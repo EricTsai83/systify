@@ -1,11 +1,23 @@
 // @vitest-environment jsdom
 
 import type React from "react";
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { getFunctionName } from "convex/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { RepositoryShell } from "./repository-shell";
 import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+
+// Convex's `api`/`anyApi` proxy returns a fresh FunctionReference object on
+// every property access, so `query === api.foo.bar` is never true. Compare the
+// canonical "module:function" name string instead.
+const queryName = (query: unknown) => {
+  try {
+    return getFunctionName(query as Parameters<typeof getFunctionName>[0]);
+  } catch {
+    return null;
+  }
+};
 
 const { useMutationMock, useQueryMock } = vi.hoisted(() => ({
   useMutationMock: vi.fn(),
@@ -25,19 +37,27 @@ vi.mock("react-router-dom", () => ({
 
 vi.mock("@/components/app-sidebar", () => ({
   AppSidebar: ({
+    activeWorkspaceId,
     onImported,
   }: {
+    activeWorkspaceId: WorkspaceId | null;
     onImported: (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => void;
   }) => (
-    <button
-      type="button"
-      data-testid="sidebar-import"
-      onClick={() =>
-        onImported("repo_imported" as RepositoryId, "thread_imported" as ThreadId, "workspace_imported" as WorkspaceId)
-      }
-    >
-      Import from sidebar
-    </button>
+    <div data-testid="sidebar" data-active-workspace-id={activeWorkspaceId ?? ""}>
+      <button
+        type="button"
+        data-testid="sidebar-import"
+        onClick={() =>
+          onImported(
+            "repo_imported" as RepositoryId,
+            "thread_imported" as ThreadId,
+            "workspace_imported" as WorkspaceId,
+          )
+        }
+      >
+        Import from sidebar
+      </button>
+    </div>
   ),
 }));
 
@@ -158,12 +178,45 @@ vi.mock("@/hooks/use-repository-actions", () => ({
 }));
 
 type MatchMediaListener = (event: MediaQueryListEvent) => void;
+type ViewerPreferencesResult =
+  | { lastActiveWorkspaceId: WorkspaceId | null; lastActiveWorkspaceUpdatedAt: number | null }
+  | null
+  | undefined;
 
 let repositoriesResult: Doc<"repositories">[] | undefined;
+let workspacesResult: Doc<"workspaces">[] | undefined;
+let viewerPreferencesResult: ViewerPreferencesResult;
 let ownerThreadsResult: Doc<"threads">[] | undefined;
 let isDesktopMatches = false;
 let mediaListener: MatchMediaListener | null = null;
 let storedActiveWorkspaceId: string | null = null;
+
+// Convex's `useMutation` returns a callable `ReactMutation` object that also
+// exposes `.withOptimisticUpdate(...)`. The repository-shell now wraps
+// `touchWorkspace` with an optimistic update, so the mock has to be both
+// callable AND carry that method (returning itself so the wrapped value is
+// still the same vi.fn we assert against).
+type CallableMockWithOptimistic = ReturnType<typeof vi.fn> & {
+  withOptimisticUpdate: ReturnType<typeof vi.fn>;
+};
+
+function makeCallableMock(): CallableMockWithOptimistic {
+  const fn = vi.fn() as CallableMockWithOptimistic;
+  fn.mockResolvedValue(null);
+  fn.withOptimisticUpdate = vi.fn().mockReturnValue(fn);
+  return fn;
+}
+
+function resetCallableMock(fn: CallableMockWithOptimistic) {
+  fn.mockReset();
+  fn.mockResolvedValue(null);
+  fn.withOptimisticUpdate.mockReset();
+  fn.withOptimisticUpdate.mockReturnValue(fn);
+}
+
+const touchWorkspaceMock = makeCallableMock();
+const initializeWorkspacesMock = makeCallableMock();
+const createThreadMock = makeCallableMock();
 
 beforeEach(() => {
   navigateMock.mockReset();
@@ -185,30 +238,60 @@ beforeEach(() => {
     },
   });
   repositoriesResult = [];
+  // Default to "no workspaces yet" so existing tests that don't care about the
+  // workspace reconciliation paths short-circuit on `workspaces.length === 0`.
+  workspacesResult = [];
+  // Default to "no preference recorded" so the DB-wins effect is a no-op for
+  // tests that aren't exercising cross-device convergence.
+  viewerPreferencesResult = null;
   ownerThreadsResult = [];
   isDesktopMatches = false;
   mediaListener = null;
 
+  resetCallableMock(touchWorkspaceMock);
+  resetCallableMock(initializeWorkspacesMock);
+  resetCallableMock(createThreadMock);
+
   useMutationMock.mockReset();
   useQueryMock.mockReset();
-  useMutationMock.mockReturnValue(vi.fn().mockResolvedValue(null));
-  useQueryMock.mockImplementation((_query: unknown, args: unknown) => {
-    if (args === undefined) {
-      return repositoriesResult;
+  // Dispatch by mutation name so each call site gets its own spy. Falls
+  // back to a fresh resolved-null mock for mutations the tests don't assert on.
+  useMutationMock.mockImplementation((mutation: unknown) => {
+    switch (queryName(mutation)) {
+      case "workspaces:touchWorkspace":
+        return touchWorkspaceMock;
+      case "workspaces:initializeWorkspaces":
+        return initializeWorkspacesMock;
+      case "chat/threads:createThread":
+        return createThreadMock;
+      default:
+        return vi.fn().mockResolvedValue(null);
     }
-    if (args && typeof args === "object" && Object.keys(args).length === 0) {
-      return ownerThreadsResult;
+  });
+  // Dispatch by query name. The previous arg-shape dispatcher collided for
+  // any two queries that take no args (e.g. listRepositories, listWorkspaces,
+  // getViewerPreferences), making it impossible to vary viewerPreferences
+  // without also changing repositories. Each query now has its own knob.
+  useQueryMock.mockImplementation((query: unknown, args: unknown) => {
+    if (args === "skip") return undefined;
+    switch (queryName(query)) {
+      case "repositories:listRepositories":
+        return repositoriesResult;
+      case "workspaces:listWorkspaces":
+        return workspacesResult;
+      case "userPreferences:getViewerPreferences":
+        return viewerPreferencesResult;
+      case "chat/threads:listThreads":
+        return ownerThreadsResult;
+      case "repositories:getRepositoryDetail":
+        return null;
+      case "chat/threads:listMessages":
+        return [];
+      case "chat/streaming:getActiveMessageStream":
+        return null;
+      default:
+        return undefined;
     }
-    if (args === "skip") {
-      return undefined;
-    }
-    if (args && typeof args === "object" && "threadId" in args) {
-      return [];
-    }
-    if (args && typeof args === "object" && "repositoryId" in args) {
-      return null;
-    }
-    return undefined;
   });
 
   window.matchMedia = vi.fn().mockImplementation(() => ({
@@ -238,6 +321,17 @@ function makeRepository(overrides: Partial<Doc<"repositories">> = {}): Doc<"repo
     sourceRepoFullName: "octocat/hello-world",
     ...overrides,
   } as unknown as Doc<"repositories">;
+}
+
+function makeWorkspace(overrides: Partial<Doc<"workspaces">> & { _id: string }): Doc<"workspaces"> {
+  return {
+    _creationTime: Date.now(),
+    ownerTokenIdentifier: "user|test",
+    name: "Workspace",
+    color: "blue",
+    lastAccessedAt: Date.now(),
+    ...overrides,
+  } as unknown as Doc<"workspaces">;
 }
 
 describe("RepositoryShell artifact toggle behavior", () => {
@@ -291,5 +385,100 @@ describe("RepositoryShell import workspace routing", () => {
 
     expect(localStorage.getItem("systify.activeWorkspaceId")).toBe("workspace_empty");
     expect(navigateMock).toHaveBeenCalledWith("/t/thread_empty");
+  });
+});
+
+describe("RepositoryShell workspace reconciliation", () => {
+  // The DB is the canonical source of truth and localStorage is a first-paint
+  // cache. These three tests pin the contracts spelled out in
+  // docs/workspace-persistence-system-design.md so future refactors can't
+  // silently drop cross-device convergence, fallback seeding, or stale-cache
+  // recovery without a failing test.
+
+  test("DB-wins reconciliation overrides cached workspace once both queries resolve", async () => {
+    // Cross-device case: this browser cached `ws_cached`, but the user's
+    // canonical selection on another device is `ws_db`. The shell must adopt
+    // `ws_db` and not issue a redundant touchWorkspace (the DB already holds
+    // the right value).
+    storedActiveWorkspaceId = "ws_cached";
+    workspacesResult = [makeWorkspace({ _id: "ws_db" }), makeWorkspace({ _id: "ws_cached" })];
+    viewerPreferencesResult = {
+      lastActiveWorkspaceId: "ws_db" as WorkspaceId,
+      lastActiveWorkspaceUpdatedAt: 1,
+    };
+
+    render(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_db");
+    });
+    expect(localStorage.getItem("systify.activeWorkspaceId")).toBe("ws_db");
+    expect(touchWorkspaceMock).not.toHaveBeenCalled();
+  });
+
+  test("fallback effect seeds touchWorkspace when no preference exists yet", async () => {
+    // Brand-new browser: cache empty, DB has no preference recorded. The
+    // fallback effect should pick the first (most-recent) workspace AND
+    // promote it into userPreferences so the next device convergence works.
+    // Without the seed, a fresh browser would silently re-fall-back forever
+    // and never establish a canonical selection.
+    storedActiveWorkspaceId = null;
+    workspacesResult = [makeWorkspace({ _id: "ws_first" }), makeWorkspace({ _id: "ws_second" })];
+    viewerPreferencesResult = null;
+
+    render(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_first");
+    });
+    expect(touchWorkspaceMock).toHaveBeenCalledWith({ workspaceId: "ws_first" });
+  });
+
+  test("stale localStorage pointing at a deleted workspace recovers via fallback and seeds the DB", async () => {
+    // Cache points at a workspace deleted (on another device) since the cache
+    // was written. The current device has no DB preference yet, so the
+    // fallback path must both pick a surviving workspace and seed it as the
+    // canonical selection.
+    storedActiveWorkspaceId = "ws_deleted";
+    workspacesResult = [makeWorkspace({ _id: "ws_alive" })];
+    viewerPreferencesResult = null;
+
+    render(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_alive");
+    });
+    expect(localStorage.getItem("systify.activeWorkspaceId")).toBe("ws_alive");
+    expect(touchWorkspaceMock).toHaveBeenCalledWith({ workspaceId: "ws_alive" });
+  });
+
+  test("live cross-tab push updates the active workspace without remounting", async () => {
+    // Tab A renders happily on `ws_a`. Tab B then switches the user to `ws_b`;
+    // Convex's subscription pushes the new viewerPreferences into Tab A's
+    // `useQuery`. Without the one-shot reconciliation guard, the effect must
+    // observe the diff and adopt `ws_b` live in Tab A — no reload required.
+    storedActiveWorkspaceId = "ws_a";
+    workspacesResult = [makeWorkspace({ _id: "ws_a" }), makeWorkspace({ _id: "ws_b" })];
+    viewerPreferencesResult = {
+      lastActiveWorkspaceId: "ws_a" as WorkspaceId,
+      lastActiveWorkspaceUpdatedAt: 1,
+    };
+
+    const { rerender } = render(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_a");
+    });
+
+    // Simulate Tab B's switch landing in Tab A's subscription.
+    viewerPreferencesResult = {
+      lastActiveWorkspaceId: "ws_b" as WorkspaceId,
+      lastActiveWorkspaceUpdatedAt: 2,
+    };
+    rerender(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_b");
+    });
   });
 });

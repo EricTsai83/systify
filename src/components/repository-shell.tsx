@@ -1,7 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import type { Doc } from "../../convex/_generated/dataModel";
+import type { OptimisticLocalStore } from "convex/browser";
+import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
@@ -24,6 +25,43 @@ import { toUserErrorMessage } from "@/lib/errors";
 
 type RepositoryWorkspaceStatus = "initializing" | "no-repo" | "ready";
 const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
+
+/**
+ * Optimistic mirror of the server-side `touchWorkspace` mutation. Defined at
+ * module scope (not inside the component) so React's purity rules treat the
+ * `Date.now()` call as a runtime concern rather than memoization-time impurity,
+ * and so the function reference is stable for `withOptimisticUpdate`.
+ *
+ * It updates the same two pieces of state the real mutation touches:
+ *   1. `userPreferences.lastActiveWorkspaceId` — keeps the canonical
+ *      "current workspace" pointer aligned with the user's intent so the
+ *      reconciliation effect in `RepositoryShell` doesn't see a stale DB
+ *      snapshot during the in-flight window.
+ *   2. `workspaces.lastAccessedAt` (with a re-sort) — snaps the sidebar's
+ *      most-recent ordering into place immediately. The DB index is
+ *      descending on `lastAccessedAt`, so we sort the same way.
+ */
+function applyTouchWorkspaceOptimistic(
+  store: OptimisticLocalStore,
+  args: { workspaceId: Id<"workspaces"> },
+) {
+  const now = Date.now();
+
+  for (const { args: queryArgs } of store.getAllQueries(api.userPreferences.getViewerPreferences)) {
+    store.setQuery(api.userPreferences.getViewerPreferences, queryArgs, {
+      lastActiveWorkspaceId: args.workspaceId,
+      lastActiveWorkspaceUpdatedAt: now,
+    });
+  }
+
+  for (const { args: queryArgs, value } of store.getAllQueries(api.workspaces.listWorkspaces)) {
+    if (value === undefined) continue;
+    const updated = value
+      .map((ws) => (ws._id === args.workspaceId ? { ...ws, lastAccessedAt: now } : ws))
+      .sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
+    store.setQuery(api.workspaces.listWorkspaces, queryArgs, updated);
+  }
+}
 
 const DeepAnalysisDialog = lazy(() =>
   import("@/components/deep-analysis-dialog").then((module) => ({ default: module.DeepAnalysisDialog })),
@@ -59,14 +97,41 @@ export function RepositoryShell({
   const createThreadMutation = useMutation(api.chat.threads.createThread);
 
   // -------------------------------------------------------------------------
-  // Workspace state — persisted in localStorage for cross-session continuity.
+  // Workspace state — DB is the source of truth, localStorage is a
+  // first-paint cache.
+  //
+  // Resolution order (see docs/workspace-persistence-system-design.md):
+  //   1. Render immediately with whatever localStorage has so we avoid a
+  //      blank-shell flash while Convex hydrates.
+  //   2. When `getViewerPreferences` resolves with a stored
+  //      `lastActiveWorkspaceId`, reconcile to the DB value — that is the
+  //      canonical "current workspace" and the only thing that survives a
+  //      different device or a cleared cache.
+  //   3. If the active id is missing or no longer valid (workspace deleted),
+  //      fall back to the most-recently-touched workspace, then promote that
+  //      pick into the DB so future loads converge instantly.
   // -------------------------------------------------------------------------
   const workspaces = useQuery(api.workspaces.listWorkspaces);
+  const viewerPreferences = useQuery(api.userPreferences.getViewerPreferences);
   const initializeWorkspaces = useMutation(api.workspaces.initializeWorkspaces);
-  const touchWorkspace = useMutation(api.workspaces.touchWorkspace);
+  // `touchWorkspace` carries `applyTouchWorkspaceOptimistic` so the local
+  // query cache reflects the user's switch the same render they click.
+  // Without it, the reconciliation effect below would briefly observe a stale
+  // `viewerPreferences` (still pointing at the previous workspace) and bounce
+  // the user back. With it, the local query cache and the local React state
+  // agree on the new workspace within the same render, which both eliminates
+  // the in-flight race and lets us drop the one-shot reconciliation guard so
+  // genuine cross-tab pushes propagate live.
+  const baseTouchWorkspace = useMutation(api.workspaces.touchWorkspace);
+  const touchWorkspace = useMemo(
+    () => baseTouchWorkspace.withOptimisticUpdate(applyTouchWorkspaceOptimistic),
+    [baseTouchWorkspace],
+  );
   const initializationAttemptedRef = useRef(false);
 
-  // Persist active workspace in localStorage.
+  // First-paint cache. Rendering with this avoids a one-frame flicker before
+  // `viewerPreferences` arrives. The cache is *only* trusted until the DB
+  // value lands; after that, the DB wins on conflict.
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<WorkspaceId | null>(() => {
     try {
       const stored = localStorage.getItem("systify.activeWorkspaceId");
@@ -76,7 +141,10 @@ export function RepositoryShell({
     }
   });
 
-  // Sync to localStorage whenever it changes.
+  // Mirror every active-workspace change back into localStorage so the
+  // first-paint cache stays warm for the next load. This is best-effort: if
+  // the write fails (private mode quota, storage disabled, …), the DB still
+  // carries the canonical value.
   useEffect(() => {
     try {
       if (activeWorkspaceId) {
@@ -98,19 +166,66 @@ export function RepositoryShell({
     void initializeWorkspaces({});
   }, [workspaces, initializeWorkspaces]);
 
-  // Auto-select the most recent workspace if none is active or the active one
-  // no longer exists (e.g. deleted).
+  // DB-wins reconciliation. Re-runs whenever the DB-side selection changes,
+  // which is also the cross-tab live-sync path: a switch in another tab pushes
+  // the new `viewerPreferences` row through Convex's subscription, this effect
+  // observes the diff, and adopts the new value here. The race that used to
+  // need a one-shot ref (a stale `viewerPreferences` arriving after the user's
+  // local switch and bouncing them back) is now neutralised by the optimistic
+  // update on `touchWorkspace`, which keeps the local query cache aligned with
+  // the user's intent during the in-flight window.
+  useEffect(() => {
+    if (workspaces === undefined || viewerPreferences === undefined) return;
+    const dbWorkspaceId = viewerPreferences?.lastActiveWorkspaceId ?? null;
+    if (!dbWorkspaceId) return;
+    const dbWorkspaceExists = workspaces.some((ws) => ws._id === dbWorkspaceId);
+    if (!dbWorkspaceExists) return;
+    if (dbWorkspaceId !== activeWorkspaceId) {
+      // setState in an effect, but the only practical alternative is to
+      // derive `activeWorkspaceId` purely during render, which would require
+      // dropping the localStorage-cached first-paint state and re-introducing
+      // a flash on every load. The guard above ensures this only fires when
+      // the DB and local state actually disagree, so it's a one-shot per
+      // genuine cross-tab/cross-device push, not a render loop.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setActiveWorkspaceId(dbWorkspaceId);
+    }
+  }, [workspaces, viewerPreferences, activeWorkspaceId]);
+
+  // Auto-select the most recent workspace if none is active or the active
+  // one no longer exists (e.g. deleted on another device). We also seed the
+  // DB preference here so cross-device convergence works even for users who
+  // never explicitly switch — without this, a brand-new browser would pick
+  // its own fallback and never publish it as the canonical selection.
   useEffect(() => {
     if (!workspaces || workspaces.length === 0) return;
+    // Wait for the reconciliation pass before considering fallback so we
+    // don't briefly select the wrong workspace and then bounce to the DB
+    // value once `viewerPreferences` resolves.
+    if (viewerPreferences === undefined) return;
     const activeExists = workspaces.some((ws) => ws._id === activeWorkspaceId);
-    if (!activeExists && activeWorkspaceId !== workspaces[0]._id) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setActiveWorkspaceId(workspaces[0]._id);
+    if (activeExists) return;
+    const fallback = workspaces[0]._id;
+    // setState in an effect is normally a smell, but here it's the right tool:
+    // the fallback choice depends on async query data (`workspaces`) and on a
+    // sibling DB query (`viewerPreferences`), which can't be derived purely
+    // during render without re-introducing the original race. The early
+    // returns above guarantee at most one setState per workspaces snapshot,
+    // and after this fires `activeExists` becomes true on the next run so the
+    // effect short-circuits.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setActiveWorkspaceId(fallback);
+    if (viewerPreferences?.lastActiveWorkspaceId !== fallback) {
+      void touchWorkspace({ workspaceId: fallback }).catch(() => {});
     }
-  }, [workspaces, activeWorkspaceId]);
+  }, [workspaces, viewerPreferences, activeWorkspaceId, touchWorkspace]);
 
   const handleSwitchWorkspace = useCallback(
     (workspaceId: WorkspaceId) => {
+      // Optimistic local update for instant UI; `touchWorkspace` then
+      // promotes the same value into the DB inside a single Convex
+      // transaction (bumps `lastAccessedAt` *and* writes
+      // `userPreferences.lastActiveWorkspaceId` together).
       setActiveWorkspaceId(workspaceId);
       void touchWorkspace({ workspaceId }).catch(() => {});
       // Navigate to /chat so the redirect-to-most-recent-thread logic kicks in
