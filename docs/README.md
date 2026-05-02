@@ -41,6 +41,9 @@ This folder contains the system design documentation for the current Systify cod
 - `github-callback-returnto-allowlist-system-design.md`
   - Why is URL-format validation alone insufficient for callback redirect trust?
   - How does origin allowlisting reduce open-redirect phishing-chain risk?
+- `workspace-persistence-system-design.md`
+  - Why is the viewer's "current workspace" stored in both Convex and localStorage?
+  - How does DB-wins reconciliation give cross-device continuity without a first-paint flash?
 
 ## Implementation Coverage
 
@@ -56,6 +59,7 @@ The current codebase keeps system-design documentation for all implemented high-
 - Deep analysis TTL, installation conflict handling, and chat usage-cost writing: `deep-analysis-installation-cost-system-design.md`
 - Vercel + Convex deployment model: `vercel-convex-deployment-system-design.md`
 - GitHub callback returnTo allowlist boundary: `github-callback-returnto-allowlist-system-design.md`
+- Workspace persistence and cross-device continuity: `workspace-persistence-system-design.md`
 
 ## What Each Document Answers
 

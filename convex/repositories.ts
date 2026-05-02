@@ -8,6 +8,7 @@ import { getSandboxModeStatus } from "./lib/sandboxAvailability";
 import { makeRepositoryTitle, parseGitHubUrl } from "./lib/github";
 import { CASCADE_BATCH_SIZE } from "./lib/constants";
 import { ensureRepositoryWorkspace } from "./lib/workspaces";
+import { clearLastActiveWorkspaceIfMatches } from "./lib/userPreferences";
 import {
   consumeDaytonaGlobalRateLimit,
   consumeImportRateLimit,
@@ -604,6 +605,10 @@ export const cascadeDeleteRepository = internalMutation({
         )
         .take(CASCADE_BATCH_SIZE);
       for (const workspace of workspaces) {
+        await clearLastActiveWorkspaceIfMatches(ctx, {
+          ownerTokenIdentifier: repository.ownerTokenIdentifier,
+          workspaceId: workspace._id,
+        });
         await ctx.db.delete(workspace._id);
       }
       if (workspaces.length === CASCADE_BATCH_SIZE) {

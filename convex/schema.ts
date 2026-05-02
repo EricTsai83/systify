@@ -132,6 +132,24 @@ export default defineSchema({
     .index("by_ownerTokenIdentifier_and_lastAccessedAt", ["ownerTokenIdentifier", "lastAccessedAt"])
     .index("by_ownerTokenIdentifier_and_repositoryId", ["ownerTokenIdentifier", "repositoryId"]),
 
+  /**
+   * Per-viewer key-value preferences that need to follow the user across
+   * devices. Today this only carries the last active workspace so that
+   * re-entering the app on a different browser converges to the same
+   * selection; future user-level prefs (default chat mode, theme, etc.)
+   * extend this table without touching the workspace data model.
+   *
+   * Source-of-truth boundary: `lastActiveWorkspaceId` is the canonical
+   * "current workspace" for a viewer. The frontend keeps a localStorage
+   * cache for first-paint, but on conflict the DB wins (see
+   * `docs/workspace-persistence-system-design.md`).
+   */
+  userPreferences: defineTable({
+    ownerTokenIdentifier: v.string(),
+    lastActiveWorkspaceId: v.optional(v.id("workspaces")),
+    lastActiveWorkspaceUpdatedAt: v.optional(v.number()),
+  }).index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
+
   repositories: defineTable({
     ownerTokenIdentifier: v.string(),
     sourceHost: v.literal("github"),

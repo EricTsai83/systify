@@ -1,5 +1,6 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
+import { clearLastActiveWorkspaceIfMatches } from "./userPreferences";
 
 export const HOME_WORKSPACE_NAME = "Home";
 
@@ -77,6 +78,10 @@ export async function ensureHomeWorkspace(ctx: MutationCtx, ownerTokenIdentifier
       workspaceId: workspace._id,
       homeWorkspaceId,
       ownerTokenIdentifier,
+    });
+    await clearLastActiveWorkspaceIfMatches(ctx, {
+      ownerTokenIdentifier,
+      workspaceId: workspace._id,
     });
     await ctx.db.delete(workspace._id);
   }
