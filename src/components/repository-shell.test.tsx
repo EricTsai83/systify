@@ -323,7 +323,9 @@ function makeRepository(overrides: Partial<Doc<"repositories">> = {}): Doc<"repo
   } as unknown as Doc<"repositories">;
 }
 
-function makeWorkspace(overrides: Partial<Doc<"workspaces">> & { _id: string }): Doc<"workspaces"> {
+function makeWorkspace(
+  overrides: Omit<Partial<Doc<"workspaces">>, "_id"> & { _id: string },
+): Doc<"workspaces"> {
   return {
     _creationTime: Date.now(),
     ownerTokenIdentifier: "user|test",
