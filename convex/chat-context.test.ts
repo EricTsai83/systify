@@ -1111,6 +1111,73 @@ describe("chat reply context", () => {
     ).rejects.toThrow(/queued user message not found/i);
   });
 
+  test("exposes artifact ids on the reply context for docs-mode citation maps", async () => {
+    // Plan 02: the prompt builder needs each artifact's `_id` so it can
+    // assemble a numbered `[A#] → artifactId` map and persist it on
+    // `messages.citationMap`. Without `id` on the context entry, the
+    // frontend would only see `[A1]` tokens with no way to resolve them
+    // back to the artifact in the side panel.
+    const ownerTokenIdentifier = "user|docs-id-exposure";
+    const t = convexTest(schema, modules);
+
+    const { threadId, userMessageId, expectedArtifactId } = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/docs-id-exposure",
+        sourceRepoFullName: "acme/docs-id-exposure",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "docs-id-exposure",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 0,
+      });
+
+      const threadId = await ctx.db.insert("threads", {
+        repositoryId,
+        ownerTokenIdentifier,
+        title: "Docs id thread",
+        mode: "docs",
+        lastMessageAt: Date.now(),
+      });
+
+      const expectedArtifactId = await ctx.db.insert("artifacts", {
+        repositoryId,
+        threadId,
+        ownerTokenIdentifier,
+        kind: "architecture_diagram",
+        title: "Architecture diagram",
+        summary: "Module boundaries",
+        contentMarkdown: "graph TD\nA-->B",
+        source: "heuristic",
+        version: 1,
+      });
+
+      const userMessageId = await ctx.db.insert("messages", {
+        repositoryId,
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "docs",
+        content: "Where is the boundary between A and B?",
+      });
+
+      return { threadId, userMessageId, expectedArtifactId };
+    });
+
+    const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
+
+    expect(context.artifacts).toHaveLength(1);
+    expect(context.artifacts[0]?.id).toBe(expectedArtifactId);
+    expect(context.artifacts[0]?.title).toBe("Architecture diagram");
+  });
+
   test("rejects a userMessageId that points to an assistant message", async () => {
     // Role guard: assistant messages have a `mode` column too (the mode
     // they were produced under), but anchoring to one would mean

@@ -7,7 +7,7 @@ import { STREAM_FLUSH_THRESHOLD } from "../lib/constants";
 import { logWarn } from "../lib/observability";
 import { estimateCostUsd } from "../lib/openaiPricing";
 import type { ReplyContext } from "./context";
-import { buildHeuristicAnswer, buildSystemPrompt, buildUserPrompt } from "./prompting";
+import { buildCitationMap, buildHeuristicAnswer, buildSystemPrompt, buildUserPrompt } from "./prompting";
 import { selectRelevantChunks } from "./relevance";
 
 export const generateAssistantReply = internalAction({
@@ -52,6 +52,15 @@ export const generateAssistantReply = internalAction({
       const userPrompt = queuedUserMessage.content;
       const relevantChunks = selectRelevantChunks(replyContext.chunks, userPrompt);
 
+      // Build the citation map *before* the heuristic / streaming branches so
+      // both paths persist the same `[A#] → artifactId` lookup the prompt is
+      // about to advertise to the model. Skipped (left undefined) when no
+      // artifacts were selected — `discuss` and unattached threads have an
+      // empty list, so persisting `[]` would just add noise to the message
+      // row without any frontend usefulness.
+      const citationMap = buildCitationMap(replyContext);
+      const persistedCitationMap = citationMap.length > 0 ? citationMap : undefined;
+
       if (!process.env.OPENAI_API_KEY) {
         const heuristicAnswer = buildHeuristicAnswer(replyContext, userPrompt, relevantChunks);
         await ctx.runMutation(internal.chat.streaming.finalizeAssistantReply, {
@@ -59,6 +68,7 @@ export const generateAssistantReply = internalAction({
           assistantMessageId: args.assistantMessageId,
           jobId: args.jobId,
           finalDelta: heuristicAnswer,
+          citationMap: persistedCitationMap,
         });
         return;
       }
@@ -112,6 +122,7 @@ export const generateAssistantReply = internalAction({
         inputTokens,
         outputTokens,
         costUsd,
+        citationMap: persistedCitationMap,
       });
     } catch (error) {
       await ctx.runMutation(internal.chat.streaming.failAssistantReply, {

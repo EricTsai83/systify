@@ -5,6 +5,7 @@ export type WorkspaceId = Id<"workspaces">;
 export type RepositoryId = Id<"repositories">;
 export type ThreadId = Id<"threads">;
 export type MessageId = Id<"messages">;
+export type ArtifactId = Id<"artifacts">;
 
 /**
  * UI-level chat mode the user picks in the ChatPanel selector. The frontend

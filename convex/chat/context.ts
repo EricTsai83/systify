@@ -32,7 +32,13 @@ export type ReplyContext = {
   readmeSummary?: string;
   architectureSummary?: string;
   sourceRepoFullName?: string;
-  artifacts: Array<{ title: string; summary: string; contentMarkdown: string }>;
+  /**
+   * Artifacts in scope for this reply. The `id` is exposed alongside the
+   * displayed fields so `generation.ts` can build a numbered citation map
+   * (`[A1] → artifactId`) that travels with the assistant message and lets
+   * the frontend resolve `[A#]` tokens back to specific artifact rows.
+   */
+  artifacts: Array<{ id: Id<"artifacts">; title: string; summary: string; contentMarkdown: string }>;
   chunks: Array<{ path: string; summary: string; content: string }>;
   messages: Array<{ id: Id<"messages">; role: "user" | "assistant" | "system" | "tool"; content: string }>;
 };
@@ -240,6 +246,7 @@ export const getReplyContext = internalQuery({
       architectureSummary: repository.architectureSummary,
       sourceRepoFullName: repository.sourceRepoFullName,
       artifacts: artifacts.map((artifact) => ({
+        id: artifact._id,
         title: artifact.title,
         summary: artifact.summary,
         contentMarkdown: artifact.contentMarkdown,

@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { Fragment, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation } from "convex/react";
 import {
   ChatCircleIcon,
@@ -14,6 +14,7 @@ import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { AppNotice } from "@/components/app-notice";
 import { ImportRepoDialog } from "@/components/import-repo-dialog";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -29,6 +30,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type {
   ActiveMessageStream,
+  ArtifactId,
   RepositoryId,
   ThreadId,
   ChatMode,
@@ -83,6 +85,28 @@ const MODE_CATALOG: ReadonlyArray<{
   },
 ];
 
+/**
+ * Lookup keyed by `ChatMode` so the per-message badge (Plan 02) and any
+ * future onboarding popovers (Plan 14) all read from the same display
+ * vocabulary. Building this off of `MODE_CATALOG` rather than re-typing the
+ * labels keeps the badge and the selector pill in lockstep — renaming a mode
+ * in `MODE_CATALOG` automatically renames the badge.
+ */
+const MODE_LABELS: Record<ChatMode, string> = MODE_CATALOG.reduce(
+  (acc, entry) => {
+    acc[entry.value] = entry.label;
+    return acc;
+  },
+  {} as Record<ChatMode, string>,
+);
+
+/**
+ * Token regex for the citation rewriter: matches `[A#]` (1+ digits) anywhere
+ * in the assistant's body. Captures the index so the replacement walker can
+ * resolve it against `messages.citationMap`.
+ */
+const CITATION_TOKEN_REGEX = /\[A(\d+)\]/g;
+
 const EMPTY_CHAT_OWL = ["   ^...^   ", "  / o,o \\  ", "  |):::(|  ", "====w=w===="].join("\n");
 
 const EMPTY_CHAT_OWL_BLINK = ["   ^...^   ", "  / -,- \\  ", "  |):::(|  ", "====w=w===="].join("\n");
@@ -110,6 +134,7 @@ export function ChatPanel({
   availableRepositories = [],
   onImported,
   onThreadMovedToWorkspace,
+  onSelectArtifact,
 }: {
   selectedThreadId: ThreadId | null;
   messages: Doc<"messages">[] | undefined;
@@ -136,6 +161,13 @@ export function ChatPanel({
   /** Callback after a new repository is imported via the inline dialog. */
   onImported?: (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => void;
   onThreadMovedToWorkspace?: (workspaceId: WorkspaceId | null) => void;
+  /**
+   * Plan 02: clicking an inline `[A#]` citation in an assistant reply forwards
+   * the resolved artifact id to this callback. The shell uses it to open
+   * the artifact panel and scroll/highlight the matching artifact card.
+   * Optional so unit tests and headless renders can omit it.
+   */
+  onSelectArtifact?: (artifactId: ArtifactId) => void;
 }) {
   const hasMessages = (messages?.length ?? 0) > 0;
   const availableModeSet = useMemo(() => new Set(availableModes), [availableModes]);
@@ -172,7 +204,12 @@ export function ChatPanel({
           ) : (
             <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
               {messages!.map((message) => (
-                <MessageBubble key={message._id} message={message} activeMessageStream={activeMessageStream ?? null} />
+                <MessageBubble
+                  key={message._id}
+                  message={message}
+                  activeMessageStream={activeMessageStream ?? null}
+                  onSelectArtifact={onSelectArtifact}
+                />
               ))}
             </div>
           )}
@@ -536,26 +573,118 @@ function EmptyNoRepoHint({
 function MessageBubble({
   message,
   activeMessageStream,
+  onSelectArtifact,
 }: {
   message: Doc<"messages">;
   activeMessageStream: ActiveMessageStream | null;
+  onSelectArtifact?: (artifactId: ArtifactId) => void;
 }) {
   const isUser = message.role === "user";
+  const isAssistant = message.role === "assistant";
   const statusLabel = getMessageStatusLabel(message.status);
   const displayContent =
-    message.role === "assistant" && activeMessageStream?.assistantMessageId === message._id
+    isAssistant && activeMessageStream?.assistantMessageId === message._id
       ? activeMessageStream.content || message.content
       : message.content;
+  // Plan 02: assistant messages show a small mode chip so the user can tell
+  // which mode produced the answer (and trace surprising replies back to a
+  // mode mismatch). User messages still carry `mode` in the schema, but the
+  // sender already knows what mode they were in — the chip would just be
+  // visual noise on their own bubble.
+  const modeLabel = isAssistant ? MODE_LABELS[message.mode] : null;
+  // `[A#]` rewrite: only assistant content is rewritten because user input
+  // never contains real citation tokens (and rewriting it would let a user
+  // accidentally render a "fake" citation by typing `[A1]`).
+  const renderedContent = isAssistant
+    ? renderAssistantContent(displayContent, message.citationMap, onSelectArtifact)
+    : displayContent || "…";
   return (
     <Card className={cn("p-4", isUser ? "bg-muted border-transparent" : "border-transparent bg-transparent px-0")}>
       <div className="mb-1 flex items-center justify-between gap-3">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{message.role}</p>
+        <div className="flex items-center gap-2">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{message.role}</p>
+          {modeLabel ? (
+            <Badge
+              variant="muted"
+              className="border-transparent px-1.5 py-0 text-[10px] font-medium uppercase tracking-wider"
+              data-testid="message-mode-badge"
+            >
+              {modeLabel}
+            </Badge>
+          ) : null}
+        </div>
         <p className="text-[10px] text-muted-foreground">{statusLabel}</p>
       </div>
-      <p className="whitespace-pre-wrap text-sm leading-6">{displayContent || "…"}</p>
+      <p className="whitespace-pre-wrap text-sm leading-6">{renderedContent}</p>
       {message.errorMessage ? <p className="mt-2 text-xs text-destructive">{message.errorMessage}</p> : null}
     </Card>
   );
+}
+
+/**
+ * Walks the assistant's content, replacing every `[A#]` token whose index
+ * resolves to a `messages.citationMap` entry with a clickable inline button
+ * that forwards the artifact id to `onSelectArtifact`. Tokens whose index
+ * has no entry (and therefore no artifact to jump to) are left as-is so the
+ * user can still see the model's intended citation.
+ *
+ * Returns a `ReactNode` array (interleaving plain-text segments with button
+ * elements) rather than a single string so React can render the inline
+ * buttons; preserving the surrounding whitespace keeps `whitespace-pre-wrap`
+ * formatting intact for prose around the citations.
+ */
+function renderAssistantContent(
+  content: string,
+  citationMap: Doc<"messages">["citationMap"],
+  onSelectArtifact: ((artifactId: ArtifactId) => void) | undefined,
+): ReactNode {
+  if (!content) {
+    return "…";
+  }
+  // Build an O(1) lookup keyed by the numeric `[A#]` index. Doing this once
+  // per render is cheap (citationMap caps at MAX_CONTEXT_ARTIFACTS = 6) and
+  // avoids re-scanning the array for every regex match.
+  const indexToArtifactId = new Map<number, ArtifactId>();
+  for (const entry of citationMap ?? []) {
+    indexToArtifactId.set(entry.index, entry.artifactId);
+  }
+
+  const segments: ReactNode[] = [];
+  let lastIndex = 0;
+  let key = 0;
+  CITATION_TOKEN_REGEX.lastIndex = 0;
+  let match: RegExpExecArray | null = CITATION_TOKEN_REGEX.exec(content);
+  while (match !== null) {
+    if (match.index > lastIndex) {
+      segments.push(<Fragment key={`text-${key++}`}>{content.slice(lastIndex, match.index)}</Fragment>);
+    }
+    const tokenIndex = Number.parseInt(match[1], 10);
+    const artifactId = indexToArtifactId.get(tokenIndex);
+    if (artifactId && onSelectArtifact) {
+      segments.push(
+        <button
+          key={`cite-${key++}`}
+          type="button"
+          onClick={() => onSelectArtifact(artifactId)}
+          className="mx-0.5 inline-flex items-center rounded-sm border border-primary/30 bg-primary/5 px-1 py-0 text-[11px] font-semibold leading-5 text-primary hover:bg-primary/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          data-testid={`citation-link-${tokenIndex}`}
+          aria-label={`Open referenced artifact A${tokenIndex}`}
+        >
+          {match[0]}
+        </button>,
+      );
+    } else {
+      // Unresolved tokens render as plain text so the model's intent is
+      // visible even when the citation map is missing or out of range.
+      segments.push(<Fragment key={`text-${key++}`}>{match[0]}</Fragment>);
+    }
+    lastIndex = match.index + match[0].length;
+    match = CITATION_TOKEN_REGEX.exec(content);
+  }
+  if (lastIndex < content.length) {
+    segments.push(<Fragment key={`text-${key++}`}>{content.slice(lastIndex)}</Fragment>);
+  }
+  return segments;
 }
 
 function getSandboxStatusTitle(reasonCode: SandboxModeStatus["reasonCode"] | undefined) {
