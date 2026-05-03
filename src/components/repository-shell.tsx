@@ -291,9 +291,14 @@ export function RepositoryShell({
   /**
    * Plan 02 inline citation jump target. Set by `handleSelectArtifact` when
    * the user clicks an `[A#]` citation in an assistant reply; the artifact
-   * panel watches this for "scroll into view + transient highlight". Cleared
-   * when the user opens a different thread so a stale citation pick doesn't
-   * carry over and accidentally re-highlight an unrelated artifact.
+   * panel watches this for "scroll into view + transient highlight". See
+   * `handleSelectArtifact` below for the full transient highlight lifecycle
+   * (open the panel, publish the id, and the consume callback that clears
+   * this back to `null` once the highlight animation settles). This value
+   * persists across thread changes — `handleSelectThread` does not clear it
+   * and there is no `urlThreadId`-keyed cleanup effect. That persistence is
+   * acceptable because the artifact panel filters cards by thread, so a
+   * stale id from another thread matches no card and renders nothing.
    */
   const [selectedArtifactId, setSelectedArtifactId] = useState<ArtifactId | null>(null);
   const [isDesktopLayout, setIsDesktopLayout] = useState<boolean>(() => {
