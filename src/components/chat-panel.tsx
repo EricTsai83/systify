@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type {
@@ -131,7 +132,7 @@ export function ChatPanel({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex-1 overflow-y-auto">
+      <ScrollArea type="always" className="flex-1 min-h-0">
         <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-3 px-6 py-6">
           {!isChatLoading && chatMode === "sandbox" && sandboxModeStatus && !sandboxModeAvailable ? (
             <AppNotice
@@ -165,7 +166,7 @@ export function ChatPanel({
             </div>
           )}
         </div>
-      </div>
+      </ScrollArea>
 
       <div className="border-t border-border bg-background">
         <form
@@ -232,11 +233,28 @@ export function ChatPanel({
               type="submit"
               variant="default"
               size="sm"
-              className="w-full sm:min-w-24 sm:w-auto"
+              className="w-full sm:w-auto"
               disabled={isSending || isSyncing || !selectedThreadId || !chatInput.trim()}
             >
               <PaperPlaneTiltIcon weight="bold" />
-              {isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
+              {/*
+               * Grid-stack the label so the button width is always sized to
+               * the longest possible state ("Sending…" / "Syncing…") and
+               * doesn't reflow when toggling between idle/sending/syncing.
+               * The invisible sizer reserves the max width; the visible
+               * span is overlaid in the same grid cell.
+               */}
+              <span className="grid">
+                <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+                  Sending…
+                </span>
+                <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+                  Syncing…
+                </span>
+                <span className="col-start-1 row-start-1">
+                  {isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
+                </span>
+              </span>
             </Button>
           </div>
         </form>
