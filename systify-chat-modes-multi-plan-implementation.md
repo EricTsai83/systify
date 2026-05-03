@@ -259,7 +259,7 @@ SysTify 的 chat 對使用者開放三種模式：`discuss`（自由聊）、`do
 在 sandbox 工具對更多人開放前，修掉**兩個會把 secret 寫進 `messages` 表**的洩露點：
 
 1. **`cloneRepositoryInSandbox` 把 GitHub App installation token 嵌入 `.git/config`**（已驗證：`convex/daytona.ts:211-218` 走 HTTPS clone 帶 `x-access-token:<token>` 進 URL，無 post-clone scrub）。一旦 Plan 08 的 `run_shell` 開放，LLM 跑 `cat .git/config` 就能把 token 寫進回應、進而進 message DB。
-2. **原始碼裡硬寫的 secret**（如 `const STRIPE_KEY = "sk_live_..."`）。路徑長得無辜，path-based blocklist 擋不到；唯一可行的是內容掃描。
+2. **原始碼裡硬寫的 secret**（如 `const STRIPE_KEY = "sk_live_…"`）。路徑長得無辜，path-based blocklist 擋不到；唯一可行的是內容掃描。
 
 > **設計上明確不做 path blocklist**（`.env` / `.aws/credentials` / `secrets/`）：在 SysTify 的 sandbox 模型下這些檔案要不在 repo（`.env`）、要不在 home 不在 repo 內（`.aws/credentials`），blocklist 提供的是錯誤的安心感。完整論述見 design doc。
 

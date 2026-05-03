@@ -77,7 +77,7 @@ The Daytona SDK forwards the username/password pair to `git clone` over HTTPS. G
 
 ```
 [remote "origin"]
-    url = https://x-access-token:ghs_xxxxxxxxxxxxxxxx@github.com/owner/repo.git
+    url = https://x-access-token:<INSTALLATION_TOKEN>@github.com/owner/repo.git
 ```
 
 The token is a GitHub App installation access token (`convex/githubAppNode.ts:110-129`). It is valid for one hour and scoped to whatever repositories the installation has been granted. That scope is small relative to a personal access token, but it is not negligible — for a multi-repo installation it covers every repo the customer has granted Systify.
@@ -93,8 +93,8 @@ This is the dominant near-term threat. It is independent of customer behavior �
 Once `.git/config` is handled, the next class of leakage is secrets hard-coded into committed source files:
 
 ```ts
-// Real example pattern
-const STRIPE_SECRET = "sk_live_[SECRET_REMOVED_FOR_DOCS]";
+// Pattern: sk_live_[A-Za-z0-9]{24}
+const STRIPE_SECRET = "sk_live_…";
 ```
 
 These files have unremarkable paths. No path-based blocklist can catch them. The only defense is content-based: scan tool output for high-confidence secret patterns and replace matches with a sentinel before the output reaches the LLM and before it reaches `messages`.
