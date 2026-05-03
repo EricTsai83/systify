@@ -3,6 +3,7 @@
 import { describe, expect, test } from "vitest";
 import { convexTest } from "convex-test";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { selectRelevantChunks } from "./chat/relevance";
 import schema from "./schema";
 
@@ -1209,5 +1210,236 @@ describe("chat reply context", () => {
         userMessageId: assistantMessageId,
       }),
     ).rejects.toThrow(/queued user message not found/i);
+  });
+
+  test("hides cross-mode assistant replies from the LLM context while keeping every user turn", async () => {
+    // Plan 03: when the user switches modes mid-thread, the previous mode's
+    // assistant answer (e.g. an unattached `discuss` hypothetical) must not
+    // bleed into the new mode's prompt — the model would otherwise treat
+    // that hypothetical as ground truth for the live-grounded reply.
+    // User turns (every role except `assistant`) are kept regardless of mode
+    // so the conversational continuity the user expects ("you remember what
+    // I asked before, right?") survives the switch.
+    const ownerTokenIdentifier = "user|cross-mode-filter";
+    const t = convexTest(schema, modules);
+
+    const { threadId, sandboxUserMessageId } = await t.run(async (ctx) => {
+      const threadId = await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Cross-mode thread",
+        // Thread default `discuss` is irrelevant once each row carries its
+        // own `mode` — `getReplyContext` anchors `effectiveMode` to the
+        // queued user message, not to the thread row.
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+
+      // Round 1 — `discuss`: user asks, assistant answers from training.
+      await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "discuss",
+        content: "What is a design pattern?",
+      });
+      await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "assistant",
+        status: "completed",
+        mode: "discuss",
+        content: "Design patterns are reusable solutions to common problems.",
+      });
+
+      // Round 2 — `sandbox`: user follows up. This is the queued reply.
+      const sandboxUserMessageId = await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "sandbox",
+        content: "How do we implement the factory pattern in this repo?",
+      });
+      // A prior `sandbox` reply from earlier in the thread (here we model it
+      // as the same round; in practice it would be the previous turn). It
+      // must survive the cross-mode filter because it shares the queued
+      // mode.
+      await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "assistant",
+        status: "completed",
+        mode: "sandbox",
+        content: "Earlier sandbox-mode answer.",
+      });
+
+      return { threadId, sandboxUserMessageId };
+    });
+
+    const context = await t.query(internal.chat.context.getReplyContext, {
+      threadId,
+      userMessageId: sandboxUserMessageId,
+    });
+
+    // User turns survive across the mode switch — both `discuss` and
+    // `sandbox` user messages remain visible to the model.
+    const userMessages = context.messages.filter((message) => message.role === "user");
+    expect(userMessages.map((message) => message.content)).toEqual([
+      "What is a design pattern?",
+      "How do we implement the factory pattern in this repo?",
+    ]);
+
+    // Assistant turns are mode-scoped: the `discuss` answer is dropped, the
+    // `sandbox` answer stays.
+    const assistantMessages = context.messages.filter((message) => message.role === "assistant");
+    expect(assistantMessages.map((message) => message.content)).toEqual(["Earlier sandbox-mode answer."]);
+  });
+
+  test("keeps every assistant turn when the thread never switches modes", async () => {
+    // Sanity check / regression guard: same-mode threads must not lose any
+    // turn just because the cross-mode filter is now in the path. A
+    // refactor that accidentally compares `effectiveMode` against
+    // `thread.mode` instead of `message.mode` would still pass the
+    // cross-mode test above, but would silently drop assistant rows here.
+    const ownerTokenIdentifier = "user|same-mode-preserve";
+    const t = convexTest(schema, modules);
+
+    const { threadId, userMessageId } = await t.run(async (ctx) => {
+      const threadId = await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Same mode thread",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+
+      const turns: Array<{ role: "user" | "assistant"; content: string }> = [
+        { role: "user", content: "First question" },
+        { role: "assistant", content: "First answer" },
+        { role: "user", content: "Second question" },
+        { role: "assistant", content: "Second answer" },
+        { role: "user", content: "Third question" },
+      ];
+      let queuedId: Id<"messages"> | undefined;
+      for (const turn of turns) {
+        const messageId = await ctx.db.insert("messages", {
+          threadId,
+          ownerTokenIdentifier,
+          role: turn.role,
+          status: "completed",
+          mode: "discuss",
+          content: turn.content,
+        });
+        if (turn.role === "user") {
+          queuedId = messageId;
+        }
+      }
+      if (!queuedId) {
+        throw new Error("seed produced no user message");
+      }
+
+      return { threadId, userMessageId: queuedId };
+    });
+
+    const context = await t.query(internal.chat.context.getReplyContext, {
+      threadId,
+      userMessageId,
+    });
+
+    expect(context.messages.map((message) => ({ role: message.role, content: message.content }))).toEqual([
+      { role: "user", content: "First question" },
+      { role: "assistant", content: "First answer" },
+      { role: "user", content: "Second question" },
+      { role: "assistant", content: "Second answer" },
+      { role: "user", content: "Third question" },
+    ]);
+  });
+
+  test("over-fetches past stale cross-mode rows to keep the LLM-context window near the cap", async () => {
+    // Robustness boundary: when many recent rows are stale cross-mode
+    // assistant replies, a naive `take(MAX_CONTEXT_MESSAGES)` followed by
+    // filtering would shrink the LLM-context window to a handful of
+    // messages. The bounded over-fetch in `loadReplyContextMessages` keeps
+    // the post-filter survivor count at or near the cap by reading
+    // `MAX_CONTEXT_MESSAGES * REPLY_CONTEXT_OVERFETCH_FACTOR` rows from
+    // the index — invisible to callers, but the difference shows up here.
+    //
+    // Layout:
+    //   - 18 stale `discuss` assistant rows (oldest)
+    //   - 1 alternating user/assistant pair in `sandbox` (so the queued
+    //     mode has a non-trivial recent history of its own)
+    //   - The queued `sandbox` user message (newest)
+    //
+    // Total raw rows: 21. Naive `take(20)` would drop the oldest stale
+    // row but keep 17 stale ones; after the cross-mode filter we'd have
+    // ~4 messages. With over-fetch, all 21 raw rows are scanned, the 18
+    // stale ones are dropped, and the 3 queued-mode rows survive — exactly
+    // the conversational window the user expects to preserve.
+    const ownerTokenIdentifier = "user|cross-mode-overfetch";
+    const t = convexTest(schema, modules);
+
+    const { threadId, queuedUserMessageId } = await t.run(async (ctx) => {
+      const threadId = await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Cross-mode over-fetch thread",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+
+      // 18 stale `discuss` assistant rows. Raw rows alone would crowd out
+      // the queued-mode history under naive `take(MAX_CONTEXT_MESSAGES)`.
+      for (let index = 0; index < 18; index += 1) {
+        await ctx.db.insert("messages", {
+          threadId,
+          ownerTokenIdentifier,
+          role: "assistant",
+          status: "completed",
+          mode: "discuss",
+          content: `Stale discuss reply ${index}`,
+        });
+      }
+
+      // Earlier `sandbox` round (user + assistant) before the queued one.
+      await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "sandbox",
+        content: "Earlier sandbox question.",
+      });
+      await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "assistant",
+        status: "completed",
+        mode: "sandbox",
+        content: "Earlier sandbox answer.",
+      });
+
+      const queuedUserMessageId = await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "sandbox",
+        content: "Queued sandbox question.",
+      });
+
+      return { threadId, queuedUserMessageId };
+    });
+
+    const context = await t.query(internal.chat.context.getReplyContext, {
+      threadId,
+      userMessageId: queuedUserMessageId,
+    });
+
+    // The 18 stale `discuss` assistant rows are filtered out; the 3
+    // sandbox-mode rows remain, in ascending creation order.
+    expect(context.messages.map((message) => ({ role: message.role, content: message.content }))).toEqual([
+      { role: "user", content: "Earlier sandbox question." },
+      { role: "assistant", content: "Earlier sandbox answer." },
+      { role: "user", content: "Queued sandbox question." },
+    ]);
   });
 });
