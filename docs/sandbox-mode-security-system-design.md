@@ -75,14 +75,14 @@ await sandbox.git.clone(
 
 The Daytona SDK forwards the username/password pair to `git clone` over HTTPS. Git's default behavior is to persist the credential into `.git/config` on the cloned remote URL:
 
-```
+```ini
 [remote "origin"]
     url = https://x-access-token:<INSTALLATION_TOKEN>@github.com/owner/repo.git
 ```
 
 The token is a GitHub App installation access token (`convex/githubAppNode.ts:110-129`). It is valid for one hour and scoped to whatever repositories the installation has been granted. That scope is small relative to a personal access token, but it is not negligible — for a multi-repo installation it covers every repo the customer has granted Systify.
 
-There is no post-clone scrubbing in `convex/importsNode.ts:186-206`. The token sits in `.git/config` for the lifetime of the sandbox.
+Currently, there is no post-clone scrubbing in `convex/daytona.ts` (the `cloneRepositoryInSandbox` function at lines 204-227 that executes the git clone). The token is written into `.git/config` by git during the clone and sits there for the lifetime of the sandbox. **Plan 05 will add post-clone scrubbing at this location to remove the token.**
 
 If sandbox mode lands without addressing this, an LLM running `run_shell` (Plan 08) can issue `cat .git/config` or `git remote -v`, see the token in the result, and emit it as part of its answer. The answer is then persisted to `messages`.
 
@@ -196,12 +196,14 @@ The chosen design accepts the following trade-offs:
 
 ## Result
 
-The result is a security boundary with a small, defensible surface:
+The planned security boundary has a small, defensible surface:
 
-- The clone step no longer writes a Systify credential into the sandbox at all.
-- All tool output passes through a single redaction function before it reaches either the LLM or durable storage.
-- The design does not lean on a path blocklist whose coverage would be largely illusory.
+- **Clone-time scrubbing (Plan 05)**: The clone step will no longer leave a Systify credential in `.git/config`. This requires post-clone cleanup in `convex/daytona.ts` (the `cloneRepositoryInSandbox` function around lines 204-227) to redact the token immediately after the git clone completes.
+- **Redaction layer (Plan 05)**: All tool output will pass through a single redaction function (defined in `convex/chat/sandboxTools.ts` header area lines 1-50) before it reaches either the LLM or durable storage.
+- **No path blocklist**: The design does not lean on a path blocklist whose coverage would be largely illusory.
 
 ## Implementation
 
-This design is realized by Plan 05 in `systify-chat-modes-multi-plan-implementation.md`. The clone-time scrub is a new requirement on `convex/daytona.ts`; the redaction module and its application points are unchanged from the original Plan 05 sketch but with a tightened pattern set.
+This design is planned for Plan 05 in `systify-chat-modes-multi-plan-implementation.md`:
+- The clone-time scrub is a new requirement on the post-clone cleanup in `convex/daytona.ts` (not yet implemented).
+- The redaction module and its application points are sketched in `convex/chat/sandboxTools.ts` and in the multi-plan document, with a tightened pattern set, but not yet implemented.

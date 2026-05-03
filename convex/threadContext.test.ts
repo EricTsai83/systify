@@ -12,24 +12,35 @@ const OWNER = "user|thread-context-test";
 const OTHER_OWNER = "user|thread-context-other";
 
 /**
- * The Plan-04 feature gate is consulted inside `enrichThreadContext` via
- * `getSandboxFeatureGate(viewer)`, which reads `process.env`. The
- * pre-existing test suite was written before the gate existed and
- * therefore expects the resolver to return its lifecycle-derived shape;
- * to keep those tests honest about *that* contract (separate from the
- * gate), we open the gate for the duration of every test in this file
- * via the wildcard allowlist. Closed-gate behavior is exercised in the
- * dedicated describe block at the bottom.
+ * Snapshot the sandbox feature-gate env vars before each test and restore
+ * them after, optionally seeding a starting value (or explicitly clearing
+ * them). Centralizing this avoids drift between describe blocks that all
+ * need the same save/restore discipline but differ in *what* the test body
+ * starts from — open-gate suites pre-set "true" + "*", closed-gate suites
+ * delete both, per-test customizations layer on top of the cleared state.
+ *
+ * Pass `undefined` to delete the var on entry; pass a string to set it.
  */
-function withSandboxFeatureGateOpen() {
+function withSandboxEnvSnapshot(initial: {
+  enabled?: string;
+  allowlist?: string;
+}) {
   let priorEnabled: string | undefined;
   let priorAllowlist: string | undefined;
 
   beforeEach(() => {
     priorEnabled = process.env.SANDBOX_MODE_ENABLED;
     priorAllowlist = process.env.SANDBOX_BETA_ALLOWLIST;
-    process.env.SANDBOX_MODE_ENABLED = "true";
-    process.env.SANDBOX_BETA_ALLOWLIST = "*";
+    if (initial.enabled === undefined) {
+      delete process.env.SANDBOX_MODE_ENABLED;
+    } else {
+      process.env.SANDBOX_MODE_ENABLED = initial.enabled;
+    }
+    if (initial.allowlist === undefined) {
+      delete process.env.SANDBOX_BETA_ALLOWLIST;
+    } else {
+      process.env.SANDBOX_BETA_ALLOWLIST = initial.allowlist;
+    }
   });
 
   afterEach(() => {
@@ -44,6 +55,20 @@ function withSandboxFeatureGateOpen() {
       process.env.SANDBOX_BETA_ALLOWLIST = priorAllowlist;
     }
   });
+}
+
+/**
+ * The Plan-04 feature gate is consulted inside `enrichThreadContext` via
+ * `getSandboxFeatureGate(viewer)`, which reads `process.env`. The
+ * pre-existing test suite was written before the gate existed and
+ * therefore expects the resolver to return its lifecycle-derived shape;
+ * to keep those tests honest about *that* contract (separate from the
+ * gate), we open the gate for the duration of every test in this file
+ * via the wildcard allowlist. Closed-gate behavior is exercised in the
+ * dedicated describe block at the bottom.
+ */
+function withSandboxFeatureGateOpen() {
+  withSandboxEnvSnapshot({ enabled: "true", allowlist: "*" });
 }
 
 interface SeedOptions {
@@ -295,28 +320,10 @@ describe("getThreadContext (public, owner-scoped)", () => {
  * and applies it.
  */
 describe("getThreadContext sandbox feature gate", () => {
-  let priorEnabled: string | undefined;
-  let priorAllowlist: string | undefined;
-
-  beforeEach(() => {
-    priorEnabled = process.env.SANDBOX_MODE_ENABLED;
-    priorAllowlist = process.env.SANDBOX_BETA_ALLOWLIST;
-    delete process.env.SANDBOX_MODE_ENABLED;
-    delete process.env.SANDBOX_BETA_ALLOWLIST;
-  });
-
-  afterEach(() => {
-    if (priorEnabled === undefined) {
-      delete process.env.SANDBOX_MODE_ENABLED;
-    } else {
-      process.env.SANDBOX_MODE_ENABLED = priorEnabled;
-    }
-    if (priorAllowlist === undefined) {
-      delete process.env.SANDBOX_BETA_ALLOWLIST;
-    } else {
-      process.env.SANDBOX_BETA_ALLOWLIST = priorAllowlist;
-    }
-  });
+  // Each test in this block starts from a *cleared* env so the per-test
+  // setting is the only signal — the snapshot helper restores any value the
+  // outer process had on entry.
+  withSandboxEnvSnapshot({});
 
   test("flag off: ready sandbox no longer surfaces sandbox in availableModes", async () => {
     // Default env state (flag unset) — even with a fully-eligible thread,

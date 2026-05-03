@@ -1,5 +1,6 @@
 import type { ToolCallOptions } from "ai";
 import { describe, expect, test, vi } from "vitest";
+import { z } from "zod";
 import {
   SANDBOX_LIST_DIR_MAX_ENTRIES,
   SANDBOX_READ_FILE_MAX_BYTES,
@@ -265,6 +266,23 @@ describe("executeReadFile", () => {
     expect(err.errorCode).toBe("io_error");
     expect(err.message).toMatch(/non-binary/i);
   });
+
+  test("allows empty path through schema validation to executeReadFile error handling (regression)", async () => {
+    // READ_FILE_INPUT_SCHEMA must not enforce .min(1) so empty paths reach
+    // executeReadFile's structured error handling rather than being rejected
+    // by Zod validation. This ensures the tool returns the documented error
+    // envelope ({ ok: false, errorCode, message }) instead of a schema error.
+    const client = makeFakeFsClient();
+    const result = await executeReadFile(client, REPO_PATH, "");
+    const err = expectErr(result);
+
+    // The error must be a structured result, not a schema validation error.
+    // Empty path normalizes to the repo root, which is invalid for read_file
+    // (read_file rejects directories; list_dir accepts them).
+    expect(err.errorCode).toBe("invalid_path");
+    expect(err.message).toMatch(/repository root|not the repository root|directory/i);
+    expect(client.downloadFile).not.toHaveBeenCalled();
+  });
 });
 
 describe("executeListDir", () => {
@@ -387,5 +405,33 @@ describe("createSandboxTools (AI SDK wrapper)", () => {
     expect(listResult.ok).toBe(true);
     expect(listFiles).toHaveBeenCalledOnce();
     expect(listFiles).toHaveBeenCalledWith(REPO_PATH);
+  });
+
+  test("read_file: empty path passes Zod validation and returns the structured invalid_path envelope", async () => {
+    // Regression for the input-schema layer. The factory's read_file schema
+    // must NOT carry a `.min(1)` constraint — if it did, an LLM emitting
+    // `{path: ""}` would trip Zod and the AI SDK would surface a generic
+    // schema error, bypassing the documented `{ ok: false, errorCode,
+    // message }` contract that lets the model recover. Empty paths are
+    // legitimately rejected, but as a *value* by `executeReadFile`, not as a
+    // schema violation. (`list_dir` accepts empty as "list the root".)
+    const tools = createSandboxTools(makeFakeFsClient(), REPO_PATH);
+
+    // Step 1: schema-level — empty path must validate cleanly. We re-cast
+    // through `z.ZodType` because the AI SDK widens `inputSchema` to its
+    // FlexibleSchema union; in this codebase we always pass a Zod object so
+    // calling `.safeParse` is safe.
+    const parsed = (tools.read_file.inputSchema as z.ZodType).safeParse({ path: "" });
+    expect(parsed.success).toBe(true);
+
+    // Step 2: execute-level — the structured envelope is what the LLM (and
+    // any persisted tool trace) actually sees.
+    const result = (await tools.read_file.execute!(
+      { path: "" },
+      makeToolCallOptions("call-empty-path"),
+    )) as ReadFileToolResult;
+    const err = expectErr(result);
+    expect(err.errorCode).toBe("invalid_path");
+    expect(err.message).toMatch(/repository root|not the repository root|directory/i);
   });
 });

@@ -406,7 +406,6 @@ export async function executeListDir(
 const READ_FILE_INPUT_SCHEMA = z.object({
   path: z
     .string()
-    .min(1, { message: "path must not be empty" })
     .describe(
       "Path to the file inside the repository, relative to the repo root (e.g. 'convex/chat/send.ts'). Absolute paths and '..' escape attempts are rejected.",
     ),
