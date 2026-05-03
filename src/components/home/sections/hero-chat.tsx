@@ -10,6 +10,7 @@ import {
 } from "@phosphor-icons/react";
 
 import { GitHubIcon } from "@/components/icons";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { CornerMarks } from "../primitives/corner-marks";
 import { REPLAY_ON_MOUNT_ATTR } from "../primitives/replay-animations";
 
@@ -114,8 +115,25 @@ export const HeroChat = forwardRef<HTMLDivElement>(function HeroChat(_props, ref
               • tablet (`sm-lg`) → mid-size; minor scroll on expand.
               • desktop (`lg+`)  → tall enough that even expanded
                                    citations fit without scrolling. */}
-        {/* `contain: content` + `will-change: transform` promote this
-            scroll container to its own permanent GPU compositor layer.
+        {/* Wrapped in shadcn `<ScrollArea type="hover">` (Radix primitive)
+            so the scrollbar (a) only reveals on hover or while actively
+            scrolling — keeping the panel chrome quiet at rest — and (b)
+            paints the thumb in `bg-border`, which is wired to the theme
+            token (`--border`) and therefore re-colors automatically when
+            the user toggles light/dark. This replaces the previous
+            `scrollbar-themed` class which was referenced but had no CSS
+            backing it (so the browser default scrollbar leaked through
+            and never matched the theme).
+
+            We rely on Radix's native `type="hover"` instead of toggling
+            `<ScrollBar>` opacity by hand — the manual approach hides the
+            bar even *while* the user is scrolling without a hover (e.g.
+            wheel/trackpad with cursor outside the panel), which defeats
+            the affordance.
+
+            `contain: content` + `will-change: transform` are kept on the
+            ScrollArea root (the compositing parent of Radix's Viewport)
+            so it still becomes its own permanent GPU compositor layer.
             This creates a compositing boundary that isolates child
             animation layer promotions/demotions (especially the 17
             rapid-fire word-streaming fade-ins) from the parent card's
@@ -124,13 +142,16 @@ export const HeroChat = forwardRef<HTMLDivElement>(function HeroChat(_props, ref
             entire backdrop-blur region, and the sub-pixel rounding
             differences between GPU and CPU alpha blending on the
             semi-transparent card background reads as flicker. */}
-        <div
-          className="scrollbar-themed flex h-[340px] flex-col gap-2.5 overflow-y-auto px-3 py-3 sm:h-[400px] sm:gap-3 sm:px-5 sm:py-5 lg:h-[460px]"
+        <ScrollArea
+          type="hover"
+          className="h-[340px] sm:h-[400px] lg:h-[460px]"
           style={{ contain: "content", willChange: "transform" }}
         >
-          <UserMessage delay={TIMELINE.userMessage}>{TYPED_TEXT}</UserMessage>
-          <AssistantMessage delay={TIMELINE.assistantHeader} />
-        </div>
+          <div className="flex flex-col gap-2.5 px-3 py-3 sm:gap-3 sm:px-5 sm:py-5">
+            <UserMessage delay={TIMELINE.userMessage}>{TYPED_TEXT}</UserMessage>
+            <AssistantMessage delay={TIMELINE.assistantHeader} />
+          </div>
+        </ScrollArea>
 
         <ChatComposer />
       </div>
@@ -179,8 +200,18 @@ function ChatTopBar() {
  */
 function UserMessage({ children, delay }: { children: ReactNode; delay: number }) {
   return (
+    // `shrink-0` is load-bearing: the parent chat body is a flex column with a
+    // fixed `h-[340px]` on mobile and `overflow-y-auto`. Flex children default
+    // to `flex-shrink: 1`, so when this bubble + the assistant block (with
+    // citations expanded by default) together exceed the body height, the
+    // flex layout would shrink each child proportionally *instead of* letting
+    // the parent scroll. Combined with this element's own `overflow-hidden`
+    // (kept so the rail's scaleY animation can't escape the bubble), shrinking
+    // would clip the user's question — exactly the "user message gets
+    // compressed on mobile" bug. `shrink-0` forces children to keep their
+    // natural height; the parent's `overflow-y-auto` handles the excess.
     <div
-      className="relative overflow-hidden bg-muted px-4 py-3 animate-reveal-up"
+      className="relative shrink-0 overflow-hidden bg-muted px-4 py-3 animate-reveal-up"
       style={{ animationDelay: `${delay}ms` }}
       {...replayAttr}
     >
@@ -221,7 +252,12 @@ function AssistantMessage({ delay }: { delay: number }) {
     // below), and the moment the container's curve completes you'd
     // see a perceptible brightness pulse on the child's bg as the
     // multiplier snaps to 1.
-    <div className="px-0 py-1">
+    //
+    // `shrink-0` matches `<UserMessage />` — see the comment there for why
+    // both children of the fixed-height scroll container must opt out of
+    // flex shrinking (the tool-call bubble inside this block also has
+    // `overflow-hidden` and would clip the same way under shrink pressure).
+    <div className="shrink-0 px-0 py-1">
       {/* Header — fades in on its own so it can ride the parent's
           original entry beat without dragging the rest of the block
           into a nested animation. */}
