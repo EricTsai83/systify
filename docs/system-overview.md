@@ -8,7 +8,7 @@ This document describes the overall system boundaries of Systify. Its goal is to
 
 Systify is a repository-centered architecture analysis product. A user first authorizes repository access through a GitHub App, then the system imports the repository into a Daytona sandbox, extracts files and chunks, persists them into Convex, and finally offers two analysis experiences:
 
-- Chat with three selectable modes — `discuss` (no repo context, training-only), `docs` (grounded in design artifacts), and `sandbox` (grounded in the live sandbox source tree; tools wired in Plan 04 of the chat-modes rollout).
+- Chat with three selectable modes — `discuss` (no repo context, training-only), `docs` (grounded in design artifacts), and `sandbox` (grounded in the live sandbox source tree with integrated tools for reading files and running shell commands).
 - Deep analysis: a sandbox-backed background job that performs focused inspection directly against the sandboxed repository and writes a reusable `deep_analysis` artifact, which later `docs`/`sandbox` chat replies can cite.
 
 ## Main Runtime Boundaries

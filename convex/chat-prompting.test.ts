@@ -43,7 +43,7 @@ describe("buildSystemPrompt", () => {
     // The prompt should still concretely tell the model not to invent
     // "your codebase" / "your repo" references — otherwise the model can
     // simply use those phrases without ever saying the word "repository".
-    expect(prompt.toLowerCase()).toContain("your codebase");
+    expect(prompt).toMatch(/(?:never|do not|do not refer|do not mention).*your codebase/i);
   });
 
   test("docs prompt makes design artifacts the sole source of truth", () => {

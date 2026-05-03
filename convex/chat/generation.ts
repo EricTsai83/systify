@@ -66,12 +66,11 @@ export const generateAssistantReply = internalAction({
       const modelName = process.env.OPENAI_MODEL ?? "gpt-5.4-mini";
       const response = streamText({
         model: openai(modelName),
-        // `replyContext.mode` is the effective mode for this reply
-        // (`latestUserMessage.mode ?? thread.mode`). Passing it to
-        // `buildSystemPrompt` is what makes each mode's prompt
-        // (general-chat / docs / sandbox) reach the model — without this
-        // hand-off every mode would still receive the docs-flavored prompt
-        // that used to be hard-coded in `buildSystemPrompt`.
+        // `replyContext.mode` is the effective mode for this reply,
+        // derived from the queued user message. Passing it to
+        // `buildSystemPrompt` ensures the model receives the correct
+        // prompt for the selected mode ("discuss" / "docs" / "sandbox"),
+        // anchored to the same message that provides the user's question.
         system: buildSystemPrompt(replyContext.mode),
         prompt: buildUserPrompt(replyContext, userPrompt, relevantChunks),
       });
