@@ -4,21 +4,24 @@
 
 This document describes the two AI interaction paths currently available in Systify:
 
-- Quick chat
-- Deep analysis
+- Chat — interactive Q&A with three selectable modes:
+  - `discuss` (UI label "General Chat") — training-only, no repo context
+  - `docs` (UI label "Design Docs") — answers grounded in design artifacts (ADRs, diagrams, deep analyses)
+  - `sandbox` (UI label "Sandbox") — answers grounded in the live sandbox source tree (tools wired in Plan 04 of the chat-modes rollout)
+- Deep analysis — a sandbox-backed background job that produces a reusable `deep_analysis` artifact
 
-Both are repository-centered, but they depend on different data sources and execution models.
+Both are repository-centered, but they depend on different data sources and execution models. Chat and deep analysis are also complementary: deep analysis writes artifacts that later `docs`/`sandbox` chat replies can cite.
 
 ## Differences Between the Two Paths
 
 
-| Capability               | Quick chat                                           | Deep analysis                               |
-| ------------------------ | ---------------------------------------------------- | ------------------------------------------- |
-| Main entry point         | `chat.sendMessage`                                   | `analysis.requestDeepAnalysis`              |
-| Primary data source      | `artifacts` + `repoChunks` + recent messages | live sandbox                                |
-| Execution location       | Convex action                                        | Convex Node action + Daytona                |
-| UI presentation          | stable history + active stream merge                 | a new deep-analysis artifact plus job state |
-| Availability requirement | repository has completed import                      | repository has a usable sandbox             |
+| Capability               | Chat (per mode)                                                                                                                                | Deep analysis                               |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| Main entry point         | `chat.sendMessage`                                                                                                                             | `analysis.requestDeepAnalysis`              |
+| Primary data source      | `discuss`: none · `docs`: design `artifacts` only · `sandbox`: design `artifacts` + `repoChunks` + (Plan 04+) live sandbox tools               | live sandbox                                |
+| Execution location       | Convex action                                                                                                                                  | Convex Node action + Daytona                |
+| UI presentation          | stable history + active stream merge                                                                                                           | a new deep-analysis artifact plus job state |
+| Availability requirement | `discuss`: always · `docs`: repository has completed import · `sandbox`: repository has completed import **and** a usable sandbox              | repository has a usable sandbox             |
 
 
 ## Chat Flow
@@ -82,18 +85,19 @@ This allows the UI to immediately show a reply that is waiting to be generated.
 
 ### 3. Build the reply context
 
-`getReplyContext` assembles the reply context from three major sources:
+`getReplyContext` assembles the reply context based on the **effective mode** for the reply (`latestUserMessage.mode ?? thread.mode`, exposed on `ReplyContext.mode`):
 
-- repository-level summaries
-- import artifacts plus recent deep-analysis artifacts
-- `repoChunks` associated with the latest import
-- recent conversation messages
+- `discuss`: skips every repo-scoped lookup — returns empty `artifacts`, empty `chunks`, and no repo summaries. The early return is what makes `discuss` training-only by design even when the thread has a `repositoryId` attached.
+- `docs`: artifact-only retrieval — loads up to 12 design artifacts across the docs kinds (`architecture_diagram`, `adr`, `failure_mode_analysis`, `deep_analysis`, `architecture_overview`, `design_review`, `migration_plan`, `trade_off_matrix`, `capacity_estimate`). Indexed code chunks are intentionally skipped so docs answers cannot drift away from the user-produced design layer.
+- `sandbox`: artifacts from the latest import job plus recent `deep_analysis` artifacts, **and** `repoChunks` from the latest import for the chunk-selection step below.
 
-That means Quick chat does not read the whole repository directly. It reads the repository's already-processed knowledge layer.
+In every mode, the context also includes recent conversation messages bounded by `MAX_CONTEXT_MESSAGES`. The chat pipeline never reads the raw repository directly — it reads the repository's already-processed knowledge layer (artifacts + chunks) and, in `sandbox` mode from Plan 04 onward, the live sandbox via `read_file` / `list_dir` / `run_shell` tools.
 
-### 4. Select chunks
+### 4. Select chunks (sandbox mode only)
 
-The chat pipeline now uses a two-step retrieval flow:
+Chunk selection runs only when the effective mode is `sandbox`. `discuss` returns no chunks because it skips repo context entirely; `docs` returns no chunks because it is artifact-only by design (so docs answers and sandbox answers stay non-overlapping).
+
+In `sandbox` mode the pipeline uses a two-step retrieval flow:
 
 1. build a bounded candidate pool from the latest import snapshot
 2. rerank that candidate pool locally before building the prompt
@@ -118,7 +122,8 @@ If `OPENAI_API_KEY` exists, the system:
 
 - uses `streamText`
 - selects `OPENAI_MODEL` or falls back to `gpt-5.4-mini`
-- builds a prompt from artifacts, chunks, and the user question
+- builds a **per-mode** system prompt via `buildSystemPrompt(replyContext.mode)` so the model receives a different contract per mode (`discuss` is told there is no repo and to refuse to fabricate "your codebase" references; `docs` is told design artifacts are the sole source of truth; `sandbox` is told tools are coming and to flag any claim it would normally verify with a tool call)
+- builds a user prompt from artifacts, chunks, and the user question
 
 If `OPENAI_API_KEY` is absent, the system falls back to a heuristic answer so it can still produce a response based on indexed data.
 
@@ -233,34 +238,34 @@ The analysis result is ultimately written as:
 
 That means deep analysis output does not exist only at execution time. It becomes reusable repository knowledge for later flows.
 
-## Deep Mode Availability
+## Sandbox Availability
 
-The biggest difference between deep mode and Quick chat is that deep mode depends on a live sandbox. If the sandbox:
+Two distinct surfaces depend on a live Daytona sandbox: the chat `sandbox` mode and the deep-analysis background job. Both gate themselves on the same sandbox state, but through separate code paths (`chatModeResolver.resolveChatModes` for chat, `requestDeepAnalysis` for analysis). If the sandbox:
 
 - has passed its TTL
 - is archived
 - has failed
 - is missing required remote path information
 
-then deep mode becomes unavailable.
+then `sandbox` mode is removed from the chat mode selector (with a per-state tooltip surfaced through `disabledReasons`) and `requestDeepAnalysis` rejects new analysis requests.
 
-The frontend `ChatPanel` also uses this state to tell the user to:
+The frontend `ChatPanel` uses this state to tell the user to:
 
-- sync the repository to provision a new sandbox
-- or switch back to Quick mode
+- sync the repository to provision a new sandbox, or
+- switch to `discuss` (training-only) or `docs` (artifact-grounded) for a degraded but still useful answer
 
 ## How The Two Pipelines Complement Each Other
 
-Quick chat and Deep analysis are not mutually exclusive. They form two layers of analysis capability:
+Chat and deep analysis are not mutually exclusive. They form layered capabilities:
 
-- Quick chat: fast, inexpensive, and mostly based on indexed knowledge
+- Chat (`discuss` / `docs` / `sandbox`): fast, interactive, with cost and grounding scaling per mode
 - Deep analysis: slower and sandbox-dependent, but able to add observations closer to the live repository state
 
-Artifacts produced by deep analysis flow back into later chat context, so the overall system forms a cumulative knowledge loop.
+Artifacts produced by deep analysis flow back into later chat context (`docs` mode loads `deep_analysis` among its docs kinds, and `sandbox` mode also pulls them), so the overall system forms a cumulative knowledge loop.
 
 ## Known Limitations
 
-- Quick chat currently uses a lightweight chunk-ranking approach and does not yet implement a richer semantic retrieval layer.
+- `sandbox` mode is currently artifact + chunk grounded only; the live `read_file` / `list_dir` / `run_shell` tools land in Plan 04 of the chat-modes rollout and are gated behind the `SANDBOX_MODE_ENABLED` feature flag until then.
 - Chat and deep analysis are both AI features, but their outputs and tracking models are still split between thread replies and artifacts.
 - Deep analysis is currently closer to focused file discovery plus a markdown report than to a full agentic repository-reasoning pipeline.
 

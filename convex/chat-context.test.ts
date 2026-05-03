@@ -13,7 +13,7 @@ describe("chat reply context", () => {
     const ownerTokenIdentifier = "user|chat-context";
     const t = convexTest(schema, modules);
 
-    const threadId = await t.run(async (ctx) => {
+    const { threadId, userMessageId } = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
@@ -184,10 +184,20 @@ describe("chat reply context", () => {
         latestImportJobId: latestJobId,
       });
 
-      return threadId;
+      const userMessageId = await ctx.db.insert("messages", {
+        repositoryId,
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "sandbox",
+        content: "What does the latest import look like?",
+      });
+
+      return { threadId, userMessageId };
     });
 
-    const context = await t.query(internal.chat.context.getReplyContext, { threadId });
+    const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
     expect(context.chunks).toHaveLength(1);
     expect(context.chunks[0]?.path).toBe("src/current.ts");
@@ -200,7 +210,7 @@ describe("chat reply context", () => {
     const ownerTokenIdentifier = "user|chat-query-aware";
     const t = convexTest(schema, modules);
 
-    const threadId = await t.run(async (ctx) => {
+    const { threadId, userMessageId } = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
@@ -330,7 +340,7 @@ describe("chat reply context", () => {
         });
       }
 
-      await ctx.db.insert("messages", {
+      const userMessageId = await ctx.db.insert("messages", {
         repositoryId,
         threadId,
         ownerTokenIdentifier,
@@ -347,10 +357,10 @@ describe("chat reply context", () => {
         latestImportJobId: latestJobId,
       });
 
-      return threadId;
+      return { threadId, userMessageId };
     });
 
-    const context = await t.query(internal.chat.context.getReplyContext, { threadId });
+    const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
     expect(context.chunks.some((chunk) => chunk.path === "src/file-180-auth.ts")).toBe(true);
     expect(context.chunks.some((chunk) => chunk.path === "src/file-stale-auth.ts")).toBe(false);
@@ -360,7 +370,7 @@ describe("chat reply context", () => {
     const ownerTokenIdentifier = "user|chat-baseline-fallback";
     const t = convexTest(schema, modules);
 
-    const threadId = await t.run(async (ctx) => {
+    const { threadId, userMessageId } = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
@@ -438,7 +448,7 @@ describe("chat reply context", () => {
         });
       }
 
-      await ctx.db.insert("messages", {
+      const userMessageId = await ctx.db.insert("messages", {
         repositoryId,
         threadId,
         ownerTokenIdentifier,
@@ -455,10 +465,10 @@ describe("chat reply context", () => {
         latestImportJobId: latestJobId,
       });
 
-      return threadId;
+      return { threadId, userMessageId };
     });
 
-    const context = await t.query(internal.chat.context.getReplyContext, { threadId });
+    const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
     expect(context.chunks).not.toHaveLength(0);
     expect(context.chunks.map((chunk) => chunk.path)).toContain("src/a.ts");
@@ -528,16 +538,25 @@ describe("chat reply context", () => {
     const ownerTokenIdentifier = "user|repo-less-thread";
     const t = convexTest(schema, modules);
 
-    const threadId = await t.run(async (ctx) => {
-      return await ctx.db.insert("threads", {
+    const { threadId, userMessageId } = await t.run(async (ctx) => {
+      const threadId = await ctx.db.insert("threads", {
         ownerTokenIdentifier,
         title: "Design conversation",
         mode: "discuss",
         lastMessageAt: Date.now(),
       });
+      const userMessageId = await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "discuss",
+        content: "Open-ended question.",
+      });
+      return { threadId, userMessageId };
     });
 
-    const context = await t.query(internal.chat.context.getReplyContext, { threadId });
+    const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
     expect(context.sourceRepoFullName).toBeUndefined();
     expect(context.artifacts).toHaveLength(0);
@@ -551,7 +570,7 @@ describe("chat reply context", () => {
     const ownerTokenIdentifier = "user|docs-artifact-only";
     const t = convexTest(schema, modules);
 
-    const threadId = await t.run(async (ctx) => {
+    const { threadId, userMessageId } = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
@@ -635,7 +654,7 @@ describe("chat reply context", () => {
         source: "heuristic",
         version: 1,
       });
-      await ctx.db.insert("messages", {
+      const userMessageId = await ctx.db.insert("messages", {
         repositoryId,
         threadId,
         ownerTokenIdentifier,
@@ -650,10 +669,10 @@ describe("chat reply context", () => {
         latestImportJobId: importJobId,
       });
 
-      return threadId;
+      return { threadId, userMessageId };
     });
 
-    const context = await t.query(internal.chat.context.getReplyContext, { threadId });
+    const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
     expect(context.artifacts.map((artifact) => artifact.title)).toContain("Architecture diagram");
     expect(context.chunks).toHaveLength(0);
   });
@@ -662,7 +681,7 @@ describe("chat reply context", () => {
     const ownerTokenIdentifier = "user|docs-single-kind";
     const t = convexTest(schema, modules);
 
-    const threadId = await t.run(async (ctx) => {
+    const { threadId, userMessageId } = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
@@ -702,7 +721,7 @@ describe("chat reply context", () => {
         });
       }
 
-      await ctx.db.insert("messages", {
+      const userMessageId = await ctx.db.insert("messages", {
         repositoryId,
         threadId,
         ownerTokenIdentifier,
@@ -712,10 +731,10 @@ describe("chat reply context", () => {
         content: "Show the latest architecture artifacts.",
       });
 
-      return threadId;
+      return { threadId, userMessageId };
     });
 
-    const context = await t.query(internal.chat.context.getReplyContext, { threadId });
+    const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
     expect(context.artifacts).toHaveLength(12);
     expect(context.artifacts[0]?.title).toBe("Architecture diagram 19");
@@ -726,7 +745,7 @@ describe("chat reply context", () => {
     const ownerTokenIdentifier = "user|discuss-with-repo";
     const t = convexTest(schema, modules);
 
-    const threadId = await t.run(async (ctx) => {
+    const { threadId, userMessageId } = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
@@ -815,7 +834,7 @@ describe("chat reply context", () => {
         source: "heuristic",
         version: 1,
       });
-      await ctx.db.insert("messages", {
+      const userMessageId = await ctx.db.insert("messages", {
         repositoryId,
         threadId,
         ownerTokenIdentifier,
@@ -830,10 +849,10 @@ describe("chat reply context", () => {
         latestImportJobId: importJobId,
       });
 
-      return threadId;
+      return { threadId, userMessageId };
     });
 
-    const context = await t.query(internal.chat.context.getReplyContext, { threadId });
+    const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
     expect(context.artifacts).toHaveLength(0);
     expect(context.chunks).toHaveLength(0);
@@ -843,5 +862,285 @@ describe("chat reply context", () => {
     expect(context.sourceRepoFullName).toBeUndefined();
     // Messages are still returned so the model can see the conversation.
     expect(context.messages.map((message) => message.content)).toEqual(["Let's brainstorm."]);
+  });
+
+  test("anchors effective mode to the queued user message, not the latest message in the window", async () => {
+    // Race-condition guard: if a second user message lands between queueing
+    // an assistant reply and running it, "the latest user message in the
+    // window" would silently take over the mode (and the search query),
+    // making the assistant answer message A's content with message B's
+    // mode prompt. `getReplyContext` must instead anchor both to the
+    // explicit `userMessageId` it receives.
+    const ownerTokenIdentifier = "user|race-mode-anchor";
+    const t = convexTest(schema, modules);
+
+    const { threadId, queuedUserMessageId } = await t.run(async (ctx) => {
+      const threadId = await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Mode anchoring",
+        // Thread default disagrees with both messages so the test can
+        // distinguish "anchored to queued message" (`docs`) from "fell
+        // back to thread.mode" (`discuss`).
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+
+      const queuedUserMessageId = await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "docs",
+        content: "Question pinned to docs mode.",
+      });
+
+      // Newer user message lands after queueing, before generation runs.
+      // Picking it would make the test fail with mode === "sandbox".
+      await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "sandbox",
+        content: "Newer message, different mode.",
+      });
+
+      return { threadId, queuedUserMessageId };
+    });
+
+    const context = await t.query(internal.chat.context.getReplyContext, {
+      threadId,
+      userMessageId: queuedUserMessageId,
+    });
+
+    expect(context.mode).toBe("docs");
+  });
+
+  test("uses the queued user message's content as the chunk-search query, not the newest message", async () => {
+    // Companion to the mode-anchoring race-condition test: the search
+    // query that picks code chunks must come from the same queued
+    // message, otherwise we'd retrieve chunks that match a later
+    // (unrelated) user question and mismatch the prompt this reply is
+    // paired to.
+    const ownerTokenIdentifier = "user|race-search-query";
+    const t = convexTest(schema, modules);
+
+    const { threadId, queuedUserMessageId } = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/race-search-repo",
+        sourceRepoFullName: "acme/race-search-repo",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "race-search-repo",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 0,
+      });
+
+      const threadId = await ctx.db.insert("threads", {
+        repositoryId,
+        ownerTokenIdentifier,
+        title: "Search anchoring",
+        mode: "sandbox",
+        lastMessageAt: Date.now(),
+      });
+
+      const importJobId = await ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "import",
+        status: "completed",
+        stage: "completed",
+        progress: 1,
+        costCategory: "indexing",
+        triggerSource: "user",
+      });
+      const importId = await ctx.db.insert("imports", {
+        repositoryId,
+        ownerTokenIdentifier,
+        sourceUrl: "https://github.com/acme/race-search-repo",
+        branch: "main",
+        adapterKind: "git_clone",
+        status: "completed",
+        jobId: importJobId,
+      });
+
+      // Two distinguishable chunks. The queued message asks about auth;
+      // the later message asks about caching. If the search query were
+      // taken from "the latest user message", the auth chunk would be
+      // pushed out of the candidate pool by the cache-related search.
+      const fillerCount = 200;
+      for (let index = 0; index < fillerCount; index += 1) {
+        const path = `src/filler-${index.toString().padStart(3, "0")}.ts`;
+        const fileId = await ctx.db.insert("repoFiles", {
+          repositoryId,
+          ownerTokenIdentifier,
+          importId,
+          path,
+          parentPath: "src",
+          fileType: "file",
+          extension: "ts",
+          language: "typescript",
+          sizeBytes: 80,
+          isEntryPoint: false,
+          isConfig: false,
+          isImportant: false,
+        });
+        await ctx.db.insert("repoChunks", {
+          repositoryId,
+          ownerTokenIdentifier,
+          importId,
+          fileId,
+          path,
+          chunkIndex: 0,
+          startLine: 1,
+          endLine: 4,
+          chunkKind: "code",
+          summary: `${path}: filler helper ${index}`,
+          content: `export const value${index} = ${index};`,
+        });
+      }
+      const authFileId = await ctx.db.insert("repoFiles", {
+        repositoryId,
+        ownerTokenIdentifier,
+        importId,
+        path: "src/auth-token-flow.ts",
+        parentPath: "src",
+        fileType: "file",
+        extension: "ts",
+        language: "typescript",
+        sizeBytes: 128,
+        isEntryPoint: false,
+        isConfig: false,
+        isImportant: false,
+      });
+      await ctx.db.insert("repoChunks", {
+        repositoryId,
+        ownerTokenIdentifier,
+        importId,
+        fileId: authFileId,
+        path: "src/auth-token-flow.ts",
+        chunkIndex: 0,
+        startLine: 1,
+        endLine: 6,
+        chunkKind: "code",
+        summary: "src/auth-token-flow.ts: auth middleware token flow",
+        content: 'export function handleAuthToken() { return "auth middleware token flow"; }',
+      });
+
+      await ctx.db.patch(repositoryId, {
+        latestImportId: importId,
+        latestImportJobId: importJobId,
+      });
+
+      const queuedUserMessageId = await ctx.db.insert("messages", {
+        repositoryId,
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "sandbox",
+        content: "How does auth middleware token flow work?",
+      });
+
+      // Later user message with an unrelated topic. If search anchored to
+      // "latest", the auth chunk would not be retrieved.
+      await ctx.db.insert("messages", {
+        repositoryId,
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "sandbox",
+        content: "Unrelated cache eviction question.",
+      });
+
+      return { threadId, queuedUserMessageId };
+    });
+
+    const context = await t.query(internal.chat.context.getReplyContext, {
+      threadId,
+      userMessageId: queuedUserMessageId,
+    });
+
+    expect(context.chunks.some((chunk) => chunk.path === "src/auth-token-flow.ts")).toBe(true);
+  });
+
+  test("rejects a userMessageId that does not belong to the requested thread", async () => {
+    // Cross-thread protection: even if a caller somehow constructs a
+    // `userMessageId` from another thread, the query must refuse rather
+    // than silently anchor to that foreign mode/content.
+    const ownerTokenIdentifier = "user|cross-thread-reject";
+    const t = convexTest(schema, modules);
+
+    const { threadAId, threadBUserMessageId } = await t.run(async (ctx) => {
+      const threadAId = await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Thread A",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+      const threadBId = await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Thread B",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+      const threadBUserMessageId = await ctx.db.insert("messages", {
+        threadId: threadBId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "discuss",
+        content: "Belongs to thread B.",
+      });
+      return { threadAId, threadBUserMessageId };
+    });
+
+    await expect(
+      t.query(internal.chat.context.getReplyContext, {
+        threadId: threadAId,
+        userMessageId: threadBUserMessageId,
+      }),
+    ).rejects.toThrow(/queued user message not found/i);
+  });
+
+  test("rejects a userMessageId that points to an assistant message", async () => {
+    // Role guard: assistant messages have a `mode` column too (the mode
+    // they were produced under), but anchoring to one would mean
+    // generating a "reply to a reply", which is meaningless.
+    const ownerTokenIdentifier = "user|role-guard";
+    const t = convexTest(schema, modules);
+
+    const { threadId, assistantMessageId } = await t.run(async (ctx) => {
+      const threadId = await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Role guard",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+      const assistantMessageId = await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "assistant",
+        status: "completed",
+        mode: "discuss",
+        content: "Assistant text.",
+      });
+      return { threadId, assistantMessageId };
+    });
+
+    await expect(
+      t.query(internal.chat.context.getReplyContext, {
+        threadId,
+        userMessageId: assistantMessageId,
+      }),
+    ).rejects.toThrow(/queued user message not found/i);
   });
 });

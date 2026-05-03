@@ -42,6 +42,17 @@ import type {
  * capability ladder left-to-right: discuss → docs → sandbox, lowest-context
  * to highest-context (and lowest-cost to highest-cost).
  *
+ * `value` is the persisted DB literal (`messages.mode` / `threads.mode`) and
+ * never changes — only the user-facing `label` / `caption` evolve. The new
+ * labels ("General Chat" / "Design Docs" / "Sandbox") are aimed at making the
+ * differences obvious to engineering users without requiring the onboarding
+ * popover (Plan 14): "Discuss" by itself didn't tell anyone the mode is
+ * *training-only*, and "Docs" was ambiguous (README? design artifacts?). The
+ * "Sandbox" label is intentionally kept unchanged — it is already the shared
+ * vocabulary on the engineering side (Daytona sandbox, sandbox lifecycle,
+ * sandbox.process.executeCommand) so renaming it would create a needless
+ * translation layer between UI copy and code.
+ *
  * Each caption is the short user-facing answer to "what does this mode read
  * from?". The disabled-mode tooltip (rendered by the resolver via
  * `disabledModeReasons`) takes over when the option isn't usable.
@@ -54,20 +65,20 @@ const MODE_CATALOG: ReadonlyArray<{
 }> = [
   {
     value: "discuss",
-    label: "Discuss",
-    caption: "no code reference",
+    label: "General Chat",
+    caption: "training-only · no repo context",
     icon: ChatCircleIcon,
   },
   {
     value: "docs",
-    label: "Docs",
-    caption: "searches your design docs",
+    label: "Design Docs",
+    caption: "grounded in your design artifacts",
     icon: FileTextIcon,
   },
   {
     value: "sandbox",
     label: "Sandbox",
-    caption: "runs in a sandbox against live code",
+    caption: "grounded in the live sandbox source tree",
     icon: CubeIcon,
   },
 ];

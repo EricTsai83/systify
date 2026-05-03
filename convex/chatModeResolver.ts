@@ -4,9 +4,11 @@
  *
  * Single source of truth for chat-mode availability used by both the UI mode
  * selector and the `chat.sendMessage` / `chat.createThread` validators on the
- * backend. The same `ChatMode` literals are persisted on `threads.mode` and
- * `messages.mode`, so log-line `mode: 'docs'` matches the UI label "Docs"
- * exactly — no legacy quick/deep aliasing.
+ * backend. The `ChatMode` literals here are the persisted DB enum on
+ * `threads.mode` and `messages.mode`; the UI labels ("General Chat" /
+ * "Design Docs" / "Sandbox") are deliberately decoupled from these literals
+ * so user-facing copy can evolve without a schema migration. Log lines stay
+ * stable on `'discuss' | 'docs' | 'sandbox'` — no legacy quick/deep aliasing.
  *
  * Mode semantics (PRD #19, Architectural reversal):
  *   - `discuss`  — LLM training only; no repo, no sandbox. Pre-design talk.
@@ -37,7 +39,12 @@ export interface ChatModeResolution {
   disabledReasons: Partial<Record<ChatMode, string>>;
 }
 
-const DISABLED_REASON_DOCS_NO_REPO = "Attach a repository to use Docs mode.";
+// User-facing copy uses the new mode labels — "Design Docs" for `docs`, and
+// "Sandbox" for `sandbox` (kept unchanged because it is already the shared
+// engineering vocabulary). The resolver and the mode selector tell the user
+// the same story; only the persisted column type still uses the DB literal
+// `docs`.
+const DISABLED_REASON_DOCS_NO_REPO = "Attach a repository to use Design Docs mode.";
 const DISABLED_REASON_SANDBOX_NO_REPO = "Attach a repository and provision a sandbox to use Sandbox mode.";
 const DISABLED_REASON_SANDBOX_NO_SANDBOX = "Provision a sandbox to use Sandbox mode.";
 const DISABLED_REASON_SANDBOX_PROVISIONING =

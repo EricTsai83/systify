@@ -9,9 +9,25 @@ import {
   MAX_CONTEXT_MESSAGES,
 } from "../lib/constants";
 import { buildChunkSearchQuery } from "./relevance";
+import type { ChatMode } from "../chatModeResolver";
 
 export type ReplyContext = {
   ownerTokenIdentifier: string;
+  /**
+   * Effective mode for this reply, anchored to the queued user message:
+   * `userMessage.mode ?? thread.mode`. Anchoring to the specific queued
+   * message (not "the latest user message in the window") matters under
+   * concurrent send: if a second user message lands between queueing and
+   * generation, "latest" would point to that newer message and the assistant
+   * reply would answer message A's content with message B's mode prompt.
+   * The user message's own mode is the canonical choice for "what the user
+   * meant when they sent this" — falling back to `thread.mode` only when the
+   * row predates the per-message `mode` field.
+   *
+   * Exposed on the context so `generation.ts` can hand it to
+   * `buildSystemPrompt` without re-deriving the rule.
+   */
+  mode: ChatMode;
   repositorySummary?: string;
   readmeSummary?: string;
   architectureSummary?: string;
@@ -123,6 +139,16 @@ async function loadCandidateChunks(ctx: Pick<QueryCtx, "db">, importId: Id<"impo
 export const getReplyContext = internalQuery({
   args: {
     threadId: v.id("threads"),
+    /**
+     * Anchor for mode and search-query derivation. Required so the same
+     * message id that `generation.ts` is paired to determines both the
+     * system prompt (via `userMessage.mode`) and the chunk-search query
+     * (via `userMessage.content`). Anchoring to "the latest user message
+     * in the window" used to be the rule here, but that derivation is
+     * unsafe under concurrent send — a newer message landing between
+     * queueing and generation would silently take over both fields.
+     */
+    userMessageId: v.id("messages"),
   },
   handler: async (ctx, args) => {
     const thread = await ctx.db.get(args.threadId);
@@ -130,11 +156,19 @@ export const getReplyContext = internalQuery({
       throw new Error("Thread not found.");
     }
 
+    const userMessage = await ctx.db.get(args.userMessageId);
+    if (!userMessage || userMessage.threadId !== args.threadId || userMessage.role !== "user") {
+      // The reply is paired to a specific user message at queue time. If
+      // the message no longer exists, was moved to another thread, or is
+      // not a user message, the entire generation must abort — answering
+      // the wrong prompt is worse than failing visibly.
+      throw new Error("Queued user message not found for this thread.");
+    }
+    const effectiveMode = userMessage.mode ?? thread.mode;
+
     const messages = (await loadRecentMessages(ctx, args.threadId, MAX_CONTEXT_MESSAGES + 1))
       .filter((message) => message.content.trim().length > 0)
       .slice(-MAX_CONTEXT_MESSAGES);
-    const latestUserMessage = [...messages].reverse().find((message) => message.role === "user");
-    const effectiveMode = latestUserMessage?.mode ?? thread.mode;
 
     // `discuss` mode is "no repo, no sandbox" by design (per the schema/resolver
     // contract): even if the thread has a repositoryId attached, the user has
@@ -145,6 +179,7 @@ export const getReplyContext = internalQuery({
     if (!thread.repositoryId || effectiveMode === "discuss") {
       return {
         ownerTokenIdentifier: thread.ownerTokenIdentifier,
+        mode: effectiveMode,
         repositorySummary: undefined,
         readmeSummary: undefined,
         architectureSummary: undefined,
@@ -186,15 +221,20 @@ export const getReplyContext = internalQuery({
     // stop pulling indexed code chunks in this mode so knowledge sources stay
     // non-overlapping (`docs` => artifacts, `sandbox` => live/code-grounded).
     // `discuss` is handled by the early return above.
+    //
+    // The search query is taken from the *queued* user message, not from
+    // "the latest user message in the window" — that keeps chunk selection
+    // consistent with the mode anchor above when sends are concurrent.
     const chunks =
       effectiveMode === "docs"
         ? []
         : repository.latestImportId
-          ? await loadCandidateChunks(ctx, repository.latestImportId, latestUserMessage?.content ?? "")
+          ? await loadCandidateChunks(ctx, repository.latestImportId, userMessage.content)
           : [];
 
     return {
       ownerTokenIdentifier: repository.ownerTokenIdentifier,
+      mode: effectiveMode,
       repositorySummary: repository.summary,
       readmeSummary: repository.readmeSummary,
       architectureSummary: repository.architectureSummary,

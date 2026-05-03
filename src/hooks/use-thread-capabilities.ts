@@ -38,7 +38,7 @@ export interface ThreadCapabilities {
  * them to start a conversation first, then attach a repo.
  */
 const NO_THREAD_DISABLED_REASONS: ChatModeResolution["disabledReasons"] = {
-  docs: "Start a thread and attach a repository to use Docs mode.",
+  docs: "Start a thread and attach a repository to use Design Docs mode.",
   sandbox: "Start a thread, attach a repository, and provision a sandbox to use Sandbox mode.",
 };
 

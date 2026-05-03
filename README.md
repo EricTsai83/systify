@@ -2,10 +2,13 @@
 
 Every answer points to its source.
 
-Systify is an open source repository analysis app for understanding unfamiliar codebases through grounded, repository-specific context. A user signs in with WorkOS, connects a GitHub App installation, imports a repository into a Daytona sandbox, indexes the codebase into Convex, and then explores it in two modes:
+Systify is an open source repository analysis app for understanding unfamiliar codebases through grounded, repository-specific context. A user signs in with WorkOS, connects a GitHub App installation, imports a repository into a Daytona sandbox, indexes the codebase into Convex, and then explores it through two AI surfaces:
 
-- `Quick chat`: answer questions from indexed files, chunks, artifacts, and recent thread history
-- `Deep analysis`: inspect a live sandbox when indexed data is not enough
+- **Chat** with three selectable modes that scale from cheap to grounded:
+  - `discuss` (UI label "General Chat") — training-only, no repo context; for shaping a question before grounding
+  - `docs` (UI label "Design Docs") — answers grounded in design artifacts (ADRs, diagrams, deep analyses)
+  - `sandbox` (UI label "Sandbox") — answers grounded in the live sandbox source tree
+- `Deep analysis`: a sandbox-backed background job that runs focused inspection inside Daytona and writes a reusable `deep_analysis` artifact, which later chat replies in `docs` and `sandbox` modes can cite
 
 The app uses a React frontend and a Convex backend. Convex owns the database, backend functions, background jobs, cron work, and HTTP endpoints, so there is no separate Express or Nest server in this repo.
 
@@ -32,7 +35,7 @@ This repository is standardized on Bun for package management and script executi
 3. Systify verifies repository access and creates an import workflow.
 4. A Daytona sandbox is provisioned and the repository is cloned.
 5. The import pipeline scans the repository and writes files, chunks, summaries, and artifacts into Convex.
-6. The user explores the repository in `Quick chat` or `Deep analysis`.
+6. The user explores the repository through chat (`discuss` / `docs` / `sandbox` modes) or by requesting a `Deep analysis` job.
 7. Later syncs refresh the active snapshot without mixing old and new import data.
 
 ## Stack
@@ -214,8 +217,8 @@ Recommended setup:
 - Repository access is enforced through GitHub App installation state, not personal access tokens.
 - Most backend flows derive the current owner from authenticated identity and verify ownership server-side.
 - Every import creates a new snapshot-oriented workflow instead of mutating repository knowledge in place.
-- `Quick chat` reads from indexed repository knowledge stored in Convex.
-- `Deep analysis` depends on a usable Daytona sandbox and stores its result back as a reusable artifact.
+- Chat reads from indexed repository knowledge stored in Convex; the per-mode contract is: `discuss` uses no repo context, `docs` uses design artifacts only, and `sandbox` is wired (Plan 04 onward) to live sandbox file tools.
+- `Deep analysis` depends on a usable Daytona sandbox and stores its result back as a reusable `deep_analysis` artifact, which `docs`/`sandbox` chat modes can then cite.
 - Cleanup and reconciliation rely on cron jobs plus webhook-driven convergence so external Daytona resources do not drift too far from Convex state.
 
 ## Recommended reading
