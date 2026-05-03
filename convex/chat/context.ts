@@ -170,7 +170,7 @@ async function loadReplyContextMessages(
     if (message.content.trim().length === 0) {
       return false;
     }
-    if (message.role === "assistant" && message.mode !== effectiveMode) {
+    if (message.role === "assistant" && message.mode !== undefined && message.mode !== effectiveMode) {
       return false;
     }
     return true;
