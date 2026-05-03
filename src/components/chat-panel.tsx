@@ -132,7 +132,7 @@ export function ChatPanel({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <ScrollArea type="always" className="flex-1">
+      <ScrollArea type="always" className="flex-1 min-h-0">
         <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-3 px-6 py-6">
           {!isChatLoading && chatMode === "sandbox" && sandboxModeStatus && !sandboxModeAvailable ? (
             <AppNotice
@@ -247,6 +247,9 @@ export function ChatPanel({
               <span className="grid">
                 <span aria-hidden="true" className="invisible col-start-1 row-start-1">
                   Sending…
+                </span>
+                <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+                  Syncing…
                 </span>
                 <span className="col-start-1 row-start-1">
                   {isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
