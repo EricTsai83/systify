@@ -92,7 +92,7 @@ describe("ChatPanel streaming rendering", () => {
         setChatMode={vi.fn()}
         availableModes={["discuss"]}
         disabledModeReasons={{
-          docs: "Attach a repository to use Docs mode.",
+          docs: "Attach a repository to use Design Docs mode.",
           sandbox: "Attach a repository with a ready sandbox to use Sandbox mode.",
         }}
         isSending={false}

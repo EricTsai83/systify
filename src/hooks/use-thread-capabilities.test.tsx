@@ -76,7 +76,7 @@ describe("useThreadCapabilities — bridging behavior", () => {
         availableModes: ["discuss"],
         defaultMode: "discuss",
         disabledReasons: {
-          docs: "Attach a repository to use Docs mode.",
+          docs: "Attach a repository to use Design Docs mode.",
           sandbox: "Attach a repository with a ready sandbox to use Sandbox mode.",
         },
       },

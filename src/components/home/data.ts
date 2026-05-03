@@ -87,9 +87,15 @@ export const NARRATIVE: ReadonlyArray<NarrativeEntry> = [
   },
 ];
 
+// `name` here must match the chat-panel `MODE_CATALOG` labels — that catalogue
+// is the single in-app source of truth for mode naming, and a landing-page
+// pill that says "Discuss" while the in-app pill says "General Chat" would
+// just teach engineers two names for the same thing. "Sandbox" is kept as-is
+// because it is shared engineering vocabulary (Daytona sandbox, sandbox
+// lifecycle); the other two modes carry the new, more explicit names.
 export const MODES: ReadonlyArray<Mode> = [
   {
-    name: "Discuss",
+    name: "General Chat",
     pitch: "cheapest · seconds",
     depth: 1,
     scenarios: [
@@ -100,7 +106,7 @@ export const MODES: ReadonlyArray<Mode> = [
     tone: "emerald",
   },
   {
-    name: "Docs",
+    name: "Design Docs",
     pitch: "grounded · always sourced",
     depth: 2,
     scenarios: [
@@ -142,7 +148,7 @@ export const FAQS: ReadonlyArray<FaqEntry> = [
   },
   {
     q: "When should I pick which mode?",
-    a: "Discuss is fastest. Docs is for grounded narrative answers. Sandbox is for line-precise checks against the current state of the code.",
+    a: "General Chat is fastest. Design Docs is for grounded narrative answers from your indexed artifacts. Sandbox is for line-precise checks against the current state of the code.",
   },
 ];
 

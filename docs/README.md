@@ -89,9 +89,9 @@ The current codebase keeps system-design documentation for all implemented high-
 
 ### `chat-and-analysis-pipeline.md`
 
-- What data sources do Quick chat and Deep analysis each depend on?
+- What data sources does each chat mode (`discuss` / `docs` / `sandbox`) depend on, and how do they differ from Deep analysis?
 - How is an assistant reply created, streamed, completed, or failed?
-- Why can deep mode become unavailable because of sandbox state?
+- Why can `sandbox` mode and Deep analysis become unavailable because of sandbox state?
 
 ### `integrations-and-operations.md`
 

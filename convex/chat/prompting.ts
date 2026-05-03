@@ -1,3 +1,4 @@
+import type { ChatMode } from "../chatModeResolver";
 import { MAX_CONTEXT_ARTIFACTS } from "../lib/constants";
 import type { ReplyContext } from "./context";
 
@@ -13,12 +14,79 @@ function getUILanguage(_context: ReplyContext): UILanguage {
   return "en";
 }
 
-export function buildSystemPrompt() {
-  return [
-    "You are an open source architecture analyst.",
-    "Answer questions about the imported repository using the provided artifacts and code excerpts.",
-    "Be concrete, mention likely boundaries, and state uncertainty when evidence is weak.",
-  ].join(" ");
+/**
+ * Per-mode system prompts. Each mode has a distinct contract with the model:
+ *
+ *   - `discuss` (DB literal): training-only, no repo context. The prompt
+ *     deliberately avoids the word "repository" so the model is less likely
+ *     to fabricate references to "your repo" / "your codebase" when the
+ *     conversation has nothing attached. The language pivots on "general
+ *     architecture knowledge" and explicitly bans pretending to have access
+ *     to source code.
+ *   - `docs` (DB literal): artifact-grounded. The supplied artifacts (ADRs,
+ *     diagrams, deep analyses, …) are the *only* source of truth; the model
+ *     must say "the artifacts are silent on that" rather than guess.
+ *   - `sandbox` (DB literal): in v1 the prompt makes clear the model has no
+ *     direct file-reading or shell-execution capability and must answer using
+ *     only the artifacts and code excerpts present in the user prompt; it
+ *     also flags claims it would normally verify against the live source so
+ *     the user knows which parts are unverified.
+ *
+ * Two style invariants worth preserving across all three prompts (and tested
+ * in `chat-prompting.test.ts`):
+ *
+ *   1. **No UI display labels.** Prompts refer to other modes by their
+ *      *capability* ("an artifact-grounded mode", "a live-sandbox mode"),
+ *      never by the UI display label from `MODE_CATALOG` ("General Chat",
+ *      "Design Docs"). UI copy can then be renamed without silently changing
+ *      what the LLM tells the user.
+ *   2. **No product roadmap.** Prompts describe the *current* capability gap
+ *      rather than promising future tools. Specific upcoming tool names live
+ *      in the tool-wiring plan, not here — naming them in v1 would commit us
+ *      publicly (via the model's responses) to names and timelines we may
+ *      still want to revise.
+ *
+ * Strings live in module-scoped constants (rather than inlined into the
+ * lookup) so future tweaks — a citation contract, a step-budget hint, a
+ * tool-usage section once tools are wired — can compose them without
+ * re-deriving the whole block.
+ */
+const SYSTEM_PROMPT_DISCUSS = [
+  "You are a senior software architect helping the user think through ideas in a free-form discussion.",
+  "This conversation is not bound to any particular codebase, so answer from general architecture knowledge and reasoning only.",
+  "Never assume the user has a specific project, codebase, or files in mind, and never refer to 'your codebase' or 'your repo' as if you can see one.",
+  "If the user asks about specific code, suggest they switch to an artifact-grounded mode (for indexed design documents and architecture references) or a live-sandbox mode (for line-precise checks against current source) to get a grounded answer.",
+  "Be concrete, mention likely trade-offs, and state uncertainty when reasoning is speculative.",
+].join(" ");
+
+const SYSTEM_PROMPT_DOCS = [
+  "You are an open source architecture analyst answering questions about the attached project.",
+  "Your sole source of truth is the design artifacts (ADRs, diagrams, deep analyses, design reviews, etc.) supplied in the user prompt.",
+  "If the artifacts do not cover the question, say so explicitly — never fabricate file paths, line numbers, or code-level claims that are not present in an artifact.",
+  "Be concrete, mention likely boundaries, and state uncertainty when evidence is weak.",
+].join(" ");
+
+const SYSTEM_PROMPT_SANDBOX = [
+  "You are a senior architect with read-only knowledge of the attached project's source tree.",
+  "In this version, you do not have file-reading or shell-execution tools available, so answer using only the design artifacts and code excerpts provided in the user prompt.",
+  "Explicitly flag any claim you would normally verify by inspecting a file or running a command, so the user knows which parts are unverified rather than directly checked.",
+  "Be concrete, cite specific files and line ranges when the provided context contains them, and state uncertainty when evidence is weak.",
+].join(" ");
+
+/**
+ * Lookup keyed by `ChatMode` so adding a new mode literal forces a compile
+ * error here (TypeScript exhaustiveness on `Record<Union, T>` is stricter
+ * than on a `switch` statement, which only errors on accidental fall-through
+ * if the function signature explicitly returns a non-union type).
+ */
+const SYSTEM_PROMPTS: Record<ChatMode, string> = {
+  discuss: SYSTEM_PROMPT_DISCUSS,
+  docs: SYSTEM_PROMPT_DOCS,
+  sandbox: SYSTEM_PROMPT_SANDBOX,
+};
+
+export function buildSystemPrompt(mode: ChatMode): string {
+  return SYSTEM_PROMPTS[mode];
 }
 
 export function buildUserPrompt(

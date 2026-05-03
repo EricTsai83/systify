@@ -27,21 +27,27 @@ export const generateAssistantReply = internalAction({
     let pendingDelta = "";
 
     try {
+      // Pass `userMessageId` through to the context query so that mode,
+      // search query, and the prompt content are all anchored to the *same*
+      // queued message. Anchoring at the query layer (rather than re-reading
+      // the message in this action) keeps the three derivations consistent
+      // even if a newer user message lands between queueing and generation.
+      // The query throws if the queued message has been deleted or moved to
+      // another thread; the outer `catch` then runs `failAssistantReply` once,
+      // matching every other failure path in this action.
       const replyContext = (await ctx.runQuery(internal.chat.context.getReplyContext, {
         threadId: args.threadId,
+        userMessageId: args.userMessageId,
       })) as ReplyContext;
 
-      // Bind the assistant reply to the exact queued user message rather than
-      // "the latest user message in this thread". If a second user message
-      // ever lands between queueing and generation, picking the latest one
-      // would cause this assistantMessageId to answer a different prompt
-      // than it was paired with at send time. If the queued user message has
-      // been deleted (or was filtered out of the context window), throw and
-      // let the outer catch run failAssistantReply once — this keeps the
-      // error path consistent with every other failure in this action.
+      // The queued message is also expected to be in the conversational
+      // window so the model can see "what the user just asked" as the last
+      // turn. If empty-content filtering or window truncation drops it, fall
+      // back to throwing — generating a reply against a window that no
+      // longer contains the user's question would still be wrong.
       const queuedUserMessage = replyContext.messages.find((message) => message.id === args.userMessageId);
       if (!queuedUserMessage || queuedUserMessage.role !== "user") {
-        throw new Error("Queued user message not found in thread context for this assistant reply.");
+        throw new Error("Queued user message not present in conversational window for this assistant reply.");
       }
       const userPrompt = queuedUserMessage.content;
       const relevantChunks = selectRelevantChunks(replyContext.chunks, userPrompt);
@@ -60,7 +66,13 @@ export const generateAssistantReply = internalAction({
       const modelName = process.env.OPENAI_MODEL ?? "gpt-5.4-mini";
       const response = streamText({
         model: openai(modelName),
-        system: buildSystemPrompt(),
+        // `replyContext.mode` is the effective mode for this reply
+        // (`latestUserMessage.mode ?? thread.mode`). Passing it to
+        // `buildSystemPrompt` is what makes each mode's prompt
+        // (general-chat / docs / sandbox) reach the model — without this
+        // hand-off every mode would still receive the docs-flavored prompt
+        // that used to be hard-coded in `buildSystemPrompt`.
+        system: buildSystemPrompt(replyContext.mode),
         prompt: buildUserPrompt(replyContext, userPrompt, relevantChunks),
       });
 

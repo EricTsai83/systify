@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "convex-test";
 import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { MAX_CONTEXT_MESSAGES, MAX_VISIBLE_MESSAGES } from "./lib/constants";
 import schema from "./schema";
 
@@ -33,9 +34,16 @@ describe("chat history ordering", () => {
   test("getReplyContext trims old messages and preserves the latest conversation", async () => {
     const ownerTokenIdentifier = "user|chat-history-context";
     const t = convexTest(schema, modules);
-    const { threadId, contents } = await seedThreadWithMessages(t, ownerTokenIdentifier, MAX_CONTEXT_MESSAGES + 5);
+    const { threadId, latestUserMessageId, contents } = await seedThreadWithMessages(
+      t,
+      ownerTokenIdentifier,
+      MAX_CONTEXT_MESSAGES + 5,
+    );
 
-    const context = await t.query(internal.chat.context.getReplyContext, { threadId });
+    const context = await t.query(internal.chat.context.getReplyContext, {
+      threadId,
+      userMessageId: latestUserMessageId,
+    });
 
     expect(context.messages).toHaveLength(MAX_CONTEXT_MESSAGES);
     expect(context.messages.map((message) => message.content)).toEqual(contents.slice(-MAX_CONTEXT_MESSAGES));
@@ -44,7 +52,7 @@ describe("chat history ordering", () => {
   test("getReplyContext ignores an empty assistant placeholder message", async () => {
     const ownerTokenIdentifier = "user|chat-history-placeholder";
     const t = convexTest(schema, modules);
-    const { repositoryId, threadId } = await seedThreadWithMessages(t, ownerTokenIdentifier, 4);
+    const { repositoryId, threadId, latestUserMessageId } = await seedThreadWithMessages(t, ownerTokenIdentifier, 4);
 
     await t.run(async (ctx) => {
       await ctx.db.insert("messages", {
@@ -60,7 +68,10 @@ describe("chat history ordering", () => {
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
     const messages = await viewer.query(api.chat.threads.listMessages, { threadId });
-    const context = await t.query(internal.chat.context.getReplyContext, { threadId });
+    const context = await t.query(internal.chat.context.getReplyContext, {
+      threadId,
+      userMessageId: latestUserMessageId,
+    });
 
     expect(messages.at(-1)?.content).toBe("");
     expect(context.messages.at(-1)?.content).toBe("message-3");
@@ -99,21 +110,30 @@ async function seedThreadWithMessages(
     });
 
     const contents: string[] = [];
+    let latestUserMessageId: Id<"messages"> | undefined;
     for (let index = 0; index < messageCount; index += 1) {
       const content = `message-${index}`;
       contents.push(content);
-      await ctx.db.insert("messages", {
+      const role = index % 2 === 0 ? "user" : "assistant";
+      const messageId = await ctx.db.insert("messages", {
         repositoryId,
         threadId,
         ownerTokenIdentifier,
-        role: index % 2 === 0 ? "user" : "assistant",
+        role,
         status: "completed",
         mode: "discuss",
         content,
       });
+      if (role === "user") {
+        latestUserMessageId = messageId;
+      }
       vi.advanceTimersByTime(1_000);
     }
 
-    return { repositoryId, threadId, contents };
+    if (!latestUserMessageId) {
+      throw new Error("seedThreadWithMessages requires at least one user message; pass an even index 0 message.");
+    }
+
+    return { repositoryId, threadId, contents, latestUserMessageId };
   });
 }
