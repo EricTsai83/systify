@@ -141,6 +141,20 @@ export const finalizeAssistantReply = internalMutation({
     inputTokens: v.optional(v.number()),
     outputTokens: v.optional(v.number()),
     costUsd: v.optional(v.number()),
+    /**
+     * Plan 02 citation map: numbered `[A#] → artifactId` entries for the
+     * artifacts that ended up in the prompt. Optional so non-docs replies
+     * (and pre-Plan-02 messages) keep the field unset rather than written as
+     * an empty array — the frontend treats both as "no resolvable citations".
+     */
+    citationMap: v.optional(
+      v.array(
+        v.object({
+          index: v.number(),
+          artifactId: v.id("artifacts"),
+        }),
+      ),
+    ),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -156,6 +170,7 @@ export const finalizeAssistantReply = internalMutation({
           errorMessage: undefined,
           estimatedInputTokens: args.inputTokens,
           estimatedOutputTokens: args.outputTokens,
+          citationMap: args.citationMap,
         });
         // The thread may have been deleted while we were streaming. Patching a
         // missing doc throws and would roll back the whole mutation (so the

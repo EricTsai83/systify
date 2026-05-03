@@ -20,7 +20,7 @@ import { useCheckForUpdates } from "@/hooks/use-check-for-updates";
 import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
 import { useRepositoryActions } from "@/hooks/use-repository-actions";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
-import type { RepositoryId, ThreadId, WorkspaceId, ChatMode, SandboxModeStatus } from "@/lib/types";
+import type { ArtifactId, RepositoryId, ThreadId, WorkspaceId, ChatMode, SandboxModeStatus } from "@/lib/types";
 import { toUserErrorMessage } from "@/lib/errors";
 
 type RepositoryWorkspaceStatus = "initializing" | "no-repo" | "ready";
@@ -288,6 +288,19 @@ export function RepositoryShell({
     true,
   );
   const [isArtifactSheetOpen, setIsArtifactSheetOpen] = useState(false);
+  /**
+   * Plan 02 inline citation jump target. Set by `handleSelectArtifact` when
+   * the user clicks an `[A#]` citation in an assistant reply; the artifact
+   * panel watches this for "scroll into view + transient highlight". See
+   * `handleSelectArtifact` below for the full transient highlight lifecycle
+   * (open the panel, publish the id, and the consume callback that clears
+   * this back to `null` once the highlight animation settles). This value
+   * persists across thread changes — `handleSelectThread` does not clear it
+   * and there is no `urlThreadId`-keyed cleanup effect. That persistence is
+   * acceptable because the artifact panel filters cards by thread, so a
+   * stale id from another thread matches no card and renders nothing.
+   */
+  const [selectedArtifactId, setSelectedArtifactId] = useState<ArtifactId | null>(null);
   const [isDesktopLayout, setIsDesktopLayout] = useState<boolean>(() => {
     if (typeof window === "undefined") {
       return true;
@@ -405,6 +418,46 @@ export function RepositoryShell({
     }
     setIsArtifactSheetOpen((open) => !open);
   }, [isDesktopLayout, setIsArtifactPanelOpen, workspaceStatus]);
+
+  /**
+   * Plan 02: a user clicked `[A#]` inside an assistant reply. Force the
+   * artifact panel open (desktop) or the sheet open (mobile) so the target
+   * is visible, then publish the id so the panel can scroll/highlight. The
+   * panel calls `onArtifactSelectionConsumed` itself once the highlight
+   * animation settles, which clears `selectedArtifactId` back to `null` —
+   * we don't need a thread-change cleanup effect because the artifact
+   * panel filters by thread, so a stale id from another thread simply
+   * matches no card and renders nothing.
+   */
+  const handleSelectArtifact = useCallback(
+    (artifactId: ArtifactId) => {
+      if (workspaceStatus === "no-repo") {
+        return;
+      }
+      if (isDesktopLayout) {
+        setIsArtifactPanelOpen(true);
+      } else {
+        setIsArtifactSheetOpen(true);
+      }
+      setSelectedArtifactId(artifactId);
+    },
+    [isDesktopLayout, setIsArtifactPanelOpen, workspaceStatus],
+  );
+
+  /**
+   * Stable handler the artifact panel calls once the highlight animation
+   * finishes. Must be referentially stable across renders: `ArtifactCard`'s
+   * scroll-into-view effect lists this callback in its dependency array, and
+   * a fresh inline arrow on every parent render would re-fire the effect on
+   * every re-render — including the many that happen mid-stream as the
+   * `getActiveMessageStream` subscription ticks. That re-firing both
+   * re-triggers `scrollIntoView` and reschedules the 1.6s consume timer, so
+   * the selection ring would stay visible until streaming stops instead of
+   * fading on schedule.
+   */
+  const handleArtifactSelectionConsumed = useCallback(() => {
+    setSelectedArtifactId(null);
+  }, []);
 
   useEffect(() => {
     if (workspaceStatus === "no-repo") {
@@ -587,6 +640,7 @@ export function RepositoryShell({
                 availableRepositories={repositories ?? []}
                 onImported={handleImported}
                 onThreadMovedToWorkspace={handleThreadMovedToWorkspace}
+                onSelectArtifact={handleSelectArtifact}
               />
               {isDesktopLayout ? (
                 // Mirror left-sidebar behavior: animate container width while
@@ -604,6 +658,8 @@ export function RepositoryShell({
                       sandboxModeStatus={capabilities.sandboxModeStatus}
                       isVisible={isArtifactPanelHydrated && isArtifactPanelOpen}
                       className="h-full w-80 border-l-0 lg:flex"
+                      selectedArtifactId={selectedArtifactId}
+                      onArtifactSelectionConsumed={handleArtifactSelectionConsumed}
                     />
                   </div>
                 </div>
@@ -624,6 +680,8 @@ export function RepositoryShell({
               sandboxModeStatus={capabilities.sandboxModeStatus}
               isVisible={isArtifactSheetOpen}
               className="flex h-full w-full border-l-0"
+              selectedArtifactId={selectedArtifactId}
+              onArtifactSelectionConsumed={handleArtifactSelectionConsumed}
             />
           </SheetContent>
         </Sheet>

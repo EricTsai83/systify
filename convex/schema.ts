@@ -391,6 +391,23 @@ export default defineSchema({
     errorMessage: v.optional(v.string()),
     estimatedInputTokens: v.optional(v.number()),
     estimatedOutputTokens: v.optional(v.number()),
+    /**
+     * Numbered artifact citation map for `docs` mode replies. Index 1 in the
+     * array is the artifact the prompt rendered as `## [A1] …`, index 2 the
+     * `[A2]` artifact, and so on. The frontend uses this to turn `[A#]`
+     * tokens in the assistant's content into links that jump to the right
+     * artifact in the side panel. Optional + only written when the reply
+     * actually had artifacts in scope (docs mode), so messages predating
+     * Plan 02 stay valid without backfill (widen-migrate-narrow).
+     */
+    citationMap: v.optional(
+      v.array(
+        v.object({
+          index: v.number(),
+          artifactId: v.id("artifacts"),
+        }),
+      ),
+    ),
   })
     .index("by_threadId", ["threadId"])
     .index("by_threadId_and_status", ["threadId", "status"])

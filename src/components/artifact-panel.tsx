@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
   CaretDownIcon,
@@ -22,7 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MermaidRenderer } from "@/components/mermaid-renderer";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { SandboxModeStatus, ThreadId } from "@/lib/types";
+import type { ArtifactId, SandboxModeStatus, ThreadId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -49,12 +49,24 @@ export function ArtifactPanel({
   sandboxModeStatus,
   isVisible = true,
   className,
+  selectedArtifactId = null,
+  onArtifactSelectionConsumed,
 }: {
   threadId: ThreadId | null;
   hasAttachedRepository: boolean;
   sandboxModeStatus: SandboxModeStatus | null;
   isVisible?: boolean;
   className?: string;
+  /**
+   * Plan 02: when a `[A#]` citation in chat is clicked, the shell publishes
+   * the resolved artifact id here. This panel scrolls the matching card
+   * into view and applies a transient highlight so the user sees where
+   * they landed; once consumed, the panel calls
+   * `onArtifactSelectionConsumed` so subsequent clicks on the same `[A#]`
+   * retrigger the scroll/highlight cycle.
+   */
+  selectedArtifactId?: ArtifactId | null;
+  onArtifactSelectionConsumed?: () => void;
 }) {
   // Query is scoped to thread-level artifacts. A diagram is double-parented
   // (thread + repo), so it shows up here. ADRs and failure modes will follow
@@ -105,7 +117,14 @@ export function ArtifactPanel({
               }
             />
           ) : (
-            artifacts.map((artifact: Doc<"artifacts">) => <ArtifactCard key={artifact._id} artifact={artifact} />)
+            artifacts.map((artifact: Doc<"artifacts">) => (
+              <ArtifactCard
+                key={artifact._id}
+                artifact={artifact}
+                isSelected={selectedArtifactId === artifact._id}
+                onSelectionConsumed={onArtifactSelectionConsumed}
+              />
+            ))
           )}
         </div>
       </ScrollArea>
@@ -343,23 +362,62 @@ function InlineError({ error, onClear }: { error: string | null; onClear: () => 
   );
 }
 
-function ArtifactCard({ artifact }: { artifact: Doc<"artifacts"> }) {
+function ArtifactCard({
+  artifact,
+  isSelected = false,
+  onSelectionConsumed,
+}: {
+  artifact: Doc<"artifacts">;
+  isSelected?: boolean;
+  onSelectionConsumed?: () => void;
+}) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  // Scroll-into-view + transient highlight when the citation jump targets
+  // this card. We clear the selection (`onSelectionConsumed`) once the
+  // highlight animation is over so a follow-up click on the same `[A#]`
+  // re-runs the effect — without this, React would see the same id and
+  // skip the effect on the next click.
+  useEffect(() => {
+    if (!isSelected) {
+      return;
+    }
+    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const timer = window.setTimeout(() => {
+      onSelectionConsumed?.();
+    }, 1600);
+    return () => window.clearTimeout(timer);
+  }, [isSelected, onSelectionConsumed]);
+
+  // The shared `Card` component is not a `forwardRef`, so we hang the
+  // scroll-target ref off a thin wrapper. The wrapper is also where the
+  // transient highlight ring lives; keeping it on the wrapper rather than
+  // the Card means the ring sits *outside* the card border, which reads
+  // visually as "this card is the one I jumped to".
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-start justify-between gap-3 p-3 pb-2">
-        <div className="min-w-0">
-          <h4 className="truncate text-sm font-semibold">{artifact.title}</h4>
-          <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{artifact.summary}</p>
-        </div>
-        <Badge variant="outline" className="shrink-0 text-[10px] uppercase">
-          {artifact.kind.replace(/_/g, " ")}
-        </Badge>
-      </CardHeader>
-      <CardContent className="p-3 pt-0">
-        <ArtifactBody artifact={artifact} />
-        <ArtifactFooter artifact={artifact} />
-      </CardContent>
-    </Card>
+    <div
+      ref={cardRef}
+      data-testid={`artifact-card-${artifact._id}`}
+      className={cn(
+        "rounded-md transition-shadow duration-300",
+        isSelected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "",
+      )}
+    >
+      <Card>
+        <CardHeader className="flex flex-row items-start justify-between gap-3 p-3 pb-2">
+          <div className="min-w-0">
+            <h4 className="truncate text-sm font-semibold">{artifact.title}</h4>
+            <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{artifact.summary}</p>
+          </div>
+          <Badge variant="outline" className="shrink-0 text-[10px] uppercase">
+            {artifact.kind.replace(/_/g, " ")}
+          </Badge>
+        </CardHeader>
+        <CardContent className="p-3 pt-0">
+          <ArtifactBody artifact={artifact} />
+          <ArtifactFooter artifact={artifact} />
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

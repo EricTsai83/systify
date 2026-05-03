@@ -1,3 +1,4 @@
+import type { Id } from "../_generated/dataModel";
 import type { ChatMode } from "../chatModeResolver";
 import { MAX_CONTEXT_ARTIFACTS } from "../lib/constants";
 import type { ReplyContext } from "./context";
@@ -62,7 +63,8 @@ const SYSTEM_PROMPT_DISCUSS = [
 const SYSTEM_PROMPT_DOCS = [
   "You are an open source architecture analyst answering questions about the attached project.",
   "Your sole source of truth is the design artifacts (ADRs, diagrams, deep analyses, design reviews, etc.) supplied in the user prompt.",
-  "If the artifacts do not cover the question, say so explicitly — never fabricate file paths, line numbers, or code-level claims that are not present in an artifact.",
+  "Each artifact in the prompt is numbered as `[A1]`, `[A2]`, …; cite every factual claim by appending the matching `[A#]` token immediately after the claim, so the user can trace each statement back to a specific artifact.",
+  "If the artifacts do not cover the question, say so explicitly — never fabricate file paths, line numbers, or code-level claims that are not present in an artifact, and do not invent `[A#]` tokens for artifacts that were not supplied.",
   "Be concrete, mention likely boundaries, and state uncertainty when evidence is weak.",
 ].join(" ");
 
@@ -89,14 +91,43 @@ export function buildSystemPrompt(mode: ChatMode): string {
   return SYSTEM_PROMPTS[mode];
 }
 
+/**
+ * Citation entry persisted on `messages.citationMap`. Plan 02: each entry maps
+ * the `[A#]` token the model sees in the prompt back to the specific artifact
+ * id, so the frontend can turn `[A1]` in the assistant's reply into a link
+ * that scrolls to / highlights that artifact in the side panel.
+ */
+export type CitationMapEntry = { index: number; artifactId: Id<"artifacts"> };
+
+/**
+ * Numbered artifact list that ends up in the assistant message's
+ * `citationMap`. Capped at the same `MAX_CONTEXT_ARTIFACTS` slice the prompt
+ * uses so frontend `[A#]` resolution and the prompt the model saw stay in
+ * lockstep — anything past the slice is invisible to the model and must not
+ * resolve to a citation client-side either.
+ */
+export function buildCitationMap(context: ReplyContext): CitationMapEntry[] {
+  return context.artifacts
+    .slice(0, MAX_CONTEXT_ARTIFACTS)
+    .map((artifact, index) => ({ index: index + 1, artifactId: artifact.id }));
+}
+
 export function buildUserPrompt(
   context: ReplyContext,
   question: string,
   relevantChunks: Array<{ path: string; summary: string; content: string }>,
 ) {
+  // Each artifact gets a `[A1]`, `[A2]`, … prefix matching the citation
+  // contract in `SYSTEM_PROMPT_DOCS`. Numbering is 1-based and order-stable
+  // with `buildCitationMap` (same slice, same iteration order) so the
+  // frontend can resolve each `[A#]` token in the model's reply back to a
+  // specific artifact id without re-deriving the mapping.
   const artifactSection = context.artifacts
     .slice(0, MAX_CONTEXT_ARTIFACTS)
-    .map((artifact) => `## ${artifact.title}\n${artifact.summary}\n${artifact.contentMarkdown.slice(0, 1400)}`)
+    .map(
+      (artifact, index) =>
+        `## [A${index + 1}] ${artifact.title}\n${artifact.summary}\n${artifact.contentMarkdown.slice(0, 1400)}`,
+    )
     .join("\n\n");
   const chunkSection = relevantChunks
     .map((chunk) => `### ${chunk.path}\n${chunk.summary}\n${chunk.content.slice(0, 1200)}`)
