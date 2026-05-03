@@ -24,6 +24,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import type {
@@ -131,7 +132,7 @@ export function ChatPanel({
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div className="flex-1 overflow-y-auto">
+      <ScrollArea type="hover" className="flex-1">
         <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-3 px-6 py-6">
           {!isChatLoading && chatMode === "sandbox" && sandboxModeStatus && !sandboxModeAvailable ? (
             <AppNotice
@@ -165,7 +166,7 @@ export function ChatPanel({
             </div>
           )}
         </div>
-      </div>
+      </ScrollArea>
 
       <div className="border-t border-border bg-background">
         <form
