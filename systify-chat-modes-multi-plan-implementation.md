@@ -41,7 +41,7 @@ SysTify 的 chat 對使用者開放三種模式：`discuss`（自由聊）、`do
 | 02  | Docs `[A1]` 引用 + UI Mode Badge                | 1d   | 01     | off                       |
 | 03  | 跨模式對話歷史過濾                                     | 0.5d | —      | off                       |
 | 04  | Sandbox 工具骨架（read_file + list_dir）            | 3d   | 01     | **flag 引入**，預設 off，僅白名單   |
-| 05  | 安全護欄（敏感檔擋 + Output Redaction）                 | 1.5d | 04     | 內部白名單仍 on                 |
+| 05  | 安全護欄（Clone-Time Token Scrub + Output Redaction） | 1d   | 04     | 內部白名單仍 on                 |
 | 06  | Live Tool-Call Ticker                         | 2d   | 04     | 同                         |
 | 07  | Cancel In-Flight Reply                        | 1.5d | 04     | 同                         |
 | 08  | `run_shell` 工具                                | 1.5d | 05     | 同                         |
@@ -250,49 +250,71 @@ SysTify 的 chat 對使用者開放三種模式：`discuss`（自由聊）、`do
 
 ---
 
-# Plan 05 — 安全護欄（敏感檔擋 + Output Redaction）
+# Plan 05 — 安全護欄（Clone-Time Token Scrub + Output Redaction）
+
+> 完整威脅模型與設計依據見 `docs/sandbox-mode-security-system-design.md`。本節是該設計的執行清單。
 
 ## 目標
 
-在更多人測試前，把「`.env` / 私鑰被讀到」「AWS key 進 LLM context 與 message 持久層」兩個必踩雷修掉。
+在 sandbox 工具對更多人開放前，修掉**兩個會把 secret 寫進 `messages` 表**的洩露點：
+
+1. **`cloneRepositoryInSandbox` 把 GitHub App installation token 嵌入 `.git/config`**（已驗證：`convex/daytona.ts:211-218` 走 HTTPS clone 帶 `x-access-token:<token>` 進 URL，無 post-clone scrub）。一旦 Plan 08 的 `run_shell` 開放，LLM 跑 `cat .git/config` 就能把 token 寫進回應、進而進 message DB。
+2. **原始碼裡硬寫的 secret**（如 `const STRIPE_KEY = "sk_live_..."`）。路徑長得無辜，path-based blocklist 擋不到；唯一可行的是內容掃描。
+
+> **設計上明確不做 path blocklist**（`.env` / `.aws/credentials` / `secrets/`）：在 SysTify 的 sandbox 模型下這些檔案要不在 repo（`.env`）、要不在 home 不在 repo 內（`.aws/credentials`），blocklist 提供的是錯誤的安心感。完整論述見 design doc。
 
 ## Done 標準（產品狀態）
 
-- `read_file('.env')` 回 `{ error: "blocked_path", reason: "..." }`，LLM 看得到原因
-- `read_file` / `list_dir` 結果含 AWS access key / GitHub token / Bearer JWT 時，自動替換為 `[REDACTED:aws_key]` 等標記，再進 LLM 與寫入 message
-- redaction 是雙向：送進 LLM 前 redact，寫進 trace metadata 前也 redact
+- `cloneRepositoryInSandbox` 完成後，`.git/config` 的 remote URL 不再含 `x-access-token` 或 token 字串（grep 應為 0）
+- 後續 `git fetch` / `git pull` 在 sandbox 內無憑證，預期失敗（read-only sandbox 期望行為）
+- `read_file` / `list_dir` / `run_shell` 結果含 GitHub token / JWT / Bearer 時，被替換為 `[REDACTED:github_token]` 等標記，再進 LLM 與寫入 message
+- redaction 是雙向：送進 LLM 前 redact，寫進 trace metadata（`messages.toolCalls`、`messageToolCallEvents`、`sandboxToolCallLog`）前也 redact
+- redact 的回傳同時帶 `matchedTypes: string[]`，讓 LLM 知道有東西被遮（不揭露內容）
 
 ## 改動檔案
 
 
-| 檔案                                 | 變更                                                                          |
-| ---------------------------------- | --------------------------------------------------------------------------- |
-| `convex/chat/sandboxTools.ts`      | 加 `BLOCKED_PATH_PATTERNS` 並在 read/list 入口檢查                                 |
-| `convex/chat/redaction.ts`         | **新檔**：`redact(text: string): { redacted: string; matchedTypes: string[] }` |
-| `convex/chat/redaction.test.ts`    | **新檔**：給定含 AWS key 字串，redact 後 grep 不到原 key                                 |
-| `convex/chat/sandboxTools.test.ts` | 擴充：blocked path、redaction 都要測                                               |
+| 檔案                                 | 變更                                                                                                              |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `convex/daytona.ts`                | `cloneRepositoryInSandbox` 在 `sandbox.git.clone` 之後加 `git remote set-url origin <url-without-credentials>` |
+| `convex/daytona.test.ts`           | 擴充：mock clone 後驗證有跑 `git remote set-url`、且最終 URL 不含 token                                                       |
+| `convex/chat/redaction.ts`         | **新檔**：`redact(text: string): { redacted: string; matchedTypes: string[] }`                                     |
+| `convex/chat/redaction.test.ts`    | **新檔**：給定含 GitHub token / JWT / Bearer 字串，redact 後 grep 不到原 token；matchedTypes 正確                              |
+| `convex/chat/sandboxTools.ts`      | 每個 tool execute 的 return 路徑強制過 `redact()`；不另設 path blocklist                                                    |
+| `convex/chat/sandboxTools.test.ts` | 擴充：含 secret 的 mock 檔案內容經 redact 後才回 LLM                                                                         |
 
 
 ## 工作項目
 
-1. `BLOCKED_PATH_PATTERNS`：`/\.env(\.|$)/`、`/^\.git\//`、`/(^|\/)secrets?\//`、`/\.(pem|key|p12)$/`、`/id_rsa$/`、`/\.aws\/credentials/`
-2. `redaction.ts`：regex set
-  - AWS access key: `/AKIA[0-9A-Z]{16}/`
-  - GitHub token: `/gh[pousr]_[A-Za-z0-9]{36,}/`
-  - Slack token: `/xox[baprs]-[A-Za-z0-9-]+/`
-  - JWT: `/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/`
-  - Generic Bearer: `/Bearer\s+[A-Za-z0-9._-]{20,}/i`
-3. 工具的 execute 在 return 前對 result.content 過 `redact()`，把 `matchedTypes` 也回給 LLM（讓 LLM 知道有東西被遮）
-4. 後續寫進 message metadata（Plan 06 會做）也要先 redact——這 plan 先把 redaction module 建好
+1. **Clone-time scrub**（`convex/daytona.ts`）：在 `cloneRepositoryInSandbox` 內，於現有的 `sandbox.git.clone(...)` 之後、現有 `git branch --show-current` 之前，插入：
+   ```ts
+   await sandbox.process.executeCommand(
+     `git remote set-url origin ${shellQuote(args.url)}`,
+     "repo",
+   );
+   ```
+   注意：`args.url` 應為**不含憑證的 canonical HTTPS URL**（既有呼叫端 `importsNode.ts:201-206` 已是這個形式，token 是另一個參數）。需要對 url 做 shell-escape 以防特殊字元。
+2. **此 scrub 在 `SANDBOX_MODE_ENABLED=false` 時也照跑**——這是 hardening 不是 feature，不該綁 flag。在 plan 文末「Cross-Plan Conventions」第 3 條的例外，需在程式碼註解標明。
+3. **Redaction module**（`convex/chat/redaction.ts`）：核心 3 個 pattern（必加）：
+   - GitHub token: `/gh[pousr]_[A-Za-z0-9]{36,}/`
+   - JWT: `/eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/`
+   - Generic Bearer: `/Bearer\s+[A-Za-z0-9._-]{20,}/i`
+   
+   選配 2 個（可加可不加，不影響設計）：
+   - AWS access key: `/AKIA[0-9A-Z]{16}/`
+   - Slack token: `/xox[baprs]-[A-Za-z0-9-]+/`
+4. **Tool integration**：`sandboxTools.ts` 每個 tool 的 execute 在 return 前都過 `redact()`；把 `matchedTypes` 也回給 LLM。**沒有** `BLOCKED_PATH_PATTERNS` 入口檢查。
+5. **Trace 寫入路徑**：Plan 06 / Plan 12 寫入 message metadata 與 audit log 前要過 `redact()`——這 plan 先把 module 建好、tool 端先用，下游 plan 沿用同一個函式。
 
 ## Verification
 
-- `bun test convex/chat/redaction.test.ts convex/chat/sandboxTools.test.ts`
-- 手動：在 sandbox 內放一個含 AWS key 的測試檔，read_file 看回應與 trace 都被 redact
+- `bun test convex/daytona.test.ts convex/chat/redaction.test.ts convex/chat/sandboxTools.test.ts`
+- 手動 1（clone scrub）：跑一次 import，SSH 進 sandbox 跑 `cat .git/config`，確認 URL 是 `https://github.com/owner/repo.git` 而非 `https://x-access-token:ghs_xxx@...`
+- 手動 2（redaction）：sandbox 對話中要求 LLM `cat` 一個含假 GitHub token（`ghp_` + 36 chars）的測試檔，確認回應與 message DB 的 `toolCalls` 都顯示 `[REDACTED:github_token]`，原始 token 字串完全 grep 不到
 
 ## 依賴
 
-- Plan 04
+- Plan 04（要有 sandbox tools 才能驗 redaction 流程）
 
 ---
 
