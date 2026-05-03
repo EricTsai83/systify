@@ -10,18 +10,26 @@ import schema from "./schema";
 const modules = import.meta.glob("./**/*.ts");
 
 describe("chat reply context", () => {
-  test("uses the latest import snapshot instead of stale historical data", async () => {
-    const ownerTokenIdentifier = "user|chat-context";
+  test("sandbox mode (Plan 04) returns no chunks and only deep_analysis artifacts", async () => {
+    // Plan 04 contract: sandbox mode is now LLM-driven retrieval — the
+    // model runs `read_file` / `list_dir` against the live sandbox via
+    // tools. Pre-loading indexed `repoChunks` (the legacy behavior) is
+    // wasted work and would silently outvote tool results when the index
+    // is stale. We still surface deep-analysis artifacts because they
+    // summarise design decisions the model can't trivially re-derive
+    // from the source tree alone — but other artifact kinds (manifests,
+    // entrypoints, dependency overviews, …) are excluded.
+    const ownerTokenIdentifier = "user|sandbox-plan-04-context";
     const t = convexTest(schema, modules);
 
     const { threadId, userMessageId } = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
-        sourceUrl: "https://github.com/acme/context-repo",
-        sourceRepoFullName: "acme/context-repo",
+        sourceUrl: "https://github.com/acme/sandbox-context-repo",
+        sourceRepoFullName: "acme/sandbox-context-repo",
         sourceRepoOwner: "acme",
-        sourceRepoName: "context-repo",
+        sourceRepoName: "sandbox-context-repo",
         defaultBranch: "main",
         visibility: "private",
         accessMode: "private",
@@ -35,69 +43,9 @@ describe("chat reply context", () => {
       const threadId = await ctx.db.insert("threads", {
         repositoryId,
         ownerTokenIdentifier,
-        title: "Context thread",
-        // sandbox mode is exercised here so we go through the artifact/chunk
-        // loading branches; `discuss` is now repo-context-free by design.
+        title: "Sandbox context thread",
         mode: "sandbox",
         lastMessageAt: Date.now(),
-      });
-
-      const oldJobId = await ctx.db.insert("jobs", {
-        repositoryId,
-        ownerTokenIdentifier,
-        kind: "import",
-        status: "completed",
-        stage: "completed",
-        progress: 1,
-        costCategory: "indexing",
-        triggerSource: "user",
-      });
-      const oldImportId = await ctx.db.insert("imports", {
-        repositoryId,
-        ownerTokenIdentifier,
-        sourceUrl: "https://github.com/acme/context-repo",
-        branch: "main",
-        adapterKind: "git_clone",
-        status: "completed",
-        jobId: oldJobId,
-      });
-      const oldFileId = await ctx.db.insert("repoFiles", {
-        repositoryId,
-        ownerTokenIdentifier,
-        importId: oldImportId,
-        path: "src/legacy.ts",
-        parentPath: "src",
-        fileType: "file",
-        extension: "ts",
-        language: "typescript",
-        sizeBytes: 120,
-        isEntryPoint: false,
-        isConfig: false,
-        isImportant: false,
-      });
-      await ctx.db.insert("repoChunks", {
-        repositoryId,
-        ownerTokenIdentifier,
-        importId: oldImportId,
-        fileId: oldFileId,
-        path: "src/legacy.ts",
-        chunkIndex: 0,
-        startLine: 1,
-        endLine: 5,
-        chunkKind: "code",
-        summary: "Old chunk",
-        content: 'const legacyValue = "old";',
-      });
-      await ctx.db.insert("artifacts", {
-        repositoryId,
-        jobId: oldJobId,
-        ownerTokenIdentifier,
-        kind: "manifest",
-        title: "Old Manifest",
-        summary: "Old import summary",
-        contentMarkdown: "old",
-        source: "heuristic",
-        version: 1,
       });
 
       const latestJobId = await ctx.db.insert("jobs", {
@@ -113,12 +61,14 @@ describe("chat reply context", () => {
       const latestImportId = await ctx.db.insert("imports", {
         repositoryId,
         ownerTokenIdentifier,
-        sourceUrl: "https://github.com/acme/context-repo",
+        sourceUrl: "https://github.com/acme/sandbox-context-repo",
         branch: "main",
         adapterKind: "git_clone",
         status: "completed",
         jobId: latestJobId,
       });
+      // Chunks would have been loaded under the old behavior — seed one
+      // so the assertion that they are NOT loaded is non-trivial.
       const latestFileId = await ctx.db.insert("repoFiles", {
         repositoryId,
         ownerTokenIdentifier,
@@ -143,22 +93,25 @@ describe("chat reply context", () => {
         startLine: 1,
         endLine: 5,
         chunkKind: "code",
-        summary: "New chunk",
-        content: 'const currentValue = "new";',
+        summary: "Should not appear",
+        content: "const value = 1;",
       });
+
+      // Manifest artifact (NOT deep_analysis) — must be excluded from
+      // sandbox-mode artifacts since Plan 04 narrows to deep_analysis.
       await ctx.db.insert("artifacts", {
         repositoryId,
         jobId: latestJobId,
         ownerTokenIdentifier,
         kind: "manifest",
-        title: "New Manifest",
-        summary: "New import summary",
-        contentMarkdown: "new",
+        title: "Manifest (excluded)",
+        summary: "Excluded by sandbox-mode artifact filter",
+        contentMarkdown: "manifest body",
         source: "heuristic",
         version: 1,
       });
-
-      const deepAnalysisJobId = await ctx.db.insert("jobs", {
+      // Deep-analysis artifact — must be included.
+      const deepJobId = await ctx.db.insert("jobs", {
         repositoryId,
         ownerTokenIdentifier,
         kind: "deep_analysis",
@@ -170,12 +123,12 @@ describe("chat reply context", () => {
       });
       await ctx.db.insert("artifacts", {
         repositoryId,
-        jobId: deepAnalysisJobId,
+        jobId: deepJobId,
         ownerTokenIdentifier,
         kind: "deep_analysis",
-        title: "Latest Deep Analysis",
-        summary: "Deep summary",
-        contentMarkdown: "deep",
+        title: "Deep analysis (included)",
+        summary: "Architectural deep dive",
+        contentMarkdown: "deep body",
         source: "sandbox",
         version: 1,
       });
@@ -192,7 +145,7 @@ describe("chat reply context", () => {
         role: "user",
         status: "completed",
         mode: "sandbox",
-        content: "What does the latest import look like?",
+        content: "What does the latest source tree look like?",
       });
 
       return { threadId, userMessageId };
@@ -200,25 +153,29 @@ describe("chat reply context", () => {
 
     const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
-    expect(context.chunks).toHaveLength(1);
-    expect(context.chunks[0]?.path).toBe("src/current.ts");
-    expect(context.chunks[0]?.content).toContain('"new"');
-    expect(context.chunks.some((chunk) => chunk.path === "src/legacy.ts")).toBe(false);
-    expect(context.artifacts.map((artifact) => artifact.title)).toEqual(["New Manifest", "Latest Deep Analysis"]);
+    // Plan 04 contract — chunks always [] in sandbox mode.
+    expect(context.chunks).toEqual([]);
+    // Only deep_analysis kind survives the sandbox-mode artifact filter.
+    expect(context.artifacts.map((artifact) => artifact.title)).toEqual(["Deep analysis (included)"]);
+    // No sandbox row exists yet, so sandboxTooling stays undefined.
+    expect(context.sandboxTooling).toBeUndefined();
   });
 
-  test("expands the candidate pool with query-aware search hits from the latest import", async () => {
-    const ownerTokenIdentifier = "user|chat-query-aware";
+  test("sandbox mode exposes sandboxTooling when the repository has a ready sandbox", async () => {
+    // Generation.ts builds the SandboxFsClient from this surfaced metadata.
+    // Failing to expose it would silently fall back to the no-tool path even
+    // when a healthy sandbox exists.
+    const ownerTokenIdentifier = "user|sandbox-tooling-ready";
     const t = convexTest(schema, modules);
 
     const { threadId, userMessageId } = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
-        sourceUrl: "https://github.com/acme/query-aware-repo",
-        sourceRepoFullName: "acme/query-aware-repo",
+        sourceUrl: "https://github.com/acme/tooling-ready",
+        sourceRepoFullName: "acme/tooling-ready",
         sourceRepoOwner: "acme",
-        sourceRepoName: "query-aware-repo",
+        sourceRepoName: "tooling-ready",
         defaultBranch: "main",
         visibility: "private",
         accessMode: "private",
@@ -229,133 +186,41 @@ describe("chat reply context", () => {
         fileCount: 0,
       });
 
+      const sandboxId = await ctx.db.insert("sandboxes", {
+        repositoryId,
+        ownerTokenIdentifier,
+        provider: "daytona",
+        sourceAdapter: "git_clone",
+        remoteId: "remote-tool-ready",
+        status: "ready",
+        workDir: "/workspace",
+        repoPath: "/workspace/repo",
+        cpuLimit: 2,
+        memoryLimitGiB: 4,
+        diskLimitGiB: 10,
+        ttlExpiresAt: Date.now() + 60_000,
+        autoStopIntervalMinutes: 10,
+        autoArchiveIntervalMinutes: 60,
+        autoDeleteIntervalMinutes: 1440,
+        networkBlockAll: false,
+      });
+      await ctx.db.patch(repositoryId, { latestSandboxId: sandboxId });
+
       const threadId = await ctx.db.insert("threads", {
         repositoryId,
         ownerTokenIdentifier,
-        title: "Query-aware thread",
-        // sandbox mode preserves chunk loading so this test still exercises
-        // search-index ranking; `discuss` is repo-context-free now.
+        title: "Tooling thread",
         mode: "sandbox",
         lastMessageAt: Date.now(),
       });
-
-      const olderJobId = await ctx.db.insert("jobs", {
-        repositoryId,
-        ownerTokenIdentifier,
-        kind: "import",
-        status: "completed",
-        stage: "completed",
-        progress: 1,
-        costCategory: "indexing",
-        triggerSource: "user",
-      });
-      const olderImportId = await ctx.db.insert("imports", {
-        repositoryId,
-        ownerTokenIdentifier,
-        sourceUrl: "https://github.com/acme/query-aware-repo",
-        branch: "main",
-        adapterKind: "git_clone",
-        status: "completed",
-        jobId: olderJobId,
-      });
-      const olderFileId = await ctx.db.insert("repoFiles", {
-        repositoryId,
-        ownerTokenIdentifier,
-        importId: olderImportId,
-        path: "src/file-stale-auth.ts",
-        parentPath: "src",
-        fileType: "file",
-        extension: "ts",
-        language: "typescript",
-        sizeBytes: 128,
-        isEntryPoint: false,
-        isConfig: false,
-        isImportant: false,
-      });
-      await ctx.db.insert("repoChunks", {
-        repositoryId,
-        ownerTokenIdentifier,
-        importId: olderImportId,
-        fileId: olderFileId,
-        path: "src/file-stale-auth.ts",
-        chunkIndex: 0,
-        startLine: 1,
-        endLine: 6,
-        chunkKind: "code",
-        summary: "src/file-stale-auth.ts: stale auth middleware boundary",
-        content: 'export function handleAuthToken() { return "stale auth middleware token flow"; }',
-      });
-
-      const latestJobId = await ctx.db.insert("jobs", {
-        repositoryId,
-        ownerTokenIdentifier,
-        kind: "import",
-        status: "completed",
-        stage: "completed",
-        progress: 1,
-        costCategory: "indexing",
-        triggerSource: "user",
-      });
-      const latestImportId = await ctx.db.insert("imports", {
-        repositoryId,
-        ownerTokenIdentifier,
-        sourceUrl: "https://github.com/acme/query-aware-repo",
-        branch: "main",
-        adapterKind: "git_clone",
-        status: "completed",
-        jobId: latestJobId,
-      });
-
-      for (let index = 0; index < 200; index += 1) {
-        const path = index === 180 ? "src/file-180-auth.ts" : `src/file-${index.toString().padStart(3, "0")}.ts`;
-        const fileId = await ctx.db.insert("repoFiles", {
-          repositoryId,
-          ownerTokenIdentifier,
-          importId: latestImportId,
-          path,
-          parentPath: "src",
-          fileType: "file",
-          extension: "ts",
-          language: "typescript",
-          sizeBytes: 128,
-          isEntryPoint: index === 0,
-          isConfig: false,
-          isImportant: index < 10,
-        });
-
-        await ctx.db.insert("repoChunks", {
-          repositoryId,
-          ownerTokenIdentifier,
-          importId: latestImportId,
-          fileId,
-          path,
-          chunkIndex: 0,
-          startLine: 1,
-          endLine: 6,
-          chunkKind: "code",
-          summary: index === 180 ? `${path}: auth middleware boundary` : `${path}: generic helper ${index}`,
-          content:
-            index === 180
-              ? 'export function handleAuthToken() { return "auth middleware token flow"; }'
-              : `export const value${index} = ${index};`,
-        });
-      }
-
       const userMessageId = await ctx.db.insert("messages", {
         repositoryId,
         threadId,
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        // sandbox mode keeps the chunk-loading code path live; the user
-        // message mode is what `getReplyContext` uses for `effectiveMode`.
         mode: "sandbox",
-        content: "How does auth work?",
-      });
-
-      await ctx.db.patch(repositoryId, {
-        latestImportId,
-        latestImportJobId: latestJobId,
+        content: "Read the entrypoint.",
       });
 
       return { threadId, userMessageId };
@@ -363,117 +228,85 @@ describe("chat reply context", () => {
 
     const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
-    expect(context.chunks.some((chunk) => chunk.path === "src/file-180-auth.ts")).toBe(true);
-    expect(context.chunks.some((chunk) => chunk.path === "src/file-stale-auth.ts")).toBe(false);
-  });
-
-  test("keeps a baseline chunk set when search terms miss everything", async () => {
-    const ownerTokenIdentifier = "user|chat-baseline-fallback";
-    const t = convexTest(schema, modules);
-
-    const { threadId, userMessageId } = await t.run(async (ctx) => {
-      const repositoryId = await ctx.db.insert("repositories", {
-        ownerTokenIdentifier,
-        sourceHost: "github",
-        sourceUrl: "https://github.com/acme/fallback-repo",
-        sourceRepoFullName: "acme/fallback-repo",
-        sourceRepoOwner: "acme",
-        sourceRepoName: "fallback-repo",
-        defaultBranch: "main",
-        visibility: "private",
-        accessMode: "private",
-        importStatus: "completed",
-        detectedLanguages: [],
-        packageManagers: [],
-        entrypoints: [],
-        fileCount: 0,
-      });
-
-      const threadId = await ctx.db.insert("threads", {
-        repositoryId,
-        ownerTokenIdentifier,
-        title: "Fallback thread",
-        // sandbox mode keeps chunk loading active; `discuss` returns no chunks.
-        mode: "sandbox",
-        lastMessageAt: Date.now(),
-      });
-
-      const latestJobId = await ctx.db.insert("jobs", {
-        repositoryId,
-        ownerTokenIdentifier,
-        kind: "import",
-        status: "completed",
-        stage: "completed",
-        progress: 1,
-        costCategory: "indexing",
-        triggerSource: "user",
-      });
-      const latestImportId = await ctx.db.insert("imports", {
-        repositoryId,
-        ownerTokenIdentifier,
-        sourceUrl: "https://github.com/acme/fallback-repo",
-        branch: "main",
-        adapterKind: "git_clone",
-        status: "completed",
-        jobId: latestJobId,
-      });
-
-      for (const [index, path] of ["src/a.ts", "src/b.ts", "src/c.ts"].entries()) {
-        const fileId = await ctx.db.insert("repoFiles", {
-          repositoryId,
-          ownerTokenIdentifier,
-          importId: latestImportId,
-          path,
-          parentPath: "src",
-          fileType: "file",
-          extension: "ts",
-          language: "typescript",
-          sizeBytes: 80,
-          isEntryPoint: false,
-          isConfig: false,
-          isImportant: false,
-        });
-
-        await ctx.db.insert("repoChunks", {
-          repositoryId,
-          ownerTokenIdentifier,
-          importId: latestImportId,
-          fileId,
-          path,
-          chunkIndex: 0,
-          startLine: 1,
-          endLine: 4,
-          chunkKind: "code",
-          summary: `${path}: generic helper ${index}`,
-          content: `export const value${index} = ${index};`,
-        });
-      }
-
-      const userMessageId = await ctx.db.insert("messages", {
-        repositoryId,
-        threadId,
-        ownerTokenIdentifier,
-        role: "user",
-        status: "completed",
-        // sandbox mode preserves chunk loading; user message mode wins
-        // over thread.mode in `getReplyContext.effectiveMode`.
-        mode: "sandbox",
-        content: "quaternion entanglement neutron lattice",
-      });
-
-      await ctx.db.patch(repositoryId, {
-        latestImportId,
-        latestImportJobId: latestJobId,
-      });
-
-      return { threadId, userMessageId };
+    expect(context.sandboxTooling).toEqual({
+      remoteId: "remote-tool-ready",
+      repoPath: "/workspace/repo",
     });
-
-    const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
-
-    expect(context.chunks).not.toHaveLength(0);
-    expect(context.chunks.map((chunk) => chunk.path)).toContain("src/a.ts");
   });
+
+  test.each(["provisioning", "stopped", "archived", "failed"] as const)(
+    "sandbox mode leaves sandboxTooling undefined when sandbox status is %s (not ready)",
+    async (sandboxStatus) => {
+      // Surfacing tooling for a non-ready sandbox would cause the action's
+      // tool-call path to fail mid-stream — much worse UX than recognising
+      // up-front that the sandbox isn't usable and falling through to the
+      // no-tool reply path.
+      const ownerTokenIdentifier = `user|sandbox-tooling-${sandboxStatus}`;
+      const t = convexTest(schema, modules);
+
+      const { threadId, userMessageId } = await t.run(async (ctx) => {
+        const repositoryId = await ctx.db.insert("repositories", {
+          ownerTokenIdentifier,
+          sourceHost: "github",
+          sourceUrl: `https://github.com/acme/tooling-${sandboxStatus}`,
+          sourceRepoFullName: `acme/tooling-${sandboxStatus}`,
+          sourceRepoOwner: "acme",
+          sourceRepoName: `tooling-${sandboxStatus}`,
+          defaultBranch: "main",
+          visibility: "private",
+          accessMode: "private",
+          importStatus: "completed",
+          detectedLanguages: [],
+          packageManagers: [],
+          entrypoints: [],
+          fileCount: 0,
+        });
+
+        const sandboxId = await ctx.db.insert("sandboxes", {
+          repositoryId,
+          ownerTokenIdentifier,
+          provider: "daytona",
+          sourceAdapter: "git_clone",
+          remoteId: `remote-${sandboxStatus}`,
+          status: sandboxStatus,
+          workDir: "/workspace",
+          repoPath: "/workspace/repo",
+          cpuLimit: 2,
+          memoryLimitGiB: 4,
+          diskLimitGiB: 10,
+          ttlExpiresAt: Date.now() + 60_000,
+          autoStopIntervalMinutes: 10,
+          autoArchiveIntervalMinutes: 60,
+          autoDeleteIntervalMinutes: 1440,
+          networkBlockAll: false,
+        });
+        await ctx.db.patch(repositoryId, { latestSandboxId: sandboxId });
+
+        const threadId = await ctx.db.insert("threads", {
+          repositoryId,
+          ownerTokenIdentifier,
+          title: `Tooling ${sandboxStatus} thread`,
+          mode: "sandbox",
+          lastMessageAt: Date.now(),
+        });
+        const userMessageId = await ctx.db.insert("messages", {
+          repositoryId,
+          threadId,
+          ownerTokenIdentifier,
+          role: "user",
+          status: "completed",
+          mode: "sandbox",
+          content: "Try to use a tool.",
+        });
+
+        return { threadId, userMessageId };
+      });
+
+      const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
+
+      expect(context.sandboxTooling).toBeUndefined();
+    },
+  );
 
   test("content matches influence ranking even when path and summary miss", () => {
     const ranked = selectRelevantChunks(
@@ -917,161 +750,15 @@ describe("chat reply context", () => {
     expect(context.mode).toBe("docs");
   });
 
-  test("uses the queued user message's content as the chunk-search query, not the newest message", async () => {
-    // Companion to the mode-anchoring race-condition test: the search
-    // query that picks code chunks must come from the same queued
-    // message, otherwise we'd retrieve chunks that match a later
-    // (unrelated) user question and mismatch the prompt this reply is
-    // paired to.
-    const ownerTokenIdentifier = "user|race-search-query";
-    const t = convexTest(schema, modules);
-
-    const { threadId, queuedUserMessageId } = await t.run(async (ctx) => {
-      const repositoryId = await ctx.db.insert("repositories", {
-        ownerTokenIdentifier,
-        sourceHost: "github",
-        sourceUrl: "https://github.com/acme/race-search-repo",
-        sourceRepoFullName: "acme/race-search-repo",
-        sourceRepoOwner: "acme",
-        sourceRepoName: "race-search-repo",
-        defaultBranch: "main",
-        visibility: "private",
-        accessMode: "private",
-        importStatus: "completed",
-        detectedLanguages: [],
-        packageManagers: [],
-        entrypoints: [],
-        fileCount: 0,
-      });
-
-      const threadId = await ctx.db.insert("threads", {
-        repositoryId,
-        ownerTokenIdentifier,
-        title: "Search anchoring",
-        mode: "sandbox",
-        lastMessageAt: Date.now(),
-      });
-
-      const importJobId = await ctx.db.insert("jobs", {
-        repositoryId,
-        ownerTokenIdentifier,
-        kind: "import",
-        status: "completed",
-        stage: "completed",
-        progress: 1,
-        costCategory: "indexing",
-        triggerSource: "user",
-      });
-      const importId = await ctx.db.insert("imports", {
-        repositoryId,
-        ownerTokenIdentifier,
-        sourceUrl: "https://github.com/acme/race-search-repo",
-        branch: "main",
-        adapterKind: "git_clone",
-        status: "completed",
-        jobId: importJobId,
-      });
-
-      // Two distinguishable chunks. The queued message asks about auth;
-      // the later message asks about caching. If the search query were
-      // taken from "the latest user message", the auth chunk would be
-      // pushed out of the candidate pool by the cache-related search.
-      const fillerCount = 200;
-      for (let index = 0; index < fillerCount; index += 1) {
-        const path = `src/filler-${index.toString().padStart(3, "0")}.ts`;
-        const fileId = await ctx.db.insert("repoFiles", {
-          repositoryId,
-          ownerTokenIdentifier,
-          importId,
-          path,
-          parentPath: "src",
-          fileType: "file",
-          extension: "ts",
-          language: "typescript",
-          sizeBytes: 80,
-          isEntryPoint: false,
-          isConfig: false,
-          isImportant: false,
-        });
-        await ctx.db.insert("repoChunks", {
-          repositoryId,
-          ownerTokenIdentifier,
-          importId,
-          fileId,
-          path,
-          chunkIndex: 0,
-          startLine: 1,
-          endLine: 4,
-          chunkKind: "code",
-          summary: `${path}: filler helper ${index}`,
-          content: `export const value${index} = ${index};`,
-        });
-      }
-      const authFileId = await ctx.db.insert("repoFiles", {
-        repositoryId,
-        ownerTokenIdentifier,
-        importId,
-        path: "src/auth-token-flow.ts",
-        parentPath: "src",
-        fileType: "file",
-        extension: "ts",
-        language: "typescript",
-        sizeBytes: 128,
-        isEntryPoint: false,
-        isConfig: false,
-        isImportant: false,
-      });
-      await ctx.db.insert("repoChunks", {
-        repositoryId,
-        ownerTokenIdentifier,
-        importId,
-        fileId: authFileId,
-        path: "src/auth-token-flow.ts",
-        chunkIndex: 0,
-        startLine: 1,
-        endLine: 6,
-        chunkKind: "code",
-        summary: "src/auth-token-flow.ts: auth middleware token flow",
-        content: 'export function handleAuthToken() { return "auth middleware token flow"; }',
-      });
-
-      await ctx.db.patch(repositoryId, {
-        latestImportId: importId,
-        latestImportJobId: importJobId,
-      });
-
-      const queuedUserMessageId = await ctx.db.insert("messages", {
-        repositoryId,
-        threadId,
-        ownerTokenIdentifier,
-        role: "user",
-        status: "completed",
-        mode: "sandbox",
-        content: "How does auth middleware token flow work?",
-      });
-
-      // Later user message with an unrelated topic. If search anchored to
-      // "latest", the auth chunk would not be retrieved.
-      await ctx.db.insert("messages", {
-        repositoryId,
-        threadId,
-        ownerTokenIdentifier,
-        role: "user",
-        status: "completed",
-        mode: "sandbox",
-        content: "Unrelated cache eviction question.",
-      });
-
-      return { threadId, queuedUserMessageId };
-    });
-
-    const context = await t.query(internal.chat.context.getReplyContext, {
-      threadId,
-      userMessageId: queuedUserMessageId,
-    });
-
-    expect(context.chunks.some((chunk) => chunk.path === "src/auth-token-flow.ts")).toBe(true);
-  });
+  // NOTE: Plan 04 retired the per-mode chunk-search code path entirely
+  // (sandbox is tool-driven, docs is artifact-only, discuss returns early).
+  // The race-condition guard against "search query anchored to the wrong
+  // user message" therefore no longer has a code path to defend; the
+  // companion mode-anchoring test above (`anchors effective mode to the
+  // queued user message`) still covers the queue-anchor invariant for the
+  // surviving mode/system-prompt derivation. If a future plan re-introduces
+  // per-mode chunk pre-selection, this guard should be reinstated against
+  // that code path rather than the retired one.
 
   test("rejects a userMessageId that does not belong to the requested thread", async () => {
     // Cross-thread protection: even if a caller somehow constructs a

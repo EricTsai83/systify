@@ -16,17 +16,16 @@ export const MAX_VISIBLE_MESSAGES = 100;
 /** Maximum number of recent messages loaded for a chat reply. */
 export const MAX_CONTEXT_MESSAGES = 20;
 
-/** Maximum number of relevant code chunks selected for a chat reply. */
+/**
+ * Maximum number of relevant code chunks selected for a chat reply.
+ *
+ * Plan 04 retired the chunk-pre-loading path for both `docs` (artifact-only)
+ * and `sandbox` (LLM-driven via tools). The relevance selector is still
+ * imported by `chat/generation.ts` and exercised by direct unit tests in
+ * `chat-context.test.ts`, so the cap stays here as the contract for any
+ * future caller that re-introduces chunk pre-selection.
+ */
 export const MAX_RELEVANT_CHUNKS = 6;
-
-/** Baseline chunks kept even when search terms miss. */
-export const CHAT_BASELINE_CHUNKS = 30;
-
-/** Maximum search hits loaded from each chat retrieval index. */
-export const CHAT_SEARCH_RESULTS_PER_INDEX = 30;
-
-/** Upper bound for the query-aware chunk candidate pool. */
-export const CHAT_CANDIDATE_POOL_LIMIT = 90;
 
 /** Number of documents to delete per batch in cascade operations. */
 export const CASCADE_BATCH_SIZE = 200;

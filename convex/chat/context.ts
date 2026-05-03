@@ -2,13 +2,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { internalQuery } from "../_generated/server";
-import {
-  CHAT_BASELINE_CHUNKS,
-  CHAT_CANDIDATE_POOL_LIMIT,
-  CHAT_SEARCH_RESULTS_PER_INDEX,
-  MAX_CONTEXT_MESSAGES,
-} from "../lib/constants";
-import { buildChunkSearchQuery } from "./relevance";
+import { MAX_CONTEXT_ARTIFACTS, MAX_CONTEXT_MESSAGES } from "../lib/constants";
 import type { ChatMode } from "../chatModeResolver";
 
 export type ReplyContext = {
@@ -41,6 +35,29 @@ export type ReplyContext = {
   artifacts: Array<{ id: Id<"artifacts">; title: string; summary: string; contentMarkdown: string }>;
   chunks: Array<{ path: string; summary: string; content: string }>;
   messages: Array<{ id: Id<"messages">; role: "user" | "assistant" | "system" | "tool"; content: string }>;
+  /**
+   * Plan-04 sandbox-tool wiring information. Populated **only** for
+   * `mode === "sandbox"` replies that have a ready sandbox attached to the
+   * repository, and `undefined` in every other case (discuss, docs, missing
+   * sandbox, sandbox not in `ready` state).
+   *
+   * The two fields are everything `generation.ts` needs to construct a
+   * `SandboxFsClient` and pass it to `createSandboxTools`:
+   *
+   *   - `remoteId` — Daytona-side sandbox identifier (`sandboxes.remoteId`).
+   *   - `repoPath` — absolute path of the repository's root inside the
+   *     sandbox, used to scope every tool call's path validation.
+   *
+   * Surfacing this via the context query (rather than a separate fetch in
+   * the action) keeps the `(thread, sandbox, repository)` lookup as a single
+   * transactional snapshot — a sandbox that becomes unavailable between
+   * queueing and generation is reflected here as `undefined` and the action
+   * can fall back to a no-tool reply without an extra `ctx.db.get` race.
+   */
+  sandboxTooling?: {
+    remoteId: string;
+    repoPath: string;
+  };
 };
 
 const DOCS_ARTIFACT_KINDS: Array<Doc<"artifacts">["kind"]> = [
@@ -183,52 +200,6 @@ async function loadReplyContextMessages(
   return filtered.slice(0, limit).reverse();
 }
 
-async function loadCandidateChunks(ctx: Pick<QueryCtx, "db">, importId: Id<"imports">, question: string) {
-  const headCount = Math.ceil(CHAT_BASELINE_CHUNKS / 2);
-  const tailCount = CHAT_BASELINE_CHUNKS - headCount;
-  const [headChunks, tailChunks] = await Promise.all([
-    ctx.db
-      .query("repoChunks")
-      .withIndex("by_importId_and_path_and_chunkIndex", (q) => q.eq("importId", importId))
-      .take(headCount),
-    ctx.db
-      .query("repoChunks")
-      .withIndex("by_importId_and_path_and_chunkIndex", (q) => q.eq("importId", importId))
-      .order("desc")
-      .take(tailCount),
-  ]);
-  const searchQuery = buildChunkSearchQuery(question);
-  let summaryMatches: Doc<"repoChunks">[] = [];
-  let contentMatches: Doc<"repoChunks">[] = [];
-
-  if (searchQuery) {
-    [summaryMatches, contentMatches] = await Promise.all([
-      ctx.db
-        .query("repoChunks")
-        .withSearchIndex("search_summary", (q) => q.search("summary", searchQuery).eq("importId", importId))
-        .take(CHAT_SEARCH_RESULTS_PER_INDEX),
-      ctx.db
-        .query("repoChunks")
-        .withSearchIndex("search_content", (q) => q.search("content", searchQuery).eq("importId", importId))
-        .take(CHAT_SEARCH_RESULTS_PER_INDEX),
-    ]);
-  }
-
-  const candidatesById = new Map<string, Doc<"repoChunks">>();
-  for (const chunk of [...summaryMatches, ...contentMatches, ...headChunks, ...[...tailChunks].reverse()]) {
-    if (candidatesById.has(chunk._id)) {
-      continue;
-    }
-
-    candidatesById.set(chunk._id, chunk);
-    if (candidatesById.size >= CHAT_CANDIDATE_POOL_LIMIT) {
-      break;
-    }
-  }
-
-  return Array.from(candidatesById.values());
-}
-
 export const getReplyContext = internalQuery({
   args: {
     threadId: v.id("threads"),
@@ -297,38 +268,52 @@ export const getReplyContext = internalQuery({
       throw new Error("Repository not found.");
     }
 
+    // Plan 04: sandbox mode is now LLM-driven retrieval — the model uses
+    // `read_file` / `list_dir` tools to fetch exactly what it needs from the
+    // live sandbox. Pre-loading indexed `repoChunks` is therefore wasted
+    // work (and would silently outvote tool results when the index is
+    // stale). We still surface deep-analysis artifacts because they
+    // summarise design decisions the model can't trivially re-derive from
+    // the source tree alone.
+    //
+    // `docs` mode keeps its existing artifact-only retrieval. The
+    // legacy "kitchen sink" branch (everything from latestImportJob +
+    // deep_analysis) is no longer reachable: every code path is now an
+    // explicit per-mode contract.
     const artifacts =
       effectiveMode === "docs"
         ? await loadLatestDocsArtifacts(ctx, repository._id)
-        : [
-            ...(repository.latestImportJobId
-              ? await ctx.db
-                  .query("artifacts")
-                  .withIndex("by_jobId", (q) => q.eq("jobId", repository.latestImportJobId!))
-                  .take(10)
-              : []),
-            ...(await ctx.db
-              .query("artifacts")
-              .withIndex("by_repositoryId_and_kind", (q) =>
-                q.eq("repositoryId", repository._id).eq("kind", "deep_analysis"),
-              )
-              .order("desc")
-              .take(10)),
-          ];
-    // Phase 4 rollout: `docs` mode is artifact-only retrieval. We intentionally
-    // stop pulling indexed code chunks in this mode so knowledge sources stay
-    // non-overlapping (`docs` => artifacts, `sandbox` => live/code-grounded).
-    // `discuss` is handled by the early return above.
-    //
-    // The search query is taken from the *queued* user message, not from
-    // "the latest user message in the window" — that keeps chunk selection
-    // consistent with the mode anchor above when sends are concurrent.
-    const chunks =
-      effectiveMode === "docs"
-        ? []
-        : repository.latestImportId
-          ? await loadCandidateChunks(ctx, repository.latestImportId, userMessage.content)
-          : [];
+        : await ctx.db
+            .query("artifacts")
+            .withIndex("by_repositoryId_and_kind", (q) =>
+              q.eq("repositoryId", repository._id).eq("kind", "deep_analysis"),
+            )
+            .order("desc")
+            .take(MAX_CONTEXT_ARTIFACTS);
+
+    // Phase 4 rollout: `docs` mode is artifact-only retrieval and `sandbox`
+    // mode is tool-driven retrieval. Both intentionally skip pre-loaded
+    // code chunks so knowledge sources stay non-overlapping (`docs` =>
+    // artifacts, `sandbox` => live tool calls). `discuss` is handled by
+    // the early return above.
+    const chunks: Array<{ path: string; summary: string; content: string }> = [];
+
+    // Plan 04 sandbox-tool wiring: surface the live sandbox handle here so
+    // the action can build a `SandboxFsClient` without an extra fetch. We
+    // only expose it when the sandbox is in `ready` state — `provisioning`,
+    // `stopped`, `archived`, and `failed` would all surface as a tool-call
+    // failure mid-stream, which is much worse UX than answering without
+    // tools and telling the user the sandbox isn't ready.
+    let sandboxTooling: ReplyContext["sandboxTooling"];
+    if (effectiveMode === "sandbox" && repository.latestSandboxId) {
+      const sandbox = await ctx.db.get(repository.latestSandboxId);
+      if (sandbox?.status === "ready" && sandbox.remoteId && sandbox.repoPath) {
+        sandboxTooling = {
+          remoteId: sandbox.remoteId,
+          repoPath: sandbox.repoPath,
+        };
+      }
+    }
 
     return {
       ownerTokenIdentifier: repository.ownerTokenIdentifier,
@@ -343,16 +328,13 @@ export const getReplyContext = internalQuery({
         summary: artifact.summary,
         contentMarkdown: artifact.contentMarkdown,
       })),
-      chunks: chunks.map((chunk) => ({
-        path: chunk.path,
-        summary: chunk.summary,
-        content: chunk.content,
-      })),
+      chunks,
       messages: messages.map((message) => ({
         id: message._id,
         role: message.role,
         content: message.content,
       })),
+      sandboxTooling,
     };
   },
 });

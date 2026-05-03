@@ -1,6 +1,7 @@
 "use node";
 
 import { CodeLanguage, Daytona, DaytonaError, DaytonaNotFoundError, type Sandbox } from "@daytona/sdk";
+import type { SandboxFsClient } from "./chat/sandboxTools";
 import { shouldReadFile, type RepositorySnapshot } from "./lib/repoAnalysis";
 import { buildSandboxName } from "./lib/sandboxNames";
 import {
@@ -305,6 +306,46 @@ PY`;
 
 export function isDaytonaConfigured() {
   return Boolean(process.env.DAYTONA_API_KEY);
+}
+
+/**
+ * Plan-04 adapter — wraps a Daytona `Sandbox` in the runtime-agnostic
+ * `SandboxFsClient` interface that `chat/sandboxTools.ts` consumes.
+ *
+ * Why this lives in `daytona.ts` rather than `chat/sandboxTools.ts`:
+ *
+ *   - All Daytona-specific code (Node-only imports, error types, SDK quirks)
+ *     stays here. `sandboxTools.ts` remains runtime-agnostic and trivially
+ *     unit-testable with a fake client.
+ *   - Future tools that need the same FS surface — `run_shell` in Plan 08,
+ *     for instance — can extend this adapter rather than re-querying
+ *     Daytona inside `chat/sandboxTools.ts`.
+ *   - Type fidelity: Daytona's `downloadFile` is overloaded — one form
+ *     returns `Buffer`, the other returns `void` (writes to a local path).
+ *     Selecting the buffer overload here means `sandboxTools.ts` sees the
+ *     narrower, single-overload `Promise<Uint8Array>` shape.
+ */
+export async function getSandboxFsClient(remoteId: string): Promise<SandboxFsClient> {
+  const sandbox = await getSandbox(remoteId);
+  return {
+    // The two-arg `downloadFile(path, timeout)` overload returns a Buffer
+    // (which extends Uint8Array, satisfying the SandboxFsClient contract).
+    // We intentionally pin to that overload; the three-arg form would
+    // download to a local file and is irrelevant here.
+    downloadFile: (path, timeoutSeconds) => sandbox.fs.downloadFile(path, timeoutSeconds),
+    listFiles: async (path) => {
+      const entries = await sandbox.fs.listFiles(path);
+      // Project Daytona's `FileInfo` (group, mode, owner, modTime, …) onto
+      // the `SandboxListedFile` minimum the tool needs. This both narrows
+      // the surface area we pass into the LLM (no metadata leaks) and
+      // insulates the tool factory from upstream SDK schema drift.
+      return entries.map((entry) => ({
+        name: entry.name,
+        isDir: entry.isDir,
+        size: entry.size,
+      }));
+    },
+  };
 }
 
 export function isSystifyManagedSandbox(labels: Record<string, string> | undefined): boolean {

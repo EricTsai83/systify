@@ -12,6 +12,7 @@ import {
   isLeaseActive,
   throwOperationAlreadyInProgress,
 } from "../lib/rateLimit";
+import { getSandboxFeatureGate } from "../lib/sandboxFeatureFlag";
 
 async function getActiveChatJobForThread(ctx: MutationCtx, threadId: Id<"threads">, now: number) {
   const jobs = await ctx.db
@@ -63,6 +64,16 @@ export const sendMessage = mutation({
       throw new Error(`'${mode}' mode requires an attached repository.`);
     }
     if (mode === "sandbox") {
+      // Plan 04: re-check the feature gate at the write boundary. The
+      // selector already disables sandbox mode for viewers outside the
+      // allowlist, but a stale UI / a bypassed selector / a direct mutation
+      // call would otherwise still queue a sandbox-mode reply. The gate
+      // result is a value (not a throw) so we can surface a tooltip-quality
+      // message verbatim.
+      const sandboxGate = getSandboxFeatureGate(identity.tokenIdentifier);
+      if (!sandboxGate.enabled) {
+        throw new Error(sandboxGate.tooltip);
+      }
       // `repository` is guaranteed non-null by the previous check, but TS
       // can't narrow across the `||` without restating it.
       const repo = repository!;

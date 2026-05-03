@@ -86,15 +86,52 @@ describe("buildSystemPrompt", () => {
     expect(prompt.toLowerCase()).toMatch(/sole source of truth|only source/);
   });
 
-  test("sandbox prompt acknowledges the absence of file/exec tools in this version", () => {
+  test("sandbox prompt names the read_file and list_dir tools (Plan 04)", () => {
     const prompt = buildSystemPrompt("sandbox");
 
-    // The model must know it cannot literally read files or run commands
-    // in this version, otherwise it will fabricate "I checked X and saw
-    // Y" output. We assert a negation near "tool" rather than pinning a
-    // specific phrasing so future polish doesn't break the invariant.
-    expect(prompt.toLowerCase()).toContain("tool");
-    expect(prompt).toMatch(/(?:no|not|don't|do not|without)[^.]*tool/i);
+    // Plan 04 wires real `read_file` / `list_dir` tools. The system prompt
+    // must name them so the model picks them up — the AI SDK exposes the
+    // tool descriptions but the prompt's "USE THE TOOLS" framing is what
+    // actually gets the model to *prefer* tool calls over guessing from
+    // the artifact summaries.
+    expect(prompt).toContain("read_file");
+    expect(prompt).toContain("list_dir");
+  });
+
+  test("sandbox prompt teaches the structured error envelope shape", () => {
+    const prompt = buildSystemPrompt("sandbox");
+
+    // Tool errors are *values*, not throws (see `sandboxTools.ts`). The
+    // model needs to know an `{ ok: false, errorCode, message }` envelope
+    // is signal — not a fatal failure to retry blindly. Without this hint
+    // the model often loops on the same bad path or surrenders.
+    expect(prompt).toContain("errorCode");
+    // Specific error codes the validator emits should appear so the
+    // model can react with named handling.
+    expect(prompt).toMatch(/path_outside_repo|invalid_path/);
+  });
+
+  test("sandbox prompt enforces a per-reply citation contract pointing at file:line", () => {
+    const prompt = buildSystemPrompt("sandbox");
+
+    // The model now knows exact line numbers (it can `read_file` to find
+    // them), so the citation contract is stricter than docs mode's
+    // artifact-level `[A#]` — every claim must point at `[path:line-line]`.
+    expect(prompt).toMatch(/\[path[^\]]*line[^\]]*\]/i);
+    // The "Unverified:" prefix is the bargain we make with the model when
+    // a claim cannot be backed by a tool result; tested separately so
+    // the contract isn't accidentally dropped.
+    expect(prompt).toContain("Unverified:");
+  });
+
+  test("sandbox prompt mentions the per-reply tool-call budget so the model knows when to stop", () => {
+    const prompt = buildSystemPrompt("sandbox");
+
+    // The literal `8` mirrors `SANDBOX_STEP_BUDGET` in `generation.ts`.
+    // The two values must agree — if the budget changes, this assertion
+    // will catch the prompt drift that would otherwise silently mislead
+    // the model. (Plan 11 turns this into a per-step injected counter.)
+    expect(prompt).toMatch(/at most 8/);
   });
 
   test("sandbox prompt does not promise future product capability (no roadmap leak)", () => {

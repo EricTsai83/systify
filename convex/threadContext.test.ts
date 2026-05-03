@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 
-import { describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { convexTest } from "convex-test";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -10,6 +10,66 @@ const modules = import.meta.glob("./**/*.ts");
 
 const OWNER = "user|thread-context-test";
 const OTHER_OWNER = "user|thread-context-other";
+
+/**
+ * Snapshot the sandbox feature-gate env vars before each test and restore
+ * them after, optionally seeding a starting value (or explicitly clearing
+ * them). Centralizing this avoids drift between describe blocks that all
+ * need the same save/restore discipline but differ in *what* the test body
+ * starts from — open-gate suites pre-set "true" + "*", closed-gate suites
+ * delete both, per-test customizations layer on top of the cleared state.
+ *
+ * Pass `undefined` to delete the var on entry; pass a string to set it.
+ */
+function withSandboxEnvSnapshot(initial: {
+  enabled?: string;
+  allowlist?: string;
+}) {
+  let priorEnabled: string | undefined;
+  let priorAllowlist: string | undefined;
+
+  beforeEach(() => {
+    priorEnabled = process.env.SANDBOX_MODE_ENABLED;
+    priorAllowlist = process.env.SANDBOX_BETA_ALLOWLIST;
+    if (initial.enabled === undefined) {
+      delete process.env.SANDBOX_MODE_ENABLED;
+    } else {
+      process.env.SANDBOX_MODE_ENABLED = initial.enabled;
+    }
+    if (initial.allowlist === undefined) {
+      delete process.env.SANDBOX_BETA_ALLOWLIST;
+    } else {
+      process.env.SANDBOX_BETA_ALLOWLIST = initial.allowlist;
+    }
+  });
+
+  afterEach(() => {
+    if (priorEnabled === undefined) {
+      delete process.env.SANDBOX_MODE_ENABLED;
+    } else {
+      process.env.SANDBOX_MODE_ENABLED = priorEnabled;
+    }
+    if (priorAllowlist === undefined) {
+      delete process.env.SANDBOX_BETA_ALLOWLIST;
+    } else {
+      process.env.SANDBOX_BETA_ALLOWLIST = priorAllowlist;
+    }
+  });
+}
+
+/**
+ * The Plan-04 feature gate is consulted inside `enrichThreadContext` via
+ * `getSandboxFeatureGate(viewer)`, which reads `process.env`. The
+ * pre-existing test suite was written before the gate existed and
+ * therefore expects the resolver to return its lifecycle-derived shape;
+ * to keep those tests honest about *that* contract (separate from the
+ * gate), we open the gate for the duration of every test in this file
+ * via the wildcard allowlist. Closed-gate behavior is exercised in the
+ * dedicated describe block at the bottom.
+ */
+function withSandboxFeatureGateOpen() {
+  withSandboxEnvSnapshot({ enabled: "true", allowlist: "*" });
+}
 
 interface SeedOptions {
   withRepository?: boolean;
@@ -84,6 +144,8 @@ async function seedThread(
 }
 
 describe("getThreadContext (internal)", () => {
+  withSandboxFeatureGateOpen();
+
   test("returns null when the thread does not exist", async () => {
     const t = convexTest(schema, modules);
     const fakeId = await t.run(async (ctx) => {
@@ -216,6 +278,8 @@ describe("getThreadContext (internal)", () => {
 });
 
 describe("getThreadContext (public, owner-scoped)", () => {
+  withSandboxFeatureGateOpen();
+
   test("rejects access from a different owner", async () => {
     const t = convexTest(schema, modules);
     const { threadId } = await seedThread(t, {
@@ -243,5 +307,74 @@ describe("getThreadContext (public, owner-scoped)", () => {
     expect(publicResult).not.toBeNull();
     expect(publicResult!.thread._id).toBe(internalResult!.thread._id);
     expect(publicResult!.chatModes).toEqual(internalResult!.chatModes);
+  });
+});
+
+/**
+ * Plan-04 sandbox feature-flag behavior at the thread-context boundary.
+ *
+ * The resolver tests in `chatModeResolver.test.ts` exercise the gate as a
+ * pure function. These tests close the loop by exercising the *env-driven*
+ * gate through the actual `internal.threadContext.getThreadContextInternal`
+ * call path — proof that `enrichThreadContext` reads the gate per-viewer
+ * and applies it.
+ */
+describe("getThreadContext sandbox feature gate", () => {
+  // Each test in this block starts from a *cleared* env so the per-test
+  // setting is the only signal — the snapshot helper restores any value the
+  // outer process had on entry.
+  withSandboxEnvSnapshot({});
+
+  test("flag off: ready sandbox no longer surfaces sandbox in availableModes", async () => {
+    // Default env state (flag unset) — even with a fully-eligible thread,
+    // sandbox mode must be hidden. The disabled tooltip explains the
+    // private-beta status; the user is not stuck without an explanation.
+    const t = convexTest(schema, modules);
+    const { threadId } = await seedThread(t, { withRepository: true, sandboxStatus: "ready" });
+
+    const result = await t.query(internal.threadContext.getThreadContextInternal, { threadId });
+
+    expect(result!.sandboxStatus).toBe("ready");
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
+    expect(result!.chatModes.disabledReasons.sandbox).toMatch(/private beta/i);
+  });
+
+  test("flag on + viewer in allowlist: ready sandbox is selectable end-to-end", async () => {
+    process.env.SANDBOX_MODE_ENABLED = "true";
+    process.env.SANDBOX_BETA_ALLOWLIST = OWNER;
+
+    const t = convexTest(schema, modules);
+    const { threadId } = await seedThread(t, {
+      withRepository: true,
+      sandboxStatus: "ready",
+      ownerTokenIdentifier: OWNER,
+    });
+
+    const result = await t.query(internal.threadContext.getThreadContextInternal, { threadId });
+
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs", "sandbox"]);
+    expect(result!.chatModes.disabledReasons).toEqual({});
+  });
+
+  test("flag on + viewer NOT in allowlist: tooltip explains the allowlist requirement", async () => {
+    // The internal query evaluates the gate against the *thread owner*
+    // (since there is no authenticated viewer in an internal query). With
+    // the owner left off the allowlist, the gate closes with the
+    // not_allowlisted tooltip — that is the per-viewer signal flowing
+    // through the same code the public query uses.
+    process.env.SANDBOX_MODE_ENABLED = "true";
+    process.env.SANDBOX_BETA_ALLOWLIST = "user|someone-else";
+
+    const t = convexTest(schema, modules);
+    const { threadId } = await seedThread(t, {
+      withRepository: true,
+      sandboxStatus: "ready",
+      ownerTokenIdentifier: OWNER,
+    });
+
+    const result = await t.query(internal.threadContext.getThreadContextInternal, { threadId });
+
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
+    expect(result!.chatModes.disabledReasons.sandbox).toMatch(/allowlist/i);
   });
 });
