@@ -76,6 +76,79 @@ describe("chat history ordering", () => {
     expect(messages.at(-1)?.content).toBe("");
     expect(context.messages.at(-1)?.content).toBe("message-3");
   });
+
+  test("listMessages returns assistant replies from every mode the thread has been in", async () => {
+    // Plan 03 contract divergence: the cross-mode assistant filter only
+    // applies to the LLM reply context (`getReplyContext`). The chat panel
+    // still has to render every message the user can see in their thread,
+    // including replies generated under a previous mode — otherwise
+    // switching modes would visually erase part of the conversation, which
+    // is the opposite of the desired UX. This test locks the UI side of
+    // the contract so a future refactor that "unifies" the two paths
+    // doesn't silently regress UI history.
+    const ownerTokenIdentifier = "user|chat-history-cross-mode";
+    const t = convexTest(schema, modules);
+
+    const threadId = await t.run(async (ctx) => {
+      const threadId = await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Cross-mode UI thread",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+
+      // discuss-mode round followed by a sandbox-mode round.
+      await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "discuss",
+        content: "discuss-question",
+      });
+      vi.advanceTimersByTime(1_000);
+      await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "assistant",
+        status: "completed",
+        mode: "discuss",
+        content: "discuss-answer",
+      });
+      vi.advanceTimersByTime(1_000);
+      await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "sandbox",
+        content: "sandbox-question",
+      });
+      vi.advanceTimersByTime(1_000);
+      await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "assistant",
+        status: "completed",
+        mode: "sandbox",
+        content: "sandbox-answer",
+      });
+
+      return threadId;
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const messages = await viewer.query(api.chat.threads.listMessages, { threadId });
+
+    // Every message — including the cross-mode `discuss` assistant reply —
+    // is visible to the UI, in chronological order.
+    expect(messages.map((message) => ({ role: message.role, mode: message.mode, content: message.content }))).toEqual([
+      { role: "user", mode: "discuss", content: "discuss-question" },
+      { role: "assistant", mode: "discuss", content: "discuss-answer" },
+      { role: "user", mode: "sandbox", content: "sandbox-question" },
+      { role: "assistant", mode: "sandbox", content: "sandbox-answer" },
+    ]);
+  });
 });
 
 async function seedThreadWithMessages(

@@ -86,6 +86,17 @@ async function loadLatestDocsArtifacts(ctx: Pick<QueryCtx, "db">, repositoryId: 
   return allArtifacts.slice(0, DOCS_ARTIFACTS_TOTAL_LIMIT);
 }
 
+/**
+ * Load the most recent `limit` messages on a thread for UI display.
+ *
+ * Returned in ascending creation-time order. This function intentionally
+ * applies **no** mode-aware filtering: the chat panel must render every
+ * message the user sent or received, including replies generated under a
+ * previous mode, so the user can scroll back through the full thread
+ * history. Mode-aware filtering for the LLM reply context lives in
+ * `loadReplyContextMessages` below — that's the only call site where
+ * cross-mode assistant replies must be hidden from the model.
+ */
 export async function loadRecentMessages(ctx: Pick<QueryCtx, "db">, threadId: Id<"threads">, limit: number) {
   const recentMessages = await ctx.db
     .query("messages")
@@ -94,6 +105,82 @@ export async function loadRecentMessages(ctx: Pick<QueryCtx, "db">, threadId: Id
     .take(limit);
 
   return recentMessages.reverse();
+}
+
+/**
+ * Plan 03: how aggressively `loadReplyContextMessages` over-fetches the
+ * `by_threadId` index before applying the cross-mode + empty-content
+ * filters. With `MAX_CONTEXT_MESSAGES = 20` this caps the index read at
+ * 80 rows per reply — small enough to keep transaction read budget tight,
+ * large enough that a typical mode-switch (a handful of stale cross-mode
+ * assistant rows + an aborted stream placeholder) still leaves the
+ * post-filter window at the full 20-row cap. The factor lives as a named
+ * constant so the trade-off is auditable in code review rather than
+ * buried as a magic number.
+ *
+ * If a thread is so heavy on cross-mode replies that even 80 rows can't
+ * yield 20 same-mode survivors, the model sees a smaller window — that's
+ * the correct degradation: the older "same-mode" turns are by then so far
+ * back in history they aren't really "recent context" anyway.
+ */
+const REPLY_CONTEXT_OVERFETCH_FACTOR = 4;
+
+/**
+ * Load up to `limit` recent messages eligible for the LLM reply context.
+ *
+ * Plan 03 contract — applied while iterating from newest-first:
+ *   1. **Cross-mode assistant filter.** A previous mode's hypothetical
+ *      answer must not contaminate the new mode's reply, so assistant rows
+ *      whose `mode` differs from the queued reply's `effectiveMode` are
+ *      dropped. User / tool / system rows are kept regardless of mode so
+ *      cross-mode conversational continuity (the user's earlier questions)
+ *      survives a mode switch.
+ *   2. **Empty-content filter.** Stream-aborted assistant rows (and any
+ *      other rows whose `content` is whitespace-only) carry no useful
+ *      signal and must not enter the LLM context as blank turns. This is
+ *      handled here — alongside the mode filter — so the cap math below is
+ *      computed against post-filter survivors, not raw rows.
+ *
+ * The function over-fetches `limit * REPLY_CONTEXT_OVERFETCH_FACTOR` rows
+ * from the `by_threadId` index and then keeps the newest `limit` survivors.
+ * This is the robust choice over a naive `take(limit)` followed by
+ * filtering: a `take(limit)` could be entirely consumed by stale cross-mode
+ * rows in heavy mode-switching threads, leaving the model with little or
+ * no recent context. The over-fetch is bounded by a small constant factor
+ * so transaction read work stays tight.
+ *
+ * Returned rows are in ascending creation-time order to match the
+ * downstream prompt builder's expectation of a chronologically-ordered
+ * conversation.
+ */
+async function loadReplyContextMessages(
+  ctx: Pick<QueryCtx, "db">,
+  threadId: Id<"threads">,
+  effectiveMode: ChatMode,
+  limit: number,
+) {
+  const overfetchLimit = limit * REPLY_CONTEXT_OVERFETCH_FACTOR;
+  const candidateMessages = await ctx.db
+    .query("messages")
+    .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
+    .order("desc")
+    .take(overfetchLimit);
+
+  const filtered = candidateMessages.filter((message) => {
+    if (message.content.trim().length === 0) {
+      return false;
+    }
+    if (message.role === "assistant" && message.mode !== effectiveMode) {
+      return false;
+    }
+    return true;
+  });
+
+  // `candidateMessages` is in descending creation-time order, so `filtered`
+  // preserves that order; the newest `limit` survivors are the first
+  // `limit` items. Reverse to hand back ascending order for the prompt
+  // builder.
+  return filtered.slice(0, limit).reverse();
 }
 
 async function loadCandidateChunks(ctx: Pick<QueryCtx, "db">, importId: Id<"imports">, question: string) {
@@ -172,9 +259,14 @@ export const getReplyContext = internalQuery({
     }
     const effectiveMode = userMessage.mode ?? thread.mode;
 
-    const messages = (await loadRecentMessages(ctx, args.threadId, MAX_CONTEXT_MESSAGES + 1))
-      .filter((message) => message.content.trim().length > 0)
-      .slice(-MAX_CONTEXT_MESSAGES);
+    // Plan 03: cross-mode filtering + empty-content filtering happen inside
+    // `loadReplyContextMessages` so the helper can over-fetch a bounded
+    // multiple of the cap and only then trim to MAX_CONTEXT_MESSAGES. Doing
+    // both filters here in the caller would require re-applying
+    // `take(MAX_CONTEXT_MESSAGES + 1)` semantics on top of an already-truncated
+    // window, which silently shrinks the LLM-context view whenever a mode
+    // switch left stale assistant rows in the most recent `limit` slots.
+    const messages = await loadReplyContextMessages(ctx, args.threadId, effectiveMode, MAX_CONTEXT_MESSAGES);
 
     // `discuss` mode is "no repo, no sandbox" by design (per the schema/resolver
     // contract): even if the thread has a repositoryId attached, the user has
