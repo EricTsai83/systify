@@ -1,6 +1,6 @@
 /**
- * ChatModeResolver — pure resolver mapping (hasAttachedRepo, sandboxStatus)
- * to (availableModes, defaultMode, disabledReasons).
+ * ChatModeResolver — pure resolver mapping (hasAttachedRepo, sandboxStatus,
+ * sandboxFeatureGate) to (availableModes, defaultMode, disabledReasons).
  *
  * Single source of truth for chat-mode availability used by both the UI mode
  * selector and the `chat.sendMessage` / `chat.createThread` validators on the
@@ -27,7 +27,18 @@
  *     promised by US 14 ("disabled modes show a tooltip explaining how to
  *     unlock them"). A mode that is in `disabledReasons` is, by construction,
  *     not in `availableModes`.
+ *   - The Plan-04 feature gate (`sandboxFeatureGate`) is layered *on top* of
+ *     the (repo, sandbox-status) resolution: when the gate is closed the
+ *     resolver removes `sandbox` from `availableModes` regardless of the
+ *     underlying sandbox lifecycle. The gate's tooltip wins over the lifecycle
+ *     tooltip because "this mode is in private beta" is the more actionable
+ *     signal — provisioning a sandbox would not unlock the mode for a viewer
+ *     who isn't on the allowlist. Env reads stay at the *call site*; the
+ *     resolver only consumes the precomputed gate so it remains a pure
+ *     function (trivially testable, no `process.env` coupling).
  */
+
+import type { SandboxFeatureGate } from "./lib/sandboxFeatureFlag";
 
 export type ChatMode = "discuss" | "docs" | "sandbox";
 
@@ -38,6 +49,14 @@ export interface ChatModeResolution {
   defaultMode: ChatMode;
   disabledReasons: Partial<Record<ChatMode, string>>;
 }
+
+/**
+ * Statically-open gate for callers that have already established the feature
+ * is on (e.g. resolver tests that focus on the underlying repo / sandbox
+ * lifecycle logic, or one-off scripts in dev). Real per-viewer evaluation
+ * lives in `lib/sandboxFeatureFlag.ts`.
+ */
+export const OPEN_SANDBOX_FEATURE_GATE: SandboxFeatureGate = { enabled: true };
 
 // User-facing copy uses the new mode labels — "Design Docs" for `docs`, and
 // "Sandbox" for `sandbox` (kept unchanged because it is already the shared
@@ -56,7 +75,54 @@ export function getDefaultThreadMode(hasAttachedRepo: boolean): ChatMode {
   return hasAttachedRepo ? "docs" : "discuss";
 }
 
-export function resolveChatModes(hasAttachedRepo: boolean, sandboxStatus: ChatModeSandboxStatus): ChatModeResolution {
+/**
+ * Apply the Plan-04 sandbox feature gate to an already-resolved
+ * `ChatModeResolution`. Idempotent and safe to call when the gate is open
+ * (returns the input unchanged).
+ *
+ * When the gate is closed and `sandbox` *was* available, this function
+ * removes it from `availableModes` and writes the gate's tooltip into
+ * `disabledReasons.sandbox` — overriding any lifecycle-derived tooltip
+ * because the gate is a stronger signal (the mode is unavailable to this
+ * viewer regardless of sandbox status).
+ *
+ * The `defaultMode` invariant ("default is always one of `availableModes`")
+ * is preserved by the upstream resolver: `defaultMode` is never `sandbox`
+ * (sandbox is opt-in), so removing `sandbox` from `availableModes` cannot
+ * orphan the default.
+ */
+function applySandboxFeatureGate(
+  resolution: ChatModeResolution,
+  gate: SandboxFeatureGate,
+): ChatModeResolution {
+  if (gate.enabled) {
+    return resolution;
+  }
+  // Filter out sandbox from availableModes (no-op if it wasn't there) and
+  // replace any lifecycle tooltip with the gate's tooltip.
+  return {
+    availableModes: resolution.availableModes.filter((mode) => mode !== "sandbox"),
+    defaultMode: resolution.defaultMode,
+    disabledReasons: {
+      ...resolution.disabledReasons,
+      sandbox: gate.tooltip,
+    },
+  };
+}
+
+export function resolveChatModes(
+  hasAttachedRepo: boolean,
+  sandboxStatus: ChatModeSandboxStatus,
+  sandboxFeatureGate: SandboxFeatureGate,
+): ChatModeResolution {
+  const baseline = resolveChatModesIgnoringFeatureGate(hasAttachedRepo, sandboxStatus);
+  return applySandboxFeatureGate(baseline, sandboxFeatureGate);
+}
+
+function resolveChatModesIgnoringFeatureGate(
+  hasAttachedRepo: boolean,
+  sandboxStatus: ChatModeSandboxStatus,
+): ChatModeResolution {
   if (!hasAttachedRepo) {
     return {
       availableModes: ["discuss"],

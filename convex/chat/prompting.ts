@@ -27,11 +27,13 @@ function getUILanguage(_context: ReplyContext): UILanguage {
  *   - `docs` (DB literal): artifact-grounded. The supplied artifacts (ADRs,
  *     diagrams, deep analyses, …) are the *only* source of truth; the model
  *     must say "the artifacts are silent on that" rather than guess.
- *   - `sandbox` (DB literal): in v1 the prompt makes clear the model has no
- *     direct file-reading or shell-execution capability and must answer using
- *     only the artifacts and code excerpts present in the user prompt; it
- *     also flags claims it would normally verify against the live source so
- *     the user knows which parts are unverified.
+ *   - `sandbox` (DB literal, Plan 04): live-source-grounded. The model is
+ *     given two read-only file-system tools (`read_file` / `list_dir`) that
+ *     return the actual contents of the attached sandbox. The prompt
+ *     instructs the model to *use the tools* before claiming anything about
+ *     specific files / line ranges, and to be honest when a tool call
+ *     returns an error envelope (`{ ok: false, errorCode, message }`) — that
+ *     is signal, not failure.
  *
  * Two style invariants worth preserving across all three prompts (and tested
  * in `chat-prompting.test.ts`):
@@ -68,11 +70,35 @@ const SYSTEM_PROMPT_DOCS = [
   "Be concrete, mention likely boundaries, and state uncertainty when evidence is weak.",
 ].join(" ");
 
+/**
+ * Plan 04 — sandbox prompt. The model now has two read-only tools available:
+ *
+ *   - `read_file({ path })` returns the UTF-8 contents of a file under the
+ *     repository root, capped at 64 KiB.
+ *   - `list_dir({ path })` returns the entries (dirs first, alphabetical) of
+ *     a directory under the repository root, capped at 200 entries.
+ *
+ * The prompt deliberately:
+ *
+ *   - Tells the model the repo root is the implicit anchor (so it doesn't
+ *     try absolute paths the path validator will reject anyway).
+ *   - Names the structured error envelope shape so the model knows that
+ *     `{ ok: false, errorCode, message }` is a successful tool *call* with
+ *     a useful error to *report* (not a fatal failure to retry blindly).
+ *   - Reinforces a `[path:line-range]` citation habit — the model is now in
+ *     a position to know exact line numbers, so unverified claims should
+ *     stand out.
+ *   - Caps tool usage to the step budget configured in `generation.ts`
+ *     (currently 8) so the model knows when to stop drilling and start
+ *     answering. The literal number stays in the prompt builder rather
+ *     than the action so the contract is auditable in one place.
+ */
 const SYSTEM_PROMPT_SANDBOX = [
-  "You are a senior architect with read-only knowledge of the attached project's source tree.",
-  "In this version, you do not have file-reading or shell-execution tools available, so answer using only the design artifacts and code excerpts provided in the user prompt.",
-  "Explicitly flag any claim you would normally verify by inspecting a file or running a command, so the user knows which parts are unverified rather than directly checked.",
-  "Be concrete, cite specific files and line ranges when the provided context contains them, and state uncertainty when evidence is weak.",
+  "You are a senior architect with read-only access to the attached project's live source tree via two tools: `read_file({ path })` and `list_dir({ path })`. Paths are always relative to the repository root.",
+  "When the user asks about specific files, modules, line ranges, or behavior, USE THE TOOLS to verify rather than guess from the artifact summaries. A short `list_dir` followed by a targeted `read_file` is almost always the right opening move.",
+  "Each tool returns either `{ ok: true, ... }` or `{ ok: false, errorCode, message }`. Treat error envelopes as ordinary information — surface the errorCode to the user when it is meaningful (e.g. `path_outside_repo`, `invalid_path`), and try a corrected path instead of repeating the same call.",
+  "Cite every claim about the codebase as `[path/to/file.ts:line-line]` so the user can jump to the exact source you read. If you state something you did not verify with a tool, prefix it with `Unverified:`.",
+  "Stay within the per-reply tool budget (you have at most 8 tool calls). When the budget is nearly spent, stop drilling and write the best answer you can with what you have.",
 ].join(" ");
 
 /**
@@ -167,6 +193,33 @@ export function buildHeuristicAnswer(
   relevantChunks: Array<{ path: string; summary: string; content: string }>,
 ) {
   const language = getUILanguage(context);
+
+  // Plan 04 — sandbox-mode degraded path. When `OPENAI_API_KEY` is missing
+  // we cannot run the tool loop at all (the tools fire from inside the AI
+  // SDK's streamText loop and exist purely to inform the model's next
+  // turn). Pretending to use them — by, say, returning the artifact
+  // summaries instead — would be the worst-of-both: the user sees a
+  // confident answer that didn't actually consult the live source. Surface
+  // the gap explicitly and recommend the closest fallback (`docs`/General).
+  if (context.mode === "sandbox") {
+    const sandboxNoKeyMessages = {
+      en: [
+        "`OPENAI_API_KEY` is not configured, so I cannot run the live sandbox tools (`read_file` / `list_dir`) needed to answer in Sandbox mode.",
+        "",
+        `Your question: ${question}`,
+        "",
+        "Switch to an artifact-grounded mode (Design Docs) for answers based on your existing analyses, or to General Chat for open-ended discussion. Configure `OPENAI_API_KEY` to re-enable Sandbox mode.",
+      ],
+      zh: [
+        "目前沒有設定 `OPENAI_API_KEY`，無法在 Sandbox 模式下呼叫 `read_file` / `list_dir` 工具來實際讀取沙箱裡的程式碼。",
+        "",
+        `你的問題：${question}`,
+        "",
+        "請改用 Design Docs 模式以你的設計文件作答，或切到 General Chat 做一般討論。要恢復 Sandbox 模式，請設定 `OPENAI_API_KEY`。",
+      ],
+    };
+    return sandboxNoKeyMessages[language].join("\n");
+  }
 
   const noRepoNoKeyMessages = {
     en: [
