@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
-import { internalMutation, mutation, query } from "../_generated/server";
+import type { Id } from "../_generated/dataModel";
+import { internalMutation, mutation, query, type MutationCtx } from "../_generated/server";
 import { getDefaultThreadMode } from "../chatModeResolver";
 import { requireViewerIdentity } from "../lib/auth";
 import { MAX_STREAM_CHUNKS_PER_PASS, MAX_VISIBLE_MESSAGES } from "../lib/constants";
@@ -224,62 +225,99 @@ export const deleteThread = mutation({
     if (!thread || thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
       throw new Error("Thread not found.");
     }
-
-    const messages = await ctx.db
-      .query("messages")
-      .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
-      .take(500);
-    for (const message of messages) {
-      // Plan 06 — drain orphan tool-call events ahead of deleting the
-      // message, otherwise the live `getMessageToolCallEvents` subscription
-      // would hold rows referencing a now-missing parent. Bounded
-      // per-message (≤ step budget × 2 by construction).
-      await drainMessageToolCallEvents(ctx, message._id);
-      await ctx.db.delete(message._id);
-    }
-
-    // Drain message streams in this thread, but cap total chunk-row deletions
-    // per invocation. Without a budget, one mutation could try to delete every
-    // chunk across every stream in the thread (e.g. 500 streams * a long
-    // uncompacted tail), which can blow past Convex's per-mutation
-    // read/write limits. Streams we don't get to are picked up by
-    // cleanupOrphanedMessageStreams on the follow-up scheduler tick.
-    const streams = await ctx.db
-      .query("messageStreams")
-      .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
-      .take(500);
-
-    let totalChunksProcessed = 0;
-    let streamBudgetExhausted = false;
-    for (const stream of streams) {
-      if (totalChunksProcessed >= MAX_STREAM_CHUNKS_PER_PASS) {
-        streamBudgetExhausted = true;
-        break;
-      }
-      totalChunksProcessed += await deleteMessageStreamState(ctx, stream._id);
-    }
-
-    if (thread.repositoryId) {
-      const repository = await ctx.db.get(thread.repositoryId);
-      if (repository && repository.defaultThreadId === args.threadId) {
-        await ctx.db.patch(thread.repositoryId, { defaultThreadId: undefined });
-      }
-    }
-
-    await ctx.db.delete(args.threadId);
-
-    if (messages.length === 500) {
-      await ctx.scheduler.runAfter(0, internal.chat.threads.cleanupOrphanedMessages, {
-        threadId: args.threadId,
-      });
-    }
-    if (streamBudgetExhausted || streams.length === 500) {
-      await ctx.scheduler.runAfter(0, internal.chat.threads.cleanupOrphanedMessageStreams, {
-        threadId: args.threadId,
-      });
-    }
+    // Delegate the heavy lifting to the shared helper. The same helper
+    // backs `deleteThreadContinuation` (an internal mutation) so we can
+    // reschedule across mutations when a single transaction can't fit
+    // the full message + stream + tool-event delete budget.
+    await deleteThreadImpl(ctx, args);
   },
 });
+
+/**
+ * Continuation hook for `deleteThread`. The public mutation does the
+ * ownership check up front and then calls the same helper this mutation
+ * runs; if the work spilled past the per-mutation write budget, we
+ * reschedule ourselves (not the public `deleteThread`, which can't be
+ * referenced via `internal.*` and would re-run the auth check without an
+ * identity context).
+ */
+export const deleteThreadContinuation = internalMutation({
+  args: {
+    threadId: v.id("threads"),
+  },
+  handler: async (ctx, args) => {
+    await deleteThreadImpl(ctx, args);
+  },
+});
+
+async function deleteThreadImpl(ctx: MutationCtx, args: { threadId: Id<"threads"> }): Promise<void> {
+  const thread = await ctx.db.get(args.threadId);
+  if (!thread) {
+    // Already deleted — either a concurrent caller finished the job or a
+    // continuation tick fired after the row went away. Nothing to do.
+    return;
+  }
+
+  const messages = await ctx.db
+    .query("messages")
+    .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
+    .take(500);
+  for (const message of messages) {
+    // Plan 06 — drain orphan tool-call events ahead of deleting the
+    // message, otherwise the live `getMessageToolCallEvents` subscription
+    // would hold rows referencing a now-missing parent. Bounded
+    // per-message (≤ MAX_TOOL_CALL_EVENTS_PER_MESSAGE by construction).
+    await drainMessageToolCallEvents(ctx, message._id);
+    await ctx.db.delete(message._id);
+  }
+
+  if (messages.length === 500) {
+    // Each iteration above can issue up to MAX_TOOL_CALL_EVENTS_PER_MESSAGE
+    // event-delete writes plus the message-row delete; 500 messages can
+    // exceed Convex's per-mutation write budget. Mirror the
+    // `cleanupOrphanedMessageStreams` checkpoint pattern: schedule a
+    // continuation on a fresh transaction and return early so we don't
+    // also try to delete streams + the thread row in this mutation.
+    await ctx.scheduler.runAfter(0, internal.chat.threads.deleteThreadContinuation, args);
+    return;
+  }
+
+  // Drain message streams in this thread, but cap total chunk-row deletions
+  // per invocation. Without a budget, one mutation could try to delete every
+  // chunk across every stream in the thread (e.g. 500 streams * a long
+  // uncompacted tail), which can blow past Convex's per-mutation
+  // read/write limits. Streams we don't get to are picked up by
+  // cleanupOrphanedMessageStreams on the follow-up scheduler tick.
+  const streams = await ctx.db
+    .query("messageStreams")
+    .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
+    .take(500);
+
+  let totalChunksProcessed = 0;
+  let streamBudgetExhausted = false;
+  for (const stream of streams) {
+    if (totalChunksProcessed >= MAX_STREAM_CHUNKS_PER_PASS) {
+      streamBudgetExhausted = true;
+      break;
+    }
+    totalChunksProcessed += await deleteMessageStreamState(ctx, stream._id);
+  }
+
+  if (thread.repositoryId) {
+    const repository = await ctx.db.get(thread.repositoryId);
+    if (repository && repository.defaultThreadId === args.threadId) {
+      await ctx.db.patch(thread.repositoryId, { defaultThreadId: undefined });
+    }
+  }
+
+  await ctx.db.delete(args.threadId);
+
+  if (streamBudgetExhausted || streams.length === 500) {
+    await ctx.scheduler.runAfter(0, internal.chat.threads.cleanupOrphanedMessageStreams, {
+      threadId: args.threadId,
+    });
+  }
+}
 
 export const cleanupOrphanedMessages = internalMutation({
   args: {

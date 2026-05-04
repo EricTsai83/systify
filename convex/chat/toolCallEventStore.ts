@@ -84,10 +84,7 @@ export async function loadAllToolCallEventsByMessage(
  *
  * Idempotent: calling on a message with no events is a no-op.
  */
-export async function drainMessageToolCallEvents(
-  ctx: MutationCtx,
-  messageId: Id<"messages">,
-): Promise<number> {
+export async function drainMessageToolCallEvents(ctx: MutationCtx, messageId: Id<"messages">): Promise<number> {
   let drained = 0;
   while (true) {
     const batch = await ctx.db
@@ -116,10 +113,7 @@ export async function drainMessageToolCallEvents(
  * `messageStreamChunks` invariant the rest of the streaming code relies
  * on).
  */
-export async function nextToolCallEventSequence(
-  ctx: DbCtx,
-  messageId: Id<"messages">,
-): Promise<number> {
+export async function nextToolCallEventSequence(ctx: DbCtx, messageId: Id<"messages">): Promise<number> {
   const last = await ctx.db
     .query("messageToolCallEvents")
     .withIndex("by_messageId_and_sequence", (q) => q.eq("messageId", messageId))
@@ -147,9 +141,7 @@ export async function nextToolCallEventSequence(
  * the resulting array reflects actual call order even when events arrive
  * interleaved on the AI SDK stream.
  */
-export function foldToolCallEvents(
-  events: ReadonlyArray<Doc<"messageToolCallEvents">>,
-): ToolCallTraceEntry[] {
+export function foldToolCallEvents(events: ReadonlyArray<Doc<"messageToolCallEvents">>): ToolCallTraceEntry[] {
   if (events.length === 0) {
     return [];
   }
@@ -178,7 +170,9 @@ export function foldToolCallEvents(
   return ordered.map(([toolCallId, slot]) => {
     const startEvent = slot.start;
     const endEvent = slot.end;
-    const startedAt = startEvent?.occurredAt ?? endEvent?.occurredAt ?? 0;
+    const startedAt =
+      startEvent?.occurredAt ??
+      (endEvent && startEvent === undefined ? Math.max(0, endEvent.occurredAt - 1) : (endEvent?.occurredAt ?? 0));
     const endedAt = endEvent?.occurredAt ?? startedAt;
     return {
       toolCallId,

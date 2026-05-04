@@ -155,10 +155,7 @@ export const generateAssistantReply = internalAction({
       //     always present when we look it up.
       //   - The action is the only writer for this assistant message, so
       //     in-process state is the source of truth for the run.
-      const toolCallMap = new Map<
-        string,
-        { toolName: string; inputSummary: string; startedAt: number }
-      >();
+      const toolCallMap = new Map<string, { toolName: string; inputSummary: string; startedAt: number }>();
 
       const response = streamText({
         model: openai(modelName),
@@ -254,6 +251,11 @@ export const generateAssistantReply = internalAction({
             const occurredAt = Date.now();
             const toolCall = toolCallMap.get(part.toolCallId);
             const errorMessage = part.error instanceof Error ? part.error.message : String(part.error);
+            // Compute once so the persisted `outputSummary` and the
+            // observability payload share the same redacted text — keeps
+            // logs free of upstream HTTP bodies / secrets that the SDK
+            // may have surfaced inside the error.
+            const redactedError = redact(`Error: ${errorMessage}`).redacted;
 
             await ctx.runMutation(internal.chat.streaming.appendAssistantToolCallEvent, {
               assistantMessageId: args.assistantMessageId,
@@ -266,7 +268,7 @@ export const generateAssistantReply = internalAction({
               // recognizable prefix so the UI / LLM can distinguish it
               // from a normal `outputSummary`. Redact in case the SDK
               // surfaces an upstream HTTP body with secrets.
-              outputSummary: redact(`Error: ${errorMessage}`).redacted,
+              outputSummary: redactedError,
               errorCode: "tool_error",
               occurredAt,
             });
@@ -276,15 +278,14 @@ export const generateAssistantReply = internalAction({
               jobId: args.jobId,
               toolName: part.toolName,
               toolCallId: part.toolCallId,
-              error: errorMessage,
+              error: redactedError,
             });
             break;
           }
           case "error": {
             // Surface mid-stream provider errors. Re-throwing routes through
             // the outer catch which runs `failAssistantReply` exactly once.
-            const message =
-              part.error instanceof Error ? part.error.message : `Stream error: ${String(part.error)}`;
+            const message = part.error instanceof Error ? part.error.message : `Stream error: ${String(part.error)}`;
             throw new Error(message);
           }
           default:
@@ -349,9 +350,7 @@ export const generateAssistantReply = internalAction({
  * fallback (degrade to docs mode mid-session) once we have a redaction
  * layer to safely persist partial tool results.
  */
-async function buildSandboxTools(
-  sandboxTooling: NonNullable<ReplyContext["sandboxTooling"]>,
-): Promise<ToolSet> {
+async function buildSandboxTools(sandboxTooling: NonNullable<ReplyContext["sandboxTooling"]>): Promise<ToolSet> {
   const fsClient = await getSandboxFsClient(sandboxTooling.remoteId);
   return createSandboxTools(fsClient, sandboxTooling.repoPath);
 }

@@ -91,10 +91,7 @@ export function getDefaultThreadMode(hasAttachedRepo: boolean): ChatMode {
  * (sandbox is opt-in), so removing `sandbox` from `availableModes` cannot
  * orphan the default.
  */
-function applySandboxFeatureGate(
-  resolution: ChatModeResolution,
-  gate: SandboxFeatureGate,
-): ChatModeResolution {
+function applySandboxFeatureGate(resolution: ChatModeResolution, gate: SandboxFeatureGate): ChatModeResolution {
   if (gate.enabled) {
     return resolution;
   }

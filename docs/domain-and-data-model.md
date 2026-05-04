@@ -155,7 +155,7 @@ Chat data follows a standard thread/message model:
 Beyond the basics, `messages` carries a few optional fields that are only populated when the corresponding feature applies:
 
 - `citationMap`: numbered `[A#] -> artifactId` entries, written for `docs`-mode replies that cited design artifacts
-- `toolCalls`: frozen tool-call trace for sandbox-mode replies (folded from `messageToolCallEvents` at finalize time; see `chat-and-analysis-pipeline.md` for the lifecycle)
+- `toolCalls`: frozen tool-call trace for sandbox-mode replies (folded from `messageToolCallEvents` at terminalization: finalize or any terminal failure/recovery path; see `chat-and-analysis-pipeline.md` for the lifecycle)
 - `estimatedInputTokens` / `estimatedOutputTokens`: usage data from the model provider, when available
 
 All three stay unset on messages that do not need them, so older rows continue to validate without backfill.

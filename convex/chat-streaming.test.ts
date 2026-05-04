@@ -58,11 +58,7 @@ describe("chat streaming lifecycle", () => {
   test("appendAssistantStreamChunk refreshes the job lease once half the lease window has elapsed", async () => {
     const ownerTokenIdentifier = "user|stream-lease-refresh";
     const t = convexTest(schema, modules);
-    const { jobId, assistantMessageId } = await createStreamingFixture(
-      t,
-      ownerTokenIdentifier,
-      "stream-lease-refresh",
-    );
+    const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "stream-lease-refresh");
 
     // First chunk: stream.lastAppendedAt was set at fixture creation time
     // (now), so the threshold check sees a "recent refresh" and skips the
@@ -507,11 +503,7 @@ describe("chat tool-call event lifecycle (Plan 06)", () => {
     // and the events table must not leak.
     const ownerTokenIdentifier = "user|tool-events-partial";
     const t = convexTest(schema, modules);
-    const { jobId, assistantMessageId } = await createStreamingFixture(
-      t,
-      ownerTokenIdentifier,
-      "tool-events-partial",
-    );
+    const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "tool-events-partial");
 
     await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
       assistantMessageId,
@@ -552,11 +544,7 @@ describe("chat tool-call event lifecycle (Plan 06)", () => {
   test("recoverStaleChatJob folds and drains tool-call events on stale recovery", async () => {
     const ownerTokenIdentifier = "user|tool-events-stale";
     const t = convexTest(schema, modules);
-    const { jobId, assistantMessageId } = await createStreamingFixture(
-      t,
-      ownerTokenIdentifier,
-      "tool-events-stale",
-    );
+    const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "tool-events-stale");
 
     await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
       assistantMessageId,
@@ -597,11 +585,7 @@ describe("chat tool-call event lifecycle (Plan 06)", () => {
   test("appendAssistantToolCallEvent character-caps oversized summaries", async () => {
     const ownerTokenIdentifier = "user|tool-events-cap";
     const t = convexTest(schema, modules);
-    const { jobId, assistantMessageId } = await createStreamingFixture(
-      t,
-      ownerTokenIdentifier,
-      "tool-events-cap",
-    );
+    const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "tool-events-cap");
 
     const oversized = "x".repeat(2000);
     await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
@@ -666,11 +650,7 @@ describe("chat tool-call event lifecycle (Plan 06)", () => {
     const ownerTokenIdentifier = "user|tool-events-owner";
     const otherTokenIdentifier = "user|tool-events-stranger";
     const t = convexTest(schema, modules);
-    const { jobId, assistantMessageId } = await createStreamingFixture(
-      t,
-      ownerTokenIdentifier,
-      "tool-events-fence",
-    );
+    const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "tool-events-fence");
 
     await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
       assistantMessageId,

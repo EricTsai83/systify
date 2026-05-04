@@ -15,9 +15,7 @@ function makeArtifactId(suffix: string): Id<"artifacts"> {
   return `artifact_${suffix}` as unknown as Id<"artifacts">;
 }
 
-function makeContext(
-  overrides: Partial<ReplyContext> & { artifacts?: ReplyContext["artifacts"] } = {},
-): ReplyContext {
+function makeContext(overrides: Partial<ReplyContext> & { artifacts?: ReplyContext["artifacts"] } = {}): ReplyContext {
   return {
     ownerTokenIdentifier: "owner|test",
     mode: "docs",

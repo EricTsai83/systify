@@ -4,10 +4,7 @@ import { type MutationCtx, internalMutation, query } from "../_generated/server"
 import { requireViewerIdentity } from "../lib/auth";
 import { CHAT_JOB_LEASE_MS } from "../lib/rateLimit";
 import { logWarn } from "../lib/observability";
-import {
-  MAX_TOOL_CALL_EVENTS_PER_MESSAGE,
-  TOOL_CALL_EVENT_SUMMARY_MAX_CHARS,
-} from "../lib/constants";
+import { MAX_TOOL_CALL_EVENTS_PER_MESSAGE, TOOL_CALL_EVENT_SUMMARY_MAX_CHARS } from "../lib/constants";
 import {
   compactMessageStreamTail,
   deleteMessageStreamState,
@@ -166,9 +163,7 @@ export const getMessageToolCallEvents = query({
   handler: async (
     ctx,
     args,
-  ): Promise<
-    Array<ToolCallTraceEntry & { state: "running" | "completed" | "errored" }> | null
-  > => {
+  ): Promise<Array<ToolCallTraceEntry & { state: "running" | "completed" | "errored" }> | null> => {
     const identity = await requireViewerIdentity(ctx);
     const message = await ctx.db.get(args.assistantMessageId);
     if (!message) {

@@ -110,11 +110,7 @@ function extractPath(inputSummary: string): string | null {
   return extractInputField(inputSummary, "path");
 }
 
-function deriveStateFromPersisted(entry: {
-  startedAt: number;
-  endedAt: number;
-  errorCode?: string;
-}): ToolCallState {
+function deriveStateFromPersisted(entry: { startedAt: number; endedAt: number; errorCode?: string }): ToolCallState {
   if (entry.errorCode) return "errored";
   if (entry.endedAt > entry.startedAt) return "completed";
   return "running";
@@ -131,9 +127,7 @@ function formatDuration(ms: number): string {
 const TICKER_PREVIEW_MAX_CHARS = 60;
 
 function truncatePreview(value: string): string {
-  return value.length > TICKER_PREVIEW_MAX_CHARS
-    ? `${value.slice(0, TICKER_PREVIEW_MAX_CHARS)}…`
-    : value;
+  return value.length > TICKER_PREVIEW_MAX_CHARS ? `${value.slice(0, TICKER_PREVIEW_MAX_CHARS)}…` : value;
 }
 
 function tickerLabel(tool: NormalizedToolCall): string {
@@ -152,20 +146,14 @@ function tickerLabel(tool: NormalizedToolCall): string {
       // payload), fall back to a length-capped preview of the raw
       // summary so the ticker still has something to display.
       const command = extractInputField(tool.inputSummary, "command");
-      return command
-        ? `Running ${truncatePreview(command)}`
-        : `Running ${truncatePreview(tool.inputSummary)}`;
+      return command ? `Running ${truncatePreview(command)}` : `Running ${truncatePreview(tool.inputSummary)}`;
     }
     default:
       return path ? `${tool.toolName}: ${path}` : tool.toolName;
   }
 }
 
-export function ToolCallTrace({
-  messageId,
-  persistedToolCalls,
-  isStreaming,
-}: ToolCallTraceProps) {
+export function ToolCallTrace({ messageId, persistedToolCalls, isStreaming }: ToolCallTraceProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   // Live subscription. We pass `"skip"` for non-streaming messages so the
@@ -268,12 +256,8 @@ function ToolCallEntry({ tool }: { tool: NormalizedToolCall }) {
           {path ? <span className="truncate text-muted-foreground">{path}</span> : null}
         </div>
         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-          {tool.state === "running" ? (
-            <SpinnerGapIcon size={11} className="animate-spin" />
-          ) : null}
-          {tool.state === "errored" ? (
-            <WarningCircleIcon size={11} weight="bold" className="text-destructive" />
-          ) : null}
+          {tool.state === "running" ? <SpinnerGapIcon size={11} className="animate-spin" /> : null}
+          {tool.state === "errored" ? <WarningCircleIcon size={11} weight="bold" className="text-destructive" /> : null}
           {tool.state !== "running" ? <span>{formatDuration(durationMs)}</span> : null}
         </div>
       </div>
@@ -285,9 +269,7 @@ function ToolCallEntry({ tool }: { tool: NormalizedToolCall }) {
           {tool.outputSummary}
         </pre>
       ) : null}
-      {tool.errorCode ? (
-        <p className="mt-1.5 text-[10px] text-destructive">Error code: {tool.errorCode}</p>
-      ) : null}
+      {tool.errorCode ? <p className="mt-1.5 text-[10px] text-destructive">Error code: {tool.errorCode}</p> : null}
     </div>
   );
 }

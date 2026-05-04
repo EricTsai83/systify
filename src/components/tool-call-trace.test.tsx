@@ -32,10 +32,7 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/components/ui/button", () => ({
-  Button: ({
-    children,
-    ...props
-  }: React.ButtonHTMLAttributes<HTMLButtonElement> & { children?: React.ReactNode }) => (
+  Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { children?: React.ReactNode }) => (
     <button {...props}>{children}</button>
   ),
 }));
@@ -75,13 +72,7 @@ vi.mock("@/components/ui/collapsible", () => ({
       </div>
     </collapsibleContext.Provider>
   ),
-  CollapsibleTrigger: ({
-    children,
-    asChild,
-  }: {
-    children: React.ReactNode;
-    asChild?: boolean;
-  }) => {
+  CollapsibleTrigger: ({ children, asChild }: { children: React.ReactNode; asChild?: boolean }) => {
     const { open, onOpenChange } = useContext(collapsibleContext);
     if (asChild && isValidElement<{ onClick?: (event: MouseEvent) => void }>(children)) {
       const childOnClick = children.props.onClick;
@@ -140,9 +131,7 @@ describe("ToolCallTrace — finalized (persistedToolCalls)", () => {
       },
     ];
 
-    render(
-      <ToolCallTrace messageId={messageId} persistedToolCalls={persisted} isStreaming={false} />,
-    );
+    render(<ToolCallTrace messageId={messageId} persistedToolCalls={persisted} isStreaming={false} />);
 
     expect(screen.getByTestId("tool-call-trace-toggle")).toHaveTextContent("Tool calls (2)");
 
@@ -168,9 +157,7 @@ describe("ToolCallTrace — finalized (persistedToolCalls)", () => {
       },
     ];
 
-    render(
-      <ToolCallTrace messageId={messageId} persistedToolCalls={persisted} isStreaming={false} />,
-    );
+    render(<ToolCallTrace messageId={messageId} persistedToolCalls={persisted} isStreaming={false} />);
 
     expect(screen.getByTestId("tool-call-entry-c-err")).toHaveAttribute("data-state", "errored");
     expect(screen.getByText(/Error code: tool_error/)).toBeInTheDocument();
@@ -187,9 +174,7 @@ describe("ToolCallTrace — finalized (persistedToolCalls)", () => {
         endedAt: 1,
       },
     ];
-    render(
-      <ToolCallTrace messageId={messageId} persistedToolCalls={persisted} isStreaming={false} />,
-    );
+    render(<ToolCallTrace messageId={messageId} persistedToolCalls={persisted} isStreaming={false} />);
     const toggle = screen.getByTestId("tool-call-trace-toggle");
     expect(toggle).toHaveAttribute("aria-expanded", "false");
     fireEvent.click(toggle);
@@ -211,9 +196,7 @@ describe("ToolCallTrace — streaming (live subscription)", () => {
       },
     ]);
 
-    render(
-      <ToolCallTrace messageId={messageId} persistedToolCalls={undefined} isStreaming={true} />,
-    );
+    render(<ToolCallTrace messageId={messageId} persistedToolCalls={undefined} isStreaming={true} />);
 
     const ticker = screen.getByTestId("tool-call-ticker");
     expect(ticker).toHaveTextContent("Reading convex/chat/send.ts");
@@ -235,9 +218,7 @@ describe("ToolCallTrace — streaming (live subscription)", () => {
       },
     ]);
 
-    render(
-      <ToolCallTrace messageId={messageId} persistedToolCalls={undefined} isStreaming={true} />,
-    );
+    render(<ToolCallTrace messageId={messageId} persistedToolCalls={undefined} isStreaming={true} />);
 
     expect(screen.queryByTestId("tool-call-ticker")).not.toBeInTheDocument();
     expect(screen.getByTestId("tool-call-entry-c-done")).toHaveAttribute("data-state", "completed");
@@ -282,9 +263,7 @@ describe("ToolCallTrace — streaming (live subscription)", () => {
       },
     ]);
 
-    render(
-      <ToolCallTrace messageId={messageId} persistedToolCalls={undefined} isStreaming={true} />,
-    );
+    render(<ToolCallTrace messageId={messageId} persistedToolCalls={undefined} isStreaming={true} />);
 
     const ticker = screen.getByTestId("tool-call-ticker");
     expect(ticker).toHaveTextContent("Running grep -r foo convex/");
@@ -308,9 +287,7 @@ describe("ToolCallTrace — streaming (live subscription)", () => {
       },
     ]);
 
-    render(
-      <ToolCallTrace messageId={messageId} persistedToolCalls={undefined} isStreaming={true} />,
-    );
+    render(<ToolCallTrace messageId={messageId} persistedToolCalls={undefined} isStreaming={true} />);
 
     const ticker = screen.getByTestId("tool-call-ticker");
     // The visible label is capped well below the full command length.
@@ -334,9 +311,7 @@ describe("ToolCallTrace — streaming (live subscription)", () => {
       },
     ]);
 
-    render(
-      <ToolCallTrace messageId={messageId} persistedToolCalls={undefined} isStreaming={true} />,
-    );
+    render(<ToolCallTrace messageId={messageId} persistedToolCalls={undefined} isStreaming={true} />);
 
     expect(screen.getByTestId("tool-call-ticker")).toHaveTextContent(/Running grep -r foo convex/);
   });

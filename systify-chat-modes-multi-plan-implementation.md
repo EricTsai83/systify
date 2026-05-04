@@ -366,8 +366,11 @@ Sandbox 跑工具期間 UI 顯示 live ticker（`Reading X.ts...`），取代靜
 
 ## Verification
 
-- `bun test convex/chat-streaming.test.ts`（含 fold/drain、multi-call、partial、stale、cap、fence、cascade 共 7 個 case）
-- `bun test src/components/tool-call-trace.test.tsx`（含 production-shape JSON、長指令截斷、raw-string fallback）
+- `bun run format`
+- `bun run lint`
+- `bun run typecheck`
+- `bun run test convex/chat-streaming.test.ts`（含 fold/drain、multi-call、partial、stale、cap、fence、cascade 共 7 個 case）
+- `bun run test src/components/tool-call-trace.test.tsx`（含 production-shape JSON、長指令截斷、raw-string fallback）
 - 手動：sandbox 對話，肉眼確認 ticker 即時更新；F5 重整後 trace 仍存在；mid-stream cancel 後 partial trace 顯示為「interrupted」
 
 ## 依賴

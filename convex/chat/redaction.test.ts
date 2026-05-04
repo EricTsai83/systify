@@ -28,8 +28,7 @@ const FAKE_BEARER_TOKEN = `Bearer ${"k".repeat(40)}`;
 
 describe("redact()", () => {
   test("returns the original text and empty matchedTypes for input with no secrets", () => {
-    const innocuous =
-      "function hello() {\n  return 'world';\n}\n// References convex/chat/send.ts:80\n";
+    const innocuous = "function hello() {\n  return 'world';\n}\n// References convex/chat/send.ts:80\n";
     const result = redact(innocuous);
 
     expect(result.redacted).toBe(innocuous);
@@ -226,9 +225,7 @@ describe("redact()", () => {
     // each of these slugs at least once.
     const unique = new Set(REDACTION_PATTERN_TYPES);
     expect(unique.size).toBe(REDACTION_PATTERN_TYPES.length);
-    expect(unique).toEqual(
-      new Set(["github_token", "jwt", "aws_access_key", "slack_token", "bearer_token"]),
-    );
+    expect(unique).toEqual(new Set(["github_token", "jwt", "aws_access_key", "slack_token", "bearer_token"]));
   });
 
   test("never produces a sentinel that itself contains a matchable substring (no infinite-loop / second-pass regression)", () => {

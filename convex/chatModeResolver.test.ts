@@ -114,12 +114,8 @@ describe("resolveChatModes (sandbox feature gate open)", () => {
   test("getDefaultThreadMode centralizes the repo-attached default-mode rule", () => {
     expect(getDefaultThreadMode(false)).toBe("discuss");
     expect(getDefaultThreadMode(true)).toBe("docs");
-    expect(getDefaultThreadMode(false)).toBe(
-      resolveChatModes(false, "none", OPEN_SANDBOX_FEATURE_GATE).defaultMode,
-    );
-    expect(getDefaultThreadMode(true)).toBe(
-      resolveChatModes(true, "none", OPEN_SANDBOX_FEATURE_GATE).defaultMode,
-    );
+    expect(getDefaultThreadMode(false)).toBe(resolveChatModes(false, "none", OPEN_SANDBOX_FEATURE_GATE).defaultMode);
+    expect(getDefaultThreadMode(true)).toBe(resolveChatModes(true, "none", OPEN_SANDBOX_FEATURE_GATE).defaultMode);
   });
 
   test.each(cases)("$name", (testCase) => {

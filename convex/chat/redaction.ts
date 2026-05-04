@@ -31,12 +31,7 @@
  * Adding a pattern means widening this union *and* adding a registry
  * entry — the compiler enforces the pairing.
  */
-export type RedactionType =
-  | "github_token"
-  | "jwt"
-  | "aws_access_key"
-  | "slack_token"
-  | "bearer_token";
+export type RedactionType = "github_token" | "jwt" | "aws_access_key" | "slack_token" | "bearer_token";
 
 type RedactionPattern = {
   readonly type: RedactionType;
@@ -143,6 +138,4 @@ export function redact(text: string): RedactionResult {
  * assert "every pattern in the registry has a dedicated coverage case"
  * without grepping the source.
  */
-export const REDACTION_PATTERN_TYPES: readonly RedactionType[] = PATTERN_REGISTRY.map(
-  (p) => p.type,
-);
+export const REDACTION_PATTERN_TYPES: readonly RedactionType[] = PATTERN_REGISTRY.map((p) => p.type);

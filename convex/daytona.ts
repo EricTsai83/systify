@@ -233,10 +233,7 @@ export async function cloneRepositoryInSandbox(args: {
   //
   // Subsequent `git fetch` inside the sandbox will fail without re-auth,
   // which is the desired posture for a read-only analysis sandbox.
-  await sandbox.process.executeCommand(
-    `git remote set-url origin ${posixSingleQuote(args.url)}`,
-    "repo",
-  );
+  await sandbox.process.executeCommand(`git remote set-url origin ${posixSingleQuote(args.url)}`, "repo");
 
   // Branch and SHA are independent reads, so issue them in parallel —
   // each is a separate Daytona round trip, sequencing them doubles the

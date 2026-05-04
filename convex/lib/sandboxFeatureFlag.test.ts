@@ -10,39 +10,33 @@ const VIEWER = "user|alice";
 const OTHER_VIEWER = "user|bob";
 
 describe("evaluateSandboxFeatureGate (pure)", () => {
-  test.each([undefined, "", "false", "0", "no", "off", "  False  ", "FALSE"])(
-    "treats %j as flag off",
-    (flagValue) => {
-      const gate = evaluateSandboxFeatureGate({
-        enabledFlag: flagValue,
-        allowlist: VIEWER,
-        tokenIdentifier: VIEWER,
-      });
+  test.each([undefined, "", "false", "0", "no", "off", "  False  ", "FALSE"])("treats %j as flag off", (flagValue) => {
+    const gate = evaluateSandboxFeatureGate({
+      enabledFlag: flagValue,
+      allowlist: VIEWER,
+      tokenIdentifier: VIEWER,
+    });
 
-      expect(gate.enabled).toBe(false);
-      // Flag-off precedence: even a viewer who *would* match the allowlist
-      // sees the more meaningful "private beta" reason. Knowing "the
-      // feature is off entirely" is strictly more informative than "you
-      // are not on the list."
-      if (!gate.enabled) {
-        expect(gate.reason).toBe("flag_off");
-        expect(gate.tooltip).toBe(SANDBOX_FLAG_OFF_TOOLTIP);
-      }
-    },
-  );
+    expect(gate.enabled).toBe(false);
+    // Flag-off precedence: even a viewer who *would* match the allowlist
+    // sees the more meaningful "private beta" reason. Knowing "the
+    // feature is off entirely" is strictly more informative than "you
+    // are not on the list."
+    if (!gate.enabled) {
+      expect(gate.reason).toBe("flag_off");
+      expect(gate.tooltip).toBe(SANDBOX_FLAG_OFF_TOOLTIP);
+    }
+  });
 
-  test.each(["true", "1", "yes", "on", "  TRUE  ", "True"])(
-    "treats %j as flag on",
-    (flagValue) => {
-      const gate = evaluateSandboxFeatureGate({
-        enabledFlag: flagValue,
-        allowlist: VIEWER,
-        tokenIdentifier: VIEWER,
-      });
+  test.each(["true", "1", "yes", "on", "  TRUE  ", "True"])("treats %j as flag on", (flagValue) => {
+    const gate = evaluateSandboxFeatureGate({
+      enabledFlag: flagValue,
+      allowlist: VIEWER,
+      tokenIdentifier: VIEWER,
+    });
 
-      expect(gate.enabled).toBe(true);
-    },
-  );
+    expect(gate.enabled).toBe(true);
+  });
 
   test("flag on + viewer in allowlist: gate is open", () => {
     const gate = evaluateSandboxFeatureGate({

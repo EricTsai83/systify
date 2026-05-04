@@ -116,10 +116,7 @@ export async function compactMessageStreamTail(ctx: MutationCtx, streamId: Id<"m
  * idempotent: calling it again on an already-deleted stream is a no-op (the
  * `ctx.db.delete(streamId)` would throw, so we guard it).
  */
-export async function deleteMessageStreamState(
-  ctx: MutationCtx,
-  streamId: Id<"messageStreams">,
-): Promise<number> {
+export async function deleteMessageStreamState(ctx: MutationCtx, streamId: Id<"messageStreams">): Promise<number> {
   let drainedCount = 0;
   while (true) {
     const chunks = await ctx.db
