@@ -103,11 +103,26 @@ const threadMode = v.union(v.literal("discuss"), v.literal("docs"), v.literal("s
 
 const messageRole = v.union(v.literal("system"), v.literal("user"), v.literal("assistant"), v.literal("tool"));
 
+/**
+ * Plan 07 — `cancelled` joins the terminal-state set alongside `completed` /
+ * `failed`. Used when the owner stops their own in-flight reply via
+ * `chat.cancel.cancelInFlightReply`. Distinct from `failed` because:
+ *
+ *   - the message body is not an error — partial content is still useful;
+ *   - the status label should read "Cancelled" (not "Failed") in the UI;
+ *   - audit trails / metrics should distinguish user intent from upstream
+ *     failures.
+ *
+ * Schema migration: pure widen (the union now accepts an additional literal
+ * the database has never previously held). No backfill — existing rows still
+ * map cleanly to one of the four legacy values.
+ */
 const messageStatus = v.union(
   v.literal("pending"),
   v.literal("streaming"),
   v.literal("completed"),
   v.literal("failed"),
+  v.literal("cancelled"),
 );
 
 const workspaceColor = v.union(

@@ -52,6 +52,7 @@ export function useRepositoryActions({
 }) {
   const requestDeepAnalysis = useMutation(api.analysis.requestDeepAnalysis);
   const sendMessageMutation = useMutation(api.chat.send.sendMessage);
+  const cancelInFlightReplyMutation = useMutation(api.chat.cancel.cancelInFlightReply);
   const syncRepositoryMutation = useMutation(api.repositories.syncRepository);
   const deleteThreadMutation = useMutation(api.chat.threads.deleteThread);
   const deleteRepositoryMutation = useMutation(api.repositories.deleteRepository);
@@ -75,6 +76,32 @@ export function useRepositoryActions({
       },
       [chatInput, chatMode, selectedThreadId, sendMessageMutation, setActionError, setChatInput],
     ),
+  );
+
+  /**
+   * Plan 07 — owner-initiated cancellation of the current in-flight reply.
+   *
+   * `useAsyncCallback` exposes the in-flight boolean to the panel as
+   * `isCancellingReply` so the Stop button can render "Stopping…" between
+   * click and bubble flip. Errors short-circuit through the same
+   * `setActionError` channel as send / sync so the user always gets a
+   * consistent failure surface.
+   *
+   * No-op when there's no selected thread — the panel hides the Stop button
+   * unless an in-flight assistant message exists for this thread, but we
+   * gate here too so a stale callback that fired post-thread-switch can't
+   * hit the server with a missing thread id.
+   */
+  const [isCancellingReply, handleCancelInFlightReply] = useAsyncCallback(
+    useCallback(async () => {
+      if (!selectedThreadId) return;
+      setActionError(null);
+      try {
+        await cancelInFlightReplyMutation({ threadId: selectedThreadId });
+      } catch (error) {
+        setActionError(toUserErrorMessage(error, "Failed to stop the reply."));
+      }
+    }, [cancelInFlightReplyMutation, selectedThreadId, setActionError]),
   );
 
   const [isRunningAnalysis, handleRunAnalysis] = useAsyncCallback(
@@ -155,6 +182,8 @@ export function useRepositoryActions({
   return {
     isSending,
     handleSendMessage,
+    isCancellingReply,
+    handleCancelInFlightReply,
     isRunningAnalysis,
     handleRunAnalysis,
     isSyncing,
