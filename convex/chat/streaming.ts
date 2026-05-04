@@ -1,8 +1,9 @@
 import { v } from "convex/values";
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import { type MutationCtx, internalMutation, internalQuery, query } from "../_generated/server";
 import { requireViewerIdentity } from "../lib/auth";
-import { CHAT_JOB_LEASE_MS } from "../lib/rateLimit";
+import { CHAT_JOB_LEASE_MS, consumeSandboxDailyCost } from "../lib/rateLimit";
+import { costUsdToCents } from "../lib/openaiPricing";
 import { logInfo, logWarn } from "../lib/observability";
 import { MAX_TOOL_CALL_EVENTS_PER_MESSAGE, TOOL_CALL_EVENT_SUMMARY_MAX_CHARS } from "../lib/constants";
 import {
@@ -75,6 +76,76 @@ async function foldAndDrainToolCallEvents(
     });
   }
   return folded.length > 0 ? folded : undefined;
+}
+
+/**
+ * Plan 10 — settle the actual reply cost against the per-user and
+ * (when applicable) per-workspace daily caps.
+ *
+ * Called from every terminal-state path:
+ *   - `finalizeAssistantReply` (success)
+ *   - `failAssistantReply` (upstream error / mid-stream failure)
+ *   - `markAssistantReplyCancelled` (user-initiated stop)
+ *   - `recoverStaleChatJob` (lease expired)
+ *
+ * Settling on every path matters because partial replies still incur
+ * cost from OpenAI — a sandbox reply that was cancelled after 30s of
+ * tool calls produced real spend that must count against the cap.
+ * Skipping settlement on cancellation/failure would let users repeatedly
+ * hit Stop just before finalize and bypass the cap.
+ *
+ * Idempotent on `cents <= 0` so the call site can pass through whatever
+ * `estimateCostUsd` produced (including `undefined`) without checking
+ * it first.
+ */
+async function settleSandboxReplyCost(
+  ctx: MutationCtx,
+  args: {
+    jobId: Id<"jobs">;
+    assistantMessage: Doc<"messages"> | null;
+    costUsd: number | undefined;
+  },
+): Promise<void> {
+  // Only sandbox-mode replies bill against the daily cap. The check on
+  // `assistantMessage.mode` is the source of truth — using the job's
+  // `costCategory` would also work today (sandbox ↔ deep_analysis), but
+  // the message-level mode keeps this code resilient if the costCategory
+  // mapping ever changes.
+  if (!args.assistantMessage || args.assistantMessage.mode !== "sandbox") {
+    return;
+  }
+  const cents = costUsdToCents(args.costUsd);
+  if (cents === undefined || cents <= 0) {
+    // Heuristic-only replies (no OPENAI_API_KEY) and pricing-table
+    // misses arrive here. We deliberately do not settle in those cases:
+    //   - heuristic replies are free (no LLM call)
+    //   - pricing-miss replies have unknowable cost; double-counting
+    //     them as "free" is the conservative direction (better than
+    //     guessing a number and starving the user's quota by accident)
+    return;
+  }
+
+  // Look up workspace from the thread (the message stores threadId, not
+  // workspaceId). Concurrent thread deletion makes this a defensive
+  // fetch — if the thread is gone, we still want the per-user
+  // settlement to land, so a missing thread degrades to "user-only
+  // settlement" rather than blocking the cost recording entirely.
+  const thread = await ctx.db.get(args.assistantMessage.threadId);
+  const workspaceId = thread?.workspaceId ?? null;
+
+  await consumeSandboxDailyCost(ctx, {
+    ownerTokenIdentifier: args.assistantMessage.ownerTokenIdentifier,
+    workspaceId,
+    cents,
+  });
+
+  logInfo("chat", "sandbox_cost_settled", {
+    jobId: args.jobId,
+    assistantMessageId: args.assistantMessage._id,
+    ownerTokenIdentifier: args.assistantMessage.ownerTokenIdentifier,
+    workspaceId,
+    cents,
+  });
 }
 
 /**
@@ -410,6 +481,12 @@ export const finalizeAssistantReply = internalMutation({
           errorMessage: undefined,
           estimatedInputTokens: args.inputTokens,
           estimatedOutputTokens: args.outputTokens,
+          // Plan 10 — persist the per-message cost so the chat bubble's
+          // cost ticker can render an exact value rather than re-deriving
+          // it from tokens + model on every render. Stays `undefined`
+          // when usage was unavailable or the model wasn't priced (the
+          // ticker degrades gracefully to "—" in that case).
+          estimatedCostUsd: args.costUsd,
           citationMap: args.citationMap,
           toolCalls: persistedToolCalls,
         });
@@ -462,6 +539,17 @@ export const finalizeAssistantReply = internalMutation({
           leaseExpiresAt: undefined,
         });
       }
+
+      // Plan 10 — settle the cost AFTER the message + job patches commit
+      // their statuses. Doing it last means a hypothetical settle failure
+      // never blocks the message's terminal-state write, which is the
+      // user-visible part of finalize. Settle is a no-op for non-sandbox
+      // replies, so this is also free for discuss / docs.
+      await settleSandboxReplyCost(ctx, {
+        jobId: args.jobId,
+        assistantMessage: message ?? null,
+        costUsd: args.costUsd,
+      });
     } finally {
       // Always remove persisted stream state on completion. Note: Convex
       // mutations are transactional, so if any write above throws the
@@ -485,6 +573,15 @@ export const failAssistantReply = internalMutation({
     jobId: v.id("jobs"),
     errorMessage: v.string(),
     finalDelta: v.optional(v.string()),
+    /**
+     * Plan 10 — partial cost (USD) accrued before the failure. Optional
+     * because pre-Plan-10 callers (and pre-stream failures, where no
+     * cost has been incurred) leave it unset; the settle helper treats
+     * `undefined` as "no cost recorded" and skips the cap consumption.
+     */
+    inputTokens: v.optional(v.number()),
+    outputTokens: v.optional(v.number()),
+    costUsd: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -509,6 +606,12 @@ export const failAssistantReply = internalMutation({
           errorMessage: args.errorMessage,
           content: streamedContent || args.errorMessage,
           toolCalls: persistedToolCalls,
+          // Plan 10 — partial cost is still real spend; persist it so
+          // the failed bubble can show "Failed at $0.04 (800 tokens)"
+          // in the cost ticker, and the daily cap can settle accurately.
+          estimatedInputTokens: args.inputTokens ?? message.estimatedInputTokens,
+          estimatedOutputTokens: args.outputTokens ?? message.estimatedOutputTokens,
+          estimatedCostUsd: args.costUsd ?? message.estimatedCostUsd,
         });
       } else {
         logWarn("chat", "fail_assistant_message_missing", {
@@ -526,7 +629,20 @@ export const failAssistantReply = internalMutation({
         progress: 1,
         completedAt: now,
         errorMessage: args.errorMessage,
+        estimatedInputTokens: args.inputTokens,
+        estimatedOutputTokens: args.outputTokens,
+        estimatedCostUsd: args.costUsd,
         leaseExpiresAt: undefined,
+      });
+
+      // Plan 10 — even on failure, the cost has been incurred upstream
+      // (OpenAI charges for streamed tokens regardless of whether the
+      // stream completed). Settling on this path prevents users from
+      // bypassing the daily cap by repeatedly triggering errors.
+      await settleSandboxReplyCost(ctx, {
+        jobId: args.jobId,
+        assistantMessage: message ?? null,
+        costUsd: args.costUsd,
       });
     } finally {
       if (streamSnapshot) {
@@ -616,6 +732,17 @@ export const markAssistantReplyCancelled = internalMutation({
      * future budget enforcement) so the UI can render the right copy.
      */
     reason: v.optional(v.string()),
+    /**
+     * Plan 10 — partial cost accrued before the user clicked Stop. Same
+     * shape as the failure path: cost has already been incurred
+     * upstream, so we settle it against the daily cap. Optional so
+     * pre-Plan-10 cancellations (or stops fired before any token was
+     * generated) leave the field unset — the settle helper treats that
+     * as "no cost".
+     */
+    inputTokens: v.optional(v.number()),
+    outputTokens: v.optional(v.number()),
+    costUsd: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -644,6 +771,14 @@ export const markAssistantReplyCancelled = internalMutation({
           // fallback for the same reason.
           content: streamedContent || reason,
           toolCalls: persistedToolCalls,
+          // Plan 10 — preserve partial-cost telemetry on cancellation
+          // for both UI display and audit. Falling back to the existing
+          // values (rather than overwriting with `undefined`) handles
+          // the "stop arrived before generation produced any tokens"
+          // case where the action passes `costUsd: undefined`.
+          estimatedInputTokens: args.inputTokens ?? message.estimatedInputTokens,
+          estimatedOutputTokens: args.outputTokens ?? message.estimatedOutputTokens,
+          estimatedCostUsd: args.costUsd ?? message.estimatedCostUsd,
         });
       } else {
         logWarn("chat", "cancel_assistant_message_missing", {
@@ -666,6 +801,9 @@ export const markAssistantReplyCancelled = internalMutation({
           progress: 1,
           completedAt: now,
           errorMessage: reason,
+          estimatedInputTokens: args.inputTokens,
+          estimatedOutputTokens: args.outputTokens,
+          estimatedCostUsd: args.costUsd,
           leaseExpiresAt: undefined,
         });
       } else {
@@ -674,6 +812,17 @@ export const markAssistantReplyCancelled = internalMutation({
           jobId: args.jobId,
         });
       }
+
+      // Plan 10 — settle the partial cost. Cancellation is a common
+      // path (user clicked Stop because the reply was taking too long
+      // or going off the rails) so charging the actual spend prevents
+      // the cap from being a no-op for power users. Settle is a no-op
+      // for non-sandbox replies and for `costUsd === undefined`.
+      await settleSandboxReplyCost(ctx, {
+        jobId: args.jobId,
+        assistantMessage: message ?? null,
+        costUsd: args.costUsd,
+      });
     } finally {
       if (streamSnapshot) {
         await deleteMessageStreamState(ctx, streamSnapshot.stream._id);
@@ -738,6 +887,25 @@ export const recoverStaleChatJob = internalMutation({
           errorMessage: message,
           content: streamSnapshot?.content || message,
           toolCalls: persistedToolCalls,
+        });
+      }
+
+      // Plan 10 — note: stale-recovery deliberately does NOT settle cost
+      // against the daily cap. The action that crashed/stalled never
+      // reached the finalize / fail mutation, so we have no reliable
+      // usage data — recording an arbitrary fixed cost here would either
+      // double-count (if the action actually completed and the
+      // settlement landed before the crash) or under-count (if it
+      // stalled mid-stream after burning many tokens). We accept this
+      // as a known shortfall: the daily cap may be slightly under-
+      // recorded for stalled replies. Logged so ops can correlate
+      // billing reconciliation findings with stale-recovery events.
+      if (assistantMessage && assistantMessage.mode === "sandbox") {
+        logWarn("chat", "sandbox_cost_settlement_skipped_on_stale_recovery", {
+          jobId: args.jobId,
+          assistantMessageId: assistantMessage._id,
+          ownerTokenIdentifier: assistantMessage.ownerTokenIdentifier,
+          hint: "Action never reported usage; daily cap not charged for this stalled reply.",
         });
       }
 

@@ -12,6 +12,25 @@ export interface AttachedRepositorySummary {
   shortName: string;
 }
 
+/**
+ * Plan 10 — sandbox daily-cost-cap snapshot for the chat-panel ticker.
+ *
+ * `remainingUsd` / `capacityUsd` are USD floats so the UI can format
+ * with two decimals directly; cents-as-int is a server-side concern
+ * the hook abstracts away. `resetAtMs` drives the "Resets in 3h 12m"
+ * countdown.
+ *
+ * Always non-null when sandbox mode is at least theoretically usable
+ * (thread has a repo). The frontend takes `min(user.remaining,
+ * workspace.remaining)` as the visible budget so the ticker reflects
+ * whichever cap will fire first.
+ */
+export interface SandboxDailyCostBudget {
+  remainingUsd: number;
+  capacityUsd: number;
+  resetAtMs: number;
+}
+
 export interface ThreadCapabilities {
   /** True while the underlying `getThreadContext` query is still in flight. */
   isLoading: boolean;
@@ -29,6 +48,13 @@ export interface ThreadCapabilities {
   defaultMode: ChatMode;
   /** Tooltip text keyed by mode for the greyed-out options. */
   disabledReasons: ChatModeResolution["disabledReasons"];
+  /**
+   * Plan 10 — visible sandbox cost budget for the ticker. `null` when
+   * sandbox mode isn't currently relevant (no repo attached). When
+   * non-null, this reflects the *more restrictive* of the per-user and
+   * per-workspace caps so the user sees a single coherent number.
+   */
+  sandboxCostBudget: SandboxDailyCostBudget | null;
 }
 
 /**
@@ -51,6 +77,7 @@ const NO_THREAD_CAPABILITIES: ThreadCapabilities = {
   availableModes: ["discuss"],
   defaultMode: getDefaultThreadMode(false),
   disabledReasons: NO_THREAD_DISABLED_REASONS,
+  sandboxCostBudget: null,
 };
 
 const NO_THREAD_LOADING_CAPABILITIES: ThreadCapabilities = {
@@ -112,5 +139,46 @@ export function useThreadCapabilities(threadId: ThreadId | null): ThreadCapabili
     availableModes: ctx.chatModes.availableModes,
     defaultMode: ctx.chatModes.defaultMode,
     disabledReasons: ctx.chatModes.disabledReasons,
+    sandboxCostBudget: deriveSandboxCostBudget(ctx.sandboxCostBudgets),
+  };
+}
+
+/**
+ * Plan 10 — collapse the (per-user, per-workspace) budget pair into a
+ * single user-facing budget. Returns the *more restrictive* of the two
+ * remaining values so the ticker shows the budget that will actually
+ * block the next send.
+ *
+ * Returns the smaller `capacityUsd` and the smaller `remainingUsd`
+ * (independent picks) and the *earlier* `resetAtMs`. They might come
+ * from different buckets — that is fine for the ticker, which only
+ * needs a coherent "your floor" number rather than perfect
+ * reconciliation between the two scopes.
+ */
+function deriveSandboxCostBudget(
+  budgets: NonNullable<ReturnType<typeof useQuery<typeof api.threadContext.getThreadContext>>>["sandboxCostBudgets"],
+): SandboxDailyCostBudget | null {
+  if (!budgets) {
+    return null;
+  }
+  const userRemaining = budgets.userBudget.remainingCents / 100;
+  const userCapacity = budgets.userBudget.capacityCents / 100;
+  if (!budgets.workspaceBudget) {
+    return {
+      remainingUsd: userRemaining,
+      capacityUsd: userCapacity,
+      resetAtMs: budgets.userBudget.resetAtMs,
+    };
+  }
+  const workspaceRemaining = budgets.workspaceBudget.remainingCents / 100;
+  const workspaceCapacity = budgets.workspaceBudget.capacityCents / 100;
+  // Pick the more restrictive remaining + the earlier reset. Capacity is
+  // tied to whichever side gave us the binding remaining — using the
+  // matching capacity keeps "$0.02 of $5.00 remaining" coherent.
+  const userBinds = userRemaining <= workspaceRemaining;
+  return {
+    remainingUsd: userBinds ? userRemaining : workspaceRemaining,
+    capacityUsd: userBinds ? userCapacity : workspaceCapacity,
+    resetAtMs: Math.min(budgets.userBudget.resetAtMs, budgets.workspaceBudget.resetAtMs),
   };
 }

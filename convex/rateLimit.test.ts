@@ -323,6 +323,437 @@ describe("rate limits and interactive job guards", () => {
     expect(result.streams).toHaveLength(0);
   });
 
+  /**
+   * Plan 10 — daily sandbox cost cap. We anchor every test in this group
+   * with `SANDBOX_DAILY_CAP_PER_USER_USD=0.05` so the cap is hit after a
+   * single ~$0.04 settlement (5 cents capacity × 1 cent estimate ≤ 4
+   * cents settle). Workspace cap stays at default ($50) so the user cap
+   * is the binding constraint; a separate test exercises the workspace
+   * cap path.
+   */
+  describe("sandbox daily cost cap (Plan 10)", () => {
+    let priorUserCapEnv: string | undefined;
+    let priorWorkspaceCapEnv: string | undefined;
+    let priorEstimateEnv: string | undefined;
+    let priorSandboxFlagEnv: string | undefined;
+    let priorAllowlistEnv: string | undefined;
+    let priorOpenAiKeyEnv: string | undefined;
+
+    beforeEach(() => {
+      priorUserCapEnv = process.env.SANDBOX_DAILY_CAP_PER_USER_USD;
+      priorWorkspaceCapEnv = process.env.SANDBOX_DAILY_CAP_PER_WORKSPACE_USD;
+      priorEstimateEnv = process.env.SANDBOX_REPLY_ESTIMATE_USD;
+      priorSandboxFlagEnv = process.env.SANDBOX_MODE_ENABLED;
+      priorAllowlistEnv = process.env.SANDBOX_BETA_ALLOWLIST;
+      priorOpenAiKeyEnv = process.env.OPENAI_API_KEY;
+      // 5-cent cap: lets us settle one $0.04 reply, then hit the cap on
+      // the next pre-check (1 cent estimate vs 1 cent remaining → ok;
+      // 1 cent estimate vs 0 cents → blocked).
+      process.env.SANDBOX_DAILY_CAP_PER_USER_USD = "0.05";
+      process.env.SANDBOX_DAILY_CAP_PER_WORKSPACE_USD = "10";
+      process.env.SANDBOX_REPLY_ESTIMATE_USD = "0.01";
+      process.env.SANDBOX_MODE_ENABLED = "true";
+      process.env.SANDBOX_BETA_ALLOWLIST = "*";
+      // Disable real OpenAI calls so the action falls into the
+      // heuristic path. We're testing the rate-limit accounting end-to-end
+      // (send → finalize), and the heuristic path lets us drive that
+      // entire flow without external calls.
+      delete process.env.OPENAI_API_KEY;
+    });
+
+    afterEach(() => {
+      const restore = (name: string, prior: string | undefined) => {
+        if (prior === undefined) {
+          delete process.env[name];
+        } else {
+          process.env[name] = prior;
+        }
+      };
+      restore("SANDBOX_DAILY_CAP_PER_USER_USD", priorUserCapEnv);
+      restore("SANDBOX_DAILY_CAP_PER_WORKSPACE_USD", priorWorkspaceCapEnv);
+      restore("SANDBOX_REPLY_ESTIMATE_USD", priorEstimateEnv);
+      restore("SANDBOX_MODE_ENABLED", priorSandboxFlagEnv);
+      restore("SANDBOX_BETA_ALLOWLIST", priorAllowlistEnv);
+      restore("OPENAI_API_KEY", priorOpenAiKeyEnv);
+    });
+
+    test("non-sandbox sends are not subject to the cap (no extra reads, no extra rejections)", async () => {
+      // Discuss / docs sends bill against the cheaper `chat` category;
+      // they must keep working even when the user has hit their sandbox
+      // cap. Drive the user's sandbox bucket to 0 by direct rate-limiter
+      // consumption first, then send a discuss-mode message.
+      const ownerTokenIdentifier = "user|cap-non-sandbox";
+      const t = createTestConvex();
+      const { threadId } = await createRepositoryFixture(t, ownerTokenIdentifier, "cap-non-sandbox");
+      const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+      // Burn through the sandbox cap directly (5 cents capacity).
+      // Inline config matches the runtime config (sandbox cost buckets
+      // use the inline-config pattern so env vars apply per call).
+      await t.run(async (ctx) => {
+        const { rateLimiter } = await import("./lib/rateLimit");
+        await rateLimiter.limit(ctx, "sandboxCostUsdPerUserDaily", {
+          key: ownerTokenIdentifier,
+          count: 5,
+          config: { kind: "fixed window", rate: 5, capacity: 5, period: 86_400_000, maxReserved: 5, start: 0 },
+        });
+      });
+
+      // Discuss send must succeed despite the cap being exhausted —
+      // discuss mode does not consume the sandbox bucket.
+      const result = await viewer.mutation(api.chat.send.sendMessage, {
+        threadId,
+        content: "Hi from discuss mode",
+        mode: "discuss",
+      });
+      expect(result.jobId).toBeDefined();
+    });
+
+    test("sandbox pre-check rejects with SANDBOX_DAILY_CAP_EXCEEDED once user cap is exhausted", async () => {
+      const ownerTokenIdentifier = "user|cap-user-blocked";
+      const t = createTestConvex();
+      const { threadId } = await createRepositoryFixture(t, ownerTokenIdentifier, "cap-user-blocked", {
+        withSandbox: true,
+      });
+      const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+      // Drive the user's sandbox bucket to 0 (5 cent capacity).
+      await t.run(async (ctx) => {
+        const { rateLimiter } = await import("./lib/rateLimit");
+        await rateLimiter.limit(ctx, "sandboxCostUsdPerUserDaily", {
+          key: ownerTokenIdentifier,
+          count: 5,
+          config: { kind: "fixed window", rate: 5, capacity: 5, period: 86_400_000, maxReserved: 5, start: 0 },
+        });
+      });
+
+      const before = await getThreadCounts(t, threadId);
+      const error = await viewer
+        .mutation(api.chat.send.sendMessage, {
+          threadId,
+          content: "Inspect the lease logic.",
+          mode: "sandbox",
+        })
+        .catch((caughtError) => caughtError);
+
+      expectStructuredError(error, "SANDBOX_DAILY_CAP_EXCEEDED", "sandboxCostUsdPerUserDaily");
+      // No job, message, or stream rows should be created when the
+      // pre-check rejects — the failure must happen *before* any
+      // side-effecting writes.
+      expect(await getThreadCounts(t, threadId)).toEqual(before);
+    });
+
+    test("sandbox pre-check rejects with SANDBOX_WORKSPACE_DAILY_CAP_EXCEEDED when only the workspace cap is exhausted", async () => {
+      // Two-cap scenario: user cap has plenty of room, workspace cap is
+      // exhausted. Verifies the user-cap check passes but the
+      // workspace-cap check fires with its own structured error code.
+      const ownerTokenIdentifier = "user|cap-workspace-blocked";
+      const t = createTestConvex();
+
+      const workspaceId = await t.run(async (ctx) => {
+        return await ctx.db.insert("workspaces", {
+          ownerTokenIdentifier,
+          name: "Capped Workspace",
+          color: "blue",
+          lastAccessedAt: Date.now(),
+        });
+      });
+
+      const { repositoryId, threadId } = await createRepositoryFixture(
+        t,
+        ownerTokenIdentifier,
+        "cap-workspace-blocked",
+        { withSandbox: true },
+      );
+      // Attach the thread to the workspace so the pre-check runs the
+      // workspace branch.
+      await t.run(async (ctx) => {
+        await ctx.db.patch(threadId, { workspaceId });
+        await ctx.db.patch(repositoryId, {});
+      });
+      const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+      // Workspace cap = $10 = 1000 cents. Burn through all of it.
+      await t.run(async (ctx) => {
+        const { rateLimiter, workspaceCostKey } = await import("./lib/rateLimit");
+        await rateLimiter.limit(ctx, "sandboxCostUsdPerWorkspaceDaily", {
+          key: workspaceCostKey(workspaceId),
+          count: 1000,
+          config: {
+            kind: "fixed window",
+            rate: 1000,
+            capacity: 1000,
+            period: 86_400_000,
+            maxReserved: 1000,
+            start: 0,
+          },
+        });
+      });
+
+      const error = await viewer
+        .mutation(api.chat.send.sendMessage, {
+          threadId,
+          content: "Inspect the lease logic.",
+          mode: "sandbox",
+        })
+        .catch((caughtError) => caughtError);
+
+      expectStructuredError(error, "SANDBOX_WORKSPACE_DAILY_CAP_EXCEEDED", "sandboxCostUsdPerWorkspaceDaily");
+    });
+
+    test("finalizeAssistantReply settles real costUsd into the daily-cap bucket (sandbox mode)", async () => {
+      // Verifies the in-flight reply → finalize transition actually
+      // calls the settle helper. We construct the message + job + stream
+      // state by hand (skipping the full send → action flow) so the
+      // assertion is anchored on the *settlement* behavior of finalize,
+      // not on the action runtime. The action's role is to produce the
+      // cost number; this test feeds a known cost in directly.
+      const ownerTokenIdentifier = "user|cap-finalize";
+      const t = createTestConvex();
+      const { repositoryId, threadId } = await createRepositoryFixture(t, ownerTokenIdentifier, "cap-finalize", {
+        withSandbox: true,
+      });
+
+      const { jobId, assistantMessageId } = await t.run(async (ctx) => {
+        const jobId = await ctx.db.insert("jobs", {
+          repositoryId,
+          ownerTokenIdentifier,
+          threadId,
+          kind: "chat",
+          status: "running",
+          stage: "generating_reply",
+          progress: 0.6,
+          costCategory: "deep_analysis",
+          triggerSource: "user",
+          startedAt: Date.now(),
+          leaseExpiresAt: Date.now() + 60_000,
+        });
+        const assistantMessageId = await ctx.db.insert("messages", {
+          repositoryId,
+          threadId,
+          jobId,
+          ownerTokenIdentifier,
+          role: "assistant",
+          status: "streaming",
+          mode: "sandbox",
+          content: "",
+        });
+        await ctx.db.insert("messageStreams", {
+          repositoryId,
+          threadId,
+          jobId,
+          assistantMessageId,
+          ownerTokenIdentifier,
+          compactedContent: "",
+          compactedThroughSequence: -1,
+          nextSequence: 0,
+          startedAt: Date.now(),
+          lastAppendedAt: Date.now(),
+        });
+        return { jobId, assistantMessageId };
+      });
+
+      // Run finalize with a known cost: $0.02 = 2 cents → settle 2 cents
+      // out of the 5-cent capacity → 3 cents remaining.
+      await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
+        threadId,
+        assistantMessageId,
+        jobId,
+        finalDelta: "Done.",
+        inputTokens: 100,
+        outputTokens: 50,
+        costUsd: 0.02,
+      });
+
+      const remaining = await t.run(async (ctx) => {
+        const { rateLimiter } = await import("./lib/rateLimit");
+        const snapshot = await rateLimiter.getValue(ctx, "sandboxCostUsdPerUserDaily", {
+          key: ownerTokenIdentifier,
+          config: { kind: "fixed window", rate: 5, capacity: 5, period: 86_400_000, maxReserved: 5, start: 0 },
+        });
+        return snapshot.value;
+      });
+      expect(remaining).toBe(3);
+
+      // Per-message cost is also persisted on the message so the chat
+      // ticker can render it.
+      const message = await t.run(async (ctx) => await ctx.db.get(assistantMessageId));
+      expect(message?.estimatedCostUsd).toBeCloseTo(0.02);
+    });
+
+    test("finalizeAssistantReply does NOT settle for non-sandbox replies (cost still records on message)", async () => {
+      // Discuss / docs replies bill the cheaper `chat` category and
+      // shouldn't decrement the sandbox bucket — the cap is sandbox-only.
+      const ownerTokenIdentifier = "user|cap-finalize-discuss";
+      const t = createTestConvex();
+      const { repositoryId, threadId } = await createRepositoryFixture(t, ownerTokenIdentifier, "cap-finalize-discuss");
+
+      const { jobId, assistantMessageId } = await t.run(async (ctx) => {
+        const jobId = await ctx.db.insert("jobs", {
+          repositoryId,
+          ownerTokenIdentifier,
+          threadId,
+          kind: "chat",
+          status: "running",
+          stage: "generating_reply",
+          progress: 0.6,
+          costCategory: "chat",
+          triggerSource: "user",
+          startedAt: Date.now(),
+          leaseExpiresAt: Date.now() + 60_000,
+        });
+        const assistantMessageId = await ctx.db.insert("messages", {
+          repositoryId,
+          threadId,
+          jobId,
+          ownerTokenIdentifier,
+          role: "assistant",
+          status: "streaming",
+          mode: "discuss",
+          content: "",
+        });
+        await ctx.db.insert("messageStreams", {
+          repositoryId,
+          threadId,
+          jobId,
+          assistantMessageId,
+          ownerTokenIdentifier,
+          compactedContent: "",
+          compactedThroughSequence: -1,
+          nextSequence: 0,
+          startedAt: Date.now(),
+          lastAppendedAt: Date.now(),
+        });
+        return { jobId, assistantMessageId };
+      });
+
+      await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
+        threadId,
+        assistantMessageId,
+        jobId,
+        finalDelta: "Discuss reply.",
+        inputTokens: 100,
+        outputTokens: 50,
+        costUsd: 0.02,
+      });
+
+      // Sandbox bucket untouched — discuss replies don't settle into it.
+      const remaining = await t.run(async (ctx) => {
+        const { rateLimiter } = await import("./lib/rateLimit");
+        const snapshot = await rateLimiter.getValue(ctx, "sandboxCostUsdPerUserDaily", {
+          key: ownerTokenIdentifier,
+          config: { kind: "fixed window", rate: 5, capacity: 5, period: 86_400_000, maxReserved: 5, start: 0 },
+        });
+        return snapshot.value;
+      });
+      expect(remaining).toBe(5);
+
+      // Cost still persists on the message so the ticker shows it.
+      const message = await t.run(async (ctx) => await ctx.db.get(assistantMessageId));
+      expect(message?.estimatedCostUsd).toBeCloseTo(0.02);
+    });
+
+    test("explicit settle via consumeSandboxDailyCost decrements both per-user and per-workspace buckets", async () => {
+      // Direct test of the settle helper because the end-to-end finalize
+      // test above uses the heuristic path (no real cost). This proves
+      // the "real cost gets settled" branch.
+      const ownerTokenIdentifier = "user|cap-settle-direct";
+      const t = createTestConvex();
+
+      const workspaceId = await t.run(async (ctx) => {
+        return await ctx.db.insert("workspaces", {
+          ownerTokenIdentifier,
+          name: "Settle Workspace",
+          color: "blue",
+          lastAccessedAt: Date.now(),
+        });
+      });
+
+      await t.run(async (ctx) => {
+        const { consumeSandboxDailyCost } = await import("./lib/rateLimit");
+        await consumeSandboxDailyCost(ctx, {
+          ownerTokenIdentifier,
+          workspaceId,
+          cents: 3,
+        });
+      });
+
+      const userRemaining = await t.run(async (ctx) => {
+        const { rateLimiter } = await import("./lib/rateLimit");
+        const snapshot = await rateLimiter.getValue(ctx, "sandboxCostUsdPerUserDaily", {
+          key: ownerTokenIdentifier,
+          config: { kind: "fixed window", rate: 5, capacity: 5, period: 86_400_000, maxReserved: 5, start: 0 },
+        });
+        return snapshot.value;
+      });
+      expect(userRemaining).toBe(2); // 5 capacity − 3 consumed
+
+      const workspaceRemaining = await t.run(async (ctx) => {
+        const { rateLimiter, workspaceCostKey } = await import("./lib/rateLimit");
+        const snapshot = await rateLimiter.getValue(ctx, "sandboxCostUsdPerWorkspaceDaily", {
+          key: workspaceCostKey(workspaceId),
+          config: {
+            kind: "fixed window",
+            rate: 1000,
+            capacity: 1000,
+            period: 86_400_000,
+            maxReserved: 1000,
+            start: 0,
+          },
+        });
+        return snapshot.value;
+      });
+      expect(workspaceRemaining).toBe(997); // 1000 capacity − 3 consumed
+    });
+
+    test("consumeSandboxDailyCost is a no-op for cents <= 0 (heuristic / pricing-miss replies)", async () => {
+      const ownerTokenIdentifier = "user|cap-noop";
+      const t = createTestConvex();
+
+      await t.run(async (ctx) => {
+        const { consumeSandboxDailyCost } = await import("./lib/rateLimit");
+        await consumeSandboxDailyCost(ctx, {
+          ownerTokenIdentifier,
+          workspaceId: null,
+          cents: 0,
+        });
+        await consumeSandboxDailyCost(ctx, {
+          ownerTokenIdentifier,
+          workspaceId: null,
+          cents: -5,
+        });
+      });
+
+      const remaining = await t.run(async (ctx) => {
+        const { rateLimiter } = await import("./lib/rateLimit");
+        const snapshot = await rateLimiter.getValue(ctx, "sandboxCostUsdPerUserDaily", {
+          key: ownerTokenIdentifier,
+          config: { kind: "fixed window", rate: 5, capacity: 5, period: 86_400_000, maxReserved: 5, start: 0 },
+        });
+        return snapshot.value;
+      });
+      // Zero / negative cents must not affect the bucket. Capacity = 5.
+      expect(remaining).toBe(5);
+    });
+
+    test("peekSandboxDailyCostForUser returns the configured capacity and a future reset timestamp", async () => {
+      const ownerTokenIdentifier = "user|cap-peek";
+      const t = createTestConvex();
+
+      const budget = await t.run(async (ctx) => {
+        const { peekSandboxDailyCostForUser } = await import("./lib/rateLimit");
+        return await peekSandboxDailyCostForUser(ctx, ownerTokenIdentifier);
+      });
+
+      expect(budget.capacityCents).toBe(5);
+      expect(budget.remainingCents).toBe(5);
+      // Reset is at the next UTC midnight after the fake `2026-04-22T00:00:00Z`
+      // system time set by the outer beforeEach. With `start: 0`, that's
+      // 2026-04-23T00:00:00Z.
+      expect(budget.resetAtMs).toBe(Date.UTC(2026, 3, 23, 0, 0, 0));
+    });
+  });
+
   test("stale deep analysis recovery fails the expired job", async () => {
     const ownerTokenIdentifier = "user|stale-analysis";
     const t = createTestConvex();
@@ -524,7 +955,11 @@ async function completeJob(t: AppTestConvex, jobId: Id<"jobs">) {
 
 function expectStructuredError(
   error: any,
-  code: "RATE_LIMIT_EXCEEDED" | "OPERATION_ALREADY_IN_PROGRESS",
+  code:
+    | "RATE_LIMIT_EXCEEDED"
+    | "OPERATION_ALREADY_IN_PROGRESS"
+    | "SANDBOX_DAILY_CAP_EXCEEDED"
+    | "SANDBOX_WORKSPACE_DAILY_CAP_EXCEEDED",
   bucket: string,
 ) {
   const data = typeof error?.data === "string" ? JSON.parse(error.data) : error?.data;
@@ -535,5 +970,9 @@ function expectStructuredError(
   expect(data.message).toEqual(expect.any(String));
   if (code === "RATE_LIMIT_EXCEEDED") {
     expect(data.retryAfterMs).toEqual(expect.any(Number));
+  }
+  if (code === "SANDBOX_DAILY_CAP_EXCEEDED" || code === "SANDBOX_WORKSPACE_DAILY_CAP_EXCEEDED") {
+    expect(data.retryAfterMs).toEqual(expect.any(Number));
+    expect(data.capUsd).toEqual(expect.any(Number));
   }
 }

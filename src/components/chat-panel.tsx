@@ -708,6 +708,19 @@ function MessageBubble({
   const renderedContent = isAssistant
     ? renderAssistantContent(displayContent, message.citationMap, onSelectArtifact)
     : displayContent || "…";
+  // Plan 10 — cost ticker for assistant messages: shows estimated cost
+  // and tokens / tool-call count so the user can correlate spend to a
+  // specific reply. Rendered only for *terminal* assistant states
+  // (`completed` / `failed` / `cancelled`) — streaming messages have
+  // partial usage that would tick visibly and distract from the
+  // streaming content. Built from the persisted message fields rather
+  // than re-derived from the model so unsupported models (`undefined`
+  // costUsd) gracefully render the token-only variant instead of a
+  // fake "$0.00".
+  const costTicker =
+    isAssistant && message.status !== "streaming" && message.status !== "pending"
+      ? buildCostTickerLabel(message)
+      : null;
   return (
     <Card className={cn("p-4", isUser ? "bg-muted border-transparent" : "border-transparent bg-transparent px-0")}>
       <div className="mb-1 flex items-center justify-between gap-3">
@@ -734,8 +747,81 @@ function MessageBubble({
           isStreaming={message.status === "streaming"}
         />
       ) : null}
+      {costTicker ? (
+        <p
+          className="mt-1 text-[11px] text-muted-foreground/80 tabular-nums"
+          data-testid="message-cost-ticker"
+          aria-label={`Reply cost ${costTicker}`}
+        >
+          {costTicker}
+        </p>
+      ) : null}
     </Card>
   );
+}
+
+/**
+ * Plan 10 — render the chat-bubble cost ticker.
+ *
+ * Tries to surface as much information as is available, in this order:
+ *
+ *   1. `~$0.03 · 1.2k tokens · 5 tools` — full info (priced model,
+ *      tokens reported, tool-call trace persisted).
+ *   2. `~$0.03 · 1.2k tokens` — full info minus tool calls (discuss /
+ *      docs replies have no tools by design).
+ *   3. `1.2k tokens · 5 tools` — pricing miss (model not in
+ *      `openaiPricing.ts`); we still show what we know.
+ *   4. `1.2k tokens` — discuss/docs reply for a model we don't price.
+ *   5. `null` — heuristic reply (no cost, no tokens). Skips the ticker
+ *      entirely so the user isn't shown an empty "—" line.
+ *
+ * Sub-cent costs get rendered as `<$0.01` rather than `$0.00` so the
+ * user can distinguish "cheap reply" from "free reply".
+ */
+function buildCostTickerLabel(message: Doc<"messages">): string | null {
+  const inputTokens = message.estimatedInputTokens;
+  const outputTokens = message.estimatedOutputTokens;
+  const totalTokens =
+    inputTokens !== undefined || outputTokens !== undefined ? (inputTokens ?? 0) + (outputTokens ?? 0) : null;
+  const cost = message.estimatedCostUsd;
+  const toolCallCount = message.toolCalls?.length ?? 0;
+
+  // Heuristic / no-token replies don't get a ticker — there's nothing
+  // useful to show beyond what the bubble already says.
+  if (totalTokens === null && cost === undefined && toolCallCount === 0) {
+    return null;
+  }
+
+  const parts: string[] = [];
+  if (cost !== undefined) {
+    parts.push(formatCostUsd(cost));
+  }
+  if (totalTokens !== null) {
+    parts.push(`${formatTokenCount(totalTokens)} tokens`);
+  }
+  if (toolCallCount > 0) {
+    parts.push(`${toolCallCount} ${toolCallCount === 1 ? "tool" : "tools"}`);
+  }
+  return parts.join(" · ");
+}
+
+function formatCostUsd(usd: number): string {
+  if (usd < 0.01) {
+    return "<$0.01";
+  }
+  if (usd < 1) {
+    return `~$${usd.toFixed(2)}`;
+  }
+  return `~$${usd.toFixed(2)}`;
+}
+
+function formatTokenCount(tokens: number): string {
+  if (tokens < 1000) {
+    return tokens.toString();
+  }
+  // 1.2k granularity — sufficient for the ticker and avoids noisy
+  // single-token differences across re-renders.
+  return `${(tokens / 1000).toFixed(1)}k`;
 }
 
 /**

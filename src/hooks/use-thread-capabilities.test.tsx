@@ -216,3 +216,136 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.disabledReasons.sandbox).toMatch(/expired/i);
   });
 });
+
+/**
+ * Plan 10 — sandbox cost-budget bridging from the threadContext query
+ * into the hook's flat shape.
+ *
+ * The hook consolidates the (per-user, per-workspace) budget pair into
+ * a single user-facing budget so the UI doesn't have to make the
+ * "which cap binds first?" decision in JSX. Tests anchor that
+ * consolidation logic.
+ */
+describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
+  test("threads without budget data (no repo attached) report sandboxCostBudget: null", () => {
+    useQueryMock.mockReturnValue({
+      thread: { _id: threadId },
+      attachedRepository: null,
+      sandboxStatus: null,
+      sandboxModeStatus: null,
+      chatModes: {
+        availableModes: ["discuss"],
+        defaultMode: "discuss",
+        disabledReasons: {
+          docs: "Attach a repository to use Design Docs mode.",
+          sandbox: "Attach a repository with a ready sandbox to use Sandbox mode.",
+        },
+      },
+      sandboxCostBudgets: null,
+    });
+
+    const { result } = renderHook(() => useThreadCapabilities(threadId));
+
+    expect(result.current.sandboxCostBudget).toBeNull();
+  });
+
+  test("user-only budget (no workspace) is exposed verbatim in USD", () => {
+    useQueryMock.mockReturnValue({
+      thread: { _id: threadId, repositoryId },
+      attachedRepository: {
+        _id: repositoryId,
+        sourceRepoFullName: "acme/widget",
+        sourceRepoName: "widget",
+      },
+      sandboxStatus: "ready",
+      sandboxModeStatus: { reasonCode: "available", message: null },
+      chatModes: {
+        availableModes: ["discuss", "docs", "sandbox"],
+        defaultMode: "docs",
+        disabledReasons: {},
+      },
+      sandboxCostBudgets: {
+        userBudget: { remainingCents: 320, capacityCents: 500, resetAtMs: 1_700_000_000_000 },
+        workspaceBudget: null,
+      },
+    });
+
+    const { result } = renderHook(() => useThreadCapabilities(threadId));
+
+    // Cents → USD with two-decimal precision; the hook is the right
+    // place for this conversion because every UI consumer would
+    // otherwise re-do it.
+    expect(result.current.sandboxCostBudget).toEqual({
+      remainingUsd: 3.2,
+      capacityUsd: 5,
+      resetAtMs: 1_700_000_000_000,
+    });
+  });
+
+  test("when both caps are present, the hook surfaces the more restrictive remaining (workspace)", () => {
+    useQueryMock.mockReturnValue({
+      thread: { _id: threadId, repositoryId },
+      attachedRepository: {
+        _id: repositoryId,
+        sourceRepoFullName: "acme/widget",
+        sourceRepoName: "widget",
+      },
+      sandboxStatus: "ready",
+      sandboxModeStatus: { reasonCode: "available", message: null },
+      chatModes: {
+        availableModes: ["discuss", "docs", "sandbox"],
+        defaultMode: "docs",
+        disabledReasons: {},
+      },
+      sandboxCostBudgets: {
+        userBudget: { remainingCents: 480, capacityCents: 500, resetAtMs: 1_700_000_010_000 },
+        // Workspace cap has only $0.10 left — far less than the user's
+        // $4.80, so the workspace cap is the binding constraint.
+        workspaceBudget: { remainingCents: 10, capacityCents: 5000, resetAtMs: 1_700_000_005_000 },
+      },
+    });
+
+    const { result } = renderHook(() => useThreadCapabilities(threadId));
+
+    expect(result.current.sandboxCostBudget).not.toBeNull();
+    expect(result.current.sandboxCostBudget!.remainingUsd).toBeCloseTo(0.1);
+    // Capacity tracks the binding cap (workspace = $50) — keeps the
+    // ratio "10¢ of $50.00 remaining" coherent rather than the cross-
+    // axis "10¢ of $5.00".
+    expect(result.current.sandboxCostBudget!.capacityUsd).toBe(50);
+    // Reset is the *earlier* of the two so the countdown reflects when
+    // the binding constraint releases (workspace's earlier reset wins).
+    expect(result.current.sandboxCostBudget!.resetAtMs).toBe(1_700_000_005_000);
+  });
+
+  test("when both caps are present, the hook surfaces the more restrictive remaining (user)", () => {
+    // Mirror of the above with the user cap binding instead.
+    useQueryMock.mockReturnValue({
+      thread: { _id: threadId, repositoryId },
+      attachedRepository: {
+        _id: repositoryId,
+        sourceRepoFullName: "acme/widget",
+        sourceRepoName: "widget",
+      },
+      sandboxStatus: "ready",
+      sandboxModeStatus: { reasonCode: "available", message: null },
+      chatModes: {
+        availableModes: ["discuss", "docs", "sandbox"],
+        defaultMode: "docs",
+        disabledReasons: {},
+      },
+      sandboxCostBudgets: {
+        userBudget: { remainingCents: 5, capacityCents: 500, resetAtMs: 1_700_000_010_000 },
+        workspaceBudget: { remainingCents: 4500, capacityCents: 5000, resetAtMs: 1_700_000_020_000 },
+      },
+    });
+
+    const { result } = renderHook(() => useThreadCapabilities(threadId));
+
+    expect(result.current.sandboxCostBudget!.remainingUsd).toBeCloseTo(0.05);
+    expect(result.current.sandboxCostBudget!.capacityUsd).toBe(5);
+    // Workspace reset is later, but user cap binds first (and resets
+    // earlier in this fixture too).
+    expect(result.current.sandboxCostBudget!.resetAtMs).toBe(1_700_000_010_000);
+  });
+});

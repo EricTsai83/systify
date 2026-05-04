@@ -155,6 +155,9 @@ vi.mock("@/hooks/use-thread-capabilities", () => ({
     disabledReasons: {},
     isMissingThread: false,
     isLoading: false,
+    // Plan 10 — sandboxCostBudget is null when no repo is attached
+    // (which is the no-repo fixture case here).
+    sandboxCostBudget: null,
   }),
 }));
 

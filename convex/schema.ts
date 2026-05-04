@@ -407,6 +407,25 @@ export default defineSchema({
     estimatedInputTokens: v.optional(v.number()),
     estimatedOutputTokens: v.optional(v.number()),
     /**
+     * Plan 10 — per-message cost estimate in USD, computed from the
+     * model's reported usage and a snapshot pricing table at finalize
+     * time (`convex/lib/openaiPricing.ts`). Used by:
+     *
+     *   1. The chat bubble cost-ticker ("~$0.03 (1.2k tokens, 5 tools)")
+     *      so the user can correlate spend to specific replies.
+     *   2. Audit / debugging — `messages.estimatedCostUsd` plus
+     *      `jobs.estimatedCostUsd` lets us reconcile the per-message
+     *      cost against the per-job total when an investigation needs
+     *      a finer breakdown than the job-level rollup.
+     *
+     * Optional + only written for assistant replies whose model is in the
+     * pricing table; messages predating Plan 10 (and discuss / docs
+     * heuristic replies) keep the field unset rather than stored as 0,
+     * so the frontend can render "—" instead of "$0.00" when cost is
+     * genuinely unknown vs. genuinely zero.
+     */
+    estimatedCostUsd: v.optional(v.number()),
+    /**
      * Numbered artifact citation map for `docs` mode replies. Index 1 in the
      * array is the artifact the prompt rendered as `## [A1] …`, index 2 the
      * `[A2]` artifact, and so on. The frontend uses this to turn `[A#]`
