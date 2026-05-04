@@ -112,6 +112,7 @@ export const generateAssistantReply = internalAction({
     let cancellationReason: string | undefined;
     let pollHandle: ReturnType<typeof setTimeout> | undefined;
     let pollingStopped = false;
+    let generationAborted = false;
 
     /**
      * Self-rescheduling poll. We use `setTimeout` instead of `setInterval`
@@ -144,11 +145,13 @@ export const generateAssistantReply = internalAction({
         }
         if (status.jobMissing) {
           // The job row was deleted out from under us (concurrent
-          // thread / repo cascade). Stop polling — the next runMutation
-          // would only error noisily — and let the action finish its
-          // current iteration; finalize / fail will then no-op cleanly
-          // since the message + job are already gone.
+          // thread / repo cascade). Abort the entire generation stream
+          // and stop polling to prevent noisy mutations patching a
+          // deleted job. Set the abort flag and tear down the stream
+          // so the for-await iterator exits cleanly.
+          generationAborted = true;
           pollingStopped = true;
+          cancellationController.abort();
           return;
         }
       } catch (error) {
@@ -220,12 +223,24 @@ export const generateAssistantReply = internalAction({
         // wins the race, we route through the cancel finalize variant
         // and skip the (very fast) heuristic write entirely.
         if (wasCancelled) {
-          await ctx.runMutation(internal.chat.streaming.markAssistantReplyCancelled, {
-            assistantMessageId: args.assistantMessageId,
-            jobId: args.jobId,
-            finalDelta: pendingDelta || undefined,
-            reason: cancellationReason,
-          });
+          // If the job row was also deleted under us (generationAborted),
+          // skip the cancel mutation — patching the missing job would only
+          // throw on the way back to the catch block.
+          if (!generationAborted) {
+            await ctx.runMutation(internal.chat.streaming.markAssistantReplyCancelled, {
+              assistantMessageId: args.assistantMessageId,
+              jobId: args.jobId,
+              finalDelta: pendingDelta || undefined,
+              reason: cancellationReason,
+            });
+          }
+          return;
+        }
+        // Same short-circuit as the streaming path: if the job row was
+        // deleted between scheduling the poll and reaching here, do not
+        // call finalize — the unconditional `ctx.db.patch(jobId, ...)` in
+        // `finalizeAssistantReply` would throw on the missing row.
+        if (generationAborted) {
           return;
         }
         const heuristicAnswer = buildHeuristicAnswer(replyContext, userPrompt, relevantChunks);
@@ -285,12 +300,24 @@ export const generateAssistantReply = internalAction({
       // the cancel finalize variant. `pendingDelta` is empty at this
       // point so the partial-content branch is a no-op.
       if (wasCancelled) {
-        await ctx.runMutation(internal.chat.streaming.markAssistantReplyCancelled, {
-          assistantMessageId: args.assistantMessageId,
-          jobId: args.jobId,
-          finalDelta: pendingDelta || undefined,
-          reason: cancellationReason,
-        });
+        // If the job row was also deleted (generationAborted), skip the
+        // cancel mutation — patching the missing job would only throw.
+        if (!generationAborted) {
+          await ctx.runMutation(internal.chat.streaming.markAssistantReplyCancelled, {
+            assistantMessageId: args.assistantMessageId,
+            jobId: args.jobId,
+            finalDelta: pendingDelta || undefined,
+            reason: cancellationReason,
+          });
+        }
+        return;
+      }
+      // Mirror of the streaming-path short-circuit: bail out before
+      // hitting OpenAI if the job row was already deleted under us. The
+      // for-await loop would otherwise tear down on the first event due
+      // to the abort signal, but skipping the call entirely saves a
+      // pointless upstream fetch.
+      if (generationAborted) {
         return;
       }
 
@@ -334,7 +361,14 @@ export const generateAssistantReply = internalAction({
         //      events table after `cancelInFlightReply` already drained
         //      it (which would briefly resurrect a "running" entry in
         //      the live ticker).
-        if (wasCancelled) {
+        //
+        // We also break on `generationAborted` so that a poll-detected
+        // jobMissing immediately stops further `appendAssistantStreamChunk`
+        // / `appendAssistantToolCallEvent` calls — both unconditionally
+        // patch the (now-missing) job row for the lease refresh and would
+        // throw, propagating noisy errors all the way through the catch
+        // path.
+        if (wasCancelled || generationAborted) {
           break;
         }
         switch (part.type) {
@@ -472,12 +506,20 @@ export const generateAssistantReply = internalAction({
       // streamed gives the user the partial reply they intentionally
       // interrupted to see.
       if (wasCancelled) {
-        await ctx.runMutation(internal.chat.streaming.markAssistantReplyCancelled, {
-          assistantMessageId: args.assistantMessageId,
-          jobId: args.jobId,
-          finalDelta: pendingDelta || undefined,
-          reason: cancellationReason,
-        });
+        // Skip finalize if generation was aborted due to missing job.
+        if (!generationAborted) {
+          await ctx.runMutation(internal.chat.streaming.markAssistantReplyCancelled, {
+            assistantMessageId: args.assistantMessageId,
+            jobId: args.jobId,
+            finalDelta: pendingDelta || undefined,
+            reason: cancellationReason,
+          });
+        }
+        return;
+      }
+
+      // Skip finalize if generation was aborted due to missing job.
+      if (generationAborted) {
         return;
       }
 
@@ -517,12 +559,19 @@ export const generateAssistantReply = internalAction({
       // the poll already saw the cancel and set the flag, we know the
       // throw is a consequence of that cancel and route accordingly.
       if (wasCancelled) {
-        await ctx.runMutation(internal.chat.streaming.markAssistantReplyCancelled, {
-          assistantMessageId: args.assistantMessageId,
-          jobId: args.jobId,
-          finalDelta: pendingDelta || undefined,
-          reason: cancellationReason,
-        });
+        // Skip finalize if generation was aborted due to missing job.
+        if (!generationAborted) {
+          await ctx.runMutation(internal.chat.streaming.markAssistantReplyCancelled, {
+            assistantMessageId: args.assistantMessageId,
+            jobId: args.jobId,
+            finalDelta: pendingDelta || undefined,
+            reason: cancellationReason,
+          });
+        }
+        return;
+      }
+      // Skip fail finalize if generation was aborted due to missing job.
+      if (generationAborted) {
         return;
       }
       await ctx.runMutation(internal.chat.streaming.failAssistantReply, {

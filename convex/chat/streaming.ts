@@ -654,21 +654,26 @@ export const markAssistantReplyCancelled = internalMutation({
 
       // Always cancel the job and clear the lease, regardless of whether
       // the assistant message still exists or whether `cancelInFlightReply`
-      // already set the status. Calling `patch` with the same status is a
-      // no-op write but keeps the code path uniform — this mutation always
-      // re-asserts the lease release on the cancel path even when
-      // `cancelInFlightReply` already cleared it, so a recovered or
-      // synthesized cancel that bypassed the front-half mutation still
-      // exits with `leaseExpiresAt: undefined` and never strands the
-      // per-thread in-flight gate.
-      await ctx.db.patch(args.jobId, {
-        status: "cancelled",
-        stage: "cancelled",
-        progress: 1,
-        completedAt: now,
-        errorMessage: reason,
-        leaseExpiresAt: undefined,
-      });
+      // already set the status. Guard against concurrent deletion so the
+      // cancellation finalization doesn't fail if the job row was deleted
+      // by a cascade (e.g. thread deleted). Check for existence first so
+      // a missing job is a clean no-op rather than throwing.
+      const job = await ctx.db.get(args.jobId);
+      if (job) {
+        await ctx.db.patch(args.jobId, {
+          status: "cancelled",
+          stage: "cancelled",
+          progress: 1,
+          completedAt: now,
+          errorMessage: reason,
+          leaseExpiresAt: undefined,
+        });
+      } else {
+        logWarn("chat", "cancel_job_missing", {
+          assistantMessageId: args.assistantMessageId,
+          jobId: args.jobId,
+        });
+      }
     } finally {
       if (streamSnapshot) {
         await deleteMessageStreamState(ctx, streamSnapshot.stream._id);
