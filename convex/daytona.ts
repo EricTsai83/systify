@@ -90,6 +90,11 @@ export async function provisionSandbox(options: CreateSandboxOptions): Promise<S
   }
 
   const networkAllowList = process.env.DAYTONA_NETWORK_ALLOW_LIST;
+  if (!networkAllowList) {
+    throw new Error(
+      "DAYTONA_NETWORK_ALLOW_LIST env var is required for sandbox provisioning",
+    );
+  }
   const cpuLimit = readNumberEnv("DAYTONA_CPU_LIMIT", DEFAULT_CPU_LIMIT);
   const memoryLimitGiB = readNumberEnv("DAYTONA_MEMORY_GIB", DEFAULT_MEMORY_GIB);
   const diskLimitGiB = readNumberEnv("DAYTONA_DISK_GIB", DEFAULT_DISK_GIB);
@@ -568,7 +573,7 @@ async function walkRepositoryTree(sandbox: Sandbox, repoPath: string): Promise<R
           isImportant: false,
           summary: undefined,
         });
-        if (item.isDir) {
+        if (item.isDir && depth < MAX_TREE_DEPTH) {
           nextFrontier.push({ relativePath: nextRelative, depth: depth + 1 });
         }
       }
