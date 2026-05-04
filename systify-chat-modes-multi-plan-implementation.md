@@ -333,30 +333,42 @@ Sandbox 跑工具期間 UI 顯示 live ticker（`Reading X.ts...`），取代靜
   ```
 - 訊息結束後，這個 ticker 變成可摺疊的「Tool calls (3)」段落，列出工具名 + 輸入摘要 + 結果 status
 - 重新整理頁面後 trace 還在（已持久化）
+- mid-stream 中斷（cancel / sandbox 失效 / job 過 lease）時，partial trace（只有 `start` 沒 `end` 的工具）會 fold 為 `endedAt === startedAt` 的 entry，UI 標示為「interrupted」，事件表不留孤兒
+- 同回覆中**多次呼叫同一工具**（例如連讀兩個檔）保持為兩筆獨立 entry，不被合併
 
 ## 改動檔案
 
 
-| 檔案                              | 變更                                                                                                                |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `convex/schema.ts`              | `messages` 加 optional `toolCalls: v.array(v.object({...}))`；新表 `messageToolCallEvents`（streaming 期間 append）       |
-| `convex/chat/streaming.ts`      | 新 mutation `appendAssistantToolCallEvent`、在 `finalizeAssistantReply` 把 events 收斂寫入 `messages.toolCalls` 並刪 events |
-| `convex/chat/generation.ts`     | `fullStream` 攔截 `tool-call` / `tool-result` 即刻寫入 events                                                           |
-| `src/components/chat-panel.tsx` | 新元件 `<ToolCallTrace>`（in-progress 與 final 共用），訂閱 `messageToolCallEvents` + `messages.toolCalls`                   |
-| `convex/chat-streaming.test.ts` | 擴充驗證 events 寫入與收斂                                                                                                 |
+| 檔案                                          | 變更                                                                                                                                                                |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `convex/schema.ts`                          | `messages` 加 optional `toolCalls`；新表 `messageToolCallEvents`，索引 `by_messageId_and_sequence`                                                                       |
+| `convex/lib/constants.ts`                   | 新增 `MAX_TOOL_CALL_EVENTS_PER_MESSAGE = 64`、`TOOL_CALL_EVENT_SUMMARY_MAX_CHARS = 600`                                                                              |
+| `convex/chat/toolCallEventStore.ts`         | **新檔**：純 helpers — `loadAllToolCallEventsByMessage`、`drainMessageToolCallEvents`、`nextToolCallEventSequence`、`foldToolCallEvents`                                |
+| `convex/chat/streaming.ts`                  | 新 mutation `appendAssistantToolCallEvent`、新 query `getMessageToolCallEvents`；`finalize` / `fail` / `recoverStaleChatJob` 共用 `foldAndDrainToolCallEvents` helper |
+| `convex/chat/generation.ts`                 | `fullStream` 攔截 `tool-call` / `tool-result` / `tool-error` 即刻寫入 events，`inputSummary` / `outputSummary` 走 Plan 05 的 `redact()`                                  |
+| `convex/chat/threads.ts` + `repositories.ts` | thread / repository cascade-delete 與 `cleanupOrphanedMessages` 都呼叫 `drainMessageToolCallEvents`                                                                  |
+| `src/components/tool-call-trace.tsx`        | **新檔**：`<ToolCallTrace>` 元件（live + persisted 共用一個 renderer），歷史訊息透過 `"skip"` sentinel 防止每個 bubble 都開訂閱                                                            |
+| `src/components/chat-panel.tsx`             | `MessageBubble` 在 assistant message 下渲染 `<ToolCallTrace>`                                                                                                        |
+| `convex/chat-streaming.test.ts`             | 擴充：fold/drain、multi-call same toolName、partial trace、stale recovery、cap truncation、cross-tenant fence、cascade drain（共 7 個 case）                                |
+| `src/components/tool-call-trace.test.tsx`   | **新檔**：streaming + finalized 兩種 state 渲染、ticker label（含 `run_shell` JSON 抽 command）、collapsible 行為                                                              |
 
 
 ## 工作項目
 
-1. Schema：`toolCalls?: Array<{ toolName, inputSummary, outputSummary, startedAt, endedAt, errorCode? }>`；events 表 `{ messageId, sequence, type: "start" | "end", toolName, inputSummary, outputSummary?, errorCode? }`
-2. Streaming：執行工具前 append `{type: "start"}`；執行完 append `{type: "end"}`；finalize 時讀 events 收斂為 `toolCalls` 陣列、寫入 message、刪 events
-3. **使用 Plan 05 的 `redact()`** 對 inputSummary / outputSummary 過濾後再寫入
-4. UI：subscribe events → 顯示最後一個 in-progress；終態時顯示完整列表
+1. **Schema**：`messages.toolCalls?: Array<{ toolCallId, toolName, inputSummary, outputSummary, startedAt, endedAt, errorCode? }>`；events 表 `{ messageId, toolCallId, sequence, type: "start" | "end", toolName, inputSummary, outputSummary?, errorCode?, occurredAt }`。`occurredAt` 來自 action 端的 `Date.now()`（不是 `_creationTime`），這樣 `endedAt - startedAt` 反映真正的工具延遲，而非 mutation dispatch 抖動
+2. **以 `toolCallId` 配對**（不是 `toolName`）：`toolCallId` 是 AI SDK 在 `fullStream` 上對應 `tool-call` ↔ `tool-result` / `tool-error` 的唯一 key。用 `toolName` 配對會把同一回覆中兩個 `read_file` 合併成一筆，破壞 trace 完整性
+3. **Streaming**：執行工具前 append `{type: "start"}`；result 或 error 到時 append `{type: "end"}`。finalize / fail / `recoverStaleChatJob` **三條路徑都共用 `foldAndDrainToolCallEvents` helper**（讀 events → fold by `toolCallId` → 寫 `messages.toolCalls` → drain events，全部在同一 transaction 內），確保前端絕不會看到「事件還在但 message 已 completed」的中介狀態
+4. **使用 Plan 05 的 `redact()`** 對 `inputSummary` / `outputSummary` 過濾後再寫入 events 表
+5. **Caps + 觀測信號**：events 讀取上限 `MAX_TOOL_CALL_EVENTS_PER_MESSAGE = 64`（防止 buggy AI SDK 重複事件造成 fold 爆量）、每欄字元上限 `TOOL_CALL_EVENT_SUMMARY_MAX_CHARS = 600`（防止 message doc 衝破 Convex 1MB row limit），命中即附 `…[truncated]` marker；finalize / fail / recover 在讀到 cap 時 `logWarn("chat", "tool_event_fold_truncated", { foldedEventCount, drainedEventCount, cap, … })`，使 truncation 可觀測。drain step 用 while-loop 確保即使讀超 cap 仍排乾，避免孤兒事件殘留
+6. **Lease refresh half-window heuristic**：`appendAssistantToolCallEvent` 與 `appendAssistantStreamChunk` 共用「上次 append 過半 lease 窗才 patch lease」的判斷，避免 cold-sandbox 慢工具步驟（例如 15s 的 archived sandbox 讀檔）被 `recoverStaleChatJob` 誤判 stale。沒有這個 refresh，工具呼叫期間若 model 沒發 text delta，lease 會悄悄過期
+7. **Cascade-delete 整合**：`drainMessageToolCallEvents` 在 thread cascade-delete、repository cascade-delete、`cleanupOrphanedMessages` 三條路徑都被呼叫，順序是「先 drain 子表事件、後刪父 message」，確保 partial-failed cascade 不留下指向不存在 `messageId` 的事件
+8. **UI**：`<ToolCallTrace>` 一個元件吃 streaming 與 finalized 兩種 state — streaming 時 subscribe live events 並從 `state === "running"` 找出 ticker 主角；終態時讀 `messages.toolCalls`。歷史訊息透過 `useQuery(..., "skip")` sentinel 避免每個 assistant bubble 都開訂閱（一條 thread 100 則訊息只有 in-flight 的那則訂閱）。`run_shell` 的 ticker 從 redacted JSON 抽 `command` 欄位顯示，避免 `Running {"command":"…"}` 的醜畫面
 
 ## Verification
 
-- `bun test convex/chat-streaming.test.ts`
-- 手動：sandbox 對話，肉眼確認 ticker 即時更新；F5 重整後 trace 仍存在
+- `bun test convex/chat-streaming.test.ts`（含 fold/drain、multi-call、partial、stale、cap、fence、cascade 共 7 個 case）
+- `bun test src/components/tool-call-trace.test.tsx`（含 production-shape JSON、長指令截斷、raw-string fallback）
+- 手動：sandbox 對話，肉眼確認 ticker 即時更新；F5 重整後 trace 仍存在；mid-stream cancel 後 partial trace 顯示為「interrupted」
 
 ## 依賴
 

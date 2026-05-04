@@ -37,8 +37,12 @@ flowchart TD
   Generate[GenerateReply]
   Stream[AppendAssistantStreamChunk]
   Compact[CompactActiveStreamTail]
+  ToolStart[AppendToolCallStartEvent]
+  ToolEnd[AppendToolCallEndEvent]
   Usage[CaptureFinalUsageIfAvailable]
   Complete[finalizeAssistantReply]
+  Fold[FoldEventsIntoMessageToolCalls]
+  Drain[DrainToolCallEvents]
 
   UserQuestion --> CreateJob
   CreateJob --> InsertMessages
@@ -47,9 +51,14 @@ flowchart TD
   LoadContext --> SelectChunks
   SelectChunks --> Generate
   Generate --> Stream
+  Generate -. sandbox tools .-> ToolStart
+  ToolStart -. result/error .-> ToolEnd
   Stream --> Compact
   Compact --> Usage
+  ToolEnd --> Usage
   Usage --> Complete
+  Complete --> Fold
+  Fold --> Drain
 ```
 
 
@@ -154,6 +163,21 @@ When the flow completes, it updates:
 - and deletes the active stream state
 
 If an error occurs midstream, both the assistant message and the job are marked failed.
+
+### 7. Tool-call trace (sandbox mode only)
+
+When the reply runs in `sandbox` mode and the AI SDK's `fullStream` surfaces `tool-call` / `tool-result` / `tool-error` events, the pipeline persists each event into a separate `messageToolCallEvents` table. This is the same hot/durable split that `messageStreamChunks` uses for text deltas (see `streaming-reply-optimization-system-design.md`):
+
+1. `tool-call` arrives → `appendAssistantToolCallEvent` writes a `start` row keyed by the AI SDK's `toolCallId`
+2. matching `tool-result` or `tool-error` arrives → a paired `end` row is written with the redacted `outputSummary`
+3. the live `<ToolCallTrace>` component subscribes to `getMessageToolCallEvents` so the UI paints a "Reading X.ts…" ticker the moment the `start` row commits, without waiting for the tool to finish
+4. at finalize time (or fail / stale recovery), `foldAndDrainToolCallEvents` pairs each `start` to its `end` by `toolCallId`, writes the result onto durable `messages.toolCalls`, and drains every event row in the same transaction so the live subscription cannot lag past the message's terminal state
+
+Pairing by `toolCallId` (rather than by `toolName`) preserves multiple invocations of the same tool — e.g. two `read_file` calls in one reply appear as two distinct `messages.toolCalls` entries. Each event's `inputSummary` and `outputSummary` are passed through `redact()` and capped at `TOOL_CALL_EVENT_SUMMARY_MAX_CHARS` before insertion so a runaway tool result cannot push the message document past Convex's 1 MB row limit.
+
+A defensive `MAX_TOOL_CALL_EVENTS_PER_MESSAGE` cap bounds reads and folds; if a buggy producer ever exceeds it, `tool_event_fold_truncated` is logged from finalize / fail / recover so the truncation is observable. The drain step still sweeps every row regardless of the read cap, so events never outlive their parent message.
+
+For the security rationale behind redaction at every persistence point, and for the threat model that motivates the `redactedTypes` audit signal, see `sandbox-mode-security-system-design.md`.
 
 ## Message state model
 

@@ -1,9 +1,13 @@
 import { v } from "convex/values";
-import { internalMutation, query } from "../_generated/server";
+import type { Id } from "../_generated/dataModel";
+import { type MutationCtx, internalMutation, query } from "../_generated/server";
 import { requireViewerIdentity } from "../lib/auth";
 import { CHAT_JOB_LEASE_MS } from "../lib/rateLimit";
 import { logWarn } from "../lib/observability";
-import { TOOL_CALL_EVENT_SUMMARY_MAX_CHARS } from "../lib/constants";
+import {
+  MAX_TOOL_CALL_EVENTS_PER_MESSAGE,
+  TOOL_CALL_EVENT_SUMMARY_MAX_CHARS,
+} from "../lib/constants";
 import {
   compactMessageStreamTail,
   deleteMessageStreamState,
@@ -30,6 +34,51 @@ const STALE_CHAT_JOB_ERROR_MESSAGE = "The assistant reply stalled and was automa
  * truncation is never silent.
  */
 const TOOL_CALL_SUMMARY_TRUNCATION_MARKER = "…[truncated]";
+
+/**
+ * Plan 06 — fold + drain helper shared by `finalizeAssistantReply`,
+ * `failAssistantReply`, and `recoverStaleChatJob`.
+ *
+ * All three mutations need to: (1) read up to `MAX_TOOL_CALL_EVENTS_PER_MESSAGE`
+ * events for the fold, (2) compute the persisted `messages.toolCalls`
+ * payload, and (3) make sure *every* event row attached to this message
+ * is gone before the transaction commits.
+ *
+ * Centralizing this matters because `loadAllToolCallEventsByMessage`
+ * caps reads at `MAX_TOOL_CALL_EVENTS_PER_MESSAGE` (defensively, to keep
+ * the live subscription cheap and the fold inside Convex's per-tx read
+ * budget). If a buggy upstream produced more events than the cap,
+ * deleting only the rows we read would leave orphans behind that the
+ * live subscription can't see but that survive the message itself.
+ * Always calling `drainMessageToolCallEvents` after the fold guarantees
+ * a full sweep — the function is idempotent and cheap when the read
+ * already deleted the first batch.
+ */
+async function foldAndDrainToolCallEvents(
+  ctx: MutationCtx,
+  messageId: Id<"messages">,
+  context: { jobId: Id<"jobs">; mutation: string },
+): Promise<ToolCallTraceEntry[] | undefined> {
+  const events = await loadAllToolCallEventsByMessage(ctx, messageId);
+  const folded = foldToolCallEvents(events);
+  // Defensive sweep: drain *all* rows even if the fold-read hit the cap.
+  // Returns the actual count drained so we can log when truncation
+  // happened — that's the signal that something upstream produced more
+  // events than `SANDBOX_STEP_BUDGET * 2`, which is worth alerting on.
+  const drained = await drainMessageToolCallEvents(ctx, messageId);
+  if (events.length >= MAX_TOOL_CALL_EVENTS_PER_MESSAGE) {
+    logWarn("chat", "tool_event_fold_truncated", {
+      messageId,
+      jobId: context.jobId,
+      mutation: context.mutation,
+      foldedEventCount: events.length,
+      drainedEventCount: drained,
+      cap: MAX_TOOL_CALL_EVENTS_PER_MESSAGE,
+      hint: "messages.toolCalls reflects only the first MAX_TOOL_CALL_EVENTS_PER_MESSAGE rows; subsequent rows are dropped from the persisted trace.",
+    });
+  }
+  return folded.length > 0 ? folded : undefined;
+}
 
 /**
  * Cap a tool-call summary at `TOOL_CALL_EVENT_SUMMARY_MAX_CHARS` characters,
@@ -350,10 +399,12 @@ export const finalizeAssistantReply = internalMutation({
     // events still exist but the message is already `completed`; the
     // `getMessageToolCallEvents` subscription either returns the running
     // trace (pre-finalize) or the empty list (post-finalize, with
-    // `messages.toolCalls` taking over).
-    const toolCallEvents = await loadAllToolCallEventsByMessage(ctx, args.assistantMessageId);
-    const foldedToolCalls = foldToolCallEvents(toolCallEvents);
-    const persistedToolCalls = foldedToolCalls.length > 0 ? foldedToolCalls : undefined;
+    // `messages.toolCalls` taking over). The helper also drains beyond the
+    // fold's read cap so a runaway producer doesn't leave orphan rows.
+    const persistedToolCalls = await foldAndDrainToolCallEvents(ctx, args.assistantMessageId, {
+      jobId: args.jobId,
+      mutation: "finalizeAssistantReply",
+    });
 
     try {
       if (message) {
@@ -426,12 +477,9 @@ export const finalizeAssistantReply = internalMutation({
       if (streamSnapshot) {
         await deleteMessageStreamState(ctx, streamSnapshot.stream._id);
       }
-      // Drain tool-call events. Same `finally`-block rationale as the stream
-      // cleanup: a future refactor that wraps individual writes in try/catch
-      // must not leave orphan events behind.
-      for (const event of toolCallEvents) {
-        await ctx.db.delete(event._id);
-      }
+      // Tool-call events are already drained by `foldAndDrainToolCallEvents`
+      // above (which sweeps past the fold's read cap), so there's no
+      // separate cleanup to do here.
     }
   },
 });
@@ -451,10 +499,12 @@ export const failAssistantReply = internalMutation({
     // Plan 06 — surface partial tool-call traces on failures so the user can
     // see which tool the reply was running when it died. Unfinished entries
     // (only `start` events) fold to `endedAt === startedAt` and the trace
-    // UI renders them as "interrupted".
-    const toolCallEvents = await loadAllToolCallEventsByMessage(ctx, args.assistantMessageId);
-    const foldedToolCalls = foldToolCallEvents(toolCallEvents);
-    const persistedToolCalls = foldedToolCalls.length > 0 ? foldedToolCalls : undefined;
+    // UI renders them as "interrupted". The helper also drains beyond the
+    // fold's read cap so failure paths can't leak orphan events.
+    const persistedToolCalls = await foldAndDrainToolCallEvents(ctx, args.assistantMessageId, {
+      jobId: args.jobId,
+      mutation: "failAssistantReply",
+    });
 
     try {
       if (message) {
@@ -487,9 +537,8 @@ export const failAssistantReply = internalMutation({
       if (streamSnapshot) {
         await deleteMessageStreamState(ctx, streamSnapshot.stream._id);
       }
-      for (const event of toolCallEvents) {
-        await ctx.db.delete(event._id);
-      }
+      // Tool-call events are already drained by `foldAndDrainToolCallEvents`
+      // above (sweep-past-cap), so there's no separate cleanup to do here.
     }
   },
 });
@@ -526,11 +575,14 @@ export const recoverStaleChatJob = internalMutation({
     // can tell what was running when the job stalled. Drained in the same
     // mutation; orphan events from a stalled-then-recovered reply must not
     // outlive the message (they'd leak via the live subscription forever).
-    const toolCallEvents = assistantMessage
-      ? await loadAllToolCallEventsByMessage(ctx, assistantMessage._id)
-      : [];
-    const foldedToolCalls = foldToolCallEvents(toolCallEvents);
-    const persistedToolCalls = foldedToolCalls.length > 0 ? foldedToolCalls : undefined;
+    // The helper sweeps past the fold's read cap, so even a runaway
+    // producer can't leave rows pointing at a failed message.
+    const persistedToolCalls = assistantMessage
+      ? await foldAndDrainToolCallEvents(ctx, assistantMessage._id, {
+          jobId: args.jobId,
+          mutation: "recoverStaleChatJob",
+        })
+      : undefined;
 
     try {
       if (assistantMessage) {
@@ -554,17 +606,8 @@ export const recoverStaleChatJob = internalMutation({
       if (stream) {
         await deleteMessageStreamState(ctx, stream._id);
       }
-      for (const event of toolCallEvents) {
-        await ctx.db.delete(event._id);
-      }
+      // Tool-call events are already drained by `foldAndDrainToolCallEvents`
+      // above (sweep-past-cap), so there's no separate cleanup to do here.
     }
   },
 });
-
-/**
- * Re-export for cascade-delete code paths (`repositories.ts`,
- * `chat/threads.ts`) that need to drain orphan events alongside their
- * existing per-thread / per-message cleanup. Living on the streaming
- * surface keeps the caller list discoverable from one file.
- */
-export { drainMessageToolCallEvents };

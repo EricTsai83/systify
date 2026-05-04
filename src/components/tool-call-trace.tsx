@@ -72,26 +72,42 @@ type NormalizedToolCall = {
   state: ToolCallState;
 };
 
-/** Best-effort path extractor used by the ticker label. */
-function extractPath(inputSummary: string): string | null {
-  // The action stores `inputSummary` as a redacted JSON-stringified args
-  // object (e.g. `{"path":"convex/chat/send.ts"}`). We try to parse it
-  // and pull the `path` field; a parse failure (or a non-string `path`)
-  // falls back to the raw summary so the ticker still has *something* to
-  // show.
+/**
+ * Best-effort string-field extractor for the redacted JSON-stringified
+ * tool args produced by `generation.ts` (e.g.
+ * `{"path":"convex/chat/send.ts"}` for `read_file` /
+ * `{"command":"grep -r foo convex/"}` for `run_shell`).
+ *
+ * Returns the value of `field` when:
+ *   - `inputSummary` parses to a non-array object, AND
+ *   - the field is present and is a non-empty string.
+ *
+ * A parse failure (truncated JSON, future tool whose input isn't an
+ * object, raw-string fixture) returns `null` so callers can fall back to
+ * the raw summary. We exclude arrays explicitly because `Array.isArray`
+ * objects have a property index of `0,1,…` that could collide with a
+ * future tool whose schema accepts an array of strings.
+ */
+function extractInputField(inputSummary: string, field: string): string | null {
   try {
     const parsed: unknown = JSON.parse(inputSummary);
-    if (parsed && typeof parsed === "object" && "path" in parsed) {
-      const path = (parsed as { path: unknown }).path;
-      if (typeof path === "string" && path.length > 0) {
-        return path;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && field in parsed) {
+      const value = (parsed as Record<string, unknown>)[field];
+      if (typeof value === "string" && value.length > 0) {
+        return value;
       }
     }
   } catch {
-    // Fall through; the JSON may have been truncated or never been valid
-    // (e.g. a future tool whose input isn't an object).
+    // Fall through; the JSON may have been truncated or the input is a
+    // raw string (e.g. unit-test fixtures, or a tool whose `inputSummary`
+    // isn't JSON-shaped after redaction).
   }
   return null;
+}
+
+/** Convenience for the common `path` lookup used by the entry renderer. */
+function extractPath(inputSummary: string): string | null {
+  return extractInputField(inputSummary, "path");
 }
 
 function deriveStateFromPersisted(entry: {
@@ -111,6 +127,15 @@ function formatDuration(ms: number): string {
   return `${(ms / 1000).toFixed(1)}s`;
 }
 
+/** Cap the ticker preview so a long command doesn't overflow the bar. */
+const TICKER_PREVIEW_MAX_CHARS = 60;
+
+function truncatePreview(value: string): string {
+  return value.length > TICKER_PREVIEW_MAX_CHARS
+    ? `${value.slice(0, TICKER_PREVIEW_MAX_CHARS)}…`
+    : value;
+}
+
 function tickerLabel(tool: NormalizedToolCall): string {
   const path = extractPath(tool.inputSummary);
   switch (tool.toolName) {
@@ -118,13 +143,19 @@ function tickerLabel(tool: NormalizedToolCall): string {
       return path ? `Reading ${path}` : "Reading file";
     case "list_dir":
       return path ? `Listing ${path}` : "Listing directory";
-    case "run_shell":
-      // Plan 08 lands `run_shell`; the input shape (`{ command }`) doesn't
-      // expose a `path`. Fall back to the raw summary, capped to a
-      // reasonable preview length.
-      return tool.inputSummary.length > 60
-        ? `Running ${tool.inputSummary.slice(0, 60)}…`
-        : `Running ${tool.inputSummary}`;
+    case "run_shell": {
+      // Plan 08 lands `run_shell` whose `inputSummary` is the redacted
+      // JSON-stringified args (e.g. `{"command":"grep -r foo convex/"}`).
+      // Pull `command` out so the ticker reads `Running grep -r foo …`
+      // instead of leaking the JSON braces. If the JSON parse fails
+      // (e.g. unit-test fixture passing a raw string, or a truncated
+      // payload), fall back to a length-capped preview of the raw
+      // summary so the ticker still has something to display.
+      const command = extractInputField(tool.inputSummary, "command");
+      return command
+        ? `Running ${truncatePreview(command)}`
+        : `Running ${truncatePreview(tool.inputSummary)}`;
+    }
     default:
       return path ? `${tool.toolName}: ${path}` : tool.toolName;
   }

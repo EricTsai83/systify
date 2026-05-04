@@ -264,10 +264,67 @@ describe("ToolCallTrace — streaming (live subscription)", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  test("falls back to the toolName when the input summary is not JSON", () => {
+  test("renders run_shell with the command extracted from the JSON args", () => {
+    // Production shape: `generation.ts` JSON-stringifies the tool args
+    // before redaction, so `inputSummary` for run_shell is
+    // `{"command":"…"}`. The ticker must extract the inner command so
+    // the user reads `Running grep -r foo convex/` instead of the raw
+    // JSON blob.
     useQueryMock.mockReturnValue([
       {
-        toolCallId: "c-shell",
+        toolCallId: "c-shell-json",
+        toolName: "run_shell",
+        inputSummary: '{"command":"grep -r foo convex/"}',
+        outputSummary: "",
+        startedAt: 1000,
+        endedAt: 1000,
+        state: "running",
+      },
+    ]);
+
+    render(
+      <ToolCallTrace messageId={messageId} persistedToolCalls={undefined} isStreaming={true} />,
+    );
+
+    const ticker = screen.getByTestId("tool-call-ticker");
+    expect(ticker).toHaveTextContent("Running grep -r foo convex/");
+    // Negative assertion: the JSON braces must not leak into the ticker.
+    expect(ticker.textContent).not.toContain("{");
+  });
+
+  test("truncates an overlong run_shell command in the ticker", () => {
+    // Long commands should be capped so the ticker doesn't overflow the
+    // single-line bar; the truncation marker (`…`) signals there's more.
+    const longCommand = "find . ".concat("-name '*.ts' ".repeat(20));
+    useQueryMock.mockReturnValue([
+      {
+        toolCallId: "c-shell-long",
+        toolName: "run_shell",
+        inputSummary: JSON.stringify({ command: longCommand }),
+        outputSummary: "",
+        startedAt: 1000,
+        endedAt: 1000,
+        state: "running",
+      },
+    ]);
+
+    render(
+      <ToolCallTrace messageId={messageId} persistedToolCalls={undefined} isStreaming={true} />,
+    );
+
+    const ticker = screen.getByTestId("tool-call-ticker");
+    // The visible label is capped well below the full command length.
+    expect(ticker.textContent ?? "").toMatch(/Running find \. -name.*…/);
+    expect((ticker.textContent ?? "").length).toBeLessThan(longCommand.length);
+  });
+
+  test("falls back to the raw summary when run_shell input is not JSON", () => {
+    // Defensive path: a future tool, a truncated JSON, or a raw-string
+    // fixture should still produce a readable ticker rather than a
+    // crashing parse.
+    useQueryMock.mockReturnValue([
+      {
+        toolCallId: "c-shell-raw",
         toolName: "run_shell",
         inputSummary: "grep -r foo convex/",
         outputSummary: "",

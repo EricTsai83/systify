@@ -149,10 +149,28 @@ Together, these tables form the indexing layer:
 
 Chat data follows a standard thread/message model:
 
-- `threads` stores the title, mode, and last interaction timestamps
-- `messages` stores role, status, content, and error information
+- `threads` stores the title, mode (one of `discuss` / `docs` / `sandbox`), and last interaction timestamps
+- `messages` stores role, status, content, mode, and error information
+
+Beyond the basics, `messages` carries a few optional fields that are only populated when the corresponding feature applies:
+
+- `citationMap`: numbered `[A#] -> artifactId` entries, written for `docs`-mode replies that cited design artifacts
+- `toolCalls`: frozen tool-call trace for sandbox-mode replies (folded from `messageToolCallEvents` at finalize time; see `chat-and-analysis-pipeline.md` for the lifecycle)
+- `estimatedInputTokens` / `estimatedOutputTokens`: usage data from the model provider, when available
+
+All three stay unset on messages that do not need them, so older rows continue to validate without backfill.
 
 An assistant message is not written all at once. It transitions through `pending` -> `streaming` -> `completed` or `failed`.
+
+### `messageStreams`, `messageStreamChunks`, and `messageToolCallEvents`
+
+These three tables hold ephemeral state for an in-flight assistant reply. They exist so the durable `messages` row is not rewritten on every streamed delta or tool-call event:
+
+- `messageStreams`: one active stream header per in-flight reply (compacted prefix + tail metadata). Deleted in the same transaction that finalizes the reply.
+- `messageStreamChunks`: append-only stream tail chunks keyed by `streamId` + `sequence`. Periodically compacted into the header so the active-stream query stays bounded.
+- `messageToolCallEvents`: append-only `start` / `end` events for sandbox-mode tool invocations, keyed by the AI SDK's `toolCallId` plus a per-message dense `sequence`. Drives the live "Reading X.ts…" ticker, then folded onto `messages.toolCalls` and drained at finalize / fail / stale-recovery time.
+
+See `streaming-reply-optimization-system-design.md` for the design reasoning behind splitting these out from `messages`.
 
 ### `githubInstallations` and `githubOAuthStates`
 

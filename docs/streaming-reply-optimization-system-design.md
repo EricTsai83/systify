@@ -38,15 +38,16 @@ The long-term design optimizes for five properties:
 
 ## Chosen Design
 
-The system now uses three layers:
+The system now uses four layers:
 
-- `messages` for durable chat history
+- `messages` for durable chat history (text, status, citation map, finalized tool-call trace)
 - `messageStreams` for one active stream header
 - `messageStreamChunks` for append-only stream tail chunks
+- `messageToolCallEvents` for ephemeral tool-call `start` / `end` events (sandbox mode only)
 
 The key rule is:
 
-> `messages.content` is only written at terminalization time, not on every delta.
+> `messages.content` is only written at terminalization time, not on every delta. The same applies to `messages.toolCalls`, which is folded from `messageToolCallEvents` only at finalize / fail / stale-recovery time.
 
 ## Data Model
 
@@ -74,6 +75,19 @@ The key rule is:
 - `sequence`
 - `text`
 
+`messageToolCallEvents` stores append-only tool-call lifecycle events for sandbox-mode replies:
+
+- `messageId`
+- `toolCallId` (the AI SDK correlation key — pairs each `start` event to its matching `end`)
+- `sequence` (per-message dense monotonic counter, allocated at insert)
+- `type` (`"start"` | `"end"`)
+- `toolName`
+- redacted `inputSummary` / `outputSummary` (length-capped at `TOOL_CALL_EVENT_SUMMARY_MAX_CHARS`)
+- optional `errorCode` for failed tool invocations
+- `occurredAt` wall-clock timestamp
+
+Why a separate table for tool events instead of an array on `messages`: every patch on a Convex document rewrites the full row. Two writes per tool call (`start` + `end`) on a `messages.toolCalls` array would re-marshal the entire `messages` row each time and contend with the durable `content` patch. The dedicated table follows the same write-amplification reasoning that motivated splitting `messageStreamChunks` out from `messages.content`.
+
 ## Runtime Flow
 
 ```mermaid
@@ -85,8 +99,11 @@ flowchart TD
   actionRun --> appendChunk[appendAssistantStreamChunk]
   appendChunk --> compactTail[CompactTailIntoHeader]
   compactTail --> activeQuery[getActiveMessageStream]
+  actionRun -. sandbox tools .-> appendToolEvent[appendAssistantToolCallEvent]
+  appendToolEvent --> liveTickerQuery[getMessageToolCallEvents]
   actionRun --> finalize[finalizeAssistantReply]
   finalize --> writeDurable[PatchMessagesContentOnce]
+  finalize --> foldDrain[FoldAndDrainToolCallEvents]
   finalize --> cleanup[DeleteStreamHeaderAndChunks]
 ```
 
@@ -104,25 +121,29 @@ That gives the system a useful balance:
 
 ## Frontend Read Boundary
 
-The UI now reads two sources:
+The UI now reads three sources:
 
 ```mermaid
 flowchart TD
   historyQuery[listMessages]
   streamQuery[getActiveMessageStream]
+  toolCallQuery[getMessageToolCallEvents]
   mergeUi[MergeByAssistantMessageId]
   chatPanel[RenderChatPanel]
 
   historyQuery --> mergeUi
   streamQuery --> mergeUi
+  toolCallQuery --> mergeUi
   mergeUi --> chatPanel
 ```
 
-`listMessages` is now responsible for stable history and placeholder rows.
+`listMessages` is now responsible for stable history and placeholder rows (including the finalized `messages.toolCalls` trace once a sandbox reply has settled).
 
 `getActiveMessageStream` is responsible only for the live in-flight assistant text.
 
-This prevents the whole history query from becoming the transport mechanism for every streamed delta.
+`getMessageToolCallEvents` powers the live ticker. It is gated by the `"skip"` sentinel for non-streaming messages so the historical chat list never opens one subscription per assistant bubble — only the in-flight reply (at most one per thread) holds an active query. Once the message status flips to `completed` / `failed`, the UI silently switches to the persisted `messages.toolCalls` array and the live subscription is dropped.
+
+This prevents the whole history query from becoming the transport mechanism for every streamed delta or tool event.
 
 ## Failure Recovery
 
@@ -132,17 +153,23 @@ flowchart TD
   leaseCheck -- No --> keepStreaming[KeepStreaming]
   leaseCheck -- Yes --> recover[recoverStaleChatJob]
   recover --> markFailed[MarkAssistantMessageFailed]
+  recover --> foldPartialTrace[FoldPartialToolCallTrace]
   recover --> removeHotState[DeleteMessageStreamRows]
+  recover --> drainEvents[DrainMessageToolCallEvents]
   markFailed --> cleanEnd[CleanTerminalState]
+  foldPartialTrace --> cleanEnd
   removeHotState --> cleanEnd
+  drainEvents --> cleanEnd
 ```
 
 The cleanup rule is simple:
 
 - if a reply completes, durable content is written and hot state is deleted
-- if a reply fails or stalls, the durable row is marked failed and hot state is deleted
+- if a reply fails or stalls, the durable row is marked failed (with any partial tool-call trace folded onto `messages.toolCalls`) and hot state is deleted
 
-That prevents orphan `messageStreams` or `messageStreamChunks` from accumulating after failures.
+That prevents orphan `messageStreams`, `messageStreamChunks`, or `messageToolCallEvents` from accumulating after failures. A tool whose `start` event committed but whose `end` event never arrived folds into a `messages.toolCalls` entry with `endedAt === startedAt`, which the trace UI renders as "interrupted" so the user can tell the model didn't finish that call.
+
+The lease-refresh heuristic in `appendAssistantStreamChunk` and `appendAssistantToolCallEvent` (refresh once half the lease window has elapsed) keeps long-running tool steps — e.g. a 15s file fetch from a cold sandbox — from being incorrectly marked stale. Without it, a slow tool with no intervening text deltas could drift past `leaseExpiresAt` while the reply is genuinely healthy.
 
 ## Why This Fits Convex Better
 
