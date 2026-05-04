@@ -6,9 +6,11 @@ import { mutation } from "../_generated/server";
 import { requireViewerIdentity } from "../lib/auth";
 import {
   CHAT_JOB_LEASE_MS,
+  assertSandboxDailyCostBudget,
   consumeChatGlobalRateLimit,
   consumeChatRateLimit,
   getLeaseRetryAfterMs,
+  getSandboxReplyEstimateCents,
   isLeaseActive,
   throwOperationAlreadyInProgress,
 } from "../lib/rateLimit";
@@ -97,6 +99,35 @@ export const sendMessage = mutation({
         "An assistant reply is already in progress for this thread.",
         getLeaseRetryAfterMs(activeJob.leaseExpiresAt, now),
       );
+    }
+
+    // Plan 10 — daily-cost-cap pre-check, sandbox-only.
+    //
+    // Order matters: this fires *before* the per-owner / global chat
+    // rate limits because (a) a quota-exceeded error is a more
+    // user-actionable signal than "too many requests" and (b) the
+    // structured `SANDBOX_DAILY_CAP_EXCEEDED` error code carries a
+    // precise reset timestamp the UI uses to render a countdown,
+    // whereas a rate-limited request would advise generic retry. The
+    // resolver / threadContext also disables sandbox mode preemptively
+    // when the cap is reached, but the write-path check is necessary
+    // for two reasons:
+    //
+    //   1. A stale UI tab that loaded before the user hit their cap
+    //      could still queue a sandbox send.
+    //   2. The reactive resolver subscribes to *peek* values which
+    //      can momentarily race with concurrent settlements; only the
+    //      mutation-context check is authoritative.
+    //
+    // Discuss / docs sends skip this entirely — they bill against
+    // the cheaper `chat` cost category and aren't subject to the
+    // sandbox cap.
+    if (mode === "sandbox") {
+      await assertSandboxDailyCostBudget(ctx, {
+        ownerTokenIdentifier: identity.tokenIdentifier,
+        workspaceId: thread.workspaceId ?? null,
+        estimateCents: getSandboxReplyEstimateCents(),
+      });
     }
 
     await consumeChatRateLimit(ctx, identity.tokenIdentifier);

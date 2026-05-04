@@ -1,12 +1,23 @@
 /// <reference types="vite/client" />
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { register as registerRateLimiter } from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
+
+function createTestConvex() {
+  const t = convexTest(schema, modules);
+  // Plan 10 — getThreadContext now peeks the rate-limiter for sandbox
+  // cost budgets, so the rate-limiter component must be registered for
+  // every test in this file (not just the cost-cap-specific ones —
+  // every code path now reads the bucket).
+  registerRateLimiter(t);
+  return t;
+}
 
 const OWNER = "user|thread-context-test";
 const OTHER_OWNER = "user|thread-context-other";
@@ -144,7 +155,7 @@ describe("getThreadContext (internal)", () => {
   withSandboxFeatureGateOpen();
 
   test("returns null when the thread does not exist", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const fakeId = await t.run(async (ctx) => {
       const id = await ctx.db.insert("threads", {
         ownerTokenIdentifier: OWNER,
@@ -163,7 +174,7 @@ describe("getThreadContext (internal)", () => {
   });
 
   test("thread without a repository: only discuss mode is available", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const { threadId } = await seedThread(t, { withRepository: false });
 
     const result = await t.query(internal.threadContext.getThreadContextInternal, {
@@ -179,7 +190,7 @@ describe("getThreadContext (internal)", () => {
   });
 
   test("thread with repository but no sandbox: discuss + docs available", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const { threadId, repositoryId } = await seedThread(t, { withRepository: true });
 
     const result = await t.query(internal.threadContext.getThreadContextInternal, {
@@ -194,7 +205,7 @@ describe("getThreadContext (internal)", () => {
   });
 
   test("thread with repository and ready sandbox: all three modes available, default docs", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
       sandboxStatus: "ready",
@@ -211,7 +222,7 @@ describe("getThreadContext (internal)", () => {
   });
 
   test("thread with stopped sandbox maps to expired in resolver input", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
       sandboxStatus: "stopped",
@@ -227,7 +238,7 @@ describe("getThreadContext (internal)", () => {
   });
 
   test("thread with archived sandbox maps to expired in resolver input", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
       sandboxStatus: "archived",
@@ -243,7 +254,7 @@ describe("getThreadContext (internal)", () => {
   });
 
   test("thread with provisioning sandbox surfaces a provisioning hint for sandbox mode", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
       sandboxStatus: "provisioning",
@@ -259,7 +270,7 @@ describe("getThreadContext (internal)", () => {
   });
 
   test("thread with failed sandbox surfaces a failed hint for sandbox mode", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
       sandboxStatus: "failed",
@@ -278,7 +289,7 @@ describe("getThreadContext (public, owner-scoped)", () => {
   withSandboxFeatureGateOpen();
 
   test("rejects access from a different owner", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: false,
       ownerTokenIdentifier: OWNER,
@@ -289,7 +300,7 @@ describe("getThreadContext (public, owner-scoped)", () => {
   });
 
   test("returns the same shape as the internal query for the owner", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
       sandboxStatus: "ready",
@@ -326,7 +337,7 @@ describe("getThreadContext sandbox feature gate", () => {
     // Default env state (flag unset) — even with a fully-eligible thread,
     // sandbox mode must be hidden. The disabled tooltip explains the
     // private-beta status; the user is not stuck without an explanation.
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const { threadId } = await seedThread(t, { withRepository: true, sandboxStatus: "ready" });
 
     const result = await t.query(internal.threadContext.getThreadContextInternal, { threadId });
@@ -340,7 +351,7 @@ describe("getThreadContext sandbox feature gate", () => {
     process.env.SANDBOX_MODE_ENABLED = "true";
     process.env.SANDBOX_BETA_ALLOWLIST = OWNER;
 
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
       sandboxStatus: "ready",
@@ -362,7 +373,7 @@ describe("getThreadContext sandbox feature gate", () => {
     process.env.SANDBOX_MODE_ENABLED = "true";
     process.env.SANDBOX_BETA_ALLOWLIST = "user|someone-else";
 
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
       sandboxStatus: "ready",
@@ -373,5 +384,147 @@ describe("getThreadContext sandbox feature gate", () => {
 
     expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
     expect(result!.chatModes.disabledReasons.sandbox).toMatch(/allowlist/i);
+  });
+});
+
+/**
+ * Plan 10 — daily-cost-cap signals at the thread-context boundary.
+ *
+ * Verifies that:
+ *
+ *   1. `sandboxCostBudgets` is `null` for no-repo threads (the cap is
+ *      irrelevant; we save the rate-limiter peek and avoid polluting
+ *      the reactive query's read set).
+ *   2. With a repo attached, `sandboxCostBudgets.userBudget` is
+ *      populated with capacity / remaining / resetAtMs.
+ *   3. When the user cap is exhausted, the resolver removes sandbox
+ *      from `availableModes` and surfaces the cost-cap tooltip.
+ */
+describe("getThreadContext sandbox cost-cap gate (Plan 10)", () => {
+  // Open the feature gate so cost-cap is the only gate variable
+  // these tests vary.
+  withSandboxFeatureGateOpen();
+
+  let priorUserCapEnv: string | undefined;
+  let priorEstimateEnv: string | undefined;
+  beforeEach(() => {
+    priorUserCapEnv = process.env.SANDBOX_DAILY_CAP_PER_USER_USD;
+    priorEstimateEnv = process.env.SANDBOX_REPLY_ESTIMATE_USD;
+    // Cap = 5 cents; estimate = 1 cent. Lets us drive the bucket to 0
+    // by consuming exactly the capacity, then assert that the gate
+    // closes on the very next peek.
+    process.env.SANDBOX_DAILY_CAP_PER_USER_USD = "0.05";
+    process.env.SANDBOX_REPLY_ESTIMATE_USD = "0.01";
+  });
+  afterEach(() => {
+    if (priorUserCapEnv === undefined) {
+      delete process.env.SANDBOX_DAILY_CAP_PER_USER_USD;
+    } else {
+      process.env.SANDBOX_DAILY_CAP_PER_USER_USD = priorUserCapEnv;
+    }
+    if (priorEstimateEnv === undefined) {
+      delete process.env.SANDBOX_REPLY_ESTIMATE_USD;
+    } else {
+      process.env.SANDBOX_REPLY_ESTIMATE_USD = priorEstimateEnv;
+    }
+  });
+
+  test("threads without a repository skip the cost-cap peek (sandboxCostBudgets is null)", async () => {
+    // Performance contract: no-repo threads don't subscribe to the
+    // rate-limiter's docs (which would trigger reactive re-renders for
+    // every other user's settlement). The frontend's mode selector
+    // already has sandbox disabled in that branch from the no-repo
+    // disabled-reason, so the budget read would be wasted work.
+    const t = createTestConvex();
+    const { threadId } = await seedThread(t, { withRepository: false });
+    const result = await t.query(internal.threadContext.getThreadContextInternal, { threadId });
+
+    expect(result!.sandboxCostBudgets).toBeNull();
+  });
+
+  test("threads with a repository expose the user-budget snapshot", async () => {
+    const t = createTestConvex();
+    const { threadId } = await seedThread(t, {
+      withRepository: true,
+      sandboxStatus: "ready",
+    });
+    const result = await t.query(internal.threadContext.getThreadContextInternal, { threadId });
+
+    expect(result!.sandboxCostBudgets).not.toBeNull();
+    expect(result!.sandboxCostBudgets!.userBudget.capacityCents).toBe(5);
+    expect(result!.sandboxCostBudgets!.userBudget.remainingCents).toBe(5);
+    expect(result!.sandboxCostBudgets!.userBudget.resetAtMs).toBeGreaterThan(Date.now());
+    // No workspace attached → workspaceBudget is null.
+    expect(result!.sandboxCostBudgets!.workspaceBudget).toBeNull();
+  });
+
+  test("when the user cap is exhausted, sandbox is removed from availableModes and the cap tooltip surfaces", async () => {
+    const t = createTestConvex();
+    const { threadId } = await seedThread(t, {
+      withRepository: true,
+      sandboxStatus: "ready",
+    });
+
+    // Drive the bucket to 0 directly via the rate-limiter component.
+    // Inline config matches the runtime helper so the bucket's persisted
+    // shape lines up with what the production code peeks.
+    await t.run(async (ctx) => {
+      const { rateLimiter } = await import("./lib/rateLimit");
+      await rateLimiter.limit(ctx, "sandboxCostUsdPerUserDaily", {
+        key: OWNER,
+        count: 5,
+        config: { kind: "fixed window", rate: 5, capacity: 5, period: 86_400_000, maxReserved: 5, start: 0 },
+      });
+    });
+
+    const result = await t.query(internal.threadContext.getThreadContextInternal, { threadId });
+
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
+    expect(result!.chatModes.disabledReasons.sandbox).toMatch(/daily.*spend.*account/i);
+    // Bucket peek reflects the exhaustion in the exposed snapshot too.
+    expect(result!.sandboxCostBudgets!.userBudget.remainingCents).toBe(0);
+  });
+
+  test("when the workspace cap is exhausted, the workspace-cap tooltip surfaces", async () => {
+    const t = createTestConvex();
+    const ownerTokenIdentifier = OWNER;
+    const workspaceId = await t.run(async (ctx) => {
+      return await ctx.db.insert("workspaces", {
+        ownerTokenIdentifier,
+        name: "Cap Workspace",
+        color: "blue",
+        lastAccessedAt: Date.now(),
+      });
+    });
+    const { threadId } = await seedThread(t, {
+      withRepository: true,
+      sandboxStatus: "ready",
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(threadId, { workspaceId });
+    });
+
+    // Workspace cap defaults to $50 = 5000 cents. Burn it.
+    await t.run(async (ctx) => {
+      const { rateLimiter, workspaceCostKey } = await import("./lib/rateLimit");
+      await rateLimiter.limit(ctx, "sandboxCostUsdPerWorkspaceDaily", {
+        key: workspaceCostKey(workspaceId),
+        count: 5000,
+        config: {
+          kind: "fixed window",
+          rate: 5000,
+          capacity: 5000,
+          period: 86_400_000,
+          maxReserved: 5000,
+          start: 0,
+        },
+      });
+    });
+
+    const result = await t.query(internal.threadContext.getThreadContextInternal, { threadId });
+
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
+    expect(result!.chatModes.disabledReasons.sandbox).toMatch(/daily.*spend.*workspace/i);
+    expect(result!.sandboxCostBudgets!.workspaceBudget!.remainingCents).toBe(0);
   });
 });

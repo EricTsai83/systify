@@ -704,3 +704,260 @@ describe("ChatPanel cancel-in-flight reply (Plan 07)", () => {
     expect(screen.getByText("Cancelled by user.")).toBeInTheDocument();
   });
 });
+
+/**
+ * Plan 10 — per-message cost ticker. The ticker:
+ *
+ *   1. Renders only on terminal-state assistant messages (completed /
+ *      failed / cancelled) — streaming partial usage would tick
+ *      visibly and distract from the reply text.
+ *   2. Combines cost / tokens / tool-call count, gracefully handling
+ *      missing pieces (e.g. heuristic replies have no cost; discuss
+ *      replies have no tools).
+ *   3. Renders sub-cent costs as `<$0.01` so "cheap" stays visually
+ *      distinct from "free".
+ */
+describe("ChatPanel per-message cost ticker (Plan 10)", () => {
+  test("renders cost + tokens for a fully-priced sandbox reply", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "completed",
+            mode: "sandbox",
+            content: "Done.",
+            estimatedInputTokens: 800,
+            estimatedOutputTokens: 400,
+            estimatedCostUsd: 0.034,
+            errorMessage: undefined,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="sandbox"
+        setChatMode={vi.fn()}
+        availableModes={["discuss", "docs", "sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const ticker = screen.getByTestId("message-cost-ticker");
+    // 800 + 400 = 1200 = 1.2k tokens; cost rounds to ~$0.03.
+    expect(ticker).toHaveTextContent("~$0.03");
+    expect(ticker).toHaveTextContent("1.2k tokens");
+  });
+
+  test("renders tool-call count when present (sandbox replies with tools)", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "completed",
+            mode: "sandbox",
+            content: "Done.",
+            estimatedInputTokens: 1200,
+            estimatedOutputTokens: 800,
+            estimatedCostUsd: 0.05,
+            toolCalls: [
+              {
+                toolCallId: "t1",
+                toolName: "read_file",
+                inputSummary: "{}",
+                outputSummary: "{}",
+                startedAt: 1,
+                endedAt: 2,
+              },
+              {
+                toolCallId: "t2",
+                toolName: "list_dir",
+                inputSummary: "{}",
+                outputSummary: "{}",
+                startedAt: 3,
+                endedAt: 4,
+              },
+            ],
+            errorMessage: undefined,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="sandbox"
+        setChatMode={vi.fn()}
+        availableModes={["discuss", "docs", "sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const ticker = screen.getByTestId("message-cost-ticker");
+    expect(ticker).toHaveTextContent("2 tools");
+  });
+
+  test("renders <$0.01 for sub-cent costs so 'cheap' stays distinct from 'free'", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "completed",
+            mode: "sandbox",
+            content: "Done.",
+            estimatedInputTokens: 50,
+            estimatedOutputTokens: 30,
+            estimatedCostUsd: 0.0008,
+            errorMessage: undefined,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="sandbox"
+        setChatMode={vi.fn()}
+        availableModes={["discuss", "docs", "sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("message-cost-ticker")).toHaveTextContent("<$0.01");
+  });
+
+  test("does not render the ticker for streaming or pending messages", () => {
+    // Partial-usage tickers would update visibly during streaming and
+    // distract from the reply content. The ticker only fires on
+    // terminal states.
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "streaming",
+            mode: "sandbox",
+            content: "partial",
+            estimatedInputTokens: 200,
+            estimatedOutputTokens: 100,
+            estimatedCostUsd: 0.015,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="sandbox"
+        setChatMode={vi.fn()}
+        availableModes={["discuss", "docs", "sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("message-cost-ticker")).not.toBeInTheDocument();
+  });
+
+  test("does not render the ticker for heuristic replies (no cost, no tokens, no tools)", () => {
+    // Heuristic replies (no OPENAI_API_KEY) produce no cost data.
+    // Showing an empty ticker line would be visual noise; skipping it
+    // entirely is the cleaner UX.
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "completed",
+            mode: "discuss",
+            content: "Heuristic answer.",
+            errorMessage: undefined,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("message-cost-ticker")).not.toBeInTheDocument();
+  });
+
+  test("renders tokens-only when pricing is unavailable for the model (cost ticker degrades gracefully)", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "completed",
+            mode: "discuss",
+            content: "answer",
+            estimatedInputTokens: 600,
+            estimatedOutputTokens: 200,
+            // estimatedCostUsd intentionally undefined — model not in pricing table.
+            errorMessage: undefined,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const ticker = screen.getByTestId("message-cost-ticker");
+    // 600 + 200 = 800 tokens — under the 1k threshold so renders raw.
+    expect(ticker).toHaveTextContent("800 tokens");
+    expect(ticker).not.toHaveTextContent("$");
+  });
+});

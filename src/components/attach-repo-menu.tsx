@@ -1,13 +1,6 @@
 import { useRef, useState } from "react";
 import { useMutation } from "convex/react";
-import {
-  CaretDownIcon,
-  CircleNotchIcon,
-  GlobeIcon,
-  LinkIcon,
-  LockIcon,
-  XIcon,
-} from "@phosphor-icons/react";
+import { CaretDownIcon, CircleNotchIcon, GlobeIcon, LinkIcon, LockIcon, XIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";

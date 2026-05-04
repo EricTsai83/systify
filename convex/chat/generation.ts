@@ -88,6 +88,18 @@ export const generateAssistantReply = internalAction({
     // Anything still buffered in pendingDelta below STREAM_FLUSH_THRESHOLD can be lost on a crash; recoverStaleChatJob only sees persisted messageStreamChunks flushed via appendAssistantStreamChunk before compactMessageStreamTail/finalizeAssistantReply/failAssistantReply run.
     let pendingDelta = "";
 
+    // Plan 10 — `streamText` response is hoisted so every exit path (success
+    // / cancel / fail / aborted) can read `response.totalUsage` to harvest
+    // the partial token usage and cost. Cancelled and failed replies still
+    // incur cost from OpenAI (provider-side billing happens on each token
+    // generated, not on stream completion), so settling that partial cost
+    // is the only way to keep the daily cap honest.
+    //
+    // `undefined` until `streamText` is invoked, so the heuristic-path
+    // fast exits and the cancel-before-streamText fast exits don't try to
+    // extract usage from a non-existent stream.
+    let streamResponse: ReturnType<typeof streamText> | undefined;
+
     // Plan 07 — cancellation control plane.
     //
     // The AI SDK's `streamText` accepts an `abortSignal`. When the signal
@@ -254,7 +266,7 @@ export const generateAssistantReply = internalAction({
         return;
       }
 
-      const modelName = process.env.OPENAI_MODEL ?? "gpt-5.4-mini";
+      const modelName = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
       const systemPrompt = buildSystemPrompt(replyContext.mode);
       const userPromptText = buildUserPrompt(replyContext, userPrompt, relevantChunks);
 
@@ -321,7 +333,7 @@ export const generateAssistantReply = internalAction({
         return;
       }
 
-      const response = streamText({
+      streamResponse = streamText({
         model: openai(modelName),
         system: systemPrompt,
         prompt: userPromptText,
@@ -340,6 +352,7 @@ export const generateAssistantReply = internalAction({
         // (and burning tokens) until the model finished naturally.
         abortSignal: cancellationController.signal,
       });
+      const response = streamResponse;
 
       // We always iterate `fullStream` — it is a strict superset of
       // `textStream` (every text chunk shows up as a `text-delta` event).
@@ -499,12 +512,27 @@ export const generateAssistantReply = internalAction({
         }
       }
 
+      // Plan 10 — extract usage *before* branching on cancel/success so
+      // the partial-cost telemetry is available to both the cancel
+      // finalize variant and the success finalize. A cancelled stream
+      // can still produce a `totalUsage` resolution if the upstream sent
+      // its final usage frame before the abort signal tore down the
+      // connection; degrading silently to undefined when it didn't is
+      // the right behavior (we charge what we know about; partial-pretty-
+      // good > none-at-all for the daily cap).
+      const usage = await extractStreamUsage(streamResponse, {
+        modelName,
+        assistantMessageId: args.assistantMessageId,
+        jobId: args.jobId,
+      });
+
       // Plan 07 — if the loop exited because cancellation fired (either
       // through the in-loop `break` or because the abortSignal made
       // fullStream end early), route to the cancel finalize variant
       // instead of the normal one. Persisting whatever was already
       // streamed gives the user the partial reply they intentionally
-      // interrupted to see.
+      // interrupted to see, plus the partial cost so the daily cap
+      // settles accurately.
       if (wasCancelled) {
         // Skip finalize if generation was aborted due to missing job.
         if (!generationAborted) {
@@ -513,6 +541,9 @@ export const generateAssistantReply = internalAction({
             jobId: args.jobId,
             finalDelta: pendingDelta || undefined,
             reason: cancellationReason,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            costUsd: usage.costUsd,
           });
         }
         return;
@@ -523,34 +554,28 @@ export const generateAssistantReply = internalAction({
         return;
       }
 
-      let inputTokens: number | undefined;
-      let outputTokens: number | undefined;
-      let costUsd: number | undefined;
-      try {
-        const usage = await response.totalUsage;
-        inputTokens = usage.inputTokens;
-        outputTokens = usage.outputTokens;
-        costUsd = estimateCostUsd(modelName, inputTokens, outputTokens);
-      } catch (error) {
-        logWarn("chat", "assistant_reply_usage_unavailable", {
-          assistantMessageId: args.assistantMessageId,
-          jobId: args.jobId,
-          model: modelName,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-
       await ctx.runMutation(internal.chat.streaming.finalizeAssistantReply, {
         threadId: args.threadId,
         assistantMessageId: args.assistantMessageId,
         jobId: args.jobId,
         finalDelta: pendingDelta,
-        inputTokens,
-        outputTokens,
-        costUsd,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        costUsd: usage.costUsd,
         citationMap: persistedCitationMap,
       });
     } catch (error) {
+      // Plan 10 — even on the error path, try to extract whatever usage
+      // the SDK already accumulated before the throw. Some errors fire
+      // mid-stream (e.g. provider rate-limit kicking in after the model
+      // produced 200 tokens) and the partial cost is real spend that
+      // should count against the daily cap.
+      const usage = await extractStreamUsage(streamResponse, {
+        modelName: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+        assistantMessageId: args.assistantMessageId,
+        jobId: args.jobId,
+      });
+
       // Plan 07 — abort-induced exceptions land here too: streamText
       // surfaces a `DOMException`/`AbortError` once the SSE tear-down
       // bubbles back through `fullStream`. Distinguishing them via the
@@ -566,6 +591,9 @@ export const generateAssistantReply = internalAction({
             jobId: args.jobId,
             finalDelta: pendingDelta || undefined,
             reason: cancellationReason,
+            inputTokens: usage.inputTokens,
+            outputTokens: usage.outputTokens,
+            costUsd: usage.costUsd,
           });
         }
         return;
@@ -579,6 +607,9 @@ export const generateAssistantReply = internalAction({
         jobId: args.jobId,
         errorMessage: error instanceof Error ? error.message : "Unknown assistant error",
         finalDelta: pendingDelta,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        costUsd: usage.costUsd,
       });
     } finally {
       // Plan 07 — always tear down the cancellation poll, regardless of
@@ -610,4 +641,50 @@ export const generateAssistantReply = internalAction({
 async function buildSandboxTools(sandboxTooling: NonNullable<ReplyContext["sandboxTooling"]>): Promise<ToolSet> {
   const fsClient = await getSandboxFsClient(sandboxTooling.remoteId);
   return createSandboxTools(fsClient, sandboxTooling.repoPath);
+}
+
+/**
+ * Plan 10 — extract `inputTokens` / `outputTokens` / `costUsd` from a
+ * (possibly aborted, possibly partial) `streamText` response.
+ *
+ * Returns all three as `undefined` when:
+ *
+ *   - `response` is undefined (fast-exit paths that never invoked
+ *     `streamText`, e.g. heuristic mode or cancel-before-streamText);
+ *   - `response.totalUsage` rejects (the SDK closed the stream before
+ *     the upstream produced its final usage frame, common with
+ *     mid-stream aborts);
+ *   - the model's reported tokens or our pricing snapshot is missing.
+ *
+ * Logging at WARN preserves the prior behavior where unavailable usage
+ * is observable in dashboards but not user-facing — the user already
+ * sees the (un)cost ticker, so the warning is for ops dashboards only.
+ *
+ * Crucially, this never throws: every settle / finalize call site can
+ * `await` the helper without its own try/catch, keeping the caller's
+ * control flow flat and making the cost-extraction concern a single
+ * point of change for future telemetry / pricing additions.
+ */
+async function extractStreamUsage(
+  response: ReturnType<typeof streamText> | undefined,
+  context: { modelName: string; assistantMessageId: string; jobId: string },
+): Promise<{ inputTokens?: number; outputTokens?: number; costUsd?: number }> {
+  if (!response) {
+    return {};
+  }
+  try {
+    const usage = await response.totalUsage;
+    const inputTokens = usage.inputTokens;
+    const outputTokens = usage.outputTokens;
+    const costUsd = estimateCostUsd(context.modelName, inputTokens, outputTokens);
+    return { inputTokens, outputTokens, costUsd };
+  } catch (error) {
+    logWarn("chat", "assistant_reply_usage_unavailable", {
+      assistantMessageId: context.assistantMessageId,
+      jobId: context.jobId,
+      model: context.modelName,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return {};
+  }
 }

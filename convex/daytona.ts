@@ -91,9 +91,7 @@ export async function provisionSandbox(options: CreateSandboxOptions): Promise<S
 
   const networkAllowList = process.env.DAYTONA_NETWORK_ALLOW_LIST;
   if (!networkAllowList) {
-    throw new Error(
-      "DAYTONA_NETWORK_ALLOW_LIST env var is required for sandbox provisioning",
-    );
+    throw new Error("DAYTONA_NETWORK_ALLOW_LIST env var is required for sandbox provisioning");
   }
   const cpuLimit = readNumberEnv("DAYTONA_CPU_LIMIT", DEFAULT_CPU_LIMIT);
   const memoryLimitGiB = readNumberEnv("DAYTONA_MEMORY_GIB", DEFAULT_MEMORY_GIB);
@@ -545,7 +543,8 @@ async function walkRepositoryTree(sandbox: Sandbox, repoPath: string): Promise<R
     // and avoids a separate filter step.
     const listings = await Promise.all(
       batch.map(async ({ relativePath, depth }) => {
-        if (depth > MAX_TREE_DEPTH) return { items: [] as readonly { name: string; isDir: boolean; size: number }[], depth, relativePath };
+        if (depth > MAX_TREE_DEPTH)
+          return { items: [] as readonly { name: string; isDir: boolean; size: number }[], depth, relativePath };
         const currentPath = relativePath ? `${repoPath}/${relativePath}` : repoPath;
         const items = await sandbox.fs.listFiles(currentPath);
         const sorted = [...items].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
