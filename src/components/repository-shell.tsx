@@ -537,6 +537,8 @@ export function RepositoryShell({
   const {
     isSending,
     handleSendMessage,
+    isCancellingReply,
+    handleCancelInFlightReply,
     isRunningAnalysis,
     handleRunAnalysis,
     isSyncing,
@@ -627,6 +629,8 @@ export function RepositoryShell({
                 disabledModeReasons={capabilities.disabledReasons}
                 isSending={isSending}
                 onSendMessage={handleSendMessage}
+                onCancelInFlightReply={handleCancelInFlightReply}
+                isCancellingReply={isCancellingReply}
                 sandboxModeStatus={effectiveSandboxModeStatus}
                 isSyncing={isSyncing || isRepositorySyncing}
                 onSync={() => void handleSync()}

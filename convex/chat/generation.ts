@@ -55,6 +55,23 @@ import { redact } from "./redaction";
  */
 const SANDBOX_STEP_BUDGET = 8;
 
+/**
+ * Plan 07 — interval for the background poll that watches for owner-initiated
+ * cancellation while the reply streams.
+ *
+ * 1 s gives the user a sub-second to ~2 s perceived latency between Stop
+ * click and bubble flip (the worst case is "user clicks just after the last
+ * poll fired, must wait one full interval"). The Done criteria's 5 s SLO
+ * leaves comfortable headroom even if a tool call is mid-flight when the
+ * cancel arrives — the loop will pick up the abort on the next iteration.
+ *
+ * Lower intervals would just generate more `getJobCancellationStatus`
+ * queries with no UX benefit (the bottleneck is the underlying HTTP stream
+ * tear-down, not our polling cadence). Higher intervals start to creep into
+ * the SLO window if a tool call also runs slowly.
+ */
+const CANCELLATION_POLL_INTERVAL_MS = 1_000;
+
 export const generateAssistantReply = internalAction({
   args: {
     threadId: v.id("threads"),
@@ -70,6 +87,97 @@ export const generateAssistantReply = internalAction({
 
     // Anything still buffered in pendingDelta below STREAM_FLUSH_THRESHOLD can be lost on a crash; recoverStaleChatJob only sees persisted messageStreamChunks flushed via appendAssistantStreamChunk before compactMessageStreamTail/finalizeAssistantReply/failAssistantReply run.
     let pendingDelta = "";
+
+    // Plan 07 — cancellation control plane.
+    //
+    // The AI SDK's `streamText` accepts an `abortSignal`. When the signal
+    // fires the underlying HTTP/SSE request is torn down and `fullStream`
+    // either ends naturally (for clean abort points) or throws a
+    // `DOMException`-shaped abort error from the for-await iterator. We
+    // wrap that in a single boolean (`wasCancelled`) plus a controller so
+    // every exit path (loop break, thrown abort, post-loop finalize) can
+    // route through the `markAssistantReplyCancelled` finalize variant
+    // instead of the failure path.
+    //
+    // Why we don't just check the cancel flag from inside the for-await
+    // body: a long text-deltaless stretch (e.g. a 30 s tool call) would
+    // never observe the flag because no event fires. The polling task is
+    // independent of the stream loop and runs every
+    // `CANCELLATION_POLL_INTERVAL_MS` regardless of stream activity, so
+    // user clicks Stop → poll catches cancelled → controller.abort() →
+    // streamText tears down → for-await exits, all without depending on
+    // the model emitting another delta first.
+    const cancellationController = new AbortController();
+    let wasCancelled = false;
+    let cancellationReason: string | undefined;
+    let pollHandle: ReturnType<typeof setTimeout> | undefined;
+    let pollingStopped = false;
+    let generationAborted = false;
+
+    /**
+     * Self-rescheduling poll. We use `setTimeout` instead of `setInterval`
+     * so a slow query (rare but possible under load) cannot create
+     * overlapping in-flight polls; each tick waits for the previous
+     * tick's query to complete before scheduling the next one.
+     *
+     * The poll never `throw`s — any error is logged and we keep polling,
+     * because failing to poll is far worse than failing once: a single
+     * transient failure must not strand the action with no way to learn
+     * about a cancellation. If the action finishes naturally first, the
+     * `finally` block stops the polling loop before the next tick fires.
+     */
+    const runPollTick = async (): Promise<void> => {
+      if (pollingStopped) {
+        return;
+      }
+      try {
+        const status = (await ctx.runQuery(internal.chat.streaming.getJobCancellationStatus, {
+          jobId: args.jobId,
+        })) as { cancelled: boolean; jobMissing: boolean };
+        if (pollingStopped) {
+          return;
+        }
+        if (status.cancelled) {
+          wasCancelled = true;
+          cancellationReason = "Cancelled by user.";
+          cancellationController.abort();
+          return;
+        }
+        if (status.jobMissing) {
+          // The job row was deleted out from under us (concurrent
+          // thread / repo cascade). Abort the entire generation stream
+          // and stop polling to prevent noisy mutations patching a
+          // deleted job. Set the abort flag and tear down the stream
+          // so the for-await iterator exits cleanly.
+          generationAborted = true;
+          pollingStopped = true;
+          cancellationController.abort();
+          return;
+        }
+      } catch (error) {
+        logWarn("chat", "cancellation_poll_failed", {
+          assistantMessageId: args.assistantMessageId,
+          jobId: args.jobId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+      schedulePoll();
+    };
+    const schedulePoll = (): void => {
+      if (pollingStopped) {
+        return;
+      }
+      // Non-async setTimeout callback so the type signature stays
+      // `() => void`. The inner async function is fire-and-forget — any
+      // error inside `runPollTick` is already caught and logged, so the
+      // unhandled-rejection risk is bounded. Awaiting here is impossible
+      // (setTimeout doesn't await its callback) and would not extend the
+      // action's lifetime even if it could.
+      pollHandle = setTimeout(() => {
+        void runPollTick();
+      }, CANCELLATION_POLL_INTERVAL_MS);
+    };
+    schedulePoll();
 
     try {
       // Pass `userMessageId` through to the context query so that mode,
@@ -107,6 +215,34 @@ export const generateAssistantReply = internalAction({
       const persistedCitationMap = citationMap.length > 0 ? citationMap : undefined;
 
       if (!process.env.OPENAI_API_KEY) {
+        // The heuristic path produces its full answer synchronously, so
+        // there is no streamText to abort. We still honor a cancellation
+        // that arrived between `markAssistantReplyRunning` and this point —
+        // the user could have clicked Stop while the context query ran —
+        // by checking the polled flag. Cooperative either way: if cancel
+        // wins the race, we route through the cancel finalize variant
+        // and skip the (very fast) heuristic write entirely.
+        if (wasCancelled) {
+          // If the job row was also deleted under us (generationAborted),
+          // skip the cancel mutation — patching the missing job would only
+          // throw on the way back to the catch block.
+          if (!generationAborted) {
+            await ctx.runMutation(internal.chat.streaming.markAssistantReplyCancelled, {
+              assistantMessageId: args.assistantMessageId,
+              jobId: args.jobId,
+              finalDelta: pendingDelta || undefined,
+              reason: cancellationReason,
+            });
+          }
+          return;
+        }
+        // Same short-circuit as the streaming path: if the job row was
+        // deleted between scheduling the poll and reaching here, do not
+        // call finalize — the unconditional `ctx.db.patch(jobId, ...)` in
+        // `finalizeAssistantReply` would throw on the missing row.
+        if (generationAborted) {
+          return;
+        }
         const heuristicAnswer = buildHeuristicAnswer(replyContext, userPrompt, relevantChunks);
         await ctx.runMutation(internal.chat.streaming.finalizeAssistantReply, {
           threadId: args.threadId,
@@ -157,6 +293,34 @@ export const generateAssistantReply = internalAction({
       //     in-process state is the source of truth for the run.
       const toolCallMap = new Map<string, { toolName: string; inputSummary: string; startedAt: number }>();
 
+      // Plan 07 — cancel-before-streamText fast path. The polling task can
+      // flip `wasCancelled` any time after `markAssistantReplyRunning`
+      // committed; if it already did, skip the upstream fetch entirely
+      // (no point hitting OpenAI just to immediately abort) and route to
+      // the cancel finalize variant. `pendingDelta` is empty at this
+      // point so the partial-content branch is a no-op.
+      if (wasCancelled) {
+        // If the job row was also deleted (generationAborted), skip the
+        // cancel mutation — patching the missing job would only throw.
+        if (!generationAborted) {
+          await ctx.runMutation(internal.chat.streaming.markAssistantReplyCancelled, {
+            assistantMessageId: args.assistantMessageId,
+            jobId: args.jobId,
+            finalDelta: pendingDelta || undefined,
+            reason: cancellationReason,
+          });
+        }
+        return;
+      }
+      // Mirror of the streaming-path short-circuit: bail out before
+      // hitting OpenAI if the job row was already deleted under us. The
+      // for-await loop would otherwise tear down on the first event due
+      // to the abort signal, but skipping the call entirely saves a
+      // pointless upstream fetch.
+      if (generationAborted) {
+        return;
+      }
+
       const response = streamText({
         model: openai(modelName),
         system: systemPrompt,
@@ -169,6 +333,12 @@ export const generateAssistantReply = internalAction({
         // call shape uniform across paths.
         tools: sandboxTools,
         stopWhen: stepCountIs(SANDBOX_STEP_BUDGET),
+        // Plan 07 — wire the cancellation controller into the SDK so a
+        // poll-detected cancel actively tears down the underlying HTTP
+        // request. Without this we'd still observe `wasCancelled === true`
+        // post-loop, but the SSE connection would keep streaming bytes
+        // (and burning tokens) until the model finished naturally.
+        abortSignal: cancellationController.signal,
       });
 
       // We always iterate `fullStream` — it is a strict superset of
@@ -177,6 +347,30 @@ export const generateAssistantReply = internalAction({
       // `tool-result` / `tool-error` events here; Plan 06 persists them
       // into messageToolCallEvents for the live ticker and trace UI.
       for await (const part of response.fullStream) {
+        // Plan 07 — short-circuit before processing any further events.
+        // Two reasons we still need this even though we passed
+        // `abortSignal` to streamText:
+        //   1. The SDK / underlying provider may keep emitting buffered
+        //      events for a brief window after `controller.abort()` fires.
+        //      Honoring the flag immediately means we stop *persisting*
+        //      those events (no more `appendAssistantToolCallEvent`
+        //      writes) the moment the poll catches the cancel.
+        //   2. If a tool execution is currently in flight when abort
+        //      fires, the `tool-result` event may still arrive. Bailing
+        //      here prevents the result from being written into the
+        //      events table after `cancelInFlightReply` already drained
+        //      it (which would briefly resurrect a "running" entry in
+        //      the live ticker).
+        //
+        // We also break on `generationAborted` so that a poll-detected
+        // jobMissing immediately stops further `appendAssistantStreamChunk`
+        // / `appendAssistantToolCallEvent` calls — both unconditionally
+        // patch the (now-missing) job row for the lease refresh and would
+        // throw, propagating noisy errors all the way through the catch
+        // path.
+        if (wasCancelled || generationAborted) {
+          break;
+        }
         switch (part.type) {
           case "text-delta": {
             pendingDelta += part.text;
@@ -292,11 +486,41 @@ export const generateAssistantReply = internalAction({
             // `text-start` / `text-end` / `start-step` / `finish-step` /
             // `start` / `finish` / `reasoning-*` / `tool-input-*` / `source` /
             // `file` / `tool-output-denied` / `tool-approval-request` /
-            // `abort` / `raw` — none of these affect the text we persist for
-            // Plan 04. They will become hooks for the Plan 06 ticker /
-            // Plan 07 cancel-mid-stream / Plan 11 step-budget feedback.
+            // `abort` / `raw` — none of these affect the text we persist.
+            //
+            // Plan 07: an `abort` event surfaces here when the SDK observes
+            // our `abortSignal` firing. The next loop iteration's
+            // `wasCancelled` check breaks out before any persistence runs
+            // (since the poll that fired the abort already flipped the
+            // flag), so we don't need to special-case `abort` here. Plan 11
+            // will hook `start-step` / `finish-step` for the step-budget
+            // feedback prompt.
             break;
         }
+      }
+
+      // Plan 07 — if the loop exited because cancellation fired (either
+      // through the in-loop `break` or because the abortSignal made
+      // fullStream end early), route to the cancel finalize variant
+      // instead of the normal one. Persisting whatever was already
+      // streamed gives the user the partial reply they intentionally
+      // interrupted to see.
+      if (wasCancelled) {
+        // Skip finalize if generation was aborted due to missing job.
+        if (!generationAborted) {
+          await ctx.runMutation(internal.chat.streaming.markAssistantReplyCancelled, {
+            assistantMessageId: args.assistantMessageId,
+            jobId: args.jobId,
+            finalDelta: pendingDelta || undefined,
+            reason: cancellationReason,
+          });
+        }
+        return;
+      }
+
+      // Skip finalize if generation was aborted due to missing job.
+      if (generationAborted) {
+        return;
       }
 
       let inputTokens: number | undefined;
@@ -327,12 +551,45 @@ export const generateAssistantReply = internalAction({
         citationMap: persistedCitationMap,
       });
     } catch (error) {
+      // Plan 07 — abort-induced exceptions land here too: streamText
+      // surfaces a `DOMException`/`AbortError` once the SSE tear-down
+      // bubbles back through `fullStream`. Distinguishing them via the
+      // `wasCancelled` flag (rather than sniffing `error.name`) keeps the
+      // logic decoupled from undici / AI SDK error-shape internals — if
+      // the poll already saw the cancel and set the flag, we know the
+      // throw is a consequence of that cancel and route accordingly.
+      if (wasCancelled) {
+        // Skip finalize if generation was aborted due to missing job.
+        if (!generationAborted) {
+          await ctx.runMutation(internal.chat.streaming.markAssistantReplyCancelled, {
+            assistantMessageId: args.assistantMessageId,
+            jobId: args.jobId,
+            finalDelta: pendingDelta || undefined,
+            reason: cancellationReason,
+          });
+        }
+        return;
+      }
+      // Skip fail finalize if generation was aborted due to missing job.
+      if (generationAborted) {
+        return;
+      }
       await ctx.runMutation(internal.chat.streaming.failAssistantReply, {
         assistantMessageId: args.assistantMessageId,
         jobId: args.jobId,
         errorMessage: error instanceof Error ? error.message : "Unknown assistant error",
         finalDelta: pendingDelta,
       });
+    } finally {
+      // Plan 07 — always tear down the cancellation poll, regardless of
+      // which exit path the action took. Setting `pollingStopped` first
+      // disarms a tick that might already be queued when we hit
+      // `clearTimeout`; without that, a fast queryPaused → resumed cycle
+      // could let a stale `runQuery` fire after the action returned.
+      pollingStopped = true;
+      if (pollHandle) {
+        clearTimeout(pollHandle);
+      }
     }
   },
 });

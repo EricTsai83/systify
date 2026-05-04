@@ -9,6 +9,7 @@ import {
   LockIcon,
   PaperPlaneTiltIcon,
   PlusIcon,
+  StopCircleIcon,
 } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
@@ -125,6 +126,8 @@ export function ChatPanel({
   disabledModeReasons,
   isSending,
   onSendMessage,
+  onCancelInFlightReply,
+  isCancellingReply = false,
   sandboxModeStatus,
   isSyncing,
   onSync,
@@ -149,6 +152,24 @@ export function ChatPanel({
   disabledModeReasons: Partial<Record<ChatMode, string>>;
   isSending: boolean;
   onSendMessage: (e: FormEvent<HTMLFormElement>) => Promise<void>;
+  /**
+   * Plan 07 — fires when the user clicks Stop on the in-flight reply. The
+   * shell wires this to the `chat.cancel.cancelInFlightReply` mutation. The
+   * panel only renders the Stop affordance when this prop is supplied *and*
+   * the latest assistant message is still in a non-terminal state, so
+   * tests / headless renders that don't need cancellation can simply omit
+   * the prop and continue to see the Send button.
+   */
+  onCancelInFlightReply?: () => void | Promise<void>;
+  /**
+   * Plan 07 — true between user click and the assistant message
+   * transitioning out of `streaming` / `pending`. While true the button
+   * label switches to "Stopping…" so the user sees an acknowledgement that
+   * the request is in flight even before the bubble flips to "Cancelled".
+   * Defaults to `false` so existing call sites don't have to thread this
+   * through immediately.
+   */
+  isCancellingReply?: boolean;
   sandboxModeStatus: SandboxModeStatus | null;
   isSyncing: boolean;
   onSync: () => void;
@@ -173,6 +194,36 @@ export function ChatPanel({
   const hasMessages = (messages?.length ?? 0) > 0;
   const availableModeSet = useMemo(() => new Set(availableModes), [availableModes]);
   const sandboxModeAvailable = sandboxModeStatus?.reasonCode === "available";
+
+  /**
+   * Plan 07 — derive "is the most recent assistant reply still in flight?"
+   * from the (already-subscribed) message list rather than threading another
+   * boolean prop down. We check the *last* assistant message so a brand-new
+   * thread (no messages) shows Send and a thread whose last reply finished
+   * shows Send too; only the in-flight assistant flips the button to Stop.
+   *
+   * Why we accept `pending` as well as `streaming`: there is a brief window
+   * after `sendMessage` schedules the action but before
+   * `markAssistantReplyRunning` fires where the assistant message status is
+   * still `pending`. Cancelling in that window is valid — the action will
+   * see `wasCancelled` on its first poll and skip straight to the
+   * cancel finalize variant — and showing Send during that window would be
+   * a UX hole the user could click into another send mid-pending.
+   */
+  const inFlightAssistantMessage = useMemo(() => {
+    if (!messages) {
+      return null;
+    }
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const message = messages[i];
+      if (message.role === "assistant") {
+        return message.status === "streaming" || message.status === "pending" ? message : null;
+      }
+    }
+    return null;
+  }, [messages]);
+
+  const canCancel = inFlightAssistantMessage !== null && typeof onCancelInFlightReply === "function";
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -278,33 +329,68 @@ export function ChatPanel({
                 />
               </div>
             </div>
-            <Button
-              type="submit"
-              variant="default"
-              size="sm"
-              className="w-full sm:w-auto"
-              disabled={isSending || isSyncing || !selectedThreadId || !chatInput.trim()}
-            >
-              <PaperPlaneTiltIcon weight="bold" />
-              {/*
-               * Grid-stack the label so the button width is always sized to
-               * the longest possible state ("Sending…" / "Syncing…") and
-               * doesn't reflow when toggling between idle/sending/syncing.
-               * The invisible sizer reserves the max width; the visible
-               * span is overlaid in the same grid cell.
-               */}
-              <span className="grid">
-                <span aria-hidden="true" className="invisible col-start-1 row-start-1">
-                  Sending…
+            {canCancel ? (
+              /*
+               * Plan 07 — Stop button. `type="button"` so a stray Enter in
+               * the textarea cannot accidentally submit a Stop click as if
+               * it were Send. `aria-label` plus the visible "Stop" /
+               * "Stopping…" label keep the affordance accessible to screen
+               * readers throughout the cancellation cycle.
+               *
+               * Disabled during the "Stopping…" interval to prevent
+               * double-cancels: the mutation is idempotent on the server,
+               * but stacking clicks would still fire redundant requests.
+               */
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                className="w-full sm:w-auto"
+                disabled={isCancellingReply}
+                aria-label="Stop generating reply"
+                data-testid="chat-panel-stop-button"
+                onClick={() => {
+                  void onCancelInFlightReply?.();
+                }}
+              >
+                <StopCircleIcon weight="bold" />
+                <span className="grid">
+                  <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+                    Stopping…
+                  </span>
+                  <span className="col-start-1 row-start-1">{isCancellingReply ? "Stopping…" : "Stop"}</span>
                 </span>
-                <span aria-hidden="true" className="invisible col-start-1 row-start-1">
-                  Syncing…
+              </Button>
+            ) : (
+              <Button
+                type="submit"
+                variant="default"
+                size="sm"
+                className="w-full sm:w-auto"
+                disabled={isSending || isSyncing || !selectedThreadId || !chatInput.trim()}
+                data-testid="chat-panel-send-button"
+              >
+                <PaperPlaneTiltIcon weight="bold" />
+                {/*
+                 * Grid-stack the label so the button width is always sized to
+                 * the longest possible state ("Sending…" / "Syncing…") and
+                 * doesn't reflow when toggling between idle/sending/syncing.
+                 * The invisible sizer reserves the max width; the visible
+                 * span is overlaid in the same grid cell.
+                 */}
+                <span className="grid">
+                  <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+                    Sending…
+                  </span>
+                  <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+                    Syncing…
+                  </span>
+                  <span className="col-start-1 row-start-1">
+                    {isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
+                  </span>
                 </span>
-                <span className="col-start-1 row-start-1">
-                  {isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
-                </span>
-              </span>
-            </Button>
+              </Button>
+            )}
           </div>
         </form>
       </div>
@@ -719,6 +805,10 @@ function getMessageStatusLabel(status: Doc<"messages">["status"]) {
       return "Ready";
     case "failed":
       return "Failed";
+    case "cancelled":
+      // Plan 07 — distinct from "Failed" so the user can tell at a glance
+      // that they themselves stopped the reply (vs. an upstream error).
+      return "Cancelled";
     default:
       return status;
   }

@@ -1,9 +1,9 @@
 import { v } from "convex/values";
 import type { Id } from "../_generated/dataModel";
-import { type MutationCtx, internalMutation, query } from "../_generated/server";
+import { type MutationCtx, internalMutation, internalQuery, query } from "../_generated/server";
 import { requireViewerIdentity } from "../lib/auth";
 import { CHAT_JOB_LEASE_MS } from "../lib/rateLimit";
-import { logWarn } from "../lib/observability";
+import { logInfo, logWarn } from "../lib/observability";
 import { MAX_TOOL_CALL_EVENTS_PER_MESSAGE, TOOL_CALL_EVENT_SUMMARY_MAX_CHARS } from "../lib/constants";
 import {
   compactMessageStreamTail,
@@ -535,6 +535,158 @@ export const failAssistantReply = internalMutation({
       // Tool-call events are already drained by `foldAndDrainToolCallEvents`
       // above (sweep-past-cap), so there's no separate cleanup to do here.
     }
+  },
+});
+
+/**
+ * Plan 07 — minimal, hot-path query the generation action polls to discover
+ * whether the user has requested cancellation of the in-flight reply.
+ *
+ * Kept as a tiny `internalQuery` (a single `ctx.db.get` and three field reads)
+ * rather than reusing a fatter `getJob` query because it runs every
+ * `CANCELLATION_POLL_INTERVAL_MS` while the LLM streams — a typical 30 s
+ * sandbox-mode reply will issue ~30 of these. Returning `{ cancelled,
+ * jobMissing }` instead of the full job document keeps the payload tiny
+ * (parsing / serialization across the action ↔ query boundary stays
+ * negligible) and discourages callers from peeking at unrelated job state on
+ * the cancel hot path.
+ *
+ * `jobMissing` is exposed (rather than treated as a silent `cancelled = true`)
+ * so the action can distinguish "user explicitly cancelled" — which means
+ * `cancelInFlightReply` already wrote the `cancelled` status to the assistant
+ * message and the action just needs to bow out — from "job row was deleted by
+ * a concurrent thread / repo cascade", which the action wants to surface as
+ * a normal failure (so finalize / fail still runs and the lease is released).
+ */
+export const getJobCancellationStatus = internalQuery({
+  args: {
+    jobId: v.id("jobs"),
+  },
+  handler: async (ctx, args): Promise<{ cancelled: boolean; jobMissing: boolean }> => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job) {
+      return { cancelled: false, jobMissing: true };
+    }
+    return {
+      cancelled: job.status === "cancelled",
+      jobMissing: false,
+    };
+  },
+});
+
+/**
+ * Plan 07 — terminal-state mutation invoked when the action confirms the
+ * owner cancelled the reply mid-stream.
+ *
+ * Mirrors `failAssistantReply` in shape (preserves partial content, drains
+ * the tool-call event log, releases the job lease) but uses the dedicated
+ * `cancelled` status on both the message and the job so the UI / audit log
+ * can distinguish user-initiated stops from upstream errors.
+ *
+ * Idempotent against `cancelInFlightReply`: that mutation already flips the
+ * message + job statuses to `cancelled` synchronously when the user clicks
+ * Stop, so by the time the action reaches this mutation the rows are
+ * typically already in the terminal state. We re-`patch` regardless because:
+ *
+ *   - the action is the only writer that knows the final partial content
+ *     (any text the model produced before the abort fired);
+ *   - the action is the only writer that can drain the events table in the
+ *     same transaction the message flips to terminal state, which is the
+ *     contract `getMessageToolCallEvents` relies on (events visible iff
+ *     message is still streaming);
+ *   - the lease must be cleared (`leaseExpiresAt: undefined`) so
+ *     `recoverStaleChatJob` does not later try to "rescue" a row that
+ *     already reached its terminal state.
+ *
+ * Why we preserve `finalDelta` instead of dropping it: the model's last
+ * partial sentence is often the most useful part of a slow reply, and the
+ * user clicked Stop *because* they had enough context. Discarding it would
+ * be a usability regression vs. the `failed` path (which already keeps
+ * partial content for the same reason).
+ */
+export const markAssistantReplyCancelled = internalMutation({
+  args: {
+    assistantMessageId: v.id("messages"),
+    jobId: v.id("jobs"),
+    finalDelta: v.optional(v.string()),
+    /**
+     * Human-readable cancellation reason surfaced as `messages.errorMessage`.
+     * Defaults to "Cancelled by user." but the action passes a more specific
+     * reason when the cancellation was triggered by a system path (e.g. a
+     * future budget enforcement) so the UI can render the right copy.
+     */
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const reason = args.reason ?? "Cancelled by user.";
+    const streamSnapshot = await loadMessageStreamSnapshot(ctx, args.assistantMessageId);
+    const message = await ctx.db.get(args.assistantMessageId);
+
+    // Drain in the same transaction the message flips to terminal state —
+    // same lifecycle invariant `failAssistantReply` enforces, see the
+    // comment on `foldAndDrainToolCallEvents`. Without this, the live
+    // `getMessageToolCallEvents` subscription could briefly paint
+    // "running" after the user already saw "Cancelled" in the bubble.
+    const persistedToolCalls = await foldAndDrainToolCallEvents(ctx, args.assistantMessageId, {
+      jobId: args.jobId,
+      mutation: "markAssistantReplyCancelled",
+    });
+
+    try {
+      if (message) {
+        const streamedContent = `${streamSnapshot?.content ?? message.content}${args.finalDelta ?? ""}`;
+        await ctx.db.patch(args.assistantMessageId, {
+          status: "cancelled",
+          errorMessage: reason,
+          // Empty partial replies render as the cancellation reason so the
+          // bubble never shows blank — `failAssistantReply` uses the same
+          // fallback for the same reason.
+          content: streamedContent || reason,
+          toolCalls: persistedToolCalls,
+        });
+      } else {
+        logWarn("chat", "cancel_assistant_message_missing", {
+          assistantMessageId: args.assistantMessageId,
+          jobId: args.jobId,
+        });
+      }
+
+      // Always cancel the job and clear the lease, regardless of whether
+      // the assistant message still exists or whether `cancelInFlightReply`
+      // already set the status. Guard against concurrent deletion so the
+      // cancellation finalization doesn't fail if the job row was deleted
+      // by a cascade (e.g. thread deleted). Check for existence first so
+      // a missing job is a clean no-op rather than throwing.
+      const job = await ctx.db.get(args.jobId);
+      if (job) {
+        await ctx.db.patch(args.jobId, {
+          status: "cancelled",
+          stage: "cancelled",
+          progress: 1,
+          completedAt: now,
+          errorMessage: reason,
+          leaseExpiresAt: undefined,
+        });
+      } else {
+        logWarn("chat", "cancel_job_missing", {
+          assistantMessageId: args.assistantMessageId,
+          jobId: args.jobId,
+        });
+      }
+    } finally {
+      if (streamSnapshot) {
+        await deleteMessageStreamState(ctx, streamSnapshot.stream._id);
+      }
+      // Tool-call events were drained by `foldAndDrainToolCallEvents`
+      // above; nothing else to clean up.
+    }
+
+    logInfo("chat", "assistant_reply_cancelled", {
+      assistantMessageId: args.assistantMessageId,
+      jobId: args.jobId,
+      hadPartialContent: Boolean(args.finalDelta && args.finalDelta.length > 0),
+    });
   },
 });
 

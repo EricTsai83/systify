@@ -381,3 +381,326 @@ describe("ChatPanel mode badge and inline citations", () => {
     expect(screen.getByText(/\[A99\]/)).toBeInTheDocument();
   });
 });
+
+/**
+ * Plan 07 — Stop button toggles in for Send while the latest assistant
+ * message is still streaming / pending. Coverage targets:
+ *
+ *   - Stop button renders only when (a) `onCancelInFlightReply` is wired AND
+ *     (b) the latest assistant message is non-terminal.
+ *   - Click on Stop fires the callback exactly once.
+ *   - "Stopping…" label appears between click and bubble flip.
+ *   - `cancelled` status surfaces the "Cancelled" label in the message status
+ *     chip rather than fall through to the raw enum.
+ *   - Send is restored once the assistant message reaches a terminal state.
+ */
+describe("ChatPanel cancel-in-flight reply (Plan 07)", () => {
+  test("renders Send when no assistant reply is in flight", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: "message_user_1" as MessageId,
+            role: "user",
+            status: "completed",
+            mode: "discuss",
+            content: "Hi",
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput="more"
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        onCancelInFlightReply={vi.fn()}
+        isCancellingReply={false}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("chat-panel-send-button")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-panel-stop-button")).not.toBeInTheDocument();
+  });
+
+  test("renders Stop in place of Send while the latest assistant message is streaming", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "streaming",
+            mode: "discuss",
+            content: "partial reply",
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={{
+          assistantMessageId,
+          content: "partial reply",
+          startedAt: Date.now(),
+          lastAppendedAt: Date.now(),
+        }}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        onCancelInFlightReply={vi.fn()}
+        isCancellingReply={false}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const stop = screen.getByTestId("chat-panel-stop-button");
+    expect(stop).toBeInTheDocument();
+    expect(stop).toHaveTextContent("Stop");
+    expect(screen.queryByTestId("chat-panel-send-button")).not.toBeInTheDocument();
+  });
+
+  test("renders Stop while the assistant message is pending (between sendMessage and markRunning)", () => {
+    // The brief pending window before the action flips status to
+    // streaming is still cancellation-eligible — the action's first
+    // poll will pick it up. Showing Send during that window would let
+    // the user double-fire send.
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "pending",
+            mode: "discuss",
+            content: "",
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        onCancelInFlightReply={vi.fn()}
+        isCancellingReply={false}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("chat-panel-stop-button")).toBeInTheDocument();
+  });
+
+  test("falls back to Send when onCancelInFlightReply is not wired even with a streaming reply", () => {
+    // Defensive: a caller that opts out of cancellation (e.g. an embedded
+    // demo without a Convex backend) must still get the standard Send
+    // button — never a Stop button that nobody listens to.
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "streaming",
+            mode: "discuss",
+            content: "",
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput="next"
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("chat-panel-send-button")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-panel-stop-button")).not.toBeInTheDocument();
+  });
+
+  test("clicking Stop invokes onCancelInFlightReply exactly once", () => {
+    const onCancel = vi.fn();
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "streaming",
+            mode: "discuss",
+            content: "",
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        onCancelInFlightReply={onCancel}
+        isCancellingReply={false}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("chat-panel-stop-button"));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  test("renders 'Stopping…' and disables the Stop button while the cancel mutation is in flight", () => {
+    const onCancel = vi.fn();
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "streaming",
+            mode: "discuss",
+            content: "",
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        onCancelInFlightReply={onCancel}
+        isCancellingReply={true}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const stop = screen.getByTestId("chat-panel-stop-button");
+    expect(stop).toHaveTextContent("Stopping…");
+    expect(stop).toBeDisabled();
+
+    // Defensive: even if the user manages to click the disabled button via
+    // assistive tech (some screen readers can dispatch click on aria-disabled),
+    // we don't want to fire the cancel a second time.
+    fireEvent.click(stop);
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  test("flips back to Send once the assistant message reaches a terminal state", () => {
+    // Smoke test of the post-cancellation state: bubble is `cancelled`,
+    // but for the form footer the panel should be ready for the next
+    // prompt (Send button visible again).
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "cancelled",
+            mode: "discuss",
+            content: "partial reply",
+            errorMessage: "Cancelled by user.",
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        onCancelInFlightReply={vi.fn()}
+        isCancellingReply={false}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("chat-panel-send-button")).toBeInTheDocument();
+    expect(screen.queryByTestId("chat-panel-stop-button")).not.toBeInTheDocument();
+  });
+
+  test("cancelled assistant message renders 'Cancelled' status label", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "cancelled",
+            mode: "discuss",
+            content: "partial reply",
+            errorMessage: "Cancelled by user.",
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        onCancelInFlightReply={vi.fn()}
+        isCancellingReply={false}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    // Status label distinguishes user-initiated stop from upstream
+    // failure ("Failed"). Anchor the assertion on the visible label
+    // rather than role/aria so a future restyling doesn't silently
+    // regress copy.
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    expect(screen.getByText("Cancelled by user.")).toBeInTheDocument();
+  });
+});
