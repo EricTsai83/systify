@@ -150,15 +150,23 @@ export const createThread = mutation({
 /**
  * Attach, swap, or detach the repository bound to a thread.
  *
- * Powers the in-thread `AttachRepoMenu` per PRD #19 user stories 2 and 3:
- * users can move from abstract discussion to grounded analysis (or back) on
- * the same thread without losing context. Passing `repositoryId: null`
- * clears the optional `threads.repositoryId` field; Convex `patch` accepts
- * `undefined` to drop optional fields, which is what we forward.
+ * The current UI (`AttachRepoMenu` in the TopBar) only surfaces the
+ * **attach** path — once a thread is bound to a repo, the binding is
+ * permanent from the user's perspective. Swap and detach were intentionally
+ * removed from the UI: this mutation does not re-ground historical messages
+ * (only new messages pick up the new repo's context via `getReplyContext`),
+ * so swapping mid-conversation produces a Frankenstein thread where the
+ * scrollback references repo A and new replies reference repo B. To work
+ * against a different repo, users start a new thread.
  *
- * Note that historical messages on the thread are not re-grounded. New
- * messages issued after the swap pick up the new repository's context via
- * `getReplyContext`, but prior assistant replies stay as-is.
+ * The mutation itself stays general (accepts `null` and any repo id) so a
+ * future "Fork thread to repo X" feature — which would copy a thread before
+ * re-pointing the binding, sidestepping the Frankenstein problem — can reuse
+ * it without a backend change.
+ *
+ * Passing `repositoryId: null` clears the optional `threads.repositoryId`
+ * field; Convex `patch` accepts `undefined` to drop optional fields, which
+ * is what we forward.
  */
 export const setThreadRepository = mutation({
   args: {
@@ -330,7 +338,10 @@ export const cleanupOrphanedMessages = internalMutation({
       .take(500);
     for (const message of messages) {
       // Plan 06 — same drain-then-delete order as `deleteThread` so the
-      // re-scheduled cleanup pass doesn't outlive the events table.
+      // re-scheduled cleanup pass doesn't outlive the events table. Reversing
+      // this would leave orphaned `messageToolCallEvents` rows once the
+      // parent message is gone, which then can't be reached by the
+      // by_messageId drain on the next pass.
       await drainMessageToolCallEvents(ctx, message._id);
       await ctx.db.delete(message._id);
     }
@@ -353,16 +364,17 @@ export const cleanupOrphanedMessageStreams = internalMutation({
       .take(500);
 
     let totalChunksProcessed = 0;
-    let streamBudgetExhausted = false;
     for (const stream of streams) {
       if (totalChunksProcessed >= MAX_STREAM_CHUNKS_PER_PASS) {
-        streamBudgetExhausted = true;
-        break;
+        await ctx.scheduler.runAfter(0, internal.chat.threads.cleanupOrphanedMessageStreams, {
+          threadId: args.threadId,
+        });
+        return;
       }
       totalChunksProcessed += await deleteMessageStreamState(ctx, stream._id);
     }
 
-    if (streamBudgetExhausted || streams.length === 500) {
+    if (streams.length === 500) {
       await ctx.scheduler.runAfter(0, internal.chat.threads.cleanupOrphanedMessageStreams, {
         threadId: args.threadId,
       });

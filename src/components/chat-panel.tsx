@@ -225,48 +225,71 @@ export function ChatPanel({
 
   const canCancel = inFlightAssistantMessage !== null && typeof onCancelInFlightReply === "function";
 
+  const shouldShowSandboxWarning =
+    !isChatLoading && chatMode === "sandbox" && sandboxModeStatus && !sandboxModeAvailable;
+  const shouldShowEmptyState = !isChatLoading && !hasMessages;
+
+  // Hoisted so the empty-state branch (no ScrollArea) and the messages
+  // branch (inside ScrollArea) can both render the warning above their
+  // content without duplicating the AppNotice props.
+  const sandboxWarning = shouldShowSandboxWarning ? (
+    <AppNotice
+      title={getSandboxStatusTitle(sandboxModeStatus.reasonCode)}
+      message={
+        sandboxModeStatus.message ??
+        "Sandbox mode is unavailable right now. Sync the repository to provision a fresh sandbox, or switch to a lighter mode."
+      }
+      tone="warning"
+      actionLabel={isSyncing ? "Syncing…" : "Sync now"}
+      actionDisabled={isSyncing}
+      onAction={onSync}
+    />
+  ) : null;
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <ScrollArea type="always" className="flex-1 min-h-0">
-        <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-3 px-6 py-6">
-          {!isChatLoading && chatMode === "sandbox" && sandboxModeStatus && !sandboxModeAvailable ? (
-            <AppNotice
-              title={getSandboxStatusTitle(sandboxModeStatus.reasonCode)}
-              message={
-                sandboxModeStatus.message ??
-                "Sandbox mode is unavailable right now. Sync the repository to provision a fresh sandbox, or switch to a lighter mode."
-              }
-              tone="warning"
-              actionLabel={isSyncing ? "Syncing…" : "Sync now"}
-              actionDisabled={isSyncing}
-              onAction={onSync}
-            />
-          ) : null}
-          {isChatLoading ? null : !hasMessages ? (
-            !hasAttachedRepository ? (
-              <EmptyNoRepoHint
-                threadId={selectedThreadId}
-                availableRepositories={availableRepositories ?? []}
-                onImported={onImported}
-                onThreadMovedToWorkspace={onThreadMovedToWorkspace}
-              />
-            ) : (
-              <EmptyChatHint />
-            )
+      {shouldShowEmptyState ? (
+        // The empty-state hint is rendered *outside* ScrollArea on purpose.
+        // Radix's ScrollArea.Viewport wraps its children in an internal
+        // `display: table` element, which silently breaks the percentage-
+        // height / `flex-1` chain — so `min-h-full` here and `flex-1` on
+        // the hint's own wrapper both collapse, parking the hint near the
+        // top instead of the vertical middle of the chat column. The
+        // empty state never needs to scroll, so dropping ScrollArea for
+        // this branch is the cleanest fix and lets `flex-1` actually
+        // reach the centered Card.
+        <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 flex-col gap-3 px-6 py-6">
+          {sandboxWarning}
+          {hasAttachedRepository ? (
+            <EmptyChatHint />
           ) : (
-            <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              {messages!.map((message) => (
-                <MessageBubble
-                  key={message._id}
-                  message={message}
-                  activeMessageStream={activeMessageStream ?? null}
-                  onSelectArtifact={onSelectArtifact}
-                />
-              ))}
-            </div>
+            <EmptyNoRepoHint
+              threadId={selectedThreadId}
+              availableRepositories={availableRepositories ?? []}
+              onImported={onImported}
+              onThreadMovedToWorkspace={onThreadMovedToWorkspace}
+            />
           )}
         </div>
-      </ScrollArea>
+      ) : (
+        <ScrollArea type="always" className="flex-1 min-h-0">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6">
+            {sandboxWarning}
+            {!isChatLoading && (
+              <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                {messages!.map((message) => (
+                  <MessageBubble
+                    key={message._id}
+                    message={message}
+                    activeMessageStream={activeMessageStream ?? null}
+                    onSelectArtifact={onSelectArtifact}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      )}
 
       <div className="border-t border-border bg-background">
         <form
@@ -605,7 +628,7 @@ function EmptyNoRepoHint({
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={isAttaching}>
                 <LinkIcon size={13} weight="bold" />
-                {isAttaching ? "Moving…" : "Move to repository"}
+                {isAttaching ? "Attaching…" : "Attach repository"}
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="center" className="w-64">

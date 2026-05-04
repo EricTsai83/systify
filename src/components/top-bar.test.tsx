@@ -35,17 +35,13 @@ vi.mock("@/components/ui/sidebar", () => ({
 
 // AttachRepoMenu pulls in `useMutation` from convex/react; we don't exercise
 // the mutation flow here, so a lightweight stand-in keeps the test deterministic
-// without needing a Convex provider.
+// without needing a Convex provider. The mock only renders when TopBar
+// actually mounts AttachRepoMenu — i.e. when no repo is attached to the
+// thread — so a fixed "Attach repository" label is enough to assert presence.
 vi.mock("@/components/attach-repo-menu", () => ({
-  AttachRepoMenu: ({
-    threadId,
-    attachedRepository,
-  }: {
-    threadId: ThreadId;
-    attachedRepository: { fullName: string } | null;
-  }) => (
+  AttachRepoMenu: ({ threadId }: { threadId: ThreadId }) => (
     <div data-testid="attach-repo-menu" data-thread-id={threadId}>
-      {attachedRepository ? attachedRepository.fullName : "Attach repository"}
+      Attach repository
     </div>
   ),
 }));
@@ -123,11 +119,17 @@ describe("TopBar attach repo chip behavior", () => {
     expect(chip).toHaveTextContent("Attach repository");
   });
 
-  test("shows attached repository name when repository is bound to thread", () => {
+  test("hides standalone attach chip once a repository is bound to the thread", () => {
+    // Once a repo is attached, swap/detach controls live inside the
+    // RepoInfoPopover's workspace section instead of in the TopBar — the
+    // header stays uncluttered for the long-tail of session time the user
+    // isn't swapping. The attached repo name is still visible via the
+    // (mocked) popover trigger that wraps the title.
     renderTopBar({
       attachedRepository: { id: repoId, fullName: "octocat/hello-world", shortName: "hello-world" },
     });
 
-    expect(screen.getByTestId("attach-repo-menu")).toHaveTextContent("octocat/hello-world");
+    expect(screen.queryByTestId("attach-repo-menu")).not.toBeInTheDocument();
+    expect(screen.getByText("octocat/hello-world")).toBeInTheDocument();
   });
 });
