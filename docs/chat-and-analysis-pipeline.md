@@ -289,7 +289,7 @@ Artifacts produced by deep analysis flow back into later chat context (`docs` mo
 
 ## Known Limitations
 
-- `sandbox` mode is in private beta. Live tooling (`read_file`, `list_dir`) is gated by the `SANDBOX_MODE_ENABLED` flag and an explicit per-viewer allowlist (`SANDBOX_BETA_ALLOWLIST`); see `convex/lib/sandboxFeatureFlag.ts`. Viewers outside the allowlist see the mode disabled with a tooltip explaining the beta status. The destructive `run_shell` tool is intentionally absent from the current toolset and is planned for Plan 08, after additional safeguards land.
+- `sandbox` mode is in private beta. Live tooling (`read_file`, `list_dir`, `run_shell`) is gated by the `SANDBOX_MODE_ENABLED` flag and an explicit per-viewer allowlist (`SANDBOX_BETA_ALLOWLIST`); see `convex/lib/sandboxFeatureFlag.ts`. Viewers outside the allowlist see the mode disabled with a tooltip explaining the beta status. `run_shell` is gated by a deny list of obviously-destructive patterns (`rm -rf /`, fork bombs, `mkfs`, `dd`, `sudo`, system shutdown, network pipe-to-shell), a 32 KiB combined-output cap, a 60 s ceiling on per-call timeout, and a workdir pinned inside the repository — see `docs/sandbox-mode-system-design.md` for the layered defenses and `docs/sandbox-mode-security-system-design.md` for the content boundary.
 - Chat and deep analysis are both AI features, but their outputs and tracking models are still split between thread replies and artifacts.
 - Deep analysis is currently closer to focused file discovery plus a markdown report than to a full agentic repository-reasoning pipeline.
 

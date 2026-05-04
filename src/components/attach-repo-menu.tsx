@@ -3,9 +3,7 @@ import { useMutation } from "convex/react";
 import {
   CaretDownIcon,
   CircleNotchIcon,
-  GitBranchIcon,
   GlobeIcon,
-  LinkBreakIcon,
   LinkIcon,
   LockIcon,
   XIcon,
@@ -19,41 +17,43 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { AttachedRepositorySummary } from "@/hooks/use-thread-capabilities";
 import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 
 /**
- * In-thread affordance to move the current thread between Home and
- * repository workspaces. PRD #19 user stories 2 and 3:
+ * One-shot CTA for binding a no-repo thread to a repository workspace,
+ * surfaced in the TopBar when the thread is sitting in Home with no repo
+ * attached yet. PRD #19 user story 2: promote a free-form discussion thread
+ * into a grounded repo workspace.
  *
- *   - Move a design thread into a repository workspace to move from abstract
- *     discussion to grounded analysis without losing context.
- *   - Move back to Home or another repository workspace so the same thread can
- *     compare designs across codebases.
- *
- * The trigger is a single button whose copy reflects the current state — this
- * keeps the affordance scannable without claiming sidebar real-estate. When a
- * repo is attached, the button shows that repo's full name + a caret; the
- * dropdown lists the other repos as swap targets plus a destructive-styled
- * Detach action. When no repo is attached, the button reads "Attach
- * repository" and the dropdown lists every repo the user owns.
+ * **The binding is permanent by design.** Once a repo is attached, this
+ * component stops rendering (TopBar gates on `attachedRepository === null`)
+ * and there is no swap or detach affordance anywhere in the UI. The decision:
+ * a thread's history is grounded against the repo it was attached to, and
+ * re-pointing the binding mid-conversation creates a Frankenstein context
+ * where messages 1-N reference repo A and messages N+1 reference repo B —
+ * confusing for the model and the user. To work against a different repo,
+ * users start a new thread (cheap) instead. The backend mutation still
+ * accepts arbitrary moves so a future "Fork thread" feature can copy a
+ * thread into a different repo without mutating the original.
  */
 export function AttachRepoMenu({
   threadId,
-  attachedRepository,
   availableRepositories,
   onMovedToWorkspace,
 }: {
   threadId: ThreadId;
-  attachedRepository: AttachedRepositorySummary | null;
   availableRepositories: ReadonlyArray<Doc<"repositories">>;
   onMovedToWorkspace: (workspaceId: WorkspaceId | null) => void;
 }) {
   const setThreadRepository = useMutation(api.chat.threads.setThreadRepository);
+  // Latest-request-wins: a fast user clicking two different repos in rapid
+  // succession should land on the second pick, even if the first request's
+  // network round-trip happens to resolve later. We track the request id
+  // generated at click time and only commit results when the in-flight id
+  // still matches the latest one we issued.
   const latestRequestRef = useRef(0);
   const [pendingRequest, setPendingRequest] = useState<{
     threadId: ThreadId;
@@ -66,7 +66,7 @@ export function AttachRepoMenu({
   const isPending = pendingRequest?.threadId === threadId;
   const error = errorState?.threadId === threadId ? errorState.message : null;
 
-  const handleSelect = async (repoId: RepositoryId | null) => {
+  const handleAttach = async (repoId: RepositoryId) => {
     const requestId = latestRequestRef.current + 1;
     latestRequestRef.current = requestId;
     setErrorState(null);
@@ -80,70 +80,51 @@ export function AttachRepoMenu({
       if (latestRequestRef.current === requestId) {
         setErrorState({
           threadId,
-          message: toUserErrorMessage(err, "Failed to update repository."),
+          message: toUserErrorMessage(err, "Failed to attach repository."),
         });
       }
     }
     setPendingRequest((current) => (current?.requestId === requestId ? null : current));
   };
 
-  const swapTargets = attachedRepository
-    ? availableRepositories.filter((repo) => repo._id !== attachedRepository.id)
-    : availableRepositories;
-
   return (
     <div className="flex items-center gap-2">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
-            variant={attachedRepository ? "ghost" : "outline"}
+            variant="outline"
             size="sm"
             disabled={isPending}
             className="gap-1.5 text-xs"
-            aria-label={attachedRepository ? "Change repository workspace" : "Move to a repository workspace"}
+            aria-label="Attach a repository to this thread"
           >
-            {attachedRepository ? (
-              <>
-                <GitBranchIcon size={12} weight="bold" />
-                <span className="max-w-[200px] truncate font-medium">{attachedRepository.fullName}</span>
-              </>
-            ) : (
-              <>
-                <LinkIcon size={12} weight="bold" />
-                <span className="font-medium">Move to repository</span>
-              </>
-            )}
+            <LinkIcon size={12} weight="bold" />
+            <span className="font-medium">Attach repository</span>
             {isPending ? (
               <span className="inline-flex items-center gap-1 text-muted-foreground" aria-live="polite">
                 <CircleNotchIcon size={11} className="animate-spin" />
-                <span>Updating…</span>
+                <span>Attaching…</span>
               </span>
             ) : null}
             <CaretDownIcon size={10} weight="bold" className="opacity-60" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-72">
-          <DropdownMenuLabel className="text-[11px] uppercase tracking-wider">
-            {attachedRepository ? "Move to another repository" : "Move to repository workspace"}
-          </DropdownMenuLabel>
-          {swapTargets.length === 0 ? (
-            // Empty-state copy is intentionally different from the sidebar's
-            // "no repositories" — here the user has *some* repos but none
-            // they could *swap to*, or none at all. Both collapse to the
-            // same UX (open the import dialog from the sidebar) so we don't
-            // duplicate that flow inside this menu.
+          <DropdownMenuLabel className="text-[11px] uppercase tracking-wider">Attach repository</DropdownMenuLabel>
+          {availableRepositories.length === 0 ? (
+            // Empty-state intentionally points at the sidebar's import flow
+            // rather than duplicating it inline — there's only one canonical
+            // entry point to importing a repo.
             <div className="px-2 py-3 text-xs text-muted-foreground">
-              {attachedRepository
-                ? "No other repositories to swap to. Import one to get started."
-                : "You have no repositories yet. Import one to get started."}
+              You have no repositories yet. Import one to get started.
             </div>
           ) : (
-            swapTargets.map((repo) => (
+            availableRepositories.map((repo) => (
               <DropdownMenuItem
                 key={repo._id}
                 disabled={isPending}
                 onSelect={() => {
-                  void handleSelect(repo._id);
+                  void handleAttach(repo._id);
                 }}
                 className="flex items-center gap-2 text-xs"
               >
@@ -156,21 +137,6 @@ export function AttachRepoMenu({
               </DropdownMenuItem>
             ))
           )}
-          {attachedRepository ? (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                disabled={isPending}
-                onSelect={() => {
-                  void handleSelect(null);
-                }}
-                className="flex items-center gap-2 text-xs text-destructive focus:text-destructive"
-              >
-                <LinkBreakIcon size={12} weight="bold" />
-                Move back to Home
-              </DropdownMenuItem>
-            </>
-          ) : null}
         </DropdownMenuContent>
       </DropdownMenu>
       {error ? (
@@ -182,7 +148,7 @@ export function AttachRepoMenu({
             size="icon"
             className="size-4 text-destructive/80 hover:text-destructive"
             onClick={() => setErrorState((current) => (current?.threadId === threadId ? null : current))}
-            aria-label="Dismiss repository update error"
+            aria-label="Dismiss repository attach error"
           >
             <XIcon size={10} weight="bold" />
           </Button>

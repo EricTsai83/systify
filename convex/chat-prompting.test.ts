@@ -84,16 +84,58 @@ describe("buildSystemPrompt", () => {
     expect(prompt.toLowerCase()).toMatch(/sole source of truth|only source/);
   });
 
-  test("sandbox prompt names the read_file and list_dir tools (Plan 04)", () => {
+  test("sandbox prompt names the read_file, list_dir, and run_shell tools (Plan 04 + Plan 08)", () => {
     const prompt = buildSystemPrompt("sandbox");
 
-    // Plan 04 wires real `read_file` / `list_dir` tools. The system prompt
-    // must name them so the model picks them up — the AI SDK exposes the
-    // tool descriptions but the prompt's "USE THE TOOLS" framing is what
-    // actually gets the model to *prefer* tool calls over guessing from
-    // the artifact summaries.
+    // Plan 04 wired `read_file` / `list_dir`; Plan 08 added `run_shell`.
+    // The system prompt must name all three so the model picks them up —
+    // the AI SDK exposes the tool descriptions but the prompt's "USE THE
+    // TOOLS" framing is what actually gets the model to *prefer* tool
+    // calls over guessing from the artifact summaries.
     expect(prompt).toContain("read_file");
     expect(prompt).toContain("list_dir");
+    expect(prompt).toContain("run_shell");
+  });
+
+  test("sandbox prompt frames run_shell as read-only inspection (Plan 08)", () => {
+    const prompt = buildSystemPrompt("sandbox");
+
+    // Plan 08's success criterion: "stdout 走 redaction" + "LLM 不會試圖
+    // 跑外網（透過 system prompt 強調 + workdir 鎖在 repoPath 內)". The
+    // prompt is the first line of defense — the deny list catches what
+    // the LLM tries anyway, but if the LLM internalises "read-only
+    // inspection only" we save Daytona round trips on guaranteed-bad
+    // calls.
+    expect(prompt.toLowerCase()).toMatch(/read-only/);
+    // At least one of the canonical inspection tools must be exemplified
+    // so the model has concrete patterns to compose. We pin `grep` /
+    // `find` / `git log` since they're the plan's documented examples;
+    // failing on the *whole set* would over-couple to wording, but at
+    // least one of them is the floor.
+    expect(prompt).toMatch(/grep|find|git log/i);
+  });
+
+  test("sandbox prompt forbids network egress so the LLM does not even attempt curl (Plan 08)", () => {
+    const prompt = buildSystemPrompt("sandbox");
+
+    // The Daytona allow list (`DAYTONA_NETWORK_ALLOW_LIST`) is the
+    // network-layer enforcement; the prompt is the cooperative guard.
+    // Without an explicit "no network egress" instruction, the LLM
+    // cheerfully tries `curl example.com` and burns a step on a
+    // guaranteed failure. Pinning the prompt-layer wording here keeps
+    // the contract auditable.
+    expect(prompt.toLowerCase()).toMatch(/network|egress|do not.*curl|outbound/);
+  });
+
+  test("sandbox prompt teaches the command_blocked / command_timeout error codes (Plan 08)", () => {
+    const prompt = buildSystemPrompt("sandbox");
+
+    // Layered with the existing `path_outside_repo` / `invalid_path`
+    // assertion: the model must learn that the deny list and the
+    // timeout produce specific, named envelopes so it can adapt
+    // (rephrase, narrow input) instead of looping on the same shape.
+    expect(prompt).toContain("command_blocked");
+    expect(prompt).toContain("command_timeout");
   });
 
   test("sandbox prompt teaches the structured error envelope shape", () => {

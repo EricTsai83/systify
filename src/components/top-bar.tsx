@@ -94,16 +94,17 @@ export function TopBar({
         </div>
       ) : null}
 
-      {threadId !== null ? (
-        // PRD US 2 / 3: inline attach/swap/detach chip lives in the TopBar so
-        // changing the thread's grounding is a single click that never leaves
-        // the chat. Rendered outside the title block so it is also reachable
-        // when the thread has no repo attached yet (otherwise the user would
-        // have no entry point to attach one). Hidden when threadId is null
-        // because there is nothing to bind a repo to.
+      {threadId !== null && attachedRepository === null ? (
+        // PRD US 2: one-shot affordance for promoting a no-repo thread into a
+        // repository workspace ("abstract discussion → grounded analysis").
+        // Once a repo is attached, the binding is permanent — there is no
+        // swap or detach UI by design (see decision log: avoiding Frankenstein
+        // conversations where history is grounded against repo A but new
+        // messages reference repo B). To work against a different repo, the
+        // user starts a new thread. Hidden when `threadId === null` because
+        // there is nothing to bind a repo to.
         <AttachRepoMenu
           threadId={threadId}
-          attachedRepository={attachedRepository}
           availableRepositories={availableRepositories}
           onMovedToWorkspace={onThreadMovedToWorkspace}
         />
