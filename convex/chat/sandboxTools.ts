@@ -44,10 +44,23 @@
  *      `totalBytes` / `totalEntries` so the upcoming tool-call ticker can
  *      summarise a call as `Reading convex/chat/send.ts (12.4 KB, truncated)`
  *      without re-running the tool.
+ *
+ *   6. **Plan 05 — every return path runs through `redact()`.** Tool output
+ *      flows two places: into the LLM's next-step input *and* into durable
+ *      storage (Plan 06's `messages.toolCalls`, Plan 12's
+ *      `sandboxToolCallLog`). A `.git/config` token or hard-coded API key
+ *      that escapes here lands in the `messages` table and survives sandbox
+ *      deletion. So both `read_file` content *and* `list_dir` entry names
+ *      are scrubbed before the success envelope is built; matched pattern
+ *      types bubble up via `redactedTypes` so the LLM (and any downstream
+ *      audit reader) knows that something was filtered without learning
+ *      what. See `docs/sandbox-mode-security-system-design.md` for the
+ *      threat model.
  */
 
 import { tool } from "ai";
 import { z } from "zod";
+import { redact, type RedactionType } from "./redaction";
 
 /* ---------------------------------------------------------------------- *
  * Public limits (constants live here so tests pin the boundary, not the *
@@ -139,6 +152,14 @@ export type ReadFileToolResult =
       readonly totalBytes: number;
       readonly truncated: boolean;
       readonly content: string;
+      /**
+       * Plan 05 — sorted, de-duplicated redaction slugs that fired
+       * against the decoded content. Empty when nothing was scrubbed.
+       * Plan 12's `sandboxToolCallLog.redactedFields` lifts this field
+       * directly, so the typed union (rather than `string[]`) ensures
+       * audit consumers stay in sync with the registry.
+       */
+      readonly redactedTypes: readonly RedactionType[];
     }
   | SandboxToolErrorEnvelope;
 
@@ -155,6 +176,13 @@ export type ListDirToolResult =
       readonly entries: readonly ListDirToolEntry[];
       readonly totalEntries: number;
       readonly truncated: boolean;
+      /**
+       * Plan 05 — like `ReadFileToolResult.redactedTypes` but aggregated
+       * across every entry name. Forecloses an obscure leak path where
+       * an attacker plants a file whose *name* is the secret and the
+       * LLM exfiltrates it through a directory listing alone.
+       */
+      readonly redactedTypes: readonly RedactionType[];
     }
   | SandboxToolErrorEnvelope;
 
@@ -254,6 +282,13 @@ function resolveSandboxPath(
 }
 
 /**
+ * Module-scoped UTF-8 decoder. `TextDecoder.decode()` is stateless when
+ * called without `{ stream: true }`, so a single instance is safe across
+ * concurrent reads — and we save one allocation per `read_file` call.
+ */
+const UTF8_DECODER = new TextDecoder("utf-8", { fatal: false });
+
+/**
  * Slice raw bytes to `SANDBOX_READ_FILE_MAX_BYTES` and UTF-8-decode with
  * substitution. Returns `{ content, bytesReturned, truncated }` so callers
  * can build the surrounding metadata.
@@ -265,8 +300,7 @@ function resolveSandboxPath(
 function decodeFileBytes(bytes: Uint8Array): { content: string; bytesReturned: number; truncated: boolean } {
   const truncated = bytes.byteLength > SANDBOX_READ_FILE_MAX_BYTES;
   const sliced = truncated ? bytes.subarray(0, SANDBOX_READ_FILE_MAX_BYTES) : bytes;
-  const decoder = new TextDecoder("utf-8", { fatal: false });
-  const decoded = decoder.decode(sliced);
+  const decoded = UTF8_DECODER.decode(sliced);
   return {
     content: truncated ? `${decoded}${SANDBOX_TRUNCATION_MARKER}` : decoded,
     bytesReturned: sliced.byteLength,
@@ -331,13 +365,19 @@ export async function executeReadFile(
   }
 
   const { content, bytesReturned, truncated } = decodeFileBytes(bytes);
+  // Plan 05 — `bytesReturned` / `totalBytes` keep their pre-redaction
+  // values: they are cost signals for Plan 06's "Reading X.ts (12.4 KB)"
+  // ticker, not lengths of the post-redaction string.
+  const { redacted, matchedTypes } = redact(content);
+
   return {
     ok: true,
     path: resolution.normalizedRelative,
     bytesReturned,
     totalBytes: bytes.byteLength,
     truncated,
-    content,
+    content: redacted,
+    redactedTypes: matchedTypes,
   };
 }
 
@@ -381,16 +421,29 @@ export async function executeListDir(
   const truncated = sortedEntries.length > SANDBOX_LIST_DIR_MAX_ENTRIES;
   const sliced = truncated ? sortedEntries.slice(0, SANDBOX_LIST_DIR_MAX_ENTRIES) : sortedEntries;
 
+  // Plan 05 — redaction signals are aggregated to the result level (not
+  // annotated per-entry) so the entry shape stays `{name, type, sizeBytes}`,
+  // which Plan 06's tool-call ticker depends on.
+  const aggregatedRedactionTypes = new Set<RedactionType>();
+  const redactedEntries: ListDirToolEntry[] = sliced.map((entry) => {
+    const { redacted, matchedTypes } = redact(entry.name);
+    for (const type of matchedTypes) {
+      aggregatedRedactionTypes.add(type);
+    }
+    return {
+      name: redacted,
+      type: entry.isDir ? "dir" : "file",
+      sizeBytes: entry.size,
+    };
+  });
+
   return {
     ok: true,
     path: resolution.normalizedRelative,
-    entries: sliced.map((entry) => ({
-      name: entry.name,
-      type: entry.isDir ? "dir" : "file",
-      sizeBytes: entry.size,
-    })),
+    entries: redactedEntries,
     totalEntries: sortedEntries.length,
     truncated,
+    redactedTypes: [...aggregatedRedactionTypes].sort(),
   };
 }
 

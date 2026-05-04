@@ -217,13 +217,57 @@ export async function cloneRepositoryInSandbox(args: {
     args.token,
   );
 
-  const branchCommand = await sandbox.process.executeCommand("git branch --show-current", "repo");
-  const shaCommand = await sandbox.process.executeCommand("git rev-parse HEAD", "repo");
+  // Plan 05 — Token scrub. `sandbox.git.clone` with credentials embeds
+  // the token into `.git/config` (`https://x-access-token:<token>@…`).
+  // Without this overwrite, Plan 08's `run_shell` would let the LLM
+  // `cat .git/config` and exfiltrate the token into `messages`, which
+  // sandbox deletion does NOT scrub. See
+  // `docs/sandbox-mode-security-system-design.md`.
+  //
+  // Unconditional (not gated on `SANDBOX_MODE_ENABLED`): the leak is
+  // created by the clone, not by the chat layer, so this is hardening
+  // rather than feature behavior. The `args.url` substitution is
+  // POSIX-single-quoted for defense in depth — `importsNode.ts` only
+  // ever passes canonical HTTPS URLs today, but a less-sanitized
+  // future caller must not break out of the command.
+  //
+  // Subsequent `git fetch` inside the sandbox will fail without re-auth,
+  // which is the desired posture for a read-only analysis sandbox.
+  await sandbox.process.executeCommand(
+    `git remote set-url origin ${posixSingleQuote(args.url)}`,
+    "repo",
+  );
+
+  // Branch and SHA are independent reads, so issue them in parallel —
+  // each is a separate Daytona round trip, sequencing them doubles the
+  // post-clone latency for no benefit. The scrub above stays sequential
+  // because its ordering (before any other post-clone command) is the
+  // security invariant pinned by `daytona.test.ts`.
+  const [branchCommand, shaCommand] = await Promise.all([
+    sandbox.process.executeCommand("git branch --show-current", "repo"),
+    sandbox.process.executeCommand("git rev-parse HEAD", "repo"),
+  ]);
 
   return {
     branch: branchCommand.result.trim() || args.branch,
     commitSha: shaCommand.result.trim(),
   };
+}
+
+/**
+ * POSIX-shell single-quote escaping for safe `'…'` substitution into a
+ * shell command. Embedded single quotes are escaped by closing the quote,
+ * inserting a literal `\\'`, and reopening — the canonical pattern from
+ * `man sh` that works under every POSIX shell Daytona could plausibly use
+ * (bash, dash, ash, zsh).
+ *
+ * Used here only for the `origin` URL post-clone rewrite. Callers that
+ * need to escape *arguments* should remember that this is full quoting,
+ * not escaping — joining multiple quoted segments with spaces still
+ * produces a well-formed argv.
+ */
+function posixSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
 export async function collectRepositorySnapshot(remoteId: string, repoPath: string): Promise<RepositorySnapshot> {

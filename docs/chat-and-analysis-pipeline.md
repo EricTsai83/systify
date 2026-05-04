@@ -91,7 +91,7 @@ This allows the UI to immediately show a reply that is waiting to be generated.
 - `docs`: artifact-only retrieval — loads up to 12 design artifacts across the docs kinds (`architecture_diagram`, `adr`, `failure_mode_analysis`, `deep_analysis`, `architecture_overview`, `design_review`, `migration_plan`, `trade_off_matrix`, `capacity_estimate`). Indexed code chunks are intentionally skipped so docs answers cannot drift away from the user-produced design layer.
 - `sandbox`: artifacts from the latest import job plus recent `deep_analysis` artifacts, **and** `repoChunks` from the latest import for the chunk-selection step below.
 
-In every mode, the context also includes recent conversation messages bounded by `MAX_CONTEXT_MESSAGES`. The chat pipeline never reads the raw repository directly — it reads the repository's already-processed knowledge layer (artifacts + chunks) and, in `sandbox` mode from Plan 04 onward, the live sandbox via `read_file` / `list_dir` / `run_shell` tools.
+In every mode, the context also includes recent conversation messages bounded by `MAX_CONTEXT_MESSAGES`. The chat pipeline never reads the raw repository directly — it reads the repository's already-processed knowledge layer (artifacts + chunks) and, in `sandbox` mode (Plan 04 onward), the live sandbox via the read-only `read_file` and `list_dir` tools. Tool output is scrubbed for credential-shaped patterns before reaching the LLM (see `sandbox-mode-security-system-design.md`). A destructive `run_shell` tool is planned for Plan 08 and is intentionally absent from the current toolset.
 
 ### 4. Select chunks (sandbox mode only)
 
@@ -265,7 +265,7 @@ Artifacts produced by deep analysis flow back into later chat context (`docs` mo
 
 ## Known Limitations
 
-- `sandbox` mode is currently artifact + chunk grounded only; the live `read_file` / `list_dir` / `run_shell` tools land in Plan 04 of the chat-modes rollout and are gated behind the `SANDBOX_MODE_ENABLED` feature flag until then.
+- `sandbox` mode is in private beta. Live tooling (`read_file`, `list_dir`) is gated by the `SANDBOX_MODE_ENABLED` flag and an explicit per-viewer allowlist (`SANDBOX_BETA_ALLOWLIST`); see `convex/lib/sandboxFeatureFlag.ts`. Viewers outside the allowlist see the mode disabled with a tooltip explaining the beta status. The destructive `run_shell` tool is intentionally absent from the current toolset and is planned for Plan 08, after additional safeguards land.
 - Chat and deep analysis are both AI features, but their outputs and tracking models are still split between thread replies and artifacts.
 - Deep analysis is currently closer to focused file discovery plus a markdown report than to a full agentic repository-reasoning pipeline.
 

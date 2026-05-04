@@ -16,6 +16,7 @@ import type * as artifacts from "../artifacts.js";
 import type * as chat_context from "../chat/context.js";
 import type * as chat_generation from "../chat/generation.js";
 import type * as chat_prompting from "../chat/prompting.js";
+import type * as chat_redaction from "../chat/redaction.js";
 import type * as chat_relevance from "../chat/relevance.js";
 import type * as chat_sandboxTools from "../chat/sandboxTools.js";
 import type * as chat_send from "../chat/send.js";
@@ -72,6 +73,7 @@ declare const fullApi: ApiFromModules<{
   "chat/context": typeof chat_context;
   "chat/generation": typeof chat_generation;
   "chat/prompting": typeof chat_prompting;
+  "chat/redaction": typeof chat_redaction;
   "chat/relevance": typeof chat_relevance;
   "chat/sandboxTools": typeof chat_sandboxTools;
   "chat/send": typeof chat_send;

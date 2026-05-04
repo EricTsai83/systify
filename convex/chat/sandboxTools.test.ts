@@ -368,6 +368,187 @@ describe("executeListDir", () => {
   });
 });
 
+/**
+ * Plan 05 — Output redaction integration.
+ *
+ * The unit-level behaviour of `redact()` is covered exhaustively in
+ * `redaction.test.ts`. The cases below pin the *integration* contract:
+ *
+ *   1. Tool success envelopes always carry a `redactedTypes` field
+ *      (empty when nothing matched) — Plan 06 / Plan 12 persistence
+ *      reads it directly, so changing it from "always present" to
+ *      "optional" would silently drop redaction signals from audit
+ *      logs.
+ *   2. Secrets in `read_file` content are scrubbed before the result
+ *      reaches the LLM. The raw token string never appears in any
+ *      observable field.
+ *   3. Secrets in `list_dir` entry *names* are likewise scrubbed and
+ *      reported at the result level (entry shape stays `{name, type,
+ *      sizeBytes}` — Plan 06's ticker depends on that being stable).
+ *   4. `bytesReturned` / `totalBytes` continue to refer to the
+ *      *original* file size even when redaction shortens the string —
+ *      they are size signals for the LLM, not lengths of the
+ *      redacted payload.
+ */
+describe("Plan 05 — output redaction integration", () => {
+  // Synthetic credentials with the exact pattern shape — never real.
+  const FAKE_INSTALLATION_TOKEN = `ghs_${"x".repeat(40)}`;
+  const FAKE_AWS_ACCESS_KEY = `AKIA${"Z".repeat(16)}`;
+
+  test("read_file: scrubs a GitHub token from content and surfaces redactedTypes", async () => {
+    // Simulates `cat .git/config` after a tokened clone — the dominant
+    // near-term threat documented in
+    // `docs/sandbox-mode-security-system-design.md`.
+    const sensitive = `[remote "origin"]\n\turl = https://x-access-token:${FAKE_INSTALLATION_TOKEN}@github.com/acme/widget.git\n`;
+    const downloadFile = vi
+      .fn<SandboxFsClient["downloadFile"]>()
+      .mockResolvedValue(TEXT_ENCODER.encode(sensitive));
+    const client = makeFakeFsClient({ downloadFile });
+
+    const result = await executeReadFile(client, REPO_PATH, ".git/config");
+    const ok = expectOk(result);
+
+    // The raw token is gone from the observable result …
+    expect(ok.content).not.toContain(FAKE_INSTALLATION_TOKEN);
+    expect(ok.content).toContain("[REDACTED:github_token]");
+    // … and the matched type is surfaced for the LLM and the audit log.
+    expect(ok.redactedTypes).toEqual(["github_token"]);
+  });
+
+  test("read_file: returns an empty redactedTypes array for innocuous content (stable shape)", async () => {
+    const downloadFile = vi
+      .fn<SandboxFsClient["downloadFile"]>()
+      .mockResolvedValue(TEXT_ENCODER.encode("export const HELLO = 1;\n"));
+    const client = makeFakeFsClient({ downloadFile });
+
+    const result = await executeReadFile(client, REPO_PATH, "src/index.ts");
+    const ok = expectOk(result);
+
+    // The empty-array contract matters: callers (Plan 06 trace, Plan 12
+    // audit log) destructure `redactedTypes` directly, so making it
+    // optional / undefined-when-empty would shift work to every consumer.
+    expect(ok.redactedTypes).toEqual([]);
+    expect(ok.content).toBe("export const HELLO = 1;\n");
+  });
+
+  test("read_file: bytesReturned / totalBytes still refer to the ORIGINAL file size after redaction shortens the string", async () => {
+    // Pin the size-signal contract: a file whose contents redact down to
+    // a much shorter string still reports its original byte size, so
+    // the LLM (and Plan 06's "Reading X.ts (12.4 KB)" ticker) sees the
+    // true cost of the read, not the post-redaction string length.
+    const sensitive = `secret=${FAKE_INSTALLATION_TOKEN}\n`;
+    const encoded = TEXT_ENCODER.encode(sensitive);
+    const downloadFile = vi
+      .fn<SandboxFsClient["downloadFile"]>()
+      .mockResolvedValue(encoded);
+    const client = makeFakeFsClient({ downloadFile });
+
+    const result = await executeReadFile(client, REPO_PATH, "config/secret.env");
+    const ok = expectOk(result);
+
+    expect(ok.totalBytes).toBe(encoded.byteLength);
+    expect(ok.bytesReturned).toBe(encoded.byteLength);
+    // Sanity: the content was actually rewritten (not silently passed
+    // through). If a future regression set `bytesReturned` to
+    // `content.length` while leaving redaction intact, the prior two
+    // assertions would still flag it; this guards the redaction itself.
+    expect(ok.content).not.toBe(sensitive);
+    expect(ok.content).toContain("[REDACTED:github_token]");
+  });
+
+  test("read_file: detects multiple distinct secret types in one file and reports them sorted", async () => {
+    // A pathological file that genuinely contains both an AWS access
+    // key and a GitHub token. The result should redact both and surface
+    // a sorted, de-duplicated `redactedTypes` so audit consumers see a
+    // stable diff regardless of regex match order inside `redact()`.
+    const sensitive = `aws.id = ${FAKE_AWS_ACCESS_KEY}\ngithub.token = ${FAKE_INSTALLATION_TOKEN}\n`;
+    const downloadFile = vi
+      .fn<SandboxFsClient["downloadFile"]>()
+      .mockResolvedValue(TEXT_ENCODER.encode(sensitive));
+    const client = makeFakeFsClient({ downloadFile });
+
+    const result = await executeReadFile(client, REPO_PATH, "config/auth.ts");
+    const ok = expectOk(result);
+
+    expect(ok.redactedTypes).toEqual(["aws_access_key", "github_token"]);
+    expect(ok.content).not.toContain(FAKE_AWS_ACCESS_KEY);
+    expect(ok.content).not.toContain(FAKE_INSTALLATION_TOKEN);
+  });
+
+  test("read_file: error envelopes are unaffected by redaction wiring (no redactedTypes field on errors)", async () => {
+    // Defensive: a regression that put `redactedTypes` on every
+    // envelope (including errors) would expand the error surface area
+    // and confuse Plan 06's trace summariser. Errors are pure
+    // `{ ok: false, errorCode, message }` and stay that way.
+    const client = makeFakeFsClient();
+    const result = await executeReadFile(client, REPO_PATH, "../escape");
+    const err = expectErr(result);
+
+    expect(err).toEqual({
+      ok: false,
+      errorCode: "path_outside_repo",
+      message: expect.stringContaining("../escape"),
+    });
+    // Belt-and-braces: even if the type system tightened to forbid the
+    // field, the runtime should still reject it.
+    expect("redactedTypes" in err).toBe(false);
+  });
+
+  test("list_dir: scrubs a credential-shaped entry name and aggregates the redaction type", async () => {
+    // Contrived but possible: an attacker plants a file whose *name*
+    // is a credential to leak it through a directory listing alone,
+    // without anyone reading the file. The aggregated `redactedTypes`
+    // surfaces this, and the entry's `name` field hides the raw secret.
+    const listFiles = vi.fn<SandboxFsClient["listFiles"]>().mockResolvedValue([
+      { name: "README.md", isDir: false, size: 100 },
+      { name: FAKE_INSTALLATION_TOKEN, isDir: false, size: 0 },
+    ]);
+    const client = makeFakeFsClient({ listFiles });
+
+    const result = await executeListDir(client, REPO_PATH, "");
+    const ok = expectOk(result);
+
+    expect(ok.redactedTypes).toEqual(["github_token"]);
+
+    const tokenEntry = ok.entries.find((entry) => entry.name.includes("REDACTED"));
+    expect(tokenEntry?.name).toBe("[REDACTED:github_token]");
+    // The README entry is untouched — redaction is per-name, so an
+    // adjacent normal file isn't collateral damage.
+    const readme = ok.entries.find((entry) => entry.name === "README.md");
+    expect(readme).toBeDefined();
+  });
+
+  test("list_dir: returns an empty redactedTypes array for normal directories (stable shape)", async () => {
+    const listFiles = vi.fn<SandboxFsClient["listFiles"]>().mockResolvedValue([
+      { name: "alpha.ts", isDir: false, size: 1 },
+      { name: "subdir", isDir: true, size: 0 },
+    ]);
+    const client = makeFakeFsClient({ listFiles });
+
+    const result = await executeListDir(client, REPO_PATH, "convex");
+    const ok = expectOk(result);
+
+    expect(ok.redactedTypes).toEqual([]);
+  });
+
+  test("list_dir: keeps the entry shape stable (no per-entry redaction annotations)", async () => {
+    // Plan 06's tool-call ticker depends on the `{name, type, sizeBytes}`
+    // shape. If a future change moved redaction signals onto each
+    // entry (e.g. `entry.redactedTypes`), the ticker would silently
+    // drop fields it doesn't know how to render. This regression test
+    // pins the entry contract.
+    const listFiles = vi.fn<SandboxFsClient["listFiles"]>().mockResolvedValue([
+      { name: FAKE_INSTALLATION_TOKEN, isDir: false, size: 42 },
+    ]);
+    const client = makeFakeFsClient({ listFiles });
+
+    const result = await executeListDir(client, REPO_PATH, "");
+    const ok = expectOk(result);
+
+    expect(Object.keys(ok.entries[0]).sort()).toEqual(["name", "sizeBytes", "type"]);
+  });
+});
+
 describe("createSandboxTools (AI SDK wrapper)", () => {
   test("wires read_file and list_dir with the captured client and repoPath", async () => {
     const downloadFile = vi
