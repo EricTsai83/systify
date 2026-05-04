@@ -40,8 +40,8 @@ export function DeepAnalysisDialog({
         <DialogHeader>
           <DialogTitle>Deep analysis</DialogTitle>
           <DialogDescription>
-            Searches the live sandbox filesystem for files matching your prompt. Unlike Design Docs mode which only
-            uses pre-indexed data, Sandbox mode can find any file in the repository.
+            Searches the live sandbox filesystem for files matching your prompt. Unlike Design Docs mode which only uses
+            pre-indexed data, Sandbox mode can find any file in the repository.
           </DialogDescription>
         </DialogHeader>
         <Textarea

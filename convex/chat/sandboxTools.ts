@@ -132,11 +132,7 @@ export interface SandboxFsClient {
  * Plan 06 / Plan 12 import the same types).                              *
  * ---------------------------------------------------------------------- */
 
-export type SandboxToolErrorCode =
-  | "invalid_path"
-  | "path_outside_repo"
-  | "file_too_large_to_decode"
-  | "io_error";
+export type SandboxToolErrorCode = "invalid_path" | "path_outside_repo" | "file_too_large_to_decode" | "io_error";
 
 export type SandboxToolErrorEnvelope = {
   readonly ok: false;

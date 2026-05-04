@@ -408,6 +408,42 @@ export default defineSchema({
         }),
       ),
     ),
+    /**
+     * Plan 06 — frozen tool-call trace for finalized assistant replies.
+     *
+     * Folded from the ephemeral `messageToolCallEvents` table at finalize
+     * time so the durable `messages` row carries the full, post-streaming
+     * trace without joining a second table. Optional + only written when the
+     * reply actually ran tools, so messages predating Plan 06 (and any non-
+     * sandbox reply) keep the field unset rather than `[]` — the frontend
+     * treats both as "no trace".
+     *
+     * Each entry corresponds to *one* tool invocation, correlated by the AI
+     * SDK's `toolCallId` during folding. Multiple calls of the same tool
+     * (e.g. two `read_file`s in the same reply) appear as distinct entries
+     * in execution order. `inputSummary` / `outputSummary` are already
+     * redaction-passed (see `convex/chat/redaction.ts`) and capped in size
+     * to keep the document under Convex's 1 MB row limit on long replies.
+     *
+     * `startedAt` / `endedAt` are wall-clock millisecond epochs from the
+     * action's perspective — a tool that completed has `endedAt > startedAt`;
+     * a tool whose `end` event was lost (mid-stream cancellation, server
+     * crash) has `endedAt === startedAt` and is rendered as "interrupted"
+     * by the trace UI.
+     */
+    toolCalls: v.optional(
+      v.array(
+        v.object({
+          toolCallId: v.string(),
+          toolName: v.string(),
+          inputSummary: v.string(),
+          outputSummary: v.string(),
+          startedAt: v.number(),
+          endedAt: v.number(),
+          errorCode: v.optional(v.string()),
+        }),
+      ),
+    ),
   })
     .index("by_threadId", ["threadId"])
     .index("by_threadId_and_status", ["threadId", "status"])
@@ -443,6 +479,60 @@ export default defineSchema({
     sequence: v.number(),
     text: v.string(),
   }).index("by_streamId_and_sequence", ["streamId", "sequence"]),
+
+  /**
+   * Plan 06 — ephemeral tool-call event log used to drive the live ticker
+   * and to fold a durable `messages.toolCalls` trace at finalize time.
+   *
+   * Lifecycle (per assistant reply):
+   *   1. `appendAssistantToolCallEvent` writes a `start` row when the AI
+   *      SDK's `fullStream` emits `tool-call`, then an `end` row when the
+   *      same `toolCallId` emits `tool-result` or `tool-error`.
+   *   2. `getMessageToolCallEvents` (subscribable query) lets the frontend
+   *      reactively render the running tool while the reply streams.
+   *   3. `finalizeAssistantReply` / `failAssistantReply` /
+   *      `recoverStaleChatJob` fold these rows into `messages.toolCalls`
+   *      (paired by `toolCallId`) and drain them in the same transaction.
+   *
+   * Why a separate table (rather than appending to a `messages` array):
+   *   - Convex documents are rewritten in full on every patch. An array
+   *     field that gets two writes per tool call would re-marshal the
+   *     entire `messages` row each time, contending with the durable
+   *     `content` patch on every flush.
+   *   - The `by_messageId_and_sequence` index gives the live query an
+   *     O(events-per-message) scan with stable ordering, independent of
+   *     row insertion order on the underlying table.
+   *
+   * Field notes:
+   *   - `toolCallId` is the AI SDK's correlation key. Folding pairs the
+   *     `start` row to its `end` row by this id, so two calls of the same
+   *     `toolName` (e.g. two `read_file`s) stay distinct in the persisted
+   *     trace.
+   *   - `sequence` is a per-message monotonically-increasing counter
+   *     allocated at insert time (`max(sequence)+1`). Stable order is the
+   *     contract the frontend relies on for ticker UX — the AI SDK does
+   *     not guarantee event ordering across `fullStream` consumers.
+   *   - `occurredAt` is wall-clock at the time of the event. Used to
+   *     derive `startedAt`/`endedAt` durations in the trace; we do *not*
+   *     reuse `_creationTime` for this because the row may have been
+   *     written long after the underlying tool started (e.g. `end` event
+   *     after a slow shell command).
+   *   - `inputSummary` / `outputSummary` are pre-redacted (Plan 05) and
+   *     length-capped in `chat/streaming.ts` so a runaway tool result
+   *     can't exceed Convex's 1 MB document size when folded into
+   *     `messages.toolCalls`.
+   */
+  messageToolCallEvents: defineTable({
+    messageId: v.id("messages"),
+    toolCallId: v.string(),
+    sequence: v.number(),
+    type: v.union(v.literal("start"), v.literal("end")),
+    toolName: v.string(),
+    inputSummary: v.string(),
+    outputSummary: v.optional(v.string()),
+    errorCode: v.optional(v.string()),
+    occurredAt: v.number(),
+  }).index("by_messageId_and_sequence", ["messageId", "sequence"]),
 
   githubInstallations: defineTable({
     ownerTokenIdentifier: v.string(),

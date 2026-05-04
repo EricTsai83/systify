@@ -173,14 +173,10 @@ describe("cloneRepositoryInSandbox — Plan 05 token scrub", () => {
 
     // The scrub command runs against the cloned repo's working dir
     // ("repo") with the canonical URL, single-quoted.
-    const scrubCall = executeCalls.find((call) =>
-      call.command.startsWith("git remote set-url origin"),
-    );
+    const scrubCall = executeCalls.find((call) => call.command.startsWith("git remote set-url origin"));
     expect(scrubCall).toBeDefined();
     expect(scrubCall?.cwd).toBe("repo");
-    expect(scrubCall?.command).toBe(
-      `git remote set-url origin '${canonicalUrl}'`,
-    );
+    expect(scrubCall?.command).toBe(`git remote set-url origin '${canonicalUrl}'`);
 
     // The token must NOT appear in any executed command — that is the
     // whole point of the scrub. A regression that shells out the raw
@@ -231,13 +227,9 @@ describe("cloneRepositoryInSandbox — Plan 05 token scrub", () => {
       // No token field at all.
     });
 
-    const scrubCall = executeCalls.find((call) =>
-      call.command.startsWith("git remote set-url origin"),
-    );
+    const scrubCall = executeCalls.find((call) => call.command.startsWith("git remote set-url origin"));
     expect(scrubCall).toBeDefined();
-    expect(scrubCall?.command).toBe(
-      `git remote set-url origin 'https://github.com/acme/public-widget.git'`,
-    );
+    expect(scrubCall?.command).toBe(`git remote set-url origin 'https://github.com/acme/public-widget.git'`);
   });
 
   test("POSIX-single-quotes the URL substitution so embedded single quotes cannot break out of the command", async () => {
@@ -259,12 +251,8 @@ describe("cloneRepositoryInSandbox — Plan 05 token scrub", () => {
       branch: "main",
     });
 
-    const scrubCall = executeCalls.find((call) =>
-      call.command.startsWith("git remote set-url origin"),
-    );
+    const scrubCall = executeCalls.find((call) => call.command.startsWith("git remote set-url origin"));
     // The raw `'` is replaced by `'\''`; the surrounding wrap is `'…'`.
-    expect(scrubCall?.command).toBe(
-      `git remote set-url origin 'https://github.com/acme/oops'\\''.git'`,
-    );
+    expect(scrubCall?.command).toBe(`git remote set-url origin 'https://github.com/acme/oops'\\''.git'`);
   });
 });

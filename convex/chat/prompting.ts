@@ -271,7 +271,5 @@ export function buildHeuristicAnswer(
     ],
   };
 
-  return withRepoNoKeyMessages[language]
-    .filter(Boolean)
-    .join("\n");
+  return withRepoNoKeyMessages[language].filter(Boolean).join("\n");
 }

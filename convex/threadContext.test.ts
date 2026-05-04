@@ -21,10 +21,7 @@ const OTHER_OWNER = "user|thread-context-other";
  *
  * Pass `undefined` to delete the var on entry; pass a string to set it.
  */
-function withSandboxEnvSnapshot(initial: {
-  enabled?: string;
-  allowlist?: string;
-}) {
+function withSandboxEnvSnapshot(initial: { enabled?: string; allowlist?: string }) {
   let priorEnabled: string | undefined;
   let priorAllowlist: string | undefined;
 

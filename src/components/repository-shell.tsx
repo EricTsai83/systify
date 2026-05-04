@@ -41,10 +41,7 @@ const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
  *      most-recent ordering into place immediately. The DB index is
  *      descending on `lastAccessedAt`, so we sort the same way.
  */
-function applyTouchWorkspaceOptimistic(
-  store: OptimisticLocalStore,
-  args: { workspaceId: Id<"workspaces"> },
-) {
+function applyTouchWorkspaceOptimistic(store: OptimisticLocalStore, args: { workspaceId: Id<"workspaces"> }) {
   const now = Date.now();
 
   for (const { args: queryArgs } of store.getAllQueries(api.userPreferences.getViewerPreferences)) {

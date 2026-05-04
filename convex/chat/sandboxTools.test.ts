@@ -40,16 +40,12 @@ const NUL = String.fromCharCode(0);
  */
 function makeFakeFsClient(overrides: Partial<SandboxFsClient> = {}): SandboxFsClient {
   return {
-    downloadFile: vi
-      .fn<SandboxFsClient["downloadFile"]>()
-      .mockImplementation(async () => {
-        throw new Error("test forgot to stub downloadFile");
-      }),
-    listFiles: vi
-      .fn<SandboxFsClient["listFiles"]>()
-      .mockImplementation(async () => {
-        throw new Error("test forgot to stub listFiles");
-      }),
+    downloadFile: vi.fn<SandboxFsClient["downloadFile"]>().mockImplementation(async () => {
+      throw new Error("test forgot to stub downloadFile");
+    }),
+    listFiles: vi.fn<SandboxFsClient["listFiles"]>().mockImplementation(async () => {
+      throw new Error("test forgot to stub listFiles");
+    }),
     ...overrides,
   };
 }
@@ -85,16 +81,11 @@ describe("executeReadFile", () => {
     // Daytona is invoked with the absolute path under the repo root and the
     // bounded per-call timeout, never the file's "raw" relative path.
     expect(downloadFile).toHaveBeenCalledOnce();
-    expect(downloadFile).toHaveBeenCalledWith(
-      `${REPO_PATH}/convex/chat/send.ts`,
-      SANDBOX_READ_FILE_TIMEOUT_SECONDS,
-    );
+    expect(downloadFile).toHaveBeenCalledWith(`${REPO_PATH}/convex/chat/send.ts`, SANDBOX_READ_FILE_TIMEOUT_SECONDS);
   });
 
   test("strips a leading './' for ergonomics", async () => {
-    const downloadFile = vi
-      .fn<SandboxFsClient["downloadFile"]>()
-      .mockResolvedValue(TEXT_ENCODER.encode("ok"));
+    const downloadFile = vi.fn<SandboxFsClient["downloadFile"]>().mockResolvedValue(TEXT_ENCODER.encode("ok"));
     const client = makeFakeFsClient({ downloadFile });
 
     const result = await executeReadFile(client, REPO_PATH, "./README.md");
@@ -186,21 +177,20 @@ describe("executeReadFile", () => {
     expect(client.downloadFile).not.toHaveBeenCalled();
   });
 
-  test.each([
-    "../etc/passwd",
-    "convex/../../etc/shadow",
-    "..",
-  ])("rejects path-escape attempt %s with errorCode=path_outside_repo", async (input) => {
-    const client = makeFakeFsClient();
-    const result = await executeReadFile(client, REPO_PATH, input);
-    const err = expectErr(result);
+  test.each(["../etc/passwd", "convex/../../etc/shadow", ".."])(
+    "rejects path-escape attempt %s with errorCode=path_outside_repo",
+    async (input) => {
+      const client = makeFakeFsClient();
+      const result = await executeReadFile(client, REPO_PATH, input);
+      const err = expectErr(result);
 
-    expect(err.errorCode).toBe("path_outside_repo");
-    // The bad path appears in the message so the LLM (and any persisted
-    // trace) can show the user what was rejected.
-    expect(err.message).toContain(input);
-    expect(client.downloadFile).not.toHaveBeenCalled();
-  });
+      expect(err.errorCode).toBe("path_outside_repo");
+      // The bad path appears in the message so the LLM (and any persisted
+      // trace) can show the user what was rejected.
+      expect(err.message).toContain(input);
+      expect(client.downloadFile).not.toHaveBeenCalled();
+    },
+  );
 
   test("rejects a path that normalizes to the repository root (not a file)", async () => {
     // `convex/..` is *not* an escape attempt — it cancels back to the repo
@@ -221,9 +211,7 @@ describe("executeReadFile", () => {
     // `convex/foo/../chat/send.ts` should normalize to `convex/chat/send.ts`
     // without rejection — the `..` cancels `foo/` but never crosses the
     // repo root.
-    const downloadFile = vi
-      .fn<SandboxFsClient["downloadFile"]>()
-      .mockResolvedValue(TEXT_ENCODER.encode("ok"));
+    const downloadFile = vi.fn<SandboxFsClient["downloadFile"]>().mockResolvedValue(TEXT_ENCODER.encode("ok"));
     const client = makeFakeFsClient({ downloadFile });
 
     const result = await executeReadFile(client, REPO_PATH, "convex/foo/../chat/send.ts");
@@ -231,10 +219,7 @@ describe("executeReadFile", () => {
 
     expect(ok.path).toBe("convex/chat/send.ts");
     expect(downloadFile).toHaveBeenCalledOnce();
-    expect(downloadFile).toHaveBeenCalledWith(
-      `${REPO_PATH}/convex/chat/send.ts`,
-      SANDBOX_READ_FILE_TIMEOUT_SECONDS,
-    );
+    expect(downloadFile).toHaveBeenCalledWith(`${REPO_PATH}/convex/chat/send.ts`, SANDBOX_READ_FILE_TIMEOUT_SECONDS);
   });
 
   test("forwards Daytona errors as a structured io_error envelope (no throw)", async () => {
@@ -256,9 +241,7 @@ describe("executeReadFile", () => {
     // a string. The tool must surface this as an io_error rather than
     // throwing inside the decoder.
     const client = makeFakeFsClient({
-      downloadFile: vi
-        .fn<SandboxFsClient["downloadFile"]>()
-        .mockResolvedValue("oops" as unknown as Uint8Array),
+      downloadFile: vi.fn<SandboxFsClient["downloadFile"]>().mockResolvedValue("oops" as unknown as Uint8Array),
     });
 
     const result = await executeReadFile(client, REPO_PATH, "convex/x.ts");
@@ -291,12 +274,14 @@ describe("executeListDir", () => {
   }
 
   test("returns dirs-first, alphabetical entries with the repo-relative path", async () => {
-    const listFiles = vi.fn<SandboxFsClient["listFiles"]>().mockResolvedValue([
-      fakeEntry("zeta.ts", false, 64),
-      fakeEntry("alpha.ts", false, 128),
-      fakeEntry("subdir", true, 0),
-      fakeEntry("README.md", false, 12),
-    ]);
+    const listFiles = vi
+      .fn<SandboxFsClient["listFiles"]>()
+      .mockResolvedValue([
+        fakeEntry("zeta.ts", false, 64),
+        fakeEntry("alpha.ts", false, 128),
+        fakeEntry("subdir", true, 0),
+        fakeEntry("README.md", false, 12),
+      ]);
     const client = makeFakeFsClient({ listFiles });
 
     const result = await executeListDir(client, REPO_PATH, "convex");
@@ -313,9 +298,7 @@ describe("executeListDir", () => {
   });
 
   test.each(["", ".", "./"])("treats %j as the repository root", async (input) => {
-    const listFiles = vi
-      .fn<SandboxFsClient["listFiles"]>()
-      .mockResolvedValue([fakeEntry("README.md", false, 12)]);
+    const listFiles = vi.fn<SandboxFsClient["listFiles"]>().mockResolvedValue([fakeEntry("README.md", false, 12)]);
     const client = makeFakeFsClient({ listFiles });
 
     const result = await executeListDir(client, REPO_PATH, input);
@@ -400,9 +383,7 @@ describe("Plan 05 — output redaction integration", () => {
     // near-term threat documented in
     // `docs/sandbox-mode-security-system-design.md`.
     const sensitive = `[remote "origin"]\n\turl = https://x-access-token:${FAKE_INSTALLATION_TOKEN}@github.com/acme/widget.git\n`;
-    const downloadFile = vi
-      .fn<SandboxFsClient["downloadFile"]>()
-      .mockResolvedValue(TEXT_ENCODER.encode(sensitive));
+    const downloadFile = vi.fn<SandboxFsClient["downloadFile"]>().mockResolvedValue(TEXT_ENCODER.encode(sensitive));
     const client = makeFakeFsClient({ downloadFile });
 
     const result = await executeReadFile(client, REPO_PATH, ".git/config");
@@ -438,9 +419,7 @@ describe("Plan 05 — output redaction integration", () => {
     // true cost of the read, not the post-redaction string length.
     const sensitive = `secret=${FAKE_INSTALLATION_TOKEN}\n`;
     const encoded = TEXT_ENCODER.encode(sensitive);
-    const downloadFile = vi
-      .fn<SandboxFsClient["downloadFile"]>()
-      .mockResolvedValue(encoded);
+    const downloadFile = vi.fn<SandboxFsClient["downloadFile"]>().mockResolvedValue(encoded);
     const client = makeFakeFsClient({ downloadFile });
 
     const result = await executeReadFile(client, REPO_PATH, "config/secret.env");
@@ -462,9 +441,7 @@ describe("Plan 05 — output redaction integration", () => {
     // a sorted, de-duplicated `redactedTypes` so audit consumers see a
     // stable diff regardless of regex match order inside `redact()`.
     const sensitive = `aws.id = ${FAKE_AWS_ACCESS_KEY}\ngithub.token = ${FAKE_INSTALLATION_TOKEN}\n`;
-    const downloadFile = vi
-      .fn<SandboxFsClient["downloadFile"]>()
-      .mockResolvedValue(TEXT_ENCODER.encode(sensitive));
+    const downloadFile = vi.fn<SandboxFsClient["downloadFile"]>().mockResolvedValue(TEXT_ENCODER.encode(sensitive));
     const client = makeFakeFsClient({ downloadFile });
 
     const result = await executeReadFile(client, REPO_PATH, "config/auth.ts");
@@ -537,9 +514,9 @@ describe("Plan 05 — output redaction integration", () => {
     // entry (e.g. `entry.redactedTypes`), the ticker would silently
     // drop fields it doesn't know how to render. This regression test
     // pins the entry contract.
-    const listFiles = vi.fn<SandboxFsClient["listFiles"]>().mockResolvedValue([
-      { name: FAKE_INSTALLATION_TOKEN, isDir: false, size: 42 },
-    ]);
+    const listFiles = vi
+      .fn<SandboxFsClient["listFiles"]>()
+      .mockResolvedValue([{ name: FAKE_INSTALLATION_TOKEN, isDir: false, size: 42 }]);
     const client = makeFakeFsClient({ listFiles });
 
     const result = await executeListDir(client, REPO_PATH, "");
@@ -551,9 +528,7 @@ describe("Plan 05 — output redaction integration", () => {
 
 describe("createSandboxTools (AI SDK wrapper)", () => {
   test("wires read_file and list_dir with the captured client and repoPath", async () => {
-    const downloadFile = vi
-      .fn<SandboxFsClient["downloadFile"]>()
-      .mockResolvedValue(TEXT_ENCODER.encode("hi"));
+    const downloadFile = vi.fn<SandboxFsClient["downloadFile"]>().mockResolvedValue(TEXT_ENCODER.encode("hi"));
     const listFiles = vi
       .fn<SandboxFsClient["listFiles"]>()
       .mockResolvedValue([{ name: "x.ts", isDir: false, size: 2 }]);
