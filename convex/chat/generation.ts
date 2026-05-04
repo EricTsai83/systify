@@ -40,6 +40,7 @@ import type { ReplyContext } from "./context";
 import { buildCitationMap, buildHeuristicAnswer, buildSystemPrompt, buildUserPrompt } from "./prompting";
 import { selectRelevantChunks } from "./relevance";
 import { createSandboxTools } from "./sandboxTools";
+import { redact } from "./redaction";
 
 /**
  * Maximum number of LLM steps in a sandbox-mode reply. Each step is one
@@ -144,6 +145,21 @@ export const generateAssistantReply = internalAction({
         }
       };
 
+      // Plan 06 — local correlation map from `toolCallId` to its `start`
+      // metadata. The events table also keys by `toolCallId`, but reading
+      // the matching `start` row from inside the `tool-result` /
+      // `tool-error` handlers would cost an extra mutation round-trip per
+      // tool. Keeping the map in process is correct because:
+      //   - The AI SDK guarantees `tool-call` precedes its matching
+      //     `tool-result` / `tool-error` on `fullStream`, so the entry is
+      //     always present when we look it up.
+      //   - The action is the only writer for this assistant message, so
+      //     in-process state is the source of truth for the run.
+      const toolCallMap = new Map<
+        string,
+        { toolName: string; inputSummary: string; startedAt: number }
+      >();
+
       const response = streamText({
         model: openai(modelName),
         system: systemPrompt,
@@ -161,9 +177,8 @@ export const generateAssistantReply = internalAction({
       // We always iterate `fullStream` — it is a strict superset of
       // `textStream` (every text chunk shows up as a `text-delta` event).
       // Sandbox-mode replies additionally surface `tool-call` /
-      // `tool-result` / `tool-error` events here; Plan 06 turns those into
-      // a persisted trace, but for Plan 04 we record them via `logInfo`
-      // for backend observability without yet persisting.
+      // `tool-result` / `tool-error` events here; Plan 06 persists them
+      // into messageToolCallEvents for the live ticker and trace UI.
       for await (const part of response.fullStream) {
         switch (part.type) {
           case "text-delta": {
@@ -172,6 +187,30 @@ export const generateAssistantReply = internalAction({
             break;
           }
           case "tool-call": {
+            // Convert the model's tool-call args to JSON, then redact; the
+            // mutation re-caps to `TOOL_CALL_EVENT_SUMMARY_MAX_CHARS` if
+            // somehow the JSON is still long after redaction (e.g. a tool
+            // input that legitimately needs more bytes — `run_shell` Plan 08).
+            const occurredAt = Date.now();
+            const inputJson = JSON.stringify(part.input ?? {});
+            const { redacted: inputSummary } = redact(inputJson);
+
+            toolCallMap.set(part.toolCallId, {
+              toolName: part.toolName,
+              inputSummary,
+              startedAt: occurredAt,
+            });
+
+            await ctx.runMutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+              assistantMessageId: args.assistantMessageId,
+              jobId: args.jobId,
+              toolCallId: part.toolCallId,
+              type: "start",
+              toolName: part.toolName,
+              inputSummary,
+              occurredAt,
+            });
+
             logInfo("chat", "sandbox_tool_call", {
               assistantMessageId: args.assistantMessageId,
               jobId: args.jobId,
@@ -181,6 +220,28 @@ export const generateAssistantReply = internalAction({
             break;
           }
           case "tool-result": {
+            const occurredAt = Date.now();
+            const toolCall = toolCallMap.get(part.toolCallId);
+            const resultJson = JSON.stringify(part.output ?? {});
+            const { redacted: outputSummary } = redact(resultJson);
+
+            // We always emit an `end` event keyed by the AI SDK's
+            // `toolCallId` even if the local correlation map missed the
+            // start (defensive — a corrupt event stream shouldn't leave a
+            // dangling `start` row). `inputSummary` falls back to an
+            // empty string; the fold logic in `toolCallEventStore.ts`
+            // tolerates that and still produces a meaningful entry.
+            await ctx.runMutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+              assistantMessageId: args.assistantMessageId,
+              jobId: args.jobId,
+              toolCallId: part.toolCallId,
+              type: "end",
+              toolName: toolCall?.toolName ?? part.toolName,
+              inputSummary: toolCall?.inputSummary ?? "",
+              outputSummary,
+              occurredAt,
+            });
+
             logInfo("chat", "sandbox_tool_result", {
               assistantMessageId: args.assistantMessageId,
               jobId: args.jobId,
@@ -190,12 +251,32 @@ export const generateAssistantReply = internalAction({
             break;
           }
           case "tool-error": {
+            const occurredAt = Date.now();
+            const toolCall = toolCallMap.get(part.toolCallId);
+            const errorMessage = part.error instanceof Error ? part.error.message : String(part.error);
+
+            await ctx.runMutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+              assistantMessageId: args.assistantMessageId,
+              jobId: args.jobId,
+              toolCallId: part.toolCallId,
+              type: "end",
+              toolName: toolCall?.toolName ?? part.toolName,
+              inputSummary: toolCall?.inputSummary ?? "",
+              // The error message is already prose — wrap with a
+              // recognizable prefix so the UI / LLM can distinguish it
+              // from a normal `outputSummary`. Redact in case the SDK
+              // surfaces an upstream HTTP body with secrets.
+              outputSummary: redact(`Error: ${errorMessage}`).redacted,
+              errorCode: "tool_error",
+              occurredAt,
+            });
+
             logWarn("chat", "sandbox_tool_error", {
               assistantMessageId: args.assistantMessageId,
               jobId: args.jobId,
               toolName: part.toolName,
               toolCallId: part.toolCallId,
-              error: part.error instanceof Error ? part.error.message : String(part.error),
+              error: errorMessage,
             });
             break;
           }

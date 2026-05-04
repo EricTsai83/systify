@@ -7,8 +7,15 @@ import type { Doc } from "../../convex/_generated/dataModel";
 import { ChatPanel } from "./chat-panel";
 import type { ArtifactId, MessageId, ThreadId } from "@/lib/types";
 
+// `<ToolCallTrace>` calls `useQuery` for the live event subscription. For
+// the chat-panel suite we only care that the trace component does not
+// crash on import — the ticker rendering is covered in `tool-call-trace.test.tsx`.
+// Returning `[]` for any `useQuery` call keeps the trace rendering but
+// surfaces no entries, which is the correct behavior for the existing
+// fixtures that don't supply `toolCalls`.
 vi.mock("convex/react", () => ({
   useMutation: vi.fn(() => vi.fn()),
+  useQuery: vi.fn(() => []),
 }));
 
 vi.mock("@/components/import-repo-dialog", () => ({

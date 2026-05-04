@@ -7,6 +7,7 @@ import { MAX_STREAM_CHUNKS_PER_PASS, MAX_VISIBLE_MESSAGES } from "../lib/constan
 import { ensureRepositoryWorkspace, findHomeWorkspaceId } from "../lib/workspaces";
 import { loadRecentMessages } from "./context";
 import { deleteMessageStreamState } from "./streamStore";
+import { drainMessageToolCallEvents } from "./toolCallEventStore";
 
 export const listThreads = query({
   args: {
@@ -229,6 +230,11 @@ export const deleteThread = mutation({
       .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
       .take(500);
     for (const message of messages) {
+      // Plan 06 — drain orphan tool-call events ahead of deleting the
+      // message, otherwise the live `getMessageToolCallEvents` subscription
+      // would hold rows referencing a now-missing parent. Bounded
+      // per-message (≤ step budget × 2 by construction).
+      await drainMessageToolCallEvents(ctx, message._id);
       await ctx.db.delete(message._id);
     }
 
@@ -285,6 +291,9 @@ export const cleanupOrphanedMessages = internalMutation({
       .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
       .take(500);
     for (const message of messages) {
+      // Plan 06 — same drain-then-delete order as `deleteThread` so the
+      // re-scheduled cleanup pass doesn't outlive the events table.
+      await drainMessageToolCallEvents(ctx, message._id);
       await ctx.db.delete(message._id);
     }
     if (messages.length === 500) {

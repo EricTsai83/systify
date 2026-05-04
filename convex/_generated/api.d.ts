@@ -23,6 +23,7 @@ import type * as chat_send from "../chat/send.js";
 import type * as chat_streamStore from "../chat/streamStore.js";
 import type * as chat_streaming from "../chat/streaming.js";
 import type * as chat_threads from "../chat/threads.js";
+import type * as chat_toolCallEventStore from "../chat/toolCallEventStore.js";
 import type * as chatModeResolver from "../chatModeResolver.js";
 import type * as crons from "../crons.js";
 import type * as daytona from "../daytona.js";
@@ -80,6 +81,7 @@ declare const fullApi: ApiFromModules<{
   "chat/streamStore": typeof chat_streamStore;
   "chat/streaming": typeof chat_streaming;
   "chat/threads": typeof chat_threads;
+  "chat/toolCallEventStore": typeof chat_toolCallEventStore;
   chatModeResolver: typeof chatModeResolver;
   crons: typeof crons;
   daytona: typeof daytona;

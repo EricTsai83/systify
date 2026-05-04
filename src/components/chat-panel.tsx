@@ -14,6 +14,7 @@ import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { AppNotice } from "@/components/app-notice";
 import { ImportRepoDialog } from "@/components/import-repo-dialog";
+import { ToolCallTrace } from "@/components/tool-call-trace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -617,6 +618,13 @@ function MessageBubble({
       </div>
       <p className="whitespace-pre-wrap text-sm leading-6">{renderedContent}</p>
       {message.errorMessage ? <p className="mt-2 text-xs text-destructive">{message.errorMessage}</p> : null}
+      {isAssistant ? (
+        <ToolCallTrace
+          messageId={message._id}
+          persistedToolCalls={message.toolCalls}
+          isStreaming={message.status === "streaming"}
+        />
+      ) : null}
     </Card>
   );
 }

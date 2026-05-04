@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { mutation, query, internalQuery, internalMutation, type MutationCtx } from "./_generated/server";
+import { drainMessageToolCallEvents } from "./chat/toolCallEventStore";
 import { getDefaultThreadMode } from "./chatModeResolver";
 import { requireViewerIdentity } from "./lib/auth";
 import { getSandboxModeStatus } from "./lib/sandboxAvailability";
@@ -489,7 +490,17 @@ export const cascadeDeleteRepository = internalMutation({
         .query("messages")
         .withIndex("by_threadId", (q) => q.eq("threadId", thread._id))
         .take(CASCADE_BATCH_SIZE);
-      for (const msg of msgs) await ctx.db.delete(msg._id);
+      for (const msg of msgs) {
+        // Plan 06 — drain orphan tool-call events before deleting the
+        // message. Events are bounded per message (≤ step budget × 2) and
+        // are normally cleaned up at finalize / fail; this is the
+        // belt-and-braces path that catches any row that survived a
+        // mid-stream crash. Order matters: delete child events first so a
+        // partially-failed cascade leaves no row pointing at a missing
+        // `messageId`.
+        await drainMessageToolCallEvents(ctx, msg._id);
+        await ctx.db.delete(msg._id);
+      }
 
       const streams = await ctx.db
         .query("messageStreams")

@@ -305,6 +305,398 @@ describe("chat streaming lifecycle", () => {
   });
 });
 
+/**
+ * Plan 06 — tool-call ticker / persisted trace.
+ *
+ * The flow under test:
+ *   1. `appendAssistantToolCallEvent` writes `start` and `end` rows keyed
+ *      by `toolCallId`.
+ *   2. `getMessageToolCallEvents` (the live subscription) returns folded
+ *      entries with explicit `state` so the UI doesn't have to
+ *      reverse-engineer it.
+ *   3. `finalizeAssistantReply` folds the events into `messages.toolCalls`
+ *      (paired by `toolCallId`, preserving multiple calls of the same
+ *      tool) and drains the events table in the same transaction.
+ *   4. `failAssistantReply` and the cascade deletes drain orphan events
+ *      so the live subscription never points at a missing parent.
+ */
+describe("chat tool-call event lifecycle (Plan 06)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-23T00:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("getMessageToolCallEvents reflects start → end → drained transitions", async () => {
+    const ownerTokenIdentifier = "user|tool-events";
+    const t = convexTest(schema, modules);
+    const { threadId, jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "tool-events",
+    );
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    // Empty until the action emits any events.
+    const initial = await viewer.query(api.chat.streaming.getMessageToolCallEvents, {
+      assistantMessageId,
+    });
+    expect(initial).toEqual([]);
+
+    // Step 1: a tool call starts. `getMessageToolCallEvents` should now
+    // surface a single running entry — the ticker can paint immediately
+    // even before the tool finishes.
+    await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+      assistantMessageId,
+      jobId,
+      toolCallId: "call-1",
+      type: "start",
+      toolName: "read_file",
+      inputSummary: '{"path":"convex/chat/send.ts"}',
+      occurredAt: Date.now(),
+    });
+    const running = await viewer.query(api.chat.streaming.getMessageToolCallEvents, {
+      assistantMessageId,
+    });
+    expect(running).toEqual([
+      expect.objectContaining({
+        toolCallId: "call-1",
+        toolName: "read_file",
+        inputSummary: '{"path":"convex/chat/send.ts"}',
+        outputSummary: "",
+        state: "running",
+      }),
+    ]);
+
+    // Step 2: tool result arrives. Same toolCallId pairs `end` with the
+    // existing `start`, lifting the entry to `completed` with output.
+    vi.advanceTimersByTime(1234);
+    await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+      assistantMessageId,
+      jobId,
+      toolCallId: "call-1",
+      type: "end",
+      toolName: "read_file",
+      inputSummary: '{"path":"convex/chat/send.ts"}',
+      outputSummary: '{"ok":true,"content":"export const send = ..."}',
+      occurredAt: Date.now(),
+    });
+    const completed = await viewer.query(api.chat.streaming.getMessageToolCallEvents, {
+      assistantMessageId,
+    });
+    expect(completed).toEqual([
+      expect.objectContaining({
+        toolCallId: "call-1",
+        state: "completed",
+      }),
+    ]);
+    expect(completed?.[0].endedAt).toBeGreaterThan(completed?.[0].startedAt ?? 0);
+
+    // Step 3: finalize. Events drain in the same transaction the message
+    // is patched, so the next subscription tick returns the empty list and
+    // `messages.toolCalls` becomes the source of truth for the UI.
+    await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
+      threadId,
+      assistantMessageId,
+      jobId,
+      finalDelta: "Reading the send file confirms the lease wiring.",
+    });
+
+    const afterFinalize = await t.run(async (ctx) => ({
+      message: await ctx.db.get(assistantMessageId),
+      events: await ctx.db
+        .query("messageToolCallEvents")
+        .withIndex("by_messageId_and_sequence", (q) => q.eq("messageId", assistantMessageId))
+        .take(10),
+    }));
+    expect(afterFinalize.events).toHaveLength(0);
+    expect(afterFinalize.message?.toolCalls).toEqual([
+      expect.objectContaining({
+        toolCallId: "call-1",
+        toolName: "read_file",
+        outputSummary: '{"ok":true,"content":"export const send = ..."}',
+      }),
+    ]);
+
+    const draining = await viewer.query(api.chat.streaming.getMessageToolCallEvents, {
+      assistantMessageId,
+    });
+    expect(draining).toEqual([]);
+  });
+
+  test("finalizeAssistantReply preserves multiple distinct calls of the same tool name", async () => {
+    // Regression guard against the previous "group by toolName" fold: two
+    // `read_file` calls in one reply must produce two `messages.toolCalls`
+    // entries, in execution order, paired by their distinct toolCallIds.
+    const ownerTokenIdentifier = "user|tool-events-multi";
+    const t = convexTest(schema, modules);
+    const { threadId, jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "tool-events-multi",
+    );
+
+    const t0 = Date.now();
+    await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+      assistantMessageId,
+      jobId,
+      toolCallId: "call-a",
+      type: "start",
+      toolName: "read_file",
+      inputSummary: '{"path":"convex/chat/send.ts"}',
+      occurredAt: t0,
+    });
+    await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+      assistantMessageId,
+      jobId,
+      toolCallId: "call-a",
+      type: "end",
+      toolName: "read_file",
+      inputSummary: '{"path":"convex/chat/send.ts"}',
+      outputSummary: '{"ok":true,"path":"convex/chat/send.ts"}',
+      occurredAt: t0 + 500,
+    });
+    await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+      assistantMessageId,
+      jobId,
+      toolCallId: "call-b",
+      type: "start",
+      toolName: "read_file",
+      inputSummary: '{"path":"convex/chat/streaming.ts"}',
+      occurredAt: t0 + 600,
+    });
+    await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+      assistantMessageId,
+      jobId,
+      toolCallId: "call-b",
+      type: "end",
+      toolName: "read_file",
+      inputSummary: '{"path":"convex/chat/streaming.ts"}',
+      outputSummary: '{"ok":true,"path":"convex/chat/streaming.ts"}',
+      occurredAt: t0 + 1100,
+    });
+
+    await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
+      threadId,
+      assistantMessageId,
+      jobId,
+      finalDelta: "ok",
+    });
+
+    const finalized = await t.run(async (ctx) => ctx.db.get(assistantMessageId));
+    expect(finalized?.toolCalls).toHaveLength(2);
+    expect(finalized?.toolCalls?.[0]).toMatchObject({
+      toolCallId: "call-a",
+      toolName: "read_file",
+      inputSummary: '{"path":"convex/chat/send.ts"}',
+    });
+    expect(finalized?.toolCalls?.[1]).toMatchObject({
+      toolCallId: "call-b",
+      toolName: "read_file",
+      inputSummary: '{"path":"convex/chat/streaming.ts"}',
+    });
+  });
+
+  test("failAssistantReply persists partial tool calls and drains orphan events", async () => {
+    // The model can crash mid-tool: a `start` event lands but the matching
+    // `end` never arrives because the action's outer catch fires first.
+    // The user should still see "what was running" via a partial entry,
+    // and the events table must not leak.
+    const ownerTokenIdentifier = "user|tool-events-partial";
+    const t = convexTest(schema, modules);
+    const { jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "tool-events-partial",
+    );
+
+    await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+      assistantMessageId,
+      jobId,
+      toolCallId: "call-orphan",
+      type: "start",
+      toolName: "read_file",
+      inputSummary: '{"path":"convex/chat/send.ts"}',
+      occurredAt: Date.now(),
+    });
+
+    await t.mutation(internal.chat.streaming.failAssistantReply, {
+      assistantMessageId,
+      jobId,
+      errorMessage: "Sandbox archived mid-call.",
+    });
+
+    const failed = await t.run(async (ctx) => ({
+      message: await ctx.db.get(assistantMessageId),
+      events: await ctx.db
+        .query("messageToolCallEvents")
+        .withIndex("by_messageId_and_sequence", (q) => q.eq("messageId", assistantMessageId))
+        .take(10),
+    }));
+    expect(failed.events).toHaveLength(0);
+    expect(failed.message?.toolCalls).toEqual([
+      expect.objectContaining({
+        toolCallId: "call-orphan",
+        toolName: "read_file",
+        outputSummary: "",
+      }),
+    ]);
+    // Partial entry: `endedAt` collapses to `startedAt`, which the UI
+    // renders as "interrupted".
+    expect(failed.message?.toolCalls?.[0].endedAt).toBe(failed.message?.toolCalls?.[0].startedAt);
+  });
+
+  test("recoverStaleChatJob folds and drains tool-call events on stale recovery", async () => {
+    const ownerTokenIdentifier = "user|tool-events-stale";
+    const t = convexTest(schema, modules);
+    const { jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "tool-events-stale",
+    );
+
+    await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+      assistantMessageId,
+      jobId,
+      toolCallId: "call-stale",
+      type: "start",
+      toolName: "list_dir",
+      inputSummary: '{"path":"convex/"}',
+      occurredAt: Date.now(),
+    });
+
+    // Push the job lease into the past so recoverStaleChatJob actually fires.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(jobId, { leaseExpiresAt: Date.now() - 1 });
+    });
+
+    await t.mutation(internal.chat.streaming.recoverStaleChatJob, {
+      jobId,
+    });
+
+    const recovered = await t.run(async (ctx) => ({
+      message: await ctx.db.get(assistantMessageId),
+      events: await ctx.db
+        .query("messageToolCallEvents")
+        .withIndex("by_messageId_and_sequence", (q) => q.eq("messageId", assistantMessageId))
+        .take(10),
+    }));
+    expect(recovered.events).toHaveLength(0);
+    expect(recovered.message?.status).toBe("failed");
+    expect(recovered.message?.toolCalls).toEqual([
+      expect.objectContaining({
+        toolCallId: "call-stale",
+        toolName: "list_dir",
+      }),
+    ]);
+  });
+
+  test("appendAssistantToolCallEvent character-caps oversized summaries", async () => {
+    const ownerTokenIdentifier = "user|tool-events-cap";
+    const t = convexTest(schema, modules);
+    const { jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "tool-events-cap",
+    );
+
+    const oversized = "x".repeat(2000);
+    await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+      assistantMessageId,
+      jobId,
+      toolCallId: "call-cap",
+      type: "end",
+      toolName: "run_shell",
+      inputSummary: oversized,
+      outputSummary: oversized,
+      occurredAt: Date.now(),
+    });
+
+    const events = await t.run(async (ctx) =>
+      ctx.db
+        .query("messageToolCallEvents")
+        .withIndex("by_messageId_and_sequence", (q) => q.eq("messageId", assistantMessageId))
+        .take(10),
+    );
+    expect(events).toHaveLength(1);
+    // Cap is `TOOL_CALL_EVENT_SUMMARY_MAX_CHARS = 600`. We don't reimport
+    // the constant here so the test stays robust to bumps; we just assert
+    // that truncation happened.
+    expect(events[0].inputSummary.length).toBeLessThan(oversized.length);
+    expect(events[0].outputSummary?.length).toBeLessThan(oversized.length);
+    expect(events[0].inputSummary.endsWith("…[truncated]")).toBe(true);
+  });
+
+  test("repository cascade-delete drains tool-call events for child messages", async () => {
+    const ownerTokenIdentifier = "user|tool-events-cascade";
+    const t = convexTest(schema, modules);
+    const { repositoryId, jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "tool-events-cascade",
+    );
+
+    await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+      assistantMessageId,
+      jobId,
+      toolCallId: "call-cascade",
+      type: "start",
+      toolName: "read_file",
+      inputSummary: '{"path":"a.ts"}',
+      occurredAt: Date.now(),
+    });
+
+    await t.mutation(internal.repositories.cascadeDeleteRepository, {
+      repositoryId,
+    });
+
+    const orphans = await t.run(async (ctx) =>
+      ctx.db
+        .query("messageToolCallEvents")
+        .withIndex("by_messageId_and_sequence", (q) => q.eq("messageId", assistantMessageId))
+        .take(10),
+    );
+    expect(orphans).toHaveLength(0);
+  });
+
+  test("getMessageToolCallEvents fences cross-tenant access", async () => {
+    const ownerTokenIdentifier = "user|tool-events-owner";
+    const otherTokenIdentifier = "user|tool-events-stranger";
+    const t = convexTest(schema, modules);
+    const { jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "tool-events-fence",
+    );
+
+    await t.mutation(internal.chat.streaming.appendAssistantToolCallEvent, {
+      assistantMessageId,
+      jobId,
+      toolCallId: "call-fenced",
+      type: "start",
+      toolName: "read_file",
+      inputSummary: '{"path":"x.ts"}',
+      occurredAt: Date.now(),
+    });
+
+    // The owner sees the running event…
+    const ownerView = await t
+      .withIdentity({ tokenIdentifier: ownerTokenIdentifier })
+      .query(api.chat.streaming.getMessageToolCallEvents, { assistantMessageId });
+    expect(ownerView).toHaveLength(1);
+
+    // …but a different identity gets `null` (not an error, so the UI can
+    // call this at thread-load time without crashing on partial snapshots).
+    const strangerView = await t
+      .withIdentity({ tokenIdentifier: otherTokenIdentifier })
+      .query(api.chat.streaming.getMessageToolCallEvents, { assistantMessageId });
+    expect(strangerView).toBeNull();
+  });
+});
+
 async function createStreamingFixture(t: ReturnType<typeof convexTest>, ownerTokenIdentifier: string, slug: string) {
   return await t.run(async (ctx) => {
     const repositoryId = await ctx.db.insert("repositories", {

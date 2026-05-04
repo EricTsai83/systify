@@ -60,3 +60,39 @@ export const DEFAULT_AUTO_ARCHIVE_MINUTES = 60 * 24;
 
 /** Default minutes before a sandbox is auto-deleted (Daytona). */
 export const DEFAULT_AUTO_DELETE_MINUTES = 60 * 24;
+
+/**
+ * Plan 06 — defensive upper bound on the number of `messageToolCallEvents`
+ * rows pulled in a single read.
+ *
+ * In practice the count is bounded by `SANDBOX_STEP_BUDGET * 2` (one `start`
+ * + one `end` per call). 64 sits comfortably above that with 4× headroom
+ * for any future step-budget bump *and* a defensive margin against duplicate
+ * events from a buggy AI SDK release. Any single message that genuinely
+ * produced more than this is a malformed trace; capping the read keeps the
+ * subscription query cheap (a constant-time index walk) and the finalize
+ * fold within Convex's transaction-read budget.
+ */
+export const MAX_TOOL_CALL_EVENTS_PER_MESSAGE = 64;
+
+/**
+ * Plan 06 — character cap applied to each tool-call event's `inputSummary`
+ * and `outputSummary` *before* it lands in the events table.
+ *
+ * Rationale:
+ *   - Read-side: `messages.toolCalls` is folded from these summaries and
+ *     persisted on the message row. A pathological tool result (e.g. a
+ *     `run_shell` that prints 32 KiB even after byte-level truncation)
+ *     would push the message document past Convex's 1 MB size limit if
+ *     all 16 events carried full payloads.
+ *   - Write-side: the values flow into the LLM's next-step input *and*
+ *     into the live ticker UI. The tool itself already returns a
+ *     redacted, size-bounded result (`SANDBOX_READ_FILE_MAX_BYTES`,
+ *     `SANDBOX_TRUNCATION_MARKER`); this cap is a second-line defense
+ *     against future tools whose output the layer above us hasn't
+ *     bounded yet.
+ *
+ * The cap is applied with a `[…truncated…]` marker so the model and the
+ * UI can both tell that the visible payload is partial.
+ */
+export const TOOL_CALL_EVENT_SUMMARY_MAX_CHARS = 600;
