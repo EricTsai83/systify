@@ -17,18 +17,27 @@ import {
 import { getSandboxFeatureGate } from "../lib/sandboxFeatureFlag";
 
 async function getActiveChatJobForThread(ctx: MutationCtx, threadId: Id<"threads">, now: number) {
-  const jobs = await ctx.db
+  const queuedJob = await ctx.db
     .query("jobs")
-    .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
-    .order("desc")
-    .take(25);
+    .withIndex("by_threadId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+      q.eq("threadId", threadId).eq("kind", "chat").eq("status", "queued").gte("leaseExpiresAt", now),
+    )
+    .first();
+  if (queuedJob && isLeaseActive(queuedJob.leaseExpiresAt, now)) {
+    return queuedJob;
+  }
 
-  return jobs.find(
-    (job) =>
-      job.kind === "chat" &&
-      (job.status === "queued" || job.status === "running") &&
-      isLeaseActive(job.leaseExpiresAt, now),
-  );
+  const runningJob = await ctx.db
+    .query("jobs")
+    .withIndex("by_threadId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+      q.eq("threadId", threadId).eq("kind", "chat").eq("status", "running").gte("leaseExpiresAt", now),
+    )
+    .first();
+  if (runningJob && isLeaseActive(runningJob.leaseExpiresAt, now)) {
+    return runningJob;
+  }
+
+  return null;
 }
 
 export const sendMessage = mutation({

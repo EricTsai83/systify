@@ -13,6 +13,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { AppNotice } from "@/components/app-notice";
 import { ChatPanel } from "@/components/chat-panel";
+import { RepositoryStatusDeck } from "@/components/repository-status-deck";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
@@ -607,6 +608,26 @@ export function RepositoryShell({
           </div>
         ) : null}
 
+        {repoDetail ? (
+          <RepositoryStatusDeck
+            repository={repoDetail.repository}
+            sandboxModeStatus={repoDetail.sandboxModeStatus}
+            jobs={repoDetail.jobs}
+            activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
+            artifacts={repoDetail.artifacts}
+            hasRemoteUpdates={repoDetail.hasRemoteUpdates}
+            isSyncing={isSyncing || isRepositorySyncing}
+            onSync={() => void handleSync()}
+            onRunAnalysis={() => {
+              if (repoDetail.sandboxModeStatus?.reasonCode !== "available") {
+                return;
+              }
+              setAnalysisError(null);
+              setShowAnalysisDialog(true);
+            }}
+          />
+        ) : null}
+
         <div className="flex min-h-0 min-w-0 flex-1">
           {workspaceStatus === "no-repo" ? (
             <EmptyState
@@ -655,6 +676,7 @@ export function RepositoryShell({
                   <div className="h-full w-80">
                     <ArtifactPanel
                       threadId={effectiveSelectedThreadId}
+                      repositoryArtifacts={repoDetail?.artifacts}
                       hasAttachedRepository={capabilities.attachedRepository !== null}
                       sandboxModeStatus={capabilities.sandboxModeStatus}
                       isVisible={isArtifactPanelHydrated && isArtifactPanelOpen}
@@ -673,10 +695,11 @@ export function RepositoryShell({
       {workspaceStatus !== "no-repo" && !isDesktopLayout ? (
         <Sheet open={isArtifactSheetOpen} onOpenChange={setIsArtifactSheetOpen}>
           <SheetContent side="bottom" className="h-[min(75vh,34rem)] rounded-t-2xl border-x border-t p-0" hideClose>
-            <SheetTitle className="sr-only">Artifacts</SheetTitle>
-            <SheetDescription className="sr-only">Persistent outputs for the current conversation.</SheetDescription>
+            <SheetTitle className="sr-only">Results and artifacts</SheetTitle>
+            <SheetDescription className="sr-only">Persistent results and artifacts for the current conversation and attached repository.</SheetDescription>
             <ArtifactPanel
               threadId={effectiveSelectedThreadId}
+              repositoryArtifacts={repoDetail?.artifacts}
               hasAttachedRepository={capabilities.attachedRepository !== null}
               sandboxModeStatus={capabilities.sandboxModeStatus}
               isVisible={isArtifactSheetOpen}

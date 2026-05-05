@@ -22,6 +22,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MermaidRenderer } from "@/components/mermaid-renderer";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
+import { formatArtifactKind } from "@/lib/operations";
 import type { ArtifactId, SandboxModeStatus, ThreadId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -45,6 +46,7 @@ import { cn } from "@/lib/utils";
  */
 export function ArtifactPanel({
   threadId,
+  repositoryArtifacts = [],
   hasAttachedRepository,
   sandboxModeStatus,
   isVisible = true,
@@ -53,6 +55,7 @@ export function ArtifactPanel({
   onArtifactSelectionConsumed,
 }: {
   threadId: ThreadId | null;
+  repositoryArtifacts?: Doc<"artifacts">[];
   hasAttachedRepository: boolean;
   sandboxModeStatus: SandboxModeStatus | null;
   isVisible?: boolean;
@@ -73,18 +76,21 @@ export function ArtifactPanel({
   // the same pattern in Phase 4.
   const artifacts = useQuery(api.artifacts.listByThread, threadId && isVisible ? { threadId } : "skip");
   const artifactCount = artifacts?.length ?? 0;
+  const repositoryIntelligence = repositoryArtifacts.filter(
+    (artifact) => artifact.kind === "manifest" || artifact.kind === "deep_analysis",
+  );
   const [actionsOpen, setActionsOpen] = useState<boolean | null>(null);
   const effectiveActionsOpen = actionsOpen ?? artifactCount === 0;
 
   return (
     <aside
-      aria-label="Thread artifacts"
+      aria-label="Repository and thread artifacts"
       className={cn("flex h-full min-h-0 w-80 shrink-0 flex-col border-l border-border bg-muted/20", className)}
     >
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
         <div className="flex flex-col">
-          <span className="text-sm font-semibold">Artifacts</span>
-          <span className="text-[11px] text-muted-foreground">Persistent outputs of this design conversation.</span>
+          <span className="text-sm font-semibold">Results</span>
+          <span className="text-[11px] text-muted-foreground">Repository intelligence and conversation outputs.</span>
         </div>
       </div>
 
@@ -102,30 +108,51 @@ export function ArtifactPanel({
 
       <ScrollArea className="flex-1">
         <div className="flex flex-col gap-3 p-4">
-          {threadId === null ? (
+          {repositoryIntelligence.length > 0 ? (
+            <ArtifactSection title="Repository intelligence" description="Reusable context available across this repo.">
+              {repositoryIntelligence.map((artifact: Doc<"artifacts">) => (
+                <ArtifactCard
+                  key={artifact._id}
+                  artifact={artifact}
+                  isSelected={selectedArtifactId === artifact._id}
+                  onSelectionConsumed={onArtifactSelectionConsumed}
+                  featured={artifact.kind === "deep_analysis"}
+                />
+              ))}
+            </ArtifactSection>
+          ) : hasAttachedRepository ? (
             <EmptyArtifactState
-              title="No conversation selected"
-              description="Pick or start a thread to see its artifacts here."
+              title="No repository intelligence yet"
+              description="Run deep analysis to create reusable context for future conversations."
             />
-          ) : artifacts === undefined ? null : artifacts.length === 0 ? (
-            <EmptyArtifactState
-              title="No artifacts yet"
-              description={
-                hasAttachedRepository
-                  ? "Generate an architecture diagram to start grounding this thread."
-                  : "Attach a repository to start producing diagrams, ADRs, and failure-mode analyses."
-              }
-            />
-          ) : (
-            artifacts.map((artifact: Doc<"artifacts">) => (
-              <ArtifactCard
-                key={artifact._id}
-                artifact={artifact}
-                isSelected={selectedArtifactId === artifact._id}
-                onSelectionConsumed={onArtifactSelectionConsumed}
+          ) : null}
+
+          <ArtifactSection title="Thread outputs" description="Artifacts produced from this conversation.">
+            {threadId === null ? (
+              <EmptyArtifactState
+                title="No conversation selected"
+                description="Pick or start a thread to see its artifacts here."
               />
-            ))
-          )}
+            ) : artifacts === undefined ? null : artifacts.length === 0 ? (
+              <EmptyArtifactState
+                title="No artifacts yet"
+                description={
+                  hasAttachedRepository
+                    ? "Generate an architecture diagram to start grounding this thread."
+                    : "Attach a repository to start producing diagrams, ADRs, and failure-mode analyses."
+                }
+              />
+            ) : (
+              artifacts.map((artifact: Doc<"artifacts">) => (
+                <ArtifactCard
+                  key={artifact._id}
+                  artifact={artifact}
+                  isSelected={selectedArtifactId === artifact._id}
+                  onSelectionConsumed={onArtifactSelectionConsumed}
+                />
+              ))
+            )}
+          </ArtifactSection>
         </div>
       </ScrollArea>
     </aside>
@@ -366,10 +393,12 @@ function ArtifactCard({
   artifact,
   isSelected = false,
   onSelectionConsumed,
+  featured = false,
 }: {
   artifact: Doc<"artifacts">;
   isSelected?: boolean;
   onSelectionConsumed?: () => void;
+  featured?: boolean;
 }) {
   const cardRef = useRef<HTMLDivElement | null>(null);
   // Scroll-into-view + transient highlight when the citation jump targets
@@ -402,14 +431,14 @@ function ArtifactCard({
         isSelected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "",
       )}
     >
-      <Card>
+      <Card className={cn(featured ? "border-primary/40 bg-primary/5" : "")}>
         <CardHeader className="flex flex-row items-start justify-between gap-3 p-3 pb-2">
           <div className="min-w-0">
             <h4 className="truncate text-sm font-semibold">{artifact.title}</h4>
             <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{artifact.summary}</p>
           </div>
           <Badge variant="outline" className="shrink-0 text-[10px] uppercase">
-            {artifact.kind.replace(/_/g, " ")}
+            {formatArtifactKind(artifact.kind)}
           </Badge>
         </CardHeader>
         <CardContent className="p-3 pt-0">
@@ -418,6 +447,26 @@ function ArtifactCard({
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function ArtifactSection({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="flex flex-col gap-2">
+      <div>
+        <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{title}</h3>
+        <p className="text-[11px] text-muted-foreground/80">{description}</p>
+      </div>
+      {children}
+    </section>
   );
 }
 
