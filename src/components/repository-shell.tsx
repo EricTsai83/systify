@@ -13,6 +13,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { AppNotice } from "@/components/app-notice";
 import { ChatPanel } from "@/components/chat-panel";
+import { RepositoryStatusDeck } from "@/components/repository-status-deck";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
@@ -607,6 +608,23 @@ export function RepositoryShell({
           </div>
         ) : null}
 
+        {repoDetail ? (
+          <RepositoryStatusDeck
+            repository={repoDetail.repository}
+            sandboxModeStatus={repoDetail.sandboxModeStatus}
+            jobs={repoDetail.jobs}
+            activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
+            artifacts={repoDetail.artifacts}
+            hasRemoteUpdates={repoDetail.hasRemoteUpdates}
+            isSyncing={isSyncing || isRepositorySyncing}
+            onSync={() => void handleSync()}
+            onRunAnalysis={() => {
+              setAnalysisError(null);
+              setShowAnalysisDialog(true);
+            }}
+          />
+        ) : null}
+
         <div className="flex min-h-0 min-w-0 flex-1">
           {workspaceStatus === "no-repo" ? (
             <EmptyState
@@ -655,6 +673,7 @@ export function RepositoryShell({
                   <div className="h-full w-80">
                     <ArtifactPanel
                       threadId={effectiveSelectedThreadId}
+                      repositoryArtifacts={repoDetail?.artifacts}
                       hasAttachedRepository={capabilities.attachedRepository !== null}
                       sandboxModeStatus={capabilities.sandboxModeStatus}
                       isVisible={isArtifactPanelHydrated && isArtifactPanelOpen}
@@ -677,6 +696,7 @@ export function RepositoryShell({
             <SheetDescription className="sr-only">Persistent outputs for the current conversation.</SheetDescription>
             <ArtifactPanel
               threadId={effectiveSelectedThreadId}
+              repositoryArtifacts={repoDetail?.artifacts}
               hasAttachedRepository={capabilities.attachedRepository !== null}
               sandboxModeStatus={capabilities.sandboxModeStatus}
               isVisible={isArtifactSheetOpen}

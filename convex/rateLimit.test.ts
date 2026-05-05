@@ -79,6 +79,61 @@ describe("rate limits and interactive job guards", () => {
     expect(await countRepositoryJobs(t, repositoryId)).toBe(before);
   });
 
+  test("requestDeepAnalysis finds active jobs past recent unrelated queued work", async () => {
+    const ownerTokenIdentifier = "user|deep-analysis-shadowed";
+    const t = createTestConvex();
+    const { repositoryId, sandboxId } = await createRepositoryFixture(
+      t,
+      ownerTokenIdentifier,
+      "deep-analysis-shadowed",
+      {
+        withSandbox: true,
+      },
+    );
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        sandboxId,
+        kind: "deep_analysis",
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+        costCategory: "deep_analysis",
+        triggerSource: "user",
+        leaseExpiresAt: Date.now() + 60_000,
+      });
+
+      for (let index = 0; index < 25; index += 1) {
+        await ctx.db.insert("jobs", {
+          repositoryId,
+          ownerTokenIdentifier,
+          sandboxId,
+          kind: "import",
+          status: "queued",
+          stage: "queued",
+          progress: 0,
+          costCategory: "indexing",
+          triggerSource: "user",
+          leaseExpiresAt: Date.now() + 60_000,
+        });
+      }
+    });
+
+    const before = await countRepositoryJobs(t, repositoryId);
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const error = await viewer
+      .mutation(api.analysis.requestDeepAnalysis, {
+        repositoryId,
+        prompt: "Trace the data flow.",
+      })
+      .catch((caughtError) => caughtError);
+
+    expectStructuredError(error, "OPERATION_ALREADY_IN_PROGRESS", "repositoryDeepAnalysisInFlight");
+    expect(await countRepositoryJobs(t, repositoryId)).toBe(before);
+  });
+
   test("sendMessage rejects active chat jobs without creating extra jobs or messages", async () => {
     const ownerTokenIdentifier = "user|chat-in-flight";
     const t = createTestConvex();
@@ -109,6 +164,56 @@ describe("rate limits and interactive job guards", () => {
         mode: "discuss",
         content: "",
       });
+    });
+
+    const before = await getThreadCounts(t, threadId);
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const error = await viewer
+      .mutation(api.chat.send.sendMessage, {
+        threadId,
+        content: "Can you answer this now?",
+      })
+      .catch((caughtError) => caughtError);
+
+    expectStructuredError(error, "OPERATION_ALREADY_IN_PROGRESS", "threadChatInFlight");
+    expect(await getThreadCounts(t, threadId)).toEqual(before);
+  });
+
+  test("sendMessage finds active chat jobs past recent unrelated thread work", async () => {
+    const ownerTokenIdentifier = "user|chat-shadowed";
+    const t = createTestConvex();
+    const { repositoryId, threadId } = await createRepositoryFixture(t, ownerTokenIdentifier, "chat-shadowed");
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        threadId,
+        kind: "chat",
+        status: "running",
+        stage: "generating_reply",
+        progress: 0.3,
+        costCategory: "chat",
+        triggerSource: "user",
+        startedAt: Date.now(),
+        leaseExpiresAt: Date.now() + 60_000,
+      });
+
+      for (let index = 0; index < 30; index += 1) {
+        await ctx.db.insert("jobs", {
+          repositoryId,
+          ownerTokenIdentifier,
+          threadId,
+          kind: "deep_analysis",
+          status: "running",
+          stage: "focused_inspection",
+          progress: 0.4,
+          costCategory: "deep_analysis",
+          triggerSource: "user",
+          startedAt: Date.now(),
+          leaseExpiresAt: Date.now() + 60_000,
+        });
+      }
     });
 
     const before = await getThreadCounts(t, threadId);
@@ -904,7 +1009,7 @@ async function countRepositoryJobs(t: AppTestConvex, repositoryId: Id<"repositor
     const jobs = await ctx.db
       .query("jobs")
       .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
-      .take(20);
+      .take(100);
     return jobs.length;
   });
 }

@@ -170,6 +170,27 @@ export const getRepositoryDetail = query({
       .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
       .order("desc")
       .take(30);
+    const now = Date.now();
+    const activeQueuedDeepAnalysisJob = await ctx.db
+      .query("jobs")
+      .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+        q
+          .eq("repositoryId", args.repositoryId)
+          .eq("kind", "deep_analysis")
+          .eq("status", "queued")
+          .gte("leaseExpiresAt", now),
+      )
+      .first();
+    const activeRunningDeepAnalysisJob = await ctx.db
+      .query("jobs")
+      .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+        q
+          .eq("repositoryId", args.repositoryId)
+          .eq("kind", "deep_analysis")
+          .eq("status", "running")
+          .gte("leaseExpiresAt", now),
+      )
+      .first();
     const threads = await ctx.db
       .query("threads")
       .withIndex("by_repositoryId_and_lastMessageAt", (q) => q.eq("repositoryId", args.repositoryId))
@@ -193,6 +214,7 @@ export const getRepositoryDetail = query({
       repository,
       artifacts,
       jobs,
+      activeDeepAnalysisJob: activeRunningDeepAnalysisJob ?? activeQueuedDeepAnalysisJob,
       threads,
       fileCount,
       fileCountLabel,

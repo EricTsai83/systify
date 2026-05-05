@@ -269,6 +269,13 @@ export default defineSchema({
     .index("by_repositoryId", ["repositoryId"])
     .index("by_repositoryId_and_status", ["repositoryId", "status"])
     .index("by_threadId", ["threadId"])
+    .index("by_threadId_and_kind_and_status_and_leaseExpiresAt", ["threadId", "kind", "status", "leaseExpiresAt"])
+    .index("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", [
+      "repositoryId",
+      "kind",
+      "status",
+      "leaseExpiresAt",
+    ])
     .index("by_status_and_leaseExpiresAt", ["status", "leaseExpiresAt"])
     .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
 

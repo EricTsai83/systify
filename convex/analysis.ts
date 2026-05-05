@@ -17,18 +17,27 @@ import { getSandboxAvailability } from "./lib/sandboxAvailability";
 const DEEP_ANALYSIS_SANDBOX_TTL_EXTENSION_MS = 30 * 60_000;
 
 async function getActiveDeepAnalysisJob(ctx: MutationCtx, repositoryId: Id<"repositories">, now: number) {
-  const queuedJobs = await ctx.db
+  const queuedJob = await ctx.db
     .query("jobs")
-    .withIndex("by_repositoryId_and_status", (q) => q.eq("repositoryId", repositoryId).eq("status", "queued"))
-    .take(20);
-  const runningJobs = await ctx.db
-    .query("jobs")
-    .withIndex("by_repositoryId_and_status", (q) => q.eq("repositoryId", repositoryId).eq("status", "running"))
-    .take(20);
+    .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+      q.eq("repositoryId", repositoryId).eq("kind", "deep_analysis").eq("status", "queued").gte("leaseExpiresAt", now),
+    )
+    .first();
+  if (queuedJob && isLeaseActive(queuedJob.leaseExpiresAt, now)) {
+    return queuedJob;
+  }
 
-  return [...queuedJobs, ...runningJobs].find(
-    (job) => job.kind === "deep_analysis" && isLeaseActive(job.leaseExpiresAt, now),
-  );
+  const runningJob = await ctx.db
+    .query("jobs")
+    .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+      q.eq("repositoryId", repositoryId).eq("kind", "deep_analysis").eq("status", "running").gte("leaseExpiresAt", now),
+    )
+    .first();
+  if (runningJob && isLeaseActive(runningJob.leaseExpiresAt, now)) {
+    return runningJob;
+  }
+
+  return null;
 }
 
 async function extendSandboxTtlForDeepAnalysis(
