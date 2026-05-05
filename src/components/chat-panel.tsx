@@ -705,8 +705,21 @@ function MessageBubble({
   // `[A#]` rewrite: only assistant content is rewritten because user input
   // never contains real citation tokens (and rewriting it would let a user
   // accidentally render a "fake" citation by typing `[A1]`).
+  //
+  // Plan 11 — `unverifiedClaims` is only rendered for terminal assistant
+  // states. While the message is still streaming `displayContent` is the
+  // live `activeMessageStream.content`, which the lint hasn't seen yet —
+  // applying ranges from a previous (or future) snapshot would flag
+  // arbitrary character positions in the live content. Gating on
+  // `status !== "streaming" / "pending"` matches the cost-ticker gating
+  // below for the same reason: `displayContent === message.content`
+  // (the lint's input) is only guaranteed in terminal states.
+  const unverifiedClaims =
+    isAssistant && message.status !== "streaming" && message.status !== "pending"
+      ? message.unverifiedClaims
+      : undefined;
   const renderedContent = isAssistant
-    ? renderAssistantContent(displayContent, message.citationMap, onSelectArtifact)
+    ? renderAssistantContent(displayContent, message.citationMap, unverifiedClaims, onSelectArtifact)
     : displayContent || "…";
   // Plan 10 — cost ticker for assistant messages: shows estimated cost
   // and tokens / tool-call count so the user can correlate spend to a
@@ -825,20 +838,171 @@ function formatTokenCount(tokens: number): string {
 }
 
 /**
- * Walks the assistant's content, replacing every `[A#]` token whose index
- * resolves to a `messages.citationMap` entry with a clickable inline button
- * that forwards the artifact id to `onSelectArtifact`. Tokens whose index
- * has no entry (and therefore no artifact to jump to) are left as-is so the
- * user can still see the model's intended citation.
+ * One contiguous sub-region of an assistant reply. The renderer splits
+ * the message content into a sequence of these so the docs-mode `[A#]`
+ * citation rewriter and the sandbox-mode unverified-claim highlighter
+ * can compose without either pass needing to know about the other:
  *
- * Returns a `ReactNode` array (interleaving plain-text segments with button
- * elements) rather than a single string so React can render the inline
- * buttons; preserving the surrounding whitespace keeps `whitespace-pre-wrap`
- * formatting intact for prose around the citations.
+ *   - Each run carries the substring it covers and the absolute offset
+ *     into the original content (only used for stable React keys).
+ *   - `flagged` is true for runs that fall inside an `unverifiedClaims`
+ *     range. The renderer wraps those runs in `<mark>`; the citation
+ *     rewriter operates on the run's text either way.
+ *
+ * Splitting into runs *before* the citation pass means a `[A#]` token
+ * that lives inside a flagged sentence still becomes a clickable
+ * button — the click target sits inside the `<mark>` wrapper rather
+ * than competing with it.
+ */
+type ContentRun = {
+  readonly text: string;
+  readonly offset: number;
+  readonly flagged: boolean;
+};
+
+/**
+ * Plan 11 — split the assistant's content into alternating "flagged"
+ * (inside an `unverifiedClaims` range) and "normal" runs.
+ *
+ * Pure function over the content and the persisted ranges; safe to
+ * call on every render of an assistant bubble (the lint output is
+ * already capped at `MAX_UNVERIFIED_CLAIMS_PER_MESSAGE = 50` so the
+ * loop body runs at most ~100 times per render). Defensive about
+ * out-of-bounds or out-of-order ranges so a future schema migration
+ * with relaxed invariants cannot crash the renderer:
+ *
+ *   - Sorts a defensive copy of the ranges by `start` (the lint emits
+ *     them sorted, but the renderer can't trust that across schema
+ *     versions).
+ *   - Clamps each range to `[cursor, content.length]` so an overlapping
+ *     range from a hypothetical future edit cannot produce a negative
+ *     slice. Overlaps degrade to "the second range starts where the
+ *     first one ended" — visually identical to a single longer
+ *     highlight, which is the right failure mode.
+ *   - Skips empty ranges (`end <= start`) silently rather than
+ *     emitting zero-width runs that React would still allocate keys
+ *     for.
+ */
+function buildContentRuns(
+  content: string,
+  ranges: ReadonlyArray<{ start: number; end: number }> | undefined,
+): ContentRun[] {
+  if (!ranges || ranges.length === 0) {
+    return [{ text: content, offset: 0, flagged: false }];
+  }
+  // Defensive copy + sort so the caller can hand us the persisted array
+  // without us mutating it. The lint module already sorts, so the
+  // sort cost on the hot path is `O(n)` for an already-sorted input.
+  const sortedRanges = [...ranges].sort((a, b) => a.start - b.start);
+  const runs: ContentRun[] = [];
+  let cursor = 0;
+  for (const range of sortedRanges) {
+    const start = Math.max(cursor, Math.min(range.start, content.length));
+    const end = Math.max(start, Math.min(range.end, content.length));
+    if (end <= start) {
+      continue;
+    }
+    if (start > cursor) {
+      runs.push({ text: content.slice(cursor, start), offset: cursor, flagged: false });
+    }
+    runs.push({ text: content.slice(start, end), offset: start, flagged: true });
+    cursor = end;
+  }
+  if (cursor < content.length) {
+    runs.push({ text: content.slice(cursor), offset: cursor, flagged: false });
+  }
+  return runs;
+}
+
+/**
+ * Walk one content run and turn `[A#]` tokens into clickable citation
+ * buttons (when the index resolves) or pass them through as plain text
+ * (when it doesn't). Returns the React nodes for that run.
+ *
+ * Uses a *local* regex (`new RegExp(CITATION_TOKEN_REGEX.source, "g")`)
+ * rather than the module-level instance: each run's walk is independent,
+ * and a local regex avoids the (small but real) risk of `lastIndex`
+ * leaking across runs in concurrent-mode renders.
+ *
+ * `keys` is a generator that the caller threads across runs so React
+ * keys stay unique within the entire bubble's render pass — without
+ * that, two runs each starting their key counter at zero would
+ * collide.
+ */
+function renderCitationsInRun(
+  text: string,
+  indexToArtifactId: ReadonlyMap<number, ArtifactId>,
+  onSelectArtifact: ((artifactId: ArtifactId) => void) | undefined,
+  keys: { next: () => number },
+): ReactNode[] {
+  const segments: ReactNode[] = [];
+  const re = new RegExp(CITATION_TOKEN_REGEX.source, "g");
+  let lastIndex = 0;
+  let match: RegExpExecArray | null = re.exec(text);
+  while (match !== null) {
+    if (match.index > lastIndex) {
+      segments.push(<Fragment key={`text-${keys.next()}`}>{text.slice(lastIndex, match.index)}</Fragment>);
+    }
+    const tokenIndex = Number.parseInt(match[1], 10);
+    const artifactId = indexToArtifactId.get(tokenIndex);
+    if (artifactId && onSelectArtifact) {
+      segments.push(
+        <button
+          key={`cite-${keys.next()}`}
+          type="button"
+          onClick={() => onSelectArtifact(artifactId)}
+          className="mx-0.5 inline-flex items-center rounded-sm border border-primary/30 bg-primary/5 px-1 py-0 text-[11px] font-semibold leading-5 text-primary hover:bg-primary/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          data-testid={`citation-link-${tokenIndex}`}
+          aria-label={`Open referenced artifact A${tokenIndex}`}
+        >
+          {match[0]}
+        </button>,
+      );
+    } else {
+      // Unresolved tokens render as plain text so the model's intent is
+      // visible even when the citation map is missing or out of range.
+      segments.push(<Fragment key={`text-${keys.next()}`}>{match[0]}</Fragment>);
+    }
+    lastIndex = match.index + match[0].length;
+    match = re.exec(text);
+  }
+  if (lastIndex < text.length) {
+    segments.push(<Fragment key={`text-${keys.next()}`}>{text.slice(lastIndex)}</Fragment>);
+  }
+  return segments;
+}
+
+/**
+ * Walks the assistant's content, applying two composable passes:
+ *
+ *   1. **Unverified-claim highlight (Plan 11).** Sentences flagged by
+ *      the citation lint are wrapped in `<mark>` with a soft yellow
+ *      background and a dotted underline so the user can read them
+ *      with extra skepticism. Non-blocking by design — the lint never
+ *      rejects model output, it just nudges the reader.
+ *
+ *   2. **`[A#]` citation rewrite (Plan 02).** Every artifact-citation
+ *      token whose index resolves against `messages.citationMap`
+ *      becomes a clickable button that forwards the artifact id to
+ *      `onSelectArtifact`. Tokens that don't resolve render as plain
+ *      text so the model's intent stays visible.
+ *
+ * The two passes compose naturally: (1) splits the content into runs,
+ * then (2) rewrites `[A#]` tokens within each run regardless of
+ * flagged/unflagged status. A `<mark>`ed sentence that contains a
+ * `[A#]` token still has a working button — the click target lives
+ * inside the highlight wrapper rather than competing with it.
+ *
+ * Returns a `ReactNode` array (interleaving plain-text segments with
+ * `<button>` and `<mark>` elements) rather than a single string so
+ * React can render the inline buttons; preserving the surrounding
+ * whitespace keeps `whitespace-pre-wrap` formatting intact for prose
+ * around the citations.
  */
 function renderAssistantContent(
   content: string,
   citationMap: Doc<"messages">["citationMap"],
+  unverifiedClaims: Doc<"messages">["unverifiedClaims"],
   onSelectArtifact: ((artifactId: ArtifactId) => void) | undefined,
 ): ReactNode {
   if (!content) {
@@ -852,42 +1016,46 @@ function renderAssistantContent(
     indexToArtifactId.set(entry.index, entry.artifactId);
   }
 
-  const segments: ReactNode[] = [];
-  let lastIndex = 0;
-  let key = 0;
-  CITATION_TOKEN_REGEX.lastIndex = 0;
-  let match: RegExpExecArray | null = CITATION_TOKEN_REGEX.exec(content);
-  while (match !== null) {
-    if (match.index > lastIndex) {
-      segments.push(<Fragment key={`text-${key++}`}>{content.slice(lastIndex, match.index)}</Fragment>);
-    }
-    const tokenIndex = Number.parseInt(match[1], 10);
-    const artifactId = indexToArtifactId.get(tokenIndex);
-    if (artifactId && onSelectArtifact) {
-      segments.push(
-        <button
-          key={`cite-${key++}`}
-          type="button"
-          onClick={() => onSelectArtifact(artifactId)}
-          className="mx-0.5 inline-flex items-center rounded-sm border border-primary/30 bg-primary/5 px-1 py-0 text-[11px] font-semibold leading-5 text-primary hover:bg-primary/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          data-testid={`citation-link-${tokenIndex}`}
-          aria-label={`Open referenced artifact A${tokenIndex}`}
+  const runs = buildContentRuns(content, unverifiedClaims);
+  // Single key generator threaded across runs so React keys stay unique
+  // bubble-wide. Inlined as an object so the closure shape doesn't drift
+  // if more renderers grow up around this one.
+  let keyCounter = 0;
+  const keys = {
+    next: () => keyCounter++,
+  };
+
+  const out: ReactNode[] = [];
+  for (const run of runs) {
+    const innerNodes = renderCitationsInRun(run.text, indexToArtifactId, onSelectArtifact, keys);
+    if (run.flagged) {
+      out.push(
+        <mark
+          key={`unv-${keys.next()}`}
+          // Subtle yellow tint + dotted underline reads as "soft warning"
+          // without crowding the prose. The browser default `<mark>`
+          // background is the bright marker-yellow Wikipedia uses for
+          // search hits, which would be too loud for a per-sentence
+          // signal that fires on plausibly-half-the-reply for unprompted
+          // model output. Theme-aware variants keep contrast acceptable
+          // in dark mode without changing semantics.
+          className="rounded-sm bg-yellow-100/70 px-0.5 underline decoration-yellow-500/60 decoration-dotted underline-offset-2 dark:bg-yellow-300/15 dark:decoration-yellow-300/60"
+          data-testid="unverified-claim"
+          // The bubble already labels the role and mode; the title
+          // here gives the user an inline tooltip explaining what the
+          // highlight means without needing onboarding copy. `aria-label`
+          // is omitted because the marked text itself is the content
+          // — overriding it would mute the sentence for screen readers.
+          title="The model did not cite a tool-verified source for this sentence. Read with skepticism."
         >
-          {match[0]}
-        </button>,
+          {innerNodes}
+        </mark>,
       );
     } else {
-      // Unresolved tokens render as plain text so the model's intent is
-      // visible even when the citation map is missing or out of range.
-      segments.push(<Fragment key={`text-${key++}`}>{match[0]}</Fragment>);
+      out.push(<Fragment key={`run-${keys.next()}`}>{innerNodes}</Fragment>);
     }
-    lastIndex = match.index + match[0].length;
-    match = CITATION_TOKEN_REGEX.exec(content);
   }
-  if (lastIndex < content.length) {
-    segments.push(<Fragment key={`text-${key++}`}>{content.slice(lastIndex)}</Fragment>);
-  }
-  return segments;
+  return out;
 }
 
 function getSandboxStatusTitle(reasonCode: SandboxModeStatus["reasonCode"] | undefined) {

@@ -302,6 +302,245 @@ describe("chat streaming lifecycle", () => {
 });
 
 /**
+ * Plan 11 — citation lint runs at terminal-state mutations and persists
+ * the flagged-sentence ranges on `messages.unverifiedClaims`. The lint
+ * is sandbox-only (the contract `[path:line]` + `Unverified:` is
+ * teaching exclusive to the sandbox prompt) so non-sandbox replies must
+ * never receive ranges, even when their content would otherwise look
+ * flag-able to the lint.
+ *
+ * The tests pin three contracts:
+ *
+ *   1. `finalizeAssistantReply` writes ranges for sandbox replies whose
+ *      content has unverified claim sentences, and omits the field
+ *      entirely for non-sandbox replies and clean replies.
+ *   2. `failAssistantReply` and `markAssistantReplyCancelled` apply the
+ *      lint to *partial* content so the user sees the same highlights
+ *      on a truncated reply they would have seen on a completed one.
+ *   3. The lint output round-trips: `content.slice(start, end)` matches
+ *      the flagged sentence text the renderer needs to wrap in `<mark>`.
+ *      This is the same offset-alignment guarantee asserted in
+ *      `citationLint.test.ts`, but pinned end-to-end through the
+ *      mutation so a future refactor can't silently break the renderer
+ *      contract.
+ */
+describe("citation lint integration (Plan 11)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-23T00:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("finalizeAssistantReply persists unverifiedClaims for sandbox replies with flagged sentences", async () => {
+    const ownerTokenIdentifier = "user|lint-finalize-sandbox";
+    const t = convexTest(schema, modules);
+    const { threadId, jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "lint-finalize-sandbox",
+    );
+
+    // Promote the fixture's assistant message to sandbox mode — the
+    // fixture defaults to `discuss` for the existing tests, but the
+    // citation lint only fires for sandbox replies. The mode is the
+    // gating field, so patching it post-fixture is the minimal
+    // mutation that exercises the lint path.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+    });
+
+    // Mix one cited sentence and one unverified sentence so the lint has
+    // a clear signal to flag exactly one. The cited form `[path:line]`
+    // is what the sandbox prompt teaches; we mirror it here so the
+    // assertion proves both directions of the contract (cited → not
+    // flagged; uncited prose → flagged).
+    const finalContent =
+      "The handler validates the payload [convex/api/foo.ts:12-30]. " +
+      "Then it dispatches to a worker queue without retry semantics.";
+    await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
+      threadId,
+      assistantMessageId,
+      jobId,
+      finalDelta: finalContent,
+    });
+
+    const finalized = await t.run(async (ctx) => await ctx.db.get(assistantMessageId));
+
+    expect(finalized?.status).toBe("completed");
+    expect(finalized?.content).toBe(finalContent);
+    expect(finalized?.unverifiedClaims).toHaveLength(1);
+    // Round-trip the persisted offsets through the persisted content;
+    // the renderer slices with these exact positions, so any drift
+    // would produce a misaligned `<mark>` overlay in the chat bubble.
+    const range = finalized!.unverifiedClaims![0];
+    expect(finalContent.slice(range.start, range.end)).toBe(
+      "Then it dispatches to a worker queue without retry semantics.",
+    );
+  });
+
+  test("finalizeAssistantReply omits unverifiedClaims when every sandbox sentence is cited", async () => {
+    // The lint returns `[]` and the streaming helper persists
+    // `undefined` rather than an empty array — keeps the
+    // widen-migrate-narrow contract honest (clean replies look
+    // identical to pre-Plan-11 messages on the wire).
+    const ownerTokenIdentifier = "user|lint-finalize-clean";
+    const t = convexTest(schema, modules);
+    const { threadId, jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "lint-finalize-clean",
+    );
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+    });
+
+    await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
+      threadId,
+      assistantMessageId,
+      jobId,
+      finalDelta: "Every claim cites the source [convex/api/foo.ts:12-30].",
+    });
+
+    const finalized = await t.run(async (ctx) => await ctx.db.get(assistantMessageId));
+    expect(finalized?.status).toBe("completed");
+    expect(finalized?.unverifiedClaims).toBeUndefined();
+  });
+
+  test("finalizeAssistantReply does not lint discuss/docs replies even when content is flag-able", async () => {
+    // Non-sandbox replies must skip the lint entirely. The lint's
+    // contract (`[path:line]` + `Unverified:`) is taught only by the
+    // sandbox prompt, so applying it to docs / discuss would generate
+    // false positives on every artifact-grounded sentence (the docs
+    // prompt teaches `[A#]`, which is not a `[path:line]` shape).
+    for (const mode of ["discuss", "docs"] as const) {
+      const ownerTokenIdentifier = `user|lint-finalize-${mode}`;
+      const t = convexTest(schema, modules);
+      const { threadId, jobId, assistantMessageId } = await createStreamingFixture(
+        t,
+        ownerTokenIdentifier,
+        `lint-finalize-${mode}`,
+      );
+
+      await t.run(async (ctx) => {
+        await ctx.db.patch(assistantMessageId, { mode });
+      });
+
+      // Same flag-able prose as the sandbox-positive test — the lint
+      // would happily flag it, but the gate must skip on `mode !== "sandbox"`.
+      await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
+        threadId,
+        assistantMessageId,
+        jobId,
+        finalDelta: "Then it dispatches to a worker queue without retry semantics.",
+      });
+
+      const finalized = await t.run(async (ctx) => await ctx.db.get(assistantMessageId));
+      expect(finalized?.unverifiedClaims, `${mode} reply should not be linted`).toBeUndefined();
+    }
+  });
+
+  test("failAssistantReply runs the lint on partial sandbox content", async () => {
+    // A sandbox reply that produced 50% of an unverified sentence
+    // before the upstream errored should still surface the highlight.
+    // This guards the parity contract: a failed bubble in sandbox mode
+    // looks like a completed bubble for the partial content the user
+    // can read.
+    const ownerTokenIdentifier = "user|lint-fail-sandbox";
+    const t = convexTest(schema, modules);
+    const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "lint-fail-sandbox");
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+    });
+
+    // Stream partial content first so the lint sees a non-empty
+    // `streamSnapshot.content` at fail time.
+    await t.mutation(internal.chat.streaming.appendAssistantStreamChunk, {
+      assistantMessageId,
+      jobId,
+      delta: "The handler kicks off a background queue without any retry policy.",
+    });
+
+    await t.mutation(internal.chat.streaming.failAssistantReply, {
+      assistantMessageId,
+      jobId,
+      errorMessage: "upstream rate-limited",
+      finalDelta: "",
+    });
+
+    const failed = await t.run(async (ctx) => await ctx.db.get(assistantMessageId));
+    expect(failed?.status).toBe("failed");
+    expect(failed?.unverifiedClaims).toHaveLength(1);
+    const range = failed!.unverifiedClaims![0];
+    expect(failed!.content.slice(range.start, range.end)).toBe(
+      "The handler kicks off a background queue without any retry policy.",
+    );
+  });
+
+  test("markAssistantReplyCancelled runs the lint on partial sandbox content", async () => {
+    // Same parity rationale as the fail path: a user who clicks Stop
+    // mid-reply still wants the unverified-claim highlights for the
+    // partial content they chose to keep.
+    const ownerTokenIdentifier = "user|lint-cancel-sandbox";
+    const t = convexTest(schema, modules);
+    const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "lint-cancel-sandbox");
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+    });
+
+    await t.mutation(internal.chat.streaming.appendAssistantStreamChunk, {
+      assistantMessageId,
+      jobId,
+      delta: "The retry policy doubles the backoff on every transient error.",
+    });
+
+    await t.mutation(internal.chat.streaming.markAssistantReplyCancelled, {
+      assistantMessageId,
+      jobId,
+      reason: "Cancelled by user.",
+    });
+
+    const cancelled = await t.run(async (ctx) => await ctx.db.get(assistantMessageId));
+    expect(cancelled?.status).toBe("cancelled");
+    expect(cancelled?.unverifiedClaims).toHaveLength(1);
+    const range = cancelled!.unverifiedClaims![0];
+    expect(cancelled!.content.slice(range.start, range.end)).toBe(
+      "The retry policy doubles the backoff on every transient error.",
+    );
+  });
+
+  test("markAssistantReplyCancelled omits unverifiedClaims when no partial content was streamed", async () => {
+    // Stop arrived before any token was generated → `streamedContent`
+    // is empty → bubble shows the reason text → no claims to lint.
+    // The persisted field must stay `undefined` so the renderer does
+    // not try to highlight inside the system-generated reason text.
+    const ownerTokenIdentifier = "user|lint-cancel-empty";
+    const t = convexTest(schema, modules);
+    const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "lint-cancel-empty");
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+    });
+
+    await t.mutation(internal.chat.streaming.markAssistantReplyCancelled, {
+      assistantMessageId,
+      jobId,
+      reason: "Cancelled by user.",
+    });
+
+    const cancelled = await t.run(async (ctx) => await ctx.db.get(assistantMessageId));
+    expect(cancelled?.status).toBe("cancelled");
+    expect(cancelled?.unverifiedClaims).toBeUndefined();
+    expect(cancelled?.content).toBe("Cancelled by user.");
+  });
+});
+
+/**
  * Plan 06 — tool-call ticker / persisted trace.
  *
  * The flow under test:

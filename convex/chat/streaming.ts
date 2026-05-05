@@ -6,6 +6,7 @@ import { CHAT_JOB_LEASE_MS, consumeSandboxDailyCost } from "../lib/rateLimit";
 import { costUsdToCents } from "../lib/openaiPricing";
 import { logInfo, logWarn } from "../lib/observability";
 import { MAX_TOOL_CALL_EVENTS_PER_MESSAGE, TOOL_CALL_EVENT_SUMMARY_MAX_CHARS } from "../lib/constants";
+import { lintCitations, type UnverifiedClaimRange } from "./citationLint";
 import {
   compactMessageStreamTail,
   deleteMessageStreamState,
@@ -146,6 +147,45 @@ async function settleSandboxReplyCost(
     workspaceId,
     cents,
   });
+}
+
+/**
+ * Plan 11 — run the citation lint against a finalized assistant reply
+ * and return the persisted shape (or `undefined` to clear the field).
+ *
+ * Gated on `mode === "sandbox"`: the lint contract exists *only* for the
+ * sandbox prompt (which teaches `[path:line]` + `Unverified:`). Discuss
+ * and docs replies have their own citation conventions (`[A#]` for
+ * docs; nothing for discuss) so applying this lint there would generate
+ * a wall of false positives.
+ *
+ * Empty content is also a `undefined` return — the lint produces no
+ * ranges on an empty string, but spelling out the early-return keeps
+ * the call sites obviously correct in the cancellation / failure
+ * paths where partial content can be the empty string. `undefined`
+ * rather than `[]` matches the schema-level convention (Plan 06's
+ * `toolCalls`, Plan 02's `citationMap`): callers that read the field
+ * treat both as "no highlights", but storing `undefined` keeps the
+ * row free of empty array bookkeeping for messages that genuinely
+ * had no flagged claims.
+ *
+ * `lintCitations` already enforces {@link MAX_UNVERIFIED_CLAIMS_PER_MESSAGE}
+ * internally via early return, so no re-cap is needed here. Re-slicing
+ * would be a guaranteed no-op and would only add a layer of mistrust
+ * between the module's documented contract and this caller.
+ */
+function lintSandboxClaims(
+  message: Pick<Doc<"messages">, "mode">,
+  finalContent: string,
+): UnverifiedClaimRange[] | undefined {
+  if (message.mode !== "sandbox") {
+    return undefined;
+  }
+  if (finalContent.length === 0) {
+    return undefined;
+  }
+  const ranges = lintCitations(finalContent);
+  return ranges.length > 0 ? ranges : undefined;
 }
 
 /**
@@ -475,6 +515,16 @@ export const finalizeAssistantReply = internalMutation({
     try {
       if (message) {
         const finalContent = `${streamSnapshot?.content ?? message.content}${args.finalDelta}`;
+        // Plan 11 — citation lint runs against the finalized content
+        // *before* the patch so `messages.unverifiedClaims` is committed
+        // in the same transaction that flips status to `completed`. The
+        // chat bubble derives "is this reply linted?" from the message
+        // status (it only renders highlights for terminal states), so
+        // a transactional write means a refresh-after-finalize never
+        // sees the message as completed-but-unlinted. Sandbox-only via
+        // `lintSandboxClaims`; discuss / docs return `undefined` and
+        // the optional schema field stays unset.
+        const unverifiedClaims = lintSandboxClaims(message, finalContent);
         await ctx.db.patch(args.assistantMessageId, {
           content: finalContent,
           status: "completed",
@@ -489,6 +539,7 @@ export const finalizeAssistantReply = internalMutation({
           estimatedCostUsd: args.costUsd,
           citationMap: args.citationMap,
           toolCalls: persistedToolCalls,
+          unverifiedClaims,
         });
         // The thread may have been deleted while we were streaming. Patching a
         // missing doc throws and would roll back the whole mutation (so the
@@ -601,11 +652,23 @@ export const failAssistantReply = internalMutation({
     try {
       if (message) {
         const streamedContent = `${streamSnapshot?.content ?? message.content}${args.finalDelta ?? ""}`;
+        // Plan 11 — lint the *streamed* content (not the error fallback).
+        // A failed reply that produced 200 tokens of partial prose
+        // before throwing should still surface unverified-claim
+        // highlights so the user can read the partial answer with
+        // appropriate skepticism. When the stream produced nothing,
+        // `streamedContent` is empty and `lintSandboxClaims` returns
+        // `undefined`, so the bubble just shows the error message
+        // without any highlights — the right behavior, since the
+        // error message is system text and never contains model
+        // claims to flag.
+        const unverifiedClaims = lintSandboxClaims(message, streamedContent);
         await ctx.db.patch(args.assistantMessageId, {
           status: "failed",
           errorMessage: args.errorMessage,
           content: streamedContent || args.errorMessage,
           toolCalls: persistedToolCalls,
+          unverifiedClaims,
           // Plan 10 — partial cost is still real spend; persist it so
           // the failed bubble can show "Failed at $0.04 (800 tokens)"
           // in the cost ticker, and the daily cap can settle accurately.
@@ -763,6 +826,14 @@ export const markAssistantReplyCancelled = internalMutation({
     try {
       if (message) {
         const streamedContent = `${streamSnapshot?.content ?? message.content}${args.finalDelta ?? ""}`;
+        // Plan 11 — same rationale as the fail path: a cancelled reply
+        // that produced partial prose before the user clicked Stop
+        // benefits from the same unverified-claim highlights so the
+        // user can scan what they got with the same skepticism the
+        // completed-state bubble would offer. Empty `streamedContent`
+        // (stop arrived before any token was streamed) returns
+        // `undefined` so the bubble just shows the cancellation reason.
+        const unverifiedClaims = lintSandboxClaims(message, streamedContent);
         await ctx.db.patch(args.assistantMessageId, {
           status: "cancelled",
           errorMessage: reason,
@@ -771,6 +842,7 @@ export const markAssistantReplyCancelled = internalMutation({
           // fallback for the same reason.
           content: streamedContent || reason,
           toolCalls: persistedToolCalls,
+          unverifiedClaims,
           // Plan 10 — preserve partial-cost telemetry on cancellation
           // for both UI display and audit. Falling back to the existing
           // values (rather than overwriting with `undefined`) handles
@@ -882,11 +954,21 @@ export const recoverStaleChatJob = internalMutation({
 
     try {
       if (assistantMessage) {
+        // Plan 11 — lint only the *streamed* portion (not the system
+        // error message that takes over when the stream produced
+        // nothing). When the stale-recovery rescues a reply that had
+        // already streamed partial prose the user can still benefit
+        // from unverified-claim highlights; when the action stalled
+        // before producing anything, `streamSnapshot?.content` is
+        // empty and `lintSandboxClaims` returns `undefined` so the
+        // bubble shows just the stall message.
+        const unverifiedClaims = lintSandboxClaims(assistantMessage, streamSnapshot?.content ?? "");
         await ctx.db.patch(assistantMessage._id, {
           status: "failed",
           errorMessage: message,
           content: streamSnapshot?.content || message,
           toolCalls: persistedToolCalls,
+          unverifiedClaims,
         });
       }
 

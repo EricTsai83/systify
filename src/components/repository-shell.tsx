@@ -696,7 +696,9 @@ export function RepositoryShell({
         <Sheet open={isArtifactSheetOpen} onOpenChange={setIsArtifactSheetOpen}>
           <SheetContent side="bottom" className="h-[min(75vh,34rem)] rounded-t-2xl border-x border-t p-0" hideClose>
             <SheetTitle className="sr-only">Results and artifacts</SheetTitle>
-            <SheetDescription className="sr-only">Persistent results and artifacts for the current conversation and attached repository.</SheetDescription>
+            <SheetDescription className="sr-only">
+              Persistent results and artifacts for the current conversation and attached repository.
+            </SheetDescription>
             <ArtifactPanel
               threadId={effectiveSelectedThreadId}
               repositoryArtifacts={repoDetail?.artifacts}
