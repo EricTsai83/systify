@@ -13,7 +13,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { AppNotice } from "@/components/app-notice";
 import { ChatPanel } from "@/components/chat-panel";
-import { RepositoryStatusDeck } from "@/components/repository-status-deck";
+import { StatusPanel } from "@/components/status-panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
@@ -299,6 +299,12 @@ export function RepositoryShell({
     true,
   );
   const [isArtifactSheetOpen, setIsArtifactSheetOpen] = useState(false);
+  // StatusPanel surfaces on demand from the top-bar pill: a Popover overlay on
+  // desktop, a bottom Sheet on mobile. Both surfaces share a single open state
+  // so toggling the pill behaves identically across breakpoints. State is
+  // intentionally not persisted — a returning user lands on a clean chat
+  // surface instead of a panel they didn't open.
+  const [isStatusOpen, setIsStatusOpen] = useState(false);
   /**
    * Plan 02 inline citation jump target. Set by `handleSelectArtifact` when
    * the user clicks an `[A#]` citation in an assistant reply; the artifact
@@ -325,6 +331,11 @@ export function RepositoryShell({
     const mediaQuery = window.matchMedia(DESKTOP_LAYOUT_QUERY);
     const handleChange = (event: MediaQueryListEvent) => {
       setIsDesktopLayout(event.matches);
+      // Reset the status surface across the breakpoint so a popover-anchored
+      // overlay doesn't hang around when the layout switches to a sheet
+      // (and vice versa). The artifact panel's desktop state is persisted
+      // and stays open; only the mobile sheet variant is reset on the way up.
+      setIsStatusOpen(false);
       if (event.matches) {
         setIsArtifactSheetOpen(false);
       }
@@ -424,11 +435,47 @@ export function RepositoryShell({
       return;
     }
     if (isDesktopLayout) {
+      // Status now overlays via the top-bar popover, so the desktop artifact
+      // column is free to coexist — no mutual-exclusion needed.
       setIsArtifactPanelOpen((open) => !open);
       return;
     }
-    setIsArtifactSheetOpen((open) => !open);
+    // Mobile keeps mutual exclusion because two bottom sheets would stack and
+    // the second one's backdrop would obscure the first.
+    setIsArtifactSheetOpen((open) => {
+      const next = !open;
+      if (next) {
+        setIsStatusOpen(false);
+      }
+      return next;
+    });
   }, [isDesktopLayout, setIsArtifactPanelOpen, workspaceStatus]);
+
+  /**
+   * Setter for the StatusPanel open state, shared by Radix Popover (desktop)
+   * and Sheet (mobile) so onOpenChange callbacks plug in directly. Carries
+   * the mobile-only mutual exclusion: opening the status sheet closes the
+   * artifact sheet so two bottom-sheet backdrops never stack. Desktop has no
+   * mutual exclusion — the popover overlays the chat without affecting the
+   * inline artifact column.
+   */
+  const handleSetStatusOpen = useCallback(
+    (open: boolean) => {
+      if (workspaceStatus === "no-repo") {
+        // Force-closed in no-repo state — never opens, but allow `false` so a
+        // controlled popover/sheet can collapse cleanly during the transition
+        // back to the empty state.
+        if (open) return;
+        setIsStatusOpen(false);
+        return;
+      }
+      if (open && !isDesktopLayout) {
+        setIsArtifactSheetOpen(false);
+      }
+      setIsStatusOpen(open);
+    },
+    [isDesktopLayout, workspaceStatus],
+  );
 
   /**
    * Plan 02: a user clicked `[A#]` inside an assistant reply. Force the
@@ -447,8 +494,15 @@ export function RepositoryShell({
       }
       if (isDesktopLayout) {
         setIsArtifactPanelOpen(true);
+        // Close the status popover too so a "View analysis" click from inside
+        // the panel hands the focus over to the artifact card without leaving
+        // a stale overlay floating above the chat. This is no longer mutual
+        // exclusion (status doesn't compete with the artifact column for
+        // space) — it's a deliberate handoff for the citation/CTA flow.
+        setIsStatusOpen(false);
       } else {
         setIsArtifactSheetOpen(true);
+        setIsStatusOpen(false);
       }
       setSelectedArtifactId(artifactId);
     },
@@ -633,16 +687,23 @@ export function RepositoryShell({
           repoDetail={repoDetail}
           repoName={selectedRepoName}
           isSyncing={isSyncing || isRepositorySyncing}
-          onSync={() => void handleSync()}
+          isStatusPanelOpen={isStatusOpen}
+          onSetStatusPanelOpen={handleSetStatusOpen}
           onDeleteRepo={() => setShowDeleteRepoDialog(true)}
-          onRunAnalysis={() => {
-            setAnalysisError(null);
-            setShowAnalysisDialog(true);
-          }}
           threadId={effectiveSelectedThreadId}
           attachedRepository={capabilities.attachedRepository}
           availableRepositories={repositories ?? []}
           onThreadMovedToWorkspace={handleThreadMovedToWorkspace}
+          isDesktopLayout={isDesktopLayout}
+          onSync={() => void handleSync()}
+          onRunAnalysis={() => {
+            if (!repoDetail || repoDetail.sandboxModeStatus.reasonCode !== "available") {
+              return;
+            }
+            setAnalysisError(null);
+            setShowAnalysisDialog(true);
+          }}
+          onViewArtifact={handleSelectArtifact}
         />
 
         {actionError ? (
@@ -655,26 +716,24 @@ export function RepositoryShell({
           </div>
         ) : null}
 
-        {repoDetail ? (
-          <RepositoryStatusDeck
-            repository={repoDetail.repository}
-            sandboxModeStatus={repoDetail.sandboxModeStatus}
-            sandbox={repoDetail.sandbox}
-            jobs={repoDetail.jobs}
-            activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
-            artifacts={repoDetail.artifacts}
-            hasRemoteUpdates={repoDetail.hasRemoteUpdates}
-            isSyncing={isSyncing || isRepositorySyncing}
-            onSync={() => void handleSync()}
-            onRunAnalysis={() => {
-              if (repoDetail.sandboxModeStatus?.reasonCode !== "available") {
-                return;
-              }
-              setAnalysisError(null);
-              setShowAnalysisDialog(true);
-            }}
-            onViewArtifact={handleSelectArtifact}
-          />
+        {/*
+         * Import-failed banner. The only state we proactively surface above
+         * the chat — sync/sandbox/update statuses live in the StatusPill
+         * because the user can keep working around them, but a failed
+         * import means the repo is genuinely unusable until it is retried.
+         * Shown regardless of which right-rail panel is open.
+         */}
+        {repoDetail?.repository.importStatus === "failed" ? (
+          <div className="border-b border-destructive/40 bg-destructive/5 px-6 py-3">
+            <AppNotice
+              title="Repository import failed"
+              message="The latest sync did not finish. Retry to restore repo-aware features for this workspace."
+              tone="error"
+              actionLabel={isSyncing || isRepositorySyncing ? "Retrying…" : "Retry sync"}
+              actionDisabled={isSyncing || isRepositorySyncing}
+              onAction={() => void handleSync()}
+            />
+          </div>
         ) : null}
 
         <div className="flex min-h-0 min-w-0 flex-1">
@@ -712,11 +771,32 @@ export function RepositoryShell({
                 onImported={handleImported}
                 onThreadMovedToWorkspace={handleThreadMovedToWorkspace}
                 onSelectArtifact={handleSelectArtifact}
+                analysisNudge={
+                  // Only nudge when there is genuinely something to do: a repo
+                  // is attached, no deep-analysis artifact exists yet, no
+                  // analysis is currently running, and the sandbox is ready
+                  // (otherwise the CTA would just bounce off the dialog's
+                  // disabled state). The card stays out of the way once any
+                  // of those conditions flips so the empty state declutters
+                  // as the user advances.
+                  repoDetail &&
+                  !repoDetail.artifacts.some((artifact) => artifact.kind === "deep_analysis") &&
+                  !repoDetail.activeDeepAnalysisJob &&
+                  repoDetail.sandboxModeStatus.reasonCode === "available"
+                    ? {
+                        onStart: () => {
+                          setAnalysisError(null);
+                          setShowAnalysisDialog(true);
+                        },
+                      }
+                    : null
+                }
               />
               {isDesktopLayout ? (
-                // Mirror left-sidebar behavior: animate container width while
-                // keeping inner panel width fixed, so the center area reflows
-                // responsively without an overlay.
+                // The desktop right rail is now a single inline column for
+                // artifacts. Status lives in the top-bar Popover, so the two
+                // surfaces no longer compete for this slot — Artifacts can
+                // stay open while the user opens Status, and vice versa.
                 <div
                   aria-hidden={!(isArtifactPanelHydrated && isArtifactPanelOpen)}
                   data-state={isArtifactPanelHydrated && isArtifactPanelOpen ? "open" : "closed"}
@@ -759,6 +839,37 @@ export function RepositoryShell({
               selectedArtifactId={selectedArtifactId}
               onArtifactSelectionConsumed={handleArtifactSelectionConsumed}
               onAskAboutArtifact={handleAskAboutArtifact}
+            />
+          </SheetContent>
+        </Sheet>
+      ) : null}
+
+      {workspaceStatus !== "no-repo" && !isDesktopLayout && repoDetail ? (
+        <Sheet open={isStatusOpen} onOpenChange={handleSetStatusOpen}>
+          <SheetContent side="bottom" className="h-[min(75vh,34rem)] rounded-t-2xl border-x border-t p-0" hideClose>
+            <SheetTitle className="sr-only">Repository status</SheetTitle>
+            <SheetDescription className="sr-only">
+              Current sync, sandbox, and analysis state, with recent activity and operation launchers.
+            </SheetDescription>
+            <StatusPanel
+              repository={repoDetail.repository}
+              sandboxModeStatus={repoDetail.sandboxModeStatus}
+              sandbox={repoDetail.sandbox}
+              jobs={repoDetail.jobs}
+              activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
+              artifacts={repoDetail.artifacts}
+              hasRemoteUpdates={repoDetail.hasRemoteUpdates}
+              isSyncing={isSyncing || isRepositorySyncing}
+              onSync={() => void handleSync()}
+              onRunAnalysis={() => {
+                if (repoDetail.sandboxModeStatus.reasonCode !== "available") {
+                  return;
+                }
+                setAnalysisError(null);
+                setShowAnalysisDialog(true);
+              }}
+              onViewArtifact={handleSelectArtifact}
+              onClose={() => setIsStatusOpen(false)}
             />
           </SheetContent>
         </Sheet>

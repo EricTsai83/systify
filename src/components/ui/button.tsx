@@ -5,16 +5,15 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+  "inline-flex cursor-pointer items-center justify-center gap-2 whitespace-nowrap font-semibold transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0",
   {
     variants: {
       variant: {
-        default:
-          "bg-primary text-primary-foreground border border-primary hover:bg-[color-mix(in_oklab,hsl(var(--bc-accent))_90%,black)] hover:text-foreground dark:hover:text-primary-foreground",
+        default: "bg-primary text-foreground border border-primary hover:bg-background",
         secondary: "bg-card text-foreground border border-border hover:bg-muted hover:border-foreground/30",
         outline: "bg-transparent text-foreground border border-border hover:bg-muted hover:border-foreground/30",
         ghost: "bg-transparent text-muted-foreground hover:bg-muted hover:text-foreground border border-transparent",
-        destructive: "bg-destructive text-white border border-destructive hover:opacity-90",
+        destructive: "bg-destructive text-foreground border border-destructive hover:bg-background",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
@@ -35,6 +34,11 @@ const buttonVariants = cva(
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
+    // React 19 treats `ref` as a regular prop, but TypeScript only sees it
+    // when the component's prop type includes it. Declaring it here lets
+    // callers (and Radix asChild Slots that inject a ref via cloneElement)
+    // forward refs without resorting to forwardRef on a plain function.
+    ref?: React.Ref<HTMLButtonElement>;
   };
 
 function Button({ className, variant, size, type = "button", asChild = false, ...props }: ButtonProps) {

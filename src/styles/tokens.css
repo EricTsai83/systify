@@ -1,0 +1,219 @@
+/*
+ * ────────────────────────────────────────────────────────────────────
+ *  Systify Design System — tokens, theme, and global usage rules.
+ * ────────────────────────────────────────────────────────────────────
+ *
+ *  Aesthetic
+ *  ---------
+ *  Technical / crisp. Sharp corners on interactive surfaces — buttons,
+ *  dropdown items, toggles, tabs, dialogs, and most cards default to
+ *  `rounded-none`. Rounded shapes are reserved for:
+ *    - Avatars and circular badges (`rounded-full`)
+ *    - Mobile bottom sheets (`rounded-t-2xl`)
+ *    - StatusPanel cards and a few container surfaces (`rounded-lg`)
+ *  Don't add rounded corners to new interactive surfaces without a
+ *  specific reason — the sharp aesthetic is the project's identity.
+ *
+ *  Color
+ *  -----
+ *  OKLCH tokens only. Do NOT use Tailwind palette names directly
+ *  (no `bg-amber-500`, no `text-emerald-400`, no `bg-yellow-100`).
+ *  Every semantic state has a token pair (`<state>` + `<state>-foreground`):
+ *    - `primary`     — brand action, focus rings
+ *    - `destructive` — errors, dangerous actions
+ *    - `success`     — completed jobs, healthy state
+ *    - `warning`     — degraded state, "ready to sync"
+ *    - `highlight`   — marker / unverified-claim style
+ *    - `muted`, `accent`, `card`, `popover` — surface scale
+ *  If a new semantic state is needed, add a token here first; never
+ *  inline a hex code or palette name into a component.
+ *
+ *  Spacing
+ *  -------
+ *  Container padding: `p-4` baseline for cards, headers, sheets.
+ *  Dialogs use `p-4 sm:p-6` for visual weight on desktop.
+ *  Header rows: `h-12`. Gap scale: `gap-2`, `gap-3`, `gap-4` only —
+ *  avoid 1.5 / 2.5 / 3.5 for new code (preserves visual rhythm).
+ *
+ *  Radius scale
+ *  ------------
+ *  `--radius` is 0.625rem (~10px). The sm/md/lg/xl/2xl scale is exposed
+ *  for the few components that need rounding (cards, sheets); most
+ *  components stay `rounded-none`. The 3xl/4xl ranks are reserved for
+ *  marketing surfaces (hero cards, narrative blocks).
+ */
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  /* ─── Typography ──────────────────────────────────────────────── */
+  --font-heading: var(--font-mono);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "BlinkMacSystemFont", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", monospace;
+
+  /* ─── Surfaces ────────────────────────────────────────────────── */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+
+  /* ─── Brand & neutrals ────────────────────────────────────────── */
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  /* ─── Status ──────────────────────────────────────────────────── */
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-highlight: var(--highlight);
+  --color-highlight-foreground: var(--highlight-foreground);
+
+  /* ─── Borders, inputs, focus ──────────────────────────────────── */
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  /* ─── Charts ──────────────────────────────────────────────────── */
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  /* ─── Sidebar ─────────────────────────────────────────────────── */
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* ─── Radius scale ────────────────────────────────────────────── */
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  /* Surfaces */
+  --background: oklch(0.954 0 0);
+  --foreground: oklch(0.216 0 0);
+  --card: oklch(0.985 0 0);
+  --card-foreground: oklch(0.216 0 0);
+  --popover: oklch(0.985 0 0);
+  --popover-foreground: oklch(0.216 0 0);
+
+  /* Brand & neutrals */
+  --primary: oklch(0.623 0.168 260.534);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.923 0 0);
+  --secondary-foreground: oklch(0.216 0 0);
+  --muted: oklch(0.923 0 0);
+  --muted-foreground: oklch(0.492 0 0);
+  --accent: oklch(0.923 0 0);
+  --accent-foreground: oklch(0.216 0 0);
+
+  /* Status — saturated foreground colors readable on `bg-card` */
+  --destructive: oklch(0.521 0.155 24.243);
+  --destructive-foreground: oklch(1 0 0);
+  --success: oklch(0.578 0.13 154.5);
+  --success-foreground: oklch(1 0 0);
+  --warning: oklch(0.673 0.156 75);
+  --warning-foreground: oklch(0.216 0 0);
+  --highlight: oklch(0.88 0.165 92);
+  --highlight-foreground: oklch(0.216 0 0);
+
+  /* Borders / inputs / focus */
+  --border: oklch(0.813 0 0);
+  --input: oklch(0.813 0 0);
+  --ring: oklch(0.623 0.168 260.534);
+
+  /* Charts */
+  --chart-1: oklch(0.623 0.168 260.534);
+  --chart-2: oklch(0.524 0.113 156.994);
+  --chart-3: oklch(0.618 0.129 67.505);
+  --chart-4: oklch(0.521 0.155 24.243);
+  --chart-5: oklch(0.492 0 0);
+
+  /* Layout */
+  --radius: 0.625rem;
+
+  /* Sidebar */
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.216 0 0);
+  --sidebar-primary: oklch(0.623 0.168 260.534);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.923 0 0);
+  --sidebar-accent-foreground: oklch(0.216 0 0);
+  --sidebar-border: oklch(0.813 0 0);
+  --sidebar-ring: oklch(0.623 0.168 260.534);
+}
+
+.dark {
+  /* Surfaces */
+  --background: oklch(0.216 0 0);
+  --foreground: oklch(0.947 0 0);
+  --card: oklch(0.259 0 0);
+  --card-foreground: oklch(0.947 0 0);
+  --popover: oklch(0.259 0 0);
+  --popover-foreground: oklch(0.947 0 0);
+
+  /* Brand & neutrals */
+  --primary: oklch(0.574 0.162 262.482);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.321 0 0);
+  --secondary-foreground: oklch(0.947 0 0);
+  --muted: oklch(0.321 0 0);
+  --muted-foreground: oklch(0.641 0 0);
+  --accent: oklch(0.321 0 0);
+  --accent-foreground: oklch(0.947 0 0);
+
+  /* Status — lifted lightness for readability on dark surfaces */
+  --destructive: oklch(0.59 0.147 22.693);
+  --destructive-foreground: oklch(1 0 0);
+  --success: oklch(0.708 0.13 156);
+  --success-foreground: oklch(0.216 0 0);
+  --warning: oklch(0.78 0.156 78);
+  --warning-foreground: oklch(0.216 0 0);
+  --highlight: oklch(0.85 0.17 92);
+  --highlight-foreground: oklch(0.216 0 0);
+
+  /* Borders / inputs / focus */
+  --border: oklch(0.301 0 0);
+  --input: oklch(0.301 0 0);
+  --ring: oklch(0.574 0.162 262.482);
+
+  /* Charts */
+  --chart-1: oklch(0.574 0.162 262.482);
+  --chart-2: oklch(0.633 0.127 157.516);
+  --chart-3: oklch(0.704 0.135 72.294);
+  --chart-4: oklch(0.59 0.147 22.693);
+  --chart-5: oklch(0.641 0 0);
+
+  /* Sidebar */
+  --sidebar: oklch(0.259 0 0);
+  --sidebar-foreground: oklch(0.947 0 0);
+  --sidebar-primary: oklch(0.574 0.162 262.482);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.321 0 0);
+  --sidebar-accent-foreground: oklch(0.947 0 0);
+  --sidebar-border: oklch(0.301 0 0);
+  --sidebar-ring: oklch(0.574 0.162 262.482);
+}
