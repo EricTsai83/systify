@@ -421,24 +421,28 @@ const ActivityRow = memo(function ActivityRow({
           )}
         </p>
         {artifact ? (
-          <button
+          <Button
             type="button"
-            className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-primary hover:underline"
+            variant="link"
+            size="xs"
+            className="mt-1 h-auto px-0 text-[10px] text-primary"
             onClick={() => onViewArtifact(artifact._id)}
           >
             <EyeIcon size={10} weight="bold" />
             View {formatArtifactKind(artifact.kind).toLowerCase()}
-          </button>
+          </Button>
         ) : null}
         {onRetrySync ? (
-          <button
+          <Button
             type="button"
-            className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-destructive hover:underline"
+            variant="link"
+            size="xs"
+            className="mt-1 h-auto px-0 text-[10px] text-destructive"
             onClick={onRetrySync}
           >
             <ArrowsClockwiseIcon size={10} weight="bold" />
             Retry sync
-          </button>
+          </Button>
         ) : null}
       </div>
     </li>
@@ -450,9 +454,9 @@ function toneClassName(tone: OperationTone) {
     case "active":
       return "bg-primary/10 text-primary";
     case "success":
-      return "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400";
+      return "bg-success/10 text-success";
     case "warning":
-      return "bg-amber-500/10 text-amber-600 dark:text-amber-400";
+      return "bg-warning/10 text-warning";
     case "error":
       return "bg-destructive/10 text-destructive";
     case "neutral":

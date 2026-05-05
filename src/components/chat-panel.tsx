@@ -1081,7 +1081,7 @@ function renderAssistantContent(
           // signal that fires on plausibly-half-the-reply for unprompted
           // model output. Theme-aware variants keep contrast acceptable
           // in dark mode without changing semantics.
-          className="rounded-sm bg-yellow-100/70 px-0.5 underline decoration-yellow-500/60 decoration-dotted underline-offset-2 dark:bg-yellow-300/15 dark:decoration-yellow-300/60"
+          className="rounded-sm bg-highlight/20 px-0.5 underline decoration-highlight/70 decoration-dotted underline-offset-2 dark:bg-highlight/15"
           data-testid="unverified-claim"
           // The bubble already labels the role and mode; the title
           // here gives the user an inline tooltip explaining what the

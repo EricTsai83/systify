@@ -13,7 +13,7 @@ import {
 } from "@/lib/operations";
 import type { SandboxModeStatus } from "@/lib/types";
 
-type PillTone = "idle" | "active" | "info" | "warning" | "error";
+type PillTone = "idle" | "active" | "warning" | "error";
 
 type PillState = {
   tone: PillTone;
@@ -54,7 +54,6 @@ type StatusPillProps = {
  *   error   → import or sandbox failed (something is genuinely blocking)
  *   warning → updates available, sandbox expired, sandbox missing
  *   active  → a user-relevant job is running
- *   info    → idle but with something noteworthy (no analysis yet)
  *   idle    → everything is healthy and unremarkable
  *
  * The label is intentionally short — a long string in a top-bar chip steals
@@ -106,7 +105,7 @@ export function StatusPill({
             aria-label="Repository status"
             data-testid="status-pill"
             className={cn(
-              "h-8 min-w-[6.5rem] gap-1.5 px-3 text-xs",
+              "h-8 min-w-26 gap-1.5 px-3 text-xs",
               state.tone !== "error" && pillToneClassName(state.tone),
               className,
             )}
@@ -210,11 +209,9 @@ function derivePillState(input: {
 function pillToneClassName(tone: PillTone) {
   switch (tone) {
     case "warning":
-      return "border-amber-500 bg-card text-amber-700 hover:bg-muted dark:text-amber-400";
+      return "border-warning bg-card text-warning hover:bg-muted";
     case "active":
       return "border-primary bg-card text-primary hover:bg-muted";
-    case "info":
-      return "border-border bg-card text-foreground hover:bg-muted hover:border-foreground/30";
     case "error":
     case "idle":
     default:

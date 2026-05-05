@@ -862,7 +862,7 @@ export function RepositoryShell({
               isSyncing={isSyncing || isRepositorySyncing}
               onSync={() => void handleSync()}
               onRunAnalysis={() => {
-                if (repoDetail.sandboxModeStatus?.reasonCode !== "available") {
+                if (repoDetail.sandboxModeStatus.reasonCode !== "available") {
                   return;
                 }
                 setAnalysisError(null);
