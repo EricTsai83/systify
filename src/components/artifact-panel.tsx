@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
   CaretDownIcon,
+  ChatCircleDotsIcon,
   CircleNotchIcon,
   FileTextIcon,
   GraphIcon,
@@ -11,6 +12,7 @@ import {
 } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
+import { ArtifactMarkdown } from "@/components/artifact-markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -33,16 +35,20 @@ import { cn } from "@/lib/utils";
  * review them without leaving the conversation").
  *
  * The panel is *kind-dispatched*: each artifact's `kind` selects a renderer.
- * For now only `architecture_diagram` has a custom renderer (MermaidRenderer);
- * everything else falls back to a markdown-ish `<pre>` block. The dispatcher
- * is a single `kindRenderers` map so adding ADR / failure-mode renderers in
- * Phase 4 is a one-line change.
+ * `architecture_diagram` renders through MermaidRenderer; everything else
+ * runs through `ArtifactMarkdown` so the structured ADR / failure-mode /
+ * deep-analysis bodies render with proper headings, lists, and code blocks
+ * instead of a wall of preformatted text. Adding a fully bespoke renderer
+ * for a new kind (e.g. a tabular trade-off matrix) is a one-line change in
+ * `kindRenderers`.
  *
- * The panel also hosts the generation CTA for the upstream artifact kind in
- * scope on this branch — a "Generate architecture diagram" affordance that
- * routes through `requestArchitectureDiagram`. Generation is gated on having
- * a repository attached to the thread; the CTA is hidden otherwise so the
- * empty state is honest about the current capability.
+ * The panel also hosts the generation CTAs for thread-scoped artifacts —
+ * architecture diagrams, ADRs, failure-mode analyses — exposed as a
+ * collapsible "+ Generate" affordance so they read as visible operation
+ * launchers (per Surface 2 in the redesign doc), not as hidden three-dot
+ * menu items. Generation is gated on having a repository attached to the
+ * thread; the CTA captions explain the missing precondition rather than
+ * silently disabling.
  */
 export function ArtifactPanel({
   threadId,
@@ -53,6 +59,7 @@ export function ArtifactPanel({
   className,
   selectedArtifactId = null,
   onArtifactSelectionConsumed,
+  onAskAboutArtifact,
 }: {
   threadId: ThreadId | null;
   repositoryArtifacts?: Doc<"artifacts">[];
@@ -70,14 +77,32 @@ export function ArtifactPanel({
    */
   selectedArtifactId?: ArtifactId | null;
   onArtifactSelectionConsumed?: () => void;
+  /**
+   * Surface 4 follow-up: pre-fills the chat input with a templated question
+   * about the artifact and (when available) flips the chat mode to `docs` so
+   * the artifact is in scope for the next reply. The panel is otherwise
+   * read-only — wiring through a callback keeps the chat / mode state owned
+   * by the workspace shell rather than duplicated here.
+   */
+  onAskAboutArtifact?: (artifact: Doc<"artifacts">) => void;
 }) {
   // Query is scoped to thread-level artifacts. A diagram is double-parented
   // (thread + repo), so it shows up here. ADRs and failure modes will follow
   // the same pattern in Phase 4.
   const artifacts = useQuery(api.artifacts.listByThread, threadId && isVisible ? { threadId } : "skip");
   const artifactCount = artifacts?.length ?? 0;
-  const repositoryIntelligence = repositoryArtifacts.filter(
-    (artifact) => artifact.kind === "manifest" || artifact.kind === "deep_analysis",
+  // Filter the repository artifacts down to the two kinds that meaningfully
+  // travel across threads. Memoize so unrelated panel re-renders (citation
+  // jumps, sheet open / close) don't re-allocate on every paint — at small
+  // sizes the cost is trivial, but the filter result also feeds the card
+  // list whose identity stability is what `memo()` on `ArtifactCard`
+  // depends on.
+  const repositoryIntelligence = useMemo(
+    () =>
+      repositoryArtifacts.filter(
+        (artifact) => artifact.kind === "manifest" || artifact.kind === "deep_analysis",
+      ),
+    [repositoryArtifacts],
   );
   const [actionsOpen, setActionsOpen] = useState<boolean | null>(null);
   const effectiveActionsOpen = actionsOpen ?? artifactCount === 0;
@@ -116,6 +141,7 @@ export function ArtifactPanel({
                   artifact={artifact}
                   isSelected={selectedArtifactId === artifact._id}
                   onSelectionConsumed={onArtifactSelectionConsumed}
+                  onAskAboutArtifact={onAskAboutArtifact}
                   featured={artifact.kind === "deep_analysis"}
                 />
               ))}
@@ -149,6 +175,7 @@ export function ArtifactPanel({
                   artifact={artifact}
                   isSelected={selectedArtifactId === artifact._id}
                   onSelectionConsumed={onArtifactSelectionConsumed}
+                  onAskAboutArtifact={onAskAboutArtifact}
                 />
               ))
             )}
@@ -393,11 +420,13 @@ function ArtifactCard({
   artifact,
   isSelected = false,
   onSelectionConsumed,
+  onAskAboutArtifact,
   featured = false,
 }: {
   artifact: Doc<"artifacts">;
   isSelected?: boolean;
   onSelectionConsumed?: () => void;
+  onAskAboutArtifact?: (artifact: Doc<"artifacts">) => void;
   featured?: boolean;
 }) {
   const cardRef = useRef<HTMLDivElement | null>(null);
@@ -443,7 +472,10 @@ function ArtifactCard({
         </CardHeader>
         <CardContent className="p-3 pt-0">
           <ArtifactBody artifact={artifact} />
-          <ArtifactFooter artifact={artifact} />
+          <ArtifactFooter
+            artifact={artifact}
+            onAskAboutArtifact={onAskAboutArtifact}
+          />
         </CardContent>
       </Card>
     </div>
@@ -471,9 +503,12 @@ function ArtifactSection({
 }
 
 /**
- * Kind dispatcher. New artifact kinds with bespoke renderers (ADR, failure
- * mode analysis, etc.) plug in here so the rest of the panel — header,
- * footer, scrolling — stays uniform across kinds.
+ * Kind dispatcher. New artifact kinds with bespoke renderers (e.g. a tabular
+ * trade-off matrix) plug in here so the rest of the panel — header, footer,
+ * scrolling — stays uniform across kinds. Everything not in the map falls
+ * through to the structured-markdown renderer below, which handles ADR,
+ * failure-mode, deep-analysis, and the manifest's repository overview without
+ * any per-kind code.
  */
 function ArtifactBody({ artifact }: { artifact: Doc<"artifacts"> }) {
   const renderer = kindRenderers[artifact.kind] ?? defaultArtifactRenderer;
@@ -485,31 +520,64 @@ const kindRenderers: Partial<Record<Doc<"artifacts">["kind"], (artifact: Doc<"ar
 };
 
 function defaultArtifactRenderer(artifact: Doc<"artifacts">): ReactNode {
+  return <ArtifactMarkdown source={artifact.contentMarkdown} />;
+}
+
+function ArtifactFooter({
+  artifact,
+  onAskAboutArtifact,
+}: {
+  artifact: Doc<"artifacts">;
+  onAskAboutArtifact?: (artifact: Doc<"artifacts">) => void;
+}) {
   return (
-    <pre className="max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-background p-3 text-[11px] leading-snug text-muted-foreground">
-      {artifact.contentMarkdown}
-    </pre>
+    <div className="mt-2 flex flex-col gap-2">
+      {onAskAboutArtifact ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-7 justify-start gap-1.5 px-2 text-[11px] text-primary hover:text-primary"
+          onClick={() => onAskAboutArtifact(artifact)}
+        >
+          <ChatCircleDotsIcon size={12} weight="bold" />
+          Ask about this {askLabelForKind(artifact.kind)}
+        </Button>
+      ) : null}
+      <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+        <span className="inline-flex items-center gap-1">
+          <LightningIcon size={10} weight="bold" />
+          <span className="capitalize">{artifact.source}</span>
+          <span aria-hidden="true">·</span>
+          <span>v{artifact.version}</span>
+        </span>
+        <time
+          dateTime={new Date(artifact._creationTime).toISOString()}
+          className="tabular-nums"
+          title={new Date(artifact._creationTime).toLocaleString()}
+        >
+          {formatRelative(artifact._creationTime)}
+        </time>
+      </div>
+    </div>
   );
 }
 
-function ArtifactFooter({ artifact }: { artifact: Doc<"artifacts"> }) {
-  return (
-    <div className="mt-2 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-      <span className="inline-flex items-center gap-1">
-        <LightningIcon size={10} weight="bold" />
-        <span className="capitalize">{artifact.source}</span>
-        <span aria-hidden="true">·</span>
-        <span>v{artifact.version}</span>
-      </span>
-      <time
-        dateTime={new Date(artifact._creationTime).toISOString()}
-        className="tabular-nums"
-        title={new Date(artifact._creationTime).toLocaleString()}
-      >
-        {formatRelative(artifact._creationTime)}
-      </time>
-    </div>
-  );
+function askLabelForKind(kind: Doc<"artifacts">["kind"]): string {
+  switch (kind) {
+    case "deep_analysis":
+      return "analysis";
+    case "architecture_diagram":
+      return "diagram";
+    case "adr":
+      return "ADR";
+    case "failure_mode_analysis":
+      return "failure mode";
+    case "manifest":
+      return "repository";
+    default:
+      return "artifact";
+  }
 }
 
 function formatRelative(timestamp: number) {

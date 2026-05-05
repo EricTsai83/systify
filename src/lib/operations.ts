@@ -1,4 +1,5 @@
 import type { Doc } from "../../convex/_generated/dataModel";
+import type { SandboxModeStatus } from "./types";
 
 export type OperationTone = "neutral" | "active" | "success" | "warning" | "error";
 
@@ -10,6 +11,18 @@ export type PresentedOperation = {
   isActive: boolean;
 };
 
+/**
+ * Surface descriptor used by the Repository Status Deck. Centralising the
+ * (title, description, tone) computation keeps the three status cards aligned
+ * with the same vocabulary used in the Activity Timeline and the Artifact
+ * panel — see `presentOperation` for the per-job equivalent.
+ */
+export type SurfaceStatus = {
+  title: string;
+  description: string;
+  tone: OperationTone;
+};
+
 const JOB_TITLES: Record<Doc<"jobs">["kind"], string> = {
   import: "Repository sync",
   index: "Repository indexing",
@@ -18,6 +31,13 @@ const JOB_TITLES: Record<Doc<"jobs">["kind"], string> = {
   cleanup: "Repository cleanup",
 };
 
+/**
+ * Stage → user-facing copy. The keys are the raw `jobs.stage` strings the
+ * pipeline emits; values are written for a non-engineer reader so the timeline
+ * and the deck never expose snake_case implementation tokens. Unknown stages
+ * fall back to `humanizeToken` so a new pipeline stage shows readable copy
+ * the same day it ships, even before the table below is updated.
+ */
 const STAGE_LABELS: Record<string, string> = {
   queued: "Waiting for a worker",
   provisioning_sandbox: "Preparing a live sandbox",
@@ -55,11 +75,40 @@ export function presentOperation(job: Doc<"jobs">): PresentedOperation {
   };
 }
 
+/**
+ * The single allowlist of job kinds that surface to end users. Anything not in
+ * this set (e.g. `cleanup`, future webhook reconciliation kinds) is treated
+ * as system maintenance and stays hidden from the Activity Timeline and the
+ * active-job badge — see the design doc Surface 3 ("badge only counts
+ * user-relevant active jobs, not system maintenance").
+ */
+const USER_RELEVANT_JOB_KINDS: ReadonlySet<Doc<"jobs">["kind"]> = new Set([
+  "import",
+  "index",
+  "chat",
+  "deep_analysis",
+]);
+
+/**
+ * UX-rule-of-thumb gate: only background work the user explicitly cares about
+ * appears in the Activity Timeline and contributes to the active-job badge.
+ * `cleanup` and other system maintenance jobs run in the same `jobs` table but
+ * are intentionally hidden.
+ */
 export function isUserRelevantActiveJob(job: Doc<"jobs">) {
   if (job.status !== "queued" && job.status !== "running") {
     return false;
   }
-  return job.kind === "import" || job.kind === "index" || job.kind === "chat" || job.kind === "deep_analysis";
+  return USER_RELEVANT_JOB_KINDS.has(job.kind);
+}
+
+/**
+ * Same gate as `isUserRelevantActiveJob` but for any status — used by the
+ * Activity Timeline so completed / failed user-initiated work shows up in
+ * "recent" history while cleanup chatter stays hidden.
+ */
+export function isUserRelevantJob(job: Doc<"jobs">) {
+  return USER_RELEVANT_JOB_KINDS.has(job.kind);
 }
 
 export function formatArtifactKind(kind: Doc<"artifacts">["kind"]) {
@@ -90,4 +139,135 @@ function humanizeToken(value: string) {
     .filter(Boolean)
     .map((part) => part[0]?.toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+// ---------------------------------------------------------------------------
+// Surface descriptors for the Repository Status Deck.
+// Each surface answers one of the three "can I use this repo right now?"
+// questions — repository intelligence, live sandbox, deep analysis. We keep
+// the (title, description, tone) decision in one module so the StatusDeck,
+// the chat empty-state, and any future status surfaces all read the same
+// vocabulary. Pure functions, no React deps — easy to unit-test and to
+// memoize at the call site.
+// ---------------------------------------------------------------------------
+
+export type RepositoryIntelligenceInput = {
+  importStatus: Doc<"repositories">["importStatus"];
+  isSyncing: boolean;
+  hasRemoteUpdates: boolean;
+};
+
+export function presentRepositoryIntelligenceSurface(input: RepositoryIntelligenceInput): SurfaceStatus {
+  const isBusy = input.isSyncing || input.importStatus === "queued" || input.importStatus === "running";
+  const isFailed = input.importStatus === "failed";
+
+  if (isFailed) {
+    return {
+      title: "Sync needs attention",
+      description: "The last import failed. Retry to restore repo-aware features.",
+      tone: "error",
+    };
+  }
+  if (isBusy) {
+    return {
+      title: "Sync in progress",
+      description: "Indexing files and refreshing repository context.",
+      tone: "active",
+    };
+  }
+  if (input.hasRemoteUpdates) {
+    return {
+      title: "Update available",
+      description: "New commits are available on the remote.",
+      tone: "warning",
+    };
+  }
+  return {
+    title: "Knowledge ready",
+    description: "Indexed context is ready for chat and artifact generation.",
+    tone: "success",
+  };
+}
+
+export type SandboxSurfaceInput = {
+  sandboxModeStatus: SandboxModeStatus;
+  sandbox: { status: string; ttlExpiresAt: number } | null;
+};
+
+/**
+ * Result of `presentSandboxSurface`. `ttlExpiresAt` is only populated on the
+ * `available` branch — that is when "Auto-archives in X" is genuinely useful.
+ * The other branches already carry the relevant urgency in their tone, and a
+ * countdown for an expired/missing sandbox would be misleading.
+ */
+export type SandboxSurfaceStatus = SurfaceStatus & { ttlExpiresAt?: number };
+
+export function presentSandboxSurface(input: SandboxSurfaceInput): SandboxSurfaceStatus {
+  const reasonCode = input.sandboxModeStatus.reasonCode;
+  if (reasonCode === "available") {
+    return {
+      title: "Sandbox ready",
+      description: "Sandbox-backed chat, scans, and deep analysis can inspect the live filesystem.",
+      tone: "success",
+      ttlExpiresAt: input.sandbox?.ttlExpiresAt,
+    };
+  }
+  if (reasonCode === "sandbox_provisioning") {
+    return {
+      title: "Sandbox starting",
+      description: input.sandboxModeStatus.message ?? "The live sandbox is provisioning. This usually takes under a minute.",
+      tone: "active",
+    };
+  }
+  if (reasonCode === "sandbox_expired") {
+    return {
+      title: "Sandbox expired",
+      description: input.sandboxModeStatus.message ?? "The live sandbox archived itself. Sync to provision a fresh one.",
+      tone: "warning",
+    };
+  }
+  if (reasonCode === "sandbox_unavailable") {
+    return {
+      title: "Sandbox error",
+      description: input.sandboxModeStatus.message ?? "The sandbox failed to come up. Sync to try again.",
+      tone: "error",
+    };
+  }
+  // missing_sandbox
+  return {
+    title: "Sandbox unavailable",
+    description: input.sandboxModeStatus.message ?? "Provision or refresh the sandbox to unlock live analysis.",
+    tone: "warning",
+  };
+}
+
+export type DeepAnalysisSurfaceInput = {
+  activeJob: Doc<"jobs"> | null;
+  latestArtifact: Doc<"artifacts"> | undefined;
+};
+
+export function presentDeepAnalysisSurface(input: DeepAnalysisSurfaceInput): SurfaceStatus & {
+  lastCompletedAt?: number;
+} {
+  if (input.activeJob) {
+    const operation = presentOperation(input.activeJob);
+    return {
+      title: operation.stageLabel,
+      description: "A repository-wide analysis is running in the background.",
+      tone: "active",
+    };
+  }
+  if (input.latestArtifact) {
+    return {
+      title: "Latest analysis ready",
+      description: input.latestArtifact.summary,
+      tone: "success",
+      lastCompletedAt: input.latestArtifact._creationTime,
+    };
+  }
+  return {
+    title: "No analysis yet",
+    description: "Run a reusable source-tree analysis for future conversations.",
+    tone: "neutral",
+  };
 }

@@ -538,6 +538,53 @@ describe("citation lint integration (Plan 11)", () => {
     expect(cancelled?.unverifiedClaims).toBeUndefined();
     expect(cancelled?.content).toBe("Cancelled by user.");
   });
+
+  test("recoverStaleChatJob runs the lint on partial sandbox content", async () => {
+    // Same parity rationale as the fail / cancel paths: a sandbox reply
+    // that streamed partial prose before its lease expired must surface
+    // the same unverified-claim highlights the user would have seen on
+    // a clean fail. The recovery mutation is the third terminal-state
+    // entry point; without this test a future refactor could silently
+    // skip the lint here while leaving the other two paths covered.
+    const ownerTokenIdentifier = "user|lint-recover-sandbox";
+    const t = convexTest(schema, modules);
+    const { jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "lint-recover-sandbox",
+    );
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+    });
+
+    // Stream partial content first so `streamSnapshot.content` is
+    // non-empty when the recovery runs the lint.
+    await t.mutation(internal.chat.streaming.appendAssistantStreamChunk, {
+      assistantMessageId,
+      jobId,
+      delta: "The handler dispatches to the worker queue without any retry policy.",
+    });
+
+    // Push the job lease into the past so the recovery actually fires
+    // (the mutation no-ops on a still-leased job).
+    await t.run(async (ctx) => {
+      await ctx.db.patch(jobId, { leaseExpiresAt: Date.now() - 1 });
+    });
+
+    await t.mutation(internal.chat.streaming.recoverStaleChatJob, {
+      jobId,
+    });
+
+    const recovered = await t.run(async (ctx) => await ctx.db.get(assistantMessageId));
+    expect(recovered?.status).toBe("failed");
+    expect(recovered?.content).toBe("The handler dispatches to the worker queue without any retry policy.");
+    expect(recovered?.unverifiedClaims).toHaveLength(1);
+    const range = recovered!.unverifiedClaims![0];
+    expect(recovered!.content.slice(range.start, range.end)).toBe(
+      "The handler dispatches to the worker queue without any retry policy.",
+    );
+  });
 });
 
 /**
@@ -819,6 +866,52 @@ describe("chat tool-call event lifecycle (Plan 06)", () => {
         toolName: "list_dir",
       }),
     ]);
+  });
+
+  test("recoverStaleChatJob runs the lint on partial sandbox content", async () => {
+    // A sandbox reply that stalled mid-stream should still surface the
+    // unverified-claim highlights for the partial content the user can read.
+    // This mirrors the parity contract in the fail/cancel paths: a recovered
+    // bubble in sandbox mode looks like a completed bubble for the partial
+    // content that was streamed before the job lease expired.
+    const ownerTokenIdentifier = "user|lint-recovery-sandbox";
+    const t = convexTest(schema, modules);
+    const { jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "lint-recovery-sandbox",
+    );
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+    });
+
+    // Stream partial content before the job stalls, so the lint sees a
+    // non-empty `streamSnapshot.content` at recovery time.
+    await t.mutation(internal.chat.streaming.appendAssistantStreamChunk, {
+      assistantMessageId,
+      jobId,
+      delta: "The cache bypasses the database without any invalidation logic.",
+    });
+
+    // Push the job lease into the past so recoverStaleChatJob actually fires.
+    await t.run(async (ctx) => {
+      await ctx.db.patch(jobId, { leaseExpiresAt: Date.now() - 1 });
+    });
+
+    await t.mutation(internal.chat.streaming.recoverStaleChatJob, {
+      jobId,
+    });
+
+    const recovered = await t.run(async (ctx) => await ctx.db.get(assistantMessageId));
+    expect(recovered?.status).toBe("failed");
+    expect(recovered?.unverifiedClaims).toHaveLength(1);
+    // Round-trip the persisted offsets through the persisted content;
+    // same offset-alignment guarantee as in the fail/cancel paths.
+    const range = recovered!.unverifiedClaims![0];
+    expect(recovered!.content.slice(range.start, range.end)).toBe(
+      "The cache bypasses the database without any invalidation logic.",
+    );
   });
 
   test("appendAssistantToolCallEvent character-caps oversized summaries", async () => {
