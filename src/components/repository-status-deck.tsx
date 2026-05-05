@@ -43,6 +43,16 @@ export function RepositoryStatusDeck({
   const latestDeepAnalysis = artifacts.find((artifact) => artifact.kind === "deep_analysis");
   const repositoryBusy = isSyncing || repository.importStatus === "queued" || repository.importStatus === "running";
   const repositoryFailed = repository.importStatus === "failed";
+  const isSandboxAvailable = sandboxModeStatus?.reasonCode === "available";
+  const handleRunAnalysis = () => {
+    // Belt-and-braces guard mirroring the disabled state below: if the
+    // sandbox status flips to unavailable between render and click, swallow
+    // the call so we don't open the dialog with a backend that will reject.
+    if (activeDeepAnalysis || !isSandboxAvailable) {
+      return;
+    }
+    onRunAnalysis();
+  };
 
   return (
     <section className="border-b border-border bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.10),transparent_32rem)] px-4 py-3 md:px-6">
@@ -115,8 +125,8 @@ export function RepositoryStatusDeck({
               type="button"
               size="sm"
               variant="default"
-              disabled={Boolean(activeDeepAnalysis)}
-              onClick={onRunAnalysis}
+              disabled={Boolean(activeDeepAnalysis) || !isSandboxAvailable}
+              onClick={handleRunAnalysis}
             >
               <SparkleIcon weight="bold" />
               {activeDeepAnalysis ? "Running" : latestDeepAnalysis ? "Run again" : "Run analysis"}

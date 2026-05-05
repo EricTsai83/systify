@@ -178,7 +178,7 @@ export const getRepositoryDetail = query({
           .eq("repositoryId", args.repositoryId)
           .eq("kind", "deep_analysis")
           .eq("status", "queued")
-          .gte("leaseExpiresAt", now),
+          .gt("leaseExpiresAt", now),
       )
       .first();
     const activeRunningDeepAnalysisJob = await ctx.db
@@ -188,7 +188,7 @@ export const getRepositoryDetail = query({
           .eq("repositoryId", args.repositoryId)
           .eq("kind", "deep_analysis")
           .eq("status", "running")
-          .gte("leaseExpiresAt", now),
+          .gt("leaseExpiresAt", now),
       )
       .first();
     const threads = await ctx.db

@@ -84,7 +84,7 @@ export function ArtifactPanel({
 
   return (
     <aside
-      aria-label="Thread artifacts"
+      aria-label="Repository and thread artifacts"
       className={cn("flex h-full min-h-0 w-80 shrink-0 flex-col border-l border-border bg-muted/20", className)}
     >
       <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">

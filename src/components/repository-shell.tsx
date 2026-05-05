@@ -619,6 +619,9 @@ export function RepositoryShell({
             isSyncing={isSyncing || isRepositorySyncing}
             onSync={() => void handleSync()}
             onRunAnalysis={() => {
+              if (repoDetail.sandboxModeStatus?.reasonCode !== "available") {
+                return;
+              }
               setAnalysisError(null);
               setShowAnalysisDialog(true);
             }}
@@ -692,8 +695,8 @@ export function RepositoryShell({
       {workspaceStatus !== "no-repo" && !isDesktopLayout ? (
         <Sheet open={isArtifactSheetOpen} onOpenChange={setIsArtifactSheetOpen}>
           <SheetContent side="bottom" className="h-[min(75vh,34rem)] rounded-t-2xl border-x border-t p-0" hideClose>
-            <SheetTitle className="sr-only">Artifacts</SheetTitle>
-            <SheetDescription className="sr-only">Persistent outputs for the current conversation.</SheetDescription>
+            <SheetTitle className="sr-only">Results and artifacts</SheetTitle>
+            <SheetDescription className="sr-only">Persistent results and artifacts for the current conversation and attached repository.</SheetDescription>
             <ArtifactPanel
               threadId={effectiveSelectedThreadId}
               repositoryArtifacts={repoDetail?.artifacts}
