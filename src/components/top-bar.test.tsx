@@ -54,6 +54,30 @@ vi.mock("@/components/repo-status-indicator", () => ({
   RepoStatusIndicator: () => null,
 }));
 
+// StatusPill is exercised by its own tests; in TopBar's scope it only matters
+// that the chip is rendered when a repo is attached, not which tone it picks.
+vi.mock("@/components/status-pill", () => ({
+  StatusPill: () => <div data-testid="status-pill" />,
+}));
+
+// StatusPanel mounts inside the desktop Popover and the mobile Sheet. The
+// content rendering is covered in status-panel-focused tests; here we only
+// need a lightweight stand-in so TopBar's surface assertions don't need a
+// repo-aware fixture.
+vi.mock("@/components/status-panel", () => ({
+  StatusPanel: () => <div data-testid="status-panel" />,
+}));
+
+// The Popover wrapper around the desktop StatusPill renders inside a Radix
+// portal, which jsdom can mount but which obscures the assertions below.
+// Stubbing to plain divs keeps the shape (`Trigger > children` + portaled
+// `Content`) addressable while side-stepping the portal/animation machinery.
+vi.mock("@/components/ui/popover", () => ({
+  Popover: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  PopoverTrigger: ({ children }: { children: React.ReactNode; asChild?: boolean }) => <>{children}</>,
+  PopoverContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+}));
+
 import { TopBar, type TopBarRepoDetail } from "./top-bar";
 
 const threadId = "thread_1" as ThreadId;
@@ -66,18 +90,29 @@ afterEach(() => {
 type TopBarTestProps = React.ComponentProps<typeof TopBar>;
 
 function makeRepoDetail(overrides: Partial<TopBarRepoDetail> = {}): TopBarRepoDetail {
+  // The TopBar surface actually reads only `sourceRepoFullName` and
+  // `importStatus` off the repository — the rest of the Convex Doc shape is
+  // irrelevant to this test, so we cast a narrow fixture rather than
+  // hand-typing every field. The `as` form keeps the cast explicit so a future
+  // accidental access to a missing field stays loud (undefined at runtime,
+  // visible in jsdom).
+  const repository = {
+    sourceRepoFullName: "octocat/hello-world",
+    importStatus: "completed",
+    defaultBranch: "main",
+    detectedLanguages: ["TypeScript"],
+  } as unknown as TopBarRepoDetail["repository"];
+
   return {
-    repository: {
-      sourceRepoFullName: "octocat/hello-world",
-      importStatus: "completed",
-      defaultBranch: "main",
-      detectedLanguages: ["TypeScript"],
-    },
+    repository,
     sandbox: null,
     sandboxModeStatus: { reasonCode: "available", message: null },
     hasRemoteUpdates: false,
     fileCount: 12,
     fileCountLabel: "12",
+    jobs: [],
+    activeDeepAnalysisJob: null,
+    artifacts: [],
     ...overrides,
   };
 }
@@ -89,10 +124,14 @@ function createTopBarProps(overrides: Partial<TopBarTestProps> = {}): TopBarTest
     attachedRepository: null,
     availableRepositories: [],
     isSyncing: false,
-    onSync: vi.fn(),
+    isStatusPanelOpen: false,
+    onSetStatusPanelOpen: vi.fn(),
     onDeleteRepo: vi.fn(),
-    onRunAnalysis: vi.fn(),
     onThreadMovedToWorkspace: vi.fn(),
+    isDesktopLayout: true,
+    onSync: vi.fn(),
+    onRunAnalysis: vi.fn(),
+    onViewArtifact: vi.fn(),
     ...overrides,
   };
 }

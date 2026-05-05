@@ -9,6 +9,7 @@ import {
   LockIcon,
   PaperPlaneTiltIcon,
   PlusIcon,
+  SparkleIcon,
   StopCircleIcon,
 } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
@@ -139,6 +140,7 @@ export function ChatPanel({
   onImported,
   onThreadMovedToWorkspace,
   onSelectArtifact,
+  analysisNudge = null,
 }: {
   selectedThreadId: ThreadId | null;
   messages: Doc<"messages">[] | undefined;
@@ -190,6 +192,17 @@ export function ChatPanel({
    * Optional so unit tests and headless renders can omit it.
    */
   onSelectArtifact?: (artifactId: ArtifactId) => void;
+  /**
+   * Optional empty-state nudge that surfaces a deep-analysis CTA below the
+   * "Start a design conversation" card when a repo is attached, no analysis
+   * has been generated yet, and the sandbox is ready to host one. The shell
+   * decides when to pass this in; the panel is purely presentational.
+   *
+   * `null` (default) hides the nudge — used for threads that already have
+   * analysis, are mid-analysis, or whose sandbox isn't ready (where the CTA
+   * would just bounce off the disabled state).
+   */
+  analysisNudge?: { onStart: () => void } | null;
 }) {
   const hasMessages = (messages?.length ?? 0) > 0;
   const availableModeSet = useMemo(() => new Set(availableModes), [availableModes]);
@@ -261,7 +274,7 @@ export function ChatPanel({
         <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 flex-col gap-3 px-6 py-6">
           {sandboxWarning}
           {hasAttachedRepository ? (
-            <EmptyChatHint />
+            <EmptyChatHint analysisNudge={analysisNudge} />
           ) : (
             <EmptyNoRepoHint
               threadId={selectedThreadId}
@@ -524,9 +537,9 @@ function ModeCompactSelect({
   );
 }
 
-function EmptyChatHint() {
+function EmptyChatHint({ analysisNudge }: { analysisNudge: { onStart: () => void } | null }) {
   return (
-    <div className="flex flex-1 animate-in items-center justify-center fade-in duration-300">
+    <div className="flex flex-1 animate-in flex-col items-center justify-center gap-4 fade-in duration-300">
       <Card className="border-transparent bg-transparent p-6 text-center">
         <div className="relative mb-1 inline-grid place-items-center">
           <pre
@@ -547,6 +560,35 @@ function EmptyChatHint() {
           <CardDescription className="text-xs">Architecture · Module dependencies · Risk hotspots</CardDescription>
         </CardHeader>
       </Card>
+      {analysisNudge ? (
+        // Auto-disappears once an analysis exists or starts running, so the
+        // nudge feels like a one-time onboarding hint rather than a persistent
+        // banner. The status panel keeps the same affordance for re-discovery.
+        <Card className="w-full max-w-sm border-dashed border-border/80 bg-muted/30 p-4 text-left">
+          <div className="flex items-start gap-3">
+            <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
+              <SparkleIcon size={14} weight="bold" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">Run a deep analysis first</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+                Build a reusable source-tree analysis so your conversations can cite it. Usually 2–3 minutes.
+              </p>
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                className="mt-3"
+                onClick={analysisNudge.onStart}
+                data-testid="empty-state-run-analysis"
+              >
+                <SparkleIcon weight="bold" />
+                Start analysis
+              </Button>
+            </div>
+          </div>
+        </Card>
+      ) : null}
     </div>
   );
 }
