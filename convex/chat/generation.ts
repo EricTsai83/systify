@@ -37,6 +37,7 @@ import { STREAM_FLUSH_THRESHOLD } from "../lib/constants";
 import { logInfo, logWarn } from "../lib/observability";
 import { estimateCostUsd } from "../lib/openaiPricing";
 import type { ReplyContext } from "./context";
+import { resolveModelForMode } from "./modelSelection";
 import { buildCitationMap, buildHeuristicAnswer, buildSystemPrompt, buildUserPrompt } from "./prompting";
 import { selectRelevantChunks } from "./relevance";
 import { createSandboxTools } from "./sandboxTools";
@@ -99,6 +100,16 @@ export const generateAssistantReply = internalAction({
     // fast exits and the cancel-before-streamText fast exits don't try to
     // extract usage from a non-existent stream.
     let streamResponse: ReturnType<typeof streamText> | undefined;
+
+    // Plan 11 — model name is hoisted for the same reason as `streamResponse`:
+    // the catch block needs to feed the post-throw cost extractor the same
+    // model the stream actually ran on, otherwise a typo in the per-mode env
+    // var (resolved on the success path) would diverge from the legacy
+    // global default the catch path used to fall back to. `undefined`
+    // before `resolveModelForMode` runs — `extractStreamUsage` short-
+    // circuits on `streamResponse === undefined` so the model name is
+    // moot in that case.
+    let modelName: string | undefined;
 
     // Plan 07 — cancellation control plane.
     //
@@ -266,7 +277,12 @@ export const generateAssistantReply = internalAction({
         return;
       }
 
-      const modelName = process.env.OPENAI_MODEL ?? "gpt-4o-mini";
+      // Plan 11 — pick the model based on the queued message's effective
+      // mode. Per-mode overrides keep sandbox on the full GPT-5 tier
+      // (it drives tool use) while letting docs / discuss stay on the
+      // mini tier. See `resolveModelForMode` for the resolution order
+      // (mode-specific override → legacy `OPENAI_MODEL` → default).
+      modelName = resolveModelForMode(replyContext.mode);
       const systemPrompt = buildSystemPrompt(replyContext.mode);
       const userPromptText = buildUserPrompt(replyContext, userPrompt, relevantChunks);
 
@@ -345,6 +361,38 @@ export const generateAssistantReply = internalAction({
         // call shape uniform across paths.
         tools: sandboxTools,
         stopWhen: stepCountIs(SANDBOX_STEP_BUDGET),
+        // Plan 11 — surface the per-step budget consumption to the model
+        // so it can self-pace mid-flight ("3 of 8 tool steps remain;
+        // wrap up if your evidence is sufficient"). Only attached on the
+        // tool-driven path: discuss / docs replies are single-step
+        // text-only and would never reach `prepareStep`'s second
+        // invocation.
+        //
+        // Step 0 reuses the outer `system` prompt verbatim (returning
+        // `undefined`) so we don't lengthen the *first* request — the
+        // base sandbox prompt already advertises the 8-step ceiling.
+        // From step 1 onward we override the system with a short
+        // suffix so the model sees a fresh budget read on each turn.
+        //
+        // The override re-includes the entire base prompt because the
+        // SDK's `system` field is *replace*, not *append*. Without
+        // re-sending it the model would lose every instruction the
+        // base prompt established (citation contract, tool semantics,
+        // network ban) for the rest of the reply — a much worse
+        // regression than the few hundred tokens of repeated context
+        // we save. The mini overhead is amortized across the long-
+        // tail steps that benefit most from the budget cue.
+        prepareStep: sandboxTools
+          ? ({ stepNumber }) => {
+              if (stepNumber === 0) {
+                return undefined;
+              }
+              const remaining = SANDBOX_STEP_BUDGET - stepNumber;
+              return {
+                system: `${systemPrompt}\n\n[Tool-budget reminder: you have used ${stepNumber} of ${SANDBOX_STEP_BUDGET} tool steps; ${remaining} remain. If your evidence is already sufficient, write the final answer now instead of taking another tool step.]`,
+              };
+            }
+          : undefined,
         // Plan 07 — wire the cancellation controller into the SDK so a
         // poll-detected cancel actively tears down the underlying HTTP
         // request. Without this we'd still observe `wasCancelled === true`
@@ -570,8 +618,16 @@ export const generateAssistantReply = internalAction({
       // mid-stream (e.g. provider rate-limit kicking in after the model
       // produced 200 tokens) and the partial cost is real spend that
       // should count against the daily cap.
+      //
+      // Plan 11 — `modelName` is the same per-mode pick the success
+      // path used. The fallback only fires when the catch lands before
+      // `resolveModelForMode` ever ran (e.g. `getReplyContext` threw),
+      // in which case `streamResponse` is also `undefined` and
+      // `extractStreamUsage` short-circuits to `{}` — so the fallback
+      // string is moot at runtime, just there to satisfy the helper's
+      // `string` parameter type.
       const usage = await extractStreamUsage(streamResponse, {
-        modelName: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+        modelName: modelName ?? "gpt-5-mini",
         assistantMessageId: args.assistantMessageId,
         jobId: args.jobId,
       });

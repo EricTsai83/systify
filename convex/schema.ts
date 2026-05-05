@@ -485,6 +485,40 @@ export default defineSchema({
         }),
       ),
     ),
+    /**
+     * Plan 11 — sandbox-mode citation lint output.
+     *
+     * Half-open `[start, end)` offsets into `messages.content` marking
+     * sentences the model emitted without either (a) a `[path:line]`
+     * citation pointing at a tool-verified source, or (b) the literal
+     * `Unverified:` excuse prefix the system prompt teaches. Used by the
+     * chat bubble to render a soft yellow `<mark>` underline so the user
+     * can read flagged sentences with extra skepticism — non-blocking by
+     * design (we never reject the model's output).
+     *
+     * Computed by `convex/chat/citationLint.ts:lintCitations` at finalize
+     * / fail / cancel time. Optional + only written for sandbox-mode
+     * replies that produced at least one flagged sentence; messages
+     * predating Plan 11 (and discuss / docs replies) keep the field
+     * unset rather than `[]` — the renderer treats both as "no
+     * highlights", so this matches the widen-migrate-narrow contract
+     * documented in `docs/sandbox-mode-system-design.md`.
+     *
+     * Capped at `MAX_UNVERIFIED_CLAIMS_PER_MESSAGE` (50) inside the lint
+     * function so a runaway pathological reply cannot push the message
+     * document past Convex's 1 MB row limit. Offsets are over UTF-16
+     * code units, the same indexing the renderer uses to slice the
+     * content, so `content.slice(start, end)` round-trips losslessly to
+     * the flagged sentence text.
+     */
+    unverifiedClaims: v.optional(
+      v.array(
+        v.object({
+          start: v.number(),
+          end: v.number(),
+        }),
+      ),
+    ),
   })
     .index("by_threadId", ["threadId"])
     .index("by_threadId_and_status", ["threadId", "status"])

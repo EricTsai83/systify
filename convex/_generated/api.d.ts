@@ -17,6 +17,7 @@ import type * as chat_cancel from "../chat/cancel.js";
 import type * as chat_citationLint from "../chat/citationLint.js";
 import type * as chat_context from "../chat/context.js";
 import type * as chat_generation from "../chat/generation.js";
+import type * as chat_modelSelection from "../chat/modelSelection.js";
 import type * as chat_prompting from "../chat/prompting.js";
 import type * as chat_redaction from "../chat/redaction.js";
 import type * as chat_relevance from "../chat/relevance.js";
@@ -77,6 +78,7 @@ declare const fullApi: ApiFromModules<{
   "chat/citationLint": typeof chat_citationLint;
   "chat/context": typeof chat_context;
   "chat/generation": typeof chat_generation;
+  "chat/modelSelection": typeof chat_modelSelection;
   "chat/prompting": typeof chat_prompting;
   "chat/redaction": typeof chat_redaction;
   "chat/relevance": typeof chat_relevance;

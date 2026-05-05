@@ -383,6 +383,276 @@ describe("ChatPanel mode badge and inline citations", () => {
 });
 
 /**
+ * Plan 11 — sandbox-mode citation lint highlights. The renderer reads
+ * `messages.unverifiedClaims` and wraps the flagged offset ranges in a
+ * `<mark>` so the user can scan unverified prose with extra skepticism.
+ * Coverage targets:
+ *
+ *   - Flagged ranges render as `<mark data-testid="unverified-claim">`
+ *     wrapping exactly the flagged substring.
+ *   - The highlight composes with the docs-mode `[A#]` citation rewrite:
+ *     a flagged sentence that contains a resolvable `[A#]` token still
+ *     produces a working button *inside* the `<mark>` wrapper.
+ *   - Streaming / pending replies skip the highlight (the lint hasn't
+ *     run yet on the live content; applying stale ranges would
+ *     mismark arbitrary character positions in the live delta).
+ *   - `undefined` / empty `unverifiedClaims` produce no `<mark>` (so
+ *     pre-Plan-11 messages and clean replies render unchanged).
+ *   - Out-of-order ranges are handled defensively without crashing —
+ *     the renderer sorts a copy before walking, so a hypothetical
+ *     future schema relaxation cannot brick the bubble.
+ */
+describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
+  test("wraps each unverified range in a <mark> covering exactly the flagged sentence", () => {
+    // The lint emits offsets that round-trip with `content.slice(start, end)`.
+    // The renderer slices with the same offsets, so the marked text must
+    // match the lint's sentence exactly — no leading whitespace, no
+    // missing terminator.
+    const content =
+      "The handler validates the payload [convex/api/foo.ts:12-30]. " +
+      "Then it dispatches to a worker queue without retry semantics.";
+    // Match the offsets produced by the citation lint for this fixture.
+    const start = content.indexOf("Then it dispatches");
+    const end = start + "Then it dispatches to a worker queue without retry semantics.".length;
+
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "completed",
+            mode: "sandbox",
+            content,
+            unverifiedClaims: [{ start, end }],
+            errorMessage: undefined,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="sandbox"
+        setChatMode={vi.fn()}
+        availableModes={["sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const mark = screen.getByTestId("unverified-claim");
+    expect(mark.tagName.toLowerCase()).toBe("mark");
+    // textContent normalizes any nested fragments back to a single
+    // string so we can pin the wrapped text without depending on the
+    // run-splitting structure.
+    expect(mark.textContent).toBe("Then it dispatches to a worker queue without retry semantics.");
+  });
+
+  test("preserves citation buttons inside an unverified range (highlight + click compose)", () => {
+    // A flagged sentence that happens to contain a resolvable `[A#]`
+    // token is the most realistic composition case: the lint flags
+    // sandbox sentences that lack `[path:line]` — `[A#]` does not
+    // count as a satisfaction of that contract — but the docs-mode
+    // citation map can still be present (sandbox prompts also see
+    // artifacts). The button must remain clickable and forward the
+    // artifact id, even though it lives inside the `<mark>`.
+    const onSelectArtifact = vi.fn();
+    const artifactId = "artifact_alpha" as ArtifactId;
+    const content = "This sentence cites [A1] but not at file:line.";
+    const start = 0;
+    const end = content.length;
+
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "completed",
+            mode: "sandbox",
+            content,
+            citationMap: [{ index: 1, artifactId }],
+            unverifiedClaims: [{ start, end }],
+            errorMessage: undefined,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="sandbox"
+        setChatMode={vi.fn()}
+        availableModes={["sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+        onSelectArtifact={onSelectArtifact}
+      />,
+    );
+
+    const mark = screen.getByTestId("unverified-claim");
+    const button = screen.getByTestId("citation-link-1");
+    // Button lives inside the <mark> wrapper rather than as a sibling.
+    expect(mark).toContainElement(button);
+    // Click still resolves the artifact; the highlight wrapper does
+    // not eat the event.
+    fireEvent.click(button);
+    expect(onSelectArtifact).toHaveBeenCalledWith(artifactId);
+  });
+
+  test("does not render unverified-claim highlights while the message is still streaming", () => {
+    // The lint runs at finalize / fail / cancel time; mid-stream the
+    // ranges in `messages.unverifiedClaims` (if any are present from
+    // a previous reply on the same row, which can't happen in
+    // production but the renderer must still degrade safely) would
+    // index against the live `activeMessageStream.content` and
+    // mis-mark arbitrary character positions. Gating on terminal
+    // status is the same gate the cost-ticker uses.
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "streaming",
+            mode: "sandbox",
+            content: "",
+            unverifiedClaims: [{ start: 0, end: 10 }],
+            errorMessage: undefined,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={{
+          assistantMessageId,
+          content: "live partial content",
+          startedAt: Date.now(),
+          lastAppendedAt: Date.now(),
+        }}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="sandbox"
+        setChatMode={vi.fn()}
+        availableModes={["sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("unverified-claim")).not.toBeInTheDocument();
+    // The streamed content still renders without the (gated) highlight.
+    expect(screen.getByText("live partial content")).toBeInTheDocument();
+  });
+
+  test("renders no <mark> when unverifiedClaims is undefined or empty", () => {
+    // Pre-Plan-11 messages and clean (fully-cited) replies have
+    // `unverifiedClaims === undefined`. Both must render without
+    // any highlight so the bubble looks identical to the pre-lint
+    // shape.
+    for (const claims of [undefined, []] as const) {
+      const { unmount } = render(
+        <ChatPanel
+          selectedThreadId={threadId}
+          messages={[
+            {
+              _id: assistantMessageId,
+              role: "assistant",
+              status: "completed",
+              mode: "sandbox",
+              content: "All claims cite the source [convex/api/foo.ts:1-10].",
+              unverifiedClaims: claims,
+              errorMessage: undefined,
+            } as unknown as Doc<"messages">,
+          ]}
+          activeMessageStream={null}
+          isChatLoading={false}
+          chatInput=""
+          setChatInput={vi.fn()}
+          chatMode="sandbox"
+          setChatMode={vi.fn()}
+          availableModes={["sandbox"]}
+          disabledModeReasons={{}}
+          isSending={false}
+          onSendMessage={vi.fn()}
+          sandboxModeStatus={{ reasonCode: "available", message: null }}
+          isSyncing={false}
+          onSync={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByTestId("unverified-claim")).not.toBeInTheDocument();
+      unmount();
+    }
+  });
+
+  test("handles out-of-order ranges defensively without dropping the bubble", () => {
+    // The lint emits sorted ranges, but the renderer must not assume
+    // sorted input — a hypothetical future schema relaxation that
+    // hands us reversed ranges should still produce *some* sensible
+    // rendering (sorted internally) rather than crash on a negative
+    // slice.
+    const content = "First sentence here. Second sentence next.";
+    const firstStart = content.indexOf("First sentence here.");
+    const firstEnd = firstStart + "First sentence here.".length;
+    const secondStart = content.indexOf("Second sentence next.");
+    const secondEnd = secondStart + "Second sentence next.".length;
+
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "completed",
+            mode: "sandbox",
+            content,
+            unverifiedClaims: [
+              { start: secondStart, end: secondEnd },
+              { start: firstStart, end: firstEnd },
+            ],
+            errorMessage: undefined,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="sandbox"
+        setChatMode={vi.fn()}
+        availableModes={["sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const marks = screen.getAllByTestId("unverified-claim");
+    expect(marks).toHaveLength(2);
+    // Internal sorting means the DOM order matches the textual order
+    // even though the input order was reversed.
+    expect(marks[0].textContent).toBe("First sentence here.");
+    expect(marks[1].textContent).toBe("Second sentence next.");
+  });
+});
+
+/**
  * Plan 07 — Stop button toggles in for Send while the latest assistant
  * message is still streaming / pending. Coverage targets:
  *

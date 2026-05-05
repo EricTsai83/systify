@@ -80,9 +80,7 @@ describe("lintCitations", () => {
     // third has the Unverified: prefix.
     expect(ranges).toHaveLength(1);
     const [range] = ranges;
-    expect(content.slice(range.start, range.end)).toBe(
-      "Then it dispatches to a worker queue without retry semantics.",
-    );
+    expect(content.slice(range.start, range.end)).toBe("Then it dispatches to a worker queue without retry semantics.");
   });
 
   test("emits non-overlapping, ascending ranges for multiple flagged sentences", () => {
@@ -126,9 +124,7 @@ describe("lintCitations", () => {
     const [range] = ranges;
     // Only the trailing prose sentence is flagged; the code block (and
     // its embedded comment-with-period) is left alone.
-    expect(content.slice(range.start, range.end)).toBe(
-      "The dispatch is asynchronous and does not await the result.",
-    );
+    expect(content.slice(range.start, range.end)).toBe("The dispatch is asynchronous and does not await the result.");
   });
 
   test("ranges align with offsets the frontend can slice without surprises", () => {
@@ -168,9 +164,7 @@ describe("lintCitations", () => {
     // flagged; the sentence after the paragraph break is.
     expect(ranges).toHaveLength(1);
     const [range] = ranges;
-    expect(content.slice(range.start, range.end)).toBe(
-      "The downstream consumer never acknowledges receipt.",
-    );
+    expect(content.slice(range.start, range.end)).toBe("The downstream consumer never acknowledges receipt.");
   });
 
   test("does not mistake [A#] artifact citations for code citations", () => {

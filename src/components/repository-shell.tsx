@@ -281,6 +281,19 @@ export function RepositoryShell({
   const [showAnalysisDialog, setShowAnalysisDialog] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  /**
+   * Transient info-level banner — used to confirm async background work was
+   * successfully queued (e.g. "Deep analysis queued") even before the next
+   * Convex tick reflects the new active job in the deck and timeline. Auto-
+   * dismisses on a timer so the surface doesn't accumulate stale notices;
+   * any new notice replaces the previous one and resets the timer.
+   */
+  const [actionNotice, setActionNotice] = useState<{ title: string; message: string } | null>(null);
+  useEffect(() => {
+    if (!actionNotice) return;
+    const timer = window.setTimeout(() => setActionNotice(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [actionNotice]);
   const [isArtifactPanelOpen, setIsArtifactPanelOpen, isArtifactPanelHydrated] = useLocalStorageBoolean(
     "systify.artifactPanel.open",
     true,
@@ -457,6 +470,35 @@ export function RepositoryShell({
     setSelectedArtifactId(null);
   }, []);
 
+  /**
+   * Surface 4 follow-up: artifact card "Ask about this …" affordance. We
+   * pre-fill the chat input with a templated question so the user can edit
+   * before sending; if `docs` mode is available we flip there so the
+   * artifact is in scope for the next reply (docs mode auto-includes
+   * thread artifacts in the prompt). On mobile we close the artifact sheet
+   * so the chat input becomes visible — without that the user would tap
+   * the button and see nothing change because the sheet still covers the
+   * chat panel.
+   *
+   * If the user is mid-typing in the chat input, append the prompt rather
+   * than overwriting — silently discarding unsent text would feel like
+   * stolen work. We use `setChatInput` callback form so we read the latest
+   * value and never race a parallel update.
+   */
+  const handleAskAboutArtifact = useCallback(
+    (artifact: Doc<"artifacts">) => {
+      const prompt = `Tell me more about "${artifact.title}". What should I take away from it, and what follow-ups should we consider?`;
+      setChatInput((current) => (current.trim() ? `${current.trimEnd()}\n\n${prompt}` : prompt));
+      if (capabilities.availableModes.includes("docs")) {
+        setPickedChatMode({ threadId: urlThreadId, mode: "docs" });
+      }
+      if (!isDesktopLayout) {
+        setIsArtifactSheetOpen(false);
+      }
+    },
+    [capabilities.availableModes, isDesktopLayout, urlThreadId],
+  );
+
   useEffect(() => {
     if (workspaceStatus === "no-repo") {
       return;
@@ -558,6 +600,7 @@ export function RepositoryShell({
     setChatInput,
     setActionError,
     setAnalysisError,
+    setActionNotice,
     onAfterDeleteThread: () => {
       // After deletion the thread no longer exists. Send the user back to the
       // landing so the redirect-to-most-recent or empty-state logic re-resolves.
@@ -606,12 +649,17 @@ export function RepositoryShell({
           <div className="border-b border-border px-6 py-3">
             <AppNotice title="Action failed" message={actionError} tone="error" />
           </div>
+        ) : actionNotice ? (
+          <div className="border-b border-border px-6 py-3">
+            <AppNotice title={actionNotice.title} message={actionNotice.message} tone="info" />
+          </div>
         ) : null}
 
         {repoDetail ? (
           <RepositoryStatusDeck
             repository={repoDetail.repository}
             sandboxModeStatus={repoDetail.sandboxModeStatus}
+            sandbox={repoDetail.sandbox}
             jobs={repoDetail.jobs}
             activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
             artifacts={repoDetail.artifacts}
@@ -625,6 +673,7 @@ export function RepositoryShell({
               setAnalysisError(null);
               setShowAnalysisDialog(true);
             }}
+            onViewArtifact={handleSelectArtifact}
           />
         ) : null}
 
@@ -683,6 +732,7 @@ export function RepositoryShell({
                       className="h-full w-80 border-l-0 lg:flex"
                       selectedArtifactId={selectedArtifactId}
                       onArtifactSelectionConsumed={handleArtifactSelectionConsumed}
+                      onAskAboutArtifact={handleAskAboutArtifact}
                     />
                   </div>
                 </div>
@@ -696,7 +746,9 @@ export function RepositoryShell({
         <Sheet open={isArtifactSheetOpen} onOpenChange={setIsArtifactSheetOpen}>
           <SheetContent side="bottom" className="h-[min(75vh,34rem)] rounded-t-2xl border-x border-t p-0" hideClose>
             <SheetTitle className="sr-only">Results and artifacts</SheetTitle>
-            <SheetDescription className="sr-only">Persistent results and artifacts for the current conversation and attached repository.</SheetDescription>
+            <SheetDescription className="sr-only">
+              Persistent results and artifacts for the current conversation and attached repository.
+            </SheetDescription>
             <ArtifactPanel
               threadId={effectiveSelectedThreadId}
               repositoryArtifacts={repoDetail?.artifacts}
@@ -706,6 +758,7 @@ export function RepositoryShell({
               className="flex h-full w-full border-l-0"
               selectedArtifactId={selectedArtifactId}
               onArtifactSelectionConsumed={handleArtifactSelectionConsumed}
+              onAskAboutArtifact={handleAskAboutArtifact}
             />
           </SheetContent>
         </Sheet>

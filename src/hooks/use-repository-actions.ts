@@ -23,6 +23,7 @@ export function useRepositoryActions({
   setChatInput,
   setActionError,
   setAnalysisError,
+  setActionNotice,
   onAfterDeleteThread,
   onAfterDeleteRepo,
   setThreadToDelete,
@@ -38,6 +39,14 @@ export function useRepositoryActions({
   setChatInput: (value: string) => void;
   setActionError: (value: string | null) => void;
   setAnalysisError: (value: string | null) => void;
+  /**
+   * Optional info-level transient banner — used to confirm long-running
+   * background work was successfully queued (e.g. "Deep analysis queued").
+   * The shell auto-dismisses these after a few seconds; we accept it as an
+   * optional dependency so existing call sites don't have to thread it
+   * through if they don't care.
+   */
+  setActionNotice?: (value: { title: string; message: string } | null) => void;
   /**
    * Fired after a thread has been deleted. The argument is the deleted thread
    * id; callers compare it with the currently visible thread to decide
@@ -112,6 +121,16 @@ export function useRepositoryActions({
       try {
         await requestDeepAnalysis({ repositoryId: selectedRepositoryId, prompt: analysisPrompt });
         setShowAnalysisDialog(false);
+        // Success feedback (Phase 1, redesign Surface 1). The deck card and
+        // activity timeline both flip to "Waiting for a worker" via the
+        // Convex subscription within a tick, but the dialog dismissal
+        // happens immediately and a brief click → blank-screen gap is
+        // disorientating. The transient notice gives the user a deterministic
+        // "your action was queued" signal regardless of subscription latency.
+        setActionNotice?.({
+          title: "Deep analysis queued",
+          message: "Track progress in the Activity timeline above.",
+        });
       } catch (error) {
         const message = toUserErrorMessage(error, "Failed to start deep analysis.");
         setActionError(message);
@@ -122,6 +141,7 @@ export function useRepositoryActions({
       requestDeepAnalysis,
       selectedRepositoryId,
       setActionError,
+      setActionNotice,
       setAnalysisError,
       setShowAnalysisDialog,
     ]),

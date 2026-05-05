@@ -19,6 +19,24 @@ export function formatRelativeTime(timestamp: number): string {
   return `${days}d ago`;
 }
 
+/**
+ * Returns a compact, forward-looking time string (e.g. "in 23 min", "in 2h").
+ * Non-positive deltas collapse to "soon" so a clock skew or a state that has
+ * just transitioned past its deadline still renders something sensible
+ * instead of a negative number.
+ */
+export function formatTimeUntil(timestamp: number): string {
+  const seconds = Math.floor((timestamp - Date.now()) / 1000);
+  if (seconds <= 0) return "soon";
+  if (seconds < 60) return "in <1 min";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `in ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `in ${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `in ${days}d`;
+}
+
 /** Truncates a commit SHA to the conventional 7-char short form. */
 export function shortSha(sha: string): string {
   return sha.slice(0, 7);
