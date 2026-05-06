@@ -44,6 +44,9 @@ This folder contains the system design documentation for the current Systify cod
 - `workspace-persistence-system-design.md`
   - Why is the viewer's "current workspace" stored in both Convex and localStorage?
   - How does DB-wins reconciliation give cross-device continuity without a first-paint flash?
+- `sandbox-tool-call-audit-log-system-design.md`
+  - Why does sandbox tool-call recording need a third table beyond `messageToolCallEvents` and `messages.toolCalls`?
+  - How does best-effort writing plus a 90-day TTL keep compliance evidence durable without coupling to user-initiated deletes?
 
 ## Implementation Coverage
 
@@ -60,6 +63,7 @@ The current codebase keeps system-design documentation for all implemented high-
 - Vercel + Convex deployment model: `vercel-convex-deployment-system-design.md`
 - GitHub callback returnTo allowlist boundary: `github-callback-returnto-allowlist-system-design.md`
 - Workspace persistence and cross-device continuity: `workspace-persistence-system-design.md`
+- Sandbox tool-call audit log retention and recording boundary: `sandbox-tool-call-audit-log-system-design.md`
 
 ## What Each Document Answers
 

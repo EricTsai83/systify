@@ -609,6 +609,71 @@ export default defineSchema({
     occurredAt: v.number(),
   }).index("by_messageId_and_sequence", ["messageId", "sequence"]),
 
+  /**
+   * Plan 12 — Sandbox tool-call audit log.
+   *
+   * One row per *completed* sandbox tool execution (success or tool-reported
+   * error). Distinct from `messageToolCallEvents` (Plan 06's ephemeral
+   * ticker feed, drained at finalize) and `messages.toolCalls` (Plan 06's
+   * frozen per-message trace, lives as long as the parent message): this
+   * table is the long-lived compliance / internal-debugging trail. It
+   * outlives individual messages so a thread deletion does not erase the
+   * record of which files were read or which commands were run.
+   *
+   * Lifecycle:
+   *   - **Append**: written from `convex/chat/generation.ts` once per
+   *     `tool-result` / `tool-error` event the AI SDK surfaces, *after*
+   *     the matching Plan 06 event row, via
+   *     `convex/chat/sandboxToolCallLog.ts:recordSandboxToolCallLogEntry`.
+   *   - **Query**: `by_owner_and_time` answers "what user X did between
+   *     time A and B"; the implicit `_creationTime` secondary sort
+   *     delivers the time component without an extra field.
+   *     `by_message` lets a future audit consumer or debugging session
+   *     pivot from a specific assistant message into the tool calls it
+   *     ran.
+   *   - **Retain**: 90 days, enforced by the daily cron
+   *     `cleanupExpiredSandboxToolCallLogs`. Time-based retention only —
+   *     parent deletion (thread / repo cascades) intentionally does *not*
+   *     drain this table, so a user-initiated delete cannot erase the
+   *     compliance trail mid-window. The 90-day TTL bounds growth.
+   *
+   * Field notes:
+   *   - `inputJson` is the redacted, JSON-stringified tool input (`part.input`
+   *     from the AI SDK). The mutation re-caps via
+   *     `SANDBOX_TOOL_CALL_LOG_INPUT_MAX_CHARS` (2000) — distinct from
+   *     Plan 06's UI-visible 600-char cap so audit recording preserves
+   *     more of long `run_shell` invocations.
+   *   - `outputBytes` is the byte length of the JSON-stringified tool
+   *     output (`part.output`), pre-redaction. The audit log deliberately
+   *     does *not* duplicate the output payload — `messages.toolCalls`
+   *     already stores a 600-char redacted summary; this table just
+   *     records the volume.
+   *   - `durationMs` is the wall-clock time between the AI SDK's
+   *     `tool-call` event and its matching `tool-result` / `tool-error`,
+   *     measured by the action.
+   *   - `errorCode` mirrors the tool's reported `errorCode` on
+   *     `ok: false` envelopes; `"tool_error"` on AI SDK `tool-error`
+   *     events; absent on success.
+   *   - `redactedFields` carries the success envelope's `redactedTypes`
+   *     (closed set in `convex/chat/redaction.ts`) so audit consumers
+   *     can detect "this tool call had a secret in the response" without
+   *     reading the response itself. Empty on error envelopes.
+   */
+  sandboxToolCallLog: defineTable({
+    ownerTokenIdentifier: v.string(),
+    threadId: v.id("threads"),
+    messageId: v.id("messages"),
+    sandboxId: v.id("sandboxes"),
+    toolName: v.string(),
+    inputJson: v.string(),
+    outputBytes: v.number(),
+    durationMs: v.number(),
+    errorCode: v.optional(v.string()),
+    redactedFields: v.array(v.string()),
+  })
+    .index("by_owner_and_time", ["ownerTokenIdentifier"])
+    .index("by_message", ["messageId"]),
+
   githubInstallations: defineTable({
     ownerTokenIdentifier: v.string(),
     installationId: v.number(),

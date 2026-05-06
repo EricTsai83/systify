@@ -118,7 +118,12 @@ function parseMarkdown(source: string): Block[] {
     const paragraph: string[] = [];
     while (i < lines.length) {
       const candidate = lines[i] ?? "";
-      if (candidate.trim() === "" || /^#{1,4}\s+/.test(candidate) || /^\s*[-*]\s+/.test(candidate) || /^```/.test(candidate)) {
+      if (
+        candidate.trim() === "" ||
+        /^#{1,4}\s+/.test(candidate) ||
+        /^\s*[-*]\s+/.test(candidate) ||
+        /^```/.test(candidate)
+      ) {
         break;
       }
       paragraph.push(candidate);
@@ -212,10 +217,7 @@ function renderInline(text: string): ReactNode {
     if (!part) return null;
     if (part.startsWith("`") && part.endsWith("`") && part.length >= 2) {
       return (
-        <code
-          key={index}
-          className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground"
-        >
+        <code key={index} className="rounded bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground">
           {part.slice(1, -1)}
         </code>
       );

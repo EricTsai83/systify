@@ -82,12 +82,7 @@ export function presentOperation(job: Doc<"jobs">): PresentedOperation {
  * active-job badge — see the design doc Surface 3 ("badge only counts
  * user-relevant active jobs, not system maintenance").
  */
-const USER_RELEVANT_JOB_KINDS: ReadonlySet<Doc<"jobs">["kind"]> = new Set([
-  "import",
-  "index",
-  "chat",
-  "deep_analysis",
-]);
+const USER_RELEVANT_JOB_KINDS: ReadonlySet<Doc<"jobs">["kind"]> = new Set(["import", "index", "chat", "deep_analysis"]);
 
 /**
  * UX-rule-of-thumb gate: only background work the user explicitly cares about
@@ -215,14 +210,16 @@ export function presentSandboxSurface(input: SandboxSurfaceInput): SandboxSurfac
   if (reasonCode === "sandbox_provisioning") {
     return {
       title: "Sandbox starting",
-      description: input.sandboxModeStatus.message ?? "The live sandbox is provisioning. This usually takes under a minute.",
+      description:
+        input.sandboxModeStatus.message ?? "The live sandbox is provisioning. This usually takes under a minute.",
       tone: "active",
     };
   }
   if (reasonCode === "sandbox_expired") {
     return {
       title: "Sandbox expired",
-      description: input.sandboxModeStatus.message ?? "The live sandbox archived itself. Sync to provision a fresh one.",
+      description:
+        input.sandboxModeStatus.message ?? "The live sandbox archived itself. Sync to provision a fresh one.",
       tone: "warning",
     };
   }

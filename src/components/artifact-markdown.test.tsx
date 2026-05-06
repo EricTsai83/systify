@@ -38,9 +38,7 @@ describe("ArtifactMarkdown", () => {
   });
 
   test("renders inline code, bold, and italic", () => {
-    const { container } = render(
-      <ArtifactMarkdown source={"Use `foo` with **bold** and *emphasis*."} />,
-    );
+    const { container } = render(<ArtifactMarkdown source={"Use `foo` with **bold** and *emphasis*."} />);
     expect(container.querySelector("code")?.textContent).toBe("foo");
     expect(container.querySelector("strong")?.textContent).toBe("bold");
     expect(container.querySelector("em")?.textContent).toBe("emphasis");

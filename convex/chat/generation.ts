@@ -40,6 +40,11 @@ import type { ReplyContext } from "./context";
 import { resolveModelForMode } from "./modelSelection";
 import { buildCitationMap, buildHeuristicAnswer, buildSystemPrompt, buildUserPrompt } from "./prompting";
 import { selectRelevantChunks } from "./relevance";
+import {
+  countUtf8Bytes,
+  extractAuditMetadataFromToolOutput,
+  tryRecordSandboxToolCallLogEntry,
+} from "./sandboxToolCallLog";
 import { createSandboxTools } from "./sandboxTools";
 import { redact } from "./redaction";
 
@@ -494,6 +499,33 @@ export const generateAssistantReply = internalAction({
               occurredAt,
             });
 
+            // Plan 12 — append an audit-log row alongside the live event.
+            // Two independent transactions (best-effort wrapper catches
+            // any failure as a warning) so a transient audit-log outage
+            // cannot tear down a reply that already produced its tool
+            // effect. `outputBytes` reflects the *pre-redaction* JSON
+            // size — it is a volume signal for compliance audits, not a
+            // length of the redacted display string. Gated on
+            // `sandboxTooling` because that is the only context where the
+            // sandboxId we key against is actually known; a stray
+            // tool-result on a non-sandbox reply is malformed and is
+            // logged for Plan 06's trace but not the audit log.
+            if (replyContext.sandboxTooling) {
+              const auditMetadata = extractAuditMetadataFromToolOutput(part.output);
+              await tryRecordSandboxToolCallLogEntry(ctx, {
+                ownerTokenIdentifier: replyContext.ownerTokenIdentifier,
+                threadId: args.threadId,
+                messageId: args.assistantMessageId,
+                sandboxId: replyContext.sandboxTooling.sandboxId,
+                toolName: toolCall?.toolName ?? part.toolName,
+                inputJson: toolCall?.inputSummary ?? "{}",
+                outputBytes: countUtf8Bytes(resultJson),
+                durationMs: toolCall ? Math.max(0, occurredAt - toolCall.startedAt) : 0,
+                errorCode: auditMetadata.errorCode,
+                redactedFields: auditMetadata.redactedFields,
+              });
+            }
+
             logInfo("chat", "sandbox_tool_result", {
               assistantMessageId: args.assistantMessageId,
               jobId: args.jobId,
@@ -527,6 +559,29 @@ export const generateAssistantReply = internalAction({
               errorCode: "tool_error",
               occurredAt,
             });
+
+            // Plan 12 — audit log entry on the AI SDK error path. The
+            // error already happened (the tool's `execute` threw), so
+            // `outputBytes` is 0 and `redactedFields` is empty; the
+            // useful audit signal is "this tool call was attempted and
+            // surfaced an SDK-level error" which `errorCode: "tool_error"`
+            // captures. Distinguished from envelope-reported errors
+            // (`extractAuditMetadataFromToolOutput`) which use the
+            // tool's own structured `errorCode` like `path_outside_repo`.
+            if (replyContext.sandboxTooling) {
+              await tryRecordSandboxToolCallLogEntry(ctx, {
+                ownerTokenIdentifier: replyContext.ownerTokenIdentifier,
+                threadId: args.threadId,
+                messageId: args.assistantMessageId,
+                sandboxId: replyContext.sandboxTooling.sandboxId,
+                toolName: toolCall?.toolName ?? part.toolName,
+                inputJson: toolCall?.inputSummary ?? "{}",
+                outputBytes: 0,
+                durationMs: toolCall ? Math.max(0, occurredAt - toolCall.startedAt) : 0,
+                errorCode: "tool_error",
+                redactedFields: [],
+              });
+            }
 
             logWarn("chat", "sandbox_tool_error", {
               assistantMessageId: args.assistantMessageId,

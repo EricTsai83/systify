@@ -41,9 +41,17 @@ export type ReplyContext = {
    * repository, and `undefined` in every other case (discuss, docs, missing
    * sandbox, sandbox not in `ready` state).
    *
-   * The two fields are everything `generation.ts` needs to construct a
-   * `SandboxFsClient` and pass it to `createSandboxTools`:
+   * The fields are everything `generation.ts` needs to construct a
+   * `SandboxFsClient`, pass it to `createSandboxTools`, and record audit
+   * log entries for every tool execution:
    *
+   *   - `sandboxId` — Convex-side sandbox row id. Plan 12's audit log
+   *     (`sandboxToolCallLog.sandboxId`) keys against this so a future
+   *     forensic query can correlate "user X's tool calls" with a
+   *     specific sandbox lifecycle. Surfacing it from the context query
+   *     (rather than re-fetching the sandbox row in the action) keeps the
+   *     lookup transactional with the `(thread, sandbox, repository)`
+   *     read.
    *   - `remoteId` — Daytona-side sandbox identifier (`sandboxes.remoteId`).
    *   - `repoPath` — absolute path of the repository's root inside the
    *     sandbox, used to scope every tool call's path validation.
@@ -55,6 +63,7 @@ export type ReplyContext = {
    * can fall back to a no-tool reply without an extra `ctx.db.get` race.
    */
   sandboxTooling?: {
+    sandboxId: Id<"sandboxes">;
     remoteId: string;
     repoPath: string;
   };
@@ -309,6 +318,7 @@ export const getReplyContext = internalQuery({
       const sandbox = await ctx.db.get(repository.latestSandboxId);
       if (sandbox?.status === "ready" && sandbox.remoteId && sandbox.repoPath) {
         sandboxTooling = {
+          sandboxId: sandbox._id,
           remoteId: sandbox.remoteId,
           repoPath: sandbox.repoPath,
         };

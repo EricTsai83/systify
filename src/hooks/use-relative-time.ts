@@ -16,12 +16,7 @@ import { formatRelativeTime, formatTimeUntil } from "@/lib/format";
 function scheduleAdaptiveTicks(timestamp: number, onTick: () => void): () => void {
   function scheduleInterval(): ReturnType<typeof setInterval> {
     const distanceSeconds = Math.floor(Math.abs(Date.now() - timestamp) / 1000);
-    const ms =
-      distanceSeconds < 60
-        ? 10_000
-        : distanceSeconds < 3600
-          ? 30_000
-          : 60_000;
+    const ms = distanceSeconds < 60 ? 10_000 : distanceSeconds < 3600 ? 30_000 : 60_000;
     return setInterval(onTick, ms);
   }
 

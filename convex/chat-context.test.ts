@@ -164,11 +164,12 @@ describe("chat reply context", () => {
   test("sandbox mode exposes sandboxTooling when the repository has a ready sandbox", async () => {
     // Generation.ts builds the SandboxFsClient from this surfaced metadata.
     // Failing to expose it would silently fall back to the no-tool path even
-    // when a healthy sandbox exists.
+    // when a healthy sandbox exists. Plan 12 also keys the audit log against
+    // `sandboxTooling.sandboxId`, so this test pins all three exposed fields.
     const ownerTokenIdentifier = "user|sandbox-tooling-ready";
     const t = convexTest(schema, modules);
 
-    const { threadId, userMessageId } = await t.run(async (ctx) => {
+    const { threadId, userMessageId, sandboxId } = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
@@ -223,12 +224,13 @@ describe("chat reply context", () => {
         content: "Read the entrypoint.",
       });
 
-      return { threadId, userMessageId };
+      return { threadId, userMessageId, sandboxId };
     });
 
     const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
     expect(context.sandboxTooling).toEqual({
+      sandboxId,
       remoteId: "remote-tool-ready",
       repoPath: "/workspace/repo",
     });

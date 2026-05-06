@@ -119,7 +119,12 @@ describe("presentSandboxSurface", () => {
   });
 
   test("non-available states omit ttlExpiresAt", () => {
-    for (const reasonCode of ["sandbox_provisioning", "sandbox_expired", "sandbox_unavailable", "missing_sandbox"] as const) {
+    for (const reasonCode of [
+      "sandbox_provisioning",
+      "sandbox_expired",
+      "sandbox_unavailable",
+      "missing_sandbox",
+    ] as const) {
       const surface = presentSandboxSurface({
         sandboxModeStatus: makeStatus({ reasonCode }),
         sandbox: { status: "running", ttlExpiresAt: 1_000_000 },
