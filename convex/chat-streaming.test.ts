@@ -548,11 +548,7 @@ describe("citation lint integration (Plan 11)", () => {
     // skip the lint here while leaving the other two paths covered.
     const ownerTokenIdentifier = "user|lint-recover-sandbox";
     const t = convexTest(schema, modules);
-    const { jobId, assistantMessageId } = await createStreamingFixture(
-      t,
-      ownerTokenIdentifier,
-      "lint-recover-sandbox",
-    );
+    const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "lint-recover-sandbox");
 
     await t.run(async (ctx) => {
       await ctx.db.patch(assistantMessageId, { mode: "sandbox" });

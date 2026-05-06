@@ -98,10 +98,7 @@ export function ArtifactPanel({
   // list whose identity stability is what `memo()` on `ArtifactCard`
   // depends on.
   const repositoryIntelligence = useMemo(
-    () =>
-      repositoryArtifacts.filter(
-        (artifact) => artifact.kind === "manifest" || artifact.kind === "deep_analysis",
-      ),
+    () => repositoryArtifacts.filter((artifact) => artifact.kind === "manifest" || artifact.kind === "deep_analysis"),
     [repositoryArtifacts],
   );
   const [actionsOpen, setActionsOpen] = useState<boolean | null>(null);
@@ -472,10 +469,7 @@ function ArtifactCard({
         </CardHeader>
         <CardContent className="p-3 pt-0">
           <ArtifactBody artifact={artifact} />
-          <ArtifactFooter
-            artifact={artifact}
-            onAskAboutArtifact={onAskAboutArtifact}
-          />
+          <ArtifactFooter artifact={artifact} onAskAboutArtifact={onAskAboutArtifact} />
         </CardContent>
       </Card>
     </div>

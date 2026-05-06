@@ -18,7 +18,7 @@ Out of scope:
 
 - The Convex backend's own sandboxing (covered by `convex/_generated/ai/guidelines.md` and the chat job lifecycle).
 - Per-user / per-workspace cost caps (Plan 10).
-- Audit log retention (Plan 12).
+- Audit log retention (Plan 12 — see `sandbox-tool-call-audit-log-system-design.md`).
 - Network-layer attack mitigation (covered by Daytona's container runtime).
 
 ## Defense Layers
@@ -146,18 +146,15 @@ Each `run_shell` call surfaces three observability signals at the **success** en
 - `durationMs`: wall-clock time from tool dispatch to adapter return. Plan 06's tool-call ticker shows this in the live UI; Plan 13 will aggregate it as a per-command latency metric. **Carried only on the success envelope** — `command_timeout` and `io_error` envelopes do not carry a measured duration. The timeout envelope's duration is implicit (`~timeoutSeconds`); the io-error envelope's "duration" is undefined because the upstream call may have failed before reaching Daytona at all. Plan 06's ticker reconstructs the timeout duration from `timeoutSeconds` rather than relying on a measurement.
 - `redactedTypes`: sorted, de-duplicated slug array for any pattern hits.
 
-`logInfo("chat", "sandbox_tool_call", ...)` and `logWarn("chat", "sandbox_tool_error", ...)` are emitted by `convex/chat/generation.ts` for every tool call, with input / output already redacted. Plan 12 lifts the same data into `sandboxToolCallLog` for compliance retention.
+`logInfo("chat", "sandbox_tool_call", ...)` and `logWarn("chat", "sandbox_tool_error", ...)` are emitted by `convex/chat/generation.ts` for every tool call, with input / output already redacted. Plan 12 lifts the same data into `sandboxToolCallLog` for compliance retention; see `sandbox-tool-call-audit-log-system-design.md` for the full append / retention design.
 
 ### `redactedTypes` Persistence Status
 
-`executeRunShell` (and `executeReadFile` / `executeListDir`) compute `redactedTypes` on every success envelope, but the slug array is **not currently persisted** into `messageToolCallEvents`. The persistence path in `convex/chat/generation.ts` re-runs `redact(JSON.stringify(part.output))` on the AI SDK's `tool-result` event and only writes the redacted text into `outputSummary` — the matched-type slugs are discarded.
+`executeRunShell` (and `executeReadFile` / `executeListDir`) compute `redactedTypes` on every success envelope. The slug array is **not** persisted into `messageToolCallEvents` — that table only carries the redacted text in `outputSummary` and discards the matched-type slugs.
 
-This is acceptable today because no consumer reads the slug array off the persisted record: the LLM sees `redactedTypes` in the live tool result, and the redacted text retains the `[REDACTED:<type>]` markers that an audit reader can grep. Plan 12 (`sandboxToolCallLog`) is the first consumer that genuinely needs the slug array, and the cleanest fix is to:
+This is acceptable because no consumer of `messageToolCallEvents` reads the slug array off the persisted record: the LLM sees `redactedTypes` in the live tool result, and the redacted text retains the `[REDACTED:<type>]` markers that an audit reader can grep.
 
-1. Add an optional `redactedTypes: v.array(v.string())` to the `appendAssistantToolCallEvent` mutation and the `messageToolCallEvents` schema.
-2. Read `redactedTypes` directly from the typed envelope (`part.output as ReadFileToolResult | ListDirToolResult | RunShellToolResult`) in the `tool-result` handler, instead of re-redacting the JSON-stringified output.
-
-Removing the second `redact()` call also eliminates a duplicated scan (the adapter has already redacted; a second scan finds nothing new) — an incidental performance win.
+Plan 12 (`sandboxToolCallLog`) does need the slug array, but it reads it from a different source — the AI SDK's `part.output` payload directly inside the `tool-result` handler in `convex/chat/generation.ts`, via `extractAuditMetadataFromToolOutput`. This keeps the slug array out of the live-ticker table entirely (which has no use for it) while still giving the audit log access to the canonical signal. The redaction runs once (inside the tool's `executeXxx`) and the slugs flow on the in-memory `part.output` reference; `messageToolCallEvents` is left unchanged.
 
 ## Open Questions / Future Work
 
@@ -170,7 +167,7 @@ Removing the second `redact()` call also eliminates a duplicated scan (the adapt
   - Plan 06's live ticker may briefly show a "running" entry that then disappears without an "end" event, depending on which side wins the race.
 
   The forward fix is twofold: (1) extend `SandboxShellExecuteOptions` with an optional `signal?: AbortSignal` and thread it through the adapter; (2) when Daytona's SDK exposes an abort hook, wire it to `cancellationController.signal` from `generation.ts` so cancel actually interrupts the underlying shell. Until then, the 60 s cap on `SANDBOX_RUN_SHELL_MAX_TIMEOUT_SECONDS` is the bound on the wasted compute window.
-- **`redactedTypes` persistence.** See "Observability → `redactedTypes` Persistence Status" above. The slug array is computed on every successful tool envelope but is not yet written to `messageToolCallEvents`; Plan 12 is the first consumer that needs it persisted, and the doc captures the migration path.
+- **`redactedTypes` persistence.** Resolved by Plan 12, but via a different path than originally proposed: the slug array is read directly from `part.output` inside `convex/chat/generation.ts`'s `tool-result` handler (see `extractAuditMetadataFromToolOutput`) rather than persisted on `messageToolCallEvents`. The events table stays focused on the live-ticker contract; the audit log gets the slugs without re-redaction. Documented in `sandbox-tool-call-audit-log-system-design.md`.
 
 ## Implementation Pointers
 
