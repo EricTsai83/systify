@@ -31,11 +31,14 @@ import { openai } from "@ai-sdk/openai";
 import { stepCountIs, streamText, type ToolSet } from "ai";
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import { internalAction } from "../_generated/server";
+import type { ChatMode } from "../chatModeResolver";
 import { getSandboxFsClient } from "../daytona";
 import { STREAM_FLUSH_THRESHOLD } from "../lib/constants";
-import { logInfo, logWarn } from "../lib/observability";
+import { emitMetric, logInfo, logWarn } from "../lib/observability";
 import { estimateCostUsd } from "../lib/openaiPricing";
+import { bucketForTokenIdentifier } from "../lib/sandboxRollout";
 import type { ReplyContext } from "./context";
 import { resolveModelForMode } from "./modelSelection";
 import { buildCitationMap, buildHeuristicAnswer, buildSystemPrompt, buildUserPrompt } from "./prompting";
@@ -78,6 +81,131 @@ const SANDBOX_STEP_BUDGET = 8;
  */
 const CANCELLATION_POLL_INTERVAL_MS = 1_000;
 
+/**
+ * Plan 13 — terminal-state taxonomy used as the `status` tag on the
+ * session metric. Distinct from the Convex schema's `messages.status`
+ * because the metric also covers paths where no message row was
+ * patched (e.g. an aborted generation that bailed out before any
+ * write). Keeping the tag set small and stable lets dashboards pivot
+ * by status without parsing free-form strings.
+ *
+ *   - `completed`        — finalize wrote `messages.status = "completed"`
+ *   - `failed`           — fail wrote `messages.status = "failed"`
+ *   - `cancelled`        — user-initiated stop landed
+ *   - `aborted_orphan`   — the job row was deleted under us; no
+ *                          mutation ran, so no message-status flip
+ *                          either, but the action still consumed
+ *                          compute and the metric should reflect
+ *                          the wasted session
+ */
+type SessionTerminalStatus = "completed" | "failed" | "cancelled" | "aborted_orphan";
+
+/**
+ * Plan 13 — accumulated session-level telemetry.
+ *
+ * The action doesn't know everything about its session up front: the
+ * mode is unknown until `getReplyContext` returns, the model is
+ * unknown until `resolveModelForMode` runs, the tool-call count
+ * depends on what the model decides to do. So we keep a single
+ * mutable `SessionTelemetry` object and update its fields as the
+ * action makes progress. At each terminal exit, we emit one
+ * `sandbox_session_finished` metric from this state.
+ *
+ * **Why mutable.** A `Record`-of-immutable-helpers refactor would push
+ * roughly 40 of `generateAssistantReply`'s short-lived locals through
+ * a function-call boundary per event. The mutable accumulator stays
+ * inside one closure scope, the field names match the metric tags
+ * 1:1, and there are exactly 4 terminal-state emit sites — none of
+ * which is hot. Readability wins.
+ */
+interface SessionTelemetry {
+  startedAt: number;
+  /** Filled in once `getReplyContext` returns; remains undefined on pre-context throws. */
+  mode?: ChatMode;
+  /** Owner identity drives the rollout-bucket tag. Sourced from `replyContext.ownerTokenIdentifier`. */
+  ownerTokenIdentifier?: string;
+  /** Set in the streaming path once `resolveModelForMode` resolves. Heuristic / pre-context paths leave it undefined. */
+  modelName?: string;
+  /** True only when the streaming path actually built and passed a non-empty `ToolSet` to streamText. */
+  hadTools: boolean;
+  /** Counter — number of distinct `tool-call` events the model emitted. */
+  toolInvocations: number;
+  /** Counter — subset of invocations that surfaced as `tool-error` OR a `tool-result` envelope with `ok === false`. */
+  toolErrors: number;
+}
+
+interface EmitSessionMetricArgs {
+  status: SessionTerminalStatus;
+  assistantMessageId: Id<"messages">;
+  jobId: Id<"jobs">;
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+}
+
+/**
+ * Plan 13 — emit the session-finished metric once per action exit.
+ *
+ * Sandbox-only by design: the metric tag space (mode, model,
+ * had_tools, bucket) is shaped for sandbox sessions, and discuss /
+ * docs replies have a distinct cost / latency profile that would
+ * otherwise muddy the time series. Pre-context failures (where
+ * `mode` is unknown) skip the emit — we lack the data to attribute
+ * the failure correctly, and the action's existing `failAssistantReply`
+ * mutation already records the failure for ops via `messages.status`.
+ *
+ * The bucket tag uses `bucketForTokenIdentifier` rather than the
+ * sidecar from {@link getSandboxFeatureGateDecision} because we do
+ * not need the gate's *decision* here — only the cohort assignment.
+ * Computing the bucket directly from `tokenIdentifier` keeps this
+ * helper independent of env-var state, which is the right shape for a
+ * post-mutation telemetry hook.
+ *
+ * Wrapped in a try/catch so a logging-layer failure can never
+ * destabilize the surrounding action — emit failures are logged
+ * locally and swallowed.
+ */
+function emitSessionFinishedMetric(telemetry: SessionTelemetry, args: EmitSessionMetricArgs): void {
+  if (telemetry.mode !== "sandbox") {
+    return;
+  }
+  const bucket = telemetry.ownerTokenIdentifier ? bucketForTokenIdentifier(telemetry.ownerTokenIdentifier) : undefined;
+  const durationMs = Date.now() - telemetry.startedAt;
+  emitMetric("sandbox_session_finished", {
+    value: durationMs,
+    tags: {
+      mode: telemetry.mode,
+      status: args.status,
+      model: telemetry.modelName,
+      had_tools: telemetry.hadTools,
+      bucket,
+    },
+    details: {
+      assistantMessageId: String(args.assistantMessageId),
+      jobId: String(args.jobId),
+      tool_calls_count: telemetry.toolInvocations,
+      tool_errors_count: telemetry.toolErrors,
+      input_tokens: args.inputTokens,
+      output_tokens: args.outputTokens,
+      cost_usd: args.costUsd,
+    },
+  });
+}
+
+/**
+ * Build the high-cardinality `details` payload shared by both
+ * `sandbox_tool_invoked` emit sites (tool-result envelope and
+ * tool-error). Centralised so a future addition (e.g. tagging by
+ * `threadId`) lands in one place instead of drifting between the two.
+ */
+function buildToolMetricDetails(assistantMessageId: Id<"messages">, jobId: Id<"jobs">, toolCallId: string) {
+  return {
+    assistantMessageId: String(assistantMessageId),
+    jobId: String(jobId),
+    toolCallId,
+  };
+}
+
 export const generateAssistantReply = internalAction({
   args: {
     threadId: v.id("threads"),
@@ -90,6 +218,45 @@ export const generateAssistantReply = internalAction({
       assistantMessageId: args.assistantMessageId,
       jobId: args.jobId,
     });
+
+    // Plan 13 — start the session timer immediately after the running
+    // mutation lands. Including the mutation in the timing is intentional:
+    // it captures the same wall-clock window the user perceives between
+    // their Send click and the bubble's first delta, which is what dash-
+    // boards alert on (p95 sandbox session duration). Anything that
+    // updates the telemetry below mutates this same object so the
+    // terminal-state emit sites stay one-liners.
+    const telemetry: SessionTelemetry = {
+      startedAt: Date.now(),
+      hadTools: false,
+      toolInvocations: 0,
+      toolErrors: 0,
+    };
+
+    // Plan 13 — single emit helper with an idempotency guard. Every
+    // terminal exit path (success finalize, cancel finalize, failure
+    // finalize, the various `aborted_orphan` fast-exits) routes through
+    // here so we cannot accidentally double-fire the
+    // `sandbox_session_finished` metric if a future refactor introduces
+    // a new exit. The action is structured so each branch ends in
+    // `return`, but the guard is cheap insurance against the next
+    // editor missing that invariant.
+    let sessionMetricEmitted = false;
+    const emitSessionExit = (
+      status: SessionTerminalStatus,
+      usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number },
+    ) => {
+      if (sessionMetricEmitted) {
+        return;
+      }
+      emitSessionFinishedMetric(telemetry, {
+        status,
+        assistantMessageId: args.assistantMessageId,
+        jobId: args.jobId,
+        ...usage,
+      });
+      sessionMetricEmitted = true;
+    };
 
     // Anything still buffered in pendingDelta below STREAM_FLUSH_THRESHOLD can be lost on a crash; recoverStaleChatJob only sees persisted messageStreamChunks flushed via appendAssistantStreamChunk before compactMessageStreamTail/finalizeAssistantReply/failAssistantReply run.
     let pendingDelta = "";
@@ -221,6 +388,14 @@ export const generateAssistantReply = internalAction({
         userMessageId: args.userMessageId,
       })) as ReplyContext;
 
+      // Plan 13 — capture the cohort tags as soon as we know them. Both
+      // fields are sourced from the same context query so they always
+      // agree on the user's identity / chosen mode at queue time.
+      // Setting them eagerly means even a mid-action throw still
+      // produces a session metric tagged with the right mode + bucket.
+      telemetry.mode = replyContext.mode;
+      telemetry.ownerTokenIdentifier = replyContext.ownerTokenIdentifier;
+
       // The queued message is also expected to be in the conversational
       // window so the model can see "what the user just asked" as the last
       // turn. If empty-content filtering or window truncation drops it, fall
@@ -261,6 +436,9 @@ export const generateAssistantReply = internalAction({
               finalDelta: pendingDelta || undefined,
               reason: cancellationReason,
             });
+            emitSessionExit("cancelled");
+          } else {
+            emitSessionExit("aborted_orphan");
           }
           return;
         }
@@ -269,6 +447,7 @@ export const generateAssistantReply = internalAction({
         // call finalize — the unconditional `ctx.db.patch(jobId, ...)` in
         // `finalizeAssistantReply` would throw on the missing row.
         if (generationAborted) {
+          emitSessionExit("aborted_orphan");
           return;
         }
         const heuristicAnswer = buildHeuristicAnswer(replyContext, userPrompt, relevantChunks);
@@ -279,6 +458,7 @@ export const generateAssistantReply = internalAction({
           finalDelta: heuristicAnswer,
           citationMap: persistedCitationMap,
         });
+        emitSessionExit("completed");
         return;
       }
 
@@ -288,6 +468,7 @@ export const generateAssistantReply = internalAction({
       // mini tier. See `resolveModelForMode` for the resolution order
       // (mode-specific override → legacy `OPENAI_MODEL` → default).
       modelName = resolveModelForMode(replyContext.mode);
+      telemetry.modelName = modelName;
       const systemPrompt = buildSystemPrompt(replyContext.mode);
       const userPromptText = buildUserPrompt(replyContext, userPrompt, relevantChunks);
 
@@ -302,6 +483,7 @@ export const generateAssistantReply = internalAction({
       const sandboxTools: ToolSet | undefined = replyContext.sandboxTooling
         ? await buildSandboxTools(replyContext.sandboxTooling)
         : undefined;
+      telemetry.hadTools = sandboxTools !== undefined;
 
       const flushIfNeeded = async () => {
         if (pendingDelta.length >= STREAM_FLUSH_THRESHOLD) {
@@ -342,6 +524,9 @@ export const generateAssistantReply = internalAction({
             finalDelta: pendingDelta || undefined,
             reason: cancellationReason,
           });
+          emitSessionExit("cancelled");
+        } else {
+          emitSessionExit("aborted_orphan");
         }
         return;
       }
@@ -351,6 +536,7 @@ export const generateAssistantReply = internalAction({
       // to the abort signal, but skipping the call entirely saves a
       // pointless upstream fetch.
       if (generationAborted) {
+        emitSessionExit("aborted_orphan");
         return;
       }
 
@@ -457,6 +643,12 @@ export const generateAssistantReply = internalAction({
               inputSummary,
               startedAt: occurredAt,
             });
+            // Plan 13 — count *invocations* on `tool-call`, not on
+            // `tool-result`. A tool-call without a matching result
+            // (e.g. mid-stream cancel before the tool returns) is
+            // still a real LLM-driven invocation we want reflected in
+            // the session metric.
+            telemetry.toolInvocations += 1;
 
             await ctx.runMutation(internal.chat.streaming.appendAssistantToolCallEvent, {
               assistantMessageId: args.assistantMessageId,
@@ -499,6 +691,29 @@ export const generateAssistantReply = internalAction({
               occurredAt,
             });
 
+            // Plan 13 — per-tool metric. We extract the envelope-reported
+            // error code so dashboards can pivot by `path_outside_repo`
+            // / `command_blocked` / `tool_timeout` / etc. and the
+            // post-rollout abort condition (`error_code='io_error'` rate
+            // > X%) can be expressed in one query. `auditMetadata.errorCode`
+            // is `undefined` for successful tool results — that's how we
+            // detect `ok` here without re-parsing the JSON.
+            const auditMetadata = extractAuditMetadataFromToolOutput(part.output);
+            const toolDurationMs = toolCall ? Math.max(0, occurredAt - toolCall.startedAt) : 0;
+            const isOk = auditMetadata.errorCode === undefined;
+            if (!isOk) {
+              telemetry.toolErrors += 1;
+            }
+            emitMetric("sandbox_tool_invoked", {
+              value: toolDurationMs,
+              tags: {
+                tool: toolCall?.toolName ?? part.toolName,
+                ok: isOk,
+                error_code: auditMetadata.errorCode,
+              },
+              details: buildToolMetricDetails(args.assistantMessageId, args.jobId, part.toolCallId),
+            });
+
             // Plan 12 — append an audit-log row alongside the live event.
             // Two independent transactions (best-effort wrapper catches
             // any failure as a warning) so a transient audit-log outage
@@ -510,8 +725,11 @@ export const generateAssistantReply = internalAction({
             // sandboxId we key against is actually known; a stray
             // tool-result on a non-sandbox reply is malformed and is
             // logged for Plan 06's trace but not the audit log.
+            //
+            // Plan 13 — `auditMetadata` was already extracted above for
+            // the per-tool metric; reuse it here so we don't pay the
+            // JSON traversal cost twice per result.
             if (replyContext.sandboxTooling) {
-              const auditMetadata = extractAuditMetadataFromToolOutput(part.output);
               await tryRecordSandboxToolCallLogEntry(ctx, {
                 ownerTokenIdentifier: replyContext.ownerTokenIdentifier,
                 threadId: args.threadId,
@@ -520,7 +738,7 @@ export const generateAssistantReply = internalAction({
                 toolName: toolCall?.toolName ?? part.toolName,
                 inputJson: toolCall?.inputSummary ?? "{}",
                 outputBytes: countUtf8Bytes(resultJson),
-                durationMs: toolCall ? Math.max(0, occurredAt - toolCall.startedAt) : 0,
+                durationMs: toolDurationMs,
                 errorCode: auditMetadata.errorCode,
                 redactedFields: auditMetadata.redactedFields,
               });
@@ -558,6 +776,24 @@ export const generateAssistantReply = internalAction({
               outputSummary: redactedError,
               errorCode: "tool_error",
               occurredAt,
+            });
+
+            // Plan 13 — per-tool error metric. `tool-error` always
+            // means the tool's `execute` threw (as opposed to a
+            // structured `ok: false` envelope); the error_code tag is
+            // the synthetic `tool_error` literal so the metric stream
+            // is uniform with the envelope-error case (which uses the
+            // tool's own structured `errorCode`).
+            telemetry.toolErrors += 1;
+            const toolErrorDurationMs = toolCall ? Math.max(0, occurredAt - toolCall.startedAt) : 0;
+            emitMetric("sandbox_tool_invoked", {
+              value: toolErrorDurationMs,
+              tags: {
+                tool: toolCall?.toolName ?? part.toolName,
+                ok: false,
+                error_code: "tool_error",
+              },
+              details: buildToolMetricDetails(args.assistantMessageId, args.jobId, part.toolCallId),
             });
 
             // Plan 12 — audit log entry on the AI SDK error path. The
@@ -648,12 +884,16 @@ export const generateAssistantReply = internalAction({
             outputTokens: usage.outputTokens,
             costUsd: usage.costUsd,
           });
+          emitSessionExit("cancelled", usage);
+        } else {
+          emitSessionExit("aborted_orphan", usage);
         }
         return;
       }
 
       // Skip finalize if generation was aborted due to missing job.
       if (generationAborted) {
+        emitSessionExit("aborted_orphan", usage);
         return;
       }
 
@@ -667,6 +907,7 @@ export const generateAssistantReply = internalAction({
         costUsd: usage.costUsd,
         citationMap: persistedCitationMap,
       });
+      emitSessionExit("completed", usage);
     } catch (error) {
       // Plan 10 — even on the error path, try to extract whatever usage
       // the SDK already accumulated before the throw. Some errors fire
@@ -706,11 +947,15 @@ export const generateAssistantReply = internalAction({
             outputTokens: usage.outputTokens,
             costUsd: usage.costUsd,
           });
+          emitSessionExit("cancelled", usage);
+        } else {
+          emitSessionExit("aborted_orphan", usage);
         }
         return;
       }
       // Skip fail finalize if generation was aborted due to missing job.
       if (generationAborted) {
+        emitSessionExit("aborted_orphan", usage);
         return;
       }
       await ctx.runMutation(internal.chat.streaming.failAssistantReply, {
@@ -722,6 +967,7 @@ export const generateAssistantReply = internalAction({
         outputTokens: usage.outputTokens,
         costUsd: usage.costUsd,
       });
+      emitSessionExit("failed", usage);
     } finally {
       // Plan 07 — always tear down the cancellation poll, regardless of
       // which exit path the action took. Setting `pollingStopped` first
