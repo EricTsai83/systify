@@ -124,16 +124,24 @@ const SANDBOX_TOOL_CALL_LOG_INPUT_TRUNCATION_MARKER = "…[truncated]";
  * Operates on UTF-16 code units (matching `String.slice`'s indexing) so
  * the resulting string never exceeds the cap by a fraction of a code
  * point. A surrogate pair is either entirely kept or entirely dropped,
- * never split — same invariant Plan 06's UI-summary cap maintains.
+ * never split — same invariant Plan 06's UI-summary cap maintains. When
+ * truncating would split a surrogate pair, the cut index is decremented
+ * to keep both units or drop both.
  */
 export function capAuditInputJson(value: string): string {
   if (value.length <= SANDBOX_TOOL_CALL_LOG_INPUT_MAX_CHARS) {
     return value;
   }
-  return (
-    value.slice(0, SANDBOX_TOOL_CALL_LOG_INPUT_MAX_CHARS - SANDBOX_TOOL_CALL_LOG_INPUT_TRUNCATION_MARKER.length) +
-    SANDBOX_TOOL_CALL_LOG_INPUT_TRUNCATION_MARKER
-  );
+  let cutIndex = SANDBOX_TOOL_CALL_LOG_INPUT_MAX_CHARS - SANDBOX_TOOL_CALL_LOG_INPUT_TRUNCATION_MARKER.length;
+  // Check if cutIndex would split a surrogate pair (high surrogate at cutIndex - 1).
+  if (cutIndex > 0) {
+    const charCode = value.charCodeAt(cutIndex - 1);
+    // High surrogate range: 0xD800–0xDBFF
+    if (charCode >= 0xd800 && charCode <= 0xdbff) {
+      cutIndex -= 1;
+    }
+  }
+  return value.slice(0, cutIndex) + SANDBOX_TOOL_CALL_LOG_INPUT_TRUNCATION_MARKER;
 }
 
 /**
