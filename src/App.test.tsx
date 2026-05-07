@@ -78,6 +78,15 @@ describe("App auth token failures", () => {
   afterEach(() => {
     cleanup();
     window.sessionStorage.clear();
+    // Expire any cookies set during the test so the WorkOS session hint
+    // doesn't leak into the next case (jsdom keeps document.cookie alive).
+    for (const cookie of document.cookie.split(";")) {
+      const eq = cookie.indexOf("=");
+      const name = (eq === -1 ? cookie : cookie.slice(0, eq)).trim();
+      if (name) {
+        document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`;
+      }
+    }
     getAccessTokenMock.mockReset();
     vi.restoreAllMocks();
   });
@@ -128,6 +137,44 @@ describe("App auth token failures", () => {
     renderWithAuth(useAuth, ["/"]);
 
     expect(await screen.findByText("chat page")).toBeInTheDocument();
+  });
+
+  test("shows the auth loading screen instead of HomePage on / when a WorkOS session cookie is present", async () => {
+    // Returning signed-in user: cookie was set by a prior OAuth callback,
+    // and useConvexAuth hasn't finished hydrating yet. We should *not*
+    // flash HomePage before the redirect to /chat fires.
+    document.cookie = "workos-has-session=client_test";
+
+    function useAuth() {
+      return {
+        isLoading: true,
+        user: null,
+        getAccessToken: getAccessTokenMock,
+      };
+    }
+
+    renderWithAuth(useAuth, ["/"]);
+
+    expect(await screen.findByText("Reconnecting your session and loading your workspace.")).toBeInTheDocument();
+    expect(screen.queryByText("home page")).not.toBeInTheDocument();
+  });
+
+  test("renders HomePage during auth loading when no WorkOS session cookie is present", async () => {
+    // First-time / signed-out visitor: nothing in document.cookie hints at
+    // a prior session, so the static landing page renders immediately
+    // rather than blocking on auth hydration.
+    function useAuth() {
+      return {
+        isLoading: true,
+        user: null,
+        getAccessToken: getAccessTokenMock,
+      };
+    }
+
+    renderWithAuth(useAuth, ["/"]);
+
+    expect(await screen.findByText("home page")).toBeInTheDocument();
+    expect(screen.queryByText("Reconnecting your session and loading your workspace.")).not.toBeInTheDocument();
   });
 
   test("redirects signed-in users from /callback to /chat", async () => {
