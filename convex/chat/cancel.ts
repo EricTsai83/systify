@@ -37,6 +37,7 @@
 import { v } from "convex/values";
 import { mutation } from "../_generated/server";
 import { requireViewerIdentity } from "../lib/auth";
+import { cancelActiveJob } from "../jobLifecycle";
 import { logInfo } from "../lib/observability";
 import { isLeaseActive } from "../lib/rateLimit";
 
@@ -125,14 +126,16 @@ export const cancelInFlightReply = mutation({
     // cancelled` on the job, the message row is already in `cancelled`
     // state. Clearing the lease prevents `recoverStaleChatJob` from later
     // stomping on top of `markAssistantReplyCancelled`.
-    await ctx.db.patch(activeJob._id, {
-      status: "cancelled",
-      stage: "cancelled",
+    const cancelledJob = await cancelActiveJob(ctx, {
+      jobId: activeJob._id,
+      expectedKind: "chat",
       progress: Math.max(activeJob.progress, 0.99),
       completedAt: now,
       errorMessage: "Cancelled by user.",
-      leaseExpiresAt: undefined,
     });
+    if (!cancelledJob) {
+      return { cancelled: false as const };
+    }
 
     logInfo("chat", "cancel_in_flight_reply", {
       threadId: args.threadId,

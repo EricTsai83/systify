@@ -4,6 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, type MutationCtx } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
 import { CASCADE_BATCH_SIZE } from "./lib/constants";
+import { completeRunningJob, failRunningJob, markQueuedJobRunning } from "./jobLifecycle";
 
 async function listActiveCleanupJobs(
   ctx: MutationCtx,
@@ -132,14 +133,19 @@ export const markSandboxCleanupRunning = internalMutation({
       throw new Error("Sandbox not found.");
     }
 
-    await ctx.db.patch(args.jobId, {
-      status: "running",
+    const runningJob = await markQueuedJobRunning(ctx, {
+      jobId: args.jobId,
+      expectedKind: "cleanup",
       stage: "deleting_remote_sandbox",
       progress: 0.3,
       startedAt: Date.now(),
     });
+    if (!runningJob) {
+      return { started: false as const };
+    }
 
     return {
+      started: true as const,
       remoteId: sandbox.remoteId,
     };
   },
@@ -151,17 +157,21 @@ export const completeSandboxCleanup = internalMutation({
     jobId: v.id("jobs"),
   },
   handler: async (ctx, args) => {
+    const completedJob = await completeRunningJob(ctx, {
+      jobId: args.jobId,
+      expectedKind: "cleanup",
+      completedAt: Date.now(),
+      outputSummary: "Sandbox deleted and archived.",
+    });
+    if (!completedJob) {
+      return { completed: false as const };
+    }
+
     await ctx.db.patch(args.sandboxId, {
       status: "archived",
       lastUsedAt: Date.now(),
     });
-    await ctx.db.patch(args.jobId, {
-      status: "completed",
-      stage: "completed",
-      progress: 1,
-      completedAt: Date.now(),
-      outputSummary: "Sandbox deleted and archived.",
-    });
+    return { completed: true as const };
   },
 });
 
@@ -172,17 +182,21 @@ export const failSandboxCleanup = internalMutation({
     errorMessage: v.string(),
   },
   handler: async (ctx, args) => {
+    const failedJob = await failRunningJob(ctx, {
+      jobId: args.jobId,
+      expectedKind: "cleanup",
+      completedAt: Date.now(),
+      errorMessage: args.errorMessage,
+    });
+    if (!failedJob) {
+      return { failed: false as const };
+    }
+
     await ctx.db.patch(args.sandboxId, {
       status: "failed",
       lastErrorMessage: args.errorMessage,
     });
-    await ctx.db.patch(args.jobId, {
-      status: "failed",
-      stage: "failed",
-      progress: 1,
-      completedAt: Date.now(),
-      errorMessage: args.errorMessage,
-    });
+    return { failed: true as const };
   },
 });
 

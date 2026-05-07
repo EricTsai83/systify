@@ -8,6 +8,13 @@ import {
   DEFAULT_AUTO_DELETE_MINUTES,
   DEFAULT_AUTO_STOP_MINUTES,
 } from "./lib/constants";
+import {
+  cancelActiveJob,
+  completeRunningJob,
+  failRunningJob,
+  markQueuedJobRunning,
+  updateRunningJobProgress,
+} from "./jobLifecycle";
 
 const REPOSITORY_DELETION_CANCEL_REASON =
   "Repository deletion is in progress. The import was cancelled before it could finish.";
@@ -90,11 +97,10 @@ async function finalizeImportCancellation(
     });
   }
 
-  if (job && job.status !== "cancelled") {
-    await ctx.db.patch(args.jobId, {
-      status: "cancelled",
-      stage: "cancelled",
-      progress: 1,
+  if (job) {
+    await cancelActiveJob(ctx, {
+      jobId: args.jobId,
+      expectedKind: "import",
       completedAt: now,
       outputSummary: args.reason,
       errorMessage: args.reason,
@@ -119,16 +125,22 @@ async function applyImportRunningState(
   },
 ) {
   const now = Date.now();
-  await ctx.db.patch(args.importId, {
-    status: "running",
-    startedAt: now,
-  });
-  await ctx.db.patch(args.jobId, {
-    status: "running",
+  const runningJob = await markQueuedJobRunning(ctx, {
+    jobId: args.jobId,
+    expectedKind: "import",
     stage: "provisioning_sandbox",
     progress: 0.1,
     startedAt: now,
   });
+  if (!runningJob) {
+    return { started: false as const };
+  }
+
+  await ctx.db.patch(args.importId, {
+    status: "running",
+    startedAt: now,
+  });
+  return { started: true as const };
 }
 
 async function applyImportCompletionState(
@@ -151,19 +163,21 @@ async function applyImportCompletionState(
   },
 ) {
   const completedAt = Date.now();
+  const completedJob = await completeRunningJob(ctx, {
+    jobId: args.jobId,
+    expectedKind: "import",
+    completedAt,
+    outputSummary: args.summary,
+  });
+  if (!completedJob) {
+    return { completed: false as const };
+  }
 
   await ctx.db.patch(args.importId, {
     status: "completed",
     commitSha: args.commitSha,
     branch: args.branch,
     completedAt,
-  });
-  await ctx.db.patch(args.jobId, {
-    status: "completed",
-    stage: "completed",
-    progress: 1,
-    completedAt,
-    outputSummary: args.summary,
   });
   await ctx.db.patch(args.repositoryId, {
     importStatus: "completed",
@@ -187,6 +201,7 @@ async function applyImportCompletionState(
     lastHeartbeatAt: completedAt,
     lastUsedAt: completedAt,
   });
+  return { completed: true as const };
 }
 
 async function guardPersistStage(
@@ -350,7 +365,13 @@ export const markImportRunning = internalMutation({
       };
     }
 
-    await applyImportRunningState(ctx, args);
+    const running = await applyImportRunningState(ctx, args);
+    if (!running.started) {
+      return {
+        kind: "cancelled" as const,
+        reason: "Import job is already in a terminal state.",
+      };
+    }
 
     return {
       kind: "running" as const,
@@ -452,6 +473,18 @@ export const persistImportHeader = internalMutation({
       return state;
     }
 
+    const progressedJob = await updateRunningJobProgress(ctx, {
+      jobId: args.jobId,
+      expectedKind: "import",
+      stage: "persisting_files",
+      progress: 0.5,
+    });
+    if (!progressedJob) {
+      return {
+        kind: "cancelled" as const,
+      };
+    }
+
     for (const artifact of args.artifacts) {
       const existingArtifact = await ctx.db
         .query("artifacts")
@@ -481,10 +514,6 @@ export const persistImportHeader = internalMutation({
     await ctx.db.patch(args.importId, {
       commitSha: args.commitSha,
       branch: args.branch,
-    });
-    await ctx.db.patch(args.jobId, {
-      stage: "persisting_files",
-      progress: 0.5,
     });
 
     return {
@@ -549,10 +578,17 @@ export const persistRepoChunksBatch = internalMutation({
       return state;
     }
 
-    await ctx.db.patch(args.jobId, {
+    const progressedJob = await updateRunningJobProgress(ctx, {
+      jobId: args.jobId,
+      expectedKind: "import",
       stage: "persisting_chunks",
       progress: 0.75,
     });
+    if (!progressedJob) {
+      return {
+        kind: "cancelled" as const,
+      };
+    }
 
     const fileIdsByPath = new Map<string, Id<"repoFiles">>();
     for (const chunk of args.chunks) {
@@ -626,7 +662,7 @@ export const finalizeImportCompletion = internalMutation({
     const previousCompletedImportId = state.repository.latestImportId;
     const previousCompletedImportJobId = state.repository.latestImportJobId;
 
-    await applyImportCompletionState(ctx, {
+    const completed = await applyImportCompletionState(ctx, {
       importId: args.importId,
       repositoryId: state.repository._id,
       jobId: args.jobId,
@@ -642,6 +678,11 @@ export const finalizeImportCompletion = internalMutation({
       architectureSummary: args.architectureSummary,
       repositoryDefaultBranch: state.repository.defaultBranch,
     });
+    if (!completed.completed) {
+      return {
+        kind: "cancelled" as const,
+      };
+    }
 
     if (
       previousCompletedImportId &&
@@ -723,23 +764,22 @@ export const markImportFailed = internalMutation({
       return;
     }
 
-    const job = await ctx.db.get(args.jobId);
     const now = Date.now();
+    const failedJob = await failRunningJob(ctx, {
+      jobId: args.jobId,
+      expectedKind: "import",
+      completedAt: now,
+      errorMessage: args.errorMessage,
+    });
+    if (!failedJob) {
+      return;
+    }
 
     await ctx.db.patch(args.importId, {
       status: "failed",
       completedAt: now,
       errorMessage: args.errorMessage,
     });
-    if (job) {
-      await ctx.db.patch(args.jobId, {
-        status: "failed",
-        stage: "failed",
-        progress: 1,
-        completedAt: now,
-        errorMessage: args.errorMessage,
-      });
-    }
     if (importRecord.sandboxId) {
       const sandbox = await ctx.db.get(importRecord.sandboxId);
       if (sandbox) {

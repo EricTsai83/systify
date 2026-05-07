@@ -19,10 +19,13 @@ export const runSandboxCleanup = internalAction({
     jobId: v.id("jobs"),
   },
   handler: async (ctx, args) => {
-    const sandbox = await ctx.runMutation(internal.ops.markSandboxCleanupRunning, {
+    const sandbox = (await ctx.runMutation(internal.ops.markSandboxCleanupRunning, {
       sandboxId: args.sandboxId,
       jobId: args.jobId,
-    });
+    })) as SandboxCleanupStart;
+    if (!sandbox.started) {
+      return;
+    }
 
     try {
       if (sandbox.remoteId) {
@@ -71,6 +74,7 @@ type SandboxLookupResult = {
   sandboxId: Id<"sandboxes">;
   status: "provisioning" | "ready" | "stopped" | "archived" | "failed";
 } | null;
+type SandboxCleanupStart = { started: true; remoteId: string } | { started: false };
 
 const STALE_CHAT_JOB_ERROR_MESSAGE = "The assistant reply stalled and was automatically marked as failed.";
 const STALE_DEEP_ANALYSIS_ERROR_MESSAGE = "The deep analysis job stalled and was automatically marked as failed.";

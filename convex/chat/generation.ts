@@ -219,10 +219,13 @@ export const generateAssistantReply = internalAction({
     jobId: v.id("jobs"),
   },
   handler: async (ctx, args) => {
-    await ctx.runMutation(internal.chat.streaming.markAssistantReplyRunning, {
+    const start = (await ctx.runMutation(internal.chat.streaming.markAssistantReplyRunning, {
       assistantMessageId: args.assistantMessageId,
       jobId: args.jobId,
-    });
+    })) as { started: boolean };
+    if (!start.started) {
+      return;
+    }
 
     // Plan 13 — start the session timer at action entry. The window
     // measured is "action start → terminal-state finalize", so dashboards
@@ -451,9 +454,8 @@ export const generateAssistantReply = internalAction({
           return;
         }
         // Same short-circuit as the streaming path: if the job row was
-        // deleted between scheduling the poll and reaching here, do not
-        // call finalize — the unconditional `ctx.db.patch(jobId, ...)` in
-        // `finalizeAssistantReply` would throw on the missing row.
+        // deleted between scheduling the poll and reaching here, there is no
+        // lifecycle row left to settle, so skip finalize entirely.
         if (generationAborted) {
           emitSessionExit("aborted_orphan");
           return;

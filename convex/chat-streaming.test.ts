@@ -148,6 +148,135 @@ describe("chat streaming lifecycle", () => {
     expect(finalized.job?.estimatedCostUsd).toBe(0.00036);
   });
 
+  test("cancel before action start prevents queued job from moving to running", async () => {
+    const ownerTokenIdentifier = "user|lifecycle-cancel-before-start";
+    const t = convexTest(schema, modules);
+    const { threadId, jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "lifecycle-cancel-before-start",
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(jobId, {
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+        startedAt: undefined,
+      });
+      await ctx.db.patch(assistantMessageId, {
+        status: "pending",
+      });
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    await viewer.mutation(api.chat.cancel.cancelInFlightReply, { threadId });
+    const start = await t.mutation(internal.chat.streaming.markAssistantReplyRunning, {
+      assistantMessageId,
+      jobId,
+    });
+
+    const state = await t.run(async (ctx) => ({
+      job: await ctx.db.get(jobId),
+      message: await ctx.db.get(assistantMessageId),
+    }));
+    expect(start).toEqual({ started: false });
+    expect(state.job?.status).toBe("cancelled");
+    expect(state.message?.status).toBe("cancelled");
+  });
+
+  test("late completion after cancellation leaves the job and message cancelled", async () => {
+    const ownerTokenIdentifier = "user|lifecycle-cancel-running";
+    const t = convexTest(schema, modules);
+    const { threadId, jobId, assistantMessageId, streamId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "lifecycle-cancel-running",
+    );
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    await viewer.mutation(api.chat.cancel.cancelInFlightReply, { threadId });
+    await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
+      threadId,
+      assistantMessageId,
+      jobId,
+      finalDelta: "late completion",
+    });
+
+    const state = await t.run(async (ctx) => ({
+      job: await ctx.db.get(jobId),
+      message: await ctx.db.get(assistantMessageId),
+      stream: await ctx.db.get(streamId),
+    }));
+    expect(state.job?.status).toBe("cancelled");
+    expect(state.message?.status).toBe("cancelled");
+    expect(state.message?.content).toBe("");
+    expect(state.stream).toBeNull();
+  });
+
+  test("late completion after stale recovery leaves the failed terminal state intact", async () => {
+    const ownerTokenIdentifier = "user|lifecycle-stale-before-complete";
+    const t = convexTest(schema, modules);
+    const { threadId, jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "lifecycle-stale-before-complete",
+    );
+    await t.mutation(internal.chat.streaming.appendAssistantStreamChunk, {
+      assistantMessageId,
+      jobId,
+      delta: "partial answer",
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(jobId, { leaseExpiresAt: Date.now() - 1 });
+    });
+
+    await t.mutation(internal.chat.streaming.recoverStaleChatJob, { jobId });
+    await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
+      threadId,
+      assistantMessageId,
+      jobId,
+      finalDelta: " late completion",
+    });
+
+    const state = await t.run(async (ctx) => ({
+      job: await ctx.db.get(jobId),
+      message: await ctx.db.get(assistantMessageId),
+    }));
+    expect(state.job?.status).toBe("failed");
+    expect(state.message?.status).toBe("failed");
+    expect(state.message?.content).toBe("partial answer");
+  });
+
+  test("failed job ignores a late assistant completion", async () => {
+    const ownerTokenIdentifier = "user|lifecycle-failed-before-complete";
+    const t = convexTest(schema, modules);
+    const { threadId, jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "lifecycle-failed-before-complete",
+    );
+    await t.mutation(internal.chat.streaming.failAssistantReply, {
+      assistantMessageId,
+      jobId,
+      errorMessage: "upstream failed",
+    });
+
+    await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
+      threadId,
+      assistantMessageId,
+      jobId,
+      finalDelta: "late completion",
+    });
+
+    const state = await t.run(async (ctx) => ({
+      job: await ctx.db.get(jobId),
+      message: await ctx.db.get(assistantMessageId),
+    }));
+    expect(state.job?.status).toBe("failed");
+    expect(state.message?.status).toBe("failed");
+    expect(state.message?.content).toBe("upstream failed");
+  });
+
   test("failAssistantReply preserves streamed content and removes stream state", async () => {
     const ownerTokenIdentifier = "user|stream-fail";
     const t = convexTest(schema, modules);
