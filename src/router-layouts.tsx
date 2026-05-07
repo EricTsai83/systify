@@ -12,6 +12,7 @@ import {
 import { AppNotice } from "@/components/app-notice";
 import { ScreenState } from "@/components/screen-state";
 import { Button } from "@/components/ui/button";
+import { hasWorkOSSessionHint } from "@/lib/auth-session-hint";
 import { useConvexAuthStatus } from "@/providers/convex-provider-with-auth-kit";
 import { AUTH_CALLBACK_PATH, DEFAULT_AUTHENTICATED_PATH, LANDING_PATH, isProtectedReturnTo } from "@/route-paths";
 import { HomePage } from "@/pages/home";
@@ -53,6 +54,15 @@ export function LandingRoute() {
   // Auth confirmed — redirect logged-in users to the app.
   if (!isLoading && isAuthenticated) {
     return <Navigate to={DEFAULT_AUTHENTICATED_PATH} replace />;
+  }
+
+  // Auth still resolving but the WorkOS session cookie says this browser
+  // was signed in last time. Render the auth-loading screen instead of
+  // HomePage so returning users don't see a marketing-page flash before
+  // we redirect them to /chat — the cookie is the same synchronous signal
+  // the WorkOS SDK uses to decide whether to refresh a session on boot.
+  if (isLoading && hasWorkOSSessionHint()) {
+    return <AuthLoadingScreen />;
   }
 
   // Render the static home page immediately, even while auth is still
