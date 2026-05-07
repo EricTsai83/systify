@@ -87,6 +87,7 @@ export function AppNotice({
         <AlertAction className="flex items-center gap-1">
           {hasAction ? (
             <Button
+              type="button"
               variant="outline"
               size="sm"
               className="gap-1.5 text-xs"
@@ -98,6 +99,7 @@ export function AppNotice({
           ) : null}
           {hasDismiss ? (
             <Button
+              type="button"
               variant="ghost"
               size="icon"
               aria-label={dismissLabel}

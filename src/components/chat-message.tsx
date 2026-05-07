@@ -80,6 +80,12 @@ export function MessageBubble({
     isAssistant && message.status !== "streaming" && message.status !== "pending"
       ? buildCostTickerLabel(message)
       : null;
+  const tickerAriaLabel =
+    costTicker === null
+      ? "Cost information"
+      : message.estimatedCostUsd !== undefined
+        ? `Reply cost ${costTicker}`
+        : `Usage ${costTicker}`;
   return (
     <Card className={cn("p-4", isUser ? "bg-muted border-transparent" : "border-transparent bg-transparent px-0")}>
       <div className="mb-1 flex items-center justify-between gap-3">
@@ -110,7 +116,7 @@ export function MessageBubble({
         <p
           className="mt-1 text-[11px] text-muted-foreground/80 tabular-nums"
           data-testid="message-cost-ticker"
-          aria-label={`Reply cost ${costTicker}`}
+          aria-label={tickerAriaLabel}
         >
           {costTicker}
         </p>

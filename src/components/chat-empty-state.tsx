@@ -112,6 +112,7 @@ export function EmptyNoRepoHint({
   const setThreadRepository = useMutation(api.chat.threads.setThreadRepository);
   const [isAttaching, setIsAttaching] = useState(false);
   const [attachError, setAttachError] = useState<string | null>(null);
+  const isAttachDisabled = isAttaching || !threadId;
 
   const handleAttachRepo = async (repoId: RepositoryId) => {
     if (!threadId) return;
@@ -152,7 +153,7 @@ export function EmptyNoRepoHint({
         <div className="mt-4 flex flex-col items-center gap-3">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={isAttaching}>
+              <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={isAttachDisabled}>
                 <LinkIcon size={13} weight="bold" />
                 {isAttaching ? "Attaching…" : "Attach repository"}
               </Button>
