@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, type MutationCtx } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
+import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
 import { validateParentPresence } from "./artifactStore";
 import {
   generateArchitectureDiagram,
@@ -46,10 +47,10 @@ export const requestArchitectureDiagram = mutation({
     if (!thread.repositoryId) {
       throw new Error("Architecture diagrams require an attached repository on this thread.");
     }
-    const repository = await ctx.db.get(thread.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Repository not found.");
-    }
+    const repository = await requireActiveRepositoryForOwner(ctx, {
+      repositoryId: thread.repositoryId,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+    });
 
     const snapshot = await buildSnapshot(ctx, repository);
 

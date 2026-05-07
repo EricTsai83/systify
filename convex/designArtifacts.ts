@@ -4,6 +4,7 @@ import { internal } from "./_generated/api";
 import { internalMutation, internalQuery, mutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
+import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
 import {
   consumeDaytonaGlobalRateLimit,
   consumeDeepAnalysisRateLimit,
@@ -27,6 +28,13 @@ export const captureAdr = mutation({
     const thread = await ctx.db.get(args.threadId);
     if (!thread || thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
       throw new Error("Thread not found.");
+    }
+    if (thread.repositoryId) {
+      await requireActiveRepositoryForOwner(ctx, {
+        repositoryId: thread.repositoryId,
+        ownerTokenIdentifier: identity.tokenIdentifier,
+        notFoundMessage: "Thread not found.",
+      });
     }
 
     const messages = await ctx.db
@@ -68,10 +76,10 @@ export const requestFailureModeAnalysis = mutation({
       throw new Error("Failure mode analysis requires an attached repository.");
     }
 
-    const repository = await ctx.db.get(thread.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Repository not found.");
-    }
+    const repository = await requireActiveRepositoryForOwner(ctx, {
+      repositoryId: thread.repositoryId,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+    });
 
     const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
     if (!sandbox || sandbox.status !== "ready") {
