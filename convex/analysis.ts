@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
+import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
 import { validateParentPresence } from "./artifactStore";
 import {
   consumeDaytonaGlobalRateLimit,
@@ -79,10 +80,10 @@ export const requestDeepAnalysis = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Repository not found.");
-    }
+    const repository = await requireActiveRepositoryForOwner(ctx, {
+      repositoryId: args.repositoryId,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+    });
 
     const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
     const sandboxAvailability = getSandboxAvailability(sandbox);

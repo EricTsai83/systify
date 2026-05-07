@@ -4,6 +4,7 @@ import { internal } from "../_generated/api";
 import type { MutationCtx } from "../_generated/server";
 import { mutation } from "../_generated/server";
 import { requireViewerIdentity } from "../lib/auth";
+import { requireActiveRepositoryForOwner } from "../lib/repositoryAccess";
 import {
   CHAT_JOB_LEASE_MS,
   assertSandboxDailyCostBudget,
@@ -59,10 +60,11 @@ export const sendMessage = mutation({
 
     let repository: Doc<"repositories"> | null = null;
     if (thread.repositoryId) {
-      repository = await ctx.db.get(thread.repositoryId);
-      if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Thread not found.");
-      }
+      repository = await requireActiveRepositoryForOwner(ctx, {
+        repositoryId: thread.repositoryId,
+        ownerTokenIdentifier: identity.tokenIdentifier,
+        notFoundMessage: "Thread not found.",
+      });
     }
 
     const mode = args.mode ?? thread.mode;
