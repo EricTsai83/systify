@@ -1,5 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
+import { useQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { AppNotice } from "@/components/app-notice";
 import { EmptyChatHint, EmptyNoRepoHint } from "@/components/chat-empty-state";
@@ -22,34 +24,7 @@ import type {
   WorkspaceId,
 } from "@/lib/types";
 
-export function ChatPanel({
-  selectedThreadId,
-  messages,
-  activeMessageStream,
-  isChatLoading,
-  chatInput,
-  setChatInput,
-  chatMode,
-  setChatMode,
-  availableModes,
-  disabledModeReasons,
-  isSending,
-  onSendMessage,
-  onCancelInFlightReply,
-  isCancellingReply = false,
-  sandboxModeStatus,
-  isSyncing,
-  onSync,
-  isArtifactPanelOpen = false,
-  onToggleArtifactPanel,
-  showArtifactToggle = false,
-  hasAttachedRepository = true,
-  availableRepositories = [],
-  onImported,
-  onThreadMovedToWorkspace,
-  onSelectArtifact,
-  analysisNudge = null,
-}: {
+type ChatPanelProps = {
   selectedThreadId: ThreadId | null;
   messages: Doc<"messages">[] | undefined;
   activeMessageStream: ActiveMessageStream | null | undefined;
@@ -111,7 +86,60 @@ export function ChatPanel({
    * would just bounce off the disabled state).
    */
   analysisNudge?: { onStart: () => void } | null;
-}) {
+};
+
+type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream" | "isChatLoading"> & {
+  isShellLoading: boolean;
+};
+
+export function ChatContainer({ selectedThreadId, isShellLoading, ...panelProps }: ChatContainerProps) {
+  const messages = useQuery(api.chat.threads.listMessages, selectedThreadId ? { threadId: selectedThreadId } : "skip");
+  const activeMessageStream = useQuery(
+    api.chat.streaming.getActiveMessageStream,
+    selectedThreadId ? { threadId: selectedThreadId } : "skip",
+  );
+
+  const isChatLoading = isShellLoading || (selectedThreadId !== null && messages === undefined);
+
+  return (
+    <ChatPanel
+      {...panelProps}
+      selectedThreadId={selectedThreadId}
+      messages={messages}
+      activeMessageStream={activeMessageStream}
+      isChatLoading={isChatLoading}
+    />
+  );
+}
+
+export function ChatPanel({
+  selectedThreadId,
+  messages,
+  activeMessageStream,
+  isChatLoading,
+  chatInput,
+  setChatInput,
+  chatMode,
+  setChatMode,
+  availableModes,
+  disabledModeReasons,
+  isSending,
+  onSendMessage,
+  onCancelInFlightReply,
+  isCancellingReply = false,
+  sandboxModeStatus,
+  isSyncing,
+  onSync,
+  isArtifactPanelOpen = false,
+  onToggleArtifactPanel,
+  showArtifactToggle = false,
+  hasAttachedRepository = true,
+  availableRepositories = [],
+  onImported,
+  onThreadMovedToWorkspace,
+  onSelectArtifact,
+  analysisNudge = null,
+}: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
   const availableModeSet = useMemo(() => new Set(availableModes), [availableModes]);
   const sandboxModeAvailable = sandboxModeStatus?.reasonCode === "available";
@@ -245,14 +273,18 @@ export function ChatPanel({
             {sandboxWarning}
             {!isChatLoading && (
               <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                {messages!.map((message) => (
-                  <MessageBubble
-                    key={message._id}
-                    message={message}
-                    activeMessageStream={activeMessageStream ?? null}
-                    onSelectArtifact={onSelectArtifact}
-                  />
-                ))}
+                {messages!.map((message) => {
+                  const messageStream =
+                    activeMessageStream?.assistantMessageId === message._id ? activeMessageStream : null;
+                  return (
+                    <MessageBubble
+                      key={message._id}
+                      message={message}
+                      activeMessageStream={messageStream}
+                      onSelectArtifact={onSelectArtifact}
+                    />
+                  );
+                })}
               </div>
             )}
           </div>

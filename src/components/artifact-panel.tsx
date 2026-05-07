@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
   CaretDownIcon,
@@ -28,6 +28,8 @@ import { formatArtifactKind } from "@/lib/operations";
 import type { ArtifactId, SandboxModeStatus, ThreadId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+const EMPTY_ARTIFACTS: Doc<"artifacts">[] = [];
+
 /**
  * ArtifactPanel — slot-based right-side panel showing artifacts attached to
  * the current thread (PRD #19, "Modules to build (frontend)" + US 23 "all
@@ -52,7 +54,7 @@ import { cn } from "@/lib/utils";
  */
 export function ArtifactPanel({
   threadId,
-  repositoryArtifacts = [],
+  repositoryArtifacts = EMPTY_ARTIFACTS,
   hasAttachedRepository,
   sandboxModeStatus,
   isVisible = true,
@@ -98,23 +100,32 @@ export function ArtifactPanel({
   // list whose identity stability is what `memo()` on `ArtifactCard`
   // depends on.
   const repositoryIntelligence = useMemo(
-    () => repositoryArtifacts.filter((artifact) => artifact.kind === "manifest" || artifact.kind === "deep_analysis"),
-    [repositoryArtifacts],
+    () =>
+      isVisible
+        ? repositoryArtifacts.filter((artifact) => artifact.kind === "manifest" || artifact.kind === "deep_analysis")
+        : EMPTY_ARTIFACTS,
+    [isVisible, repositoryArtifacts],
   );
   const [actionsOpen, setActionsOpen] = useState<boolean | null>(null);
   const effectiveActionsOpen = actionsOpen ?? artifactCount === 0;
+
+  if (!isVisible) {
+    return (
+      <aside
+        aria-label="Repository and thread artifacts"
+        className={cn("flex h-full min-h-0 w-80 shrink-0 flex-col border-l border-border bg-muted/20", className)}
+      >
+        <ArtifactPanelHeader />
+      </aside>
+    );
+  }
 
   return (
     <aside
       aria-label="Repository and thread artifacts"
       className={cn("flex h-full min-h-0 w-80 shrink-0 flex-col border-l border-border bg-muted/20", className)}
     >
-      <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
-        <div className="flex flex-col">
-          <span className="text-sm font-semibold">Results</span>
-          <span className="text-[11px] text-muted-foreground">Repository intelligence and conversation outputs.</span>
-        </div>
-      </div>
+      <ArtifactPanelHeader />
 
       {threadId ? (
         <div className="border-b border-border px-4 py-3">
@@ -180,6 +191,17 @@ export function ArtifactPanel({
         </div>
       </ScrollArea>
     </aside>
+  );
+}
+
+function ArtifactPanelHeader() {
+  return (
+    <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
+      <div className="flex flex-col">
+        <span className="text-sm font-semibold">Results</span>
+        <span className="text-[11px] text-muted-foreground">Repository intelligence and conversation outputs.</span>
+      </div>
+    </div>
   );
 }
 
@@ -413,7 +435,7 @@ function InlineError({ error, onClear }: { error: string | null; onClear: () => 
   );
 }
 
-function ArtifactCard({
+const ArtifactCard = memo(function ArtifactCard({
   artifact,
   isSelected = false,
   onSelectionConsumed,
@@ -474,7 +496,7 @@ function ArtifactCard({
       </Card>
     </div>
   );
-}
+});
 
 function ArtifactSection({
   title,

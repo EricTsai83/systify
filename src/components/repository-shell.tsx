@@ -12,7 +12,7 @@ import { TopBar } from "@/components/top-bar";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { AppNotice } from "@/components/app-notice";
-import { ChatPanel } from "@/components/chat-panel";
+import { ChatContainer } from "@/components/chat-panel";
 import { StatusPanel } from "@/components/status-panel";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -392,15 +392,6 @@ export function RepositoryShell({
   // Check GitHub for new remote commits on tab-focus and repo-switch.
   useCheckForUpdates(effectiveSelectedRepositoryId);
 
-  const messages = useQuery(
-    api.chat.threads.listMessages,
-    effectiveSelectedThreadId ? { threadId: effectiveSelectedThreadId } : "skip",
-  );
-  const activeMessageStream = useQuery(
-    api.chat.streaming.getActiveMessageStream,
-    effectiveSelectedThreadId ? { threadId: effectiveSelectedThreadId } : "skip",
-  );
-
   const isOnLanding = urlThreadId === null && urlRepositoryId === null;
   const isLandingResolving = isOnLanding && (ownerThreads === undefined || ownerThreads.length > 0);
 
@@ -413,9 +404,8 @@ export function RepositoryShell({
           ? "no-repo"
           : "ready";
 
-  const isChatLoading =
-    workspaceStatus === "initializing" ||
-    (effectiveSelectedThreadId !== null && (messages === undefined || capabilities.isLoading));
+  const isChatShellLoading =
+    workspaceStatus === "initializing" || (effectiveSelectedThreadId !== null && capabilities.isLoading);
 
   const handleSelectThread = useCallback(
     (threadId: ThreadId | null) => {
@@ -514,11 +504,9 @@ export function RepositoryShell({
    * finishes. Must be referentially stable across renders: `ArtifactCard`'s
    * scroll-into-view effect lists this callback in its dependency array, and
    * a fresh inline arrow on every parent render would re-fire the effect on
-   * every re-render — including the many that happen mid-stream as the
-   * `getActiveMessageStream` subscription ticks. That re-firing both
-   * re-triggers `scrollIntoView` and reschedules the 1.6s consume timer, so
-   * the selection ring would stay visible until streaming stops instead of
-   * fading on schedule.
+   * every re-render. That would re-trigger `scrollIntoView` and reschedule
+   * the 1.6s consume timer, so the selection ring could stay visible longer
+   * than intended after unrelated workspace updates.
    */
   const handleArtifactSelectionConsumed = useCallback(() => {
     setSelectedArtifactId(null);
@@ -745,11 +733,9 @@ export function RepositoryShell({
             />
           ) : (
             <>
-              <ChatPanel
+              <ChatContainer
                 selectedThreadId={effectiveSelectedThreadId}
-                messages={messages}
-                activeMessageStream={activeMessageStream}
-                isChatLoading={isChatLoading}
+                isShellLoading={isChatShellLoading}
                 chatInput={chatInput}
                 setChatInput={setChatInput}
                 chatMode={chatMode}

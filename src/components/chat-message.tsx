@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, memo, useMemo, type ReactNode } from "react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { MODE_LABELS } from "@/components/chat-modes";
 import { ToolCallTrace } from "@/components/tool-call-trace";
@@ -26,7 +26,7 @@ const CITATION_TOKEN_REGEX = /\[A(\d+)\]/g;
  * the full citation / cost-ticker rendering pipeline; the panel only
  * cares about the bubble's identity and click handlers.
  */
-export function MessageBubble({
+export const MessageBubble = memo(function MessageBubble({
   message,
   activeMessageStream,
   onSelectArtifact,
@@ -64,9 +64,13 @@ export function MessageBubble({
     isAssistant && message.status !== "streaming" && message.status !== "pending"
       ? message.unverifiedClaims
       : undefined;
-  const renderedContent = isAssistant
-    ? renderAssistantContent(displayContent, message.citationMap, unverifiedClaims, onSelectArtifact)
-    : displayContent || "…";
+  const renderedContent = useMemo(
+    () =>
+      isAssistant
+        ? renderAssistantContent(displayContent, message.citationMap, unverifiedClaims, onSelectArtifact)
+        : displayContent || "…",
+    [displayContent, isAssistant, message.citationMap, onSelectArtifact, unverifiedClaims],
+  );
   // Plan 10 — cost ticker for assistant messages: shows estimated cost
   // and tokens / tool-call count so the user can correlate spend to a
   // specific reply. Rendered only for *terminal* assistant states
@@ -123,7 +127,7 @@ export function MessageBubble({
       ) : null}
     </Card>
   );
-}
+});
 
 /**
  * Plan 10 — render the chat-bubble cost ticker.
