@@ -3,9 +3,11 @@
 import type React from "react";
 import { useState } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useQuery } from "convex/react";
+import { getFunctionName } from "convex/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
-import { ChatPanel } from "./chat-panel";
+import { ChatContainer, ChatPanel } from "./chat-panel";
 import type { ArtifactId, MessageId, ThreadId } from "@/lib/types";
 
 // `<ToolCallTrace>` calls `useQuery` for the live event subscription. For
@@ -115,11 +117,72 @@ vi.mock("@/components/ui/tooltip", () => ({
 const threadId = "thread_1" as ThreadId;
 const assistantMessageId = "message_1" as MessageId;
 
+const queryName = (query: unknown) => {
+  try {
+    return getFunctionName(query as Parameters<typeof getFunctionName>[0]);
+  } catch {
+    return null;
+  }
+};
+
 afterEach(() => {
   cleanup();
+  vi.mocked(useQuery).mockReset();
+  vi.mocked(useQuery).mockReturnValue([]);
 });
 
 describe("ChatPanel streaming rendering", () => {
+  test("ChatContainer owns message and active-stream subscriptions for the selected thread", () => {
+    vi.mocked(useQuery).mockImplementation((...callArgs) => {
+      const [query, args] = callArgs;
+      if (args === "skip") {
+        return undefined;
+      }
+      switch (queryName(query)) {
+        case "chat/threads:listMessages":
+          return [
+            {
+              _id: assistantMessageId,
+              role: "assistant",
+              status: "streaming",
+              content: "",
+              errorMessage: undefined,
+            } as unknown as Doc<"messages">,
+          ];
+        case "chat/streaming:getActiveMessageStream":
+          return {
+            assistantMessageId,
+            content: "streamed from container",
+            startedAt: Date.now(),
+            lastAppendedAt: Date.now(),
+          };
+        default:
+          return [];
+      }
+    });
+
+    render(
+      <ChatContainer
+        selectedThreadId={threadId}
+        isShellLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(vi.mocked(useQuery)).toHaveBeenCalledWith(expect.anything(), { threadId });
+    expect(screen.getByText("streamed from container")).toBeInTheDocument();
+  });
+
   test("renders active stream content for the in-flight assistant message", () => {
     render(
       <ChatPanel

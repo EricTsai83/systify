@@ -52,6 +52,7 @@ describe("ArtifactPanel action defaults", () => {
     render(
       <ArtifactPanel
         threadId={threadId}
+        repositoryArtifacts={[artifact]}
         hasAttachedRepository
         sandboxModeStatus={{ reasonCode: "available", message: null }}
         isVisible={false}
@@ -59,6 +60,7 @@ describe("ArtifactPanel action defaults", () => {
     );
 
     expect(useQueryMock).toHaveBeenCalledWith(expect.anything(), "skip");
+    expect(screen.queryByText("System overview")).not.toBeInTheDocument();
   });
 
   test("re-subscribes and renders latest artifacts when panel is reopened", () => {

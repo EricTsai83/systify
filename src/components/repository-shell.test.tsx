@@ -66,7 +66,7 @@ vi.mock("@/components/top-bar", () => ({
 }));
 
 vi.mock("@/components/chat-panel", () => ({
-  ChatPanel: ({
+  ChatContainer: ({
     showArtifactToggle,
     isArtifactPanelOpen,
     onToggleArtifactPanel,
@@ -338,6 +338,16 @@ function makeWorkspace(overrides: Omit<Partial<Doc<"workspaces">>, "_id"> & { _i
 }
 
 describe("RepositoryShell artifact toggle behavior", () => {
+  test("keeps chat hot-path subscriptions out of the workspace shell", () => {
+    repositoriesResult = [makeRepository()];
+
+    render(<RepositoryShell urlThreadId={null} urlRepositoryId={repoId} />);
+
+    const subscribedQueries = useQueryMock.mock.calls.map(([query]) => queryName(query));
+    expect(subscribedQueries).not.toContain("chat/threads:listMessages");
+    expect(subscribedQueries).not.toContain("chat/streaming:getActiveMessageStream");
+  });
+
   test("hides the artifact toggle while workspace is in no-repo state", () => {
     // The no-repo guard is structural — the ChatPanel-level toggle does not
     // render — instead of a disabled-but-present button. Assert the
