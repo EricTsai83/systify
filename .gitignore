@@ -25,3 +25,6 @@ dist-ssr
 .env
 
 .claude/settings.local.json
+
+# emil animation private skill
+.claude/skills/web-animation-design
