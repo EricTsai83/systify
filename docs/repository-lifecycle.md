@@ -11,7 +11,7 @@ flowchart TD
   Request[CreateImportOrSync]
   Queue[CreateImportAndJob]
   Validate[ValidateGitHubAccess]
-  Reserve[ReserveSandboxRowInConvex]
+  Reserve[ReserveImportScopedSandboxRowInConvex]
   Provision[ProvisionSandbox]
   Clone[CloneRepository]
   Snapshot[CollectSnapshot]
@@ -82,19 +82,18 @@ The first important decision in `runImportPipeline` is to perform a GitHub acces
 
 This order matters because it avoids the wasteful case where sandbox resources are created for a repository that is not actually accessible.
 
-### 4. Reserve the sandbox row, then provision the sandbox
+### 4. Reserve an import-scoped sandbox row, then provision the sandbox
 
 Only after repository access is confirmed does the system:
 
-- archive the previous sandbox record
 - insert a placeholder `sandboxes` row with `status = provisioning`
-- point `imports.sandboxId` and `repository.latestSandboxId` to that placeholder row
+- point `imports.sandboxId` to that placeholder row
 - call Daytona to create a new sandbox
 - attach resource limits, TTL, `remoteId`, and `repoPath` back onto the same sandbox row
 
-Note that archiving here changes the active role of the database record. Actual remote cleanup is handled later by the cleanup flow.
+`repositories.latestSandboxId` is intentionally not changed here. It continues to point at the last completed sandbox so sandbox-mode reads and analysis jobs do not lose the previous usable environment while a sync is still cloning, scanning, or persisting.
 
-This order is intentional. If the workflow crashes after Daytona create succeeds but before the rest of import completes, Convex still owns a sandbox record that later cleanup logic can find.
+This order is intentional. If the workflow crashes after Daytona create succeeds but before the rest of import completes, Convex still owns an import-scoped sandbox record that later cleanup logic can find without replacing the repository's last known good sandbox pointer.
 
 ### 5. Clone and snapshot
 
@@ -148,6 +147,8 @@ Only the finalize step is allowed to switch the repository to the new snapshot. 
 - updates repository summary fields and latest pointers
 - writes `lastImportedAt`, `lastIndexedAt`, and `lastSyncedCommitSha`
 - changes the sandbox state to `ready`
+- points `repositories.latestSandboxId` at the new sandbox
+- queues cleanup for the previously published sandbox, if one existed
 
 This is the moment the repository officially becomes ready for interaction on the new snapshot.
 
@@ -241,14 +242,14 @@ If any part of the pipeline fails:
 - `imports.status = failed`
 - the associated job is marked failed
 - the sandbox is marked failed if it already exists
-- `repository.importStatus = failed`
+- `repository.importStatus = failed` only when there is no previous completed import
 
 If a sandbox row had already been reserved, the system also schedules sandbox cleanup so the failed import does not leave either:
 
 - a Daytona sandbox still running without DB tracking
 - or a Convex placeholder sandbox row stuck forever in a failed state
 
-Cleanup can now handle both normal sandboxes and placeholder rows. If the row never received a Daytona `remoteId`, cleanup archives it without attempting a remote delete.
+Cleanup is scheduled for the failed import's sandbox, not for every sandbox on the repository. This preserves the last completed sandbox on sync failure. Cleanup can handle both normal sandboxes and placeholder rows. If the row never received a Daytona `remoteId`, cleanup archives it without attempting a remote delete.
 
 ### Import cancellation
 

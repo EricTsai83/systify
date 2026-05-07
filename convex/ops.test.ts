@@ -287,6 +287,108 @@ describe("expired sandbox sweep", () => {
     expect(state.job?.status).toBe("completed");
   });
 
+  test("failed sandbox cleanup can be queued again without changing the published sandbox pointer", async () => {
+    const t = convexTest(schema, modules);
+    const ownerTokenIdentifier = "user|cleanup-retry";
+
+    const ids = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/cleanup-retry",
+        sourceRepoFullName: "acme/cleanup-retry",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "cleanup-retry",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 1,
+      });
+      const publishedSandboxId = await ctx.db.insert("sandboxes", {
+        repositoryId,
+        ownerTokenIdentifier,
+        provider: "daytona",
+        sourceAdapter: "git_clone",
+        remoteId: "remote-published",
+        status: "ready",
+        workDir: "/workspace",
+        repoPath: "/workspace/repo",
+        cpuLimit: 2,
+        memoryLimitGiB: 4,
+        diskLimitGiB: 10,
+        ttlExpiresAt: Date.now() + 60_000,
+        autoStopIntervalMinutes: 30,
+        autoArchiveIntervalMinutes: 60,
+        autoDeleteIntervalMinutes: 120,
+        networkBlockAll: false,
+      });
+      const supersededSandboxId = await ctx.db.insert("sandboxes", {
+        repositoryId,
+        ownerTokenIdentifier,
+        provider: "daytona",
+        sourceAdapter: "git_clone",
+        remoteId: "remote-superseded",
+        status: "ready",
+        workDir: "/workspace",
+        repoPath: "/workspace/repo",
+        cpuLimit: 2,
+        memoryLimitGiB: 4,
+        diskLimitGiB: 10,
+        ttlExpiresAt: Date.now() + 60_000,
+        autoStopIntervalMinutes: 30,
+        autoArchiveIntervalMinutes: 60,
+        autoDeleteIntervalMinutes: 120,
+        networkBlockAll: false,
+      });
+      await ctx.db.patch(repositoryId, { latestSandboxId: publishedSandboxId });
+
+      return { repositoryId, publishedSandboxId, supersededSandboxId };
+    });
+
+    const firstCleanup = await t.mutation(internal.ops.scheduleSandboxCleanup, {
+      sandboxId: ids.supersededSandboxId,
+    });
+    if (!firstCleanup.jobId) {
+      throw new Error("Expected cleanup job to be queued.");
+    }
+    await t.mutation(internal.ops.markSandboxCleanupRunning, {
+      sandboxId: ids.supersededSandboxId,
+      jobId: firstCleanup.jobId,
+    });
+    await t.mutation(internal.ops.failSandboxCleanup, {
+      sandboxId: ids.supersededSandboxId,
+      jobId: firstCleanup.jobId,
+      errorMessage: "temporary Daytona failure",
+    });
+
+    const retryCleanup = await t.mutation(internal.ops.scheduleSandboxCleanup, {
+      sandboxId: ids.supersededSandboxId,
+    });
+
+    const state = await t.run(async (ctx) => ({
+      repository: await ctx.db.get(ids.repositoryId),
+      supersededSandbox: await ctx.db.get(ids.supersededSandboxId),
+      jobs: await ctx.db
+        .query("jobs")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", ids.repositoryId))
+        .take(10),
+    }));
+
+    expect(retryCleanup.jobId).toBeTruthy();
+    expect(retryCleanup.jobId).not.toBe(firstCleanup.jobId);
+    expect(state.repository?.latestSandboxId).toBe(ids.publishedSandboxId);
+    expect(state.supersededSandbox?.status).toBe("failed");
+    expect(
+      state.jobs.some(
+        (job) => job.kind === "cleanup" && job.sandboxId === ids.supersededSandboxId && job.status === "queued",
+      ),
+    ).toBe(true);
+  });
+
   test("reconcileDaytonaOrphans deletes Daytona sandboxes that are missing in Convex and older than the safety window", async () => {
     const t = convexTest(schema, modules);
     const olderThanWindow = new Date(Date.now() - 11 * 60_000).toISOString();

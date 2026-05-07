@@ -138,21 +138,10 @@ export const runImportPipeline = internalAction({
       });
 
       // -----------------------------------------------------------------------
-      // Repo is accessible — proceed with sandbox provisioning
+      // Repo is accessible — proceed with import-scoped sandbox provisioning.
+      // The repository keeps pointing at the last published sandbox until the
+      // new snapshot finalizes successfully.
       // -----------------------------------------------------------------------
-
-      // Archive the previous sandbox record in DB so it won't be referenced again.
-      // The Daytona-level cleanup (deleting the actual remote sandbox) is handled
-      // inside provisionSandbox via name-based lookup.
-      const existingSandbox = await ctx.runQuery(internal.imports.getExistingSandboxForRepo, {
-        repositoryId: importContext.repositoryId,
-      });
-      if (existingSandbox) {
-        await ctx.runMutation(internal.imports.archiveSandbox, {
-          sandboxId: existingSandbox.sandboxId,
-        });
-      }
-
       sandboxId = await ctx.runMutation(internal.imports.reserveSandboxRow, {
         importId: args.importId,
         repositoryId: importContext.repositoryId,
@@ -163,6 +152,7 @@ export const runImportPipeline = internalAction({
       const sandbox = await provisionSandbox({
         repositoryKey: importContext.sourceRepoFullName,
         repositoryId: importContext.repositoryId,
+        sandboxId,
         accessMode: importContext.accessMode,
         sourceAdapter: "git_clone",
       });
@@ -361,8 +351,8 @@ export const runImportPipeline = internalAction({
       });
 
       if (sandboxId) {
-        await ctx.runMutation(internal.ops.scheduleRepositorySandboxCleanup, {
-          repositoryId: importContext.repositoryId,
+        await ctx.runMutation(internal.ops.scheduleSandboxCleanup, {
+          sandboxId,
         });
       }
     }

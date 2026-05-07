@@ -26,6 +26,7 @@ const DEFAULT_DISK_GIB = 10;
 type CreateSandboxOptions = {
   repositoryKey: string;
   repositoryId: string;
+  sandboxId: string;
   accessMode: "public" | "private";
   sourceAdapter: "git_clone" | "source_service";
 };
@@ -77,10 +78,12 @@ export async function provisionSandbox(options: CreateSandboxOptions): Promise<S
   const sandboxName = buildSandboxName({
     repositoryKey: options.repositoryKey,
     repositoryId: options.repositoryId,
+    sandboxId: options.sandboxId,
   });
 
-  // Sandbox names are repository-scoped by repository id, so a same-name lookup
-  // can only refer to a prior sandbox for the same repository.
+  // Sandbox names are import-scoped by the Convex sandbox row id. A same-name
+  // lookup can only refer to a prior provisioning attempt for this sandbox row,
+  // not the previous published sandbox for the repository.
   try {
     const existing = await daytona.get(sandboxName);
     await daytona.delete(existing);
