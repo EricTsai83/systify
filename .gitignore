@@ -28,3 +28,4 @@ dist-ssr
 
 # emil animation private skill
 .claude/skills/web-animation-design
+.agents/skills/web-animation-design
