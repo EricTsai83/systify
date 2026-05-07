@@ -457,3 +457,65 @@ describe("expired sandbox sweep", () => {
     expect(deleteSandboxMock).toHaveBeenCalledWith("remote-orphan-old");
   });
 });
+
+describe("interactive job recovery queries", () => {
+  test("listStaleInteractiveJobs is not starved by non-interactive stale jobs", async () => {
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+
+    const { staleChatJobId, staleDeepAnalysisJobId } = await t.run(async (ctx) => {
+      for (let index = 0; index < 30; index += 1) {
+        await ctx.db.insert("jobs", {
+          ownerTokenIdentifier: "user|ops-stale-cleanup",
+          kind: "cleanup",
+          status: "queued",
+          stage: "queued",
+          progress: 0,
+          costCategory: "ops",
+          triggerSource: "system",
+          leaseExpiresAt: now - 60_000 - index,
+        });
+      }
+
+      const staleChatJobId = await ctx.db.insert("jobs", {
+        ownerTokenIdentifier: "user|ops-stale-chat",
+        kind: "chat",
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+        costCategory: "chat",
+        triggerSource: "user",
+        leaseExpiresAt: now - 10_000,
+      });
+      const staleDeepAnalysisJobId = await ctx.db.insert("jobs", {
+        ownerTokenIdentifier: "user|ops-stale-analysis",
+        kind: "deep_analysis",
+        status: "running",
+        stage: "analyzing",
+        progress: 0.5,
+        costCategory: "deep_analysis",
+        triggerSource: "user",
+        leaseExpiresAt: now - 5_000,
+      });
+      await ctx.db.insert("jobs", {
+        ownerTokenIdentifier: "user|ops-active-chat",
+        kind: "chat",
+        status: "running",
+        stage: "generating_reply",
+        progress: 0.5,
+        costCategory: "chat",
+        triggerSource: "user",
+        leaseExpiresAt: now + 60_000,
+      });
+
+      return { staleChatJobId, staleDeepAnalysisJobId };
+    });
+
+    const staleJobs = await t.query(internal.ops.listStaleInteractiveJobs, {});
+    const staleJobIds = staleJobs.map((job) => job.jobId);
+
+    expect(staleJobIds).toContain(staleChatJobId);
+    expect(staleJobIds).toContain(staleDeepAnalysisJobId);
+    expect(staleJobs.every((job) => job.kind === "chat" || job.kind === "deep_analysis")).toBe(true);
+  });
+});

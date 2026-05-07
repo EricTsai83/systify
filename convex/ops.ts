@@ -1,10 +1,13 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery, mutation, type MutationCtx } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
 import { CASCADE_BATCH_SIZE } from "./lib/constants";
 import { completeRunningJob, failRunningJob, markQueuedJobRunning } from "./jobLifecycle";
+
+const STALE_INTERACTIVE_JOBS_PER_KIND_LIMIT = 25;
+const STALE_INTERACTIVE_JOBS_TOTAL_LIMIT = 50;
 
 async function listActiveCleanupJobs(
   ctx: MutationCtx,
@@ -12,16 +15,20 @@ async function listActiveCleanupJobs(
 ): Promise<Map<Id<"sandboxes">, Id<"jobs">>> {
   const queuedJobs = await ctx.db
     .query("jobs")
-    .withIndex("by_repositoryId_and_status", (q) => q.eq("repositoryId", repositoryId).eq("status", "queued"))
+    .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+      q.eq("repositoryId", repositoryId).eq("kind", "cleanup").eq("status", "queued"),
+    )
     .take(CASCADE_BATCH_SIZE);
   const runningJobs = await ctx.db
     .query("jobs")
-    .withIndex("by_repositoryId_and_status", (q) => q.eq("repositoryId", repositoryId).eq("status", "running"))
+    .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+      q.eq("repositoryId", repositoryId).eq("kind", "cleanup").eq("status", "running"),
+    )
     .take(CASCADE_BATCH_SIZE);
 
   const activeCleanupJobs = new Map<Id<"sandboxes">, Id<"jobs">>();
   for (const job of [...queuedJobs, ...runningJobs]) {
-    if (job.kind !== "cleanup" || !job.sandboxId) {
+    if (!job.sandboxId) {
       continue;
     }
     activeCleanupJobs.set(job.sandboxId, job._id);
@@ -270,26 +277,49 @@ export const getSandboxByRemoteId = internalQuery({
   },
 });
 
+async function listStaleJobsByStatusAndKind(
+  ctx: Pick<QueryCtx, "db">,
+  args: {
+    status: "queued" | "running";
+    kind: "chat" | "deep_analysis";
+    now: number;
+  },
+) {
+  return await ctx.db
+    .query("jobs")
+    .withIndex("by_status_and_kind_and_leaseExpiresAt", (q) =>
+      q.eq("status", args.status).eq("kind", args.kind).lt("leaseExpiresAt", args.now),
+    )
+    .take(STALE_INTERACTIVE_JOBS_PER_KIND_LIMIT);
+}
+
 export const listStaleInteractiveJobs = internalQuery({
   args: {},
   handler: async (ctx) => {
     const now = Date.now();
-    const queuedJobs = await ctx.db
-      .query("jobs")
-      .withIndex("by_status_and_leaseExpiresAt", (q) => q.eq("status", "queued").lt("leaseExpiresAt", now))
-      .take(25);
-    const runningJobs = await ctx.db
-      .query("jobs")
-      .withIndex("by_status_and_leaseExpiresAt", (q) => q.eq("status", "running").lt("leaseExpiresAt", now))
-      .take(25);
+    const jobs = (
+      await Promise.all([
+        listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "chat", now }),
+        listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "deep_analysis", now }),
+        listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "chat", now }),
+        listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "deep_analysis", now }),
+      ])
+    )
+      .flat()
+      .sort((left, right) => {
+        const leaseDelta = (left.leaseExpiresAt ?? 0) - (right.leaseExpiresAt ?? 0);
+        if (leaseDelta !== 0) {
+          return leaseDelta;
+        }
+        return left._creationTime - right._creationTime;
+      })
+      .slice(0, STALE_INTERACTIVE_JOBS_TOTAL_LIMIT);
 
-    return [...queuedJobs, ...runningJobs]
-      .filter((job) => job.kind === "chat" || job.kind === "deep_analysis")
-      .map((job) => ({
-        jobId: job._id,
-        kind: job.kind,
-        requestedCommand: job.requestedCommand,
-      }));
+    return jobs.map((job) => ({
+      jobId: job._id,
+      kind: job.kind,
+      requestedCommand: job.requestedCommand,
+    }));
   },
 });
 

@@ -196,8 +196,16 @@ export default defineSchema({
     deletionRequestedAt: v.optional(v.number()),
   })
     .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"])
-    .index("by_ownerTokenIdentifier_and_lastImportedAt", ["ownerTokenIdentifier", "lastImportedAt"])
-    .index("by_ownerTokenIdentifier_and_sourceUrl", ["ownerTokenIdentifier", "sourceUrl"])
+    .index("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", [
+      "ownerTokenIdentifier",
+      "deletionRequestedAt",
+      "lastImportedAt",
+    ])
+    .index("by_ownerTokenIdentifier_and_sourceUrl_and_deletionRequestedAt", [
+      "ownerTokenIdentifier",
+      "sourceUrl",
+      "deletionRequestedAt",
+    ])
     .index("by_sourceRepoFullName", ["sourceRepoFullName"]),
 
   imports: defineTable({
@@ -267,7 +275,6 @@ export default defineSchema({
     leaseExpiresAt: v.optional(v.number()),
   })
     .index("by_repositoryId", ["repositoryId"])
-    .index("by_repositoryId_and_status", ["repositoryId", "status"])
     .index("by_threadId", ["threadId"])
     .index("by_threadId_and_kind_and_status_and_leaseExpiresAt", ["threadId", "kind", "status", "leaseExpiresAt"])
     .index("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", [
@@ -276,7 +283,7 @@ export default defineSchema({
       "status",
       "leaseExpiresAt",
     ])
-    .index("by_status_and_leaseExpiresAt", ["status", "leaseExpiresAt"])
+    .index("by_status_and_kind_and_leaseExpiresAt", ["status", "kind", "leaseExpiresAt"])
     .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
 
   daytonaWebhookEvents: defineTable({

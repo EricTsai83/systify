@@ -17,6 +17,7 @@ import { createOpaqueErrorId } from "./lib/observability";
 import { completeRunningJob, failRunningJob, failStaleActiveJob, markQueuedJobRunning } from "./jobLifecycle";
 
 const MAX_ADR_SOURCE_MESSAGES = 10;
+const ACTIVE_FAILURE_MODE_JOB_SCAN_LIMIT = 10;
 
 export const captureAdr = mutation({
   args: {
@@ -39,12 +40,11 @@ export const captureAdr = mutation({
 
     const messages = await ctx.db
       .query("messages")
-      .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
+      .withIndex("by_threadId_and_status", (q) => q.eq("threadId", args.threadId).eq("status", "completed"))
       .order("desc")
       .take(MAX_ADR_SOURCE_MESSAGES);
 
-    const completedMessages = messages.filter((message) => message.status === "completed");
-    const adr = synthesizeAdrFromThreadMessages([...completedMessages].reverse());
+    const adr = synthesizeAdrFromThreadMessages([...messages].reverse());
     const title = args.title?.trim() || adr.title;
     const artifactId: Id<"artifacts"> = await ctx.runMutation(internal.artifactStore.createArtifact, {
       threadId: args.threadId,
@@ -340,17 +340,22 @@ function buildAlternatives(userPoints: string[]) {
 }
 
 async function getActiveFailureModeJob(ctx: MutationCtx, threadId: Id<"threads">, now: number) {
-  const jobs = await ctx.db
-    .query("jobs")
-    .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
-    .order("desc")
-    .take(20);
+  const [queuedJobs, runningJobs] = await Promise.all([
+    ctx.db
+      .query("jobs")
+      .withIndex("by_threadId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+        q.eq("threadId", threadId).eq("kind", "deep_analysis").eq("status", "queued").gte("leaseExpiresAt", now),
+      )
+      .take(ACTIVE_FAILURE_MODE_JOB_SCAN_LIMIT),
+    ctx.db
+      .query("jobs")
+      .withIndex("by_threadId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+        q.eq("threadId", threadId).eq("kind", "deep_analysis").eq("status", "running").gte("leaseExpiresAt", now),
+      )
+      .take(ACTIVE_FAILURE_MODE_JOB_SCAN_LIMIT),
+  ]);
 
-  return jobs.find(
-    (job) =>
-      job.kind === "deep_analysis" &&
-      (job.status === "queued" || job.status === "running") &&
-      job.requestedCommand?.startsWith("failure_mode_analysis:") &&
-      isLeaseActive(job.leaseExpiresAt, now),
+  return [...runningJobs, ...queuedJobs].find(
+    (job) => job.requestedCommand?.startsWith("failure_mode_analysis:") && isLeaseActive(job.leaseExpiresAt, now),
   );
 }

@@ -75,13 +75,13 @@ export const listRepositories = query({
     const identity = await requireViewerIdentity(ctx);
     const repositories = await ctx.db
       .query("repositories")
-      .withIndex("by_ownerTokenIdentifier_and_lastImportedAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier),
+      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
       )
       .order("desc")
       .take(100);
 
-    return repositories.filter((repository) => !isRepositoryDeleting(repository));
+    return repositories;
   },
 });
 
@@ -96,7 +96,9 @@ export const getImportedRepoSummaries = query({
     const identity = await requireViewerIdentity(ctx);
     const repos = await ctx.db
       .query("repositories")
-      .withIndex("by_ownerTokenIdentifier", (q) => q.eq("ownerTokenIdentifier", identity.tokenIdentifier))
+      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
+      )
       .take(200);
 
     const summaries: Record<
@@ -109,10 +111,6 @@ export const getImportedRepoSummaries = query({
     > = {};
 
     for (const repo of repos) {
-      if (isRepositoryDeleting(repo)) {
-        continue;
-      }
-
       summaries[repo.sourceRepoFullName] = {
         importStatus: repo.importStatus,
         lastImportedAt: repo.lastImportedAt,
@@ -260,14 +258,16 @@ export const createRepositoryImport = mutation({
     // cascading (soft-deleted row lingers until background cleanup finishes).
     // Pick the first *active* (non-deleting) row; ignore tombstoned ones so
     // the user can re-import immediately after pressing "Delete".
-    const matchingRepos = await ctx.db
-      .query("repositories")
-      .withIndex("by_ownerTokenIdentifier_and_sourceUrl", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("sourceUrl", parsed.normalizedUrl),
-      )
-      .take(10);
-
-    let repository = matchingRepos.find((r) => !isRepositoryDeleting(r)) ?? null;
+    let repository =
+      (await ctx.db
+        .query("repositories")
+        .withIndex("by_ownerTokenIdentifier_and_sourceUrl_and_deletionRequestedAt", (q) =>
+          q
+            .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+            .eq("sourceUrl", parsed.normalizedUrl)
+            .eq("deletionRequestedAt", undefined),
+        )
+        .first()) ?? null;
 
     let repositoryId = repository?._id;
     let defaultThreadId = repository?.defaultThreadId;

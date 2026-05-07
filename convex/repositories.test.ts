@@ -16,6 +16,63 @@ function createTestConvex() {
 }
 
 describe("repository detail metadata", () => {
+  test("list queries read only active repositories even when tombstones dominate the owner", async () => {
+    const ownerTokenIdentifier = "user|active-list-index";
+    const t = createTestConvex();
+    const now = Date.now();
+
+    const activeRepositoryId = await t.run(async (ctx) => {
+      for (let index = 0; index < 120; index += 1) {
+        await ctx.db.insert("repositories", {
+          ownerTokenIdentifier,
+          sourceHost: "github",
+          sourceUrl: `https://github.com/acme/deleting-${index}`,
+          sourceRepoFullName: `acme/deleting-${index}`,
+          sourceRepoOwner: "acme",
+          sourceRepoName: `deleting-${index}`,
+          defaultBranch: "main",
+          visibility: "private",
+          accessMode: "private",
+          importStatus: "completed",
+          detectedLanguages: [],
+          packageManagers: [],
+          entrypoints: [],
+          fileCount: 0,
+          lastImportedAt: now + index,
+          deletionRequestedAt: now + index,
+        });
+      }
+
+      return await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/active-list-index",
+        sourceRepoFullName: "acme/active-list-index",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "active-list-index",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 1,
+        lastImportedAt: now - 1,
+        lastSyncedCommitSha: "abc123",
+        latestRemoteSha: "def456",
+      });
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const repositories = await viewer.query(api.repositories.listRepositories, {});
+    const summaries = await viewer.query(api.repositories.getImportedRepoSummaries, {});
+
+    expect(repositories.map((repository) => repository._id)).toEqual([activeRepositoryId]);
+    expect(Object.keys(summaries)).toEqual(["acme/active-list-index"]);
+    expect(summaries["acme/active-list-index"]?.hasRemoteUpdates).toBe(true);
+  });
+
   test("getRepositoryDetail reads denormalized file counts and caps oversized labels as 400+", async () => {
     const ownerTokenIdentifier = "user|repo-detail";
     const t = createTestConvex();
