@@ -23,9 +23,12 @@ export const runFailureModeAnalysis = internalAction({
     jobId: v.id("jobs"),
   },
   handler: async (ctx, args) => {
-    await ctx.runMutation(internal.designArtifacts.markFailureModeRunning, {
+    const start = (await ctx.runMutation(internal.designArtifacts.markFailureModeRunning, {
       jobId: args.jobId,
-    });
+    })) as { started: boolean };
+    if (!start.started) {
+      return;
+    }
 
     try {
       const context = (await ctx.runQuery(internal.designArtifacts.getFailureModeContext, {

@@ -27,9 +27,12 @@ export const runDeepAnalysis = internalAction({
     prompt: v.string(),
   },
   handler: async (ctx, args) => {
-    await ctx.runMutation(internal.analysis.markDeepAnalysisRunning, {
+    const start = (await ctx.runMutation(internal.analysis.markDeepAnalysisRunning, {
       jobId: args.jobId,
-    });
+    })) as { started: boolean };
+    if (!start.started) {
+      return;
+    }
 
     try {
       // Cast required: Convex action ctx.runQuery cannot infer return types

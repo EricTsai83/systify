@@ -13,6 +13,7 @@ import {
   throwOperationAlreadyInProgress,
 } from "./lib/rateLimit";
 import { getSandboxAvailability } from "./lib/sandboxAvailability";
+import { completeRunningJob, failRunningJob, failStaleActiveJob, markQueuedJobRunning } from "./jobLifecycle";
 
 const DEEP_ANALYSIS_SANDBOX_TTL_EXTENSION_MS = 30 * 60_000;
 
@@ -163,13 +164,16 @@ export const markDeepAnalysisRunning = internalMutation({
     jobId: v.id("jobs"),
   },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.jobId, {
-      status: "running",
+    const now = Date.now();
+    const runningJob = await markQueuedJobRunning(ctx, {
+      jobId: args.jobId,
+      expectedKind: "deep_analysis",
       stage: "focused_inspection",
       progress: 0.2,
-      startedAt: Date.now(),
-      leaseExpiresAt: Date.now() + DEEP_ANALYSIS_JOB_LEASE_MS,
+      startedAt: now,
+      leaseExpiresAt: now + DEEP_ANALYSIS_JOB_LEASE_MS,
     });
+    return { started: runningJob !== null };
   },
 });
 
@@ -182,6 +186,16 @@ export const completeDeepAnalysis = internalMutation({
     contentMarkdown: v.string(),
   },
   handler: async (ctx, args) => {
+    const completedJob = await completeRunningJob(ctx, {
+      jobId: args.jobId,
+      expectedKind: "deep_analysis",
+      completedAt: Date.now(),
+      outputSummary: args.summary,
+    });
+    if (!completedJob) {
+      return { completed: false as const };
+    }
+
     // completeDeepAnalysis inserts directly into `artifacts` rather than
     // routing through createArtifactInternal, so enforce the artifact
     // parent invariant here so the rule stays centralized.
@@ -199,14 +213,7 @@ export const completeDeepAnalysis = internalMutation({
       version: 1,
     });
 
-    await ctx.db.patch(args.jobId, {
-      status: "completed",
-      stage: "completed",
-      progress: 1,
-      completedAt: Date.now(),
-      outputSummary: args.summary,
-      leaseExpiresAt: undefined,
-    });
+    return { completed: true as const };
   },
 });
 
@@ -222,25 +229,23 @@ export const failDeepAnalysis = internalMutation({
       return;
     }
 
+    const now = Date.now();
     if (args.onlyIfStale) {
-      const now = Date.now();
-      if (
-        job.kind !== "deep_analysis" ||
-        (job.status !== "queued" && job.status !== "running") ||
-        typeof job.leaseExpiresAt !== "number" ||
-        job.leaseExpiresAt > now
-      ) {
-        return;
-      }
+      const failedJob = await failStaleActiveJob(ctx, {
+        jobId: args.jobId,
+        expectedKind: "deep_analysis",
+        now,
+        errorMessage: args.errorMessage,
+      });
+      return { failed: failedJob !== null };
     }
 
-    await ctx.db.patch(args.jobId, {
-      status: "failed",
-      stage: "failed",
-      progress: 1,
-      completedAt: Date.now(),
+    const failedJob = await failRunningJob(ctx, {
+      jobId: args.jobId,
+      expectedKind: "deep_analysis",
+      completedAt: now,
       errorMessage: args.errorMessage,
-      leaseExpiresAt: undefined,
     });
+    return { failed: failedJob !== null };
   },
 });

@@ -6,6 +6,14 @@ import { CHAT_JOB_LEASE_MS, consumeSandboxDailyCost } from "../lib/rateLimit";
 import { costUsdToCents } from "../lib/openaiPricing";
 import { logInfo, logWarn } from "../lib/observability";
 import { MAX_TOOL_CALL_EVENTS_PER_MESSAGE, TOOL_CALL_EVENT_SUMMARY_MAX_CHARS } from "../lib/constants";
+import {
+  cancelActiveJob,
+  completeRunningJob,
+  failRunningJob,
+  failStaleActiveJob,
+  markQueuedJobRunning,
+  refreshRunningJobLease,
+} from "../jobLifecycle";
 import { lintCitations, type UnverifiedClaimRange } from "./citationLint";
 import {
   compactMessageStreamTail,
@@ -312,16 +320,22 @@ export const markAssistantReplyRunning = internalMutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    await ctx.db.patch(args.assistantMessageId, {
-      status: "streaming",
-    });
-    await ctx.db.patch(args.jobId, {
-      status: "running",
+    const runningJob = await markQueuedJobRunning(ctx, {
+      jobId: args.jobId,
+      expectedKind: "chat",
       stage: "generating_reply",
       progress: 0.15,
       startedAt: now,
       leaseExpiresAt: now + CHAT_JOB_LEASE_MS,
     });
+    if (!runningJob) {
+      return { started: false as const };
+    }
+
+    await ctx.db.patch(args.assistantMessageId, {
+      status: "streaming",
+    });
+    return { started: true as const };
   },
 });
 
@@ -370,7 +384,9 @@ export const appendAssistantStreamChunk = internalMutation({
     // lease is renewed well before it expires on long-running streams.
     const leaseRefreshDeadline = now - Math.floor(CHAT_JOB_LEASE_MS / 2);
     if (stream.lastAppendedAt <= leaseRefreshDeadline) {
-      await ctx.db.patch(args.jobId, {
+      await refreshRunningJobLease(ctx, {
+        jobId: args.jobId,
+        expectedKind: "chat",
         leaseExpiresAt: now + CHAT_JOB_LEASE_MS,
       });
     }
@@ -459,12 +475,16 @@ export const appendAssistantToolCallEvent = internalMutation({
       const now = Date.now();
       const leaseRefreshDeadline = now - Math.floor(CHAT_JOB_LEASE_MS / 2);
       if (stream.lastAppendedAt <= leaseRefreshDeadline) {
-        await ctx.db.patch(args.jobId, {
+        const refreshedJob = await refreshRunningJobLease(ctx, {
+          jobId: args.jobId,
+          expectedKind: "chat",
           leaseExpiresAt: now + CHAT_JOB_LEASE_MS,
         });
-        await ctx.db.patch(stream._id, {
-          lastAppendedAt: now,
-        });
+        if (refreshedJob) {
+          await ctx.db.patch(stream._id, {
+            lastAppendedAt: now,
+          });
+        }
       }
     }
   },
@@ -514,6 +534,19 @@ export const finalizeAssistantReply = internalMutation({
 
     try {
       if (message) {
+        const completedJob = await completeRunningJob(ctx, {
+          jobId: args.jobId,
+          expectedKind: "chat",
+          completedAt: now,
+          outputSummary: "Assistant reply generated.",
+          estimatedInputTokens: args.inputTokens,
+          estimatedOutputTokens: args.outputTokens,
+          estimatedCostUsd: args.costUsd,
+        });
+        if (!completedJob) {
+          return;
+        }
+
         const finalContent = `${streamSnapshot?.content ?? message.content}${args.finalDelta}`;
         // Plan 11 — citation lint runs against the finalized content
         // *before* the patch so `messages.unverifiedClaims` is committed
@@ -564,30 +597,14 @@ export const finalizeAssistantReply = internalMutation({
         });
       }
 
-      // Always release the job lease so the per-thread in-flight gate clears,
-      // even when the assistant message has been deleted (e.g. concurrent
-      // thread or repository deletion). If the message is gone we can't
-      // deliver the reply, so mark the job as failed instead of completed.
-      if (message) {
-        await ctx.db.patch(args.jobId, {
-          status: "completed",
-          stage: "completed",
-          progress: 1,
-          completedAt: now,
-          outputSummary: "Assistant reply generated.",
-          estimatedInputTokens: args.inputTokens,
-          estimatedOutputTokens: args.outputTokens,
-          estimatedCostUsd: args.costUsd,
-          leaseExpiresAt: undefined,
-        });
-      } else {
-        await ctx.db.patch(args.jobId, {
-          status: "failed",
-          stage: "failed",
-          progress: 1,
+      // If the assistant message is gone we can't deliver the reply, so mark
+      // the still-running job as failed. Terminal jobs are left untouched.
+      if (!message) {
+        await failRunningJob(ctx, {
+          jobId: args.jobId,
+          expectedKind: "chat",
           completedAt: now,
           errorMessage: "Assistant message was deleted before the reply could be persisted.",
-          leaseExpiresAt: undefined,
         });
       }
 
@@ -650,6 +667,19 @@ export const failAssistantReply = internalMutation({
     });
 
     try {
+      const failedJob = await failRunningJob(ctx, {
+        jobId: args.jobId,
+        expectedKind: "chat",
+        completedAt: now,
+        errorMessage: args.errorMessage,
+        estimatedInputTokens: args.inputTokens,
+        estimatedOutputTokens: args.outputTokens,
+        estimatedCostUsd: args.costUsd,
+      });
+      if (!failedJob) {
+        return;
+      }
+
       if (message) {
         const streamedContent = `${streamSnapshot?.content ?? message.content}${args.finalDelta ?? ""}`;
         // Plan 11 — lint the *streamed* content (not the error fallback).
@@ -682,21 +712,6 @@ export const failAssistantReply = internalMutation({
           jobId: args.jobId,
         });
       }
-
-      // Always fail the job and release its lease, regardless of whether the
-      // assistant message still exists. Otherwise the in-flight gate would
-      // stay engaged until the lease expires and recoverStaleChatJob fires.
-      await ctx.db.patch(args.jobId, {
-        status: "failed",
-        stage: "failed",
-        progress: 1,
-        completedAt: now,
-        errorMessage: args.errorMessage,
-        estimatedInputTokens: args.inputTokens,
-        estimatedOutputTokens: args.outputTokens,
-        estimatedCostUsd: args.costUsd,
-        leaseExpiresAt: undefined,
-      });
 
       // Plan 10 — even on failure, the cost has been incurred upstream
       // (OpenAI charges for streamed tokens regardless of whether the
@@ -824,6 +839,26 @@ export const markAssistantReplyCancelled = internalMutation({
     });
 
     try {
+      const cancelledJob = await cancelActiveJob(ctx, {
+        jobId: args.jobId,
+        expectedKind: "chat",
+        completedAt: now,
+        errorMessage: reason,
+        estimatedInputTokens: args.inputTokens,
+        estimatedOutputTokens: args.outputTokens,
+        estimatedCostUsd: args.costUsd,
+      });
+      if (!cancelledJob) {
+        const job = await ctx.db.get(args.jobId);
+        if (job) {
+          return;
+        }
+        logWarn("chat", "cancel_job_missing", {
+          assistantMessageId: args.assistantMessageId,
+          jobId: args.jobId,
+        });
+      }
+
       if (message) {
         const streamedContent = `${streamSnapshot?.content ?? message.content}${args.finalDelta ?? ""}`;
         // Plan 11 — same rationale as the fail path: a cancelled reply
@@ -854,32 +889,6 @@ export const markAssistantReplyCancelled = internalMutation({
         });
       } else {
         logWarn("chat", "cancel_assistant_message_missing", {
-          assistantMessageId: args.assistantMessageId,
-          jobId: args.jobId,
-        });
-      }
-
-      // Always cancel the job and clear the lease, regardless of whether
-      // the assistant message still exists or whether `cancelInFlightReply`
-      // already set the status. Guard against concurrent deletion so the
-      // cancellation finalization doesn't fail if the job row was deleted
-      // by a cascade (e.g. thread deleted). Check for existence first so
-      // a missing job is a clean no-op rather than throwing.
-      const job = await ctx.db.get(args.jobId);
-      if (job) {
-        await ctx.db.patch(args.jobId, {
-          status: "cancelled",
-          stage: "cancelled",
-          progress: 1,
-          completedAt: now,
-          errorMessage: reason,
-          estimatedInputTokens: args.inputTokens,
-          estimatedOutputTokens: args.outputTokens,
-          estimatedCostUsd: args.costUsd,
-          leaseExpiresAt: undefined,
-        });
-      } else {
-        logWarn("chat", "cancel_job_missing", {
           assistantMessageId: args.assistantMessageId,
           jobId: args.jobId,
         });
@@ -991,14 +1000,15 @@ export const recoverStaleChatJob = internalMutation({
         });
       }
 
-      await ctx.db.patch(args.jobId, {
-        status: "failed",
-        stage: "failed",
-        progress: 1,
-        completedAt: now,
+      const failedJob = await failStaleActiveJob(ctx, {
+        jobId: args.jobId,
+        expectedKind: "chat",
+        now,
         errorMessage: message,
-        leaseExpiresAt: undefined,
       });
+      if (!failedJob) {
+        return;
+      }
     } finally {
       if (stream) {
         await deleteMessageStreamState(ctx, stream._id);

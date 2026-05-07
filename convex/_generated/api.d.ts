@@ -41,6 +41,7 @@ import type * as githubCheck from "../githubCheck.js";
 import type * as http from "../http.js";
 import type * as imports from "../imports.js";
 import type * as importsNode from "../importsNode.js";
+import type * as jobLifecycle from "../jobLifecycle.js";
 import type * as lib_architectureDiagram from "../lib/architectureDiagram.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_constants from "../lib/constants.js";
@@ -104,6 +105,7 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   imports: typeof imports;
   importsNode: typeof importsNode;
+  jobLifecycle: typeof jobLifecycle;
   "lib/architectureDiagram": typeof lib_architectureDiagram;
   "lib/auth": typeof lib_auth;
   "lib/constants": typeof lib_constants;

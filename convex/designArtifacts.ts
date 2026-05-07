@@ -13,6 +13,7 @@ import {
   throwOperationAlreadyInProgress,
 } from "./lib/rateLimit";
 import { createOpaqueErrorId } from "./lib/observability";
+import { completeRunningJob, failRunningJob, failStaleActiveJob, markQueuedJobRunning } from "./jobLifecycle";
 
 const MAX_ADR_SOURCE_MESSAGES = 10;
 
@@ -154,13 +155,16 @@ export const markFailureModeRunning = internalMutation({
     jobId: v.id("jobs"),
   },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.jobId, {
-      status: "running",
+    const now = Date.now();
+    const runningJob = await markQueuedJobRunning(ctx, {
+      jobId: args.jobId,
+      expectedKind: "deep_analysis",
       stage: "failure_mode_analysis",
       progress: 0.25,
-      startedAt: Date.now(),
-      leaseExpiresAt: Date.now() + DEEP_ANALYSIS_JOB_LEASE_MS,
+      startedAt: now,
+      leaseExpiresAt: now + DEEP_ANALYSIS_JOB_LEASE_MS,
     });
+    return { started: runningJob !== null };
   },
 });
 
@@ -175,6 +179,16 @@ export const completeFailureModeAnalysis = internalMutation({
     contentMarkdown: v.string(),
   },
   handler: async (ctx, args) => {
+    const completedJob = await completeRunningJob(ctx, {
+      jobId: args.jobId,
+      expectedKind: "deep_analysis",
+      completedAt: Date.now(),
+      outputSummary: args.summary,
+    });
+    if (!completedJob) {
+      return { completed: false as const };
+    }
+
     await ctx.runMutation(internal.artifactStore.createArtifact, {
       threadId: args.threadId,
       repositoryId: args.repositoryId,
@@ -187,14 +201,7 @@ export const completeFailureModeAnalysis = internalMutation({
       source: "sandbox",
     });
 
-    await ctx.db.patch(args.jobId, {
-      status: "completed",
-      stage: "completed",
-      progress: 1,
-      completedAt: Date.now(),
-      outputSummary: args.summary,
-      leaseExpiresAt: undefined,
-    });
+    return { completed: true as const };
   },
 });
 
@@ -204,14 +211,13 @@ export const failFailureModeAnalysis = internalMutation({
     errorMessage: v.string(),
   },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.jobId, {
-      status: "failed",
-      stage: "failed",
-      progress: 1,
+    const failedJob = await failRunningJob(ctx, {
+      jobId: args.jobId,
+      expectedKind: "deep_analysis",
       completedAt: Date.now(),
       errorMessage: args.errorMessage,
-      leaseExpiresAt: undefined,
     });
+    return { failed: failedJob !== null };
   },
 });
 
@@ -237,12 +243,17 @@ export const recoverStaleFailureModeJob = internalMutation({
       return;
     }
 
-    const message = args.errorMessage ?? STALE_FAILURE_MODE_JOB_ERROR_MESSAGE;
     const errorId = createOpaqueErrorId("design_artifacts");
-    await ctx.runMutation(internal.designArtifacts.failFailureModeAnalysis, {
+    const message = `${args.errorMessage ?? STALE_FAILURE_MODE_JOB_ERROR_MESSAGE}\n\nReference: ${errorId}`;
+    const failedJob = await failStaleActiveJob(ctx, {
       jobId: args.jobId,
-      errorMessage: `${message}\n\nReference: ${errorId}`,
+      expectedKind: "deep_analysis",
+      now,
+      errorMessage: message,
     });
+    if (!failedJob) {
+      return;
+    }
   },
 });
 
