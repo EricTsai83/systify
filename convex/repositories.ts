@@ -75,7 +75,7 @@ export const listRepositories = query({
     const identity = await requireViewerIdentity(ctx);
     const repositories = await ctx.db
       .query("repositories")
-      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_lastImportedAt", (q) =>
+      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", (q) =>
         q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
       )
       .order("desc")
@@ -96,7 +96,7 @@ export const getImportedRepoSummaries = query({
     const identity = await requireViewerIdentity(ctx);
     const repos = await ctx.db
       .query("repositories")
-      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_lastImportedAt", (q) =>
+      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", (q) =>
         q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
       )
       .take(200);

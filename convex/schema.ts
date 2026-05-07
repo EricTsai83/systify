@@ -196,7 +196,7 @@ export default defineSchema({
     deletionRequestedAt: v.optional(v.number()),
   })
     .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"])
-    .index("by_ownerTokenIdentifier_and_deletionRequestedAt_and_lastImportedAt", [
+    .index("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", [
       "ownerTokenIdentifier",
       "deletionRequestedAt",
       "lastImportedAt",
