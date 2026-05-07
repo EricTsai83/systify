@@ -16,6 +16,7 @@ It also needs to update the repository's published snapshot metadata, including:
 
 - `latestImportId`
 - `latestImportJobId`
+- `latestSandboxId`
 - repository summaries
 - detected languages and entrypoints
 - sandbox readiness
@@ -85,6 +86,7 @@ Only the final step is allowed to update repository-visible snapshot state:
 - detected languages
 - package managers
 - entrypoints
+- `latestSandboxId`
 - sandbox `ready` state
 
 This makes finalize the only publish boundary.
@@ -104,6 +106,8 @@ Late publish prevents that inconsistency. Readers either see:
 
 They never see an in-between version.
 
+The same rule applies to sandboxes. A sync provisions its new Daytona sandbox under `imports.sandboxId` first, while `repositories.latestSandboxId` continues to reference the previous usable sandbox. Finalize is the only step that promotes the new sandbox to `latestSandboxId`; only after that promotion does the system queue cleanup for the superseded sandbox.
+
 ## Why Cleanup Runs On Failure And Cancellation
 
 Batching introduces a new failure mode: some rows may already have been written when the workflow is cancelled or fails.
@@ -114,6 +118,8 @@ This gives the system a simple rule:
 
 - completed old snapshots are cleaned up after a successful publish
 - incomplete new snapshots are cleaned up after an unsuccessful publish
+
+Sandbox cleanup follows the same ownership boundary. Failed imports clean up only their import-scoped sandbox. Repository deletion is the path that schedules cleanup for every known sandbox belonging to the repository.
 
 ## Idempotency Strategy
 

@@ -243,6 +243,10 @@ async function guardPersistStage(
     };
   }
 
+  if (importRecord.sandboxId && importRecord.sandboxId !== args.sandboxId) {
+    return { kind: "cancelled" };
+  }
+
   const sandbox = await ctx.db.get(args.sandboxId);
   if (!sandbox) {
     await finalizeImportCancellation(ctx, {
@@ -307,34 +311,6 @@ export const getImportContext = internalQuery({
   },
 });
 
-export const getExistingSandboxForRepo = internalQuery({
-  args: {
-    repositoryId: v.id("repositories"),
-  },
-  handler: async (ctx, args) => {
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository?.latestSandboxId) {
-      return null;
-    }
-    const sandbox = await ctx.db.get(repository.latestSandboxId);
-    if (!sandbox || sandbox.status === "archived") {
-      return null;
-    }
-    return { sandboxId: sandbox._id, remoteId: sandbox.remoteId };
-  },
-});
-
-export const archiveSandbox = internalMutation({
-  args: {
-    sandboxId: v.id("sandboxes"),
-  },
-  handler: async (ctx, args) => {
-    await ctx.db.patch(args.sandboxId, {
-      status: "archived",
-    });
-  },
-});
-
 export const markImportRunning = internalMutation({
   args: {
     importId: v.id("imports"),
@@ -387,6 +363,27 @@ export const reserveSandboxRow = internalMutation({
     sourceAdapter: v.union(v.literal("git_clone"), v.literal("source_service")),
   },
   handler: async (ctx, args) => {
+    const importRecord = await ctx.db.get(args.importId);
+    if (!importRecord) {
+      throw new Error("Import not found.");
+    }
+    if (importRecord.repositoryId !== args.repositoryId) {
+      throw new Error("Import does not belong to repository.");
+    }
+    if (
+      importRecord.status === "completed" ||
+      importRecord.status === "cancelled" ||
+      importRecord.status === "failed"
+    ) {
+      throw new Error("Cannot reserve a sandbox for a terminal import.");
+    }
+    if (importRecord.sandboxId) {
+      const existingSandbox = await ctx.db.get(importRecord.sandboxId);
+      if (existingSandbox) {
+        return existingSandbox._id;
+      }
+    }
+
     const sandboxId = await ctx.db.insert("sandboxes", {
       repositoryId: args.repositoryId,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
@@ -408,9 +405,6 @@ export const reserveSandboxRow = internalMutation({
 
     await ctx.db.patch(args.importId, {
       sandboxId,
-    });
-    await ctx.db.patch(args.repositoryId, {
-      latestSandboxId: sandboxId,
     });
 
     return sandboxId;
@@ -661,6 +655,7 @@ export const finalizeImportCompletion = internalMutation({
 
     const previousCompletedImportId = state.repository.latestImportId;
     const previousCompletedImportJobId = state.repository.latestImportJobId;
+    const previousSandboxId = state.repository.latestSandboxId;
 
     const completed = await applyImportCompletionState(ctx, {
       importId: args.importId,
@@ -691,6 +686,11 @@ export const finalizeImportCompletion = internalMutation({
       await ctx.scheduler.runAfter(0, internal.imports.cleanupSupersededImportSnapshot, {
         importId: previousCompletedImportId,
         importJobId: previousCompletedImportJobId,
+      });
+    }
+    if (previousSandboxId && previousSandboxId !== args.sandboxId) {
+      await ctx.runMutation(internal.ops.scheduleSandboxCleanup, {
+        sandboxId: previousSandboxId,
       });
     }
 
@@ -786,6 +786,9 @@ export const markImportFailed = internalMutation({
         await ctx.db.patch(importRecord.sandboxId, {
           status: "failed",
           lastErrorMessage: args.errorMessage,
+        });
+        await ctx.runMutation(internal.ops.scheduleSandboxCleanup, {
+          sandboxId: importRecord.sandboxId,
         });
       }
     }

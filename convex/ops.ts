@@ -122,6 +122,22 @@ export const scheduleRepositorySandboxCleanup = internalMutation({
   },
 });
 
+export const scheduleSandboxCleanup = internalMutation({
+  args: {
+    sandboxId: v.id("sandboxes"),
+    triggerSource: v.optional(v.union(v.literal("user"), v.literal("system"))),
+  },
+  handler: async (ctx, args) => {
+    const sandbox = await ctx.db.get(args.sandboxId);
+    if (!sandbox) {
+      return { jobId: null };
+    }
+
+    const jobId = await queueSandboxCleanupJob(ctx, sandbox, args.triggerSource ?? "system");
+    return { jobId };
+  },
+});
+
 export const markSandboxCleanupRunning = internalMutation({
   args: {
     sandboxId: v.id("sandboxes"),

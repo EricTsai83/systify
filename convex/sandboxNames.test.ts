@@ -26,4 +26,21 @@ describe("buildSandboxName", () => {
     expect(name).toBe("architect-foo-bar-baz-repo-abc123");
     expect(name.length).toBeLessThanOrEqual(63);
   });
+
+  test("uses sandbox row id when provided so syncs do not reuse the published sandbox name", () => {
+    const first = buildSandboxName({
+      repositoryKey: "Foo/Bar",
+      repositoryId: "repo123",
+      sandboxId: "sandboxAlpha",
+    });
+    const second = buildSandboxName({
+      repositoryKey: "Foo/Bar",
+      repositoryId: "repo123",
+      sandboxId: "sandboxBeta",
+    });
+
+    expect(first).not.toBe(second);
+    expect(first).toContain("-sandboxalpha");
+    expect(second).toContain("-sandboxbeta");
+  });
 });
