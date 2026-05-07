@@ -68,20 +68,25 @@ export const cancelInFlightReply = mutation({
 
     const now = Date.now();
 
-    // Active chat job lookup mirrors `chat/send.ts:getActiveChatJobForThread`:
-    // descending scan limited to the recent window so we never read the full
-    // job history. We do *not* require an active lease — see the file-level
-    // comment for the why. We cap at the same 25 to keep the cost identical
-    // to the in-flight gate this lookup is paired with.
-    const recentJobs = await ctx.db
+    // Active chat job lookup mirrors `chat/send.ts:getActiveChatJobForThread`,
+    // but intentionally skips the lease predicate: owners may cancel their own
+    // stale-looking reply even when the worker has stopped refreshing its lease.
+    const runningJob = await ctx.db
       .query("jobs")
-      .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
+      .withIndex("by_threadId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+        q.eq("threadId", args.threadId).eq("kind", "chat").eq("status", "running"),
+      )
       .order("desc")
-      .take(25);
+      .first();
+    const queuedJob = await ctx.db
+      .query("jobs")
+      .withIndex("by_threadId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+        q.eq("threadId", args.threadId).eq("kind", "chat").eq("status", "queued"),
+      )
+      .order("desc")
+      .first();
 
-    const activeJob = recentJobs.find(
-      (job) => job.kind === "chat" && (job.status === "queued" || job.status === "running"),
-    );
+    const activeJob = runningJob ?? queuedJob;
 
     if (!activeJob) {
       // No-op race: the user clicked Stop just as the reply finalized (or
