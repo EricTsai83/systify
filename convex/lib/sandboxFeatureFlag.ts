@@ -7,10 +7,13 @@
  *
  *   1. **Master switch** (`SANDBOX_MODE_ENABLED`). When falsy, everyone
  *      sees the "private beta" disabled tooltip and the resolver removes
- *      `sandbox` from `availableModes`. Both the mutation layer
- *      (`chat.send`) and the action layer (`chat.generation`) re-check
- *      this so a stale UI cannot bypass it. This is the operator's
- *      kill switch — it overrides everything below.
+ *      `sandbox` from `availableModes`. The `chat.send` mutation re-checks
+ *      this at the queue boundary so a stale UI cannot bypass the gate.
+ *      The `chat.generation` action deliberately does *not* re-check:
+ *      jobs that already passed the queue gate run to completion (or
+ *      their lease), so an emergency flip cannot orphan a long-running
+ *      tool call mid-execution. See `docs/sandbox-mode-runbook.md` for
+ *      the operator-facing kill-switch behaviour.
  *
  *   2. **Allowlist** (`SANDBOX_BETA_ALLOWLIST`, comma-separated
  *      `tokenIdentifier` values). Pre-rollout VIP / internal tester
@@ -130,10 +133,10 @@ function parseAllowlist(rawValue: string | undefined): readonly string[] {
 /**
  * Plan 13 — bucket-aware decision metadata. Returned by
  * {@link decideSandboxFeatureGate} alongside the gate so callers that
- * also want to emit the rollout decision as a metric (or render
- * cohort-aware UI) don't have to re-hash the `tokenIdentifier`. The
- * gate itself stays the public contract; the decision is the
- * "explainability" sidecar.
+ * want to inspect *why* the gate decided what it did (cohort-aware
+ * UI, audit logs of access decisions, future telemetry) don't have to
+ * re-hash the `tokenIdentifier`. The gate itself stays the public
+ * contract; the decision is the "explainability" sidecar.
  */
 export type SandboxFeatureGateDecisionPath =
   | "flag_off"
@@ -314,10 +317,11 @@ export function evaluateSandboxFeatureGate(args: {
 /**
  * Process-env wrapper for the rich decision payload. Reads
  * `SANDBOX_MODE_ENABLED` / `SANDBOX_BETA_ALLOWLIST` /
- * `SANDBOX_ROLLOUT_PERCENT` fresh on every invocation. Use this when
- * you need both the gate AND the decision metadata (for example, when
- * emitting a `sandbox_rollout_decision` metric or when tagging a
- * session-level metric with the viewer's bucket).
+ * `SANDBOX_ROLLOUT_PERCENT` fresh on every invocation. Returns the
+ * gate plus the decision metadata (`bucket`, `rolloutPercent`, `path`)
+ * — use it when a caller needs to inspect *why* the gate decided what
+ * it did. Most runtime call sites only need the gate; use
+ * {@link getSandboxFeatureGate} for those.
  */
 export function getSandboxFeatureGateDecision(tokenIdentifier: string): SandboxFeatureGateDecision {
   return decideSandboxFeatureGate({

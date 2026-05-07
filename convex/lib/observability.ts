@@ -99,7 +99,7 @@ export function logErrorWithId(
  *
  * **Format contract**:
  * ```
- * [metrics] <metric> { metric, value?, tags: {...}, ...details }
+ * [metrics] <metric> { metric, value?, tags: {...}, details?: {...} }
  * ```
  * where `metric` is duplicated into both the human-readable prefix
  * (left of the JSON body) AND inside the body. The prefix is what
@@ -115,10 +115,12 @@ export function logErrorWithId(
  * `tags.mode === "sandbox"` keep working as we add new metrics)
  * without committing to a particular transport.
  *
- * **Tag flattening**: tags ride inside `tags: {...}` rather than as
- * top-level keys so the metric envelope is unambiguous — a future
- * runtime field on the envelope itself (timestamp, host, deployment)
- * can never collide with a user-supplied tag named the same thing.
+ * **Envelope isolation**: tags ride inside `tags: {...}` and details
+ * inside `details: {...}` rather than at the top level so the metric
+ * envelope is unambiguous — a future runtime field on the envelope
+ * itself (timestamp, host, deployment) can never collide with a
+ * user-supplied tag or detail key named the same thing. Nesting
+ * `details` also matches the runbook's `details.X` query notation.
  *
  * **Duration / value semantics**: an optional numeric `value` sits at
  * the top level for the dominant "this metric IS a number"
@@ -161,7 +163,7 @@ export function emitMetric(
       metric,
       ...(args.value !== undefined ? { value: args.value } : {}),
       tags: serializeTagsForLog(args.tags),
-      ...(args.details ?? {}),
+      ...(args.details ? { details: args.details } : {}),
     };
     console.log(`[${METRIC_SCOPE}] ${metric}`, payload);
   } catch {

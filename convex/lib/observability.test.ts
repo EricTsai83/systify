@@ -79,10 +79,12 @@ describe("emitMetric", () => {
     expect((payload as { tags: Record<string, unknown> }).tags).not.toHaveProperty("error_code");
   });
 
-  test("includes `details` flat at the top level alongside the envelope", () => {
-    // High-cardinality forensic fields ride at the top level (not
-    // nested inside `tags`) so they don't drive dashboard
-    // cardinality but stay grep-discoverable.
+  test("nests `details` under a `details: {...}` key alongside the envelope", () => {
+    // High-cardinality forensic fields ride inside `details: {...}`
+    // (separate from `tags`) so they don't drive dashboard cardinality
+    // but stay grep-discoverable. Nesting also isolates them from
+    // envelope keys (`metric`, `value`, `tags`) — a caller-supplied
+    // `details.metric` can never overwrite the envelope's metric name.
     emitMetric("sandbox_session_finished", {
       tags: { mode: "sandbox" },
       details: { jobId: "j_xyz", model: "gpt-5" },
@@ -91,9 +93,18 @@ describe("emitMetric", () => {
     expect(payload).toMatchObject({
       metric: "sandbox_session_finished",
       tags: { mode: "sandbox" },
-      jobId: "j_xyz",
-      model: "gpt-5",
+      details: { jobId: "j_xyz", model: "gpt-5" },
     });
+  });
+
+  test("omits `details` when not provided", () => {
+    // Symmetric to the `value` omission: a metric with no forensic
+    // payload should not surface a stale `details: {}` in the body,
+    // so JSON pipelines that test on `details` presence stay
+    // deterministic.
+    emitMetric("sandbox_session_finished", { tags: { mode: "sandbox" } });
+    const [, payload] = logSpy.mock.calls[0];
+    expect(payload).not.toHaveProperty("details");
   });
 
   test("never throws — falls back to a minimal payload on serializer crash", () => {

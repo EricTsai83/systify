@@ -135,39 +135,33 @@ describe("evaluateSandboxFeatureGate (pure)", () => {
   });
 });
 
-describe("getSandboxFeatureGate (env-backed)", () => {
+const SANDBOX_ENV_KEYS = ["SANDBOX_MODE_ENABLED", "SANDBOX_BETA_ALLOWLIST", "SANDBOX_ROLLOUT_PERCENT"] as const;
+
+function useIsolatedSandboxEnv() {
   // Each test mutates `process.env`; restore the prior values so unrelated
   // tests in the same vitest worker stay deterministic.
-  let priorEnabled: string | undefined;
-  let priorAllowlist: string | undefined;
-  let priorRollout: string | undefined;
+  const priorValues: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    priorEnabled = process.env.SANDBOX_MODE_ENABLED;
-    priorAllowlist = process.env.SANDBOX_BETA_ALLOWLIST;
-    priorRollout = process.env.SANDBOX_ROLLOUT_PERCENT;
-    delete process.env.SANDBOX_MODE_ENABLED;
-    delete process.env.SANDBOX_BETA_ALLOWLIST;
-    delete process.env.SANDBOX_ROLLOUT_PERCENT;
+    for (const key of SANDBOX_ENV_KEYS) {
+      priorValues[key] = process.env[key];
+      delete process.env[key];
+    }
   });
 
   afterEach(() => {
-    if (priorEnabled === undefined) {
-      delete process.env.SANDBOX_MODE_ENABLED;
-    } else {
-      process.env.SANDBOX_MODE_ENABLED = priorEnabled;
-    }
-    if (priorAllowlist === undefined) {
-      delete process.env.SANDBOX_BETA_ALLOWLIST;
-    } else {
-      process.env.SANDBOX_BETA_ALLOWLIST = priorAllowlist;
-    }
-    if (priorRollout === undefined) {
-      delete process.env.SANDBOX_ROLLOUT_PERCENT;
-    } else {
-      process.env.SANDBOX_ROLLOUT_PERCENT = priorRollout;
+    for (const key of SANDBOX_ENV_KEYS) {
+      if (priorValues[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = priorValues[key]!;
+      }
     }
   });
+}
+
+describe("getSandboxFeatureGate (env-backed)", () => {
+  useIsolatedSandboxEnv();
 
   test("reads SANDBOX_MODE_ENABLED and SANDBOX_BETA_ALLOWLIST from the live env", () => {
     process.env.SANDBOX_MODE_ENABLED = "true";
@@ -347,36 +341,7 @@ describe("decideSandboxFeatureGate (rollout)", () => {
 });
 
 describe("getSandboxFeatureGateDecision (env-backed)", () => {
-  let priorEnabled: string | undefined;
-  let priorAllowlist: string | undefined;
-  let priorRollout: string | undefined;
-
-  beforeEach(() => {
-    priorEnabled = process.env.SANDBOX_MODE_ENABLED;
-    priorAllowlist = process.env.SANDBOX_BETA_ALLOWLIST;
-    priorRollout = process.env.SANDBOX_ROLLOUT_PERCENT;
-    delete process.env.SANDBOX_MODE_ENABLED;
-    delete process.env.SANDBOX_BETA_ALLOWLIST;
-    delete process.env.SANDBOX_ROLLOUT_PERCENT;
-  });
-
-  afterEach(() => {
-    if (priorEnabled === undefined) {
-      delete process.env.SANDBOX_MODE_ENABLED;
-    } else {
-      process.env.SANDBOX_MODE_ENABLED = priorEnabled;
-    }
-    if (priorAllowlist === undefined) {
-      delete process.env.SANDBOX_BETA_ALLOWLIST;
-    } else {
-      process.env.SANDBOX_BETA_ALLOWLIST = priorAllowlist;
-    }
-    if (priorRollout === undefined) {
-      delete process.env.SANDBOX_ROLLOUT_PERCENT;
-    } else {
-      process.env.SANDBOX_ROLLOUT_PERCENT = priorRollout;
-    }
-  });
+  useIsolatedSandboxEnv();
 
   test("returns decision sidecar with bucket, rolloutPercent, and path", () => {
     // The sidecar is the consumer-facing API for telemetry: a single

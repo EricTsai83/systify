@@ -16,7 +16,7 @@ For the rollout playbook (10% → 50% → 100% ramp, abort thresholds, reset / p
 A sandbox-mode session emits two classes of structured logs from the Convex backend:
 
 - **Session-level**: `[metrics] sandbox_session_finished { … }` — one line per terminal-state path (`completed` / `failed` / `cancelled` / `aborted_orphan`). Carries `mode`, `model`, `had_tools`, rollout `bucket`, plus `tool_calls_count`, `tool_errors_count`, `input_tokens`, `output_tokens`, `cost_usd`, and the wall-clock `value` (= duration ms).
-- **Per-tool**: `[metrics] sandbox_tool_invoked { … }` — one line per tool result or tool error. Carries `tool` (`read_file` / `list_dir` / `run_shell`), `ok` (boolean), `error_code` (or undefined for success), and the `value` (= per-call duration ms).
+- **Per-tool**: `[metrics] sandbox_tool_invoked { … }` — one line per tool result or tool error. Carries `tool` (`read_file` / `list_dir` / `run_shell`), `ok` (boolean), `error_code` (or undefined for success), the rollout `bucket`, and the `value` (= per-call duration ms). The `bucket` tag mirrors the session metric's so ramp-step diagnostics can slice tool-error rate by cohort without joining back to `sandbox_session_finished`.
 
 These two metric streams plus the existing `[chat] …` debug logs are the only data sources this runbook references. If your downstream logging pipeline supports it, group `tags.*` fields as dimensions — every dashboard recipe in this document filters on a `tags.*` value.
 
@@ -29,7 +29,7 @@ If anything is on fire and you need to take sandbox mode offline immediately:
 SANDBOX_MODE_ENABLED=false
 ```
 
-This causes `getSandboxFeatureGate` to return `{ enabled: false, reason: "flag_off" }` for every viewer on the next request. The mode selector greys out, in-flight `chat.sendMessage(mode: "sandbox")` calls reject, and the `generation.ts` action's pre-flight check in `chat/send.ts` throws before any Daytona work begins.
+This causes `getSandboxFeatureGate` to return `{ enabled: false, reason: "flag_off" }` for every viewer on the next request. The mode selector greys out, in-flight `chat.sendMessage(mode: "sandbox")` calls reject, and the `chat/send.ts` mutation's gate re-check throws before any Daytona work is queued.
 
 In-flight replies that already passed the gate continue running until they complete or hit their lease window (`CHAT_JOB_LEASE_MS`, ~10 min). They are *not* killed by flipping the flag — that is a deliberate choice so an emergency flip cannot orphan a long-running tool call mid-execution.
 
@@ -86,7 +86,7 @@ If `io_error` rate dominates `command_blocked` / `path_outside_repo`, the cause 
 ```text
 metric: sandbox_session_finished
 filter: tags.mode = "sandbox"
-group_by: details.assistantMessageId  # or aggregate by tag.bucket / model
+group_by: details.assistantMessageId  # or aggregate by tags.bucket / model
 sort by: details.cost_usd desc
 window: 24h
 ```
@@ -203,6 +203,12 @@ group_by: tags.bucket  # 0–99 buckets — should populate uniformly when rollo
 metric: sandbox_tool_invoked
 filter: tags.ok = false
 group_by: tags.tool, tags.error_code
+
+# Per-tool error rate sliced by rollout cohort (use during ramps to
+# spot a regression that's specific to the newly-admitted bucket range)
+metric: sandbox_tool_invoked
+filter: tags.ok = false
+group_by: tags.bucket, tags.tool, tags.error_code
 
 # Cancellation rate (proxy for "user gave up because reply was slow")
 metric: sandbox_session_finished
