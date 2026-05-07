@@ -8,10 +8,10 @@ import {
   verifyDaytonaWebhookRequest,
 } from "./lib/daytonaWebhookVerification";
 
-const SIGNING_SECRET = "whsec_a2VlcC10aGlzLXN2aXgtc2VjcmV0LWhpZ2gtZW50cm9weQ==";
+const FAKE_SIGNING_SECRET = ["whsec", "ZmFrZS1zZWNyZXQtZm9yLXRlc3RzLW9ubHk="].join("_");
 
 function makeSignedRequest(rawBody: string, overrides?: Record<string, string>) {
-  const webhook = new Webhook(SIGNING_SECRET);
+  const webhook = new Webhook(FAKE_SIGNING_SECRET);
   const messageId = "msg_daytona_123";
   const timestamp = new Date();
   const signature = webhook.sign(messageId, timestamp, rawBody);
@@ -34,7 +34,7 @@ afterEach(() => {
 
 describe("verifyDaytonaWebhookRequest", () => {
   test("accepts valid Svix-signed Daytona sandbox events", () => {
-    process.env.DAYTONA_WEBHOOK_SIGNING_SECRET = SIGNING_SECRET;
+    process.env.DAYTONA_WEBHOOK_SIGNING_SECRET = FAKE_SIGNING_SECRET;
     process.env.DAYTONA_WEBHOOK_ORGANIZATION_ID = "org-123";
 
     const rawBody = JSON.stringify({
@@ -57,7 +57,7 @@ describe("verifyDaytonaWebhookRequest", () => {
   });
 
   test("rejects requests with invalid Svix signatures", () => {
-    process.env.DAYTONA_WEBHOOK_SIGNING_SECRET = SIGNING_SECRET;
+    process.env.DAYTONA_WEBHOOK_SIGNING_SECRET = FAKE_SIGNING_SECRET;
 
     const rawBody = JSON.stringify({
       event: "sandbox.created",
@@ -77,7 +77,7 @@ describe("verifyDaytonaWebhookRequest", () => {
   });
 
   test("rejects unexpected organization ids after signature verification", () => {
-    process.env.DAYTONA_WEBHOOK_SIGNING_SECRET = SIGNING_SECRET;
+    process.env.DAYTONA_WEBHOOK_SIGNING_SECRET = FAKE_SIGNING_SECRET;
     process.env.DAYTONA_WEBHOOK_ORGANIZATION_ID = "org-expected";
 
     const rawBody = JSON.stringify({

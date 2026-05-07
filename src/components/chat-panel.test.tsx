@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import type React from "react";
+import { useState } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
@@ -31,12 +32,58 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 }));
 
 vi.mock("@/components/app-notice", () => ({
-  AppNotice: ({ title, message }: { title: string; message: string }) => (
-    <div>
-      {title}
-      {message}
+  // Mock surfaces title / message and forwards `onAction` and `onDismiss` so
+  // tests can exercise the Plan 14 mode-suggestion hint (Switch + Dismiss)
+  // and the existing sandbox-warning "Sync now" CTA without depending on the
+  // shadcn Alert primitive's internal layout.
+  AppNotice: ({
+    title,
+    message,
+    actionLabel,
+    onAction,
+    actionDisabled,
+    onDismiss,
+    dismissLabel,
+  }: {
+    title: string;
+    message: string;
+    actionLabel?: string;
+    onAction?: () => void;
+    actionDisabled?: boolean;
+    onDismiss?: () => void;
+    dismissLabel?: string;
+  }) => (
+    <div data-testid="app-notice">
+      <div>{title}</div>
+      <div>{message}</div>
+      {actionLabel && onAction ? (
+        <button type="button" disabled={actionDisabled} onClick={onAction}>
+          {actionLabel}
+        </button>
+      ) : null}
+      {onDismiss ? (
+        <button
+          type="button"
+          aria-label={dismissLabel ?? "Dismiss"}
+          data-testid="app-notice-dismiss"
+          onClick={onDismiss}
+        >
+          ×
+        </button>
+      ) : null}
     </div>
   ),
+}));
+
+// Plan 14 — Radix Popover renders into a portal that complicates "did the
+// trigger render the right entries?" assertions. Stubbing both Popover and
+// the trigger to plain divs lets the popover's content live alongside the
+// trigger in the DOM, which is enough for the unit-level coverage in this
+// file (Radix's open/close behavior is exercised in its own test suite).
+vi.mock("@/components/ui/popover", () => ({
+  Popover: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  PopoverTrigger: ({ children }: { children: React.ReactNode; asChild?: boolean }) => <>{children}</>,
+  PopoverContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 vi.mock("@/components/ui/button", () => ({
@@ -1229,5 +1276,417 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
     // 600 + 200 = 800 tokens — under the 1k threshold so renders raw.
     expect(ticker).toHaveTextContent("800 tokens");
     expect(ticker).not.toHaveTextContent("$");
+  });
+});
+
+/**
+ * Plan 14 — example-prompt cards rendered above the composer when the
+ * thread is empty. Coverage targets:
+ *
+ *   - Empty thread shows a card grid for the *current* mode's prompts.
+ *   - Switching modes swaps the cards (the panel's `mode` prop is
+ *     authoritative — there's no internal mode state to drift).
+ *   - Clicking a card forwards the prompt text to `setChatInput`
+ *     verbatim and does *not* call `onSendMessage`. Auto-submit was
+ *     a deliberate non-goal: the cards are scaffolds, not finished
+ *     questions.
+ *   - Cards disappear once the thread has at least one message — the
+ *     empty-state container is the only render site.
+ */
+describe("ChatPanel mode examples (Plan 14)", () => {
+  test("renders the active mode's example cards in the empty state", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss", "docs", "sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const grid = screen.getByTestId("mode-examples");
+    // The `data-mode` attribute pins the grid to the active mode so the
+    // test fails loudly if the catalog wiring drifts (e.g. someone hard-
+    // codes "sandbox" prompts in the discuss branch).
+    expect(grid).toHaveAttribute("data-mode", "discuss");
+    // discuss-mode catalog has 3 entries; we anchor on data-testid prefix
+    // so adding a 4th in the future doesn't silently flip this assertion.
+    expect(screen.getByTestId("mode-example-discuss-0")).toBeInTheDocument();
+    expect(screen.getByTestId("mode-example-discuss-1")).toBeInTheDocument();
+    expect(screen.getByTestId("mode-example-discuss-2")).toBeInTheDocument();
+  });
+
+  test("swaps cards when the active mode changes", () => {
+    const { rerender } = render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="docs"
+        setChatMode={vi.fn()}
+        availableModes={["discuss", "docs", "sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("mode-examples")).toHaveAttribute("data-mode", "docs");
+    expect(screen.getByTestId("mode-example-docs-0")).toBeInTheDocument();
+
+    rerender(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="sandbox"
+        setChatMode={vi.fn()}
+        availableModes={["discuss", "docs", "sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("mode-examples")).toHaveAttribute("data-mode", "sandbox");
+    expect(screen.getByTestId("mode-example-sandbox-0")).toBeInTheDocument();
+    // The previous mode's cards must be gone — no duplicate test ids
+    // hanging around from the prior render tree.
+    expect(screen.queryByTestId("mode-example-docs-0")).not.toBeInTheDocument();
+  });
+
+  test("clicking an example card seeds the composer without auto-submitting", () => {
+    const setChatInput = vi.fn();
+    const onSendMessage = vi.fn();
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={setChatInput}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss", "docs", "sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={onSendMessage}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const firstCard = screen.getByTestId("mode-example-discuss-0");
+    const cardText = firstCard.textContent ?? "";
+    fireEvent.click(firstCard);
+
+    expect(setChatInput).toHaveBeenCalledTimes(1);
+    expect(setChatInput).toHaveBeenCalledWith(cardText);
+    // Critical: clicking a card never sends. The prompt is a scaffold
+    // the user is expected to refine before hitting Send.
+    expect(onSendMessage).not.toHaveBeenCalled();
+  });
+
+  test("hides example cards once the thread has messages (only renders in empty state)", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "completed",
+            mode: "discuss",
+            content: "An answer.",
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("mode-examples")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Plan 14 — `(i)` info popover next to the mode selector. The trigger
+ * is user-initiated (no auto-pop) and exposes one short caption + one
+ * example prompt per mode. Tests verify:
+ *
+ *   - The trigger renders next to the selector regardless of breakpoint
+ *     (we render two instances — one per layout — for clean co-location;
+ *     `getAllBy*` is the right query so a future single-instance design
+ *     doesn't silently regress this contract).
+ *   - All three modes appear in the popover content with their captions
+ *     and the first example prompt from `MODE_CATALOG`.
+ */
+describe("ChatPanel mode info popover (Plan 14)", () => {
+  test("renders the (i) info trigger and the three-mode descriptor list", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss", "docs", "sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    // Two triggers (compact + desktop) is the intended shape — only one
+    // is visible per breakpoint via responsive utilities, but both
+    // render in jsdom. Asserting on the count guards against a regression
+    // where one breakpoint loses its trigger.
+    const triggers = screen.getAllByTestId("mode-info-trigger");
+    expect(triggers).toHaveLength(2);
+
+    // Each popover instance carries one entry per mode. We assert on the
+    // entry test ids rather than the visible labels so a future copy
+    // change to "Sandbox (beta)" does not flap this test.
+    const discussEntries = screen.getAllByTestId("mode-info-entry-discuss");
+    const docsEntries = screen.getAllByTestId("mode-info-entry-docs");
+    const sandboxEntries = screen.getAllByTestId("mode-info-entry-sandbox");
+    expect(discussEntries).toHaveLength(2);
+    expect(docsEntries).toHaveLength(2);
+    expect(sandboxEntries).toHaveLength(2);
+
+    // The popover surfaces the *first* example prompt per mode so users
+    // who don't read the empty-state cards still see one good question
+    // shape per mode. Anchor on a unique substring from each catalog
+    // example to catch any drift in the wiring.
+    expect(discussEntries[0]).toHaveTextContent(/optimistic vs pessimistic locking/i);
+    expect(docsEntries[0]).toHaveTextContent(/architecture decisions/i);
+    expect(sandboxEntries[0]).toHaveTextContent(/in-flight reply lease/i);
+  });
+});
+
+/**
+ * Plan 14 — passive mode-suggestion hint above the toolbar. Coverage
+ * targets:
+ *
+ *   - File-path heuristic surfaces a Switch-to-Sandbox CTA when the
+ *     user is in discuss/docs and types a recognized source path.
+ *   - Open-ended-prefix heuristic surfaces a Switch-to-General-Chat CTA
+ *     when the user is in docs/sandbox and starts with one of the two
+ *     phrasings.
+ *   - Clicking [Switch to {mode}] forwards the suggested mode to
+ *     `setChatMode` exactly once.
+ *   - Clicking the dismiss × hides the hint immediately and keeps it
+ *     hidden for that heuristic key for the rest of the session, even
+ *     if the same input shape recurs (the dismiss memory is keyed on
+ *     the heuristic, not the literal input).
+ *   - The hint disappears when the suggested mode is gated out of
+ *     `availableModes` so the [Switch] button never bounces off a
+ *     disabled selector item.
+ */
+describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
+  test("shows a Switch-to-Sandbox hint when a docs-mode user mentions a source path", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput="Explain convex/chat/send.ts line 80"
+        setChatInput={vi.fn()}
+        chatMode="docs"
+        setChatMode={vi.fn()}
+        availableModes={["discuss", "docs", "sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.getByText("This question references a specific file. Sandbox mode would give a more accurate answer."),
+    ).toBeInTheDocument();
+    // The CTA names the destination explicitly so the user knows what
+    // the click will change before they click.
+    expect(screen.getByRole("button", { name: "Switch to Sandbox" })).toBeInTheDocument();
+  });
+
+  test("shows a Switch-to-General-Chat hint for an open-ended sandbox-mode question", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput="How should I structure auth in this codebase?"
+        setChatInput={vi.fn()}
+        chatMode="sandbox"
+        setChatMode={vi.fn()}
+        availableModes={["discuss", "docs", "sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("This sounds open-ended; General Chat might be better.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Switch to General Chat" })).toBeInTheDocument();
+  });
+
+  test("clicking the Switch CTA invokes setChatMode with the suggested mode", () => {
+    const setChatMode = vi.fn();
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput="Look at src/components/chat-panel.tsx"
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={setChatMode}
+        availableModes={["discuss", "docs", "sandbox"]}
+        disabledModeReasons={{}}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Sandbox" }));
+    expect(setChatMode).toHaveBeenCalledTimes(1);
+    expect(setChatMode).toHaveBeenCalledWith("sandbox");
+  });
+
+  test("dismiss button hides the hint and keeps it hidden for the same heuristic key", () => {
+    // The dismiss memory is keyed on the *heuristic* ("specific-file:sandbox"),
+    // not the literal input. So dismissing once for `convex/chat/send.ts`
+    // must also silence a later message about `convex/chat/context.ts` that
+    // would otherwise re-fire the same rule. This is the "session-local
+    // preference" model called out in the plan.
+
+    function Harness() {
+      // Local state mirrors the real shell wiring: `chatInput` is hoisted
+      // to the parent, so the dismiss set inside ChatPanel must persist
+      // across input changes within the same panel mount.
+      const [chatInput, setChatInput] = useState("Look at src/components/chat-panel.tsx");
+      return (
+        <ChatPanel
+          selectedThreadId={threadId}
+          messages={[]}
+          activeMessageStream={null}
+          isChatLoading={false}
+          chatInput={chatInput}
+          setChatInput={setChatInput}
+          chatMode="discuss"
+          setChatMode={vi.fn()}
+          availableModes={["discuss", "docs", "sandbox"]}
+          disabledModeReasons={{}}
+          isSending={false}
+          onSendMessage={vi.fn()}
+          sandboxModeStatus={{ reasonCode: "available", message: null }}
+          isSyncing={false}
+          onSync={vi.fn()}
+        />
+      );
+    }
+
+    render(<Harness />);
+
+    // Hint visible for the first file-path mention.
+    expect(screen.getByText(/Sandbox mode would give a more accurate answer\./)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Dismiss suggestion"));
+
+    // Hint disappears immediately on dismiss.
+    expect(screen.queryByText(/Sandbox mode would give a more accurate answer\./)).not.toBeInTheDocument();
+
+    // Drive the same panel mount to a *different* file-path input. The
+    // heuristic would otherwise re-fire because `convex/chat/context.ts`
+    // matches the same regex; the dismiss is keyed on the heuristic
+    // ("specific-file:sandbox") rather than the literal input, so the
+    // hint must stay hidden.
+    fireEvent.change(screen.getByPlaceholderText(/Ask about architecture/i), {
+      target: { value: "Now check convex/chat/context.ts instead" },
+    });
+    expect(screen.queryByText(/Sandbox mode would give a more accurate answer\./)).not.toBeInTheDocument();
+  });
+
+  test("does not render a hint when the suggested mode is not in availableModes", () => {
+    // If sandbox is gated by rollout / quotas / repo state, the hint
+    // would advertise a mode the [Switch] button cannot actually
+    // select. Suppression is the only correct behavior.
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput="Look at convex/chat/send.ts"
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        setChatMode={vi.fn()}
+        availableModes={["discuss", "docs"]}
+        disabledModeReasons={{ sandbox: "Provision a sandbox to use Sandbox mode." }}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(
+      screen.queryByText("This question references a specific file. Sandbox mode would give a more accurate answer."),
+    ).not.toBeInTheDocument();
   });
 });
