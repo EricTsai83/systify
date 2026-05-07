@@ -174,6 +174,7 @@ describe("App auth token failures", () => {
     renderWithAuth(useAuth, ["/"]);
 
     expect(await screen.findByText("home page")).toBeInTheDocument();
+    expect(screen.queryByText("Reconnecting your session and loading your workspace.")).not.toBeInTheDocument();
   });
 
   test("redirects signed-in users from /callback to /chat", async () => {
