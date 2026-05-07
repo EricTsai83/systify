@@ -13,6 +13,7 @@ import {
 import {
   SANDBOX_FLAG_OFF_TOOLTIP,
   SANDBOX_NOT_ALLOWLISTED_TOOLTIP,
+  SANDBOX_NOT_IN_ROLLOUT_TOOLTIP,
   type SandboxFeatureGate,
 } from "./lib/sandboxFeatureFlag";
 
@@ -234,6 +235,22 @@ describe("resolveChatModes (Plan-04 sandbox feature gate)", () => {
       expect(result.availableModes).toContain(result.defaultMode);
       expect(result.availableModes).not.toContain("sandbox");
     }
+  });
+
+  test("Plan 13 — `not_in_rollout` gate surfaces the cohort-aware tooltip", () => {
+    // The resolver doesn't know the gate's reason — only the tooltip.
+    // This test pins the contract that the rollout-specific tooltip
+    // flows through end-to-end so the UI renders "rolling out
+    // gradually" instead of the legacy allowlist copy when the gate
+    // closes for a viewer outside the rollout cohort.
+    const NOT_IN_ROLLOUT_GATE: SandboxFeatureGate = {
+      enabled: false,
+      reason: "not_in_rollout",
+      tooltip: SANDBOX_NOT_IN_ROLLOUT_TOOLTIP,
+    };
+    const result = resolveChatModes(true, "ready", NOT_IN_ROLLOUT_GATE);
+    expect(result.availableModes).toEqual(["discuss", "docs"]);
+    expect(result.disabledReasons.sandbox).toBe(SANDBOX_NOT_IN_ROLLOUT_TOOLTIP);
   });
 });
 
