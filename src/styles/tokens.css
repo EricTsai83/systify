@@ -164,6 +164,17 @@
   --sidebar-accent-foreground: oklch(0.216 0 0);
   --sidebar-border: oklch(0.813 0 0);
   --sidebar-ring: oklch(0.623 0.168 260.534);
+
+  /*
+   * Scrollbar — standalone tokens (not derived from `--muted-foreground`)
+   * because some browsers resolve `var()` inside `::-webkit-scrollbar-*`
+   * pseudos against `:root` rather than the actual element's cascade. A
+   * derived token would flip in CSSOM but the scrollbar would keep
+   * painting the light value after `.dark` is applied. Hard-coding
+   * the L value at each theme avoids that quirk.
+   */
+  --scrollbar-thumb: oklch(0.492 0 0 / 0.6);
+  --scrollbar-thumb-hover: oklch(0.492 0 0 / 0.8);
 }
 
 .dark {
@@ -216,4 +227,8 @@
   --sidebar-accent-foreground: oklch(0.947 0 0);
   --sidebar-border: oklch(0.301 0 0);
   --sidebar-ring: oklch(0.574 0.162 262.482);
+
+  /* Scrollbar — see `:root` block for the rationale on hard-coded L. */
+  --scrollbar-thumb: oklch(0.641 0 0 / 0.6);
+  --scrollbar-thumb-hover: oklch(0.641 0 0 / 0.8);
 }

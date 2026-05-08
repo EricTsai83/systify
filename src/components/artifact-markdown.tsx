@@ -1,5 +1,23 @@
 import { Fragment, memo, useMemo, type ReactNode } from "react";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+
+/**
+ * Artifact bodies wrap content in Radix `<ScrollArea>` so the vertical
+ * thumb is a real DOM element styled with `bg-border` — it re-colors with
+ * the theme through the same token cascade as every other surface.
+ *
+ * Native `::-webkit-scrollbar-thumb` was the previous approach but Chromium
+ * caches the `var()` lookup inside that pseudo against the document root
+ * at first paint and won't re-evaluate when `.dark` is toggled, so the
+ * thumb visibly drifts out of sync after a theme switch.
+ *
+ * The Viewport carries `max-h-72` directly (via the `data-slot` arbitrary
+ * selector) because shadcn's Viewport uses `size-full`, which collapses
+ * when the Root only has `max-height` — a percentage can't resolve against
+ * an indefinite parent height. Pushing the constraint onto the Viewport
+ * itself is where layout can actually honour it.
+ */
 
 /**
  * Lightweight markdown renderer tuned for the structured artifacts the
@@ -38,14 +56,16 @@ export const ArtifactMarkdown = memo(function ArtifactMarkdown({
   const blocks = useMemo(() => parseMarkdown(source), [source]);
 
   return (
-    <div
+    <ScrollArea
       className={cn(
-        "max-h-72 overflow-auto rounded-md border border-border bg-background p-3 text-[12px] leading-relaxed text-foreground/90",
+        "rounded-md border border-border bg-background [&_[data-slot=scroll-area-viewport]]:max-h-72",
         className,
       )}
     >
-      {blocks.map((block, index) => renderBlock(block, index))}
-    </div>
+      <div className="p-3 text-[12px] leading-relaxed text-foreground/90">
+        {blocks.map((block, index) => renderBlock(block, index))}
+      </div>
+    </ScrollArea>
   );
 });
 
@@ -198,12 +218,12 @@ function renderBlock(block: Block, index: number): ReactNode {
       );
     case "code":
       return (
-        <pre
-          key={index}
-          className="mb-2 overflow-auto rounded-md border border-border/60 bg-muted/40 p-2 text-[11px] leading-snug text-foreground/85"
-        >
-          <code>{block.text}</code>
-        </pre>
+        <ScrollArea key={index} className="mb-2 rounded-md border border-border/60 bg-muted/40">
+          <pre className="p-2 text-[11px] leading-snug text-foreground/85">
+            <code>{block.text}</code>
+          </pre>
+          <ScrollBar orientation="horizontal" />
+        </ScrollArea>
       );
   }
 }

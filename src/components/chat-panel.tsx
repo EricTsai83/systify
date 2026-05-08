@@ -268,7 +268,7 @@ export function ChatPanel({
           />
         </div>
       ) : (
-        <ScrollArea type="always" className="flex-1 min-h-0">
+        <ScrollArea className="flex-1 min-h-0">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6">
             {sandboxWarning}
             {!isChatLoading && (

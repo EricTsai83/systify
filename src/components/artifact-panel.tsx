@@ -139,7 +139,7 @@ export function ArtifactPanel({
         </div>
       ) : null}
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-4">
           {repositoryIntelligence.length > 0 ? (
             <ArtifactSection title="Repository intelligence" description="Reusable context available across this repo.">

@@ -45,3 +45,72 @@
     min-height: 100vh;
   }
 }
+
+/*
+ * Hover-show native scrollbars, theme-aware. Mirrors the visual rule
+ * that Radix `<ScrollArea>` already gives us in flagship surfaces, so
+ * any container using native `overflow-{auto,y-auto,x-auto}` (e.g. the
+ * Repository Manifest card and other `max-h-*` content blocks where
+ * Radix Viewport's percentage-height sizing fails) feels consistent.
+ *
+ * Behavior:
+ *   - thumb is transparent at rest (effectively hidden)
+ *   - hovering anywhere inside the scrollable element fades the thumb in
+ *   - hovering the thumb itself bumps to the heavier color
+ *
+ * The two layers (`var()`-based + explicit `.dark` override) are needed
+ * because some Chromium / WebKit versions resolve `var()` inside
+ * `::-webkit-scrollbar-*` pseudos against the document root rather than
+ * the element's actual cascade — so the variable flips in CSSOM but the
+ * scrollbar keeps painting the previously-resolved value. The explicit
+ * `.dark` selector below restates the dark colors with higher specificity
+ * so they apply regardless of the browser's variable-resolution scoping.
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+*:hover {
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: transparent;
+  border-radius: 9999px;
+  transition: background-color 0.15s ease-out;
+}
+
+:hover::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--scrollbar-thumb-hover);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Defense-in-depth dark-mode override (see comment block above). */
+.dark *:hover {
+  scrollbar-color: oklch(0.641 0 0 / 0.6) transparent;
+}
+
+.dark :hover::-webkit-scrollbar-thumb {
+  background-color: oklch(0.641 0 0 / 0.6);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background-color: oklch(0.641 0 0 / 0.8);
+}

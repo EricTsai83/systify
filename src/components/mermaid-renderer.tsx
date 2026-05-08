@@ -1,5 +1,6 @@
-import { Component, useEffect, useId, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
+import { Component, useEffect, useId, useMemo, useState, type ErrorInfo, type ReactNode } from "react";
 import { WarningCircleIcon } from "@phosphor-icons/react";
+import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTheme } from "@/providers/theme-provider";
 import { cn } from "@/lib/utils";
@@ -45,7 +46,6 @@ function MermaidRendererImpl({ source, className }: { source: string; className?
 
   const [svg, setSvg] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -105,20 +105,18 @@ function MermaidRendererImpl({ source, className }: { source: string; className?
   }
 
   return (
-    <div
-      ref={containerRef}
-      // SVG is produced by mermaid using `securityLevel: 'strict'`, which
-      // sanitises user input. Even so, this string is sourced from our own
-      // generator on the backend, not from arbitrary user typing.
-      dangerouslySetInnerHTML={{ __html: svg }}
-      className={cn(
-        "mermaid-render w-full overflow-x-auto rounded-md border border-border bg-background p-3",
-        "[&>svg]:mx-auto [&>svg]:h-auto [&>svg]:max-w-full",
-        className,
-      )}
-      role="img"
-      aria-label="Architecture diagram"
-    />
+    <ScrollArea className={cn("mermaid-render w-full rounded-md border border-border bg-background", className)}>
+      <div
+        // SVG is produced by mermaid using `securityLevel: 'strict'`, which
+        // sanitises user input. Even so, this string is sourced from our own
+        // generator on the backend, not from arbitrary user typing.
+        dangerouslySetInnerHTML={{ __html: svg }}
+        className="p-3 [&>svg]:mx-auto [&>svg]:h-auto [&>svg]:max-w-full"
+        role="img"
+        aria-label="Architecture diagram"
+      />
+      <ScrollBar orientation="horizontal" />
+    </ScrollArea>
   );
 }
 
