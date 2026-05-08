@@ -5,7 +5,7 @@ import type { OptimisticLocalStore } from "convex/browser";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
-import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ArtifactPanel } from "@/components/artifact-panel";
 import { TopBar } from "@/components/top-bar";
@@ -23,9 +23,23 @@ import { useRepositoryActions } from "@/hooks/use-repository-actions";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import type { ArtifactId, RepositoryId, ThreadId, WorkspaceId, ChatMode, SandboxModeStatus } from "@/lib/types";
 import { toUserErrorMessage } from "@/lib/errors";
+import { cn } from "@/lib/utils";
 
 type RepositoryWorkspaceStatus = "initializing" | "no-repo" | "ready";
 const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
+
+/**
+ * Mobile drawer height. 95dvh keeps a 5dvh sliver of the underlying page
+ * visible so the user reads "this is a drawer I can dismiss," not "I have
+ * navigated to a new screen." `dvh` (not `vh`) accounts for mobile browser
+ * chrome — `100vh` would extend behind the URL bar on iOS Safari.
+ *
+ * Set on `height` directly so the inner flex chain (drawer → wrapper →
+ * panel → ScrollArea) inherits a bounded container. Without an explicit
+ * height the drawer would size to content and the ScrollArea inside the
+ * panel would have no parent to scroll within.
+ */
+const MOBILE_DRAWER_HEIGHT_CLASS = "h-[95dvh] data-[vaul-drawer-direction=bottom]:max-h-[95dvh]";
 
 /**
  * Optimistic mirror of the server-side `touchWorkspace` mutation. Defined at
@@ -300,10 +314,10 @@ export function RepositoryShell({
   );
   const [isArtifactSheetOpen, setIsArtifactSheetOpen] = useState(false);
   // StatusPanel surfaces on demand from the top-bar pill: a Popover overlay on
-  // desktop, a bottom Sheet on mobile. Both surfaces share a single open state
-  // so toggling the pill behaves identically across breakpoints. State is
-  // intentionally not persisted — a returning user lands on a clean chat
-  // surface instead of a panel they didn't open.
+  // desktop, a bottom Drawer (Vaul) on mobile. Both surfaces share a single
+  // open state so toggling the pill behaves identically across breakpoints.
+  // State is intentionally not persisted — a returning user lands on a clean
+  // chat surface instead of a panel they didn't open.
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   /**
    * Plan 02 inline citation jump target. Set by `handleSelectArtifact` when
@@ -332,9 +346,9 @@ export function RepositoryShell({
     const handleChange = (event: MediaQueryListEvent) => {
       setIsDesktopLayout(event.matches);
       // Reset the status surface across the breakpoint so a popover-anchored
-      // overlay doesn't hang around when the layout switches to a sheet
+      // overlay doesn't hang around when the layout switches to a drawer
       // (and vice versa). The artifact panel's desktop state is persisted
-      // and stays open; only the mobile sheet variant is reset on the way up.
+      // and stays open; only the mobile drawer variant is reset on the way up.
       setIsStatusOpen(false);
       if (event.matches) {
         setIsArtifactSheetOpen(false);
@@ -443,17 +457,17 @@ export function RepositoryShell({
 
   /**
    * Setter for the StatusPanel open state, shared by Radix Popover (desktop)
-   * and Sheet (mobile) so onOpenChange callbacks plug in directly. Carries
-   * the mobile-only mutual exclusion: opening the status sheet closes the
-   * artifact sheet so two bottom-sheet backdrops never stack. Desktop has no
-   * mutual exclusion — the popover overlays the chat without affecting the
-   * inline artifact column.
+   * and Vaul Drawer (mobile) so onOpenChange callbacks plug in directly.
+   * Carries the mobile-only mutual exclusion: opening the status drawer
+   * closes the artifact drawer so two bottom-sheet backdrops never stack.
+   * Desktop has no mutual exclusion — the popover overlays the chat without
+   * affecting the inline artifact column.
    */
   const handleSetStatusOpen = useCallback(
     (open: boolean) => {
       if (workspaceStatus === "no-repo") {
         // Force-closed in no-repo state — never opens, but allow `false` so a
-        // controlled popover/sheet can collapse cleanly during the transition
+        // controlled popover/drawer can collapse cleanly during the transition
         // back to the empty state.
         if (open) return;
         setIsStatusOpen(false);
@@ -469,7 +483,7 @@ export function RepositoryShell({
 
   /**
    * Plan 02: a user clicked `[A#]` inside an assistant reply. Force the
-   * artifact panel open (desktop) or the sheet open (mobile) so the target
+   * artifact panel open (desktop) or the drawer open (mobile) so the target
    * is visible, then publish the id so the panel can scroll/highlight. The
    * panel calls `onArtifactSelectionConsumed` itself once the highlight
    * animation settles, which clears `selectedArtifactId` back to `null` —
@@ -517,9 +531,9 @@ export function RepositoryShell({
    * pre-fill the chat input with a templated question so the user can edit
    * before sending; if `docs` mode is available we flip there so the
    * artifact is in scope for the next reply (docs mode auto-includes
-   * thread artifacts in the prompt). On mobile we close the artifact sheet
+   * thread artifacts in the prompt). On mobile we close the artifact drawer
    * so the chat input becomes visible — without that the user would tap
-   * the button and see nothing change because the sheet still covers the
+   * the button and see nothing change because the drawer still covers the
    * chat panel.
    *
    * If the user is mid-typing in the chat input, append the prompt rather
@@ -656,6 +670,59 @@ export function RepositoryShell({
     setShowAnalysisDialog,
   });
 
+  // The chat surface is identical across breakpoints — only the layout
+  // container (Resizable group on desktop, none on mobile) differs.
+  // Defining ChatContainer once and reusing it in both branches prevents
+  // prop drift between desktop and mobile renders. React still unmounts
+  // and remounts on a breakpoint switch (different parent), but that
+  // only happens when the viewport actually crosses 1280px.
+  const chatContainerNode = (
+    <ChatContainer
+      selectedThreadId={effectiveSelectedThreadId}
+      isShellLoading={isChatShellLoading}
+      chatInput={chatInput}
+      setChatInput={setChatInput}
+      chatMode={chatMode}
+      setChatMode={setChatMode}
+      availableModes={capabilities.availableModes}
+      disabledModeReasons={capabilities.disabledReasons}
+      isSending={isSending}
+      onSendMessage={handleSendMessage}
+      onCancelInFlightReply={handleCancelInFlightReply}
+      isCancellingReply={isCancellingReply}
+      sandboxModeStatus={effectiveSandboxModeStatus}
+      isSyncing={isSyncing || isRepositorySyncing}
+      onSync={() => void handleSync()}
+      isArtifactPanelOpen={isDesktopLayout ? isArtifactPanelOpen : isArtifactSheetOpen}
+      onToggleArtifactPanel={handleToggleArtifactPanel}
+      showArtifactToggle
+      hasAttachedRepository={capabilities.attachedRepository !== null}
+      availableRepositories={repositories ?? []}
+      onImported={handleImported}
+      onThreadMovedToWorkspace={handleThreadMovedToWorkspace}
+      onSelectArtifact={handleSelectArtifact}
+      analysisNudge={
+        // Only nudge when there is genuinely something to do: a repo is
+        // attached, no deep-analysis artifact exists yet, no analysis is
+        // currently running, and the sandbox is ready (otherwise the CTA
+        // would just bounce off the dialog's disabled state). The card
+        // stays out of the way once any of those conditions flips so the
+        // empty state declutters as the user advances.
+        repoDetail &&
+        !repoDetail.artifacts.some((artifact) => artifact.kind === "deep_analysis") &&
+        !repoDetail.activeDeepAnalysisJob &&
+        repoDetail.sandboxModeStatus.reasonCode === "available"
+          ? {
+              onStart: () => {
+                setAnalysisError(null);
+                setShowAnalysisDialog(true);
+              },
+            }
+          : null
+      }
+    />
+  );
+
   return (
     <>
       <AppSidebar
@@ -733,69 +800,32 @@ export function RepositoryShell({
             />
           ) : (
             <>
-              <ChatContainer
-                selectedThreadId={effectiveSelectedThreadId}
-                isShellLoading={isChatShellLoading}
-                chatInput={chatInput}
-                setChatInput={setChatInput}
-                chatMode={chatMode}
-                setChatMode={setChatMode}
-                availableModes={capabilities.availableModes}
-                disabledModeReasons={capabilities.disabledReasons}
-                isSending={isSending}
-                onSendMessage={handleSendMessage}
-                onCancelInFlightReply={handleCancelInFlightReply}
-                isCancellingReply={isCancellingReply}
-                sandboxModeStatus={effectiveSandboxModeStatus}
-                isSyncing={isSyncing || isRepositorySyncing}
-                onSync={() => void handleSync()}
-                isArtifactPanelOpen={isDesktopLayout ? isArtifactPanelOpen : isArtifactSheetOpen}
-                onToggleArtifactPanel={handleToggleArtifactPanel}
-                showArtifactToggle
-                hasAttachedRepository={capabilities.attachedRepository !== null}
-                availableRepositories={repositories ?? []}
-                onImported={handleImported}
-                onThreadMovedToWorkspace={handleThreadMovedToWorkspace}
-                onSelectArtifact={handleSelectArtifact}
-                analysisNudge={
-                  // Only nudge when there is genuinely something to do: a repo
-                  // is attached, no deep-analysis artifact exists yet, no
-                  // analysis is currently running, and the sandbox is ready
-                  // (otherwise the CTA would just bounce off the dialog's
-                  // disabled state). The card stays out of the way once any
-                  // of those conditions flips so the empty state declutters
-                  // as the user advances.
-                  repoDetail &&
-                  !repoDetail.artifacts.some((artifact) => artifact.kind === "deep_analysis") &&
-                  !repoDetail.activeDeepAnalysisJob &&
-                  repoDetail.sandboxModeStatus.reasonCode === "available"
-                    ? {
-                        onStart: () => {
-                          setAnalysisError(null);
-                          setShowAnalysisDialog(true);
-                        },
-                      }
-                    : null
-                }
-              />
+              {chatContainerNode}
               {isDesktopLayout ? (
-                // The desktop right rail is now a single inline column for
-                // artifacts. Status lives in the top-bar Popover, so the two
-                // surfaces no longer compete for this slot — Artifacts can
-                // stay open while the user opens Status, and vice versa.
+                // Desktop right rail: a single inline column for artifacts.
+                // Status lives in the top-bar Popover, so the two surfaces
+                // don't compete for this slot — Artifacts can stay open
+                // while the user opens Status, and vice versa.
+                //
+                // Width scales with viewport: the artifact card list shows
+                // mermaid diagrams and markdown, both of which need real
+                // breathing room. `w-96` (384px) on the xl breakpoint is
+                // already wider than the prior `w-80`, and `2xl:w-[28rem]`
+                // (448px) gives larger displays a panel that comfortably
+                // holds a code block without horizontal scroll.
                 <div
                   aria-hidden={!(isArtifactPanelHydrated && isArtifactPanelOpen)}
                   data-state={isArtifactPanelHydrated && isArtifactPanelOpen ? "open" : "closed"}
-                  className="shrink-0 overflow-hidden border-l border-border transition-[width] duration-300 ease-out data-[state=closed]:w-0 data-[state=closed]:border-l-0 data-[state=open]:w-80"
+                  className="shrink-0 overflow-hidden border-l border-border transition-[width] duration-200 ease-out data-[state=closed]:w-0 data-[state=closed]:border-l-0 xl:data-[state=open]:w-96 2xl:data-[state=open]:w-[28rem]"
                 >
-                  <div className="h-full w-80">
+                  <div className="h-full xl:w-96 2xl:w-[28rem]">
                     <ArtifactPanel
                       threadId={effectiveSelectedThreadId}
                       repositoryArtifacts={repoDetail?.artifacts}
                       hasAttachedRepository={capabilities.attachedRepository !== null}
                       sandboxModeStatus={capabilities.sandboxModeStatus}
                       isVisible={isArtifactPanelHydrated && isArtifactPanelOpen}
-                      className="h-full w-80 border-l-0 lg:flex"
+                      className="flex h-full w-full border-l-0"
                       selectedArtifactId={selectedArtifactId}
                       onArtifactSelectionConsumed={handleArtifactSelectionConsumed}
                       onAskAboutArtifact={handleAskAboutArtifact}
@@ -809,56 +839,66 @@ export function RepositoryShell({
       </SidebarInset>
 
       {workspaceStatus !== "no-repo" && !isDesktopLayout ? (
-        <Sheet open={isArtifactSheetOpen} onOpenChange={setIsArtifactSheetOpen}>
-          <SheetContent side="bottom" className="h-[min(75vh,34rem)] rounded-t-2xl border-x border-t p-0" hideClose>
-            <SheetTitle className="sr-only">Results and artifacts</SheetTitle>
-            <SheetDescription className="sr-only">
+        <Drawer open={isArtifactSheetOpen} onOpenChange={setIsArtifactSheetOpen} aria-label="artifact-drawer">
+          {/*
+           * Fixed height (rather than Vaul snap points) so the inner flex
+           * chain has a bounded container — without this, the panel's
+           * internal ScrollArea has nothing to scroll within and tall
+           * content gets clipped at the bottom of the viewport.
+           */}
+          <DrawerContent className={cn(MOBILE_DRAWER_HEIGHT_CLASS, "rounded-t-2xl")}>
+            <DrawerTitle className="sr-only">Results and artifacts</DrawerTitle>
+            <DrawerDescription className="sr-only">
               Persistent results and artifacts for the current conversation and attached repository.
-            </SheetDescription>
-            <ArtifactPanel
-              threadId={effectiveSelectedThreadId}
-              repositoryArtifacts={repoDetail?.artifacts}
-              hasAttachedRepository={capabilities.attachedRepository !== null}
-              sandboxModeStatus={capabilities.sandboxModeStatus}
-              isVisible={isArtifactSheetOpen}
-              className="flex h-full w-full border-l-0"
-              selectedArtifactId={selectedArtifactId}
-              onArtifactSelectionConsumed={handleArtifactSelectionConsumed}
-              onAskAboutArtifact={handleAskAboutArtifact}
-            />
-          </SheetContent>
-        </Sheet>
+            </DrawerDescription>
+            <div className="flex min-h-0 flex-1 flex-col">
+              <ArtifactPanel
+                threadId={effectiveSelectedThreadId}
+                repositoryArtifacts={repoDetail?.artifacts}
+                hasAttachedRepository={capabilities.attachedRepository !== null}
+                sandboxModeStatus={capabilities.sandboxModeStatus}
+                isVisible={isArtifactSheetOpen}
+                className="flex h-full w-full border-l-0"
+                selectedArtifactId={selectedArtifactId}
+                onArtifactSelectionConsumed={handleArtifactSelectionConsumed}
+                onAskAboutArtifact={handleAskAboutArtifact}
+              />
+            </div>
+          </DrawerContent>
+        </Drawer>
       ) : null}
 
       {workspaceStatus !== "no-repo" && !isDesktopLayout && repoDetail ? (
-        <Sheet open={isStatusOpen} onOpenChange={handleSetStatusOpen}>
-          <SheetContent side="bottom" className="h-[min(75vh,34rem)] rounded-t-2xl border-x border-t p-0" hideClose>
-            <SheetTitle className="sr-only">Repository status</SheetTitle>
-            <SheetDescription className="sr-only">
+        <Drawer open={isStatusOpen} onOpenChange={handleSetStatusOpen} aria-label="status-drawer">
+          <DrawerContent className={cn(MOBILE_DRAWER_HEIGHT_CLASS, "rounded-t-2xl")}>
+            <DrawerTitle className="sr-only">Repository status</DrawerTitle>
+            <DrawerDescription className="sr-only">
               Current sync, sandbox, and analysis state, with recent activity and operation launchers.
-            </SheetDescription>
-            <StatusPanel
-              repository={repoDetail.repository}
-              sandboxModeStatus={repoDetail.sandboxModeStatus}
-              sandbox={repoDetail.sandbox}
-              jobs={repoDetail.jobs}
-              activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
-              artifacts={repoDetail.artifacts}
-              hasRemoteUpdates={repoDetail.hasRemoteUpdates}
-              isSyncing={isSyncing || isRepositorySyncing}
-              onSync={() => void handleSync()}
-              onRunAnalysis={() => {
-                if (repoDetail.sandboxModeStatus.reasonCode !== "available") {
-                  return;
-                }
-                setAnalysisError(null);
-                setShowAnalysisDialog(true);
-              }}
-              onViewArtifact={handleSelectArtifact}
-              onClose={() => setIsStatusOpen(false)}
-            />
-          </SheetContent>
-        </Sheet>
+            </DrawerDescription>
+            <div className="flex min-h-0 flex-1 flex-col">
+              <StatusPanel
+                repository={repoDetail.repository}
+                sandboxModeStatus={repoDetail.sandboxModeStatus}
+                sandbox={repoDetail.sandbox}
+                jobs={repoDetail.jobs}
+                activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
+                artifacts={repoDetail.artifacts}
+                hasRemoteUpdates={repoDetail.hasRemoteUpdates}
+                isSyncing={isSyncing || isRepositorySyncing}
+                onSync={() => void handleSync()}
+                onRunAnalysis={() => {
+                  if (repoDetail.sandboxModeStatus.reasonCode !== "available") {
+                    return;
+                  }
+                  setAnalysisError(null);
+                  setShowAnalysisDialog(true);
+                }}
+                onViewArtifact={handleSelectArtifact}
+                onClose={() => setIsStatusOpen(false)}
+              />
+            </div>
+          </DrawerContent>
+        </Drawer>
       ) : null}
 
       <ConfirmDialog

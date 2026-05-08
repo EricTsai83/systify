@@ -123,15 +123,23 @@ vi.mock("@/components/ui/sidebar", () => ({
   SidebarInset: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
-vi.mock("@/components/ui/sheet", () => ({
-  Sheet: ({ open, children }: { open: boolean; children: React.ReactNode }) => (
-    <div data-testid="artifact-sheet" data-open={open ? "true" : "false"}>
+vi.mock("@/components/ui/drawer", () => ({
+  Drawer: ({
+    open,
+    "aria-label": ariaLabel,
+    children,
+  }: {
+    "open": boolean;
+    "aria-label"?: string;
+    "children": React.ReactNode;
+  }) => (
+    <div data-open={open ? "true" : "false"} aria-label={ariaLabel}>
       {children}
     </div>
   ),
-  SheetContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  SheetDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  SheetTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DrawerContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DrawerDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DrawerTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 vi.mock("@/components/ui/dialog", () => ({
@@ -351,7 +359,7 @@ describe("RepositoryShell artifact toggle behavior", () => {
   test("hides the artifact toggle while workspace is in no-repo state", () => {
     // The no-repo guard is structural — the ChatPanel-level toggle does not
     // render — instead of a disabled-but-present button. Assert the
-    // absence and confirm the sheet stays closed once the workspace
+    // absence and confirm the drawer stays closed once the workspace
     // transitions into ready, so the previous click intent (had there been
     // one) cannot have leaked into shared state.
     const { rerender } = render(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
@@ -362,22 +370,22 @@ describe("RepositoryShell artifact toggle behavior", () => {
     repositoriesResult = [makeRepository()];
     rerender(<RepositoryShell urlThreadId={null} urlRepositoryId={repoId} />);
 
-    expect(screen.getByTestId("artifact-sheet")).toHaveAttribute("data-open", "false");
+    expect(screen.getByLabelText("artifact-drawer")).toHaveAttribute("data-open", "false");
   });
 
-  test("opens mobile sheet in ready state and closes it on desktop breakpoint", () => {
+  test("opens mobile drawer in ready state and closes it on desktop breakpoint", () => {
     repositoriesResult = [makeRepository()];
 
     render(<RepositoryShell urlThreadId={null} urlRepositoryId={repoId} />);
-    expect(screen.getByTestId("artifact-sheet")).toHaveAttribute("data-open", "false");
+    expect(screen.getByLabelText("artifact-drawer")).toHaveAttribute("data-open", "false");
 
     fireEvent.click(screen.getByTestId("artifact-panel-toggle"));
-    expect(screen.getByTestId("artifact-sheet")).toHaveAttribute("data-open", "true");
+    expect(screen.getByLabelText("artifact-drawer")).toHaveAttribute("data-open", "true");
 
     act(() => {
       mediaListener?.({ matches: true } as MediaQueryListEvent);
     });
-    expect(screen.queryByTestId("artifact-sheet")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("artifact-drawer")).not.toBeInTheDocument();
   });
 });
 
