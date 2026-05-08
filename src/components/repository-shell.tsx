@@ -839,7 +839,7 @@ export function RepositoryShell({
       </SidebarInset>
 
       {workspaceStatus !== "no-repo" && !isDesktopLayout ? (
-        <Drawer open={isArtifactSheetOpen} onOpenChange={setIsArtifactSheetOpen}>
+        <Drawer open={isArtifactSheetOpen} onOpenChange={setIsArtifactSheetOpen} aria-label="artifact-drawer">
           {/*
            * Fixed height (rather than Vaul snap points) so the inner flex
            * chain has a bounded container — without this, the panel's
@@ -869,7 +869,7 @@ export function RepositoryShell({
       ) : null}
 
       {workspaceStatus !== "no-repo" && !isDesktopLayout && repoDetail ? (
-        <Drawer open={isStatusOpen} onOpenChange={handleSetStatusOpen}>
+        <Drawer open={isStatusOpen} onOpenChange={handleSetStatusOpen} aria-label="status-drawer">
           <DrawerContent className={cn(MOBILE_DRAWER_HEIGHT_CLASS, "rounded-t-2xl")}>
             <DrawerTitle className="sr-only">Repository status</DrawerTitle>
             <DrawerDescription className="sr-only">

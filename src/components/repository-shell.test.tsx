@@ -124,8 +124,16 @@ vi.mock("@/components/ui/sidebar", () => ({
 }));
 
 vi.mock("@/components/ui/drawer", () => ({
-  Drawer: ({ open, children }: { open: boolean; children: React.ReactNode }) => (
-    <div data-testid="artifact-drawer" data-open={open ? "true" : "false"}>
+  Drawer: ({
+    open,
+    "aria-label": ariaLabel,
+    children,
+  }: {
+    "open": boolean;
+    "aria-label"?: string;
+    "children": React.ReactNode;
+  }) => (
+    <div data-open={open ? "true" : "false"} aria-label={ariaLabel}>
       {children}
     </div>
   ),
@@ -362,22 +370,22 @@ describe("RepositoryShell artifact toggle behavior", () => {
     repositoriesResult = [makeRepository()];
     rerender(<RepositoryShell urlThreadId={null} urlRepositoryId={repoId} />);
 
-    expect(screen.getByTestId("artifact-drawer")).toHaveAttribute("data-open", "false");
+    expect(screen.getByLabelText("artifact-drawer")).toHaveAttribute("data-open", "false");
   });
 
   test("opens mobile drawer in ready state and closes it on desktop breakpoint", () => {
     repositoriesResult = [makeRepository()];
 
     render(<RepositoryShell urlThreadId={null} urlRepositoryId={repoId} />);
-    expect(screen.getByTestId("artifact-drawer")).toHaveAttribute("data-open", "false");
+    expect(screen.getByLabelText("artifact-drawer")).toHaveAttribute("data-open", "false");
 
     fireEvent.click(screen.getByTestId("artifact-panel-toggle"));
-    expect(screen.getByTestId("artifact-drawer")).toHaveAttribute("data-open", "true");
+    expect(screen.getByLabelText("artifact-drawer")).toHaveAttribute("data-open", "true");
 
     act(() => {
       mediaListener?.({ matches: true } as MediaQueryListEvent);
     });
-    expect(screen.queryByTestId("artifact-drawer")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("artifact-drawer")).not.toBeInTheDocument();
   });
 });
 

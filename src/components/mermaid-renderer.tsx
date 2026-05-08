@@ -105,13 +105,15 @@ function MermaidRendererImpl({ source, className }: { source: string; className?
   }
 
   return (
-    <ScrollArea className={cn("mermaid-render w-full rounded-md border border-border bg-background", className)}>
+    <ScrollArea
+      className={cn("mermaid-render w-max min-w-full rounded-md border border-border bg-background", className)}
+    >
       <div
         // SVG is produced by mermaid using `securityLevel: 'strict'`, which
         // sanitises user input. Even so, this string is sourced from our own
         // generator on the backend, not from arbitrary user typing.
         dangerouslySetInnerHTML={{ __html: svg }}
-        className="p-3 [&>svg]:mx-auto [&>svg]:h-auto [&>svg]:max-w-full"
+        className="p-3 [&>svg]:mx-auto [&>svg]:h-auto [&>svg]:max-w-none"
         role="img"
         aria-label="Architecture diagram"
       />
