@@ -41,6 +41,8 @@ const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
  */
 const MOBILE_DRAWER_HEIGHT_CLASS = "h-[95dvh] data-[vaul-drawer-direction=bottom]:max-h-[95dvh]";
 
+const ACTIVE_WORKSPACE_STORAGE_KEY = "systify.activeWorkspaceId";
+
 /**
  * Optimistic mirror of the server-side `touchWorkspace` mutation. Defined at
  * module scope (not inside the component) so React's purity rules treat the
@@ -146,7 +148,7 @@ export function RepositoryShell({
   // value lands; after that, the DB wins on conflict.
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<WorkspaceId | null>(() => {
     try {
-      const stored = localStorage.getItem("systify.activeWorkspaceId");
+      const stored = localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY);
       return stored ? (stored as WorkspaceId) : null;
     } catch {
       return null;
@@ -160,9 +162,9 @@ export function RepositoryShell({
   useEffect(() => {
     try {
       if (activeWorkspaceId) {
-        localStorage.setItem("systify.activeWorkspaceId", activeWorkspaceId);
+        localStorage.setItem(ACTIVE_WORKSPACE_STORAGE_KEY, activeWorkspaceId);
       } else {
-        localStorage.removeItem("systify.activeWorkspaceId");
+        localStorage.removeItem(ACTIVE_WORKSPACE_STORAGE_KEY);
       }
     } catch {
       // Ignore storage errors.
@@ -802,17 +804,10 @@ export function RepositoryShell({
             <>
               {chatContainerNode}
               {isDesktopLayout ? (
-                // Desktop right rail: a single inline column for artifacts.
-                // Status lives in the top-bar Popover, so the two surfaces
-                // don't compete for this slot — Artifacts can stay open
-                // while the user opens Status, and vice versa.
-                //
-                // Width scales with viewport: the artifact card list shows
-                // mermaid diagrams and markdown, both of which need real
-                // breathing room. `w-96` (384px) on the xl breakpoint is
-                // already wider than the prior `w-80`, and `2xl:w-[28rem]`
-                // (448px) gives larger displays a panel that comfortably
-                // holds a code block without horizontal scroll.
+                // Status lives in the top-bar Popover, so the inline rail is
+                // owned exclusively by the artifact panel — both surfaces can
+                // stay open at once. Width scales up at 2xl so mermaid diagrams
+                // and code blocks don't need horizontal scroll.
                 <div
                   aria-hidden={!(isArtifactPanelHydrated && isArtifactPanelOpen)}
                   data-state={isArtifactPanelHydrated && isArtifactPanelOpen ? "open" : "closed"}
