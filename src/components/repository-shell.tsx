@@ -807,11 +807,13 @@ export function RepositoryShell({
                 // Status lives in the top-bar Popover, so the inline rail is
                 // owned exclusively by the artifact panel — both surfaces can
                 // stay open at once. Width scales up at 2xl so mermaid diagrams
-                // and code blocks don't need horizontal scroll.
+                // and code blocks don't need horizontal scroll. Width (not
+                // transform) is animated so chat reflows alongside the panel
+                // — `will-change: width` keeps the 200ms toggle composited.
                 <div
                   aria-hidden={!(isArtifactPanelHydrated && isArtifactPanelOpen)}
                   data-state={isArtifactPanelHydrated && isArtifactPanelOpen ? "open" : "closed"}
-                  className="shrink-0 overflow-hidden border-l border-border transition-[width] duration-200 ease-out data-[state=closed]:w-0 data-[state=closed]:border-l-0 xl:data-[state=open]:w-96 2xl:data-[state=open]:w-[28rem]"
+                  className="shrink-0 overflow-hidden border-l border-border transition-[width] duration-200 ease-out [will-change:width] data-[state=closed]:w-0 data-[state=closed]:border-l-0 xl:data-[state=open]:w-96 2xl:data-[state=open]:w-[28rem]"
                 >
                   <div className="h-full xl:w-96 2xl:w-[28rem]">
                     <ArtifactPanel
