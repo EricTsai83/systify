@@ -209,15 +209,15 @@
   }
 
   .animate-fade-up {
-    animation: fade-up 0.7s cubic-bezier(0.32, 0.72, 0, 1) both;
+    animation: fade-up 0.5s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
 
   .animate-reveal-up {
-    animation: reveal-up 0.7s cubic-bezier(0.32, 0.72, 0, 1) both;
+    animation: reveal-up 0.5s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
 
   .animate-message-rail {
-    animation: message-rail 1.5s cubic-bezier(0.32, 0.72, 0, 1) both;
+    animation: message-rail 0.7s cubic-bezier(0.32, 0.72, 0, 1) both;
     transform-origin: top;
   }
 
@@ -226,11 +226,11 @@
   }
 
   .animate-fade-in {
-    animation: fade-in 0.8s ease both;
+    animation: fade-in 0.25s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
 
   .animate-fade-out {
-    animation: fade-out 0.3s ease both;
+    animation: fade-out 0.2s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
 
   .animate-send-press {

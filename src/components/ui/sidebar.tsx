@@ -98,7 +98,7 @@ export function Sidebar({ children, className }: { children: React.ReactNode; cl
     <aside
       data-state={open ? "open" : "closed"}
       className={cn(
-        "hidden shrink-0 flex-col overflow-hidden border-r border-border bg-background transition-[width] duration-200 ease-out [will-change:width] xl:flex",
+        "hidden shrink-0 flex-col overflow-hidden border-r border-border bg-background motion-safe:transition-[width] motion-safe:duration-200 motion-safe:ease-out motion-reduce:transition-none [will-change:width] xl:flex",
         open ? "w-72" : "w-0 border-r-0",
         className,
       )}
