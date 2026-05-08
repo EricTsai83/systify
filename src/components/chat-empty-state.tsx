@@ -49,7 +49,7 @@ function OwlAsciiArt() {
 
 export function EmptyChatHint({ analysisNudge }: { analysisNudge: { onStart: () => void } | null }) {
   return (
-    <div className="flex flex-1 animate-in flex-col items-center justify-center gap-4 fade-in duration-300">
+    <div className="flex flex-1 animate-in flex-col items-center justify-center gap-4 fade-in duration-300 ease-out">
       <Card className="border-transparent bg-transparent p-6 text-center">
         <OwlAsciiArt />
         <CardHeader className="items-center p-0 pt-5">
@@ -131,7 +131,7 @@ export function EmptyNoRepoHint({
   };
 
   return (
-    <div className="flex flex-1 animate-in items-center justify-center fade-in duration-300">
+    <div className="flex flex-1 animate-in items-center justify-center fade-in duration-300 ease-out">
       <Card className="w-full max-w-md border-transparent bg-transparent p-6 text-center">
         {attachError ? (
           <div className="mb-4 w-full">

@@ -272,7 +272,7 @@ export function ChatPanel({
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6">
             {sandboxWarning}
             {!isChatLoading && (
-              <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out">
                 {messages!.map((message) => {
                   const messageStream =
                     activeMessageStream?.assistantMessageId === message._id ? activeMessageStream : null;
