@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { RepositoryShell } from "./repository-shell";
 import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
 
 // Convex's `api`/`anyApi` proxy returns a fresh FunctionReference object on
 // every property access, so `query === api.foo.bar` is never true. Compare the
@@ -552,6 +553,28 @@ describe("RepositoryShell workspace reconciliation", () => {
     });
     expect(touchWorkspaceMock).toHaveBeenCalledWith({ workspaceId: "ws_url" });
     expect(localStorage.getItem("systify.activeWorkspaceId")).toBe("ws_url");
+  });
+
+  test("URL workspace id pointing at a missing workspace redirects without entering a state loop", async () => {
+    // Stale URLs (deleted workspace, copy/paste from another device, or a
+    // bookmark to a workspace the current user no longer owns) must not be
+    // adopted into `activeWorkspaceId`. Doing so would race with the fallback
+    // effect — which keeps re-picking a surviving workspace whenever the
+    // active id is invalid — and bounce the user back and forth forever. The
+    // shell should validate the URL against `listWorkspaces` and redirect to
+    // the default path when the id is stale.
+    const urlWorkspaceId = "ws_missing" as WorkspaceId;
+    workspacesResult = [makeWorkspace({ _id: "ws_other" })];
+    viewerPreferencesResult = null;
+    storedActiveWorkspaceId = null;
+
+    render(<RepositoryShell urlWorkspaceId={urlWorkspaceId} urlThreadId={null} />);
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith(DEFAULT_AUTHENTICATED_PATH, { replace: true });
+    });
+    expect(touchWorkspaceMock).not.toHaveBeenCalledWith({ workspaceId: "ws_missing" });
+    expect(screen.getByTestId("sidebar")).not.toHaveAttribute("data-active-workspace-id", "ws_missing");
   });
 
   test("live cross-tab push updates the active workspace without remounting", async () => {

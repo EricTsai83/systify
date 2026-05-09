@@ -29,7 +29,7 @@ When reviewing animations, you MUST use a markdown table. Do NOT use a list with
 
 Wrong format (never do this):
 
-```
+```text
 Before: transform: scale(0)
 After: transform: scale(0.95)
 ────────────────────────────

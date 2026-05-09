@@ -280,11 +280,30 @@ export function RepositoryShell({
    */
   useEffect(() => {
     if (urlWorkspaceId === null) return;
+    // Wait for `listWorkspaces` to hydrate before deciding — without this
+    // guard, `workspaces?.some(...)` returns `undefined` while the query is
+    // loading, the negation flips to `true`, and we redirect away from a
+    // perfectly valid URL on first paint.
+    if (workspaces === undefined) return;
+    // Validate the URL before adopting it. A stale id (deleted workspace,
+    // copy/paste from another device) would otherwise oscillate with the
+    // fallback effect: this effect would write the stale id into
+    // `activeWorkspaceId`, the fallback effect would observe `activeExists ===
+    // false` and re-pick a surviving workspace, and we'd bounce back here on
+    // the next render forever. The validation must run *before* the
+    // `urlWorkspaceId === activeWorkspaceId` short-circuit so that a
+    // localStorage-cached stale id pinned in `activeWorkspaceId` still gets
+    // recovered.
+    const urlWorkspaceExists = workspaces.some((ws) => ws._id === urlWorkspaceId);
+    if (!urlWorkspaceExists) {
+      void navigate(DEFAULT_AUTHENTICATED_PATH, { replace: true });
+      return;
+    }
     if (urlWorkspaceId === activeWorkspaceId) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setActiveWorkspaceId(urlWorkspaceId);
     void touchWorkspace({ workspaceId: urlWorkspaceId }).catch(() => {});
-  }, [urlWorkspaceId, activeWorkspaceId, touchWorkspace]);
+  }, [urlWorkspaceId, activeWorkspaceId, touchWorkspace, workspaces, navigate]);
 
   // useThreadCapabilities is the canonical bridge between the resolver-side
   // ChatModeResolver / ThreadContextResolver and the UI's mode selector.

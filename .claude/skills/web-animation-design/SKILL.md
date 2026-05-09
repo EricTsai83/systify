@@ -29,7 +29,7 @@ When reviewing animations, you MUST use a markdown table. Do NOT use a list with
 
 Wrong format (never do this):
 
-```
+```text
 Before: transform: scale(0)
 After: transform: scale(0.95)
 ────────────────────────────
@@ -230,10 +230,10 @@ Only animate `transform` and `opacity`. These skip layout and paint stages, runn
 **Framer Motion:**
 
 ```jsx
-// Hardware accelerated (transform as string)
+// Equivalent forms — both hardware accelerated
 <motion.div animate={{ transform: "translateX(100px)" }} />
 
-// NOT hardware accelerated (more readable)
+// Hardware accelerated (more readable — maps to transform)
 <motion.div animate={{ x: 100 }} />
 ```
 
