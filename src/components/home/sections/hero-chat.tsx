@@ -338,14 +338,14 @@ function AssistantMessage({ delay }: { delay: number }) {
             <CaretDownIcon
               weight="bold"
               aria-hidden
-              className={`size-3 transition-transform duration-200 ${citationsExpanded ? "" : "-rotate-90"}`}
+              className={`size-3 transition-transform duration-200 motion-reduce:transition-none ${citationsExpanded ? "" : "-rotate-90"}`}
             />
           </button>
           <div
             id={citationsListId}
             aria-hidden={!citationsExpanded}
             hidden={!citationsExpanded}
-            className={`grid transition-[grid-template-rows] duration-200 ${citationsExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+            className={`grid transition-[grid-template-rows] duration-200 motion-reduce:transition-none ${citationsExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
           >
             <ul className="flex flex-col gap-1 overflow-hidden">
               {CITATIONS.map((path) => (

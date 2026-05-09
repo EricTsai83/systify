@@ -64,13 +64,13 @@ function FaqItem({ item }: { item: FaqEntry }) {
         aria-labelledby={buttonId}
         aria-hidden={!isOpen}
         inert={!isOpen}
-        className={`grid transition-[grid-template-rows] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+        className={`grid transition-[grid-template-rows] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none ${
           isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
         }`}
       >
         <div className="overflow-hidden">
           <div
-            className={`pb-5 pr-2 transition-[opacity,transform] duration-200 ease-out sm:pr-12 ${
+            className={`pb-5 pr-2 transition-[opacity,transform] duration-200 ease-out motion-reduce:transition-none sm:pr-12 ${
               isOpen ? "translate-y-0 opacity-100" : "-translate-y-1 opacity-0"
             }`}
           >
@@ -103,12 +103,12 @@ function ToggleIcon({ isOpen, isShrinking }: { isOpen: boolean; isShrinking: boo
     >
       <span className="relative size-3.5">
         <span
-          className={`absolute left-0 top-1/2 h-px w-full origin-center -translate-y-1/2 bg-current transition-transform duration-150 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+          className={`absolute left-0 top-1/2 h-px w-full origin-center -translate-y-1/2 bg-current transition-transform duration-150 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none ${
             horizontalHidden ? "scale-x-0" : ""
           }`}
         />
         <span
-          className={`absolute left-1/2 top-0 h-full w-px origin-center -translate-x-1/2 bg-current transition-transform duration-150 ease-[cubic-bezier(0.32,0.72,0,1)] ${
+          className={`absolute left-1/2 top-0 h-full w-px origin-center -translate-x-1/2 bg-current transition-transform duration-150 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none ${
             verticalHidden ? "scale-y-0" : ""
           }`}
         />

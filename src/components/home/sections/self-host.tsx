@@ -121,7 +121,7 @@ function CopyAllButton() {
       type="button"
       onClick={() => void copy(CLONE_COMMAND_TEXT)}
       aria-label={copied ? "Quickstart commands copied" : "Copy quickstart commands to clipboard"}
-      className="group/copy inline-flex items-center gap-1.5 border border-border bg-background/70 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground transition-colors hover:border-foreground/40 hover:text-foreground"
+      className="group/copy inline-flex cursor-pointer items-center gap-1.5 border border-border bg-background/70 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground transition-[color,border-color,transform] duration-100 hover:border-foreground/40 hover:text-foreground active:scale-[0.95] motion-reduce:active:scale-100"
     >
       {copied ? (
         <>

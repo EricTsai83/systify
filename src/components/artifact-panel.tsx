@@ -610,7 +610,7 @@ function formatRelative(timestamp: number) {
 
 function EmptyArtifactState({ title, description }: { title: string; description: string }) {
   return (
-    <Card className="animate-in border-dashed bg-background/50 text-center fade-in duration-300">
+    <Card className="animate-in border-dashed bg-background/50 text-center fade-in duration-300 ease-out">
       <CardHeader className="gap-1 p-4">
         <CardTitle className="text-xs">{title}</CardTitle>
         <CardDescription className="text-[11px]">{description}</CardDescription>

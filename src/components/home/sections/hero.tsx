@@ -78,7 +78,7 @@ export function Hero() {
           <button
             type="button"
             onClick={handleReplay}
-            className="inline-flex items-center gap-1.5 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground transition-colors hover:text-foreground"
+            className="inline-flex cursor-pointer items-center gap-1.5 px-2 py-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground transition-[color,transform] duration-100 hover:text-foreground active:scale-[0.95] motion-reduce:active:scale-100"
             aria-label="Replay hero animation"
           >
             <ArrowCounterClockwise weight="bold" className="size-3" />

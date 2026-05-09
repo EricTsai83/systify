@@ -180,7 +180,7 @@ function ThreadsSection({
       </div>
       {threads === undefined ? null : threads.length === 0 ? (
         <p
-          className="px-1 text-xs text-muted-foreground animate-in fade-in slide-in-from-top-1 duration-300"
+          className="px-1 text-xs text-muted-foreground animate-in fade-in slide-in-from-top-1 duration-300 ease-out"
           aria-live="polite"
         >
           No conversations yet. Start one above.
@@ -215,7 +215,7 @@ const ThreadsList = memo(function ThreadsList({
   showRepoBadge: boolean;
 }) {
   return (
-    <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-300">
+    <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-300 ease-out">
       {threads.map((thread) => {
         const isSelected = selectedThreadId === thread._id;
         const repository = thread.repositoryId ? repositoriesById.get(thread.repositoryId) : undefined;
