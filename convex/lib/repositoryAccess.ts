@@ -4,14 +4,24 @@ import { requireViewerIdentity } from "./auth";
 
 type RepositoryReadCtx = QueryCtx | MutationCtx;
 
-const DEFAULT_REPOSITORY_NOT_FOUND_MESSAGE = "Repository not found.";
+type RepositoryStateFields = {
+  deletionRequestedAt?: number;
+  archivedAt?: number;
+};
 
-export function isRepositoryDeleting(repository: { deletionRequestedAt?: number } | null | undefined) {
+const DEFAULT_REPOSITORY_NOT_FOUND_MESSAGE = "Repository not found.";
+const DEFAULT_REPOSITORY_ARCHIVED_MESSAGE = "Repository is archived. Restore it to continue.";
+
+export function isRepositoryDeleting(repository: RepositoryStateFields | null | undefined) {
   return typeof repository?.deletionRequestedAt === "number";
 }
 
-export function isActiveRepository(repository: { deletionRequestedAt?: number } | null | undefined) {
-  return !!repository && !isRepositoryDeleting(repository);
+export function isRepositoryArchived(repository: RepositoryStateFields | null | undefined) {
+  return !!repository && typeof repository.archivedAt === "number" && !isRepositoryDeleting(repository);
+}
+
+export function isActiveRepository(repository: RepositoryStateFields | null | undefined) {
+  return !!repository && !isRepositoryDeleting(repository) && !isRepositoryArchived(repository);
 }
 
 export async function requireActiveRepository(
@@ -19,11 +29,15 @@ export async function requireActiveRepository(
   args: {
     repositoryId: Id<"repositories">;
     notFoundMessage?: string;
+    archivedMessage?: string;
   },
 ): Promise<Doc<"repositories">> {
   const repository = await ctx.db.get(args.repositoryId);
   if (!repository || isRepositoryDeleting(repository)) {
     throw new Error(args.notFoundMessage ?? DEFAULT_REPOSITORY_NOT_FOUND_MESSAGE);
+  }
+  if (isRepositoryArchived(repository)) {
+    throw new Error(args.archivedMessage ?? DEFAULT_REPOSITORY_ARCHIVED_MESSAGE);
   }
 
   return repository;
@@ -35,6 +49,7 @@ export async function requireActiveRepositoryForOwner(
     repositoryId: Id<"repositories">;
     ownerTokenIdentifier: string;
     notFoundMessage?: string;
+    archivedMessage?: string;
   },
 ): Promise<Doc<"repositories">> {
   const repository = await requireActiveRepository(ctx, args);
@@ -50,6 +65,7 @@ export async function requireActiveRepositoryForViewer(
   args: {
     repositoryId: Id<"repositories">;
     notFoundMessage?: string;
+    archivedMessage?: string;
   },
 ): Promise<{
   identity: Awaited<ReturnType<typeof requireViewerIdentity>>;
@@ -60,7 +76,29 @@ export async function requireActiveRepositoryForViewer(
     repositoryId: args.repositoryId,
     ownerTokenIdentifier: identity.tokenIdentifier,
     notFoundMessage: args.notFoundMessage,
+    archivedMessage: args.archivedMessage,
   });
 
+  return { identity, repository };
+}
+
+/**
+ * Returns the repository if accessible to the viewer, allowing archived rows
+ * through. Returns `null` for missing, permanent-delete-pending, or
+ * non-owner repositories so the UI can render an inline empty state instead
+ * of crashing on a thrown error.
+ */
+export async function loadAccessibleRepositoryForViewer(
+  ctx: RepositoryReadCtx,
+  args: { repositoryId: Id<"repositories"> },
+): Promise<{
+  identity: Awaited<ReturnType<typeof requireViewerIdentity>>;
+  repository: Doc<"repositories"> | null;
+}> {
+  const identity = await requireViewerIdentity(ctx);
+  const repository = await ctx.db.get(args.repositoryId);
+  if (!repository || isRepositoryDeleting(repository) || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    return { identity, repository: null };
+  }
   return { identity, repository };
 }

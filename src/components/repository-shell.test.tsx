@@ -177,14 +177,20 @@ vi.mock("@/hooks/use-repository-actions", () => ({
   useRepositoryActions: () => ({
     isSending: false,
     handleSendMessage: vi.fn(),
+    isCancellingReply: false,
+    handleCancelInFlightReply: vi.fn(),
     isRunningAnalysis: false,
     handleRunAnalysis: vi.fn(),
     isSyncing: false,
     handleSync: vi.fn(),
     isDeletingThread: false,
     handleDeleteThread: vi.fn(),
-    isDeletingRepo: false,
-    handleDeleteRepo: vi.fn(),
+    isArchivingRepo: false,
+    handleArchiveRepo: vi.fn(),
+    isRestoringRepo: false,
+    handleRestoreRepo: vi.fn(),
+    isPermanentDeletingRepo: false,
+    handlePermanentDeleteRepo: vi.fn(),
   }),
 }));
 
@@ -295,7 +301,24 @@ beforeEach(() => {
       case "chat/threads:listThreads":
         return ownerThreadsResult;
       case "repositories:getRepositoryDetail":
-        return null;
+        // After the archive feature, `null` means "repo unavailable" and
+        // triggers the inline missing-repo empty state. Tests that don't
+        // care about the detail still need a non-null payload so the shell
+        // proceeds to its normal ready branch.
+        return {
+          repository: makeRepository(),
+          isArchived: false,
+          archivedAt: null,
+          artifacts: [],
+          jobs: [],
+          activeDeepAnalysisJob: null,
+          threads: [],
+          fileCount: 0,
+          fileCountLabel: "0",
+          sandboxModeStatus: { reasonCode: "missing_sandbox", message: null },
+          hasRemoteUpdates: false,
+          sandbox: null,
+        };
       case "chat/threads:listMessages":
         return [];
       case "chat/streaming:getActiveMessageStream":

@@ -18,6 +18,18 @@ vi.mock("convex/react", () => ({
   useQuery: useQueryMock,
 }));
 
+vi.mock("react-router-dom", () => ({
+  Link: ({
+    to,
+    children,
+    ...rest
+  }: { to: string; children: React.ReactNode } & React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
+    <a href={to} {...rest}>
+      {children}
+    </a>
+  ),
+}));
+
 vi.mock("@/components/profile-card", () => ({
   ProfileCard: () => <div>profile</div>,
 }));

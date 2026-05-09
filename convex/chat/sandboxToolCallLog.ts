@@ -171,7 +171,7 @@ export function countUtf8Bytes(value: string): number {
  * Audit metadata extracted from an AI SDK `tool-result` payload.
  *
  * The payload shape is the tool's `execute` return value, which for the
- * SysTify tools is one of:
+ * Systify tools is one of:
  *
  *   - `{ ok: true, ..., redactedTypes: string[] }` — success envelope.
  *   - `{ ok: false, errorCode: string, message: string }` — error

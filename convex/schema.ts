@@ -194,6 +194,7 @@ export default defineSchema({
     latestRemoteSha: v.optional(v.string()),
     lastCheckedForUpdatesAt: v.optional(v.number()),
     deletionRequestedAt: v.optional(v.number()),
+    archivedAt: v.optional(v.number()),
   })
     .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"])
     .index("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", [
@@ -206,6 +207,7 @@ export default defineSchema({
       "sourceUrl",
       "deletionRequestedAt",
     ])
+    .index("by_ownerTokenIdentifier_and_archivedAt", ["ownerTokenIdentifier", "archivedAt"])
     .index("by_sourceRepoFullName", ["sourceRepoFullName"]),
 
   imports: defineTable({

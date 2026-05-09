@@ -8,7 +8,10 @@ export const PROTECTED_ROUTE_SEGMENTS = {
   chat: "chat",
   thread: "t/:threadId",
   repository: "r/:repoId",
+  archive: "archive",
 } as const;
+
+export const ARCHIVE_PATH = `/${PROTECTED_ROUTE_SEGMENTS.archive}` as const;
 
 export const DEFAULT_AUTHENTICATED_PATH = `/${PROTECTED_ROUTE_SEGMENTS.chat}` as const;
 

@@ -8,31 +8,31 @@ import schema from "./schema";
 const modules = import.meta.glob("./**/*.ts");
 
 const {
+  assertSandboxProvisioningConfiguredMock,
   cloneRepositoryInSandboxMock,
   collectRepositorySnapshotMock,
   deleteSandboxMock,
   getSandboxStateMock,
-  isDaytonaConfiguredMock,
   provisionSandboxMock,
   runFocusedInspectionMock,
   stopSandboxMock,
 } = vi.hoisted(() => ({
+  assertSandboxProvisioningConfiguredMock: vi.fn(),
   cloneRepositoryInSandboxMock: vi.fn(),
   collectRepositorySnapshotMock: vi.fn(),
   deleteSandboxMock: vi.fn(),
   getSandboxStateMock: vi.fn(),
-  isDaytonaConfiguredMock: vi.fn(),
   provisionSandboxMock: vi.fn(),
   runFocusedInspectionMock: vi.fn(),
   stopSandboxMock: vi.fn(),
 }));
 
 vi.mock("./daytona", () => ({
+  assertSandboxProvisioningConfigured: assertSandboxProvisioningConfiguredMock,
   cloneRepositoryInSandbox: cloneRepositoryInSandboxMock,
   collectRepositorySnapshot: collectRepositorySnapshotMock,
   deleteSandbox: deleteSandboxMock,
   getSandboxState: getSandboxStateMock,
-  isDaytonaConfigured: isDaytonaConfiguredMock,
   provisionSandbox: provisionSandboxMock,
   runFocusedInspection: runFocusedInspectionMock,
   stopSandbox: stopSandboxMock,
@@ -41,11 +41,11 @@ vi.mock("./daytona", () => ({
 describe("repository deletion cleanup", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    assertSandboxProvisioningConfiguredMock.mockReset();
     cloneRepositoryInSandboxMock.mockReset();
     collectRepositorySnapshotMock.mockReset();
     deleteSandboxMock.mockReset();
     getSandboxStateMock.mockReset();
-    isDaytonaConfiguredMock.mockReset();
     provisionSandboxMock.mockReset();
     runFocusedInspectionMock.mockReset();
     stopSandboxMock.mockReset();
@@ -113,6 +113,10 @@ describe("repository deletion cleanup", () => {
     });
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    // The archive feature requires a repository to be archived before
+    // permanent deletion. Archive first so the cascade path under test
+    // is reached.
+    await viewer.mutation(api.repositories.archiveRepository, { repositoryId });
     await viewer.mutation(api.repositories.deleteRepository, { repositoryId });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 

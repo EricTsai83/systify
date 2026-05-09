@@ -1,8 +1,11 @@
 import { useCallback } from "react";
 import { useMutation } from "convex/react";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
+import { ARCHIVE_PATH } from "@/route-paths";
 import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
 
 /**
@@ -10,8 +13,8 @@ import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
  * pending flags for the dialogs that wrap them. The hook is selection-aware
  * but selection-state-agnostic: callers tell us which thread / repo is
  * currently in view, and we hand back navigation hooks via
- * `onAfterDeleteThread` / `onAfterDeleteRepo` so the parent can update the URL
- * (or do whatever it needs) once a destructive mutation succeeds.
+ * `onAfterDeleteThread` / `onAfterArchiveRepo` etc. so the parent can update
+ * the URL once a destructive mutation succeeds.
  */
 export function useRepositoryActions({
   selectedRepositoryId,
@@ -25,9 +28,12 @@ export function useRepositoryActions({
   setAnalysisError,
   setActionNotice,
   onAfterDeleteThread,
-  onAfterDeleteRepo,
+  onAfterArchiveRepo,
+  onAfterRestoreRepo,
+  onAfterPermanentDeleteRepo,
   setThreadToDelete,
-  setShowDeleteRepoDialog,
+  setShowArchiveDialog,
+  setShowPermanentDeleteDialog,
   setShowAnalysisDialog,
 }: {
   selectedRepositoryId: RepositoryId | null;
@@ -39,31 +45,24 @@ export function useRepositoryActions({
   setChatInput: (value: string) => void;
   setActionError: (value: string | null) => void;
   setAnalysisError: (value: string | null) => void;
-  /**
-   * Optional info-level transient banner — used to confirm long-running
-   * background work was successfully queued (e.g. "Deep analysis queued").
-   * The shell auto-dismisses these after a few seconds; we accept it as an
-   * optional dependency so existing call sites don't have to thread it
-   * through if they don't care.
-   */
   setActionNotice?: (value: { title: string; message: string } | null) => void;
-  /**
-   * Fired after a thread has been deleted. The argument is the deleted thread
-   * id; callers compare it with the currently visible thread to decide
-   * whether to navigate away.
-   */
   onAfterDeleteThread: (deletedThreadId: ThreadId) => void;
-  /** Fired after the active repository has been deleted. */
-  onAfterDeleteRepo: () => void;
+  onAfterArchiveRepo: () => void;
+  onAfterRestoreRepo: () => void;
+  onAfterPermanentDeleteRepo: () => void;
   setThreadToDelete: (value: ThreadId | null) => void;
-  setShowDeleteRepoDialog: (value: boolean) => void;
+  setShowArchiveDialog: (value: boolean) => void;
+  setShowPermanentDeleteDialog: (value: boolean) => void;
   setShowAnalysisDialog: (value: boolean) => void;
 }) {
+  const navigate = useNavigate();
   const requestDeepAnalysis = useMutation(api.analysis.requestDeepAnalysis);
   const sendMessageMutation = useMutation(api.chat.send.sendMessage);
   const cancelInFlightReplyMutation = useMutation(api.chat.cancel.cancelInFlightReply);
   const syncRepositoryMutation = useMutation(api.repositories.syncRepository);
   const deleteThreadMutation = useMutation(api.chat.threads.deleteThread);
+  const archiveRepositoryMutation = useMutation(api.repositories.archiveRepository);
+  const restoreRepositoryMutation = useMutation(api.repositories.restoreRepository);
   const deleteRepositoryMutation = useMutation(api.repositories.deleteRepository);
 
   const [isSending, handleSendMessage] = useAsyncCallback(
@@ -87,20 +86,6 @@ export function useRepositoryActions({
     ),
   );
 
-  /**
-   * Plan 07 — owner-initiated cancellation of the current in-flight reply.
-   *
-   * `useAsyncCallback` exposes the in-flight boolean to the panel as
-   * `isCancellingReply` so the Stop button can render "Stopping…" between
-   * click and bubble flip. Errors short-circuit through the same
-   * `setActionError` channel as send / sync so the user always gets a
-   * consistent failure surface.
-   *
-   * No-op when there's no selected thread — the panel hides the Stop button
-   * unless an in-flight assistant message exists for this thread, but we
-   * gate here too so a stale callback that fired post-thread-switch can't
-   * hit the server with a missing thread id.
-   */
   const [isCancellingReply, handleCancelInFlightReply] = useAsyncCallback(
     useCallback(async () => {
       if (!selectedThreadId) return;
@@ -121,12 +106,6 @@ export function useRepositoryActions({
       try {
         await requestDeepAnalysis({ repositoryId: selectedRepositoryId, prompt: analysisPrompt });
         setShowAnalysisDialog(false);
-        // Success feedback (Phase 1, redesign Surface 1). The deck card and
-        // activity timeline both flip to "Waiting for a worker" via the
-        // Convex subscription within a tick, but the dialog dismissal
-        // happens immediately and a brief click → blank-screen gap is
-        // disorientating. The transient notice gives the user a deterministic
-        // "your action was queued" signal regardless of subscription latency.
         setActionNotice?.({
           title: "Deep analysis queued",
           message: "Track progress in the Activity timeline above.",
@@ -167,8 +146,6 @@ export function useRepositoryActions({
         await deleteThreadMutation({ threadId: threadToDelete });
         const deletedId = threadToDelete;
         setThreadToDelete(null);
-        // Notify the parent only after the dialog is reset so navigation does
-        // not race with the controlled-dialog close animation.
         if (selectedThreadId === deletedId) {
           onAfterDeleteThread(deletedId);
         }
@@ -185,18 +162,67 @@ export function useRepositoryActions({
     ]),
   );
 
-  const [isDeletingRepo, handleDeleteRepo] = useAsyncCallback(
+  const [isArchivingRepo, handleArchiveRepo] = useAsyncCallback(
+    useCallback(async () => {
+      if (!selectedRepositoryId) return;
+      setActionError(null);
+      try {
+        await archiveRepositoryMutation({ repositoryId: selectedRepositoryId });
+        setShowArchiveDialog(false);
+        toast.success("Repository archived", {
+          description: "Restore it any time from your archive.",
+          action: {
+            label: "View archive",
+            onClick: () => void navigate(ARCHIVE_PATH),
+          },
+        });
+        onAfterArchiveRepo();
+      } catch (error) {
+        setActionError(toUserErrorMessage(error, "Failed to archive the repository."));
+      }
+    }, [
+      archiveRepositoryMutation,
+      navigate,
+      onAfterArchiveRepo,
+      selectedRepositoryId,
+      setActionError,
+      setShowArchiveDialog,
+    ]),
+  );
+
+  const [isRestoringRepo, handleRestoreRepo] = useAsyncCallback(
+    useCallback(async () => {
+      if (!selectedRepositoryId) return;
+      setActionError(null);
+      try {
+        await restoreRepositoryMutation({ repositoryId: selectedRepositoryId });
+        toast.success("Repository restored");
+        onAfterRestoreRepo();
+      } catch (error) {
+        setActionError(toUserErrorMessage(error, "Failed to restore the repository."));
+      }
+    }, [onAfterRestoreRepo, restoreRepositoryMutation, selectedRepositoryId, setActionError]),
+  );
+
+  const [isPermanentDeletingRepo, handlePermanentDeleteRepo] = useAsyncCallback(
     useCallback(async () => {
       if (!selectedRepositoryId) return;
       setActionError(null);
       try {
         await deleteRepositoryMutation({ repositoryId: selectedRepositoryId });
-        setShowDeleteRepoDialog(false);
-        onAfterDeleteRepo();
+        setShowPermanentDeleteDialog(false);
+        toast.success("Repository deleted permanently");
+        onAfterPermanentDeleteRepo();
       } catch (error) {
         setActionError(toUserErrorMessage(error, "Failed to delete the repository."));
       }
-    }, [deleteRepositoryMutation, onAfterDeleteRepo, selectedRepositoryId, setActionError, setShowDeleteRepoDialog]),
+    }, [
+      deleteRepositoryMutation,
+      onAfterPermanentDeleteRepo,
+      selectedRepositoryId,
+      setActionError,
+      setShowPermanentDeleteDialog,
+    ]),
   );
 
   return {
@@ -210,7 +236,11 @@ export function useRepositoryActions({
     handleSync,
     isDeletingThread,
     handleDeleteThread,
-    isDeletingRepo,
-    handleDeleteRepo,
+    isArchivingRepo,
+    handleArchiveRepo,
+    isRestoringRepo,
+    handleRestoreRepo,
+    isPermanentDeletingRepo,
+    handlePermanentDeleteRepo,
   };
 }

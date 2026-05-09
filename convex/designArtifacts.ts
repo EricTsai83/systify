@@ -35,6 +35,7 @@ export const captureAdr = mutation({
         repositoryId: thread.repositoryId,
         ownerTokenIdentifier: identity.tokenIdentifier,
         notFoundMessage: "Thread not found.",
+        archivedMessage: "This repository is archived. Restore it to capture artifacts.",
       });
     }
 
@@ -79,6 +80,7 @@ export const requestFailureModeAnalysis = mutation({
     const repository = await requireActiveRepositoryForOwner(ctx, {
       repositoryId: thread.repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
+      archivedMessage: "This repository is archived. Restore it to run failure-mode analysis.",
     });
 
     const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;

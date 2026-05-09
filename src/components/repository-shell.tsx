@@ -2,10 +2,12 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import type { OptimisticLocalStore } from "convex/browser";
+import { ArchiveIcon, ArrowCounterClockwiseIcon } from "@phosphor-icons/react";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
+import { Button } from "@/components/ui/button";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ArtifactPanel } from "@/components/artifact-panel";
 import { TopBar } from "@/components/top-bar";
@@ -24,6 +26,7 @@ import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import type { ArtifactId, RepositoryId, ThreadId, WorkspaceId, ChatMode, SandboxModeStatus } from "@/lib/types";
 import { toUserErrorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
+import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
 
 type RepositoryWorkspaceStatus = "initializing" | "no-repo" | "ready";
 const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
@@ -267,7 +270,8 @@ export function RepositoryShell({
   );
 
   const [threadToDelete, setThreadToDelete] = useState<ThreadId | null>(null);
-  const [showDeleteRepoDialog, setShowDeleteRepoDialog] = useState(false);
+  const [showArchiveDialog, setShowArchiveDialog] = useState(false);
+  const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] = useState(false);
   const [analysisPrompt, setAnalysisPrompt] = useState(
     "Summarize the main modules, data flow, and risk areas for this repository.",
   );
@@ -375,8 +379,11 @@ export function RepositoryShell({
     api.repositories.getRepositoryDetail,
     effectiveSelectedRepositoryId ? { repositoryId: effectiveSelectedRepositoryId } : "skip",
   );
+  const isRepoMissing = effectiveSelectedRepositoryId !== null && repoDetail === null;
+  const isRepoArchived = repoDetail !== null && repoDetail !== undefined && repoDetail.isArchived;
   const isRepositorySyncing =
-    repoDetail?.repository.importStatus === "queued" || repoDetail?.repository.importStatus === "running";
+    !isRepoArchived &&
+    (repoDetail?.repository.importStatus === "queued" || repoDetail?.repository.importStatus === "running");
   const effectiveSandboxModeStatus: SandboxModeStatus | null =
     effectiveSelectedThreadId !== null ? capabilities.sandboxModeStatus : (repoDetail?.sandboxModeStatus ?? null);
 
@@ -646,8 +653,12 @@ export function RepositoryShell({
     handleSync,
     isDeletingThread,
     handleDeleteThread,
-    isDeletingRepo,
-    handleDeleteRepo,
+    isArchivingRepo,
+    handleArchiveRepo,
+    isRestoringRepo,
+    handleRestoreRepo,
+    isPermanentDeletingRepo,
+    handlePermanentDeleteRepo,
   } = useRepositoryActions({
     selectedRepositoryId: effectiveSelectedRepositoryId,
     selectedThreadId: effectiveSelectedThreadId,
@@ -660,15 +671,21 @@ export function RepositoryShell({
     setAnalysisError,
     setActionNotice,
     onAfterDeleteThread: () => {
-      // After deletion the thread no longer exists. Send the user back to the
-      // landing so the redirect-to-most-recent or empty-state logic re-resolves.
       void navigate("/chat");
     },
-    onAfterDeleteRepo: () => {
+    onAfterArchiveRepo: () => {
+      void navigate("/chat");
+    },
+    onAfterRestoreRepo: () => {
+      // No navigation — the user stays on the repo URL and the banner
+      // disappears reactively as `repoDetail.isArchived` flips back to false.
+    },
+    onAfterPermanentDeleteRepo: () => {
       void navigate("/chat");
     },
     setThreadToDelete,
-    setShowDeleteRepoDialog,
+    setShowArchiveDialog,
+    setShowPermanentDeleteDialog,
     setShowAnalysisDialog,
   });
 
@@ -703,6 +720,8 @@ export function RepositoryShell({
       onImported={handleImported}
       onThreadMovedToWorkspace={handleThreadMovedToWorkspace}
       onSelectArtifact={handleSelectArtifact}
+      isReadOnly={isRepoArchived}
+      readOnlyHint={isRepoArchived ? "Restore this repository to send messages or run analyses." : undefined}
       analysisNudge={
         // Only nudge when there is genuinely something to do: a repo is
         // attached, no deep-analysis artifact exists yet, no analysis is
@@ -711,6 +730,7 @@ export function RepositoryShell({
         // stays out of the way once any of those conditions flips so the
         // empty state declutters as the user advances.
         repoDetail &&
+        !isRepoArchived &&
         !repoDetail.artifacts.some((artifact) => artifact.kind === "deep_analysis") &&
         !repoDetail.activeDeepAnalysisJob &&
         repoDetail.sandboxModeStatus.reasonCode === "available"
@@ -741,12 +761,14 @@ export function RepositoryShell({
 
       <SidebarInset>
         <TopBar
-          repoDetail={repoDetail}
+          repoDetail={repoDetail ?? undefined}
           repoName={selectedRepoName}
           isSyncing={isSyncing || isRepositorySyncing}
           isStatusPanelOpen={isStatusOpen}
           onSetStatusPanelOpen={handleSetStatusOpen}
-          onDeleteRepo={() => setShowDeleteRepoDialog(true)}
+          onArchiveRepo={() => setShowArchiveDialog(true)}
+          onRestoreRepo={() => void handleRestoreRepo()}
+          onPermanentDeleteRepo={() => setShowPermanentDeleteDialog(true)}
           threadId={effectiveSelectedThreadId}
           attachedRepository={capabilities.attachedRepository}
           availableRepositories={repositories ?? []}
@@ -763,6 +785,32 @@ export function RepositoryShell({
           onViewArtifact={handleSelectArtifact}
         />
 
+        {isRepoArchived ? (
+          <div className="border-b border-border bg-muted/40 px-6 py-3">
+            <div className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-2">
+                <ArchiveIcon size={18} weight="bold" className="mt-0.5 text-muted-foreground" />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-foreground">This repository is archived</p>
+                  <p className="text-xs text-muted-foreground">
+                    Threads and artifacts stay readable. Restore to continue chatting and run analyses.
+                  </p>
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="default"
+                size="sm"
+                disabled={isRestoringRepo}
+                onClick={() => void handleRestoreRepo()}
+              >
+                <ArrowCounterClockwiseIcon weight="bold" />
+                {isRestoringRepo ? "Restoring…" : "Restore"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         {actionError ? (
           <div className="border-b border-border px-6 py-3">
             <AppNotice title="Action failed" message={actionError} tone="error" />
@@ -778,9 +826,11 @@ export function RepositoryShell({
          * the chat — sync/sandbox/update statuses live in the StatusPill
          * because the user can keep working around them, but a failed
          * import means the repo is genuinely unusable until it is retried.
-         * Shown regardless of which right-rail panel is open.
+         * Shown regardless of which right-rail panel is open. Hidden when
+         * archived because the import-failed state is no longer actionable
+         * until the user restores.
          */}
-        {repoDetail?.repository.importStatus === "failed" ? (
+        {!isRepoArchived && repoDetail?.repository.importStatus === "failed" ? (
           <div className="border-b border-destructive/40 bg-destructive/5 px-6 py-3">
             <AppNotice
               title="Repository import failed"
@@ -794,7 +844,9 @@ export function RepositoryShell({
         ) : null}
 
         <div className="flex min-h-0 min-w-0 flex-1">
-          {workspaceStatus === "no-repo" ? (
+          {isRepoMissing ? (
+            <RepositoryMissingState onBack={() => void navigate(DEFAULT_AUTHENTICATED_PATH)} />
+          ) : workspaceStatus === "no-repo" ? (
             <EmptyState
               onStartConversation={() => void handleStartConversation()}
               onImported={handleImported}
@@ -910,14 +962,25 @@ export function RepositoryShell({
       />
 
       <ConfirmDialog
-        open={showDeleteRepoDialog}
-        onOpenChange={setShowDeleteRepoDialog}
-        title="Delete repository"
+        open={showArchiveDialog}
+        onOpenChange={setShowArchiveDialog}
+        title="Archive repository"
+        description="The repository disappears from your workspaces. Threads, messages, and artifacts are preserved — sandboxes are stopped to free resources. Restore any time from your archive."
+        actionLabel="Archive repository"
+        loadingLabel="Archiving…"
+        isPending={isArchivingRepo}
+        onConfirm={() => void handleArchiveRepo()}
+      />
+
+      <ConfirmDialog
+        open={showPermanentDeleteDialog}
+        onOpenChange={setShowPermanentDeleteDialog}
+        title="Permanently delete repository?"
         description="This will permanently delete this repository and all its threads, messages, analysis artifacts, jobs, and indexed files. This action cannot be undone."
-        actionLabel="Delete repository"
+        actionLabel="Delete permanently"
         loadingLabel="Deleting…"
-        isPending={isDeletingRepo}
-        onConfirm={() => void handleDeleteRepo()}
+        isPending={isPermanentDeletingRepo}
+        onConfirm={() => void handlePermanentDeleteRepo()}
       />
 
       {showAnalysisDialog ? (
@@ -945,6 +1008,22 @@ export function RepositoryShell({
         </Suspense>
       ) : null}
     </>
+  );
+}
+
+function RepositoryMissingState({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="flex flex-1 items-center justify-center px-6 py-10">
+      <div className="w-full max-w-md text-center">
+        <h2 className="text-base font-semibold text-foreground">This repository is unavailable</h2>
+        <p className="mt-2 text-sm text-muted-foreground">
+          It may have been deleted, or you no longer have access to it.
+        </p>
+        <Button type="button" variant="default" size="sm" className="mt-5" onClick={onBack}>
+          Back to chat
+        </Button>
+      </div>
+    </div>
   );
 }
 

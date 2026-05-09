@@ -14,6 +14,11 @@ async function loadChatRoute() {
   return { Component: module.ChatPage };
 }
 
+async function loadArchiveRoute() {
+  const module = await import("@/pages/archive");
+  return { Component: module.ArchivePage };
+}
+
 /**
  * Routes mounted under {@link ProtectedLayout}. Defining them as a named const
  * (rather than inline in `appRoutes`) lets {@link isProtectedReturnTo} match
@@ -32,6 +37,7 @@ const protectedRoutes: RouteObject[] = [
   // PRD #19 user story 26: stable, shareable URLs for repository overviews
   // (artifacts + threads grounded in that repo).
   { path: PROTECTED_ROUTE_SEGMENTS.repository, lazy: loadChatRoute },
+  { path: PROTECTED_ROUTE_SEGMENTS.archive, lazy: loadArchiveRoute },
 ];
 
 export const appRoutes: RouteObject[] = [

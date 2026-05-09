@@ -5,9 +5,9 @@ import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
 import {
+  assertSandboxProvisioningConfigured,
   cloneRepositoryInSandbox,
   collectRepositorySnapshot,
-  isDaytonaConfigured,
   provisionSandbox,
   stopSandbox,
 } from "./daytona";
@@ -94,9 +94,11 @@ export const runImportPipeline = internalAction({
         return;
       }
 
-      if (!isDaytonaConfigured()) {
-        throw new Error("DAYTONA_API_KEY is missing. Add Daytona credentials before importing repositories.");
-      }
+      // Fail-fast: validate every Daytona env var before any side effects
+      // (sandbox row reservation, GitHub access probe). This surfaces a
+      // single actionable error to the operator instead of failing midway
+      // through provisioning.
+      assertSandboxProvisioningConfigured();
 
       // -----------------------------------------------------------------------
       // Early permission check: verify the GitHub App installation can access

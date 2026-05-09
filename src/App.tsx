@@ -2,6 +2,7 @@ import type { ComponentProps } from "react";
 import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
 import { RouterProvider } from "react-router-dom";
+import { Toaster } from "@/components/ui/sonner";
 import { ConvexProviderWithAuthKit } from "@/providers/convex-provider-with-auth-kit";
 import { ErrorBoundary } from "@/providers/error-boundary";
 import { ThemeProvider } from "@/providers/theme-provider";
@@ -37,6 +38,7 @@ export function App({
         <AuthKitProvider clientId={workosClientId} redirectUri={redirectUri}>
           <ConvexProviderWithAuthKit client={convexClient} useAuth={useAuthHook}>
             <RouterProvider router={appRouter} />
+            <Toaster />
           </ConvexProviderWithAuthKit>
         </AuthKitProvider>
       </ThemeProvider>

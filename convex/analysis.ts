@@ -83,6 +83,7 @@ export const requestDeepAnalysis = mutation({
     const repository = await requireActiveRepositoryForOwner(ctx, {
       repositoryId: args.repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
+      archivedMessage: "This repository is archived. Restore it to run deep analysis.",
     });
 
     const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;

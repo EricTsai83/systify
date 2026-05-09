@@ -50,6 +50,7 @@ export const requestArchitectureDiagram = mutation({
     const repository = await requireActiveRepositoryForOwner(ctx, {
       repositoryId: thread.repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
+      archivedMessage: "This repository is archived. Restore it to generate diagrams.",
     });
 
     const snapshot = await buildSnapshot(ctx, repository);
