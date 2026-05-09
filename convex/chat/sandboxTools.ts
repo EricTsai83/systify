@@ -122,7 +122,7 @@ export const SANDBOX_READ_FILE_TIMEOUT_SECONDS = 15;
  * truncation that leads to "I checked the file and didn't find X" when X is
  * past byte 65,536.
  */
-export const SANDBOX_TRUNCATION_MARKER = "\n\n[…truncated by SysTify after 64 KB…]";
+export const SANDBOX_TRUNCATION_MARKER = "\n\n[…truncated by Systify after 64 KB…]";
 
 /* ---------------------------------------------------------------------- *
  * Plan 08 — `run_shell` limits.                                          *
@@ -161,9 +161,9 @@ export const SANDBOX_RUN_SHELL_MAX_OUTPUT_BYTES = 32 * 1024;
 /**
  * Marker appended to truncated run_shell outputs. Mirrors the read_file
  * marker so the LLM (and Plan 06's tool-call ticker) can pattern-match the
- * `[…truncated by SysTify after N KB…]` shape uniformly across tools.
+ * `[…truncated by Systify after N KB…]` shape uniformly across tools.
  */
-export const SANDBOX_RUN_SHELL_TRUNCATION_MARKER = "\n\n[…truncated by SysTify after 32 KB…]";
+export const SANDBOX_RUN_SHELL_TRUNCATION_MARKER = "\n\n[…truncated by Systify after 32 KB…]";
 
 /* ---------------------------------------------------------------------- *
  * Sandbox FS adapter interface — kept intentionally minimal so the       *

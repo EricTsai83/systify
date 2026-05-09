@@ -24,8 +24,13 @@ vi.mock("@/providers/theme-provider", async () => {
 
   return {
     ThemeProvider: ({ children }: { children: React.ReactNode }) => React.createElement(React.Fragment, null, children),
+    useTheme: () => ({ theme: "system" as const, setTheme: () => null }),
   };
 });
+
+vi.mock("@/components/ui/sonner", () => ({
+  Toaster: () => null,
+}));
 
 vi.mock("@/pages/home", () => ({
   HomePage: () => <div>home page</div>,

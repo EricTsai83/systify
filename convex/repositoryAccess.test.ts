@@ -92,22 +92,24 @@ describe("repository access helpers", () => {
       .withIdentity({ tokenIdentifier: ownerTokenIdentifier })
       .query(api.repositories.getRepositoryDetail, { repositoryId });
 
-    expect(detail.repository._id).toBe(repositoryId);
+    expect(detail).not.toBeNull();
+    expect(detail!.repository._id).toBe(repositoryId);
+    expect(detail!.isArchived).toBe(false);
   });
 
-  test("non-owner cannot access a repository", async () => {
+  test("non-owner sees a null repository detail (no thrown error)", async () => {
     const ownerTokenIdentifier = "user|repo-access-owner-only";
     const t = createTestConvex();
     const { repositoryId } = await seedRepositoryAccessFixture(t, { ownerTokenIdentifier });
 
-    await expect(
-      t.withIdentity({ tokenIdentifier: "user|repo-access-stranger" }).query(api.repositories.getRepositoryDetail, {
-        repositoryId,
-      }),
-    ).rejects.toThrow("Repository not found.");
+    const detail = await t
+      .withIdentity({ tokenIdentifier: "user|repo-access-stranger" })
+      .query(api.repositories.getRepositoryDetail, { repositoryId });
+
+    expect(detail).toBeNull();
   });
 
-  test("owner cannot access a repository after deletion is requested", async () => {
+  test("owner sees a null repository detail after deletion is requested", async () => {
     const ownerTokenIdentifier = "user|repo-access-tombstone";
     const t = createTestConvex();
     const { repositoryId } = await seedRepositoryAccessFixture(t, {
@@ -115,11 +117,11 @@ describe("repository access helpers", () => {
       deletionRequestedAt: Date.now(),
     });
 
-    await expect(
-      t.withIdentity({ tokenIdentifier: ownerTokenIdentifier }).query(api.repositories.getRepositoryDetail, {
-        repositoryId,
-      }),
-    ).rejects.toThrow("Repository not found.");
+    const detail = await t
+      .withIdentity({ tokenIdentifier: ownerTokenIdentifier })
+      .query(api.repositories.getRepositoryDetail, { repositoryId });
+
+    expect(detail).toBeNull();
   });
 
   test("repository-backed entry points reject tombstoned repositories", async () => {

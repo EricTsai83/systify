@@ -1,6 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import { ChatCircleIcon, GlobeIcon, LockIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
+import { ArchiveIcon, ChatCircleIcon, GlobeIcon, LockIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { ProfileCard } from "@/components/profile-card";
@@ -10,6 +11,7 @@ import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarMenuButto
 import { Logo } from "@/components/logo";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
+import { ARCHIVE_PATH } from "@/route-paths";
 import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 
 /**
@@ -112,7 +114,13 @@ export function AppSidebar({
         />
       </SidebarContent>
 
-      <SidebarFooter className="px-3 py-2">
+      <SidebarFooter className="gap-2 px-3 py-2">
+        <Button asChild variant="ghost" size="sm" className="h-8 w-full justify-start gap-2 text-xs">
+          <Link to={ARCHIVE_PATH}>
+            <ArchiveIcon size={14} weight="bold" />
+            Archive
+          </Link>
+        </Button>
         <div className="flex items-center gap-2">
           <ProfileCard />
           <WorkspaceSelector

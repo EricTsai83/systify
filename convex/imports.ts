@@ -226,7 +226,7 @@ async function guardPersistStage(
   }
 
   const repository = await ctx.db.get(importRecord.repositoryId);
-  if (!repository || repository.deletionRequestedAt) {
+  if (!repository || repository.deletionRequestedAt || repository.archivedAt) {
     await finalizeImportCancellation(ctx, {
       importId: args.importId,
       jobId: args.jobId,
@@ -290,7 +290,7 @@ export const getImportContext = internalQuery({
     }
 
     const repository = await ctx.db.get(importRecord.repositoryId);
-    if (!repository || repository.deletionRequestedAt) {
+    if (!repository || repository.deletionRequestedAt || repository.archivedAt) {
       return {
         kind: "cancelled" as const,
         jobId: importRecord.jobId,
@@ -334,7 +334,7 @@ export const markImportRunning = internalMutation({
       };
     }
 
-    if (!importRecord || !job || !repository || repository.deletionRequestedAt) {
+    if (!importRecord || !job || !repository || repository.deletionRequestedAt || repository.archivedAt) {
       return {
         kind: "cancelled" as const,
         reason: REPOSITORY_DELETION_CANCEL_REASON,
@@ -755,7 +755,7 @@ export const markImportFailed = internalMutation({
     }
 
     const repository = await ctx.db.get(importRecord.repositoryId);
-    if (!repository || repository.deletionRequestedAt) {
+    if (!repository || repository.deletionRequestedAt || repository.archivedAt) {
       await finalizeImportCancellation(ctx, {
         importId: args.importId,
         jobId: args.jobId,

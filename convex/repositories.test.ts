@@ -101,8 +101,9 @@ describe("repository detail metadata", () => {
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
     const detail = await viewer.query(api.repositories.getRepositoryDetail, { repositoryId });
 
-    expect(detail.fileCount).toBe(401);
-    expect(detail.fileCountLabel).toBe("400+");
+    expect(detail).not.toBeNull();
+    expect(detail!.fileCount).toBe(401);
+    expect(detail!.fileCountLabel).toBe("400+");
   });
 
   test("syncRepository keeps the last completed snapshot until the new sync finishes", async () => {
@@ -252,9 +253,10 @@ describe("repository detail metadata", () => {
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
     const detail = await viewer.query(api.repositories.getRepositoryDetail, { repositoryId });
 
-    expect(detail.artifacts).toHaveLength(20);
-    const uniqueArtifactIds = new Set(detail.artifacts.map((artifact) => artifact._id));
-    expect(uniqueArtifactIds.size).toBe(detail.artifacts.length);
+    expect(detail).not.toBeNull();
+    expect(detail!.artifacts).toHaveLength(20);
+    const uniqueArtifactIds = new Set(detail!.artifacts.map((artifact) => artifact._id));
+    expect(uniqueArtifactIds.size).toBe(detail!.artifacts.length);
   });
 });
 

@@ -1,4 +1,4 @@
-import { DotsThreeVerticalIcon, TrashIcon } from "@phosphor-icons/react";
+import { ArchiveIcon, ArrowCounterClockwiseIcon, DotsThreeVerticalIcon, TrashIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +26,8 @@ export type TopBarRepoDetail = {
     lastImportedAt?: number;
     lastSyncedCommitSha?: string;
   };
+  isArchived: boolean;
+  archivedAt: number | null;
   sandbox: { status: string; ttlExpiresAt: number; autoArchiveIntervalMinutes: number } | null;
   sandboxModeStatus: SandboxModeStatus;
   hasRemoteUpdates: boolean;
@@ -71,7 +73,9 @@ export function TopBar({
   isSyncing,
   isStatusPanelOpen,
   onSetStatusPanelOpen,
-  onDeleteRepo,
+  onArchiveRepo,
+  onRestoreRepo,
+  onPermanentDeleteRepo,
   onThreadMovedToWorkspace,
   isDesktopLayout,
   onSync,
@@ -79,50 +83,23 @@ export function TopBar({
   onViewArtifact,
 }: {
   repoDetail?: TopBarRepoDetail;
-  /** Immediate repo name from the already-loaded repository list so the title
-   *  never flashes "Repository" while `repoDetail` is still loading. */
   repoName?: string;
-  /**
-   * The thread the workspace is currently viewing, or `null` on bare-repo
-   * (`/r/:repoId`) and empty (`/chat`) routes. Drives whether the inline
-   * {@link AttachRepoMenu} chip renders — without a thread there is nothing
-   * to attach a repo *to*.
-   */
   threadId: ThreadId | null;
-  /** Repository currently attached to {@link threadId}, if any. */
   attachedRepository: AttachedRepositorySummary | null;
-  /** All repositories the viewer owns, used to populate the swap menu. */
   availableRepositories: ReadonlyArray<Doc<"repositories">>;
   isSyncing: boolean;
-  /** Whether the StatusPanel is currently open — controls the Popover/Sheet
-   *  and drives the pill's pressed state. */
   isStatusPanelOpen: boolean;
-  /**
-   * Setter for the status panel open state. Receives `true`/`false` rather
-   * than a toggle so it can be used both by Radix Popover's onOpenChange
-   * (which always passes the next state) and by the mobile pill's onClick
-   * (which computes `!isStatusPanelOpen`). The shell wires the additional
-   * mutual-exclusion logic for the mobile sheet stack.
-   */
   onSetStatusPanelOpen: (open: boolean) => void;
-  onDeleteRepo: () => void;
+  /** Archive an active repository. Triggered when `repoDetail.isArchived` is false. */
+  onArchiveRepo: () => void;
+  /** Restore an archived repository. Triggered when `repoDetail.isArchived` is true. */
+  onRestoreRepo: () => void;
+  /** Permanently delete an archived repository. Triggered only from the archived kebab. */
+  onPermanentDeleteRepo: () => void;
   onThreadMovedToWorkspace: (workspaceId: WorkspaceId | null) => void;
-  /**
-   * Desktop breakpoint flag from the shell's media-query subscription. Picks
-   * between Popover (desktop) and a plain pill that defers to the shell's
-   * bottom Sheet (mobile). Re-evaluated on resize so the affordance matches
-   * the current layout.
-   */
   isDesktopLayout: boolean;
-  /** Forwarded to the embedded StatusPanel. Triggers a repository sync. */
   onSync: () => void;
-  /** Forwarded to the embedded StatusPanel. Opens the deep-analysis dialog. */
   onRunAnalysis: () => void;
-  /**
-   * Forwarded to the embedded StatusPanel. Opens the artifact panel and
-   * scrolls/highlights the matching card; the shell handler also closes
-   * the Popover so the user lands directly on the artifact.
-   */
   onViewArtifact: (artifactId: ArtifactId) => void;
 }) {
   const title = repoDetail?.repository.sourceRepoFullName ?? repoName;
@@ -229,17 +206,40 @@ export function TopBar({
               <DotsThreeVerticalIcon weight="bold" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem
-              className="text-destructive focus:text-destructive"
-              onSelect={(e) => {
-                e.preventDefault();
-                onDeleteRepo();
-              }}
-            >
-              <TrashIcon weight="bold" />
-              Delete repository
-            </DropdownMenuItem>
+          <DropdownMenuContent align="end" className="w-56">
+            {repoDetail?.isArchived ? (
+              <>
+                <DropdownMenuItem
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    onRestoreRepo();
+                  }}
+                >
+                  <ArrowCounterClockwiseIcon weight="bold" />
+                  Restore repository
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="text-destructive focus:text-destructive"
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    onPermanentDeleteRepo();
+                  }}
+                >
+                  <TrashIcon weight="bold" />
+                  Delete permanently
+                </DropdownMenuItem>
+              </>
+            ) : (
+              <DropdownMenuItem
+                onSelect={(e) => {
+                  e.preventDefault();
+                  onArchiveRepo();
+                }}
+              >
+                <ArchiveIcon weight="bold" />
+                Archive repository
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

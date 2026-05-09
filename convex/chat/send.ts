@@ -64,6 +64,7 @@ export const sendMessage = mutation({
         repositoryId: thread.repositoryId,
         ownerTokenIdentifier: identity.tokenIdentifier,
         notFoundMessage: "Thread not found.",
+        archivedMessage: "This repository is archived. Restore it to continue chatting.",
       });
     }
 

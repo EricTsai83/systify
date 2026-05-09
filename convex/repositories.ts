@@ -11,6 +11,12 @@ import { CASCADE_BATCH_SIZE } from "./lib/constants";
 import { ensureRepositoryWorkspace } from "./lib/workspaces";
 import { clearLastActiveWorkspaceIfMatches } from "./lib/userPreferences";
 import {
+  isRepositoryArchived,
+  isRepositoryDeleting,
+  loadAccessibleRepositoryForViewer,
+  requireActiveRepositoryForViewer,
+} from "./lib/repositoryAccess";
+import {
   consumeDaytonaGlobalRateLimit,
   consumeImportRateLimit,
   throwOperationAlreadyInProgress,
@@ -21,10 +27,8 @@ const REPOSITORY_DETAIL_ARTIFACT_LIMIT = 20;
 const REPOSITORY_DETAIL_IMPORT_ARTIFACT_LIMIT = 10;
 const REPOSITORY_DELETE_RETRY_MS = 5_000;
 const STREAM_CHUNK_DRAIN_PASS_LIMIT = 8;
-
-function isRepositoryDeleting(repository: { deletionRequestedAt?: number } | null | undefined) {
-  return typeof repository?.deletionRequestedAt === "number";
-}
+const REPOSITORY_LIST_TAKE = 200;
+const ARCHIVED_REPOSITORY_LIST_TAKE = 200;
 
 async function queueImportWorkflow(
   ctx: MutationCtx,
@@ -79,16 +83,34 @@ export const listRepositories = query({
         q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
       )
       .order("desc")
-      .take(100);
+      .take(REPOSITORY_LIST_TAKE);
 
-    return repositories;
+    return repositories.filter((repo) => repo.archivedAt === undefined);
+  },
+});
+
+export const listArchivedRepositories = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await requireViewerIdentity(ctx);
+    const archived = await ctx.db
+      .query("repositories")
+      .withIndex("by_ownerTokenIdentifier_and_archivedAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).gt("archivedAt", 0),
+      )
+      .order("desc")
+      .take(ARCHIVED_REPOSITORY_LIST_TAKE);
+
+    return archived.filter((repo) => repo.deletionRequestedAt === undefined);
   },
 });
 
 /**
  * Returns a summary of all imported repositories for the current user,
  * keyed by `sourceRepoFullName`. Used by the authorized-repos dialog
- * to show import status alongside each GitHub-authorised repo.
+ * to show import status alongside each GitHub-authorised repo. Excludes
+ * archived repositories — the import dialog only surfaces actively-tracked
+ * repos so a re-import of an archived URL will go through `createRepositoryImport`.
  */
 export const getImportedRepoSummaries = query({
   args: {},
@@ -99,7 +121,7 @@ export const getImportedRepoSummaries = query({
       .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", (q) =>
         q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
       )
-      .take(200);
+      .take(REPOSITORY_LIST_TAKE);
 
     const summaries: Record<
       string,
@@ -111,6 +133,9 @@ export const getImportedRepoSummaries = query({
     > = {};
 
     for (const repo of repos) {
+      if (repo.archivedAt !== undefined) {
+        continue;
+      }
       summaries[repo.sourceRepoFullName] = {
         importStatus: repo.importStatus,
         lastImportedAt: repo.lastImportedAt,
@@ -128,15 +153,14 @@ export const getRepositoryDetail = query({
     repositoryId: v.id("repositories"),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (
-      !repository ||
-      isRepositoryDeleting(repository) ||
-      repository.ownerTokenIdentifier !== identity.tokenIdentifier
-    ) {
-      throw new Error("Repository not found.");
+    const { repository } = await loadAccessibleRepositoryForViewer(ctx, {
+      repositoryId: args.repositoryId,
+    });
+    if (!repository) {
+      return null;
     }
+
+    const isArchived = isRepositoryArchived(repository);
 
     const currentImportArtifacts = repository.latestImportJobId
       ? await ctx.db
@@ -210,6 +234,8 @@ export const getRepositoryDetail = query({
 
     return {
       repository,
+      isArchived,
+      archivedAt: repository.archivedAt ?? null,
       artifacts,
       jobs,
       activeDeepAnalysisJob: activeRunningDeepAnalysisJob ?? activeQueuedDeepAnalysisJob,
@@ -255,19 +281,31 @@ export const createRepositoryImport = mutation({
     const accessMode = "private" as const;
 
     // There may be more than one record if a previous deletion is still
-    // cascading (soft-deleted row lingers until background cleanup finishes).
-    // Pick the first *active* (non-deleting) row; ignore tombstoned ones so
-    // the user can re-import immediately after pressing "Delete".
-    let repository =
-      (await ctx.db
-        .query("repositories")
-        .withIndex("by_ownerTokenIdentifier_and_sourceUrl_and_deletionRequestedAt", (q) =>
-          q
-            .eq("ownerTokenIdentifier", identity.tokenIdentifier)
-            .eq("sourceUrl", parsed.normalizedUrl)
-            .eq("deletionRequestedAt", undefined),
-        )
-        .first()) ?? null;
+    // cascading (soft-deleted row lingers until background cleanup finishes)
+    // or if the user archived the repo previously and is now re-importing.
+    // Prefer an active (non-archived, non-deleting) row; fall back to the
+    // archived row and clear `archivedAt` so the user picks up where they
+    // left off without creating a duplicate.
+    const candidates = await ctx.db
+      .query("repositories")
+      .withIndex("by_ownerTokenIdentifier_and_sourceUrl_and_deletionRequestedAt", (q) =>
+        q
+          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+          .eq("sourceUrl", parsed.normalizedUrl)
+          .eq("deletionRequestedAt", undefined),
+      )
+      .take(10);
+
+    let repository = candidates.find((row) => row.archivedAt === undefined) ?? null;
+    if (!repository) {
+      const archived = candidates
+        .filter((row) => typeof row.archivedAt === "number")
+        .sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0))[0];
+      if (archived) {
+        await ctx.db.patch(archived._id, { archivedAt: undefined });
+        repository = (await ctx.db.get(archived._id)) ?? null;
+      }
+    }
 
     let repositoryId = repository?._id;
     let defaultThreadId = repository?.defaultThreadId;
@@ -360,15 +398,9 @@ export const syncRepository = mutation({
     repositoryId: v.id("repositories"),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (
-      !repository ||
-      isRepositoryDeleting(repository) ||
-      repository.ownerTokenIdentifier !== identity.tokenIdentifier
-    ) {
-      throw new Error("Repository not found.");
-    }
+    const { identity, repository } = await requireActiveRepositoryForViewer(ctx, {
+      repositoryId: args.repositoryId,
+    });
 
     // Check if user has an active GitHub installation
     const installation = await ctx.db
@@ -402,6 +434,63 @@ export const syncRepository = mutation({
   },
 });
 
+export const archiveRepository = mutation({
+  args: {
+    repositoryId: v.id("repositories"),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireViewerIdentity(ctx);
+    const repository = await ctx.db.get(args.repositoryId);
+    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      throw new Error("Repository not found.");
+    }
+
+    if (isRepositoryDeleting(repository)) {
+      throw new Error("Repository is being deleted and cannot be archived.");
+    }
+
+    if (isRepositoryArchived(repository)) {
+      return;
+    }
+
+    await ctx.db.patch(args.repositoryId, {
+      archivedAt: Date.now(),
+    });
+
+    // Stop any live sandbox to release Daytona resources. Threads, messages,
+    // and artifacts stay intact so Restore lets the user pick up where they
+    // left off.
+    await ctx.runMutation(internal.ops.scheduleRepositorySandboxCleanup, {
+      repositoryId: args.repositoryId,
+    });
+  },
+});
+
+export const restoreRepository = mutation({
+  args: {
+    repositoryId: v.id("repositories"),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireViewerIdentity(ctx);
+    const repository = await ctx.db.get(args.repositoryId);
+    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      throw new Error("Repository not found.");
+    }
+
+    if (isRepositoryDeleting(repository)) {
+      throw new Error("Repository is being deleted and cannot be restored.");
+    }
+
+    if (!isRepositoryArchived(repository)) {
+      return;
+    }
+
+    await ctx.db.patch(args.repositoryId, {
+      archivedAt: undefined,
+    });
+  },
+});
+
 export const deleteRepository = mutation({
   args: {
     repositoryId: v.id("repositories"),
@@ -415,6 +504,10 @@ export const deleteRepository = mutation({
 
     if (isRepositoryDeleting(repository)) {
       return;
+    }
+
+    if (!isRepositoryArchived(repository)) {
+      throw new Error("Archive the repository before deleting it permanently.");
     }
 
     await ctx.db.patch(args.repositoryId, {

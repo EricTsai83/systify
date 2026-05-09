@@ -8,6 +8,7 @@ import schema from "./schema";
 const modules = import.meta.glob("./**/*.ts");
 
 const {
+  assertSandboxProvisioningConfiguredMock,
   cloneRepositoryInSandboxMock,
   collectRepositorySnapshotMock,
   deleteSandboxMock,
@@ -17,6 +18,7 @@ const {
   runFocusedInspectionMock,
   stopSandboxMock,
 } = vi.hoisted(() => ({
+  assertSandboxProvisioningConfiguredMock: vi.fn(),
   cloneRepositoryInSandboxMock: vi.fn(),
   collectRepositorySnapshotMock: vi.fn(),
   deleteSandboxMock: vi.fn(),
@@ -28,6 +30,7 @@ const {
 }));
 
 vi.mock("./daytona", () => ({
+  assertSandboxProvisioningConfigured: assertSandboxProvisioningConfiguredMock,
   cloneRepositoryInSandbox: cloneRepositoryInSandboxMock,
   collectRepositorySnapshot: collectRepositorySnapshotMock,
   deleteSandbox: deleteSandboxMock,
@@ -41,6 +44,7 @@ vi.mock("./daytona", () => ({
 describe("repository deletion cleanup", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    assertSandboxProvisioningConfiguredMock.mockReset();
     cloneRepositoryInSandboxMock.mockReset();
     collectRepositorySnapshotMock.mockReset();
     deleteSandboxMock.mockReset();
@@ -113,6 +117,10 @@ describe("repository deletion cleanup", () => {
     });
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    // The archive feature requires a repository to be archived before
+    // permanent deletion. Archive first so the cascade path under test
+    // is reached.
+    await viewer.mutation(api.repositories.archiveRepository, { repositoryId });
     await viewer.mutation(api.repositories.deleteRepository, { repositoryId });
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 

@@ -105,6 +105,8 @@ function makeRepoDetail(overrides: Partial<TopBarRepoDetail> = {}): TopBarRepoDe
 
   return {
     repository,
+    isArchived: false,
+    archivedAt: null,
     sandbox: null,
     sandboxModeStatus: { reasonCode: "available", message: null },
     hasRemoteUpdates: false,
@@ -126,7 +128,9 @@ function createTopBarProps(overrides: Partial<TopBarTestProps> = {}): TopBarTest
     isSyncing: false,
     isStatusPanelOpen: false,
     onSetStatusPanelOpen: vi.fn(),
-    onDeleteRepo: vi.fn(),
+    onArchiveRepo: vi.fn(),
+    onRestoreRepo: vi.fn(),
+    onPermanentDeleteRepo: vi.fn(),
     onThreadMovedToWorkspace: vi.fn(),
     isDesktopLayout: true,
     onSync: vi.fn(),
@@ -159,16 +163,31 @@ describe("TopBar attach repo chip behavior", () => {
   });
 
   test("hides standalone attach chip once a repository is bound to the thread", () => {
-    // Once a repo is attached, swap/detach controls live inside the
-    // RepoInfoPopover's workspace section instead of in the TopBar — the
-    // header stays uncluttered for the long-tail of session time the user
-    // isn't swapping. The attached repo name is still visible via the
-    // (mocked) popover trigger that wraps the title.
     renderTopBar({
       attachedRepository: { id: repoId, fullName: "octocat/hello-world", shortName: "hello-world" },
     });
 
     expect(screen.queryByTestId("attach-repo-menu")).not.toBeInTheDocument();
     expect(screen.getByText("octocat/hello-world")).toBeInTheDocument();
+  });
+});
+
+describe("TopBar kebab actions reflect archive state", () => {
+  test("active repo shows Archive action only", () => {
+    renderTopBar();
+
+    expect(screen.getByText("Archive repository")).toBeInTheDocument();
+    expect(screen.queryByText("Restore repository")).not.toBeInTheDocument();
+    expect(screen.queryByText("Delete permanently")).not.toBeInTheDocument();
+  });
+
+  test("archived repo shows Restore + Delete permanently actions", () => {
+    renderTopBar({
+      repoDetail: makeRepoDetail({ isArchived: true, archivedAt: Date.now() }),
+    });
+
+    expect(screen.getByText("Restore repository")).toBeInTheDocument();
+    expect(screen.getByText("Delete permanently")).toBeInTheDocument();
+    expect(screen.queryByText("Archive repository")).not.toBeInTheDocument();
   });
 });

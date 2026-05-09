@@ -86,6 +86,15 @@ type ChatPanelProps = {
    * would just bounce off the disabled state).
    */
   analysisNudge?: { onStart: () => void } | null;
+  /**
+   * When true, the chat input and Send/Stop buttons are disabled and a
+   * read-only hint is shown below the composer. Used by the archived-
+   * repository banner so historical messages stay browsable but no new
+   * messages can be sent until the repo is restored.
+   */
+  isReadOnly?: boolean;
+  /** Optional copy shown below the disabled composer when `isReadOnly` is true. */
+  readOnlyHint?: string;
 };
 
 type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream" | "isChatLoading"> & {
@@ -139,6 +148,8 @@ export function ChatPanel({
   onThreadMovedToWorkspace,
   onSelectArtifact,
   analysisNudge = null,
+  isReadOnly = false,
+  readOnlyHint,
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
   const availableModeSet = useMemo(() => new Set(availableModes), [availableModes]);
@@ -301,9 +312,16 @@ export function ChatPanel({
           <Textarea
             value={chatInput}
             onChange={(e) => setChatInput(e.target.value)}
-            placeholder="Ask about architecture, module boundaries, data flow, risks…"
+            placeholder={
+              isReadOnly
+                ? "This repository is archived. Restore it to send messages."
+                : "Ask about architecture, module boundaries, data flow, risks…"
+            }
             className="min-h-20 resize-none border-border"
+            disabled={isReadOnly}
+            aria-readonly={isReadOnly}
           />
+          {isReadOnly && readOnlyHint ? <p className="text-xs text-muted-foreground">{readOnlyHint}</p> : null}
           {visibleSuggestion && suggestedModeLabel ? (
             /*
              * Plan 14 — passive mode-suggestion hint. Sits between the
@@ -411,7 +429,7 @@ export function ChatPanel({
                 <ModeInfoPopover entries={MODE_INFO_ENTRIES} />
               </div>
             </div>
-            {canCancel ? (
+            {canCancel && !isReadOnly ? (
               /*
                * Plan 07 — Stop button. `type="button"` so a stray Enter in
                * the textarea cannot accidentally submit a Stop click as if
@@ -449,7 +467,7 @@ export function ChatPanel({
                 variant="default"
                 size="sm"
                 className="w-full sm:w-auto"
-                disabled={isSending || isSyncing || !selectedThreadId || !chatInput.trim()}
+                disabled={isReadOnly || isSending || isSyncing || !selectedThreadId || !chatInput.trim()}
                 data-testid="chat-panel-send-button"
               >
                 <PaperPlaneTiltIcon weight="bold" />
