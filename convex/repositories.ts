@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import type { Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { mutation, query, internalQuery, internalMutation, type MutationCtx } from "./_generated/server";
@@ -28,7 +29,6 @@ const REPOSITORY_DETAIL_IMPORT_ARTIFACT_LIMIT = 10;
 const REPOSITORY_DELETE_RETRY_MS = 5_000;
 const STREAM_CHUNK_DRAIN_PASS_LIMIT = 8;
 const REPOSITORY_LIST_TAKE = 200;
-const ARCHIVED_REPOSITORY_LIST_TAKE = 200;
 
 async function queueImportWorkflow(
   ctx: MutationCtx,
@@ -89,19 +89,60 @@ export const listRepositories = query({
   },
 });
 
+/**
+ * Paginated archive listing with optional full-text search over
+ * `sourceRepoFullName`. Two execution paths:
+ *
+ *   - **Browse** (no `searchTerm`) — uses `by_ownerTokenIdentifier_and_archivedAt`
+ *     ordered by `archivedAt` desc. Fully reactive: archive/restore mutations
+ *     refresh the page automatically.
+ *   - **Search** (`searchTerm` set) — uses the `search_full_name` text index,
+ *     ranked by relevance. Convex paginated search is not reactive, but the
+ *     archive view treats search as a bursty find-something interaction so
+ *     the user re-runs the query after data changes anyway.
+ *
+ * Both branches post-filter by `deletionRequestedAt === undefined` (and the
+ * search branch additionally requires `archivedAt > 0`, since the search
+ * index is shared with the active-repo table). Post-filtering trims the
+ * page below `numItems` in some batches; the cursor still advances against
+ * the underlying scan, so infinite scroll keeps working — the client only
+ * stops when `isDone` is true.
+ */
 export const listArchivedRepositories = query({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    paginationOpts: paginationOptsValidator,
+    searchTerm: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
-    const archived = await ctx.db
+    const trimmed = args.searchTerm?.trim();
+
+    if (trimmed) {
+      const result = await ctx.db
+        .query("repositories")
+        .withSearchIndex("search_full_name", (q) =>
+          q.search("sourceRepoFullName", trimmed).eq("ownerTokenIdentifier", identity.tokenIdentifier),
+        )
+        .paginate(args.paginationOpts);
+
+      return {
+        ...result,
+        page: result.page.filter((repo) => (repo.archivedAt ?? 0) > 0 && repo.deletionRequestedAt === undefined),
+      };
+    }
+
+    const result = await ctx.db
       .query("repositories")
       .withIndex("by_ownerTokenIdentifier_and_archivedAt", (q) =>
         q.eq("ownerTokenIdentifier", identity.tokenIdentifier).gt("archivedAt", 0),
       )
       .order("desc")
-      .take(ARCHIVED_REPOSITORY_LIST_TAKE);
+      .paginate(args.paginationOpts);
 
-    return archived.filter((repo) => repo.deletionRequestedAt === undefined);
+    return {
+      ...result,
+      page: result.page.filter((repo) => repo.deletionRequestedAt === undefined),
+    };
   },
 });
 

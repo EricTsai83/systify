@@ -208,7 +208,11 @@ export default defineSchema({
       "deletionRequestedAt",
     ])
     .index("by_ownerTokenIdentifier_and_archivedAt", ["ownerTokenIdentifier", "archivedAt"])
-    .index("by_sourceRepoFullName", ["sourceRepoFullName"]),
+    .index("by_sourceRepoFullName", ["sourceRepoFullName"])
+    .searchIndex("search_full_name", {
+      searchField: "sourceRepoFullName",
+      filterFields: ["ownerTokenIdentifier"],
+    }),
 
   imports: defineTable({
     repositoryId: v.id("repositories"),
