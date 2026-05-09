@@ -76,17 +76,6 @@ type ChatPanelProps = {
    */
   onSelectArtifact?: (artifactId: ArtifactId) => void;
   /**
-   * Optional empty-state nudge that surfaces a deep-analysis CTA below the
-   * "Start a design conversation" card when a repo is attached, no analysis
-   * has been generated yet, and the sandbox is ready to host one. The shell
-   * decides when to pass this in; the panel is purely presentational.
-   *
-   * `null` (default) hides the nudge — used for threads that already have
-   * analysis, are mid-analysis, or whose sandbox isn't ready (where the CTA
-   * would just bounce off the disabled state).
-   */
-  analysisNudge?: { onStart: () => void } | null;
-  /**
    * When true, the chat input and Send/Stop buttons are disabled and a
    * read-only hint is shown below the composer. Used by the archived-
    * repository banner so historical messages stay browsable but no new
@@ -147,7 +136,6 @@ export function ChatPanel({
   onImported,
   onThreadMovedToWorkspace,
   onSelectArtifact,
-  analysisNudge = null,
   isReadOnly = false,
   readOnlyHint,
 }: ChatPanelProps) {
@@ -255,7 +243,7 @@ export function ChatPanel({
         <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 flex-col gap-3 px-6 py-6">
           {sandboxWarning}
           {hasAttachedRepository ? (
-            <EmptyChatHint analysisNudge={analysisNudge} />
+            <EmptyChatHint />
           ) : (
             <EmptyNoRepoHint
               threadId={selectedThreadId}

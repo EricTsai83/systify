@@ -18,6 +18,15 @@ import { completeRunningJob, failRunningJob, failStaleActiveJob, markQueuedJobRu
 
 const DEEP_ANALYSIS_SANDBOX_TTL_EXTENSION_MS = 30 * 60_000;
 
+/**
+ * Default prompt for the auto-triggered first deep analysis. Runs
+ * once after a successful import so the user lands on a workspace
+ * with a ready-to-cite analysis instead of having to discover and
+ * trigger it manually. The user can refresh later with their own
+ * prompt via {@link requestDeepAnalysis}.
+ */
+const AUTO_DEEP_ANALYSIS_PROMPT = "Summarize the main modules, data flow, and risk areas for this repository.";
+
 async function getActiveDeepAnalysisJob(ctx: MutationCtx, repositoryId: Id<"repositories">, now: number) {
   const queuedJob = await ctx.db
     .query("jobs")
@@ -133,6 +142,85 @@ export const requestDeepAnalysis = mutation({
     });
 
     return { jobId };
+  },
+});
+
+/**
+ * Auto-trigger the first deep analysis right after a successful import.
+ * Called from `finalizeImportCompletion` so the user lands on a workspace
+ * with an in-flight (or about to be in-flight) deep analysis — they don't
+ * have to discover a "Start analysis" button before the workspace is useful.
+ *
+ * No-ops if any precondition fails (existing artifact, in-flight job, missing
+ * sandbox, archived repo). The auto-trigger is best-effort: a failure here
+ * shouldn't roll back the import. The user can still trigger one manually
+ * via {@link requestDeepAnalysis}.
+ *
+ * Skips per-user rate limiting because the import flow it follows is already
+ * gated. Still consumes the daytona global rate limit so unbounded auto-runs
+ * can't bypass capacity protection.
+ */
+export const scheduleAutoDeepAnalysis = internalMutation({
+  args: {
+    repositoryId: v.id("repositories"),
+  },
+  handler: async (ctx, args) => {
+    const repository = await ctx.db.get(args.repositoryId);
+    if (!repository || repository.archivedAt || repository.deletionRequestedAt) {
+      return { scheduled: false as const };
+    }
+
+    const existingArtifact = await ctx.db
+      .query("artifacts")
+      .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", args.repositoryId).eq("kind", "deep_analysis"))
+      .first();
+    if (existingArtifact) {
+      return { scheduled: false as const };
+    }
+
+    const now = Date.now();
+    const activeJob = await getActiveDeepAnalysisJob(ctx, args.repositoryId, now);
+    if (activeJob) {
+      return { scheduled: false as const };
+    }
+
+    const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
+    const sandboxAvailability = getSandboxAvailability(sandbox);
+    if (!sandboxAvailability.available || !sandbox) {
+      return { scheduled: false as const };
+    }
+
+    try {
+      await consumeDaytonaGlobalRateLimit(ctx);
+    } catch {
+      return { scheduled: false as const };
+    }
+    await extendSandboxTtlForDeepAnalysis(ctx, sandbox._id, sandbox.ttlExpiresAt, now);
+
+    const jobId = await ctx.db.insert("jobs", {
+      repositoryId: args.repositoryId,
+      ownerTokenIdentifier: repository.ownerTokenIdentifier,
+      sandboxId: sandbox._id,
+      kind: "deep_analysis",
+      status: "queued",
+      stage: "queued",
+      progress: 0,
+      costCategory: "deep_analysis",
+      triggerSource: "system",
+      leaseExpiresAt: now + DEEP_ANALYSIS_JOB_LEASE_MS,
+    });
+
+    await ctx.db.patch(args.repositoryId, {
+      latestAnalysisJobId: jobId,
+    });
+
+    await ctx.scheduler.runAfter(0, internal.analysisNode.runDeepAnalysis, {
+      repositoryId: args.repositoryId,
+      jobId,
+      prompt: AUTO_DEEP_ANALYSIS_PROMPT,
+    });
+
+    return { scheduled: true as const, jobId };
   },
 });
 

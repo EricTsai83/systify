@@ -708,6 +708,16 @@ export const finalizeImportCompletion = internalMutation({
       });
     }
 
+    // Auto-trigger the first deep analysis. Setup phase: the workspace
+    // isn't really "ready" until a deep_analysis artifact exists, so we
+    // kick it off as part of import completion rather than asking the
+    // user to find and click a Start button. The internal mutation
+    // no-ops when an artifact already exists (re-imports), so this is
+    // safe to call unconditionally.
+    await ctx.scheduler.runAfter(0, internal.analysis.scheduleAutoDeepAnalysis, {
+      repositoryId: state.repository._id,
+    });
+
     return {
       kind: "completed" as const,
     };

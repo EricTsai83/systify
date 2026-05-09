@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "convex/react";
-import { GlobeIcon, LinkIcon, LockIcon, PlusIcon, SparkleIcon } from "@phosphor-icons/react";
+import { GlobeIcon, LinkIcon, LockIcon, PlusIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { AppNotice } from "@/components/app-notice";
@@ -47,7 +47,17 @@ function OwlAsciiArt() {
   );
 }
 
-export function EmptyChatHint({ analysisNudge }: { analysisNudge: { onStart: () => void } | null }) {
+/**
+ * Empty-state hint for repo-attached threads with no messages yet. The
+ * deep-analysis "Start analysis" CTA that used to live here has been
+ * retired — the first analysis is now scheduled automatically as part of
+ * the import flow ({@link convex/analysis.ts:scheduleAutoDeepAnalysis}),
+ * so the {@link WorkspaceSetupBanner} below the top-bar is the user's
+ * single source of truth for "is my workspace ready?". Keeping a duplicate
+ * CTA here would split the user's attention between two surfaces that
+ * trigger the same job.
+ */
+export function EmptyChatHint() {
   return (
     <div className="flex flex-1 animate-in flex-col items-center justify-center gap-4 fade-in duration-300 ease-out">
       <Card className="border-transparent bg-transparent p-6 text-center">
@@ -57,35 +67,6 @@ export function EmptyChatHint({ analysisNudge }: { analysisNudge: { onStart: () 
           <CardDescription className="text-xs">Architecture · Module dependencies · Risk hotspots</CardDescription>
         </CardHeader>
       </Card>
-      {analysisNudge ? (
-        // Auto-disappears once an analysis exists or starts running, so the
-        // nudge feels like a one-time onboarding hint rather than a persistent
-        // banner. The status panel keeps the same affordance for re-discovery.
-        <Card className="w-full max-w-sm border-dashed border-border/80 bg-muted/30 p-4 text-left">
-          <div className="flex items-start gap-3">
-            <span className="mt-0.5 grid size-7 shrink-0 place-items-center rounded-md bg-primary/10 text-primary">
-              <SparkleIcon size={14} weight="bold" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">Run a deep analysis first</p>
-              <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                Build a reusable source-tree analysis so your conversations can cite it. Usually 2–3 minutes.
-              </p>
-              <Button
-                type="button"
-                variant="default"
-                size="sm"
-                className="mt-3"
-                onClick={analysisNudge.onStart}
-                data-testid="empty-state-run-analysis"
-              >
-                <SparkleIcon weight="bold" />
-                Start analysis
-              </Button>
-            </div>
-          </div>
-        </Card>
-      ) : null}
     </div>
   );
 }

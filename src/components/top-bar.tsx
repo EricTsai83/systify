@@ -71,6 +71,7 @@ export function TopBar({
   isAttachedRepositoryLoading,
   availableRepositories,
   isSyncing,
+  isInitialSetup,
   isStatusPanelOpen,
   onSetStatusPanelOpen,
   onArchiveRepo,
@@ -96,6 +97,14 @@ export function TopBar({
   isAttachedRepositoryLoading: boolean;
   availableRepositories: ReadonlyArray<Doc<"repositories">>;
   isSyncing: boolean;
+  /**
+   * Mirrors {@link WorkspaceSetupBanner}'s render condition — true while the
+   * workspace has not yet produced its first deep_analysis artifact and a
+   * setup-related job is in flight. Lets the StatusPill swap "Syncing…" /
+   * "Analyzing…" for a unified "Setting up…" so the chrome speaks one
+   * vocabulary during the initial-setup window.
+   */
+  isInitialSetup: boolean;
   isStatusPanelOpen: boolean;
   onSetStatusPanelOpen: (open: boolean) => void;
   /** Archive an active repository. Triggered when `repoDetail.isArchived` is false. */
@@ -185,6 +194,7 @@ export function TopBar({
                   activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
                   hasRemoteUpdates={repoDetail.hasRemoteUpdates}
                   isSyncing={isSyncing}
+                  isInitialSetup={isInitialSetup}
                   isOpen={isStatusPanelOpen}
                 />
               </PopoverTrigger>
@@ -227,6 +237,7 @@ export function TopBar({
               activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
               hasRemoteUpdates={repoDetail.hasRemoteUpdates}
               isSyncing={isSyncing}
+              isInitialSetup={isInitialSetup}
               isOpen={isStatusPanelOpen}
               onClick={() => onSetStatusPanelOpen(!isStatusPanelOpen)}
             />
