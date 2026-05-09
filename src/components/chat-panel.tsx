@@ -276,6 +276,7 @@ export function ChatPanel({
             mode={chatMode}
             examples={MODE_EXAMPLES[chatMode]}
             onUseExample={(prompt) => setChatInput(prompt)}
+            disabled={isReadOnly}
           />
         </div>
       ) : (
@@ -319,8 +320,13 @@ export function ChatPanel({
             }
             className="min-h-20 resize-none border-border"
             readOnly={isReadOnly}
+            aria-describedby={isReadOnly && readOnlyHint ? "readonly-hint" : undefined}
           />
-          {isReadOnly && readOnlyHint ? <p className="text-xs text-muted-foreground">{readOnlyHint}</p> : null}
+          {isReadOnly && readOnlyHint ? (
+            <p id="readonly-hint" className="text-xs text-muted-foreground">
+              {readOnlyHint}
+            </p>
+          ) : null}
           {visibleSuggestion && suggestedModeLabel ? (
             /*
              * Plan 14 — passive mode-suggestion hint. Sits between the

@@ -579,9 +579,26 @@ describe("assertSandboxProvisioningConfigured", () => {
     expect(() => assertSandboxProvisioningConfigured()).not.toThrow();
   });
 
-  test("passes when allow list is a non-empty production value", () => {
+  test("passes when allow list is a non-empty production CIDR value", () => {
     process.env.DAYTONA_API_KEY = "test-api-key";
-    process.env.DAYTONA_NETWORK_ALLOW_LIST = "github.com:443";
+    process.env.DAYTONA_NETWORK_ALLOW_LIST = "140.82.112.0/20";
     expect(() => assertSandboxProvisioningConfigured()).not.toThrow();
+  });
+
+  test("passes when allow list is a comma-separated list of IPv4 CIDR ranges", () => {
+    process.env.DAYTONA_API_KEY = "test-api-key";
+    process.env.DAYTONA_NETWORK_ALLOW_LIST = "140.82.112.0/20, 192.30.252.0/22";
+    expect(() => assertSandboxProvisioningConfigured()).not.toThrow();
+  });
+
+  test("throws with the offending tokens when allow list contains a non-CIDR entry", () => {
+    // Daytona's `networkAllowList` field is parsed as a comma-separated CIDR
+    // list — `github.com:443` and other domain:port values are silently
+    // rejected at sandbox creation. Validating up front turns a runtime
+    // failure (deep in `daytona.create`) into an actionable error at the
+    // import pipeline's entry point.
+    process.env.DAYTONA_API_KEY = "test-api-key";
+    process.env.DAYTONA_NETWORK_ALLOW_LIST = "140.82.112.0/20, github.com:443";
+    expect(() => assertSandboxProvisioningConfigured()).toThrow(/github\.com:443/);
   });
 });

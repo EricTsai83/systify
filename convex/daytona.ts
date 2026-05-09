@@ -522,8 +522,8 @@ function resolvePostCloneBlockNetwork(): boolean {
  *     documented dev posture (see `docs/sandbox-mode-system-design.md`).
  *     We pass `undefined` to the Daytona SDK so its server-side default
  *     applies.
- *   - Non-empty → explicit allow list (e.g. `github.com:443`). Trimmed and
- *     forwarded as-is.
+ *   - Non-empty → explicit allow list of IPv4 CIDR ranges. Validated and
+ *     forwarded to Daytona.
  */
 function resolveNetworkAllowList(): string | undefined {
   const raw = process.env.DAYTONA_NETWORK_ALLOW_LIST;
@@ -537,7 +537,23 @@ function resolveNetworkAllowList(): string | undefined {
     );
   }
   const trimmed = raw.trim();
-  return trimmed === "" ? undefined : trimmed;
+  if (trimmed === "") {
+    return undefined;
+  }
+
+  // Validate CIDR format: comma-separated list of IPv4 CIDR ranges
+  const cidrPattern = /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/;
+  const entries = trimmed.split(",").map((e) => e.trim());
+  const invalid = entries.filter((e) => !cidrPattern.test(e));
+
+  if (invalid.length > 0) {
+    throw new Error(
+      `Invalid CIDR entries in DAYTONA_NETWORK_ALLOW_LIST: ${invalid.join(", ")}. ` +
+        "Each entry must be an IPv4 CIDR range (e.g. 140.82.112.0/20, 192.168.0.0/16).",
+    );
+  }
+
+  return trimmed;
 }
 
 /**

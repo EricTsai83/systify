@@ -154,8 +154,10 @@ but the defaults vary and the contracts must be specifically requested.
 Tasks:
 - Confirm OpenAI API key tier supports zero-retention; if so, set the
   appropriate request header / org config and document the choice.
-  Pin in code that requests *don't* opt back into training (no
-  `data_sharing: true` etc.).
+  Training opt-in is controlled via the organization / project "Zero Data Retention"
+  setting in the Platform UI (not via per-request fields); enabling Zero Data Retention
+  automatically prevents training opt-in. The only relevant per-request field is `store`
+  (for distillation/evals retention). Document that no per-request `data_sharing` toggle exists.
 - Confirm Anthropic API key contract specifies no training on inputs.
   Document the agreement reference in `provider-zero-retention.md`.
 - For GitHub: Systify uses a GitHub App with installation tokens.
