@@ -124,6 +124,7 @@ function createTopBarProps(overrides: Partial<TopBarTestProps> = {}): TopBarTest
     repoDetail: makeRepoDetail(),
     threadId,
     attachedRepository: null,
+    isAttachedRepositoryLoading: false,
     availableRepositories: [],
     isSyncing: false,
     isStatusPanelOpen: false,
@@ -169,6 +170,17 @@ describe("TopBar attach repo chip behavior", () => {
 
     expect(screen.queryByTestId("attach-repo-menu")).not.toBeInTheDocument();
     expect(screen.getByText("octocat/hello-world")).toBeInTheDocument();
+  });
+
+  test("hides attach chip while the thread's attached-repository binding is still resolving", () => {
+    // During a thread switch the upstream `getThreadContext` query is briefly
+    // in flight; in that window `attachedRepository` is conservatively `null`
+    // even for threads that do have a repo. Showing AttachRepoMenu here would
+    // flash a misleading "no repo" affordance that disappears the moment the
+    // query resolves. The loading flag suppresses that flash.
+    renderTopBar({ isAttachedRepositoryLoading: true });
+
+    expect(screen.queryByTestId("attach-repo-menu")).not.toBeInTheDocument();
   });
 });
 

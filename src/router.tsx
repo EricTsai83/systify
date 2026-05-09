@@ -27,16 +27,22 @@ async function loadArchiveRoute() {
  * only place it needs to be registered.
  */
 const protectedRoutes: RouteObject[] = [
-  // `/chat` is the no-selection workspace entry point. ChatPage redirects
-  // it to the most recent thread (`/t/:threadId`) when one exists, or
-  // renders the dual-CTA empty state when none does. Per PRD #19 user
-  // story 27 ("most recent thread loads on landing").
+  // `/chat` is the workspaceless entry point: ChatPage redirects to the most
+  // recently used workspace's most-recent thread (PRD #19 user story 27).
+  // It exists primarily as the post-login landing target and the place we
+  // bounce to after destructive operations clear the current selection.
   { path: PROTECTED_ROUTE_SEGMENTS.chat, lazy: loadChatRoute },
-  // PRD #19 user story 25: stable, shareable URLs for design threads.
-  { path: PROTECTED_ROUTE_SEGMENTS.thread, lazy: loadChatRoute },
-  // PRD #19 user story 26: stable, shareable URLs for repository overviews
-  // (artifacts + threads grounded in that repo).
-  { path: PROTECTED_ROUTE_SEGMENTS.repository, lazy: loadChatRoute },
+  // `/w/:workspaceId` is the workspace landing target. Same redirect-to-most-
+  // recent-thread behaviour as `/chat`, but scoped to the workspace named in
+  // the URL — used by the workspace switcher and as the canonical destination
+  // when a thread URL no longer resolves but its workspace still exists.
+  { path: PROTECTED_ROUTE_SEGMENTS.workspace, lazy: loadChatRoute },
+  // `/w/:workspaceId/t/:threadId` is the canonical thread URL. Encoding the
+  // workspace id in the URL means the shell can derive `repository.repositoryId`
+  // synchronously from the cached `listWorkspaces` query — no `getThreadContext`
+  // round-trip required to know which repo's chrome to render. PRD #19 user
+  // story 25 ("stable, shareable URLs for design threads").
+  { path: PROTECTED_ROUTE_SEGMENTS.workspaceThread, lazy: loadChatRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.archive, lazy: loadArchiveRoute },
 ];
 

@@ -368,11 +368,26 @@ function makeWorkspace(overrides: Omit<Partial<Doc<"workspaces">>, "_id"> & { _i
   } as unknown as Doc<"workspaces">;
 }
 
+// Convenience: build a repo-bound workspace fixture and the matching repo so
+// the whole "URL points at a repo workspace" branch of RepositoryShell can
+// resolve synchronously from the cached `listWorkspaces` query (which is the
+// design that lets the TopBar paint the right repo title without waiting on
+// `getThreadContext`).
+function makeRepoWorkspace(): { workspaceId: WorkspaceId; workspace: Doc<"workspaces"> } {
+  const workspaceId = "ws_repo" as WorkspaceId;
+  return {
+    workspaceId,
+    workspace: makeWorkspace({ _id: workspaceId, repositoryId: repoId }),
+  };
+}
+
 describe("RepositoryShell artifact toggle behavior", () => {
   test("keeps chat hot-path subscriptions out of the workspace shell", () => {
     repositoriesResult = [makeRepository()];
+    const { workspaceId, workspace } = makeRepoWorkspace();
+    workspacesResult = [workspace];
 
-    render(<RepositoryShell urlThreadId={null} urlRepositoryId={repoId} />);
+    render(<RepositoryShell urlWorkspaceId={workspaceId} urlThreadId={null} />);
 
     const subscribedQueries = useQueryMock.mock.calls.map(([query]) => queryName(query));
     expect(subscribedQueries).not.toContain("chat/threads:listMessages");
@@ -381,25 +396,33 @@ describe("RepositoryShell artifact toggle behavior", () => {
 
   test("hides the artifact toggle while workspace is in no-repo state", () => {
     // The no-repo guard is structural — the ChatPanel-level toggle does not
-    // render — instead of a disabled-but-present button. Assert the
-    // absence and confirm the drawer stays closed once the workspace
-    // transitions into ready, so the previous click intent (had there been
-    // one) cannot have leaked into shared state.
-    const { rerender } = render(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
+    // render — instead of a disabled-but-present button. The "no-repo" state
+    // is now the user sitting in the Home workspace (or any workspace whose
+    // `repositoryId` is unset) with no thread selected. Switching to a repo
+    // workspace flips the shell into "ready" without leaking the prior click
+    // intent into shared state.
+    const homeWorkspaceId = "ws_home" as WorkspaceId;
+    workspacesResult = [makeWorkspace({ _id: homeWorkspaceId, name: "Home" })];
+
+    const { rerender } = render(<RepositoryShell urlWorkspaceId={homeWorkspaceId} urlThreadId={null} />);
 
     expect(screen.getByTestId("empty-state")).toBeInTheDocument();
     expect(screen.queryByTestId("artifact-panel-toggle")).not.toBeInTheDocument();
 
     repositoriesResult = [makeRepository()];
-    rerender(<RepositoryShell urlThreadId={null} urlRepositoryId={repoId} />);
+    const { workspaceId: repoWorkspaceId, workspace: repoWorkspace } = makeRepoWorkspace();
+    workspacesResult = [makeWorkspace({ _id: homeWorkspaceId, name: "Home" }), repoWorkspace];
+    rerender(<RepositoryShell urlWorkspaceId={repoWorkspaceId} urlThreadId={null} />);
 
     expect(screen.getByLabelText("artifact-drawer")).toHaveAttribute("data-open", "false");
   });
 
   test("opens mobile drawer in ready state and closes it on desktop breakpoint", () => {
     repositoriesResult = [makeRepository()];
+    const { workspaceId, workspace } = makeRepoWorkspace();
+    workspacesResult = [workspace];
 
-    render(<RepositoryShell urlThreadId={null} urlRepositoryId={repoId} />);
+    render(<RepositoryShell urlWorkspaceId={workspaceId} urlThreadId={null} />);
     expect(screen.getByLabelText("artifact-drawer")).toHaveAttribute("data-open", "false");
 
     fireEvent.click(screen.getByTestId("artifact-panel-toggle"));
@@ -413,22 +436,27 @@ describe("RepositoryShell artifact toggle behavior", () => {
 });
 
 describe("RepositoryShell import workspace routing", () => {
-  test("sidebar import switches the active workspace and opens the imported default thread", () => {
-    render(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
+  // Imports navigate the user into the new workspace via the canonical URL
+  // shape; the URL→state sync effect (in the shell) then mirrors the new id
+  // into `activeWorkspaceId` and `userPreferences.lastActiveWorkspaceId`.
+  // These tests assert the navigation contract — the localStorage/preference
+  // side effects are exercised by the workspace reconciliation suite below
+  // (which simulates the URL change those navigations would produce in a
+  // real router).
+  test("sidebar import navigates to the canonical workspace-scoped thread URL", () => {
+    render(<RepositoryShell urlWorkspaceId={null} urlThreadId={null} />);
 
     fireEvent.click(screen.getByTestId("sidebar-import"));
 
-    expect(localStorage.getItem("systify.activeWorkspaceId")).toBe("workspace_imported");
-    expect(navigateMock).toHaveBeenCalledWith("/t/thread_imported");
+    expect(navigateMock).toHaveBeenCalledWith("/w/workspace_imported/t/thread_imported");
   });
 
-  test("empty-state import follows the same workspace switch and thread navigation path", () => {
-    render(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
+  test("empty-state import navigates to the canonical workspace-scoped thread URL", () => {
+    render(<RepositoryShell urlWorkspaceId={null} urlThreadId={null} />);
 
     fireEvent.click(screen.getByTestId("empty-state"));
 
-    expect(localStorage.getItem("systify.activeWorkspaceId")).toBe("workspace_empty");
-    expect(navigateMock).toHaveBeenCalledWith("/t/thread_empty");
+    expect(navigateMock).toHaveBeenCalledWith("/w/workspace_empty/t/thread_empty");
   });
 });
 
@@ -451,7 +479,7 @@ describe("RepositoryShell workspace reconciliation", () => {
       lastActiveWorkspaceUpdatedAt: 1,
     };
 
-    render(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
+    render(<RepositoryShell urlWorkspaceId={null} urlThreadId={null} />);
 
     await waitFor(() => {
       expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_db");
@@ -470,7 +498,7 @@ describe("RepositoryShell workspace reconciliation", () => {
     workspacesResult = [makeWorkspace({ _id: "ws_first" }), makeWorkspace({ _id: "ws_second" })];
     viewerPreferencesResult = null;
 
-    render(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
+    render(<RepositoryShell urlWorkspaceId={null} urlThreadId={null} />);
 
     await waitFor(() => {
       expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_first");
@@ -487,13 +515,43 @@ describe("RepositoryShell workspace reconciliation", () => {
     workspacesResult = [makeWorkspace({ _id: "ws_alive" })];
     viewerPreferencesResult = null;
 
-    render(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
+    render(<RepositoryShell urlWorkspaceId={null} urlThreadId={null} />);
 
     await waitFor(() => {
       expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_alive");
     });
     expect(localStorage.getItem("systify.activeWorkspaceId")).toBe("ws_alive");
     expect(touchWorkspaceMock).toHaveBeenCalledWith({ workspaceId: "ws_alive" });
+  });
+
+  test("URL workspace id promotes into active state and seeds the DB preference", async () => {
+    // The URL is the canonical source of truth for "which workspace is the
+    // user in". When the URL carries a workspace id different from the
+    // cached/active value, the shell must adopt the URL's id immediately and
+    // touch the DB so cross-device convergence catches up. This is what
+    // makes `handleSwitchWorkspace` a one-line `navigate(workspacePath(id))`
+    // — the URL change drives the state update without every callsite
+    // having to remember it.
+    //
+    // The DB preference is intentionally left empty so the DB-wins effect
+    // doesn't fight the URL-driven update; in production, `touchWorkspace`
+    // applies an optimistic update that synchronises the cached
+    // `getViewerPreferences` row with the new workspace before the next
+    // render, but the test mock can't replicate that side effect on its
+    // own. The cross-tab convergence path is exercised separately in the
+    // "live cross-tab push" case below.
+    storedActiveWorkspaceId = "ws_active";
+    const urlWorkspaceId = "ws_url" as WorkspaceId;
+    workspacesResult = [makeWorkspace({ _id: "ws_active" }), makeWorkspace({ _id: "ws_url" })];
+    viewerPreferencesResult = null;
+
+    render(<RepositoryShell urlWorkspaceId={urlWorkspaceId} urlThreadId={null} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_url");
+    });
+    expect(touchWorkspaceMock).toHaveBeenCalledWith({ workspaceId: "ws_url" });
+    expect(localStorage.getItem("systify.activeWorkspaceId")).toBe("ws_url");
   });
 
   test("live cross-tab push updates the active workspace without remounting", async () => {
@@ -508,7 +566,7 @@ describe("RepositoryShell workspace reconciliation", () => {
       lastActiveWorkspaceUpdatedAt: 1,
     };
 
-    const { rerender } = render(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
+    const { rerender } = render(<RepositoryShell urlWorkspaceId={null} urlThreadId={null} />);
 
     await waitFor(() => {
       expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_a");
@@ -519,7 +577,7 @@ describe("RepositoryShell workspace reconciliation", () => {
       lastActiveWorkspaceId: "ws_b" as WorkspaceId,
       lastActiveWorkspaceUpdatedAt: 2,
     };
-    rerender(<RepositoryShell urlThreadId={null} urlRepositoryId={null} />);
+    rerender(<RepositoryShell urlWorkspaceId={null} urlThreadId={null} />);
 
     await waitFor(() => {
       expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_b");
