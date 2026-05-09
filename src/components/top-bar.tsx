@@ -66,9 +66,9 @@ export type TopBarRepoDetail = {
  */
 export function TopBar({
   repoDetail,
-  repoName,
   threadId,
   attachedRepository,
+  isAttachedRepositoryLoading,
   availableRepositories,
   isSyncing,
   isStatusPanelOpen,
@@ -83,9 +83,17 @@ export function TopBar({
   onViewArtifact,
 }: {
   repoDetail?: TopBarRepoDetail;
-  repoName?: string;
   threadId: ThreadId | null;
   attachedRepository: AttachedRepositorySummary | null;
+  /**
+   * True while the upstream `getThreadContext` query is still resolving the
+   * thread's attached-repository binding. During that window `attachedRepository`
+   * is conservatively `null`, but we should not yet conclude "no repo" — gating
+   * on this flag prevents the AttachRepoMenu from flashing in for a thread that
+   * actually has a repo, only to be replaced by the repo title once the query
+   * resolves.
+   */
+  isAttachedRepositoryLoading: boolean;
   availableRepositories: ReadonlyArray<Doc<"repositories">>;
   isSyncing: boolean;
   isStatusPanelOpen: boolean;
@@ -102,31 +110,62 @@ export function TopBar({
   onRunAnalysis: () => void;
   onViewArtifact: (artifactId: ArtifactId) => void;
 }) {
-  const title = repoDetail?.repository.sourceRepoFullName ?? repoName;
-
   return (
     <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
       <SidebarTrigger />
-      {title ? (
-        <div className="flex min-w-0 flex-1 items-center gap-2 animate-in fade-in duration-300">
-          {repoDetail ? (
-            <RepoInfoPopover repoDetail={repoDetail} title={title} />
-          ) : (
-            <h1 className="min-w-0 truncate text-sm font-semibold tracking-tight md:text-base">{title}</h1>
-          )}
-          {repoDetail ? <RepoStatusIndicator sandbox={repoDetail.sandbox} /> : null}
+      {/*
+       * Title block renders only once `repoDetail` is fully resolved. Earlier
+       * versions surfaced the cached repo name through a `<h1>` fallback so
+       * the name appeared ~50–200ms sooner, but the fallback used the default
+       * `text-foreground` colour while the eventual `RepoInfoPopover` trigger
+       * is a ghost-variant Button (`text-muted-foreground`) — the swap caused
+       * a visible white-to-grey flash and a layout shift as the inner element
+       * went from `<h1>` (block) to `<Button>` (inline-flex) and the
+       * `RepoStatusIndicator` mounted alongside it. Waiting for `repoDetail`
+       * removes the swap entirely; the entire block fades in once with its
+       * final styling.
+       *
+       * Uses the codebase's `animate-fade-in` (opacity-only) rather than
+       * tw-animate-css's `animate-in fade-in`: the latter always applies
+       * `transform: translate3d(0,0,0)` and `filter: blur(0)` during the
+       * keyframe, which the default `fill-mode: none` then strips at the end
+       * — promoting and demoting the GPU layer can cause a sub-pixel snap
+       * after the fade. `animate-fade-in` only animates opacity, so the
+       * element stays on the same render layer throughout.
+       *
+       * Keyed on the repository `_id` so the entry animation fires on
+       * workspace transitions (different repo → new key → React unmounts the
+       * old node and mounts a new one) but stays put on thread switches
+       * within the same repo (same key → same DOM node → CSS animation
+       * doesn't replay). The shell caches `repoDetail` across the brief
+       * capability-loading gap so this slot doesn't unmount transiently —
+       * see `displayedRepoDetail` in repository-shell.tsx.
+       */}
+      {repoDetail ? (
+        <div key={repoDetail.repository._id} className="flex min-w-0 flex-1 items-center gap-2 animate-fade-in">
+          <RepoInfoPopover repoDetail={repoDetail} title={repoDetail.repository.sourceRepoFullName} />
+          <RepoStatusIndicator sandbox={repoDetail.sandbox} />
         </div>
       ) : null}
 
-      {threadId !== null && attachedRepository === null ? (
+      {threadId !== null && !isAttachedRepositoryLoading && attachedRepository === null ? (
         // PRD US 2: one-shot affordance for promoting a no-repo thread into a
         // repository workspace. Hidden once a repo is attached because the
         // binding is permanent — to work against another repo, start a new thread.
-        <AttachRepoMenu
-          threadId={threadId}
-          availableRepositories={availableRepositories}
-          onMovedToWorkspace={onThreadMovedToWorkspace}
-        />
+        //
+        // Wrapping fade-in mirrors the title block above so both surfaces
+        // (title for repo-bound threads, AttachRepoMenu for unbound ones) share
+        // the same entry timing. Combined with the `isAttachedRepositoryLoading`
+        // gate, this avoids the "AttachRepoMenu flashes then gets replaced by
+        // the title" sequence on thread switches — the slot stays empty until
+        // we know which surface belongs there, then the chosen one fades in.
+        <div className="animate-fade-in">
+          <AttachRepoMenu
+            threadId={threadId}
+            availableRepositories={availableRepositories}
+            onMovedToWorkspace={onThreadMovedToWorkspace}
+          />
+        </div>
       ) : null}
 
       <div className="ml-auto flex items-center gap-1.5">

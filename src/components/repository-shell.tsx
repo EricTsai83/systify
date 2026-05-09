@@ -26,7 +26,7 @@ import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import type { ArtifactId, RepositoryId, ThreadId, WorkspaceId, ChatMode, SandboxModeStatus } from "@/lib/types";
 import { toUserErrorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
+import { DEFAULT_AUTHENTICATED_PATH, workspacePath, workspaceThreadPath } from "@/route-paths";
 
 type RepositoryWorkspaceStatus = "initializing" | "no-repo" | "ready";
 const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
@@ -85,29 +85,42 @@ const DeepAnalysisDialog = lazy(() =>
 );
 
 /**
- * URL ↔ workspace-state bridge. The route layer (`/chat`, `/t/:threadId`,
- * `/r/:repoId`) hands us the params; everything else in the workspace is
- * derived from them so that selection stays a single source of truth and a
- * shareable URL always restores the same view.
+ * URL ↔ workspace-state bridge. The route layer (`/chat`, `/w/:workspaceId`,
+ * `/w/:workspaceId/t/:threadId`) hands us the params; everything else in the
+ * workspace is derived from them so that selection stays a single source of
+ * truth and a shareable URL always restores the same view.
  *
  * Resolution order:
  *
- * 1. `urlThreadId` is the highest-priority hint. The thread's own
- *    `repositoryId` (loaded via `getThreadContext`) drives the repo panel —
- *    repo-less threads show the chat input but no repo-scoped tabs.
- * 2. `urlRepositoryId` (no thread) shows the repo's overview without forcing
- *    a thread selection; the user picks a thread from the sidebar.
- * 3. Neither set (`/chat`) and the user has at least one thread → redirect to
- *    `/t/:mostRecent` so the URL always reflects the visible thread (PRD US 27).
- * 4. Neither set and the user has no threads → render the empty state with
- *    the dual CTA (PRD US 9).
+ * 1. `urlWorkspaceId` is the highest-priority signal — it identifies which
+ *    workspace's chrome we're rendering. Each repo workspace is 1:1 with its
+ *    repository, so the repo id resolves *synchronously* by looking the
+ *    workspace up in the cached `listWorkspaces` query. This is what kills
+ *    the previous workspace-switch flicker: the TopBar can paint the right
+ *    repo title from the very first render after a workspace transition,
+ *    instead of waiting on `getThreadContext` to tell us which repo this
+ *    thread belongs to.
+ * 2. `urlThreadId` selects a specific thread within the workspace. When
+ *    omitted (`/w/:workspaceId`), the redirect-to-most-recent-thread effect
+ *    sends the user to a canonical thread URL. PRD #19 user story 27.
+ * 3. Neither set (`/chat`) → redirect into the most recently used workspace,
+ *    which then redirects into its most recent thread.
+ * 4. Workspace exists but has no threads → render the empty state with the
+ *    dual CTA. PRD #19 user story 9.
+ *
+ * `activeWorkspaceId` (state) is no longer the primary driver; it carries the
+ * "last known good" workspace id used as a fallback for the workspaceless
+ * `/chat` route and for first-paint before Convex hydrates. The URL is the
+ * source of truth whenever it carries a workspace id, and a small effect
+ * keeps `activeWorkspaceId` (plus its localStorage mirror and the DB
+ * preference) in sync with whichever workspace the URL is showing.
  */
 export function RepositoryShell({
+  urlWorkspaceId,
   urlThreadId,
-  urlRepositoryId,
 }: {
+  urlWorkspaceId: WorkspaceId | null;
   urlThreadId: ThreadId | null;
-  urlRepositoryId: RepositoryId | null;
 }) {
   const navigate = useNavigate();
   const repositories = useQuery(api.repositories.listRepositories);
@@ -239,18 +252,58 @@ export function RepositoryShell({
 
   const handleSwitchWorkspace = useCallback(
     (workspaceId: WorkspaceId) => {
-      // Optimistic local update for instant UI; `touchWorkspace` then
-      // promotes the same value into the DB inside a single Convex
-      // transaction (bumps `lastAccessedAt` *and* writes
-      // `userPreferences.lastActiveWorkspaceId` together).
-      setActiveWorkspaceId(workspaceId);
-      void touchWorkspace({ workspaceId }).catch(() => {});
-      // Navigate to /chat so the redirect-to-most-recent-thread logic kicks in
-      // for the new workspace.
-      void navigate("/chat");
+      // Navigate to the workspace landing — the URL-driven sync effect below
+      // mirrors the new id into `activeWorkspaceId` (and the DB preference
+      // via `touchWorkspace`), and the workspace-landing redirect drops the
+      // user onto its most recent thread. Going through the URL here is what
+      // makes workspace switches flicker-free: the TopBar resolves the new
+      // repo synchronously from `urlWorkspaceId` instead of waiting for
+      // `getThreadContext` to tell us which repo we're now in.
+      void navigate(workspacePath(workspaceId));
     },
-    [navigate, touchWorkspace],
+    [navigate],
   );
+
+  /*
+   * URL → state sync. When the URL carries a workspace id, treat it as the
+   * canonical "current workspace" and pull `activeWorkspaceId` (plus its
+   * localStorage mirror via the existing effect, and the DB preference via
+   * `touchWorkspace`) into agreement. This is what lets workspace switches
+   * be a single `navigate(workspacePath(id))` call: the URL change drives
+   * the rest of the system here, instead of every callsite needing to
+   * remember to update three places at once.
+   *
+   * The DB-wins reconciliation effect above still runs — it handles the
+   * cross-tab path (a switch on another device pushes a new
+   * `lastActiveWorkspaceId` through the subscription) — but the common case
+   * (user clicks a workspace in this tab) flows through here.
+   */
+  useEffect(() => {
+    if (urlWorkspaceId === null) return;
+    // Wait for `listWorkspaces` to hydrate before deciding — without this
+    // guard, `workspaces?.some(...)` returns `undefined` while the query is
+    // loading, the negation flips to `true`, and we redirect away from a
+    // perfectly valid URL on first paint.
+    if (workspaces === undefined) return;
+    // Validate the URL before adopting it. A stale id (deleted workspace,
+    // copy/paste from another device) would otherwise oscillate with the
+    // fallback effect: this effect would write the stale id into
+    // `activeWorkspaceId`, the fallback effect would observe `activeExists ===
+    // false` and re-pick a surviving workspace, and we'd bounce back here on
+    // the next render forever. The validation must run *before* the
+    // `urlWorkspaceId === activeWorkspaceId` short-circuit so that a
+    // localStorage-cached stale id pinned in `activeWorkspaceId` still gets
+    // recovered.
+    const urlWorkspaceExists = workspaces.some((ws) => ws._id === urlWorkspaceId);
+    if (!urlWorkspaceExists) {
+      void navigate(DEFAULT_AUTHENTICATED_PATH, { replace: true });
+      return;
+    }
+    if (urlWorkspaceId === activeWorkspaceId) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setActiveWorkspaceId(urlWorkspaceId);
+    void touchWorkspace({ workspaceId: urlWorkspaceId }).catch(() => {});
+  }, [urlWorkspaceId, activeWorkspaceId, touchWorkspace, workspaces, navigate]);
 
   // useThreadCapabilities is the canonical bridge between the resolver-side
   // ChatModeResolver / ThreadContextResolver and the UI's mode selector.
@@ -258,15 +311,23 @@ export function RepositoryShell({
   // second `getThreadContext` subscription here.
   const capabilities = useThreadCapabilities(urlThreadId);
 
-  // Loaded only on the no-selection landing (`/chat`) so we can redirect to
-  // the most recent thread when one exists. Workspace-scoped when one is active.
+  /*
+   * `currentWorkspaceId` resolves "which workspace is the user in?" without
+   * forcing every consumer to remember the URL/state precedence. The URL
+   * wins whenever it has a workspace id (including during the brief render
+   * window before the sync effect mirrors it into `activeWorkspaceId`); the
+   * state value is the fallback for `/chat` (where the URL carries no
+   * workspace) and for first-paint before Convex hydrates.
+   */
+  const currentWorkspaceId: WorkspaceId | null = urlWorkspaceId ?? activeWorkspaceId;
+
+  // Loaded for the redirect-to-most-recent-thread logic: scope by the
+  // workspace the user is currently "in" so the sidebar/empty-state CTAs
+  // and the redirect target all line up. Skipped once a thread is selected
+  // (we already have what we need).
   const ownerThreads = useQuery(
     api.chat.threads.listThreads,
-    urlThreadId === null && urlRepositoryId === null
-      ? activeWorkspaceId
-        ? { workspaceId: activeWorkspaceId }
-        : {}
-      : "skip",
+    urlThreadId === null && currentWorkspaceId !== null ? { workspaceId: currentWorkspaceId } : "skip",
   );
 
   const [threadToDelete, setThreadToDelete] = useState<ThreadId | null>(null);
@@ -364,16 +425,25 @@ export function RepositoryShell({
     return () => mediaQuery.removeEventListener("change", handleChange);
   }, []);
 
-  // /t/:threadId → use thread's repository (if any). /r/:repoId → use the
-  // URL repo. /chat → null until the redirect-to-most-recent effect runs.
-  const effectiveSelectedRepositoryId: RepositoryId | null =
-    urlRepositoryId ?? capabilities.attachedRepository?.id ?? null;
+  /*
+   * Repo id is derived synchronously from the cached `listWorkspaces` query
+   * by looking up the workspace named in the URL. Workspaces are 1:1 with
+   * their bound repository (the no-repo "Home" workspace simply has no
+   * `repositoryId`), so this lookup is unambiguous. Doing it from the
+   * already-cached query — instead of waiting on `getThreadContext` to
+   * forward `attachedRepository.id` — is what lets the TopBar paint the
+   * right title from the very first render after a workspace transition.
+   *
+   * `workspaces` is `undefined` until the query hydrates; treat that as "no
+   * id yet" rather than failing closed, so the chrome stays in its loading
+   * state instead of briefly flashing the AttachRepoMenu.
+   */
+  const currentWorkspace = currentWorkspaceId
+    ? (workspaces?.find((ws) => ws._id === currentWorkspaceId) ?? null)
+    : null;
+  const effectiveSelectedRepositoryId: RepositoryId | null = currentWorkspace?.repositoryId ?? null;
 
   const effectiveSelectedThreadId: ThreadId | null = urlThreadId;
-
-  const selectedRepoName = repositories?.find(
-    (repository: Doc<"repositories">) => repository._id === effectiveSelectedRepositoryId,
-  )?.sourceRepoFullName;
 
   const repoDetail = useQuery(
     api.repositories.getRepositoryDetail,
@@ -387,45 +457,84 @@ export function RepositoryShell({
   const effectiveSandboxModeStatus: SandboxModeStatus | null =
     effectiveSelectedThreadId !== null ? capabilities.sandboxModeStatus : (repoDetail?.sandboxModeStatus ?? null);
 
-  // PRD US 27: most recent thread loads on landing. Runs only on `/chat` when
-  // the owner has at least one thread; the redirect is `replace` so the user
-  // can still hit Back to leave the workspace without bouncing through /chat.
+  /*
+   * URL canonicalisation. Two redirect tiers, both `replace` so the back
+   * button skips the intermediate URLs:
+   *
+   *   1. `/chat` → `/w/:currentWorkspaceId`. Once we know which workspace
+   *      the user is in (from `activeWorkspaceId`, hydrated from the DB
+   *      preference + localStorage cache), promote them onto a workspace
+   *      URL so subsequent navigation stays inside the canonical scheme.
+   *
+   *   2. `/w/:workspaceId` (no thread) → `/w/:workspaceId/t/:mostRecent`.
+   *      PRD #19 user story 27. Matches the legacy "/chat → /t/:tId" jump
+   *      but stays workspace-scoped, which is what makes workspace
+   *      switching land on a thread inside the new workspace instead of
+   *      cross-workspace one.
+   *
+   * The two are written as one effect — sequencing them across two
+   * effects with overlapping dependencies invited render-loop bugs when
+   * the threads query was loading.
+   */
   useEffect(() => {
-    if (urlThreadId !== null || urlRepositoryId !== null) {
+    if (urlThreadId !== null) {
       return;
     }
-    if (!ownerThreads || ownerThreads.length === 0) {
+    if (urlWorkspaceId === null) {
+      // Tier 1 — `/chat` to a workspace URL. Wait for `activeWorkspaceId` to
+      // hydrate before redirecting; the fallback effect above will
+      // populate it from the DB preference / first available workspace.
+      if (activeWorkspaceId === null) return;
+      void navigate(workspacePath(activeWorkspaceId), { replace: true });
       return;
     }
-    void navigate(`/t/${ownerThreads[0]._id}`, { replace: true });
-  }, [navigate, ownerThreads, urlRepositoryId, urlThreadId]);
+    // Tier 2 — workspace landing to its most recent thread.
+    if (!ownerThreads || ownerThreads.length === 0) return;
+    void navigate(workspaceThreadPath(urlWorkspaceId, ownerThreads[0]._id), { replace: true });
+  }, [navigate, ownerThreads, urlWorkspaceId, urlThreadId, activeWorkspaceId]);
 
   // Fall back gracefully when a thread URL points at an entity the viewer no
-  // longer owns or that has been deleted. Matches the empty-state recovery
-  // path so the user sees actionable CTAs instead of a broken workspace.
+  // longer owns or that has been deleted. We bounce back to the workspace
+  // landing (which then forwards to the most recent surviving thread, or
+  // renders the empty state). Going via the workspace URL — instead of
+  // `/chat` — keeps the user inside the workspace they were just in
+  // instead of bouncing them through a workspaceless detour.
   useEffect(() => {
     if (urlThreadId === null) {
       return;
     }
-    if (capabilities.isMissingThread) {
-      void navigate("/chat", { replace: true });
+    if (!capabilities.isMissingThread) {
+      return;
     }
-  }, [capabilities.isMissingThread, navigate, urlThreadId]);
+    if (urlWorkspaceId !== null) {
+      void navigate(workspacePath(urlWorkspaceId), { replace: true });
+    } else {
+      void navigate(DEFAULT_AUTHENTICATED_PATH, { replace: true });
+    }
+  }, [capabilities.isMissingThread, navigate, urlThreadId, urlWorkspaceId]);
 
   // Check GitHub for new remote commits on tab-focus and repo-switch.
   useCheckForUpdates(effectiveSelectedRepositoryId);
 
-  const isOnLanding = urlThreadId === null && urlRepositoryId === null;
-  const isLandingResolving = isOnLanding && (ownerThreads === undefined || ownerThreads.length > 0);
+  /*
+   * `isAboutToRedirect` signals that the URL is on a transient stop along
+   * the canonicalisation chain — `/chat` waiting for `activeWorkspaceId` to
+   * promote into `/w/:wsId`, or `/w/:wsId` waiting for `ownerThreads` to
+   * resolve so the most-recent-thread redirect can fire. Either way, the
+   * shell is "initializing" because the surface we ultimately render is one
+   * navigation away.
+   */
+  const isAboutToRedirect =
+    urlThreadId === null &&
+    ((urlWorkspaceId === null && activeWorkspaceId !== null) ||
+      (urlWorkspaceId !== null && (ownerThreads === undefined || ownerThreads.length > 0)));
 
   const workspaceStatus: RepositoryWorkspaceStatus =
-    isRepositoriesLoading || isLandingResolving
+    isRepositoriesLoading || workspaces === undefined || isAboutToRedirect
       ? "initializing"
-      : isOnLanding && ownerThreads?.length === 0
+      : effectiveSelectedRepositoryId === null && effectiveSelectedThreadId === null
         ? "no-repo"
-        : effectiveSelectedRepositoryId === null && effectiveSelectedThreadId === null
-          ? "no-repo"
-          : "ready";
+        : "ready";
 
   const isChatShellLoading =
     workspaceStatus === "initializing" || (effectiveSelectedThreadId !== null && capabilities.isLoading);
@@ -435,12 +544,33 @@ export function RepositoryShell({
       setActionError(null);
       setAnalysisError(null);
       if (threadId === null) {
-        void navigate("/chat");
+        // Drop selection but keep the user inside the current workspace
+        // when one is known — the workspace-landing redirect will then
+        // promote them onto the most recent surviving thread. Without a
+        // workspace context, fall back to `/chat`.
+        if (currentWorkspaceId !== null) {
+          void navigate(workspacePath(currentWorkspaceId));
+        } else {
+          void navigate(DEFAULT_AUTHENTICATED_PATH);
+        }
+        return;
+      }
+      // The sidebar only surfaces threads for the current workspace, so
+      // pairing the selected thread with `currentWorkspaceId` is correct.
+      // If we ever surface cross-workspace thread links (e.g. global
+      // search), this is the place to plumb the originating workspace id
+      // through the callback signature.
+      if (currentWorkspaceId !== null) {
+        void navigate(workspaceThreadPath(currentWorkspaceId, threadId));
       } else {
-        void navigate(`/t/${threadId}`);
+        // Defensive: if a thread is selected before any workspace is known,
+        // bounce to /chat so the canonicalising redirects can route us in.
+        // Should not happen in practice — the sidebar requires a workspace
+        // to render thread rows in the first place.
+        void navigate(DEFAULT_AUTHENTICATED_PATH);
       }
     },
-    [navigate],
+    [navigate, currentWorkspaceId],
   );
 
   const handleToggleArtifactPanel = useCallback(() => {
@@ -595,19 +725,21 @@ export function RepositoryShell({
   }, [handleToggleArtifactPanel, workspaceStatus]);
 
   const handleImported = useCallback(
-    (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => {
+    (_repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => {
       setActionError(null);
       setAnalysisError(null);
-      setActiveWorkspaceId(workspaceId);
-      void touchWorkspace({ workspaceId }).catch(() => {});
-
+      // The URL→state sync effect will pull `activeWorkspaceId` and the DB
+      // preference into agreement with the new workspace once we navigate;
+      // we don't need to setState here. Going via the URL also means the
+      // post-import landing matches what a regular workspace switch looks
+      // like — fewer surfaces to keep coherent.
       if (threadId) {
-        void navigate(`/t/${threadId}`);
+        void navigate(workspaceThreadPath(workspaceId, threadId));
       } else {
-        void navigate(`/r/${repoId}`);
+        void navigate(workspacePath(workspaceId));
       }
     },
-    [navigate, touchWorkspace],
+    [navigate],
   );
 
   const handleThreadMovedToWorkspace = useCallback(
@@ -615,10 +747,20 @@ export function RepositoryShell({
       if (!workspaceId) {
         return;
       }
-      setActiveWorkspaceId(workspaceId);
-      void touchWorkspace({ workspaceId }).catch(() => {});
+      // The thread's workspace binding just changed — typically because the
+      // user attached a repository through the AttachRepoMenu and the
+      // backend re-homed the thread under that repo's workspace. Update the
+      // URL to the new canonical location so the chrome (TopBar, sidebar
+      // highlight, repo-scoped panels) re-anchors to the right workspace
+      // synchronously. The URL→state sync effect handles the
+      // `activeWorkspaceId` and DB-preference updates from there.
+      if (urlThreadId !== null) {
+        void navigate(workspaceThreadPath(workspaceId, urlThreadId));
+      } else {
+        void navigate(workspacePath(workspaceId));
+      }
     },
-    [touchWorkspace],
+    [navigate, urlThreadId],
   );
 
   // Empty-state CTA: create a no-repo thread and navigate into it (PRD US 1
@@ -628,18 +770,30 @@ export function RepositoryShell({
   // AttachRepoMenu, at which point the mode selector unlocks `docs` and
   // potentially `sandbox`. Errors surface in the workspace's standard
   // `actionError` slot.
+  //
+  // The new thread is created in `currentWorkspaceId` (the workspace the
+  // user is presently in — usually Home for this empty-state CTA), and we
+  // navigate to its canonical workspace-scoped URL so the chrome can paint
+  // the right context immediately.
   const [isStartingConversation, handleStartConversation] = useAsyncCallback(
     useCallback(async () => {
       setActionError(null);
       try {
         const newThreadId = await createThreadMutation({
-          workspaceId: activeWorkspaceId ?? undefined,
+          workspaceId: currentWorkspaceId ?? undefined,
         });
-        void navigate(`/t/${newThreadId}`);
+        if (currentWorkspaceId !== null) {
+          void navigate(workspaceThreadPath(currentWorkspaceId, newThreadId));
+        } else {
+          // Backend creates a thread without a workspace binding when none
+          // is supplied; the workspace-landing redirects can't help here,
+          // so route to /chat and let the canonicalising redirects sort it.
+          void navigate(DEFAULT_AUTHENTICATED_PATH);
+        }
       } catch (error) {
         setActionError(toUserErrorMessage(error, "Failed to start a conversation."));
       }
-    }, [createThreadMutation, navigate, activeWorkspaceId]),
+    }, [createThreadMutation, navigate, currentWorkspaceId]),
   );
 
   const {
@@ -671,17 +825,32 @@ export function RepositoryShell({
     setAnalysisError,
     setActionNotice,
     onAfterDeleteThread: () => {
-      void navigate("/chat");
+      // Stay inside the current workspace so the user keeps their context
+      // (sidebar selection, repo chrome). The workspace-landing redirect
+      // forwards to whichever thread is now most recent, or shows the empty
+      // state if this was the last one.
+      if (currentWorkspaceId !== null) {
+        void navigate(workspacePath(currentWorkspaceId));
+      } else {
+        void navigate(DEFAULT_AUTHENTICATED_PATH);
+      }
     },
     onAfterArchiveRepo: () => {
-      void navigate("/chat");
+      // Bounce out of the workspace entirely — the repo (and therefore the
+      // workspace's chrome) is no longer the active surface for the user.
+      // The /chat → fallback-workspace redirect chain picks the next viable
+      // workspace from `listWorkspaces`.
+      void navigate(DEFAULT_AUTHENTICATED_PATH);
     },
     onAfterRestoreRepo: () => {
-      // No navigation — the user stays on the repo URL and the banner
+      // No navigation — the user stays on the workspace URL and the banner
       // disappears reactively as `repoDetail.isArchived` flips back to false.
     },
     onAfterPermanentDeleteRepo: () => {
-      void navigate("/chat");
+      // Same reasoning as archive: the workspace ceases to be relevant once
+      // the repo is gone, so route out and let the redirect chain pick the
+      // next workspace.
+      void navigate(DEFAULT_AUTHENTICATED_PATH);
     },
     setThreadToDelete,
     setShowArchiveDialog,
@@ -762,7 +931,6 @@ export function RepositoryShell({
       <SidebarInset>
         <TopBar
           repoDetail={repoDetail ?? undefined}
-          repoName={selectedRepoName}
           isSyncing={isSyncing || isRepositorySyncing}
           isStatusPanelOpen={isStatusOpen}
           onSetStatusPanelOpen={handleSetStatusOpen}
@@ -771,6 +939,7 @@ export function RepositoryShell({
           onPermanentDeleteRepo={() => setShowPermanentDeleteDialog(true)}
           threadId={effectiveSelectedThreadId}
           attachedRepository={capabilities.attachedRepository}
+          isAttachedRepositoryLoading={capabilities.isLoading}
           availableRepositories={repositories ?? []}
           onThreadMovedToWorkspace={handleThreadMovedToWorkspace}
           isDesktopLayout={isDesktopLayout}

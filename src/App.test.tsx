@@ -206,18 +206,18 @@ describe("App auth token failures", () => {
       };
     }
 
-    const router = renderWithAuth(useAuth, ["/r/repo_xyz"]);
+    const router = renderWithAuth(useAuth, ["/w/workspace_xyz"]);
 
     // ProtectedLayout should bounce signed-out users back to the landing route.
     expect(await screen.findByText("home page")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/");
     // …and have stashed the originally-requested path so AuthCallbackRoute can
     // resume there after sign-in (covers persistAuthReturnTo + normalizeReturnTo).
-    expect(window.sessionStorage.getItem(AUTH_RETURN_TO_KEY)).toBe("/r/repo_xyz");
+    expect(window.sessionStorage.getItem(AUTH_RETURN_TO_KEY)).toBe("/w/workspace_xyz");
   });
 
   test("redirects callback users back to stored destination", async () => {
-    window.sessionStorage.setItem(AUTH_RETURN_TO_KEY, "/r/repo_123");
+    window.sessionStorage.setItem(AUTH_RETURN_TO_KEY, "/w/workspace_123");
 
     function useAuth() {
       return {
@@ -230,7 +230,7 @@ describe("App auth token failures", () => {
     const router = renderWithAuth(useAuth, ["/callback?code=test-code"]);
 
     expect(await screen.findByText("chat page")).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe("/r/repo_123");
+    expect(router.state.location.pathname).toBe("/w/workspace_123");
     expect(window.sessionStorage.getItem(AUTH_RETURN_TO_KEY)).toBeNull();
   });
 
