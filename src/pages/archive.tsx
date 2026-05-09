@@ -357,7 +357,7 @@ function ArchiveRow({
     }, [repo._id, repo.sourceRepoFullName, restoreRepository]),
   );
 
-  const archivedLabel = repo.archivedAt ? formatRelativeTime(repo.archivedAt) : "recently";
+  const archivedLabel = formatRelativeTime(repo.archivedAt!);
 
   return (
     <Card className="p-4 transition-colors hover:border-foreground/25">
