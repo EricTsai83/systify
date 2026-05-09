@@ -318,8 +318,7 @@ export function ChatPanel({
                 : "Ask about architecture, module boundaries, data flow, risks…"
             }
             className="min-h-20 resize-none border-border"
-            disabled={isReadOnly}
-            aria-readonly={isReadOnly}
+            readOnly={isReadOnly}
           />
           {isReadOnly && readOnlyHint ? <p className="text-xs text-muted-foreground">{readOnlyHint}</p> : null}
           {visibleSuggestion && suggestedModeLabel ? (

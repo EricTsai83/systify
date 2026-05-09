@@ -257,7 +257,7 @@ export async function cloneRepositoryInSandbox(args: {
   // which is the desired posture for a read-only analysis sandbox.
   await sandbox.process.executeCommand(`git remote set-url origin ${posixSingleQuote(args.url)}`, "repo");
 
-  // Post-clone network lockdown. Once the source is on disk, SysTify never
+  // Post-clone network lockdown. Once the source is on disk, Systify never
   // needs sandbox-side egress: the LLM's `run_shell` is intended to be
   // read-only by prompt + deny list, and every legitimate operation
   // (read_file, list_dir, executeCommand) is dispatched through Daytona's
@@ -268,9 +268,10 @@ export async function cloneRepositoryInSandbox(args: {
   // network layer instead of completing the leak.
   //
   // Daytona applies the iptables rule to a running sandbox via
-  // `updateNetworkSettings` (added in `@daytona/sdk@0.169.0`). The call is
-  // gated by Daytona organization tier — Tier 1/2 cannot override
-  // sandbox-level network policy and the SDK call throws.
+  // `updateNetworkSettings`. This project pins `@daytona/sdk` at `0.173.0` to
+  // pick up later fixes/features required by this PR. The call is gated by
+  // Daytona organization tier — Tier 1/2 cannot override sandbox-level
+  // network policy and the SDK call throws.
   //
   // The block is therefore env-var-gated:
   //   - `DAYTONA_POST_CLONE_BLOCK_NETWORK` truthy (default) → call the SDK,
@@ -443,10 +444,6 @@ PY`;
   );
 
   return result.result.trim();
-}
-
-export function isDaytonaConfigured() {
-  return Boolean(process.env.DAYTONA_API_KEY);
 }
 
 /**

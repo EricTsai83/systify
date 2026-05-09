@@ -38,7 +38,8 @@ export function ArchivePage() {
         <div className="mx-auto w-full max-w-4xl">
           <p className="mb-6 text-sm text-muted-foreground">
             Archived repositories are kept here so you can restore them later. Threads, messages, and analysis artifacts
-            are preserved. Sandboxes are stopped to free resources — you&apos;ll reconnect manually after restoring.
+            are preserved. Sandboxes are stopped to free resources — after restoring, sync the repository to provision a
+            fresh sandbox before resuming chat.
           </p>
 
           {archived === undefined ? (

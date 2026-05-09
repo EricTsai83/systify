@@ -18,19 +18,20 @@ async function seedRepository(
   t: ReturnType<typeof convexTest>,
   args: {
     ownerTokenIdentifier: string;
-    sourceRepoFullName?: string;
+    sourceRepoName?: string;
     archivedAt?: number;
     deletionRequestedAt?: number;
   },
 ) {
   return await t.run(async (ctx) => {
+    const shortName = args.sourceRepoName ?? "archive-fixture";
     const repositoryId = await ctx.db.insert("repositories", {
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       sourceHost: "github",
-      sourceUrl: `https://github.com/acme/${args.sourceRepoFullName ?? "archive-fixture"}`,
-      sourceRepoFullName: `acme/${args.sourceRepoFullName ?? "archive-fixture"}`,
+      sourceUrl: `https://github.com/acme/${shortName}`,
+      sourceRepoFullName: `acme/${shortName}`,
       sourceRepoOwner: "acme",
-      sourceRepoName: args.sourceRepoFullName ?? "archive-fixture",
+      sourceRepoName: shortName,
       defaultBranch: "main",
       visibility: "private",
       accessMode: "private",
@@ -193,10 +194,10 @@ describe("repository listings honour archive state", () => {
     const ownerTokenIdentifier = "user|listing-archive";
     const t = createTestConvex();
 
-    const activeId = await seedRepository(t, { ownerTokenIdentifier, sourceRepoFullName: "active" });
+    const activeId = await seedRepository(t, { ownerTokenIdentifier, sourceRepoName: "active" });
     const archivedId = await seedRepository(t, {
       ownerTokenIdentifier,
-      sourceRepoFullName: "archived",
+      sourceRepoName: "archived",
       archivedAt: Date.now(),
     });
 
@@ -212,10 +213,10 @@ describe("repository listings honour archive state", () => {
     const ownerTokenIdentifier = "user|summaries-archive";
     const t = createTestConvex();
 
-    await seedRepository(t, { ownerTokenIdentifier, sourceRepoFullName: "summaries-active" });
+    await seedRepository(t, { ownerTokenIdentifier, sourceRepoName: "summaries-active" });
     await seedRepository(t, {
       ownerTokenIdentifier,
-      sourceRepoFullName: "summaries-archived",
+      sourceRepoName: "summaries-archived",
       archivedAt: Date.now(),
     });
 

@@ -18,7 +18,21 @@ import {
 
 const REPOSITORY_DELETION_CANCEL_REASON =
   "Repository deletion is in progress. The import was cancelled before it could finish.";
+const REPOSITORY_ARCHIVED_CANCEL_REASON = "Repository was archived. The import was cancelled before it could finish.";
 const PROVISIONING_SANDBOX_TTL_MS = 30 * 60_000;
+
+function reasonForRepositoryTombstone(repository: Doc<"repositories"> | null | undefined): string {
+  if (!repository) {
+    return REPOSITORY_DELETION_CANCEL_REASON;
+  }
+  if (repository.deletionRequestedAt) {
+    return REPOSITORY_DELETION_CANCEL_REASON;
+  }
+  if (repository.archivedAt) {
+    return REPOSITORY_ARCHIVED_CANCEL_REASON;
+  }
+  return REPOSITORY_DELETION_CANCEL_REASON;
+}
 const repoFileRecordValidator = v.object({
   path: v.string(),
   parentPath: v.string(),
@@ -230,7 +244,7 @@ async function guardPersistStage(
     await finalizeImportCancellation(ctx, {
       importId: args.importId,
       jobId: args.jobId,
-      reason: REPOSITORY_DELETION_CANCEL_REASON,
+      reason: reasonForRepositoryTombstone(repository),
     });
     return { kind: "cancelled" };
   }
@@ -252,7 +266,7 @@ async function guardPersistStage(
     await finalizeImportCancellation(ctx, {
       importId: args.importId,
       jobId: args.jobId,
-      reason: REPOSITORY_DELETION_CANCEL_REASON,
+      reason: reasonForRepositoryTombstone(repository),
     });
     return { kind: "cancelled" };
   }
@@ -294,7 +308,7 @@ export const getImportContext = internalQuery({
       return {
         kind: "cancelled" as const,
         jobId: importRecord.jobId,
-        reason: REPOSITORY_DELETION_CANCEL_REASON,
+        reason: reasonForRepositoryTombstone(repository),
       };
     }
 
@@ -337,7 +351,7 @@ export const markImportRunning = internalMutation({
     if (!importRecord || !job || !repository || repository.deletionRequestedAt || repository.archivedAt) {
       return {
         kind: "cancelled" as const,
-        reason: REPOSITORY_DELETION_CANCEL_REASON,
+        reason: reasonForRepositoryTombstone(repository),
       };
     }
 
@@ -759,7 +773,7 @@ export const markImportFailed = internalMutation({
       await finalizeImportCancellation(ctx, {
         importId: args.importId,
         jobId: args.jobId,
-        reason: REPOSITORY_DELETION_CANCEL_REASON,
+        reason: reasonForRepositoryTombstone(repository),
       });
       return;
     }

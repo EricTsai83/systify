@@ -108,7 +108,7 @@ The properties this gives us:
 
 - **Process / resource isolation.** A runaway `find` cannot consume more than the configured CPU and memory budget, regardless of what `run_shell` accepts. The 60 s per-call timeout caps a single call's wall clock; the auto-stop interval caps the sandbox's lifetime if no activity occurs.
 - **Throwaway lifecycle.** A sandbox is created for analysis, used for one or more chat replies, then auto-stopped, auto-archived, and auto-deleted. Anything the LLM creates inside the sandbox is gone within the auto-delete window without operator action.
-- **Network policy.** SysTify uses a two-stage egress posture rather than a static allow list:
+- **Network policy.** Systify uses a two-stage egress posture rather than a static allow list:
   1. **At provisioning time**, the sandbox is created with the `DAYTONA_NETWORK_ALLOW_LIST` posture (typically `""` so Daytona's default policy applies). This window must permit `git clone` against `github.com`.
   2. **Immediately after `cloneRepositoryInSandbox` returns**, `sandbox.updateNetworkSettings({ networkBlockAll: true })` clamps outbound to zero for the rest of the sandbox's lifetime. Daytona applies this as an iptables rule on the runner without restarting the container; the LLM's tool calls (read_file / list_dir / executeCommand) ride Daytona's *control plane*, which is independent of the container's outbound traffic, so blocking egress does not impair tool execution.
 

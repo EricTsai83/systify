@@ -60,13 +60,13 @@ Patterns to add, in order of urgency:
 
 | Type slug              | Pattern (sketch)                                             | Notes                                                                                       |
 | ---------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
-| `openai_api_key`       | `sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{32,}`            | Anchor on `sk-` prefix; OpenAI rotates the family selector but `sk-` is stable.             |
+| `openai_api_key`       | `sk-(?:proj-\|svcacct-\|admin-)?[A-Za-z0-9_-]{32,}`            | Anchor on `sk-` prefix; OpenAI rotates the family selector but `sk-` is stable.             |
 | `anthropic_api_key`    | `sk-ant-[a-z0-9-]+-[A-Za-z0-9_-]{32,}`                       | Live keys carry an `api03` family token + dashes.                                           |
-| `stripe_key`           | `(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{24,}`                | `sk_live_…` is the high-risk variant.                                                       |
+| `stripe_key`           | `(?:sk\|rk\|pk)_(?:live\|test)_[A-Za-z0-9]{24,}`                | `sk_live_…` is the high-risk variant.                                                       |
 | `gcp_service_account`  | `"private_key": "-----BEGIN PRIVATE KEY-----[\\s\\S]+?-----END PRIVATE KEY-----"` | Multi-line; needs `s` flag.                                                |
 | `azure_storage_key`    | `[A-Za-z0-9+/]{86}==`                                        | 88-char base64; high false-positive risk → require `AccountKey=` context anchor.            |
-| `pem_private_key`      | `-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----[\\s\\S]+?-----END [^-]+-----`  | Greedy across lines.                                                       |
-| `db_connection_string` | `(?:postgres|postgresql|mysql|mongodb(?:\\+srv)?|redis)://[^\\s:@]+:[^\\s@]+@[^\\s]+` | Catches `user:pass@host` form; do not match passwordless URIs.        |
+| `pem_private_key`      | `-----BEGIN (?:RSA \|EC \|OPENSSH \|DSA )?PRIVATE KEY-----[\\s\\S]+?-----END [^-]+-----`  | Greedy across lines.                                                       |
+| `db_connection_string` | `(?:postgres\|postgresql\|mysql\|mongodb(?:\\+srv)?\|redis)://[^\\s:@]+:[^\\s@]+@[^\\s]+` | Catches `user:pass@host` form; do not match passwordless URIs.        |
 | `npm_token`            | `npm_[A-Za-z0-9]{36}`                                        | Pre-2026 format pinned by npm.                                                              |
 | `pypi_token`           | `pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_-]{50,}`                     | Token starts with the fixed base64 prefix encoding `pypi.org`.                              |
 | `huggingface_token`    | `hf_[A-Za-z0-9]{34,}`                                        | New prefix style; older tokens fall through to bearer-token catch-all.                      |
@@ -186,11 +186,11 @@ data flow. Each entry records:
   current architecture deliberately rejects path blocklists in favor
   of content scanning — see the rationale in
   `docs/sandbox-mode-security-system-design.md`.
-- Vault / KMS integration for sandbox-side secrets. SysTify never
+- Vault / KMS integration for sandbox-side secrets. Systify never
   surfaces its own secrets into the sandbox, so vault integration is
   not a current threat-model contributor.
 - Automatic secret rotation on detection. That belongs to the
-  customer's own incident response, not to SysTify's chat layer.
+  customer's own incident response, not to Systify's chat layer.
 
 ## Estimated total
 

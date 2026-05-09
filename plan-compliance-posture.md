@@ -4,9 +4,9 @@ Status: draft (not started). Owner: TBD. Target: pre-paid-launch / pre-enterpris
 
 ## Why this plan exists
 
-SysTify ingests private GitHub repositories, runs them through a sandboxed
+Systify ingests private GitHub repositories, runs them through a sandboxed
 analysis pipeline, persists chat history quoting the source, and re-uses
-that history across sessions. That places SysTify squarely in the
+that history across sessions. That places Systify squarely in the
 "trust-sensitive B2B SaaS" bucket: any prospective enterprise customer
 will ask the standard set of questions (where does my code go, who can
 read it, how long do you keep it, who do you share it with, can I delete
@@ -23,7 +23,7 @@ that compliance frameworks require.
 
 ## Goal
 
-After this plan ships, SysTify can credibly answer the following with a
+After this plan ships, Systify can credibly answer the following with a
 written, dated, version-controlled response:
 
 | Question                                                              | Answer artifact                                |
@@ -55,7 +55,7 @@ team commits to and that customer-facing material can link to.
 | `data-flow.md`                  | Per-feature data flow (chat reply, deep analysis, repo import). Mermaid diagram + prose. Names every external system the data touches.                                              |
 | `sub-processors.md`             | Convex, WorkOS, Daytona, OpenAI, GitHub. Each row: location, function, what data they see, how they handle it. Versioned — append-only with effective dates.                         |
 | `retention-policy.md`           | Per-table retention. `messages` (default: keep until user deletion, configurable per workspace), `sandboxes` (auto-deleted, ≤48 h), `audit logs` (≥1 year for SOC 2), GitHub tokens. |
-| `access-control.md`             | Who within Anthropic / SysTify ops can access customer data, under what controls (admin breakglass), with what logging.                                                              |
+| `access-control.md`             | Who within Systify ops can access customer data, under what controls (admin breakglass), with what logging.                                                                          |
 | `incident-response.md`          | IR runbook. Categories (data exposure, availability, sub-processor breach), customer-notification SLO (proposal: 72 h for confirmed exposure).                                       |
 | `dpa-template.md`               | Customer-facing data processing agreement template. Aligned to GDPR Art. 28. Sub-processors flow-down via reference to `sub-processors.md`.                                          |
 | `provider-zero-retention.md`    | Per-provider attestation: OpenAI zero-retention API mode, Anthropic no-training default, GitHub App scope. Links to provider docs as supporting evidence.                            |
@@ -137,7 +137,7 @@ Tasks:
   redacted metadata.
 - Retention floor: 1 year (configurable upward).
 - Read access: workspace owners can read events scoped to their
-  workspace; SysTify staff access goes through breakglass with its own
+  workspace; Systify staff access goes through breakglass with its own
   audit row (chicken-and-egg solved by writing the breakglass row
   first, then granting access).
 
@@ -158,11 +158,11 @@ Tasks:
   `data_sharing: true` etc.).
 - Confirm Anthropic API key contract specifies no training on inputs.
   Document the agreement reference in `provider-zero-retention.md`.
-- For GitHub: SysTify uses a GitHub App with installation tokens.
+- For GitHub: Systify uses a GitHub App with installation tokens.
   Document the scope (read-only repository contents) and the principle
-  that SysTify never asks for write scopes.
+  that Systify never asks for write scopes.
 
-Out of scope: GCP / AWS posture. SysTify itself does not run on those;
+Out of scope: GCP / AWS posture. Systify itself does not run on those;
 Convex Cloud's posture is documented by Convex.
 
 ## Implementation tasks
