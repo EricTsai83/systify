@@ -47,6 +47,9 @@ This folder contains the system design documentation for the current Systify cod
 - `sandbox-tool-call-audit-log-system-design.md`
   - Why does sandbox tool-call recording need a third table beyond `messageToolCallEvents` and `messages.toolCalls`?
   - How does best-effort writing plus a 90-day TTL keep compliance evidence durable without coupling to user-initiated deletes?
+- `archive-listing-system-design.md`
+  - Why does the archive view split into a reactive browse path and a non-reactive search path on top of one Convex paginated query?
+  - How does post-filtering preserve correctness without adding a denormalized `isArchived` field or a migration?
 
 ## Implementation Coverage
 
@@ -64,6 +67,7 @@ The current codebase keeps system-design documentation for all implemented high-
 - GitHub callback returnTo allowlist boundary: `github-callback-returnto-allowlist-system-design.md`
 - Workspace persistence and cross-device continuity: `workspace-persistence-system-design.md`
 - Sandbox tool-call audit log retention and recording boundary: `sandbox-tool-call-audit-log-system-design.md`
+- Archive listing pagination, search, and view state machine: `archive-listing-system-design.md`
 
 ## What Each Document Answers
 

@@ -1,12 +1,22 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useMutation, useQuery } from "convex/react";
-import { ArchiveIcon, ArrowCounterClockwiseIcon, TrashIcon } from "@phosphor-icons/react";
+import { useMutation, usePaginatedQuery } from "convex/react";
+import {
+  ArchiveIcon,
+  ArrowCounterClockwiseIcon,
+  CaretLeftIcon,
+  CircleNotchIcon,
+  ClockCounterClockwiseIcon,
+  MagnifyingGlassIcon,
+  TrashIcon,
+  XIcon,
+} from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
@@ -15,46 +25,68 @@ import { formatRelativeTime, formatTimestamp } from "@/lib/format";
 import type { RepositoryId } from "@/lib/types";
 import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
 
+const INITIAL_PAGE_SIZE = 20;
+const NEXT_PAGE_SIZE = 20;
+
 export function ArchivePage() {
   const navigate = useNavigate();
-  const archived = useQuery(api.repositories.listArchivedRepositories);
   const [pendingPermanentDelete, setPendingPermanentDelete] = useState<Doc<"repositories"> | null>(null);
+  const [query, setQuery] = useState("");
+  const handleBack = useCallback(() => void navigate(DEFAULT_AUTHENTICATED_PATH), [navigate]);
+
+  const trimmedQuery = query.trim();
+  const isSearching = trimmedQuery.length > 0;
+
+  const {
+    results: archived,
+    status,
+    loadMore,
+  } = usePaginatedQuery(
+    api.repositories.listArchivedRepositories,
+    { searchTerm: isSearching ? trimmedQuery : undefined },
+    { initialNumItems: INITIAL_PAGE_SIZE },
+  );
+
+  const isLoadingFirstPage = status === "LoadingFirstPage";
+  const canLoadMore = status === "CanLoadMore";
+  const isLoadingMore = status === "LoadingMore";
+  // `usePaginatedQuery` reports an internal "LoadingPaused" state on disconnect;
+  // we treat it as "settled, can't load more right now" — same UI as exhausted.
+  const isExhausted = status === "Exhausted";
 
   return (
-    <div className="flex min-h-dvh flex-col bg-background">
-      <header className="border-b border-border px-6 py-4">
-        <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <ArchiveIcon size={20} weight="bold" className="text-muted-foreground" />
-            <h1 className="text-lg font-semibold tracking-tight">Archive</h1>
+    <div className="flex h-dvh w-full flex-1 flex-col overflow-y-auto bg-background">
+      <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="flex size-8 shrink-0 items-center justify-center border border-border bg-card text-muted-foreground">
+              <ArchiveIcon size={15} weight="bold" />
+            </div>
+            <h1 className="truncate text-base font-semibold tracking-tight sm:text-lg">Archive</h1>
           </div>
-          <Button variant="secondary" size="sm" onClick={() => void navigate(DEFAULT_AUTHENTICATED_PATH)}>
-            Back to chat
+          <Button variant="ghost" size="sm" onClick={handleBack} className="shrink-0" aria-label="Back to chat">
+            <CaretLeftIcon weight="bold" />
+            <span className="hidden sm:inline">Back to chat</span>
+            <span className="sm:hidden">Back</span>
           </Button>
         </div>
       </header>
 
-      <main className="flex-1 px-6 py-8">
+      <main className="flex-1 px-4 pb-10 pt-5 sm:px-6 sm:pb-12 sm:pt-8">
         <div className="mx-auto w-full max-w-4xl">
-          <p className="mb-6 text-sm text-muted-foreground">
-            Archived repositories are kept here so you can restore them later. Threads, messages, and analysis artifacts
-            are preserved. Sandboxes are stopped to free resources — after restoring, sync the repository to provision a
-            fresh sandbox before resuming chat.
-          </p>
-
-          {archived === undefined ? (
-            <ArchiveListSkeleton />
-          ) : archived.length === 0 ? (
-            <ArchiveEmptyState />
-          ) : (
-            <ul className="flex flex-col gap-3">
-              {archived.map((repo) => (
-                <li key={repo._id}>
-                  <ArchiveRow repo={repo} onRequestPermanentDelete={setPendingPermanentDelete} />
-                </li>
-              ))}
-            </ul>
-          )}
+          <ArchiveContent
+            archived={archived}
+            isLoadingFirstPage={isLoadingFirstPage}
+            canLoadMore={canLoadMore}
+            isLoadingMore={isLoadingMore}
+            isExhausted={isExhausted}
+            isSearching={isSearching}
+            query={query}
+            onQueryChange={setQuery}
+            onLoadMore={() => loadMore(NEXT_PAGE_SIZE)}
+            onBackToChat={handleBack}
+            onRequestPermanentDelete={setPendingPermanentDelete}
+          />
         </div>
       </main>
 
@@ -63,38 +95,243 @@ export function ArchivePage() {
   );
 }
 
-function ArchiveListSkeleton() {
+function ArchiveContent({
+  archived,
+  isLoadingFirstPage,
+  canLoadMore,
+  isLoadingMore,
+  isExhausted,
+  isSearching,
+  query,
+  onQueryChange,
+  onLoadMore,
+  onBackToChat,
+  onRequestPermanentDelete,
+}: {
+  archived: ReadonlyArray<Doc<"repositories">>;
+  isLoadingFirstPage: boolean;
+  canLoadMore: boolean;
+  isLoadingMore: boolean;
+  isExhausted: boolean;
+  isSearching: boolean;
+  query: string;
+  onQueryChange: (value: string) => void;
+  onLoadMore: () => void;
+  onBackToChat: () => void;
+  onRequestPermanentDelete: (repo: Doc<"repositories">) => void;
+}) {
+  // First mount, browsing, no items yet — full skeleton.
+  if (isLoadingFirstPage && !isSearching && archived.length === 0) {
+    return <ArchiveListSkeleton />;
+  }
+
+  // Settled, browsing, archive is genuinely empty.
+  if (!isSearching && archived.length === 0 && isExhausted) {
+    return <ArchiveEmptyState onBackToChat={onBackToChat} />;
+  }
+
   return (
-    <ul className="flex flex-col gap-3" aria-hidden="true">
-      {Array.from({ length: 3 }).map((_, index) => (
-        <li key={index}>
-          <Card>
-            <CardHeader className="gap-2">
-              <Skeleton className="h-4 w-1/3" />
-              <Skeleton className="h-3 w-1/2" />
-            </CardHeader>
-            <CardContent className="flex justify-end gap-2">
-              <Skeleton className="h-8 w-24" />
-              <Skeleton className="h-8 w-32" />
-            </CardContent>
-          </Card>
-        </li>
-      ))}
-    </ul>
+    <>
+      <p className="mb-4 text-sm leading-relaxed text-muted-foreground sm:mb-5">
+        Threads, messages, and analysis artifacts are preserved while sandboxes are stopped to free resources. After
+        restoring, sync the repository to provision a fresh sandbox before resuming chat.
+      </p>
+
+      <ArchiveSearchInput query={query} onQueryChange={onQueryChange} />
+
+      {isLoadingFirstPage ? (
+        <SearchPendingState />
+      ) : archived.length === 0 ? (
+        <SearchNoResults query={query} onClear={() => onQueryChange("")} />
+      ) : (
+        <ArchiveList
+          archived={archived}
+          canLoadMore={canLoadMore}
+          isLoadingMore={isLoadingMore}
+          isExhausted={isExhausted}
+          onLoadMore={onLoadMore}
+          onRequestPermanentDelete={onRequestPermanentDelete}
+        />
+      )}
+    </>
   );
 }
 
-function ArchiveEmptyState() {
+function ArchiveList({
+  archived,
+  canLoadMore,
+  isLoadingMore,
+  isExhausted,
+  onLoadMore,
+  onRequestPermanentDelete,
+}: {
+  archived: ReadonlyArray<Doc<"repositories">>;
+  canLoadMore: boolean;
+  isLoadingMore: boolean;
+  isExhausted: boolean;
+  onLoadMore: () => void;
+  onRequestPermanentDelete: (repo: Doc<"repositories">) => void;
+}) {
+  const sentinelRef = useRef<HTMLDivElement | null>(null);
+  // Keep `onLoadMore` reachable from the observer callback without re-creating
+  // the observer every render — the IntersectionObserver instance is keyed
+  // only on `canLoadMore`, so a stable ref pattern avoids a teardown thrash.
+  const onLoadMoreRef = useRef(onLoadMore);
+  useEffect(() => {
+    onLoadMoreRef.current = onLoadMore;
+  }, [onLoadMore]);
+
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !canLoadMore) {
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          onLoadMoreRef.current();
+        }
+      },
+      { rootMargin: "320px 0px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [canLoadMore]);
+
   return (
-    <Card className="text-center">
-      <CardHeader className="items-center gap-2">
-        <ArchiveIcon size={28} weight="duotone" className="text-muted-foreground" />
-        <CardTitle className="text-base">Nothing in your archive</CardTitle>
-        <CardDescription>
-          When you archive a repository it appears here. You can restore or permanently delete it any time.
-        </CardDescription>
-      </CardHeader>
-    </Card>
+    <>
+      <ul className="mt-4 flex flex-col gap-2.5">
+        {archived.map((repo) => (
+          <li key={repo._id}>
+            <ArchiveRow repo={repo} onRequestPermanentDelete={onRequestPermanentDelete} />
+          </li>
+        ))}
+      </ul>
+
+      {/*
+        Sentinel + footer state. The sentinel sits ~320px above the visible
+        bottom so loadMore fires before the user reaches the actual end of
+        the list — keeping infinite scroll feeling continuous instead of
+        bumpy. When `canLoadMore` flips to false the observer unsubscribes
+        and the footer renders one of the terminal states below.
+      */}
+      <div ref={sentinelRef} aria-hidden="true" className="h-px" />
+
+      <div className="mt-4 flex items-center justify-center" aria-live="polite">
+        {isLoadingMore ? (
+          <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
+            <CircleNotchIcon size={14} weight="bold" className="motion-safe:animate-spin" />
+            Loading more
+          </div>
+        ) : isExhausted && archived.length > INITIAL_PAGE_SIZE ? (
+          <p className="py-2 text-xs text-muted-foreground">End of archive · {archived.length} repositories</p>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+function ArchiveListSkeleton() {
+  return (
+    <div aria-hidden="true">
+      <Skeleton className="mb-4 h-4 w-3/4 max-w-md" />
+      <Skeleton className="mb-4 h-10 w-full" />
+      <ul className="flex flex-col gap-2.5">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <li key={index}>
+            <Card className="p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <div className="flex min-w-0 items-start gap-3">
+                  <Skeleton className="size-8 shrink-0" />
+                  <div className="flex min-w-0 flex-1 flex-col gap-2">
+                    <Skeleton className="h-4 w-40" />
+                    <Skeleton className="h-3 w-28" />
+                  </div>
+                </div>
+                <div className="flex gap-2 sm:shrink-0">
+                  <Skeleton className="h-8 flex-1 sm:w-24 sm:flex-none" />
+                  <Skeleton className="h-8 flex-1 sm:w-32 sm:flex-none" />
+                </div>
+              </div>
+            </Card>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function SearchPendingState() {
+  return (
+    <div className="mt-4 flex items-center justify-center border border-dashed border-border bg-card/40 px-6 py-10 text-center">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <CircleNotchIcon size={14} weight="bold" className="motion-safe:animate-spin" />
+        Searching archived repositories
+      </div>
+    </div>
+  );
+}
+
+function ArchiveEmptyState({ onBackToChat }: { onBackToChat: () => void }) {
+  return (
+    <div className="flex min-h-[55vh] flex-col items-center justify-center px-4 py-10 text-center sm:py-16">
+      <div className="flex size-16 items-center justify-center border border-border bg-card text-muted-foreground sm:size-20">
+        <ArchiveIcon size={28} weight="duotone" />
+      </div>
+      <h2 className="mt-5 text-base font-semibold tracking-tight sm:text-lg">Nothing in your archive</h2>
+      <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
+        Archived repositories appear here. Restore or delete any time.
+      </p>
+      <Button variant="secondary" size="sm" className="mt-6" onClick={onBackToChat}>
+        <CaretLeftIcon weight="bold" />
+        Back to chat
+      </Button>
+    </div>
+  );
+}
+
+function ArchiveSearchInput({ query, onQueryChange }: { query: string; onQueryChange: (value: string) => void }) {
+  return (
+    <div className="relative">
+      <MagnifyingGlassIcon
+        size={14}
+        weight="bold"
+        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+      />
+      <Input
+        type="search"
+        value={query}
+        onChange={(e) => onQueryChange(e.target.value)}
+        placeholder="Search archived repositories"
+        aria-label="Search archived repositories"
+        className="pl-9 pr-9"
+      />
+      {query ? (
+        <button
+          type="button"
+          onClick={() => onQueryChange("")}
+          aria-label="Clear search"
+          className="absolute right-2 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <XIcon size={12} weight="bold" />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function SearchNoResults({ query, onClear }: { query: string; onClear: () => void }) {
+  return (
+    <div className="mt-4 flex flex-col items-center justify-center border border-dashed border-border bg-card/40 px-6 py-10 text-center">
+      <MagnifyingGlassIcon size={22} weight="duotone" className="text-muted-foreground" />
+      <p className="mt-3 text-sm text-foreground">
+        No matches for <span className="font-medium">&ldquo;{query}&rdquo;</span>
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">Try a different name or clear the search.</p>
+      <Button variant="ghost" size="sm" className="mt-4" onClick={onClear}>
+        Clear search
+      </Button>
+    </div>
   );
 }
 
@@ -120,25 +357,54 @@ function ArchiveRow({
     }, [repo._id, repo.sourceRepoFullName, restoreRepository]),
   );
 
+  const archivedLabel = formatRelativeTime(repo.archivedAt!);
+
   return (
-    <Card>
-      <CardHeader className="gap-1">
-        <CardTitle className="truncate text-base">{repo.sourceRepoFullName}</CardTitle>
-        <CardDescription>
-          Archived {repo.archivedAt ? formatRelativeTime(repo.archivedAt) : "recently"}
-          {repo.lastImportedAt ? ` · last imported ${formatTimestamp(repo.lastImportedAt)}` : ""}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-wrap justify-end gap-2">
-        <Button type="button" variant="secondary" size="sm" disabled={isRestoring} onClick={() => void handleRestore()}>
-          <ArrowCounterClockwiseIcon weight="bold" />
-          {isRestoring ? "Restoring…" : "Restore"}
-        </Button>
-        <Button type="button" variant="destructive" size="sm" onClick={() => onRequestPermanentDelete(repo)}>
-          <TrashIcon weight="bold" />
-          Delete permanently
-        </Button>
-      </CardContent>
+    <Card className="p-4 transition-colors hover:border-foreground/25">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex size-8 shrink-0 items-center justify-center border border-border bg-background text-muted-foreground">
+            <ArchiveIcon size={14} weight="bold" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-sm font-semibold tracking-tight sm:text-base">{repo.sourceRepoFullName}</h3>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground sm:text-[13px]">
+              <span className="inline-flex items-center gap-1">
+                <ClockCounterClockwiseIcon size={12} weight="bold" />
+                Archived {archivedLabel}
+              </span>
+              {repo.lastImportedAt ? (
+                <span className="truncate">Last imported {formatTimestamp(repo.lastImportedAt)}</span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-row gap-2 sm:shrink-0">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            disabled={isRestoring}
+            onClick={() => void handleRestore()}
+            className="flex-1 sm:flex-none"
+          >
+            <ArrowCounterClockwiseIcon weight="bold" />
+            {isRestoring ? "Restoring…" : "Restore"}
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            size="sm"
+            onClick={() => onRequestPermanentDelete(repo)}
+            className="flex-1 sm:flex-none"
+            aria-label={`Delete ${repo.sourceRepoFullName} permanently`}
+          >
+            <TrashIcon weight="bold" />
+            <span className="sm:hidden">Delete</span>
+            <span className="hidden sm:inline">Delete permanently</span>
+          </Button>
+        </div>
+      </div>
     </Card>
   );
 }
