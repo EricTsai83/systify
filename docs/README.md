@@ -50,6 +50,9 @@ This folder contains the system design documentation for the current Systify cod
 - `archive-listing-system-design.md`
   - Why does the archive view split into a reactive browse path and a non-reactive search path on top of one Convex paginated query?
   - How does post-filtering preserve correctness without adding a denormalized `isArchived` field or a migration?
+- `repository-remote-freshness-check-system-design.md`
+  - Why is the "repo is behind the remote" check driven by client events plus two SHAs instead of webhooks, cron, or a persisted stale flag?
+  - Why does sync immediately clear `latestRemoteSha` instead of waiting for import finalize to update freshness state?
 
 ## Implementation Coverage
 
@@ -68,6 +71,7 @@ The current codebase keeps system-design documentation for all implemented high-
 - Workspace persistence and cross-device continuity: `workspace-persistence-system-design.md`
 - Sandbox tool-call audit log retention and recording boundary: `sandbox-tool-call-audit-log-system-design.md`
 - Archive listing pagination, search, and view state machine: `archive-listing-system-design.md`
+- Repository remote-freshness check trigger model and SHA comparison boundary: `repository-remote-freshness-check-system-design.md`
 
 ## What Each Document Answers
 
