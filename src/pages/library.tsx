@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import type { OptimisticLocalStore } from "convex/browser";
@@ -12,6 +12,7 @@ import {
   DEFAULT_AUTHENTICATED_PATH,
   discussPath,
   libraryPath,
+  libraryAskPath,
   workspacePath,
   workspaceThreadPath,
 } from "@/route-paths";
@@ -53,6 +54,7 @@ export function LibraryPage() {
   const params = useParams<{ workspaceId?: string; artifactId?: string; threadId?: string }>();
   const urlWorkspaceId = (params.workspaceId ?? null) as WorkspaceId | null;
   const urlArtifactId = (params.artifactId ?? null) as ArtifactId | null;
+  const urlThreadId = (params.threadId ?? null) as ThreadId | null;
 
   if (!urlWorkspaceId) {
     return (
@@ -65,7 +67,7 @@ export function LibraryPage() {
 
   return (
     <SidebarProvider>
-      <LibraryWorkspace workspaceId={urlWorkspaceId} artifactId={urlArtifactId} />
+      <LibraryWorkspace workspaceId={urlWorkspaceId} artifactId={urlArtifactId} askThreadId={urlThreadId} />
     </SidebarProvider>
   );
 }
@@ -75,8 +77,17 @@ export function LibraryPage() {
  * Library IDE. Split from the outer page so {@link SidebarProvider} can
  * mount before any sidebar-aware hook runs.
  */
-function LibraryWorkspace({ workspaceId, artifactId }: { workspaceId: WorkspaceId; artifactId: ArtifactId | null }) {
+function LibraryWorkspace({
+  workspaceId,
+  artifactId,
+  askThreadId,
+}: {
+  workspaceId: WorkspaceId;
+  artifactId: ArtifactId | null;
+  askThreadId: ThreadId | null;
+}) {
   const navigate = useNavigate();
+  const [isAskOpen, setIsAskOpen] = useState(askThreadId !== null);
   const repositories = useQuery(api.repositories.listRepositories);
   const workspaces = useQuery(api.workspaces.listWorkspaces);
   const baseTouchWorkspace = useMutation(api.workspaces.touchWorkspace);
@@ -198,7 +209,18 @@ function LibraryWorkspace({ workspaceId, artifactId }: { workspaceId: WorkspaceI
         </header>
         <div className="flex min-h-0 min-w-0 flex-1">
           {repositoryId ? (
-            <LibraryShell workspaceId={workspaceId} repositoryId={repositoryId} activeArtifactId={artifactId} />
+            <LibraryShell
+              workspaceId={workspaceId}
+              repositoryId={repositoryId}
+              activeArtifactId={artifactId}
+              isAskOpen={isAskOpen || askThreadId !== null}
+              askThreadId={askThreadId}
+              onOpenAsk={() => setIsAskOpen(true)}
+              onAskThreadCreated={(threadId) => {
+                setIsAskOpen(true);
+                void navigate(libraryAskPath(workspaceId, threadId));
+              }}
+            />
           ) : null}
         </div>
       </SidebarInset>

@@ -105,6 +105,13 @@ export const sendMessage = mutation({
       }
     }
 
+    let labSessionId: Id<"labSessions"> | undefined;
+    if (mode === "lab") {
+      labSessionId = await ctx.runMutation(internal.labSessions.ensureLabSessionForThread, {
+        threadId: args.threadId,
+      });
+    }
+
     const trimmedContent = args.content.trim();
     if (!trimmedContent) {
       throw new Error("Message content cannot be empty.");
@@ -213,6 +220,7 @@ export const sendMessage = mutation({
     await ctx.db.patch(args.threadId, {
       mode,
       lastMessageAt: now,
+      labSessionId,
     });
 
     await ctx.scheduler.runAfter(0, internal.chat.generation.generateAssistantReply, {

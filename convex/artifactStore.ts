@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
@@ -57,7 +58,8 @@ async function createArtifactInternal(ctx: MutationCtx, args: CreateArtifactArgs
     }
   }
 
-  return await ctx.db.insert("artifacts", {
+  const now = Date.now();
+  const artifactId = await ctx.db.insert("artifacts", {
     threadId: args.threadId,
     repositoryId: args.repositoryId,
     jobId: args.jobId,
@@ -69,7 +71,14 @@ async function createArtifactInternal(ctx: MutationCtx, args: CreateArtifactArgs
     source: args.source,
     version: 1,
     folderId: args.folderId,
+    producedIn: args.source === "sandbox" ? "lab" : args.repositoryId ? "legacy" : "discuss",
+    lastVerifiedAt: args.source === "sandbox" ? now : undefined,
+    chunkingStatus: args.repositoryId ? "pending" : undefined,
   });
+  if (args.repositoryId) {
+    await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, { artifactId });
+  }
+  return artifactId;
 }
 
 async function getArtifactInternal(ctx: QueryCtx, artifactId: Id<"artifacts">): Promise<Doc<"artifacts"> | null> {
@@ -94,15 +103,31 @@ async function updateArtifactInternal(
     summary?: string;
     contentMarkdown?: string;
     version: number;
+    chunkingStatus?: "pending";
   } = { version: artifact.version + 1 };
   if (updates.title !== undefined) patch.title = updates.title;
   if (updates.summary !== undefined) patch.summary = updates.summary;
-  if (updates.contentMarkdown !== undefined) patch.contentMarkdown = updates.contentMarkdown;
+  if (updates.contentMarkdown !== undefined) {
+    patch.contentMarkdown = updates.contentMarkdown;
+    if (artifact.repositoryId) {
+      patch.chunkingStatus = "pending";
+    }
+  }
 
   await ctx.db.patch(artifactId, patch);
+  if (artifact.repositoryId && updates.contentMarkdown !== undefined) {
+    await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, { artifactId });
+  }
 }
 
 async function deleteArtifactInternal(ctx: MutationCtx, artifactId: Id<"artifacts">): Promise<void> {
+  const chunks = await ctx.db
+    .query("artifactChunks")
+    .withIndex("by_artifactId_and_chunkIndex", (q) => q.eq("artifactId", artifactId))
+    .take(201);
+  for (const chunk of chunks) {
+    await ctx.db.delete(chunk._id);
+  }
   await ctx.db.delete(artifactId);
 }
 
@@ -220,6 +245,26 @@ export const deleteArtifact = internalMutation({
   handler: (ctx, args) => deleteArtifactInternal(ctx, args.artifactId),
 });
 
+export const markChunkingStatus = internalMutation({
+  args: {
+    artifactId: v.id("artifacts"),
+    status: v.union(v.literal("pending"), v.literal("indexed"), v.literal("failed")),
+    version: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const artifact = await ctx.db.get(args.artifactId);
+    if (!artifact || artifact.version !== args.version) {
+      return { patched: false };
+    }
+    await ctx.db.patch(args.artifactId, {
+      chunkingStatus: args.status,
+      lastChunkedAt: Date.now(),
+      lastChunkedVersion: args.version,
+    });
+    return { patched: true };
+  },
+});
+
 export const listByThread = internalQuery({
   args: { threadId: v.id("threads"), limit: v.optional(v.number()) },
   handler: (ctx, args) => listByThreadInternal(ctx, args.threadId, args.limit),
@@ -238,4 +283,26 @@ export const listByRepository = internalQuery({
 export const listByRepositoryAndKind = internalQuery({
   args: { repositoryId: v.id("repositories"), kind: artifactKindValidator, limit: v.optional(v.number()) },
   handler: (ctx, args) => listByRepositoryAndKindInternal(ctx, args.repositoryId, args.kind, args.limit),
+});
+
+export const listFailedArtifactsForReindex = internalQuery({
+  args: { cutoff: v.number(), limit: v.number() },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("artifacts")
+      .withIndex("by_chunkingStatus", (q) => q.eq("chunkingStatus", "failed"))
+      .take(Math.max(1, Math.floor(args.limit)));
+    return rows.filter((artifact) => (artifact.lastChunkedAt ?? 0) < args.cutoff && artifact.repositoryId);
+  },
+});
+
+export const listPendingArtifactsForReindex = internalQuery({
+  args: { limit: v.number() },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("artifacts")
+      .withIndex("by_chunkingStatus", (q) => q.eq("chunkingStatus", "pending"))
+      .take(Math.max(1, Math.floor(args.limit)));
+    return rows.filter((artifact) => artifact.repositoryId);
+  },
 });

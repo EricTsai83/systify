@@ -1,0 +1,162 @@
+"use node";
+
+import { openai } from "@ai-sdk/openai";
+import { embedMany } from "ai";
+import { v } from "convex/values";
+import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
+import { internalAction } from "./_generated/server";
+import {
+  chunkArtifactMarkdown,
+  DEFAULT_ARTIFACT_CHUNK_HARD_TOKEN_CAP,
+  DEFAULT_ARTIFACT_CHUNK_SOFT_TOKEN_CAP,
+} from "./lib/artifactChunking";
+import { logInfo, logWarn } from "./lib/observability";
+
+const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
+const DEFAULT_EMBEDDING_BATCH_SIZE = 100;
+const FAILED_INDEXING_RETRY_BACKOFF_MS = 30 * 60_000;
+const FAILED_INDEXING_RETRY_LIMIT = 50;
+const PENDING_INDEXING_BACKFILL_LIMIT = 20;
+
+export const reindexArtifact = internalAction({
+  args: { artifactId: v.id("artifacts") },
+  handler: async (ctx, args): Promise<{ indexed: boolean; chunks?: number; reason?: string }> => {
+    const artifact: Doc<"artifacts"> | null = await ctx.runQuery(internal.artifactStore.getArtifact, {
+      artifactId: args.artifactId,
+    });
+    if (!artifact || !artifact.repositoryId) {
+      return { indexed: false, reason: "missing_artifact_or_repository" as const };
+    }
+
+    const artifactVersion = artifact.version;
+    const chunks = chunkArtifactMarkdown(artifact.contentMarkdown, {
+      softTokenCap: readNumberEnv("ARTIFACT_CHUNK_SOFT_TOKEN_CAP", DEFAULT_ARTIFACT_CHUNK_SOFT_TOKEN_CAP),
+      hardTokenCap: readNumberEnv("ARTIFACT_CHUNK_HARD_TOKEN_CAP", DEFAULT_ARTIFACT_CHUNK_HARD_TOKEN_CAP),
+    });
+
+    await ctx.runMutation(internal.artifactStore.markChunkingStatus, {
+      artifactId: args.artifactId,
+      status: "pending",
+      version: artifactVersion,
+    });
+
+    const replaceResult: { replaced: boolean; count?: number; reason?: string } = await ctx.runMutation(
+      internal.artifactChunkStore.replaceChunksForArtifact,
+      {
+        artifactId: args.artifactId,
+        artifactVersion,
+        chunks: chunks.map(({ chunkIndex: _chunkIndex, ...chunk }) => chunk),
+      },
+    );
+    if (!replaceResult.replaced) {
+      await ctx.runMutation(internal.artifactStore.markChunkingStatus, {
+        artifactId: args.artifactId,
+        status: "failed",
+        version: artifactVersion,
+      });
+      return { indexed: false, reason: replaceResult.reason };
+    }
+
+    if (chunks.length === 0) {
+      await ctx.runMutation(internal.artifactStore.markChunkingStatus, {
+        artifactId: args.artifactId,
+        status: "indexed",
+        version: artifactVersion,
+      });
+      return { indexed: true, chunks: 0 };
+    }
+
+    try {
+      const embeddings = await embedArtifactChunks(chunks.map((chunk) => chunk.content));
+      await ctx.runMutation(internal.artifactChunkStore.batchSetEmbeddings, {
+        artifactId: args.artifactId,
+        artifactVersion,
+        embeddings: embeddings.map((embedding, chunkIndex) => ({ chunkIndex, embedding })),
+      });
+      await ctx.runMutation(internal.artifactStore.markChunkingStatus, {
+        artifactId: args.artifactId,
+        status: "indexed",
+        version: artifactVersion,
+      });
+      logInfo("artifactIndexing", "artifact_indexed", {
+        artifactId: args.artifactId,
+        artifactVersion,
+        chunks: chunks.length,
+      });
+      return { indexed: true, chunks: chunks.length };
+    } catch (error) {
+      await ctx.runMutation(internal.artifactStore.markChunkingStatus, {
+        artifactId: args.artifactId,
+        status: "failed",
+        version: artifactVersion,
+      });
+      logWarn("artifactIndexing", "embedding_failed", {
+        artifactId: args.artifactId,
+        artifactVersion,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { indexed: false, reason: "embedding_failed" as const };
+    }
+  },
+});
+
+export const retryFailedArtifactIndexing = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ scheduled: number }> => {
+    const cutoff = Date.now() - FAILED_INDEXING_RETRY_BACKOFF_MS;
+    const artifacts: Doc<"artifacts">[] = await ctx.runQuery(internal.artifactStore.listFailedArtifactsForReindex, {
+      cutoff,
+      limit: FAILED_INDEXING_RETRY_LIMIT,
+    });
+    for (const artifact of artifacts) {
+      await ctx.runAction(internal.artifactIndexing.reindexArtifact, { artifactId: artifact._id });
+    }
+    return { scheduled: artifacts.length };
+  },
+});
+
+export const backfillPendingArtifactChunks = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ scheduled: number; done: boolean }> => {
+    const artifacts: Doc<"artifacts">[] = await ctx.runQuery(internal.artifactStore.listPendingArtifactsForReindex, {
+      limit: PENDING_INDEXING_BACKFILL_LIMIT,
+    });
+    for (const artifact of artifacts) {
+      await ctx.runAction(internal.artifactIndexing.reindexArtifact, { artifactId: artifact._id });
+    }
+    if (artifacts.length === PENDING_INDEXING_BACKFILL_LIMIT) {
+      await ctx.scheduler.runAfter(0, internal.artifactIndexing.backfillPendingArtifactChunks, {});
+    }
+    return { scheduled: artifacts.length, done: artifacts.length < PENDING_INDEXING_BACKFILL_LIMIT };
+  },
+});
+
+async function embedArtifactChunks(values: string[]): Promise<number[][]> {
+  const modelName = process.env.ARTIFACT_EMBEDDING_MODEL ?? DEFAULT_EMBEDDING_MODEL;
+  const batchSize = readNumberEnv("ARTIFACT_EMBEDDING_BATCH_SIZE", DEFAULT_EMBEDDING_BATCH_SIZE);
+  const embeddings: number[][] = [];
+  for (let index = 0; index < values.length; index += batchSize) {
+    const batch = values.slice(index, index + batchSize);
+    const result = await embedMany({
+      model: openai.embedding(modelName),
+      values: batch,
+    });
+    embeddings.push(...result.embeddings);
+    logInfo("artifactIndexing", "embedding_batch_completed", {
+      model: modelName,
+      batchSize: batch.length,
+      tokens: result.usage.tokens,
+    });
+  }
+  return embeddings;
+}
+
+function readNumberEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) {
+    return fallback;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}

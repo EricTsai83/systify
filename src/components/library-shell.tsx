@@ -3,6 +3,7 @@ import { useQuery } from "convex/react";
 import { FolderIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
+import { LibraryAskPanel } from "@/components/library-ask-panel";
 import { LibraryEditor } from "@/components/library-editor";
 import { LibraryTabs } from "@/components/library-tabs";
 import { LibraryTree } from "@/components/library-tree";
@@ -13,7 +14,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { useLibraryShortcuts } from "@/hooks/use-library-shortcuts";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
 import type { MarkdownHeading } from "@/lib/markdown-headings";
-import type { ArtifactId, RepositoryId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -51,10 +52,18 @@ export function LibraryShell({
    * overview placeholder for that state.
    */
   activeArtifactId,
+  isAskOpen,
+  askThreadId,
+  onOpenAsk,
+  onAskThreadCreated,
 }: {
   workspaceId: WorkspaceId;
   repositoryId: RepositoryId;
   activeArtifactId: ArtifactId | null;
+  isAskOpen: boolean;
+  askThreadId: ThreadId | null;
+  onOpenAsk: () => void;
+  onAskThreadCreated: (threadId: ThreadId) => void;
 }) {
   // Pull the workspace's full artifact list once: powers the tree, the
   // tab strip's title resolution, and the quick-open dialog. The query
@@ -150,6 +159,9 @@ export function LibraryShell({
           <Button type="button" variant="ghost" size="sm" className="gap-1.5" onClick={() => setIsTreeOpenMobile(true)}>
             <FolderIcon size={13} weight="duotone" /> Folders
           </Button>
+          <Button type="button" variant="outline" size="sm" onClick={onOpenAsk}>
+            Ask
+          </Button>
         </div>
 
         <LibraryTabs
@@ -160,6 +172,12 @@ export function LibraryShell({
           onClose={tabs.closeTab}
           onReorder={tabs.reorderTabs}
         />
+
+        <div className="hidden justify-end border-b border-border bg-background/60 px-4 py-2 lg:flex">
+          <Button type="button" variant="outline" size="sm" onClick={onOpenAsk}>
+            Ask Library
+          </Button>
+        </div>
 
         {tabs.activeArtifactId ? (
           <LibraryEditor ref={editorScrollRef} artifactId={tabs.activeArtifactId} onHeadingsChange={setHeadings} />
@@ -173,6 +191,16 @@ export function LibraryShell({
         <div className="hidden xl:block">
           <MinimapPanel headings={headings} scrollContainerRef={editorScrollRef} />
         </div>
+      ) : null}
+
+      {isAskOpen ? (
+        <LibraryAskPanel
+          workspaceId={workspaceId}
+          threadId={askThreadId}
+          activeArtifactId={tabs.activeArtifactId}
+          onThreadCreated={onAskThreadCreated}
+          onSelectArtifact={tabs.openTab}
+        />
       ) : null}
 
       {/* Mobile tree sheet */}

@@ -7,6 +7,7 @@ import type { ExtendedChatMode } from "./prompting";
 
 export type ReplyContext = {
   ownerTokenIdentifier: string;
+  workspaceId?: Id<"workspaces">;
   /**
    * Effective mode for this reply, anchored to the queued user message:
    * `userMessage.mode ?? thread.mode`. Anchoring to the specific queued
@@ -26,6 +27,7 @@ export type ReplyContext = {
    * repository-backed, but generation keeps them tool-free.
    */
   mode: ExtendedChatMode;
+  repositoryId?: Id<"repositories">;
   repositorySummary?: string;
   readmeSummary?: string;
   architectureSummary?: string;
@@ -37,6 +39,18 @@ export type ReplyContext = {
    * the frontend resolve `[A#]` tokens back to specific artifact rows.
    */
   artifacts: Array<{ id: Id<"artifacts">; title: string; summary: string; contentMarkdown: string }>;
+  artifactChunks?: Array<{
+    chunkId: Id<"artifactChunks">;
+    artifactId: Id<"artifacts">;
+    artifactTitle: string;
+    artifactKind: Doc<"artifacts">["kind"];
+    headingPath: string[];
+    content: string;
+    lexicalScore: number;
+    semanticScore: number;
+    rrfScore: number;
+  }>;
+  artifactContext?: Id<"artifacts">[];
   chunks: Array<{ path: string; summary: string; content: string }>;
   messages: Array<{ id: Id<"messages">; role: "user" | "assistant" | "system" | "tool"; content: string }>;
   /**
@@ -272,12 +286,16 @@ export const getReplyContext = internalQuery({
     if (!thread.repositoryId || effectiveMode === "discuss") {
       return {
         ownerTokenIdentifier: thread.ownerTokenIdentifier,
+        workspaceId: thread.workspaceId,
         mode: effectiveMode,
+        repositoryId: undefined,
         repositorySummary: undefined,
         readmeSummary: undefined,
         architectureSummary: undefined,
         sourceRepoFullName: undefined,
         artifacts: [],
+        artifactChunks: [],
+        artifactContext: thread.artifactContext,
         chunks: [],
         messages: messages.map((message) => ({
           id: message._id,
@@ -347,7 +365,9 @@ export const getReplyContext = internalQuery({
 
     return {
       ownerTokenIdentifier: repository.ownerTokenIdentifier,
+      workspaceId: thread.workspaceId,
       mode: effectiveMode,
+      repositoryId: repository._id,
       repositorySummary: repository.summary,
       readmeSummary: repository.readmeSummary,
       architectureSummary: repository.architectureSummary,
@@ -358,6 +378,8 @@ export const getReplyContext = internalQuery({
         summary: artifact.summary,
         contentMarkdown: artifact.contentMarkdown,
       })),
+      artifactChunks: [],
+      artifactContext: thread.artifactContext,
       chunks,
       messages: messages.map((message) => ({
         id: message._id,

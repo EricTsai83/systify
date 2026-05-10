@@ -93,3 +93,11 @@ export const startArtifactBackfill = internalMutation({
     return { scheduled: true };
   },
 });
+
+export const backfillArtifactChunks = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    await ctx.scheduler.runAfter(0, internal.artifactIndexing.backfillPendingArtifactChunks, {});
+    return { scheduled: true };
+  },
+});
