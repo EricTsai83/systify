@@ -541,7 +541,14 @@ describe("rate limits and interactive job guards", () => {
         })
         .catch((caughtError) => caughtError);
 
-      expectStructuredError(error, "SANDBOX_DAILY_CAP_EXCEEDED", "sandboxCostUsdPerUserDaily");
+      // chat.sendMessage throws via assertServiceModeEligible → throwIfDisabled.
+      // Structured shape: { code: "sandbox_user_cap_exceeded", mode: "lab",
+      // message, retryAfterMs }. The bucket / capUsd fields stay on
+      // assertSandboxDailyCostBudget's own throws (still tested below) but
+      // are not part of the eligibility module's contract.
+      const data = typeof error?.data === "string" ? JSON.parse(error.data) : error?.data;
+      expect(data).toMatchObject({ code: "sandbox_user_cap_exceeded", mode: "lab" });
+      expect(data.retryAfterMs).toEqual(expect.any(Number));
       // No job, message, or stream rows should be created when the
       // pre-check rejects — the failure must happen *before* any
       // side-effecting writes.
@@ -603,7 +610,9 @@ describe("rate limits and interactive job guards", () => {
         })
         .catch((caughtError) => caughtError);
 
-      expectStructuredError(error, "SANDBOX_WORKSPACE_DAILY_CAP_EXCEEDED", "sandboxCostUsdPerWorkspaceDaily");
+      const data = typeof error?.data === "string" ? JSON.parse(error.data) : error?.data;
+      expect(data).toMatchObject({ code: "sandbox_workspace_cap_exceeded", mode: "lab" });
+      expect(data.retryAfterMs).toEqual(expect.any(Number));
     });
 
     test("finalizeAssistantReply settles real costUsd into the daily-cap bucket (sandbox mode)", async () => {

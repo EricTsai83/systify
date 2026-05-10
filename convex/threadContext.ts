@@ -8,11 +8,9 @@ import {
   DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
   DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED,
   resolveChatModes,
-  resolveServiceModes,
   type ChatModeResolution,
   type ChatModeSandboxStatus,
   type SandboxCostCapGate,
-  type ServiceModeResolution,
 } from "./chatModeResolver";
 import { getSandboxFeatureGate } from "./lib/sandboxFeatureFlag";
 import {
@@ -243,77 +241,5 @@ export const getThreadContextInternal = internalQuery({
       return null;
     }
     return enrichThreadContext(ctx, thread, thread.ownerTokenIdentifier);
-  },
-});
-
-/**
- * Three-mode restructure — resolve the (Discuss / Library / Lab) service
- * modes available for a workspace. Drives the vertical service-mode
- * switcher in the workspace shell sidebar.
- *
- * Distinct from {@link getThreadContext} because the answer is
- * workspace-shaped (not thread-shaped) — switching threads inside the
- * same workspace must not invalidate the switcher's query subscription.
- *
- * Returns `null` when:
- *   - the workspace doesn't exist or the viewer doesn't own it; or
- *   - the workspace exists but the viewer can't currently use any mode
- *     beyond Discuss (frontend defaults to discuss-only without a
- *     subscription).
- */
-export type WorkspaceServiceModes = ServiceModeResolution & {
-  hasAttachedRepo: boolean;
-  hasAtLeastOneArtifact: boolean;
-};
-
-export const getWorkspaceServiceModes = query({
-  args: { workspaceId: v.id("workspaces") },
-  handler: async (ctx, args): Promise<WorkspaceServiceModes | null> => {
-    const identity = await requireViewerIdentity(ctx);
-    const workspace = await ctx.db.get(args.workspaceId);
-    if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      return null;
-    }
-
-    let attachedRepository: Doc<"repositories"> | null = null;
-    let sandboxModeStatus: SandboxModeStatus | null = null;
-    let hasAtLeastOneArtifact = false;
-
-    if (workspace.repositoryId) {
-      attachedRepository = await ctx.db.get(workspace.repositoryId);
-      if (attachedRepository) {
-        // One-row probe via the repo index — cheaper than `.collect()` and
-        // still answers the binary "is there any artifact?" question.
-        const probe = await ctx.db
-          .query("artifacts")
-          .withIndex("by_repositoryId", (q) => q.eq("repositoryId", workspace.repositoryId!))
-          .take(1);
-        hasAtLeastOneArtifact = probe.length > 0;
-        const sandbox = attachedRepository.latestSandboxId
-          ? await ctx.db.get(attachedRepository.latestSandboxId)
-          : null;
-        sandboxModeStatus = getSandboxModeStatus(sandbox);
-      }
-    }
-
-    let costGate: SandboxCostCapGate = { enabled: true };
-    if (attachedRepository !== null) {
-      const { gate } = await computeSandboxCostBudgets(ctx, identity.tokenIdentifier, args.workspaceId);
-      costGate = gate;
-    }
-
-    const resolution = resolveServiceModes(
-      attachedRepository !== null,
-      hasAtLeastOneArtifact,
-      toChatModeSandboxStatus(sandboxModeStatus),
-      getSandboxFeatureGate(identity.tokenIdentifier),
-      costGate,
-    );
-
-    return {
-      ...resolution,
-      hasAttachedRepo: attachedRepository !== null,
-      hasAtLeastOneArtifact,
-    };
   },
 });

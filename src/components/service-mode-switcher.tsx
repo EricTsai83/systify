@@ -6,9 +6,13 @@ import { discussPath, labPath, libraryPath } from "@/route-paths";
 import type { ServiceMode, WorkspaceId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+interface ServiceModeDisabledLike {
+  message: string;
+}
+
 interface ServiceModeAvailability {
   availableServiceModes: ReadonlyArray<ServiceMode>;
-  disabledReasons: Partial<Record<ServiceMode, string>>;
+  disabledReasons: Partial<Record<ServiceMode, ServiceModeDisabledLike>>;
 }
 
 const SERVICE_MODE_ENTRIES: ReadonlyArray<{
@@ -96,7 +100,7 @@ export function ServiceModeSwitcher({
         >
           {SERVICE_MODE_ENTRIES.map((entry) => {
             const isAvailable = availability ? availability.availableServiceModes.includes(entry.value) : true;
-            const tooltip = !isAvailable ? availability?.disabledReasons[entry.value] : entry.caption;
+            const tooltip = !isAvailable ? availability?.disabledReasons[entry.value]?.message : entry.caption;
             const Icon = entry.icon;
             return (
               <Tooltip key={entry.value}>

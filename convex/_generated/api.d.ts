@@ -71,6 +71,7 @@ import type * as migrations from "../migrations.js";
 import type * as ops from "../ops.js";
 import type * as opsNode from "../opsNode.js";
 import type * as repositories from "../repositories.js";
+import type * as serviceModeEligibility from "../serviceModeEligibility.js";
 import type * as threadContext from "../threadContext.js";
 import type * as userPreferences from "../userPreferences.js";
 import type * as workspaces from "../workspaces.js";
@@ -145,6 +146,7 @@ declare const fullApi: ApiFromModules<{
   ops: typeof ops;
   opsNode: typeof opsNode;
   repositories: typeof repositories;
+  serviceModeEligibility: typeof serviceModeEligibility;
   threadContext: typeof threadContext;
   userPreferences: typeof userPreferences;
   workspaces: typeof workspaces;
