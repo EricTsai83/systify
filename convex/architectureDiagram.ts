@@ -3,7 +3,7 @@ import type { Doc } from "./_generated/dataModel";
 import { mutation, type MutationCtx } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
 import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
-import { validateParentPresence } from "./artifactStore";
+import { createArtifactInMutation } from "./artifactStore";
 import {
   generateArchitectureDiagram,
   type DiagramDepth,
@@ -74,14 +74,7 @@ export const requestArchitectureDiagram = mutation({
 
     const result = generateArchitectureDiagram(snapshot, args.depth as DiagramDepth);
 
-    // Belt-and-braces: the schema makes both parents optional, so re-run the
-    // store-level invariant check before bypassing it via direct insert. We
-    // intentionally do not route through `internal.artifactStore.createArtifact`
-    // because that would force a separate transaction; the validation helper
-    // is the single source of truth for the rule.
-    validateParentPresence(args.threadId, repository._id);
-
-    const artifactId = await ctx.db.insert("artifacts", {
+    const artifactId = await createArtifactInMutation(ctx, {
       threadId: args.threadId,
       repositoryId: repository._id,
       ownerTokenIdentifier: identity.tokenIdentifier,
@@ -90,7 +83,6 @@ export const requestArchitectureDiagram = mutation({
       summary: result.summary,
       contentMarkdown: result.mermaid,
       source: "heuristic",
-      version: 1,
       folderId: args.folderId,
     });
 

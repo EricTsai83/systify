@@ -55,25 +55,23 @@ export interface ThreadContext {
 }
 
 /**
- * Maps the sandbox table status enum onto the ChatModeResolver's input domain.
- *
- * The sandbox table tracks provider-level lifecycle (`stopped`, `archived`, ...)
- * but the resolver only cares about whether sandbox mode is available right now.
- * Both `stopped` and `archived` collapse to `expired` for resolver purposes —
- * they are not currently usable but the user can re-provision a sandbox.
+ * Maps the centralized sandbox availability result onto the legacy
+ * ChatModeResolver input domain. This keeps TTL, missing remote id/path, and
+ * provider status semantics in `lib/sandboxAvailability` instead of duplicating
+ * them across UI capability queries.
  */
-function toChatModeSandboxStatus(status: SandboxTableStatus | null): ChatModeSandboxStatus {
-  if (!status) {
-    return "none";
-  }
-  switch (status) {
-    case "ready":
-    case "provisioning":
-    case "failed":
-      return status;
-    case "stopped":
-    case "archived":
+function toChatModeSandboxStatus(status: SandboxModeStatus | null): ChatModeSandboxStatus {
+  switch (status?.reasonCode ?? "missing_sandbox") {
+    case "available":
+      return "ready";
+    case "sandbox_provisioning":
+      return "provisioning";
+    case "sandbox_expired":
       return "expired";
+    case "sandbox_unavailable":
+      return "failed";
+    case "missing_sandbox":
+      return "none";
   }
 }
 
@@ -191,7 +189,7 @@ async function enrichThreadContext(
 
   const chatModes = resolveChatModes(
     attachedRepository !== null,
-    toChatModeSandboxStatus(sandboxStatus),
+    toChatModeSandboxStatus(sandboxModeStatus),
     getSandboxFeatureGate(viewerTokenIdentifier),
     costGate,
   );
@@ -278,7 +276,7 @@ export const getWorkspaceServiceModes = query({
     }
 
     let attachedRepository: Doc<"repositories"> | null = null;
-    let sandboxStatus: SandboxTableStatus | null = null;
+    let sandboxModeStatus: SandboxModeStatus | null = null;
     let hasAtLeastOneArtifact = false;
 
     if (workspace.repositoryId) {
@@ -291,10 +289,10 @@ export const getWorkspaceServiceModes = query({
           .withIndex("by_repositoryId", (q) => q.eq("repositoryId", workspace.repositoryId!))
           .take(1);
         hasAtLeastOneArtifact = probe.length > 0;
-        if (attachedRepository.latestSandboxId) {
-          const sandbox = await ctx.db.get(attachedRepository.latestSandboxId);
-          sandboxStatus = sandbox?.status ?? null;
-        }
+        const sandbox = attachedRepository.latestSandboxId
+          ? await ctx.db.get(attachedRepository.latestSandboxId)
+          : null;
+        sandboxModeStatus = getSandboxModeStatus(sandbox);
       }
     }
 
@@ -307,7 +305,7 @@ export const getWorkspaceServiceModes = query({
     const resolution = resolveServiceModes(
       attachedRepository !== null,
       hasAtLeastOneArtifact,
-      toChatModeSandboxStatus(sandboxStatus),
+      toChatModeSandboxStatus(sandboxModeStatus),
       getSandboxFeatureGate(identity.tokenIdentifier),
       costGate,
     );

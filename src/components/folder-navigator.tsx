@@ -36,12 +36,10 @@ import {
   type FolderTreeNode,
 } from "@/lib/artifact-folders";
 import { formatArtifactKind } from "@/lib/operations";
-import type { ArtifactFreshness, ArtifactId, FolderId, RepositoryId } from "@/lib/types";
+import type { ArtifactId, ArtifactListItem, FolderId, RepositoryId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type NavigatorArtifact = Doc<"artifacts"> & {
-  freshness?: ArtifactFreshness;
-};
+type NavigatorArtifact = ArtifactListItem;
 
 const EMPTY_ARTIFACTS: NavigatorArtifact[] = [];
 

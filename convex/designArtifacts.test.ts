@@ -118,7 +118,7 @@ describe("design artifacts phase 4", () => {
         threadId,
         subsystem: "billing pipeline",
       }),
-    ).rejects.toThrow("sandbox to be in 'ready' state");
+    ).rejects.toThrow("sandbox is still provisioning");
 
     const jobs = await t.run(
       async (ctx) =>

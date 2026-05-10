@@ -21,11 +21,9 @@ import { cn } from "@/lib/utils";
  * the scrolling viewport so the minimap can observe scroll events
  * directly without prop-drilling another callback.
  *
- * Architecture vs. {@link ArtifactReader}: the legacy Reader is the
- * standalone `/w/:wid/a/:aid` surface (kept for one release cycle as
- * a redirect target). LibraryEditor is the in-shell variant — no back
- * button, no folder sheet (the shell already mounts the tree), and
- * scrolling is observable to the minimap via the forwarded ref.
+ * LibraryEditor is the canonical long-form artifact surface: no back button,
+ * no folder sheet (the shell already mounts the tree), and scrolling is
+ * observable to the minimap via the forwarded ref.
  */
 export const LibraryEditor = forwardRef<
   HTMLDivElement,

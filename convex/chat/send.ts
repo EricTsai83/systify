@@ -15,6 +15,7 @@ import {
   isLeaseActive,
   throwOperationAlreadyInProgress,
 } from "../lib/rateLimit";
+import { getSandboxAvailability } from "../lib/sandboxAvailability";
 import { getSandboxFeatureGate } from "../lib/sandboxFeatureFlag";
 
 async function getActiveChatJobForThread(ctx: MutationCtx, threadId: Id<"threads">, now: number) {
@@ -106,8 +107,9 @@ export const sendMessage = mutation({
       // can't narrow across the `||` without restating it.
       const repo = repository!;
       const sandbox = repo.latestSandboxId ? await ctx.db.get(repo.latestSandboxId) : null;
-      if (!sandbox || sandbox.status !== "ready") {
-        throw new Error("'sandbox' mode requires the repository's sandbox to be in 'ready' state.");
+      const sandboxAvailability = getSandboxAvailability(sandbox);
+      if (!sandboxAvailability.available) {
+        throw new Error(sandboxAvailability.message ?? "Lab requires an available sandbox.");
       }
     }
 

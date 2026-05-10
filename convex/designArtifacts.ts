@@ -13,6 +13,7 @@ import {
   isLeaseActive,
   throwOperationAlreadyInProgress,
 } from "./lib/rateLimit";
+import { getSandboxAvailability } from "./lib/sandboxAvailability";
 import { createOpaqueErrorId } from "./lib/observability";
 import { completeRunningJob, failRunningJob, failStaleActiveJob, markQueuedJobRunning } from "./jobLifecycle";
 
@@ -119,8 +120,9 @@ export const requestFailureModeAnalysis = mutation({
     }
 
     const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
-    if (!sandbox || sandbox.status !== "ready") {
-      throw new Error("Failure mode analysis requires the repository's sandbox to be in 'ready' state.");
+    const sandboxAvailability = getSandboxAvailability(sandbox);
+    if (!sandboxAvailability.available || !sandbox) {
+      throw new Error(sandboxAvailability.message ?? "Failure mode analysis requires an available sandbox.");
     }
 
     const now = Date.now();
@@ -181,8 +183,9 @@ export const getFailureModeContext = internalQuery({
       throw new Error("Repository not found.");
     }
     const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
-    if (!sandbox || sandbox.status !== "ready") {
-      throw new Error("Failure mode analysis requires a sandbox in 'ready' state.");
+    const sandboxAvailability = getSandboxAvailability(sandbox);
+    if (!sandboxAvailability.available || !sandbox) {
+      throw new Error(sandboxAvailability.message ?? "Failure mode analysis requires an available sandbox.");
     }
 
     return {

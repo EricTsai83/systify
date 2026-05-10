@@ -19,11 +19,6 @@ async function loadArchiveRoute() {
   return { Component: module.ArchivePage };
 }
 
-async function loadArtifactReaderRoute() {
-  const module = await import("@/pages/artifact-reader");
-  return { Component: module.ArtifactReaderPage };
-}
-
 /**
  * Three-mode restructure — lazy loaders for the new top-level service
  * modes. Each route mounts its own shell so the mode the user is in maps
@@ -71,10 +66,6 @@ const protectedRoutes: RouteObject[] = [
   // round-trip required to know which repo's chrome to render. PRD #19 user
   // story 25 ("stable, shareable URLs for design threads").
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceThread, lazy: loadChatRoute },
-  // `/w/:workspaceId/a/:artifactId` is the legacy Artifact Reader. Three-
-  // mode restructure points new entries at `/w/:wid/library/a/:aid`;
-  // this route stays for one release cycle so old bookmarks resolve.
-  { path: PROTECTED_ROUTE_SEGMENTS.workspaceArtifact, lazy: loadArtifactReaderRoute },
   // Three-mode restructure — top-level service modes live under their own
   // path prefixes. The page components wrap the shared workspace chrome
   // (sidebar, top-bar) and pivot the inset content based on mode.

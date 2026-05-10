@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
 import { replaceArtifactFolder } from "./lib/artifactWrites";
@@ -37,6 +37,28 @@ function computeFreshness(args: {
   if (ageDays <= agingDays) return "fresh";
   if (ageDays <= staleDays) return "aging";
   return "stale";
+}
+
+function toArtifactMetadata(artifact: Doc<"artifacts">, freshness?: Freshness) {
+  return {
+    _id: artifact._id,
+    _creationTime: artifact._creationTime,
+    repositoryId: artifact.repositoryId,
+    threadId: artifact.threadId,
+    jobId: artifact.jobId,
+    kind: artifact.kind,
+    title: artifact.title,
+    summary: artifact.summary,
+    source: artifact.source,
+    version: artifact.version,
+    folderId: artifact.folderId,
+    producedIn: artifact.producedIn,
+    lastVerifiedAt: artifact.lastVerifiedAt,
+    chunkingStatus: artifact.chunkingStatus,
+    lastChunkedAt: artifact.lastChunkedAt,
+    lastChunkedVersion: artifact.lastChunkedVersion,
+    ...(freshness ? { freshness } : {}),
+  };
 }
 
 /**
@@ -145,6 +167,40 @@ export const listByRepositoryWithFreshness = query({
         now,
       }),
     }));
+  },
+});
+
+/**
+ * Metadata-only Library listing. Tree, tabs, and quick-open do not need the
+ * markdown body; keeping `contentMarkdown` out of this subscription avoids
+ * large read payloads and unnecessary invalidation when artifact bodies change.
+ */
+export const listMetadataByRepositoryWithFreshness = query({
+  args: { repositoryId: v.id("repositories") },
+  handler: async (ctx, args) => {
+    const identity = await requireViewerIdentity(ctx);
+    const repository = await ctx.db.get(args.repositoryId);
+    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      return [];
+    }
+
+    const now = Date.now();
+    const artifacts = await ctx.db
+      .query("artifacts")
+      .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
+      .order("desc")
+      .take(ARTIFACTS_PER_REPOSITORY_LIMIT);
+
+    return artifacts.map((artifact) =>
+      toArtifactMetadata(
+        artifact,
+        computeFreshness({
+          producedIn: artifact.producedIn,
+          lastVerifiedAt: artifact.lastVerifiedAt,
+          now,
+        }),
+      ),
+    );
   },
 });
 

@@ -41,12 +41,21 @@ export function getSandboxAvailability(
     };
   }
 
+  if (sandbox.status === "provisioning") {
+    return {
+      available: false,
+      reasonCode: "sandbox_provisioning",
+      message:
+        "A live sandbox is unavailable because the sandbox is still provisioning. Wait for the import to finish or sync the repository again.",
+    };
+  }
+
   // `archived` is a normal end-of-life state (Daytona auto-archives after the
   // configured idle interval) — treat it the same as a TTL-expired sandbox so
   // the UI surfaces it as a warning ("Sandbox expired") rather than a red
   // "Sandbox error", which is reserved for the genuine `failed` case above.
   // Mirrors the `archived → expired` collapse already in chatModeResolver.
-  if (sandbox.status === "archived" || now > sandbox.ttlExpiresAt) {
+  if (sandbox.status === "stopped" || sandbox.status === "archived" || now > sandbox.ttlExpiresAt) {
     return {
       available: false,
       reasonCode: "sandbox_expired",

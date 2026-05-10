@@ -1,6 +1,5 @@
 import { FolderNavigator } from "@/components/folder-navigator";
-import type { Doc } from "../../convex/_generated/dataModel";
-import type { ArtifactId, FolderId, RepositoryId } from "@/lib/types";
+import type { ArtifactId, ArtifactListItem, FolderId, RepositoryId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -27,7 +26,7 @@ export function LibraryTree({
   className,
 }: {
   repositoryId: RepositoryId;
-  artifacts?: ReadonlyArray<Doc<"artifacts">>;
+  artifacts?: ReadonlyArray<ArtifactListItem>;
   selectedArtifactId: ArtifactId | null;
   onSelectArtifact: (artifactId: ArtifactId) => void;
   onSelectFolder?: (folderId: FolderId | null) => void;

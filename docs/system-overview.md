@@ -6,10 +6,12 @@ This document describes the overall system boundaries of Systify. Its goal is to
 
 ## Product Positioning
 
-Systify is a repository-centered architecture analysis product. A user first authorizes repository access through a GitHub App, then the system imports the repository into a Daytona sandbox, extracts files and chunks, persists them into Convex, and finally offers two analysis experiences:
+Systify is a repository-centered architecture analysis product. A user first authorizes repository access through a GitHub App, then the system imports the repository into a Daytona sandbox, extracts files and chunks, persists them into Convex, and finally offers three service modes plus background analysis:
 
-- Chat with three selectable modes — `discuss` (no repo context, training-only), `docs` (grounded in design artifacts), and `sandbox` (grounded in the live sandbox source tree with integrated tools for reading files and running shell commands).
-- Deep analysis: a sandbox-backed background job that performs focused inspection directly against the sandboxed repository and writes a reusable `deep_analysis` artifact, which later `docs`/`sandbox` chat replies can cite.
+- Discuss: free-form, no repository grounding.
+- Library: read artifacts and ask questions over artifact chunks.
+- Lab: sandbox-backed work against the live source tree.
+- Deep analysis: a sandbox-backed background job that performs focused inspection directly against the sandboxed repository and writes a reusable `deep_analysis` artifact, which later Library Ask and Lab replies can cite.
 
 ## Main Runtime Boundaries
 
@@ -105,6 +107,7 @@ That means Convex simultaneously serves as the application database, application
 - `internal.chat.generation.generateAssistantReply` loads context and produces a reply either through OpenAI streaming or a heuristic fallback.
 - Durable chat history lives in `messages`, while active in-flight stream state lives in `messageStreams` and `messageStreamChunks`.
 - When provider usage is available, chat finalization also writes token counts to `messages` and `jobs`, plus an estimated job cost.
+- Library Ask retrieves artifact chunks from `artifactChunks`; Lab uses the repository sandbox through guarded tools.
 - Deep analysis creates a `deep_analysis` job and runs focused inspection against the sandbox.
 
 ### 4. GitHub integration
@@ -166,7 +169,7 @@ flowchart TD
 ### Trade-Offs
 
 - `RepositoryShell` still carries a large amount of UI orchestration even after the hook extraction, so frontend state boundaries remain fairly centralized.
-- Both chat and deep analysis depend on the quality of imported data and sandbox availability.
+- Library depends on artifact indexing quality; Lab and deep analysis depend on sandbox availability.
 - The system still relies mainly on table status fields plus the scheduler; only Daytona webhook handling currently uses an explicit inbox-and-projection pattern.
 
 ## Further Reading

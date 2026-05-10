@@ -4,13 +4,13 @@
 
 This document describes the two AI interaction paths currently available in Systify:
 
-- Chat — interactive Q&A with three selectable modes:
-  - `discuss` (UI label "General Chat") — training-only, no repo context
-  - `docs` (UI label "Design Docs") — answers grounded in design artifacts (ADRs, diagrams, deep analyses)
-  - `sandbox` (UI label "Sandbox") — answers grounded in the live sandbox source tree (tools wired in Plan 04 of the chat-modes rollout)
+- Chat — interactive Q&A through the current product modes:
+  - `discuss` — no repository context
+  - `ask` — Library Ask, grounded in artifact chunks
+  - `lab` — sandbox-backed answers grounded in the live source tree
 - Deep analysis — a sandbox-backed background job that produces a reusable `deep_analysis` artifact
 
-Both are repository-centered, but they depend on different data sources and execution models. Chat and deep analysis are also complementary: deep analysis writes artifacts that later `docs`/`sandbox` chat replies can cite.
+Both are repository-centered, but they depend on different data sources and execution models. Chat and deep analysis are also complementary: deep analysis writes artifacts that later Library Ask and Lab replies can cite.
 
 ## Differences Between the Two Paths
 
@@ -18,10 +18,10 @@ Both are repository-centered, but they depend on different data sources and exec
 | Capability               | Chat (per mode)                                                                                                                                | Deep analysis                               |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
 | Main entry point         | `chat.sendMessage`                                                                                                                             | `analysis.requestDeepAnalysis`              |
-| Primary data source      | `discuss`: none · `docs`: design `artifacts` only · `sandbox`: design `artifacts` + `repoChunks` + (Plan 04+) live sandbox tools               | live sandbox                                |
+| Primary data source      | `discuss`: none · `ask`: `artifactChunks` + artifact metadata · `lab`: live sandbox tools plus durable artifacts                             | live sandbox                                |
 | Execution location       | Convex action                                                                                                                                  | Convex Node action + Daytona                |
 | UI presentation          | stable history + active stream merge                                                                                                           | a new deep-analysis artifact plus job state |
-| Availability requirement | `discuss`: always · `docs`: repository has completed import · `sandbox`: repository has completed import **and** a usable sandbox              | repository has a usable sandbox             |
+| Availability requirement | `discuss`: always · `ask`: repository has artifacts and indexed chunks · `lab`: repository has a usable sandbox                                | repository has a usable sandbox             |
 
 
 ## Chat Flow
@@ -94,32 +94,32 @@ This allows the UI to immediately show a reply that is waiting to be generated.
 
 ### 3. Build the reply context
 
-`getReplyContext` assembles the reply context based on the **effective mode** for the reply (`latestUserMessage.mode ?? thread.mode`, exposed on `ReplyContext.mode`):
+`getReplyContext` assembles the reply context based on the effective mode for the reply (`latestUserMessage.mode ?? thread.mode`, exposed on `ReplyContext.mode`):
 
 - `discuss`: skips every repo-scoped lookup — returns empty `artifacts`, empty `chunks`, and no repo summaries. The early return is what makes `discuss` training-only by design even when the thread has a `repositoryId` attached.
-- `docs`: artifact-only retrieval — loads up to 12 design artifacts across the docs kinds (`architecture_diagram`, `adr`, `failure_mode_analysis`, `deep_analysis`, `architecture_overview`, `design_review`, `migration_plan`, `trade_off_matrix`, `capacity_estimate`). Indexed code chunks are intentionally skipped so docs answers cannot drift away from the user-produced design layer.
-- `sandbox`: artifacts from the latest import job plus recent `deep_analysis` artifacts, **and** `repoChunks` from the latest import for the chunk-selection step below.
+- `ask`: Library retrieval over `artifactChunks`, scoped to the active workspace and optional artifact context.
+- `lab`: sandbox-backed execution through guarded tools, with durable artifacts available as reusable context.
 
-In every mode, the context also includes recent conversation messages bounded by `MAX_CONTEXT_MESSAGES`. The chat pipeline never reads the raw repository directly — it reads the repository's already-processed knowledge layer (artifacts + chunks) and, in `sandbox` mode (Plan 04 onward), the live sandbox via the read-only `read_file` and `list_dir` tools plus the `run_shell` tool. Tool output is scrubbed for credential-shaped patterns before reaching the LLM. Tool response payloads also carry an audit signal in their `redactedTypes` field — a sorted, de-duplicated list of matched pattern slugs — so integrators can see what kinds of content were redacted without learning what (see `sandbox-mode-security-system-design.md` for full details). `run_shell` is available under sandbox mode and is gated by the `SANDBOX_MODE_ENABLED` flag, the per-viewer `SANDBOX_BETA_ALLOWLIST` (see `convex/lib/sandboxFeatureFlag.ts`), and the layered protections (deny list of destructive patterns, 32 KiB output cap, 60 s timeout, repo-pinned workdir) described in `docs/sandbox-mode-system-design.md` and `docs/sandbox-mode-security-system-design.md`.
+In every mode, the context also includes recent conversation messages bounded by `MAX_CONTEXT_MESSAGES`. Discuss skips repository data, Ask reads the processed artifact knowledge layer, and Lab can use the live sandbox via `read_file`, `list_dir`, and `run_shell`. Tool output is scrubbed for credential-shaped patterns before reaching the LLM. Tool response payloads also carry an audit signal in their `redactedTypes` field so integrators can see what kinds of content were redacted without learning the secret value.
 
-### 4. Select chunks (sandbox mode only)
+### 4. Retrieve grounding context
 
-Chunk selection runs only when the effective mode is `sandbox`. `discuss` returns no chunks because it skips repo context entirely; `docs` returns no chunks because it is artifact-only by design (so docs answers and sandbox answers stay non-overlapping).
+Chunk retrieval for Library Ask runs over `artifactChunks`. `discuss` returns no chunks because it skips repo context entirely; `lab` relies on sandbox tools for current-source claims and can cite durable artifacts when useful.
 
-In `sandbox` mode the pipeline uses a two-step retrieval flow:
+Library Ask uses a two-step retrieval flow:
 
 1. build a bounded candidate pool from the latest import snapshot
 2. rerank that candidate pool locally before building the prompt
 
 The candidate pool is assembled from:
 
-- baseline chunks from the head and tail of `by_importId_and_path_and_chunkIndex`
-- `repoChunks.search_summary` hits filtered by `importId`
-- `repoChunks.search_content` hits filtered by `importId`
+- lexical hits from `artifactChunks.search_content`
+- summary hits from `artifactChunks.search_summary`
+- vector hits from `artifactChunks.by_embedding` when embeddings are available
 
-This matters because query-aware retrieval must not break the import snapshot boundary. Search is therefore always scoped to `repository.latestImportId`, so old snapshots cannot leak back into chat context.
+This matters because Ask must stay scoped to the current workspace, repository, and optional artifact context. Old artifact chunk versions are replaced by the indexing pipeline rather than mixed into retrieval.
 
-This is not a full RAG ranking pipeline. It is a lightweight relevance selector whose main goals are:
+This is a bounded retrieval layer whose main goals are:
 
 - reducing prompt size
 - improving answer focus
@@ -131,7 +131,7 @@ If `OPENAI_API_KEY` exists, the system:
 
 - uses `streamText`
 - selects `OPENAI_MODEL` or falls back to `gpt-5.4-mini`
-- builds a **per-mode** system prompt via `buildSystemPrompt(replyContext.mode)` so the model receives a different contract per mode (`discuss` is told there is no repo and to refuse to fabricate "your codebase" references; `docs` is told design artifacts are the sole source of truth; `sandbox` is told tools are coming and to flag any claim it would normally verify with a tool call)
+- builds a per-mode system prompt via `buildSystemPrompt(replyContext.mode)` so the model receives a different contract per mode
 - builds a user prompt from artifacts, chunks, and the user question
 
 If `OPENAI_API_KEY` is absent, the system falls back to a heuristic answer so it can still produce a response based on indexed data.
@@ -164,9 +164,9 @@ When the flow completes, it updates:
 
 If an error occurs midstream, both the assistant message and the job are marked failed.
 
-### 7. Tool-call trace (sandbox mode only)
+### 7. Tool-call trace (Lab only)
 
-When the reply runs in `sandbox` mode and the AI SDK's `fullStream` surfaces `tool-call` / `tool-result` / `tool-error` events, the pipeline persists each event into a separate `messageToolCallEvents` table. This is the same hot/durable split that `messageStreamChunks` uses for text deltas (see `streaming-reply-optimization-system-design.md`):
+When the reply runs in Lab and the AI SDK's `fullStream` surfaces `tool-call` / `tool-result` / `tool-error` events, the pipeline persists each event into a separate `messageToolCallEvents` table. This is the same hot/durable split that `messageStreamChunks` uses for text deltas (see `streaming-reply-optimization-system-design.md`):
 
 1. `tool-call` arrives → `appendAssistantToolCallEvent` writes a `start` row keyed by the AI SDK's `toolCallId`
 2. matching `tool-result` or `tool-error` arrives → a paired `end` row is written with the redacted `outputSummary`
@@ -264,32 +264,32 @@ That means deep analysis output does not exist only at execution time. It become
 
 ## Sandbox Availability
 
-Two distinct surfaces depend on a live Daytona sandbox: the chat `sandbox` mode and the deep-analysis background job. Both gate themselves on the same sandbox state, but through separate code paths (`chatModeResolver.resolveChatModes` for chat, `requestDeepAnalysis` for analysis). If the sandbox:
+Two distinct surfaces depend on a live Daytona sandbox: Lab mode and the deep-analysis background job. Both gate themselves through `convex/lib/sandboxAvailability.ts`. If the sandbox:
 
 - has passed its TTL
 - is archived
 - has failed
 - is missing required remote path information
 
-then `sandbox` mode is removed from the chat mode selector (with a per-state tooltip surfaced through `disabledReasons`) and `requestDeepAnalysis` rejects new analysis requests.
+then Lab is unavailable and `requestDeepAnalysis` rejects new analysis requests.
 
-The frontend `ChatPanel` uses this state to tell the user to:
+The frontend uses this state to tell the user to:
 
 - sync the repository to provision a new sandbox, or
-- switch to `discuss` (training-only) or `docs` (artifact-grounded) for a degraded but still useful answer
+- switch to Discuss or Library for degraded but still useful work
 
 ## How The Two Pipelines Complement Each Other
 
 Chat and deep analysis are not mutually exclusive. They form layered capabilities:
 
-- Chat (`discuss` / `docs` / `sandbox`): fast, interactive, with cost and grounding scaling per mode
+- Chat (`discuss` / `ask` / `lab`): fast, interactive, with cost and grounding scaling per mode
 - Deep analysis: slower and sandbox-dependent, but able to add observations closer to the live repository state
 
-Artifacts produced by deep analysis flow back into later chat context (`docs` mode loads `deep_analysis` among its docs kinds, and `sandbox` mode also pulls them), so the overall system forms a cumulative knowledge loop.
+Artifacts produced by deep analysis flow back into later Library Ask and Lab context, so the overall system forms a cumulative knowledge loop.
 
 ## Known Limitations
 
-- `sandbox` mode is in private beta. Live tooling (`read_file`, `list_dir`, `run_shell`) is gated by the `SANDBOX_MODE_ENABLED` flag and an explicit per-viewer allowlist (`SANDBOX_BETA_ALLOWLIST`); see `convex/lib/sandboxFeatureFlag.ts`. Viewers outside the allowlist see the mode disabled with a tooltip explaining the beta status. `run_shell` is gated by a deny list of obviously-destructive patterns (`rm -rf /`, fork bombs, `mkfs`, `dd`, `sudo`, system shutdown, network pipe-to-shell), a 32 KiB combined-output cap, a 60 s ceiling on per-call timeout, and a workdir pinned inside the repository — see `docs/sandbox-mode-system-design.md` for the layered defenses and `docs/sandbox-mode-security-system-design.md` for the content boundary.
+- Lab tooling (`read_file`, `list_dir`, `run_shell`) is gated by the sandbox feature flag and per-viewer allowlist. `run_shell` is gated by a deny list of obviously destructive patterns, a 32 KiB output cap, a 60 s timeout ceiling, and a workdir pinned inside the repository.
 - Chat and deep analysis are both AI features, but their outputs and tracking models are still split between thread replies and artifacts.
 - Deep analysis is currently closer to focused file discovery plus a markdown report than to a full agentic repository-reasoning pipeline.
 

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { FolderIcon } from "@phosphor-icons/react";
-import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { LibraryAskPanel } from "@/components/library-ask-panel";
 import { LibraryEditor } from "@/components/library-editor";
@@ -14,7 +13,7 @@ import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/
 import { useLibraryShortcuts } from "@/hooks/use-library-shortcuts";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
 import type { MarkdownHeading } from "@/lib/markdown-headings";
-import type { ArtifactId, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, ArtifactListItem, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -71,12 +70,12 @@ export function LibraryShell({
   // tab strip's title resolution, and the quick-open dialog. The query
   // is bounded at 200 rows server-side; Phase 3 swaps the navigator for
   // a virtualized variant when artifacts.length > 50.
-  const allArtifacts = useQuery(api.artifacts.listByRepositoryWithFreshness, { repositoryId });
+  const allArtifacts = useQuery(api.artifacts.listMetadataByRepositoryWithFreshness, { repositoryId });
 
   const tabs = useLibraryTabs(workspaceId, activeArtifactId);
 
   const artifactsById = useMemo(() => {
-    const map = new Map<ArtifactId, Doc<"artifacts">>();
+    const map = new Map<ArtifactId, ArtifactListItem>();
     for (const artifact of allArtifacts ?? []) {
       map.set(artifact._id as ArtifactId, artifact);
     }

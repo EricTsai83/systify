@@ -15,6 +15,7 @@ import {
   markQueuedJobRunning,
   updateRunningJobProgress,
 } from "./jobLifecycle";
+import { createArtifactInMutation } from "./artifactStore";
 
 const REPOSITORY_DELETION_CANCEL_REASON =
   "Repository deletion is in progress. The import was cancelled before it could finish.";
@@ -506,15 +507,17 @@ export const persistImportHeader = internalMutation({
           contentMarkdown: artifact.contentMarkdown,
           source: artifact.source,
           version: 1,
+          producedIn: artifact.source === "sandbox" ? "lab" : "legacy",
+          lastVerifiedAt: artifact.source === "sandbox" ? Date.now() : undefined,
+          chunkingStatus: "pending",
         });
         continue;
       }
 
-      await ctx.db.insert("artifacts", {
+      await createArtifactInMutation(ctx, {
         repositoryId: state.repository._id,
         jobId: args.jobId,
         ownerTokenIdentifier: state.repository.ownerTokenIdentifier,
-        version: 1,
         ...artifact,
       });
     }

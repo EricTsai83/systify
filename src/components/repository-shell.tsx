@@ -28,7 +28,7 @@ import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import type { ArtifactId, RepositoryId, ThreadId, WorkspaceId, ChatMode, SandboxModeStatus } from "@/lib/types";
 import { toUserErrorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { DEFAULT_AUTHENTICATED_PATH, workspaceArtifactPath, workspacePath, workspaceThreadPath } from "@/route-paths";
+import { DEFAULT_AUTHENTICATED_PATH, libraryArtifactPath, workspacePath, workspaceThreadPath } from "@/route-paths";
 
 type RepositoryWorkspaceStatus = "initializing" | "no-repo" | "ready";
 const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
@@ -622,19 +622,15 @@ export function RepositoryShell({
   );
 
   /**
-   * Citation jump from chat (`[A#]` click) → Artifact Reader. Phase A's
-   * Reader is the canonical place to read long-form content, so we
-   * navigate directly to the dedicated route instead of scroll-and-
-   * highlight inside the right rail. The panel itself now exposes the same
-   * affordance through `onOpenInReader`, so all artifact "open" entry
-   * points converge on one navigation path.
+   * Citation jump from chat (`[A#]` click) → Library Read. The Library route
+   * is the single canonical long-form artifact surface.
    */
   const handleSelectArtifact = useCallback(
     (artifactId: ArtifactId) => {
       if (workspaceStatus === "no-repo" || currentWorkspaceId === null) {
         return;
       }
-      void navigate(workspaceArtifactPath(currentWorkspaceId, artifactId));
+      void navigate(libraryArtifactPath(currentWorkspaceId, artifactId));
     },
     [navigate, currentWorkspaceId, workspaceStatus],
   );
