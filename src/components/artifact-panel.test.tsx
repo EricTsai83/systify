@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { ArtifactPanel } from "./artifact-panel";
-import type { ThreadId } from "@/lib/types";
+import type { RepositoryId, ThreadId } from "@/lib/types";
 
 const { useMutationMock, useQueryMock } = vi.hoisted(() => ({
   useMutationMock: vi.fn(),
@@ -20,7 +20,16 @@ vi.mock("@/components/mermaid-renderer", () => ({
   MermaidRenderer: ({ source }: { source: string }) => <pre>{source}</pre>,
 }));
 
+vi.mock("@/components/folder-navigator", () => ({
+  FolderNavigator: () => <div data-testid="folder-navigator-stub" />,
+}));
+
+vi.mock("@/components/folder-picker", () => ({
+  FolderPicker: () => <div data-testid="folder-picker-stub" />,
+}));
+
 const threadId = "thread_1" as ThreadId;
+const repositoryId = "repo_1" as RepositoryId;
 
 const artifact = {
   _id: "artifact_1",
@@ -33,14 +42,11 @@ const artifact = {
   version: 1,
 } as unknown as Doc<"artifacts">;
 
-let artifactsResult: Doc<"artifacts">[] | undefined;
-
 beforeEach(() => {
-  artifactsResult = [];
   useMutationMock.mockReset();
   useQueryMock.mockReset();
   useMutationMock.mockReturnValue(vi.fn());
-  useQueryMock.mockImplementation((_query: unknown, args: unknown) => (args === "skip" ? undefined : artifactsResult));
+  useQueryMock.mockReturnValue([]);
 });
 
 afterEach(() => {
@@ -48,63 +54,56 @@ afterEach(() => {
 });
 
 describe("ArtifactPanel action defaults", () => {
-  test("skips artifacts subscription when panel is hidden", () => {
+  test("hides folder navigator when panel is not visible", () => {
     render(
       <ArtifactPanel
         threadId={threadId}
-        repositoryArtifacts={[artifact]}
+        repositoryId={repositoryId}
+        artifacts={[artifact]}
         hasAttachedRepository
         sandboxModeStatus={{ reasonCode: "available", message: null }}
         isVisible={false}
       />,
     );
 
-    expect(useQueryMock).toHaveBeenCalledWith(expect.anything(), "skip");
-    expect(screen.queryByText("System overview")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("folder-navigator-stub")).not.toBeInTheDocument();
   });
 
-  test("re-subscribes and renders latest artifacts when panel is reopened", () => {
-    const { rerender } = render(
+  test("renders folder navigator when panel is visible with a repo", () => {
+    render(
       <ArtifactPanel
         threadId={threadId}
-        hasAttachedRepository
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
-        isVisible={false}
-      />,
-    );
-
-    expect(useQueryMock).toHaveBeenLastCalledWith(expect.anything(), "skip");
-    expect(screen.queryByText("System overview")).not.toBeInTheDocument();
-
-    artifactsResult = [artifact];
-    rerender(
-      <ArtifactPanel
-        threadId={threadId}
+        repositoryId={repositoryId}
+        artifacts={[artifact]}
         hasAttachedRepository
         sandboxModeStatus={{ reasonCode: "available", message: null }}
         isVisible
       />,
     );
 
-    expect(useQueryMock).toHaveBeenLastCalledWith(expect.anything(), { threadId });
-    expect(screen.getByText("System overview")).toBeInTheDocument();
+    expect(screen.getByTestId("folder-navigator-stub")).toBeInTheDocument();
   });
 
-  test("defaults open when no artifacts, then auto-collapses once artifacts exist", () => {
-    const { rerender } = render(
+  test("defaults the Generate panel open when there are no artifacts", () => {
+    render(
       <ArtifactPanel
         threadId={threadId}
+        repositoryId={repositoryId}
+        artifacts={[]}
         hasAttachedRepository
         sandboxModeStatus={{ reasonCode: "available", message: null }}
       />,
     );
 
     expect(screen.getByRole("button", { name: /generate architecture diagram/i })).toBeInTheDocument();
+  });
 
-    artifactsResult = [artifact];
-    rerender(
+  test("auto-collapses the Generate panel once artifacts exist", () => {
+    render(
       <ArtifactPanel
         threadId={threadId}
+        repositoryId={repositoryId}
+        artifacts={[artifact]}
         hasAttachedRepository
         sandboxModeStatus={{ reasonCode: "available", message: null }}
       />,
@@ -117,6 +116,8 @@ describe("ArtifactPanel action defaults", () => {
     const { rerender } = render(
       <ArtifactPanel
         threadId={threadId}
+        repositoryId={repositoryId}
+        artifacts={[]}
         hasAttachedRepository
         sandboxModeStatus={{ reasonCode: "available", message: null }}
       />,
@@ -125,10 +126,11 @@ describe("ArtifactPanel action defaults", () => {
     fireEvent.click(screen.getByRole("button", { name: /\+ generate/i }));
     expect(screen.queryByRole("button", { name: /generate architecture diagram/i })).not.toBeInTheDocument();
 
-    artifactsResult = [artifact];
     rerender(
       <ArtifactPanel
         threadId={threadId}
+        repositoryId={repositoryId}
+        artifacts={[artifact]}
         hasAttachedRepository
         sandboxModeStatus={{ reasonCode: "available", message: null }}
       />,
@@ -138,10 +140,11 @@ describe("ArtifactPanel action defaults", () => {
     fireEvent.click(screen.getByRole("button", { name: /\+ generate/i }));
     expect(screen.getByRole("button", { name: /generate architecture diagram/i })).toBeInTheDocument();
 
-    artifactsResult = [];
     rerender(
       <ArtifactPanel
         threadId={threadId}
+        repositoryId={repositoryId}
+        artifacts={[]}
         hasAttachedRepository
         sandboxModeStatus={{ reasonCode: "available", message: null }}
       />,

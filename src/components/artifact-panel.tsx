@@ -1,113 +1,91 @@
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { memo, useState, type ReactNode } from "react";
+import { useMutation } from "convex/react";
 import {
   CaretDownIcon,
-  ChatCircleDotsIcon,
   CircleNotchIcon,
   FileTextIcon,
   GraphIcon,
-  LightningIcon,
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
-import { ArtifactMarkdown } from "@/components/artifact-markdown";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MermaidRenderer } from "@/components/mermaid-renderer";
+import { FolderNavigator } from "@/components/folder-navigator";
+import { FolderPicker } from "@/components/folder-picker";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
-import { formatArtifactKind } from "@/lib/operations";
-import type { ArtifactId, SandboxModeStatus, ThreadId } from "@/lib/types";
+import type { ArtifactId, FolderId, RepositoryId, SandboxModeStatus, ThreadId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const EMPTY_ARTIFACTS: Doc<"artifacts">[] = [];
 
 /**
- * ArtifactPanel — slot-based right-side panel showing artifacts attached to
- * the current thread (PRD #19, "Modules to build (frontend)" + US 23 "all
- * artifacts associated with a thread visible in a side panel, so that I can
- * review them without leaving the conversation").
+ * ArtifactPanel — right-rail surface for browsing and launching artifacts
+ * from the chat. Two sections, top to bottom:
  *
- * The panel is *kind-dispatched*: each artifact's `kind` selects a renderer.
- * `architecture_diagram` renders through MermaidRenderer; everything else
- * runs through `ArtifactMarkdown` so the structured ADR / failure-mode /
- * deep-analysis bodies render with proper headings, lists, and code blocks
- * instead of a wall of preformatted text. Adding a fully bespoke renderer
- * for a new kind (e.g. a tabular trade-off matrix) is a one-line change in
- * `kindRenderers`.
+ *   1. **Generate** — collapsible launcher for thread-scoped artifact
+ *      kinds (architecture diagram, ADR, failure-mode analysis). Visible
+ *      operation entry points, not buried in a kebab menu, so the user
+ *      doesn't have to remember they exist. Generation is gated on having
+ *      a repository attached to the thread; CTA captions explain the
+ *      missing precondition rather than silently disabling.
  *
- * The panel also hosts the generation CTAs for thread-scoped artifacts —
- * architecture diagrams, ADRs, failure-mode analyses — exposed as a
- * collapsible "+ Generate" affordance so they read as visible operation
- * launchers (per Surface 2 in the redesign doc), not as hidden three-dot
- * menu items. Generation is gated on having a repository attached to the
- * thread; the CTA captions explain the missing precondition rather than
- * silently disabling.
+ *   2. **Folder navigator** — tree view replacing the original "Repository
+ *      intelligence + Thread outputs" flat sections. Drives every artifact
+ *      navigation in the panel: clicking a folder expands it; clicking
+ *      an artifact opens the standalone Reader (`/w/:wid/a/:aid`) via
+ *      `onOpenInReader`, which is where the long-form reading experience
+ *      lives.
+ *
+ * The "Ask about this artifact" pathway is preserved through the
+ * navigator's row affordances so chat workflows that pre-filled the input
+ * with a templated question continue to work after this refactor.
  */
 export function ArtifactPanel({
   threadId,
-  repositoryArtifacts = EMPTY_ARTIFACTS,
+  repositoryId,
+  artifacts = EMPTY_ARTIFACTS,
   hasAttachedRepository,
   sandboxModeStatus,
   isVisible = true,
   className,
-  selectedArtifactId = null,
-  onArtifactSelectionConsumed,
-  onAskAboutArtifact,
+  onOpenInReader,
+  onSelectFolder,
+  selectedFolderId,
 }: {
   threadId: ThreadId | null;
-  repositoryArtifacts?: Doc<"artifacts">[];
+  /**
+   * Repository the panel's folder tree is scoped to. `null` for the no-repo
+   * Home workspace — the navigator hides itself in that state.
+   */
+  repositoryId: RepositoryId | null;
+  /**
+   * Repo-level artifacts surfaced through `getRepositoryDetail`. Passed in
+   * (rather than queried inside the panel) so the desktop chat surface can
+   * keep its single subscription and the panel doesn't have to refetch.
+   */
+  artifacts?: ReadonlyArray<Doc<"artifacts">>;
   hasAttachedRepository: boolean;
   sandboxModeStatus: SandboxModeStatus | null;
   isVisible?: boolean;
   className?: string;
   /**
-   * Plan 02: when a `[A#]` citation in chat is clicked, the shell publishes
-   * the resolved artifact id here. This panel scrolls the matching card
-   * into view and applies a transient highlight so the user sees where
-   * they landed; once consumed, the panel calls
-   * `onArtifactSelectionConsumed` so subsequent clicks on the same `[A#]`
-   * retrigger the scroll/highlight cycle.
+   * Open an artifact in the standalone Reader. This is the only navigation
+   * entry the panel exposes for artifact rows — citation clicks from chat
+   * route through the same callback, so the Reader is the canonical place
+   * to read long-form content.
    */
-  selectedArtifactId?: ArtifactId | null;
-  onArtifactSelectionConsumed?: () => void;
-  /**
-   * Surface 4 follow-up: pre-fills the chat input with a templated question
-   * about the artifact and (when available) flips the chat mode to `docs` so
-   * the artifact is in scope for the next reply. The panel is otherwise
-   * read-only — wiring through a callback keeps the chat / mode state owned
-   * by the workspace shell rather than duplicated here.
-   */
-  onAskAboutArtifact?: (artifact: Doc<"artifacts">) => void;
+  onOpenInReader?: (artifactId: ArtifactId) => void;
+  onSelectFolder?: (folderId: FolderId | null) => void;
+  selectedFolderId?: FolderId | null;
 }) {
-  // Query is scoped to thread-level artifacts. A diagram is double-parented
-  // (thread + repo), so it shows up here. ADRs and failure modes will follow
-  // the same pattern in Phase 4.
-  const artifacts = useQuery(api.artifacts.listByThread, threadId && isVisible ? { threadId } : "skip");
-  const artifactCount = artifacts?.length ?? 0;
-  // Filter the repository artifacts down to the two kinds that meaningfully
-  // travel across threads. Memoize so unrelated panel re-renders (citation
-  // jumps, sheet open / close) don't re-allocate on every paint — at small
-  // sizes the cost is trivial, but the filter result also feeds the card
-  // list whose identity stability is what `memo()` on `ArtifactCard`
-  // depends on.
-  const repositoryIntelligence = useMemo(
-    () =>
-      isVisible
-        ? repositoryArtifacts.filter((artifact) => artifact.kind === "manifest" || artifact.kind === "deep_analysis")
-        : EMPTY_ARTIFACTS,
-    [isVisible, repositoryArtifacts],
-  );
   const [actionsOpen, setActionsOpen] = useState<boolean | null>(null);
-  const effectiveActionsOpen = actionsOpen ?? artifactCount === 0;
+  const effectiveActionsOpen = actionsOpen ?? artifacts.length === 0;
 
   if (!isVisible) {
     return (
@@ -131,6 +109,7 @@ export function ArtifactPanel({
         <div className="border-b border-border px-4 py-3">
           <ArtifactActions
             threadId={threadId}
+            repositoryId={repositoryId}
             hasAttachedRepository={hasAttachedRepository}
             sandboxModeStatus={sandboxModeStatus}
             open={effectiveActionsOpen}
@@ -139,57 +118,23 @@ export function ArtifactPanel({
         </div>
       ) : null}
 
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="flex flex-col gap-3 p-4">
-          {repositoryIntelligence.length > 0 ? (
-            <ArtifactSection title="Repository intelligence" description="Reusable context available across this repo.">
-              {repositoryIntelligence.map((artifact: Doc<"artifacts">) => (
-                <ArtifactCard
-                  key={artifact._id}
-                  artifact={artifact}
-                  isSelected={selectedArtifactId === artifact._id}
-                  onSelectionConsumed={onArtifactSelectionConsumed}
-                  onAskAboutArtifact={onAskAboutArtifact}
-                  featured={artifact.kind === "deep_analysis"}
-                />
-              ))}
-            </ArtifactSection>
-          ) : hasAttachedRepository ? (
-            <EmptyArtifactState
-              title="No repository intelligence yet"
-              description="Run deep analysis to create reusable context for future conversations."
-            />
-          ) : null}
-
-          <ArtifactSection title="Thread outputs" description="Artifacts produced from this conversation.">
-            {threadId === null ? (
-              <EmptyArtifactState
-                title="No conversation selected"
-                description="Pick or start a thread to see its artifacts here."
-              />
-            ) : artifacts === undefined ? null : artifacts.length === 0 ? (
-              <EmptyArtifactState
-                title="No artifacts yet"
-                description={
-                  hasAttachedRepository
-                    ? "Generate an architecture diagram to start grounding this thread."
-                    : "Attach a repository to start producing diagrams, ADRs, and failure-mode analyses."
-                }
-              />
-            ) : (
-              artifacts.map((artifact: Doc<"artifacts">) => (
-                <ArtifactCard
-                  key={artifact._id}
-                  artifact={artifact}
-                  isSelected={selectedArtifactId === artifact._id}
-                  onSelectionConsumed={onArtifactSelectionConsumed}
-                  onAskAboutArtifact={onAskAboutArtifact}
-                />
-              ))
-            )}
-          </ArtifactSection>
+      {repositoryId ? (
+        <FolderNavigator
+          repositoryId={repositoryId}
+          artifacts={artifacts}
+          selectedFolderId={selectedFolderId ?? null}
+          onSelectArtifact={(artifactId) => onOpenInReader?.(artifactId)}
+          onOpenInReader={onOpenInReader}
+          onSelectFolder={onSelectFolder}
+          className="border-l-0"
+        />
+      ) : (
+        <div className="flex flex-1 items-center justify-center px-4 py-8">
+          <p className="text-center text-[12px] text-muted-foreground">
+            Attach a repository to start producing diagrams, ADRs, and failure-mode analyses.
+          </p>
         </div>
-      </ScrollArea>
+      )}
     </aside>
   );
 }
@@ -199,7 +144,7 @@ function ArtifactPanelHeader() {
     <div className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
       <div className="flex flex-col">
         <span className="text-sm font-semibold">Results</span>
-        <span className="text-[11px] text-muted-foreground">Repository intelligence and conversation outputs.</span>
+        <span className="text-[11px] text-muted-foreground">Repository intelligence and folders.</span>
       </div>
     </div>
   );
@@ -207,12 +152,14 @@ function ArtifactPanelHeader() {
 
 function ArtifactActions({
   threadId,
+  repositoryId,
   hasAttachedRepository,
   sandboxModeStatus,
   open,
   onOpenChange,
 }: {
   threadId: ThreadId;
+  repositoryId: RepositoryId | null;
   hasAttachedRepository: boolean;
   sandboxModeStatus: SandboxModeStatus | null;
   open: boolean;
@@ -220,6 +167,11 @@ function ArtifactActions({
 }) {
   const [subsystem, setSubsystem] = useState("");
   const [activeTab, setActiveTab] = useState<"diagram" | "adr" | "failure">("diagram");
+  // One folder pick shared across the three generation tabs — the user
+  // typically wants the same destination for whatever they're generating
+  // next. Resets to root on every panel mount so previous picks don't
+  // silently follow the user into a new context.
+  const [folderId, setFolderId] = useState<FolderId | null>(null);
   const captureAdr = useMutation(api.designArtifacts.captureAdr);
   const requestFailureMode = useMutation(api.designArtifacts.requestFailureModeAnalysis);
   const requestDiagram = useMutation(api.architectureDiagram.requestArchitectureDiagram);
@@ -232,7 +184,7 @@ function ArtifactActions({
   const [isDiagramPending, runDiagram] = useAsyncCallback(async () => {
     setDiagramError(null);
     try {
-      await requestDiagram({ threadId, depth: "module" });
+      await requestDiagram({ threadId, depth: "module", folderId: folderId ?? undefined });
     } catch (err) {
       setDiagramError(toUserErrorMessage(err, "Failed to generate architecture diagram."));
     }
@@ -241,7 +193,7 @@ function ArtifactActions({
   const [isAdrPending, runAdr] = useAsyncCallback(async () => {
     setAdrError(null);
     try {
-      await captureAdr({ threadId });
+      await captureAdr({ threadId, folderId: folderId ?? undefined });
     } catch (err) {
       setAdrError(toUserErrorMessage(err, "Failed to capture ADR."));
     }
@@ -253,6 +205,7 @@ function ArtifactActions({
       await requestFailureMode({
         threadId,
         subsystem: subsystem.trim(),
+        folderId: folderId ?? undefined,
       });
     } catch (err) {
       setFailureError(toUserErrorMessage(err, "Failed to start failure mode analysis."));
@@ -272,6 +225,17 @@ function ArtifactActions({
         </Button>
       </CollapsibleTrigger>
       <CollapsibleContent className="pt-1">
+        <div className="mb-2 flex flex-col gap-1">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Folder</span>
+          <FolderPicker
+            repositoryId={repositoryId}
+            value={folderId}
+            onChange={setFolderId}
+            hint="Where should this artifact land? Pick a feature folder or leave at Repository root."
+            disabled={!hasAttachedRepository}
+            className="w-full"
+          />
+        </div>
         <Tabs
           value={activeTab}
           onValueChange={(value) => setActiveTab(value as "diagram" | "adr" | "failure")}
@@ -359,7 +323,7 @@ function ArtifactActions({
   );
 }
 
-function ActionRow({
+const ActionRow = memo(function ActionRow({
   pending,
   onClick,
   caption,
@@ -404,217 +368,22 @@ function ActionRow({
           </>
         )}
       </Button>
-      <p className="text-[11px] text-muted-foreground">{caption}</p>
-      <InlineError error={error} onClear={onDismiss} />
-    </div>
-  );
-}
-
-function InlineError({ error, onClear }: { error: string | null; onClear: () => void }) {
-  if (!error) {
-    return null;
-  }
-  return (
-    <Alert
-      variant="destructive"
-      className="grid-cols-[auto_1fr_auto] items-start gap-2 rounded-md border-destructive/40 bg-destructive/5 p-2 text-[11px]"
-    >
-      <WarningCircleIcon size={12} weight="bold" className="mt-0.5 shrink-0" />
-      <AlertDescription className="text-[11px] text-destructive">{error}</AlertDescription>
-      <Button
-        type="button"
-        onClick={onClear}
-        variant="ghost"
-        size="icon"
-        className="size-4 text-destructive/70 hover:text-destructive"
-        aria-label="Dismiss error"
-      >
-        <XIcon size={10} weight="bold" />
-      </Button>
-    </Alert>
-  );
-}
-
-const ArtifactCard = memo(function ArtifactCard({
-  artifact,
-  isSelected = false,
-  onSelectionConsumed,
-  onAskAboutArtifact,
-  featured = false,
-}: {
-  artifact: Doc<"artifacts">;
-  isSelected?: boolean;
-  onSelectionConsumed?: () => void;
-  onAskAboutArtifact?: (artifact: Doc<"artifacts">) => void;
-  featured?: boolean;
-}) {
-  const cardRef = useRef<HTMLDivElement | null>(null);
-  // Scroll-into-view + transient highlight when the citation jump targets
-  // this card. We clear the selection (`onSelectionConsumed`) once the
-  // highlight animation is over so a follow-up click on the same `[A#]`
-  // re-runs the effect — without this, React would see the same id and
-  // skip the effect on the next click.
-  useEffect(() => {
-    if (!isSelected) {
-      return;
-    }
-    cardRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    const timer = window.setTimeout(() => {
-      onSelectionConsumed?.();
-    }, 1600);
-    return () => window.clearTimeout(timer);
-  }, [isSelected, onSelectionConsumed]);
-
-  // The shared `Card` component is not a `forwardRef`, so we hang the
-  // scroll-target ref off a thin wrapper. The wrapper is also where the
-  // transient highlight ring lives; keeping it on the wrapper rather than
-  // the Card means the ring sits *outside* the card border, which reads
-  // visually as "this card is the one I jumped to".
-  return (
-    <div
-      ref={cardRef}
-      data-testid={`artifact-card-${artifact._id}`}
-      className={cn(
-        "rounded-md transition-shadow duration-300",
-        isSelected ? "ring-2 ring-primary ring-offset-2 ring-offset-background" : "",
-      )}
-    >
-      <Card className={cn(featured ? "border-primary/40 bg-primary/5" : "")}>
-        <CardHeader className="flex flex-row items-start justify-between gap-3 p-3 pb-2">
-          <div className="min-w-0">
-            <h4 className="truncate text-sm font-semibold">{artifact.title}</h4>
-            <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{artifact.summary}</p>
-          </div>
-          <Badge variant="outline" className="shrink-0 text-[10px] uppercase">
-            {formatArtifactKind(artifact.kind)}
-          </Badge>
-        </CardHeader>
-        <CardContent className="p-3 pt-0">
-          <ArtifactBody artifact={artifact} />
-          <ArtifactFooter artifact={artifact} onAskAboutArtifact={onAskAboutArtifact} />
-        </CardContent>
-      </Card>
+      <p className="text-[11px] leading-snug text-muted-foreground">{caption}</p>
+      {error ? (
+        <Alert variant="destructive" className="relative pr-9 text-[11px]">
+          <AlertDescription className="text-[11px]">{error}</AlertDescription>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="absolute right-1 top-1 h-6 w-6"
+            onClick={onDismiss}
+            aria-label="Dismiss error"
+          >
+            <XIcon size={10} weight="bold" />
+          </Button>
+        </Alert>
+      ) : null}
     </div>
   );
 });
-
-function ArtifactSection({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children: ReactNode;
-}) {
-  return (
-    <section className="flex flex-col gap-2">
-      <div>
-        <h3 className="text-[11px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{title}</h3>
-        <p className="text-[11px] text-muted-foreground/80">{description}</p>
-      </div>
-      {children}
-    </section>
-  );
-}
-
-/**
- * Kind dispatcher. New artifact kinds with bespoke renderers (e.g. a tabular
- * trade-off matrix) plug in here so the rest of the panel — header, footer,
- * scrolling — stays uniform across kinds. Everything not in the map falls
- * through to the structured-markdown renderer below, which handles ADR,
- * failure-mode, deep-analysis, and the manifest's repository overview without
- * any per-kind code.
- */
-function ArtifactBody({ artifact }: { artifact: Doc<"artifacts"> }) {
-  const renderer = kindRenderers[artifact.kind] ?? defaultArtifactRenderer;
-  return renderer(artifact);
-}
-
-const kindRenderers: Partial<Record<Doc<"artifacts">["kind"], (artifact: Doc<"artifacts">) => ReactNode>> = {
-  architecture_diagram: (artifact) => <MermaidRenderer source={artifact.contentMarkdown} />,
-};
-
-function defaultArtifactRenderer(artifact: Doc<"artifacts">): ReactNode {
-  return <ArtifactMarkdown source={artifact.contentMarkdown} />;
-}
-
-function ArtifactFooter({
-  artifact,
-  onAskAboutArtifact,
-}: {
-  artifact: Doc<"artifacts">;
-  onAskAboutArtifact?: (artifact: Doc<"artifacts">) => void;
-}) {
-  return (
-    <div className="mt-2 flex flex-col gap-2">
-      {onAskAboutArtifact ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          className="h-7 justify-start gap-1.5 px-2 text-[11px] text-primary hover:text-primary"
-          onClick={() => onAskAboutArtifact(artifact)}
-        >
-          <ChatCircleDotsIcon size={12} weight="bold" />
-          Ask about this {askLabelForKind(artifact.kind)}
-        </Button>
-      ) : null}
-      <div className="flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
-        <span className="inline-flex items-center gap-1">
-          <LightningIcon size={10} weight="bold" />
-          <span className="capitalize">{artifact.source}</span>
-          <span aria-hidden="true">·</span>
-          <span>v{artifact.version}</span>
-        </span>
-        <time
-          dateTime={new Date(artifact._creationTime).toISOString()}
-          className="tabular-nums"
-          title={new Date(artifact._creationTime).toLocaleString()}
-        >
-          {formatRelative(artifact._creationTime)}
-        </time>
-      </div>
-    </div>
-  );
-}
-
-function askLabelForKind(kind: Doc<"artifacts">["kind"]): string {
-  switch (kind) {
-    case "deep_analysis":
-      return "analysis";
-    case "architecture_diagram":
-      return "diagram";
-    case "adr":
-      return "ADR";
-    case "failure_mode_analysis":
-      return "failure mode";
-    case "manifest":
-      return "repository";
-    default:
-      return "artifact";
-  }
-}
-
-function formatRelative(timestamp: number) {
-  const diffMs = Date.now() - timestamp;
-  const seconds = Math.floor(diffMs / 1000);
-  if (seconds < 60) return `${Math.max(seconds, 1)}s ago`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function EmptyArtifactState({ title, description }: { title: string; description: string }) {
-  return (
-    <Card className="animate-in border-dashed bg-background/50 text-center fade-in duration-300 ease-out">
-      <CardHeader className="gap-1 p-4">
-        <CardTitle className="text-xs">{title}</CardTitle>
-        <CardDescription className="text-[11px]">{description}</CardDescription>
-      </CardHeader>
-    </Card>
-  );
-}

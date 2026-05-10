@@ -1,5 +1,5 @@
 import { matchRoutes, type RouteObject } from "react-router-dom";
-import type { ThreadId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, ThreadId, WorkspaceId } from "@/lib/types";
 
 export const LANDING_PATH = "/";
 export const AUTH_CALLBACK_ROUTE_SEGMENT = "callback";
@@ -14,6 +14,8 @@ export const AUTH_CALLBACK_PATH = `/${AUTH_CALLBACK_ROUTE_SEGMENT}` as const;
  *                                        that workspace's most recent thread
  *                                        (or empty state if there are none)
  *   /w/:workspaceId/t/:threadId        — canonical thread URL
+ *   /w/:workspaceId/a/:artifactId      — Artifact Reader (folder-aware deep
+ *                                        reader for a single artifact)
  *   /archive                           — archived repos listing
  *
  * Workspace is the schema's primary container: every thread either lives in a
@@ -34,6 +36,7 @@ export const PROTECTED_ROUTE_SEGMENTS = {
   chat: "chat",
   workspace: "w/:workspaceId",
   workspaceThread: "w/:workspaceId/t/:threadId",
+  workspaceArtifact: "w/:workspaceId/a/:artifactId",
   archive: "archive",
 } as const;
 
@@ -56,6 +59,16 @@ export function workspacePath(workspaceId: WorkspaceId): string {
  */
 export function workspaceThreadPath(workspaceId: WorkspaceId, threadId: ThreadId): string {
   return `/w/${workspaceId}/t/${threadId}`;
+}
+
+/**
+ * Build a `/w/:workspaceId/a/:artifactId` URL — Artifact Reader entry. The
+ * workspace id is encoded so the Reader can paint workspace chrome
+ * (sidebar, breadcrumb, repo title) without a `getRepositoryDetail`
+ * round-trip; the artifact id resolves the document body itself.
+ */
+export function workspaceArtifactPath(workspaceId: WorkspaceId, artifactId: ArtifactId): string {
+  return `/w/${workspaceId}/a/${artifactId}`;
 }
 
 const protectedReturnRoutes: RouteObject[] = Object.values(PROTECTED_ROUTE_SEGMENTS).map((path) => ({

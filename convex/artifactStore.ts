@@ -16,6 +16,13 @@ interface CreateArtifactArgs {
   summary: string;
   contentMarkdown: string;
   source: ArtifactSource;
+  /**
+   * Optional folder placement (Phase A folder model). Passed through to
+   * the row insert as-is — caller validates folder ownership / repo
+   * scope before invoking this helper because the helper doesn't have
+   * easy access to the viewer identity.
+   */
+  folderId?: Id<"artifactFolders">;
 }
 
 /**
@@ -49,6 +56,7 @@ async function createArtifactInternal(ctx: MutationCtx, args: CreateArtifactArgs
     contentMarkdown: args.contentMarkdown,
     source: args.source,
     version: 1,
+    folderId: args.folderId,
   });
 }
 
@@ -170,6 +178,7 @@ export const createArtifact = internalMutation({
     summary: v.string(),
     contentMarkdown: v.string(),
     source: artifactSourceValidator,
+    folderId: v.optional(v.id("artifactFolders")),
   },
   handler: (ctx, args) => createArtifactInternal(ctx, args),
 });

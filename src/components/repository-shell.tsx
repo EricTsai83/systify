@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import type { OptimisticLocalStore } from "convex/browser";
 import { ArchiveIcon, ArrowCounterClockwiseIcon } from "@phosphor-icons/react";
-import type { Doc, Id } from "../../convex/_generated/dataModel";
+import type { Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
@@ -28,7 +28,7 @@ import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import type { ArtifactId, RepositoryId, ThreadId, WorkspaceId, ChatMode, SandboxModeStatus } from "@/lib/types";
 import { toUserErrorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
-import { DEFAULT_AUTHENTICATED_PATH, workspacePath, workspaceThreadPath } from "@/route-paths";
+import { DEFAULT_AUTHENTICATED_PATH, workspaceArtifactPath, workspacePath, workspaceThreadPath } from "@/route-paths";
 
 type RepositoryWorkspaceStatus = "initializing" | "no-repo" | "ready";
 const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
@@ -388,19 +388,6 @@ export function RepositoryShell({
   // State is intentionally not persisted — a returning user lands on a clean
   // chat surface instead of a panel they didn't open.
   const [isStatusOpen, setIsStatusOpen] = useState(false);
-  /**
-   * Plan 02 inline citation jump target. Set by `handleSelectArtifact` when
-   * the user clicks an `[A#]` citation in an assistant reply; the artifact
-   * panel watches this for "scroll into view + transient highlight". See
-   * `handleSelectArtifact` below for the full transient highlight lifecycle
-   * (open the panel, publish the id, and the consume callback that clears
-   * this back to `null` once the highlight animation settles). This value
-   * persists across thread changes — `handleSelectThread` does not clear it
-   * and there is no `urlThreadId`-keyed cleanup effect. That persistence is
-   * acceptable because the artifact panel filters cards by thread, so a
-   * stale id from another thread matches no card and renders nothing.
-   */
-  const [selectedArtifactId, setSelectedArtifactId] = useState<ArtifactId | null>(null);
   const [isDesktopLayout, setIsDesktopLayout] = useState<boolean>(() => {
     if (typeof window === "undefined") {
       return true;
@@ -635,77 +622,21 @@ export function RepositoryShell({
   );
 
   /**
-   * Plan 02: a user clicked `[A#]` inside an assistant reply. Force the
-   * artifact panel open (desktop) or the drawer open (mobile) so the target
-   * is visible, then publish the id so the panel can scroll/highlight. The
-   * panel calls `onArtifactSelectionConsumed` itself once the highlight
-   * animation settles, which clears `selectedArtifactId` back to `null` —
-   * we don't need a thread-change cleanup effect because the artifact
-   * panel filters by thread, so a stale id from another thread simply
-   * matches no card and renders nothing.
+   * Citation jump from chat (`[A#]` click) → Artifact Reader. Phase A's
+   * Reader is the canonical place to read long-form content, so we
+   * navigate directly to the dedicated route instead of scroll-and-
+   * highlight inside the right rail. The panel itself now exposes the same
+   * affordance through `onOpenInReader`, so all artifact "open" entry
+   * points converge on one navigation path.
    */
   const handleSelectArtifact = useCallback(
     (artifactId: ArtifactId) => {
-      if (workspaceStatus === "no-repo") {
+      if (workspaceStatus === "no-repo" || currentWorkspaceId === null) {
         return;
       }
-      if (isDesktopLayout) {
-        setIsArtifactPanelOpen(true);
-        // Close the status popover too so a "View analysis" click from inside
-        // the panel hands the focus over to the artifact card without leaving
-        // a stale overlay floating above the chat. This is no longer mutual
-        // exclusion (status doesn't compete with the artifact column for
-        // space) — it's a deliberate handoff for the citation/CTA flow.
-        setIsStatusOpen(false);
-      } else {
-        setIsArtifactSheetOpen(true);
-        setIsStatusOpen(false);
-      }
-      setSelectedArtifactId(artifactId);
+      void navigate(workspaceArtifactPath(currentWorkspaceId, artifactId));
     },
-    [isDesktopLayout, setIsArtifactPanelOpen, workspaceStatus],
-  );
-
-  /**
-   * Stable handler the artifact panel calls once the highlight animation
-   * finishes. Must be referentially stable across renders: `ArtifactCard`'s
-   * scroll-into-view effect lists this callback in its dependency array, and
-   * a fresh inline arrow on every parent render would re-fire the effect on
-   * every re-render. That would re-trigger `scrollIntoView` and reschedule
-   * the 1.6s consume timer, so the selection ring could stay visible longer
-   * than intended after unrelated workspace updates.
-   */
-  const handleArtifactSelectionConsumed = useCallback(() => {
-    setSelectedArtifactId(null);
-  }, []);
-
-  /**
-   * Surface 4 follow-up: artifact card "Ask about this …" affordance. We
-   * pre-fill the chat input with a templated question so the user can edit
-   * before sending; if `docs` mode is available we flip there so the
-   * artifact is in scope for the next reply (docs mode auto-includes
-   * thread artifacts in the prompt). On mobile we close the artifact drawer
-   * so the chat input becomes visible — without that the user would tap
-   * the button and see nothing change because the drawer still covers the
-   * chat panel.
-   *
-   * If the user is mid-typing in the chat input, append the prompt rather
-   * than overwriting — silently discarding unsent text would feel like
-   * stolen work. We use `setChatInput` callback form so we read the latest
-   * value and never race a parallel update.
-   */
-  const handleAskAboutArtifact = useCallback(
-    (artifact: Doc<"artifacts">) => {
-      const prompt = `Tell me more about "${artifact.title}". What should I take away from it, and what follow-ups should we consider?`;
-      setChatInput((current) => (current.trim() ? `${current.trimEnd()}\n\n${prompt}` : prompt));
-      if (capabilities.availableModes.includes("docs")) {
-        setPickedChatMode({ threadId: urlThreadId, mode: "docs" });
-      }
-      if (!isDesktopLayout) {
-        setIsArtifactSheetOpen(false);
-      }
-    },
-    [capabilities.availableModes, isDesktopLayout, urlThreadId],
+    [navigate, currentWorkspaceId, workspaceStatus],
   );
 
   useEffect(() => {
@@ -1064,14 +995,13 @@ export function RepositoryShell({
                   <div className="h-full xl:w-96 2xl:w-[28rem]">
                     <ArtifactPanel
                       threadId={effectiveSelectedThreadId}
-                      repositoryArtifacts={repoDetail?.artifacts}
+                      repositoryId={effectiveSelectedRepositoryId}
+                      artifacts={repoDetail?.artifacts}
                       hasAttachedRepository={capabilities.attachedRepository !== null}
                       sandboxModeStatus={capabilities.sandboxModeStatus}
                       isVisible={isArtifactPanelHydrated && isArtifactPanelOpen}
                       className="flex h-full w-full border-l-0"
-                      selectedArtifactId={selectedArtifactId}
-                      onArtifactSelectionConsumed={handleArtifactSelectionConsumed}
-                      onAskAboutArtifact={handleAskAboutArtifact}
+                      onOpenInReader={handleSelectArtifact}
                     />
                   </div>
                 </div>
@@ -1097,14 +1027,16 @@ export function RepositoryShell({
             <div className="flex min-h-0 flex-1 flex-col">
               <ArtifactPanel
                 threadId={effectiveSelectedThreadId}
-                repositoryArtifacts={repoDetail?.artifacts}
+                repositoryId={effectiveSelectedRepositoryId}
+                artifacts={repoDetail?.artifacts}
                 hasAttachedRepository={capabilities.attachedRepository !== null}
                 sandboxModeStatus={capabilities.sandboxModeStatus}
                 isVisible={isArtifactSheetOpen}
                 className="flex h-full w-full border-l-0"
-                selectedArtifactId={selectedArtifactId}
-                onArtifactSelectionConsumed={handleArtifactSelectionConsumed}
-                onAskAboutArtifact={handleAskAboutArtifact}
+                onOpenInReader={(artifactId) => {
+                  handleSelectArtifact(artifactId);
+                  setIsArtifactSheetOpen(false);
+                }}
               />
             </div>
           </DrawerContent>

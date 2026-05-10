@@ -23,6 +23,13 @@ export const captureAdr = mutation({
   args: {
     threadId: v.id("threads"),
     title: v.optional(v.string()),
+    /**
+     * Optional folder placement. Surfaced by the panel's "+ Generate / ADR"
+     * tab so a captured decision can land directly in its feature folder
+     * (or stay at Repository root with `null`/undefined). Server validates
+     * the folder belongs to the same repository as the thread's repo.
+     */
+    folderId: v.optional(v.id("artifactFolders")),
   },
   handler: async (ctx, args): Promise<{ artifactId: Id<"artifacts"> }> => {
     const identity = await requireViewerIdentity(ctx);
@@ -37,6 +44,16 @@ export const captureAdr = mutation({
         notFoundMessage: "Thread not found.",
         archivedMessage: "This repository is archived. Restore it to capture artifacts.",
       });
+    }
+
+    if (args.folderId) {
+      const folder = await ctx.db.get(args.folderId);
+      if (!folder || folder.ownerTokenIdentifier !== identity.tokenIdentifier) {
+        throw new Error("Folder not found.");
+      }
+      if (thread.repositoryId && folder.repositoryId !== thread.repositoryId) {
+        throw new Error("Cannot place an artifact in a folder from a different repository.");
+      }
     }
 
     const messages = await ctx.db
@@ -56,6 +73,7 @@ export const captureAdr = mutation({
       summary: adr.summary,
       contentMarkdown: adr.contentMarkdown,
       source: "heuristic",
+      folderId: args.folderId,
     });
 
     return { artifactId };
@@ -66,6 +84,13 @@ export const requestFailureModeAnalysis = mutation({
   args: {
     threadId: v.id("threads"),
     subsystem: v.string(),
+    /**
+     * Optional folder placement. Threaded through the scheduler →
+     * `runFailureModeAnalysis` action → `completeFailureModeAnalysis`
+     * mutation chain so the artifact lands in the right folder when the
+     * sandbox-backed job finishes (which can be many seconds later).
+     */
+    folderId: v.optional(v.id("artifactFolders")),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -82,6 +107,16 @@ export const requestFailureModeAnalysis = mutation({
       ownerTokenIdentifier: identity.tokenIdentifier,
       archivedMessage: "This repository is archived. Restore it to run failure-mode analysis.",
     });
+
+    if (args.folderId) {
+      const folder = await ctx.db.get(args.folderId);
+      if (!folder || folder.ownerTokenIdentifier !== identity.tokenIdentifier) {
+        throw new Error("Folder not found.");
+      }
+      if (folder.repositoryId !== repository._id) {
+        throw new Error("Cannot place an artifact in a folder from a different repository.");
+      }
+    }
 
     const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
     if (!sandbox || sandbox.status !== "ready") {
@@ -125,6 +160,7 @@ export const requestFailureModeAnalysis = mutation({
       threadId: args.threadId,
       subsystem: trimmedSubsystem,
       jobId,
+      folderId: args.folderId,
     });
 
     return { jobId };
@@ -187,6 +223,13 @@ export const completeFailureModeAnalysis = internalMutation({
     subsystem: v.string(),
     summary: v.string(),
     contentMarkdown: v.string(),
+    /**
+     * Optional folder placement carried through from the original
+     * `requestFailureModeAnalysis` mutation. Re-validated here because
+     * folders can be deleted between the request and the completion of
+     * the long-running sandbox job.
+     */
+    folderId: v.optional(v.id("artifactFolders")),
   },
   handler: async (ctx, args) => {
     const completedJob = await completeRunningJob(ctx, {
@@ -199,6 +242,18 @@ export const completeFailureModeAnalysis = internalMutation({
       return { completed: false as const };
     }
 
+    let resolvedFolderId: Id<"artifactFolders"> | undefined = args.folderId ?? undefined;
+    if (resolvedFolderId) {
+      const folder = await ctx.db.get(resolvedFolderId);
+      if (!folder || folder.repositoryId !== args.repositoryId) {
+        // Folder was deleted or moved between request and completion.
+        // Fall back to the repository root; the artifact still lands
+        // somewhere visible to the user via the navigator's
+        // "Uncategorized" virtual node.
+        resolvedFolderId = undefined;
+      }
+    }
+
     await ctx.runMutation(internal.artifactStore.createArtifact, {
       threadId: args.threadId,
       repositoryId: args.repositoryId,
@@ -209,6 +264,7 @@ export const completeFailureModeAnalysis = internalMutation({
       summary: args.summary,
       contentMarkdown: args.contentMarkdown,
       source: "sandbox",
+      folderId: resolvedFolderId,
     });
 
     return { completed: true as const };

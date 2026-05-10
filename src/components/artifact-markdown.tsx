@@ -12,11 +12,12 @@ import { cn } from "@/lib/utils";
  * at first paint and won't re-evaluate when `.dark` is toggled, so the
  * thumb visibly drifts out of sync after a theme switch.
  *
- * The Viewport carries `max-h-72` directly (via the `data-slot` arbitrary
- * selector) because shadcn's Viewport uses `size-full`, which collapses
- * when the Root only has `max-height` — a percentage can't resolve against
- * an indefinite parent height. Pushing the constraint onto the Viewport
- * itself is where layout can actually honour it.
+ * The Viewport's `max-height` is intentionally left unset by default so
+ * callers can choose how tall the body should be. Compact callers (a
+ * right-rail card preview) still get a bounded box by passing a
+ * `[&_[data-slot=scroll-area-viewport]]:max-h-72` override; the
+ * full-screen Reader passes `:max-h-none` so long-form content scrolls
+ * with the page rather than inside a tiny window.
  */
 
 /**
@@ -56,12 +57,7 @@ export const ArtifactMarkdown = memo(function ArtifactMarkdown({
   const blocks = useMemo(() => parseMarkdown(source), [source]);
 
   return (
-    <ScrollArea
-      className={cn(
-        "rounded-md border border-border bg-background [&_[data-slot=scroll-area-viewport]]:max-h-72",
-        className,
-      )}
-    >
+    <ScrollArea className={cn("rounded-md border border-border bg-background", className)}>
       <div className="p-3 text-[12px] leading-relaxed text-foreground/90">
         {blocks.map((block, index) => renderBlock(block, index))}
       </div>

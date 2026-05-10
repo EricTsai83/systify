@@ -37,6 +37,13 @@ export const requestArchitectureDiagram = mutation({
   args: {
     threadId: v.id("threads"),
     depth: diagramDepthValidator,
+    /**
+     * Optional folder placement. Surfaced by the panel's "+ Generate" tab
+     * so the user can route a new diagram into the right feature folder
+     * (or into Repository root with `null`). Server validates the folder
+     * belongs to the same repository as the artifact.
+     */
+    folderId: v.optional(v.id("artifactFolders")),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -52,6 +59,16 @@ export const requestArchitectureDiagram = mutation({
       ownerTokenIdentifier: identity.tokenIdentifier,
       archivedMessage: "This repository is archived. Restore it to generate diagrams.",
     });
+
+    if (args.folderId) {
+      const folder = await ctx.db.get(args.folderId);
+      if (!folder || folder.ownerTokenIdentifier !== identity.tokenIdentifier) {
+        throw new Error("Folder not found.");
+      }
+      if (folder.repositoryId !== repository._id) {
+        throw new Error("Cannot place an artifact in a folder from a different repository.");
+      }
+    }
 
     const snapshot = await buildSnapshot(ctx, repository);
 
@@ -74,6 +91,7 @@ export const requestArchitectureDiagram = mutation({
       contentMarkdown: result.mermaid,
       source: "heuristic",
       version: 1,
+      folderId: args.folderId,
     });
 
     return { artifactId };

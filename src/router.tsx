@@ -19,6 +19,11 @@ async function loadArchiveRoute() {
   return { Component: module.ArchivePage };
 }
 
+async function loadArtifactReaderRoute() {
+  const module = await import("@/pages/artifact-reader");
+  return { Component: module.ArtifactReaderPage };
+}
+
 /**
  * Routes mounted under {@link ProtectedLayout}. Defining them as a named const
  * (rather than inline in `appRoutes`) lets {@link isProtectedReturnTo} match
@@ -43,6 +48,13 @@ const protectedRoutes: RouteObject[] = [
   // round-trip required to know which repo's chrome to render. PRD #19 user
   // story 25 ("stable, shareable URLs for design threads").
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceThread, lazy: loadChatRoute },
+  // `/w/:workspaceId/a/:artifactId` is the Artifact Reader — a folder-aware,
+  // wide-format reader for a single artifact. Lives alongside `/t/:threadId`
+  // under the same workspace prefix so the sidebar, top-bar, and workspace
+  // chrome stay consistent on entry. Direct entries (bookmarks, shared
+  // links) are resolved via `api.artifacts.getById`; missing artifacts
+  // surface a not-found state inside the reader.
+  { path: PROTECTED_ROUTE_SEGMENTS.workspaceArtifact, lazy: loadArtifactReaderRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.archive, lazy: loadArchiveRoute },
 ];
 

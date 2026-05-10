@@ -344,13 +344,55 @@ export default defineSchema({
     contentMarkdown: v.string(),
     source: v.union(v.literal("heuristic"), v.literal("llm"), v.literal("sandbox")),
     version: v.number(),
+    /**
+     * Phase A folder model — `folderId` ties a feature/decision-level artifact
+     * (ADR, failure_mode_analysis, trade_off_matrix, …) to a user-created
+     * `artifactFolders` row. Optional + widen-only: existing rows have no
+     * folder and surface in the navigator's "Uncategorized" virtual node.
+     * Repo-level kinds (manifest, deep_analysis, architecture_overview, …)
+     * intentionally stay folderless and are pinned at the navigator's
+     * "Repository" root.
+     */
+    folderId: v.optional(v.id("artifactFolders")),
   })
     .index("by_repositoryId", ["repositoryId"])
     .index("by_repositoryId_and_kind", ["repositoryId", "kind"])
+    .index("by_repositoryId_and_folderId", ["repositoryId", "folderId"])
+    .index("by_folderId", ["folderId"])
     .index("by_threadId", ["threadId"])
     .index("by_threadId_and_kind", ["threadId", "kind"])
     .index("by_jobId", ["jobId"])
     .index("by_jobId_and_kind", ["jobId", "kind"]),
+
+  /**
+   * Phase A folder model. Folders are workspace-scoped (one tree per
+   * `repositoryId`), nestable through `parentFolderId`, and hold zero or
+   * more artifacts via `artifacts.folderId`. The owner token enforces
+   * per-viewer access in queries.
+   *
+   * Design notes:
+   *   - `repositoryId` is required: folders don't make sense outside a
+   *     repository workspace. The `optional` validator is only there so the
+   *     same query helpers can short-circuit when callers pass `null` for
+   *     no-repo workspaces (Home).
+   *   - `parentFolderId` is optional; root folders have it unset. The
+   *     `by_repositoryId_and_parentFolderId` index lets the navigator pull a
+   *     single level on demand and build the tree client-side.
+   *   - `sortOrder` lets the user reorder siblings without touching
+   *     `_creationTime`. New folders take the current max+1 within their
+   *     parent so they land at the bottom of the list.
+   */
+  artifactFolders: defineTable({
+    ownerTokenIdentifier: v.string(),
+    repositoryId: v.id("repositories"),
+    parentFolderId: v.optional(v.id("artifactFolders")),
+    name: v.string(),
+    description: v.optional(v.string()),
+    sortOrder: v.optional(v.number()),
+  })
+    .index("by_repositoryId", ["repositoryId"])
+    .index("by_repositoryId_and_parentFolderId", ["repositoryId", "parentFolderId"])
+    .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
 
   repoFiles: defineTable({
     repositoryId: v.id("repositories"),

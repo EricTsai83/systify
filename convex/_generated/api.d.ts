@@ -11,6 +11,7 @@
 import type * as analysis from "../analysis.js";
 import type * as analysisNode from "../analysisNode.js";
 import type * as architectureDiagram from "../architectureDiagram.js";
+import type * as artifactFolders from "../artifactFolders.js";
 import type * as artifactStore from "../artifactStore.js";
 import type * as artifacts from "../artifacts.js";
 import type * as chat_cancel from "../chat/cancel.js";
@@ -76,6 +77,7 @@ declare const fullApi: ApiFromModules<{
   analysis: typeof analysis;
   analysisNode: typeof analysisNode;
   architectureDiagram: typeof architectureDiagram;
+  artifactFolders: typeof artifactFolders;
   artifactStore: typeof artifactStore;
   artifacts: typeof artifacts;
   "chat/cancel": typeof chat_cancel;
