@@ -157,8 +157,11 @@ export const moveToFolder = mutation({
       if (!folder || folder.ownerTokenIdentifier !== identity.tokenIdentifier) {
         throw new Error("Folder not found.");
       }
+      if (!artifact.repositoryId && folder.repositoryId) {
+        throw new Error("Cannot move a repo-less artifact into a repository-scoped folder.");
+      }
       if (artifact.repositoryId && folder.repositoryId !== artifact.repositoryId) {
-        throw new Error("Cannot move an artifact across repositories.");
+        throw new Error("Cannot move an artifact to a folder from a different repository.");
       }
       nextFolderId = folder._id;
     }

@@ -149,6 +149,75 @@ describe("chat history ordering", () => {
       { role: "assistant", mode: "sandbox", content: "sandbox-answer" },
     ]);
   });
+
+  test("getReplyContext treats lab and sandbox assistant replies as the same mode", async () => {
+    const ownerTokenIdentifier = "user|chat-history-lab-sandbox";
+    const t = convexTest(schema, modules);
+
+    const { threadId, latestUserMessageId } = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/lab-sandbox",
+        sourceRepoFullName: "acme/lab-sandbox",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "lab-sandbox",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 0,
+      });
+      const threadId = await ctx.db.insert("threads", {
+        repositoryId,
+        ownerTokenIdentifier,
+        title: "Lab context thread",
+        mode: "lab",
+        lastMessageAt: Date.now(),
+      });
+
+      await ctx.db.insert("messages", {
+        repositoryId,
+        threadId,
+        ownerTokenIdentifier,
+        role: "assistant",
+        status: "completed",
+        mode: "sandbox",
+        content: "legacy-sandbox-answer",
+      });
+      vi.advanceTimersByTime(1_000);
+      await ctx.db.insert("messages", {
+        repositoryId,
+        threadId,
+        ownerTokenIdentifier,
+        role: "assistant",
+        status: "completed",
+        mode: "docs",
+        content: "docs-answer",
+      });
+      vi.advanceTimersByTime(1_000);
+      const latestUserMessageId = await ctx.db.insert("messages", {
+        repositoryId,
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "lab",
+        content: "lab-question",
+      });
+
+      return { threadId, latestUserMessageId };
+    });
+
+    const context = await t.query(internal.chat.context.getReplyContext, {
+      threadId,
+      userMessageId: latestUserMessageId,
+    });
+
+    expect(context.messages.map((message) => message.content)).toEqual(["legacy-sandbox-answer", "lab-question"]);
+  });
 });
 
 async function seedThreadWithMessages(

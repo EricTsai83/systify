@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from "vitest";
 import { convexTest } from "convex-test";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 
@@ -57,6 +57,37 @@ async function seedArtifactFolder(
       sortOrder: 1,
     }),
   );
+}
+
+async function seedArtifact(
+  t: ReturnType<typeof convexTest>,
+  args: {
+    threadId?: Id<"threads">;
+    repositoryId?: Id<"repositories">;
+    ownerTokenIdentifier?: string;
+  },
+): Promise<Id<"artifacts">> {
+  const createArgs: {
+    threadId?: Id<"threads">;
+    repositoryId?: Id<"repositories">;
+    ownerTokenIdentifier: string;
+    kind: "adr";
+    title: string;
+    summary: string;
+    contentMarkdown: string;
+    source: "llm";
+  } = {
+    ownerTokenIdentifier: args.ownerTokenIdentifier ?? OWNER,
+    kind: "adr",
+    title: "ADR 001",
+    summary: "s",
+    contentMarkdown: "m",
+    source: "llm",
+  };
+  if (args.threadId !== undefined) createArgs.threadId = args.threadId;
+  if (args.repositoryId !== undefined) createArgs.repositoryId = args.repositoryId;
+
+  return await t.mutation(internal.artifactStore.createArtifact, createArgs);
 }
 
 describe("ArtifactStore — parent invariant", () => {
@@ -243,6 +274,73 @@ describe("ArtifactStore — folder integrity", () => {
         folderId,
       }),
     ).rejects.toThrow(/folder not found/i);
+  });
+
+  test("moveToFolder accepts a folder in the artifact repository scope", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await seedRepository(t);
+    const folderId = await seedArtifactFolder(t, { repositoryId });
+    const artifactId = await seedArtifact(t, { repositoryId });
+
+    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+    await viewer.mutation(api.artifacts.moveToFolder, { artifactId, folderId });
+
+    const stored = await t.query(internal.artifactStore.getArtifact, { artifactId });
+    expect(stored!.folderId).toBe(folderId);
+  });
+
+  test("moveToFolder rejects a missing or deleted folder", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await seedRepository(t);
+    const folderId = await seedArtifactFolder(t, { repositoryId });
+    const artifactId = await seedArtifact(t, { repositoryId });
+    await t.run(async (ctx) => {
+      await ctx.db.delete(folderId);
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+    await expect(viewer.mutation(api.artifacts.moveToFolder, { artifactId, folderId })).rejects.toThrow(
+      /folder not found/i,
+    );
+  });
+
+  test("moveToFolder rejects a folder from another repository", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await seedRepository(t);
+    const otherRepositoryId = await seedRepository(t);
+    const folderId = await seedArtifactFolder(t, { repositoryId: otherRepositoryId });
+    const artifactId = await seedArtifact(t, { repositoryId });
+
+    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+    await expect(viewer.mutation(api.artifacts.moveToFolder, { artifactId, folderId })).rejects.toThrow(
+      /different repository/i,
+    );
+  });
+
+  test("moveToFolder rejects a repository folder for a repo-less artifact", async () => {
+    const t = convexTest(schema, modules);
+    const threadId = await seedThread(t);
+    const repositoryId = await seedRepository(t);
+    const folderId = await seedArtifactFolder(t, { repositoryId });
+    const artifactId = await seedArtifact(t, { threadId });
+
+    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+    await expect(viewer.mutation(api.artifacts.moveToFolder, { artifactId, folderId })).rejects.toThrow(/repo-less/i);
+  });
+
+  test("moveToFolder rejects a folder owned by another user", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await seedRepository(t);
+    const folderId = await seedArtifactFolder(t, {
+      repositoryId,
+      ownerTokenIdentifier: OTHER_OWNER,
+    });
+    const artifactId = await seedArtifact(t, { repositoryId });
+
+    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+    await expect(viewer.mutation(api.artifacts.moveToFolder, { artifactId, folderId })).rejects.toThrow(
+      /folder not found/i,
+    );
   });
 });
 

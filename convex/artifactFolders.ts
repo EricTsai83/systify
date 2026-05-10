@@ -324,6 +324,14 @@ export const remove = mutation({
           stack.push(child._id);
         }
       }
+      // Detect overflow: if the DFS collected < limit but stack is non-empty,
+      // or if we stopped due to reaching the limit, there are unprocessed
+      // descendants. Abort before any writes to prevent partial deletes.
+      if (stack.length > 0 || collected.length >= FOLDERS_PER_REPO_LIMIT) {
+        throw new Error(
+          "Folder subtree exceeds the per-repository limit; cannot delete all descendants in one operation.",
+        );
+      }
       // Unset `folderId` on every artifact in the deleted subtree, then
       // delete the folders themselves (deepest-first by virtue of the stack
       // being a DFS — but order doesn't matter for unset+delete).

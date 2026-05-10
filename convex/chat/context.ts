@@ -196,12 +196,19 @@ async function loadReplyContextMessages(
     .order("desc")
     .take(overfetchLimit);
 
+  const canonicalEffectiveMode =
+    effectiveMode === "lab" || effectiveMode === "sandbox" ? ("sandbox" as const) : effectiveMode;
+
   const filtered = candidateMessages.filter((message) => {
     if (message.content.trim().length === 0) {
       return false;
     }
-    if (message.role === "assistant" && message.mode !== undefined && message.mode !== effectiveMode) {
-      return false;
+    if (message.role === "assistant" && message.mode !== undefined) {
+      const canonicalMessageMode =
+        message.mode === "lab" || message.mode === "sandbox" ? ("sandbox" as const) : message.mode;
+      if (canonicalMessageMode !== canonicalEffectiveMode) {
+        return false;
+      }
     }
     return true;
   });
