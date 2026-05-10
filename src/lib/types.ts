@@ -1,4 +1,4 @@
-import type { Id } from "../../convex/_generated/dataModel";
+import type { Doc, Id } from "../../convex/_generated/dataModel";
 import type { ChatMode, LibrarySubMode, ServiceMode } from "../../convex/chatModeResolver";
 
 export type WorkspaceId = Id<"workspaces">;
@@ -9,6 +9,30 @@ export type ArtifactId = Id<"artifacts">;
 export type FolderId = Id<"artifactFolders">;
 export type LabSessionId = Id<"labSessions">;
 export type ArtifactChunkId = Id<"artifactChunks">;
+
+export type ArtifactFreshness = "fresh" | "aging" | "stale" | "unverified";
+
+export type ArtifactListItem = Pick<
+  Doc<"artifacts">,
+  | "_id"
+  | "_creationTime"
+  | "repositoryId"
+  | "threadId"
+  | "jobId"
+  | "kind"
+  | "title"
+  | "summary"
+  | "source"
+  | "version"
+  | "folderId"
+  | "producedIn"
+  | "lastVerifiedAt"
+  | "chunkingStatus"
+  | "lastChunkedAt"
+  | "lastChunkedVersion"
+> & {
+  freshness?: ArtifactFreshness;
+};
 
 /**
  * UI-level chat mode the user picks in the ChatPanel selector. The frontend

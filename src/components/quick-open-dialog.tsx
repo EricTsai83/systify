@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Doc } from "../../convex/_generated/dataModel";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { formatArtifactKind } from "@/lib/operations";
-import type { ArtifactId } from "@/lib/types";
+import type { ArtifactId, ArtifactListItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -31,7 +30,7 @@ export function QuickOpenDialog({
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  artifacts: ReadonlyArray<Doc<"artifacts">>;
+  artifacts: ReadonlyArray<ArtifactListItem>;
   onSelect: (artifactId: ArtifactId) => void;
 }) {
   const [query, setQuery] = useState("");

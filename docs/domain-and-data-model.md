@@ -9,8 +9,9 @@ This document explains Systify's core domain entities, data responsibility bound
 The current data model has three clear centers:
 
 - the product core centered on `repositories`
+- the workspace shell centered on `workspaces`
 - tenant isolation centered on `ownerTokenIdentifier`
-- workflow progress expressed through the state fields on `imports`, `jobs`, `sandboxes`, and `messages`
+- workflow progress expressed through the state fields on `imports`, `jobs`, `sandboxes`, `messages`, and `labSessions`
 
 ## Core Entities
 
@@ -23,6 +24,10 @@ flowchart TD
   Artifact[artifacts]
   RepoFile[repoFiles]
   RepoChunk[repoChunks]
+  Workspace[workspaces]
+  ArtifactFolder[artifactFolders]
+  ArtifactChunk[artifactChunks]
+  LabSession[labSessions]
   Thread[threads]
   Message[messages]
   Installation[githubInstallations]
@@ -34,6 +39,10 @@ flowchart TD
   Repository --> Artifact
   Repository --> RepoFile
   Repository --> RepoChunk
+  Repository --> Workspace
+  Repository --> ArtifactFolder
+  Artifact --> ArtifactChunk
+  Workspace --> LabSession
   Repository --> Thread
   Thread --> Message
   Import --> RepoFile
@@ -136,6 +145,18 @@ This table plays two roles:
 1. the initial knowledge base produced after import
 2. reusable outputs from later deep analysis runs
 
+Library list surfaces read artifact metadata only; the markdown body is loaded through artifact-specific reads when an artifact editor tab is active.
+
+### `workspaces` and `userPreferences`
+
+`workspaces` is the URL and shell container. A workspace either points at one repository or represents the user's no-repo home space. `userPreferences.lastActiveWorkspaceId` stores the viewer's current workspace for cross-device continuity, while localStorage is only a first-paint cache.
+
+### `artifactFolders` and `artifactChunks`
+
+`artifactFolders` stores the user's organizational tree for feature-level artifacts. Folder listing is folder-only; the frontend derives visible counts from the already-loaded artifact metadata.
+
+`artifactChunks` stores markdown-aware chunks for Library Ask. Chunks are separate rows because indexing and embedding churn should not rewrite the stable parent `artifacts` document.
+
 ### `repoFiles` and `repoChunks`
 
 Together, these tables form the indexing layer:
@@ -149,13 +170,13 @@ Together, these tables form the indexing layer:
 
 Chat data follows a standard thread/message model:
 
-- `threads` stores the title, mode (one of `discuss` / `docs` / `sandbox`), and last interaction timestamps
+- `threads` stores the title, mode, and last interaction timestamps. Current product modes are `discuss`, `ask`, and `lab`.
 - `messages` stores role, status, content, mode, and error information
 
 Beyond the basics, `messages` carries a few optional fields that are only populated when the corresponding feature applies:
 
-- `citationMap`: numbered `[A#] -> artifactId` entries, written for `docs`-mode replies that cited design artifacts
-- `toolCalls`: frozen tool-call trace for sandbox-mode replies (folded from `messageToolCallEvents` at terminalization: finalize or any terminal failure/recovery path; see `chat-and-analysis-pipeline.md` for the lifecycle)
+- `citationMap`: numbered `[A#] -> artifactId` entries, written for artifact-grounded replies
+- `toolCalls`: frozen tool-call trace for Lab replies (folded from `messageToolCallEvents` at terminalization: finalize or any terminal failure/recovery path; see `chat-and-analysis-pipeline.md` for the lifecycle)
 - `estimatedInputTokens` / `estimatedOutputTokens`: usage data from the model provider, when available
 
 All three stay unset on messages that do not need them, so older rows continue to validate without backfill.
@@ -171,6 +192,10 @@ These three tables hold ephemeral state for an in-flight assistant reply. They e
 - `messageToolCallEvents`: append-only `start` / `end` events for sandbox-mode tool invocations, keyed by the AI SDK's `toolCallId` plus a per-message dense `sequence`. Drives the live "Reading X.ts…" ticker, then folded onto `messages.toolCalls` and drained at finalize / fail / stale-recovery time.
 
 See `streaming-reply-optimization-system-design.md` for the design reasoning behind splitting these out from `messages`.
+
+### `labSessions`
+
+`labSessions` tracks workspace-level Lab execution state: `starting`, `active`, `paused`, `stopped`, or `ended`. A Lab session owns cost transparency (`spentCents`) and idle auto-pause state so sandbox compute is explicit and observable.
 
 ### `githubInstallations` and `githubOAuthStates`
 

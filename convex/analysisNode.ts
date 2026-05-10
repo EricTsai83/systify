@@ -55,7 +55,13 @@ export const runDeepAnalysis = internalAction({
         throw new Error(unavailableReason);
       }
 
+      await ctx.runMutation(internal.analysis.refreshDeepAnalysisLease, {
+        jobId: args.jobId,
+      });
       const inspectionLog = await runFocusedInspection(context.remoteSandboxId!, context.repoPath!, args.prompt);
+      await ctx.runMutation(internal.analysis.refreshDeepAnalysisLease, {
+        jobId: args.jobId,
+      });
       const markdown = createDeepAnalysisMarkdown(args.prompt, inspectionLog);
 
       await ctx.runMutation(internal.analysis.completeDeepAnalysis, {

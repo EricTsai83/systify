@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import type { MutationCtx } from "../_generated/server";
@@ -15,6 +15,7 @@ import {
   isLeaseActive,
   throwOperationAlreadyInProgress,
 } from "../lib/rateLimit";
+import { getSandboxAvailability } from "../lib/sandboxAvailability";
 import { getSandboxFeatureGate } from "../lib/sandboxFeatureFlag";
 
 async function getActiveChatJobForThread(ctx: MutationCtx, threadId: Id<"threads">, now: number) {
@@ -60,6 +61,13 @@ export const sendMessage = mutation({
       throw new Error("Thread not found.");
     }
 
+    if (thread.lockedAt !== undefined) {
+      throw new ConvexError({
+        code: "ThreadLocked",
+        message: "This legacy Design Docs thread is archived. Open Library Ask or Lab to continue.",
+      });
+    }
+
     let repository: Doc<"repositories"> | null = null;
     if (thread.repositoryId) {
       repository = await requireActiveRepositoryForOwner(ctx, {
@@ -70,7 +78,8 @@ export const sendMessage = mutation({
       });
     }
 
-    const mode = args.mode ?? thread.mode;
+    const requestedMode = args.mode ?? thread.mode;
+    const mode = requestedMode === "sandbox" ? "lab" : requestedMode === "docs" ? "ask" : requestedMode;
 
     // Mirror the resolver's preconditions on the write path. The UI
     // disabled-mode tooltips also encode these, but a direct mutation caller
@@ -80,12 +89,10 @@ export const sendMessage = mutation({
     // Three-mode restructure: `ask` (Library Ask) and `lab` (sandbox synonym)
     // join the repo-required set. Ask cannot retrieve chunks without a repo;
     // Lab cannot provision a sandbox without a repo.
-    if ((mode === "docs" || mode === "sandbox" || mode === "ask" || mode === "lab") && !repository) {
+    if ((mode === "ask" || mode === "lab") && !repository) {
       throw new Error(`'${mode}' mode requires an attached repository.`);
     }
-    // Lab is the new persisted literal; treat it as sandbox for gate /
-    // sandbox-ready checks until Phase 3 narrows `sandbox` away.
-    if (mode === "sandbox" || mode === "lab") {
+    if (mode === "lab") {
       // Plan 04: re-check the feature gate at the write boundary. The
       // selector already disables sandbox mode for viewers outside the
       // allowlist, but a stale UI / a bypassed selector / a direct mutation
@@ -100,8 +107,9 @@ export const sendMessage = mutation({
       // can't narrow across the `||` without restating it.
       const repo = repository!;
       const sandbox = repo.latestSandboxId ? await ctx.db.get(repo.latestSandboxId) : null;
-      if (!sandbox || sandbox.status !== "ready") {
-        throw new Error("'sandbox' mode requires the repository's sandbox to be in 'ready' state.");
+      const sandboxAvailability = getSandboxAvailability(sandbox);
+      if (!sandboxAvailability.available) {
+        throw new Error(sandboxAvailability.message ?? "Lab requires an available sandbox.");
       }
     }
 
@@ -145,7 +153,7 @@ export const sendMessage = mutation({
     // Three-mode restructure: `lab` shares the cost-cap budget with the
     // legacy `sandbox` literal — both consume the same Daytona compute
     // category.
-    if (mode === "sandbox" || mode === "lab") {
+    if (mode === "lab") {
       await assertSandboxDailyCostBudget(ctx, {
         ownerTokenIdentifier: identity.tokenIdentifier,
         workspaceId: thread.workspaceId ?? null,
@@ -177,7 +185,7 @@ export const sendMessage = mutation({
       // `discuss`, `docs`, and `ask` all stay on the standard `chat`
       // category — Ask runs entirely on chunk retrieval + LLM, no
       // sandbox.
-      costCategory: mode === "sandbox" || mode === "lab" ? "deep_analysis" : "chat",
+      costCategory: mode === "lab" ? "deep_analysis" : "chat",
       triggerSource: "user",
       leaseExpiresAt: now + CHAT_JOB_LEASE_MS,
     });

@@ -542,7 +542,8 @@ export default defineSchema({
     .index("by_repositoryId_and_lastMessageAt", ["repositoryId", "lastMessageAt"])
     .index("by_ownerTokenIdentifier_and_lastMessageAt", ["ownerTokenIdentifier", "lastMessageAt"])
     .index("by_workspaceId_and_lastMessageAt", ["workspaceId", "lastMessageAt"])
-    .index("by_workspaceId_and_mode", ["workspaceId", "mode"]),
+    .index("by_workspaceId_and_mode", ["workspaceId", "mode"])
+    .index("by_mode", ["mode"]),
 
   messages: defineTable({
     repositoryId: v.optional(v.id("repositories")),
@@ -680,7 +681,8 @@ export default defineSchema({
   })
     .index("by_threadId", ["threadId"])
     .index("by_threadId_and_status", ["threadId", "status"])
-    .index("by_jobId", ["jobId"]),
+    .index("by_jobId", ["jobId"])
+    .index("by_mode", ["mode"]),
 
   /**
    * Application invariant: each assistant reply owns at most one `messageStreams`

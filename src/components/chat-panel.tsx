@@ -303,7 +303,7 @@ export function ChatPanel({
             onChange={(e) => setChatInput(e.target.value)}
             placeholder={
               isReadOnly
-                ? "This repository is archived. Restore it to send messages."
+                ? (readOnlyHint ?? "This thread is read-only.")
                 : "Ask about architecture, module boundaries, data flow, risks…"
             }
             className="min-h-20 resize-none border-border"

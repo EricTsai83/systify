@@ -72,6 +72,34 @@ describe("getSandboxAvailability", () => {
     expect(result.reasonCode).toBe("sandbox_expired");
   });
 
+  test("provisioning sandbox is not available even with remote metadata", () => {
+    const provisioning = {
+      status: "provisioning" as const,
+      ttlExpiresAt: 10_000,
+      remoteId: "remote-1",
+      repoPath: "/workspace/repo",
+    };
+
+    const result = getSandboxAvailability(provisioning, 5_000);
+
+    expect(result.available).toBe(false);
+    expect(result.reasonCode).toBe("sandbox_provisioning");
+  });
+
+  test("stopped sandbox surfaces as expired", () => {
+    const stopped = {
+      status: "stopped" as const,
+      ttlExpiresAt: 10_000,
+      remoteId: "remote-1",
+      repoPath: "/workspace/repo",
+    };
+
+    const result = getSandboxAvailability(stopped, 5_000);
+
+    expect(result.available).toBe(false);
+    expect(result.reasonCode).toBe("sandbox_expired");
+  });
+
   test("missing sandbox surfaces as missing_sandbox", () => {
     const result = getSandboxAvailability(null);
 

@@ -4,7 +4,7 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query, internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
 import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
-import { validateParentPresence } from "./artifactStore";
+import { createArtifactInMutation } from "./artifactStore";
 import {
   consumeDaytonaGlobalRateLimit,
   consumeDeepAnalysisRateLimit,
@@ -238,6 +238,9 @@ export const getDeepAnalysisContext = internalQuery({
     if (!repository) {
       throw new Error("Repository not found.");
     }
+    if (repository.archivedAt || repository.deletionRequestedAt) {
+      throw new Error("Repository is no longer active.");
+    }
 
     const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
 
@@ -272,6 +275,23 @@ export const markDeepAnalysisRunning = internalMutation({
   },
 });
 
+export const refreshDeepAnalysisLease = internalMutation({
+  args: {
+    jobId: v.id("jobs"),
+  },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job || job.kind !== "deep_analysis" || job.status !== "running") {
+      return { refreshed: false as const };
+    }
+    const now = Date.now();
+    await ctx.db.patch(args.jobId, {
+      leaseExpiresAt: now + DEEP_ANALYSIS_JOB_LEASE_MS,
+    });
+    return { refreshed: true as const };
+  },
+});
+
 export const completeDeepAnalysis = internalMutation({
   args: {
     repositoryId: v.id("repositories"),
@@ -281,6 +301,22 @@ export const completeDeepAnalysis = internalMutation({
     contentMarkdown: v.string(),
   },
   handler: async (ctx, args) => {
+    const repository = await ctx.db.get(args.repositoryId);
+    if (
+      !repository ||
+      repository.ownerTokenIdentifier !== args.ownerTokenIdentifier ||
+      repository.archivedAt ||
+      repository.deletionRequestedAt
+    ) {
+      await failRunningJob(ctx, {
+        jobId: args.jobId,
+        expectedKind: "deep_analysis",
+        completedAt: Date.now(),
+        errorMessage: "Repository is no longer active.",
+      });
+      return { completed: false as const };
+    }
+
     const completedJob = await completeRunningJob(ctx, {
       jobId: args.jobId,
       expectedKind: "deep_analysis",
@@ -291,12 +327,7 @@ export const completeDeepAnalysis = internalMutation({
       return { completed: false as const };
     }
 
-    // completeDeepAnalysis inserts directly into `artifacts` rather than
-    // routing through createArtifactInternal, so enforce the artifact
-    // parent invariant here so the rule stays centralized.
-    validateParentPresence(undefined, args.repositoryId);
-
-    await ctx.db.insert("artifacts", {
+    await createArtifactInMutation(ctx, {
       repositoryId: args.repositoryId,
       jobId: args.jobId,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
@@ -305,7 +336,6 @@ export const completeDeepAnalysis = internalMutation({
       summary: args.summary,
       contentMarkdown: args.contentMarkdown,
       source: "sandbox",
-      version: 1,
     });
 
     return { completed: true as const };

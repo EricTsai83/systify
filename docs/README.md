@@ -11,6 +11,7 @@ This folder contains the system design documentation for the current Systify cod
 5. `chat-and-analysis-pipeline.md`
 6. `integrations-and-operations.md`
 7. `orphan-resource-handling.md`
+8. `service-modes-library-lab-system-design.md`
 
 ## Additional Focused Design Docs
 
@@ -53,6 +54,9 @@ This folder contains the system design documentation for the current Systify cod
 - `repository-remote-freshness-check-system-design.md`
   - Why is the "repo is behind the remote" check driven by client events plus two SHAs instead of webhooks, cron, or a persisted stale flag?
   - Why does sync immediately clear `latestRemoteSha` instead of waiting for import finalize to update freshness state?
+- `service-modes-library-lab-system-design.md`
+  - How do Discuss, Library, and Lab map to routes, data dependencies, and sandbox availability?
+  - Why does Library use metadata-only subscriptions and artifact-specific body reads?
 
 ## Implementation Coverage
 
@@ -63,6 +67,7 @@ The current codebase keeps system-design documentation for all implemented high-
 - Daytona webhook reconciliation path: `daytona-webhook-reconciliation-system-design.md`
 - Import persistence idempotency and finalize boundary: `import-persistence-system-design.md`
 - Chat context retrieval strategy: `chat-context-retrieval-system-design.md`
+- Discuss / Library / Lab service modes: `service-modes-library-lab-system-design.md`
 - Repository file-count denormalization: `repository-filecount-rollout-system-design.md`
 - Chat streaming architecture: `streaming-reply-optimization-system-design.md`
 - Deep analysis TTL, installation conflict handling, and chat usage-cost writing: `deep-analysis-installation-cost-system-design.md`
@@ -101,9 +106,9 @@ The current codebase keeps system-design documentation for all implemented high-
 
 ### `chat-and-analysis-pipeline.md`
 
-- What data sources does each chat mode (`discuss` / `docs` / `sandbox`) depend on, and how do they differ from Deep analysis?
+- What data sources do Discuss, Library Ask, and Lab depend on, and how do they differ from Deep analysis?
 - How is an assistant reply created, streamed, completed, or failed?
-- Why can `sandbox` mode and Deep analysis become unavailable because of sandbox state?
+- Why can Lab and Deep analysis become unavailable because of sandbox state?
 
 ### `integrations-and-operations.md`
 
@@ -133,14 +138,6 @@ The current codebase keeps system-design documentation for all implemented high-
 - Prioritize stable architecture boundaries and responsibility splits rather than translating the codebase file by file.
 - Do not invent designs that do not exist, and do not describe future ideas as current capabilities.
 - Each document should stay focused on answering a small number of important questions and avoid repetition.
-
-## Archived Design Notes
-
-Older design notes that are no longer part of the core reading set live under `archive/`:
-
-- `archive/daytona-sandbox-lifecycle.md`
-- `archive/fast-path-vs-deep-path.md`
-- `archive/sandbox-cost-analysis.md`
 
 ## Out of Scope
 

@@ -30,8 +30,7 @@ interface CreateArtifactArgs {
  * belong to at least one of `thread` or `repository`. The schema makes both
  * fields `v.optional`, so this is the only place the rule is enforced.
  *
- * Exported so direct `ctx.db.insert('artifacts', …)` call sites that bypass
- * `createArtifactInternal` can still enforce the invariant in one place.
+ * Exported so direct artifact writers can share the same invariant.
  */
 export function validateParentPresence(
   threadId: Id<"threads"> | undefined,
@@ -42,7 +41,7 @@ export function validateParentPresence(
   }
 }
 
-async function createArtifactInternal(ctx: MutationCtx, args: CreateArtifactArgs): Promise<Id<"artifacts">> {
+export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArtifactArgs): Promise<Id<"artifacts">> {
   validateParentPresence(args.threadId, args.repositoryId);
 
   if (args.folderId) {
@@ -222,7 +221,7 @@ export const createArtifact = internalMutation({
     source: artifactSourceValidator,
     folderId: v.optional(v.id("artifactFolders")),
   },
-  handler: (ctx, args) => createArtifactInternal(ctx, args),
+  handler: (ctx, args) => createArtifactInMutation(ctx, args),
 });
 
 export const getArtifact = internalQuery({
@@ -265,6 +264,21 @@ export const markChunkingStatus = internalMutation({
       chunkingStatus: args.status,
       lastChunkedAt: Date.now(),
       lastChunkedVersion: args.version,
+    });
+    return { patched: true };
+  },
+});
+
+export const markVerified = internalMutation({
+  args: { artifactId: v.id("artifacts") },
+  handler: async (ctx, args) => {
+    const artifact = await ctx.db.get(args.artifactId);
+    if (!artifact) {
+      return { patched: false };
+    }
+    await ctx.db.patch(args.artifactId, {
+      producedIn: "lab",
+      lastVerifiedAt: Date.now(),
     });
     return { patched: true };
   },

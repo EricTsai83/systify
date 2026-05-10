@@ -1,11 +1,10 @@
 import { memo, useRef, useState } from "react";
 import { XIcon } from "@phosphor-icons/react";
-import type { Doc } from "../../convex/_generated/dataModel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { formatArtifactKind } from "@/lib/operations";
-import type { ArtifactId } from "@/lib/types";
+import type { ArtifactId, ArtifactListItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -30,7 +29,7 @@ export interface LibraryTabsProps {
    * for the tree, so passing the map avoids extra subscriptions in the
    * tab component.
    */
-  artifactsById: ReadonlyMap<ArtifactId, Doc<"artifacts">>;
+  artifactsById: ReadonlyMap<ArtifactId, ArtifactListItem>;
   onActivate: (artifactId: ArtifactId) => void;
   onClose: (artifactId: ArtifactId) => void;
   onReorder: (nextOrder: ReadonlyArray<ArtifactId>) => void;

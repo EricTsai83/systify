@@ -94,13 +94,9 @@ async function nextSortOrder(
 
 /**
  * Public, owner-scoped listing of every folder in a repository. Returned
- * flat — the frontend builds the tree from `parentFolderId` so we don't pay
- * a recursive read on the server. Each row carries the artifact count so
- * the navigator can show "OAuth feature · 4 items" without a second query.
- *
- * Bounded at `FOLDERS_PER_REPO_LIMIT` rows per call. The artifact count is
- * computed via a bounded scan against `by_folderId`; we deliberately do not
- * call `.collect()`.
+ * flat — the frontend builds the tree from `parentFolderId` and computes
+ * visible child counts from the artifact metadata it already loaded. Keeping
+ * this query folder-only avoids an N+1 artifact scan on every Library render.
  */
 export const listByRepository = query({
   args: { repositoryId: v.id("repositories") },
@@ -113,17 +109,7 @@ export const listByRepository = query({
       .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
       .take(FOLDERS_PER_REPO_LIMIT);
 
-    const counts = await Promise.all(
-      folders.map(async (folder) => {
-        const items = await ctx.db
-          .query("artifacts")
-          .withIndex("by_folderId", (q) => q.eq("folderId", folder._id))
-          .take(ARTIFACTS_PER_FOLDER_LIMIT);
-        return items.length;
-      }),
-    );
-
-    return folders.map((folder, index) => ({
+    return folders.map((folder) => ({
       _id: folder._id,
       _creationTime: folder._creationTime,
       repositoryId: folder.repositoryId,
@@ -131,7 +117,6 @@ export const listByRepository = query({
       name: folder.name,
       description: folder.description,
       sortOrder: folder.sortOrder,
-      artifactCount: counts[index] ?? 0,
     }));
   },
 });

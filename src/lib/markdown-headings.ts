@@ -2,9 +2,8 @@
  * Three-mode restructure — shared markdown heading extraction.
  *
  * Used by the Library shell's minimap, breadcrumb, table-of-contents
- * sheet, and citation deep-link resolver. Lives outside `artifact-reader`
- * (the Phase 1 origin point of the helper) so the four call sites read
- * from one source of truth instead of four nearly-identical copies.
+ * sheet, and citation deep-link resolver so the call sites read from one
+ * source of truth instead of several nearly-identical copies.
  *
  * The function is intentionally simple — the artifact pipeline produces
  * a small, well-formed subset of markdown (see `artifact-markdown.tsx`).

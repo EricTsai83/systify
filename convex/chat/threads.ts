@@ -127,10 +127,10 @@ export const createThread = mutation({
     // (and racing UI states) can't bypass it. We do NOT enforce
     // sandbox-ready at thread creation; `sendMessage` re-validates at the
     // actual send moment.
-    if (
-      (args.mode === "docs" || args.mode === "sandbox" || args.mode === "ask" || args.mode === "lab") &&
-      !repositoryId
-    ) {
+    const requestedMode = args.mode ?? getDefaultThreadMode(!!repositoryId);
+    const mode = requestedMode === "sandbox" ? "lab" : requestedMode === "docs" ? "ask" : requestedMode;
+
+    if ((mode === "ask" || mode === "lab") && !repositoryId) {
       throw new Error(`'${args.mode}' mode requires an attached repository.`);
     }
 
@@ -145,19 +145,12 @@ export const createThread = mutation({
       title ??= "New design conversation";
     }
 
-    // Default mode picks `docs` when a repo is in play (matches resolver's
-    // `defaultMode` for repo-attached threads with non-ready sandboxes), and
-    // `discuss` when there is no repo. Keeping this in lockstep with the
-    // resolver means the persisted mode and the UI's preselected mode agree
-    // on day one.
-    const defaultMode = getDefaultThreadMode(!!repositoryId);
-
     return await ctx.db.insert("threads", {
       workspaceId,
       repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
       title,
-      mode: args.mode ?? defaultMode,
+      mode,
       lastMessageAt: Date.now(),
     });
   },
@@ -284,7 +277,16 @@ export const setThreadRepository = mutation({
       //   2. repo-A   → repo-B:    the thread already has a repo and the user
       //      may have explicitly chosen `docs` or `sandbox`. Preserve their
       //      choice; only `repositoryId`/`workspaceId` need to change.
-      const nextMode = thread.repositoryId ? thread.mode : getDefaultThreadMode(true);
+      const defaultRepoMode = getDefaultThreadMode(true);
+      const nextMode = thread.repositoryId
+        ? thread.mode === "sandbox"
+          ? "lab"
+          : thread.mode === "docs"
+            ? "ask"
+            : thread.mode
+        : defaultRepoMode === "docs"
+          ? "ask"
+          : defaultRepoMode;
       await ctx.db.patch(args.threadId, {
         repositoryId: args.repositoryId,
         workspaceId,

@@ -61,7 +61,6 @@ export type FolderTreeNode = {
   name: string;
   description?: string;
   parentFolderId: string | null;
-  artifactCount: number;
   children: FolderTreeNode[];
 };
 
@@ -70,7 +69,6 @@ export type FolderTreeInput = {
   name: string;
   description?: string;
   parentFolderId?: string | null | undefined;
-  artifactCount: number;
 };
 
 /**
@@ -86,7 +84,6 @@ export function buildFolderTree(folders: ReadonlyArray<FolderTreeInput>): Folder
       name: folder.name,
       description: folder.description,
       parentFolderId: folder.parentFolderId ?? null,
-      artifactCount: folder.artifactCount,
       children: [],
     });
   }
