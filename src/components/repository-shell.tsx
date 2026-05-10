@@ -16,6 +16,8 @@ import { EmptyState } from "@/components/empty-state";
 import { AppNotice } from "@/components/app-notice";
 import { ChatContainer } from "@/components/chat-panel";
 import { StatusPanel } from "@/components/status-panel";
+import { WorkspaceSetupBanner } from "@/components/workspace-setup-banner";
+import { WorkspaceReadyBanner } from "@/components/workspace-ready-banner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
@@ -454,6 +456,18 @@ export function RepositoryShell({
   const isRepositorySyncing =
     !isRepoArchived &&
     (repoDetail?.repository.importStatus === "queued" || repoDetail?.repository.importStatus === "running");
+  // Initial-setup window: the workspace has been imported but has not yet
+  // produced its first `deep_analysis` artifact. Both the WorkspaceSetupBanner
+  // (always shown below the top-bar in this state) and the StatusPill ("Setting
+  // up…" label) read this so the chrome speaks one vocabulary while the user
+  // waits for the workspace to become operational.
+  const hasDeepAnalysisArtifact = repoDetail?.artifacts.some((artifact) => artifact.kind === "deep_analysis") ?? false;
+  const isInitialWorkspaceSetup =
+    !isRepoArchived &&
+    repoDetail !== null &&
+    repoDetail !== undefined &&
+    !hasDeepAnalysisArtifact &&
+    (isRepositorySyncing || Boolean(repoDetail.activeDeepAnalysisJob));
   const effectiveSandboxModeStatus: SandboxModeStatus | null =
     effectiveSelectedThreadId !== null ? capabilities.sandboxModeStatus : (repoDetail?.sandboxModeStatus ?? null);
 
@@ -891,26 +905,6 @@ export function RepositoryShell({
       onSelectArtifact={handleSelectArtifact}
       isReadOnly={isRepoArchived}
       readOnlyHint={isRepoArchived ? "Restore this repository to send messages or run analyses." : undefined}
-      analysisNudge={
-        // Only nudge when there is genuinely something to do: a repo is
-        // attached, no deep-analysis artifact exists yet, no analysis is
-        // currently running, and the sandbox is ready (otherwise the CTA
-        // would just bounce off the dialog's disabled state). The card
-        // stays out of the way once any of those conditions flips so the
-        // empty state declutters as the user advances.
-        repoDetail &&
-        !isRepoArchived &&
-        !repoDetail.artifacts.some((artifact) => artifact.kind === "deep_analysis") &&
-        !repoDetail.activeDeepAnalysisJob &&
-        repoDetail.sandboxModeStatus.reasonCode === "available"
-          ? {
-              onStart: () => {
-                setAnalysisError(null);
-                setShowAnalysisDialog(true);
-              },
-            }
-          : null
-      }
     />
   );
 
@@ -932,6 +926,7 @@ export function RepositoryShell({
         <TopBar
           repoDetail={repoDetail ?? undefined}
           isSyncing={isSyncing || isRepositorySyncing}
+          isInitialSetup={isInitialWorkspaceSetup}
           isStatusPanelOpen={isStatusOpen}
           onSetStatusPanelOpen={handleSetStatusOpen}
           onArchiveRepo={() => setShowArchiveDialog(true)}
@@ -988,6 +983,36 @@ export function RepositoryShell({
           <div className="border-b border-border px-6 py-3">
             <AppNotice title={actionNotice.title} message={actionNotice.message} tone="info" />
           </div>
+        ) : null}
+
+        {/*
+         * Workspace setup banner — visible while the very first import +
+         * deep-analysis pass is still in flight. Renders nothing once the
+         * workspace has its first `deep_analysis` artifact (subsequent
+         * re-syncs and re-analyses are signalled through the StatusPill
+         * instead). Same horizontal strip on desktop and mobile so the
+         * "is my workspace ready yet?" signal is in the same place
+         * regardless of breakpoint.
+         *
+         * The WorkspaceReadyBanner that follows takes over the moment
+         * the first artifact lands, giving the user an explicit "your
+         * workspace is ready" handoff with a one-click jump to the
+         * generated analysis. Dismissal is per-repo and persisted, so
+         * the celebration only fires once.
+         */}
+        {!isRepoArchived && repoDetail ? (
+          <>
+            <WorkspaceSetupBanner
+              repository={repoDetail.repository}
+              activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
+              hasDeepAnalysisArtifact={hasDeepAnalysisArtifact}
+            />
+            <WorkspaceReadyBanner
+              repository={repoDetail.repository}
+              latestDeepAnalysis={repoDetail.artifacts.find((artifact) => artifact.kind === "deep_analysis") ?? null}
+              onView={handleSelectArtifact}
+            />
+          </>
         ) : null}
 
         {/*

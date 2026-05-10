@@ -127,6 +127,7 @@ function createTopBarProps(overrides: Partial<TopBarTestProps> = {}): TopBarTest
     isAttachedRepositoryLoading: false,
     availableRepositories: [],
     isSyncing: false,
+    isInitialSetup: false,
     isStatusPanelOpen: false,
     onSetStatusPanelOpen: vi.fn(),
     onArchiveRepo: vi.fn(),

@@ -38,6 +38,14 @@ type StatusPillProps = {
   activeDeepAnalysisJob: Doc<"jobs"> | null;
   hasRemoteUpdates: boolean;
   isSyncing: boolean;
+  /**
+   * True until the workspace has produced its first `deep_analysis` artifact.
+   * During this initial-setup window the pill shows a unified "Setting up…"
+   * label instead of the operational "Syncing…/Analyzing…" pair, so the user
+   * sees the same vocabulary the {@link WorkspaceSetupBanner} uses below
+   * the top-bar.
+   */
+  isInitialSetup: boolean;
   isOpen: boolean;
   ref?: Ref<HTMLButtonElement>;
 } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children" | "type" | "aria-pressed" | "aria-label" | "data-testid">;
@@ -67,6 +75,7 @@ export function StatusPill({
   activeDeepAnalysisJob,
   hasRemoteUpdates,
   isSyncing,
+  isInitialSetup,
   isOpen,
   ref,
   className,
@@ -81,8 +90,9 @@ export function StatusPill({
         activeDeepAnalysisJob,
         hasRemoteUpdates,
         isSyncing,
+        isInitialSetup,
       }),
-    [repository, sandboxModeStatus, jobs, activeDeepAnalysisJob, hasRemoteUpdates, isSyncing],
+    [repository, sandboxModeStatus, jobs, activeDeepAnalysisJob, hasRemoteUpdates, isSyncing, isInitialSetup],
   );
 
   const lastSyncedLabel = useRelativeTime(repository.lastImportedAt);
@@ -142,6 +152,7 @@ function derivePillState(input: {
   activeDeepAnalysisJob: Doc<"jobs"> | null;
   hasRemoteUpdates: boolean;
   isSyncing: boolean;
+  isInitialSetup: boolean;
 }): PillState {
   const intelligence = presentRepositoryIntelligenceSurface({
     importStatus: input.repository.importStatus,
@@ -170,6 +181,19 @@ function derivePillState(input: {
   // visibility more than they want a "consider syncing" nudge.
   const hasActiveJob = input.jobs.some(isUserRelevantActiveJob) || Boolean(input.activeDeepAnalysisJob);
   if (hasActiveJob || input.isSyncing) {
+    // Initial setup: collapse "Syncing…" / "Analyzing…" into a single
+    // "Setting up…" label so the pill matches the WorkspaceSetupBanner
+    // vocabulary the user sees below the top-bar. Splitting them only
+    // makes sense once the user is operational and re-running things
+    // by choice.
+    if (input.isInitialSetup) {
+      return {
+        tone: "active",
+        label: "Setting up…",
+        icon: "spinner",
+        detail: "Preparing your workspace for the first time. Usually 2–3 minutes.",
+      };
+    }
     return {
       tone: "active",
       label: input.activeDeepAnalysisJob ? "Analyzing…" : "Syncing…",

@@ -187,6 +187,9 @@ export function StatusPanel({
               }
               action={
                 latestDeepAnalysis ? (
+                  // Operational state: artifact exists, so the user is past
+                  // setup. Surface the two natural follow-ups — review the
+                  // current analysis or refresh it after code changes.
                   <div className="flex flex-col gap-1.5">
                     <Button
                       type="button"
@@ -207,38 +210,33 @@ export function StatusPanel({
                       className="w-full"
                     >
                       <SparkleIcon weight="bold" />
-                      {activeDeepAnalysisJob ? "Running…" : "Run again"}
+                      {activeDeepAnalysisJob ? "Refreshing…" : "Refresh analysis"}
                     </Button>
                   </div>
-                ) : null
+                ) : activeDeepAnalysisJob ? null : (
+                  // Edge case: no artifact and no active job. Normally the
+                  // post-import auto-trigger ({@link
+                  // convex/analysis.ts:scheduleAutoDeepAnalysis}) keeps us
+                  // out of this branch — but a global-rate-limit failure or
+                  // a sandbox glitch can leave us here, so the panel keeps
+                  // a manual fallback. The dashed-border "Run a deep
+                  // analysis" nudge that used to live below this card has
+                  // been retired so the panel speaks one CTA per state.
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={!isSandboxAvailable}
+                    onClick={handleRunAnalysis}
+                    className="w-full"
+                  >
+                    <SparkleIcon weight="bold" />
+                    Generate analysis
+                  </Button>
+                )
               }
             />
           </section>
-
-          {!latestDeepAnalysis ? (
-            <section className="rounded-lg border border-dashed border-border/80 bg-muted/30 p-3">
-              <p className="text-xs font-semibold">Run a deep analysis</p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                Reusable source-tree analysis. Future conversations cite it. Usually 2–3 minutes.
-              </p>
-              <Button
-                type="button"
-                size="sm"
-                variant="default"
-                disabled={Boolean(activeDeepAnalysisJob) || !isSandboxAvailable}
-                onClick={handleRunAnalysis}
-                className="mt-2 w-full"
-              >
-                <SparkleIcon weight="bold" />
-                {activeDeepAnalysisJob ? "Running…" : "Start analysis"}
-              </Button>
-              {!isSandboxAvailable ? (
-                <p className="mt-1.5 text-[10px] text-muted-foreground">
-                  Sandbox required — sync the repository first.
-                </p>
-              ) : null}
-            </section>
-          ) : null}
 
           <ActivitySection
             jobs={jobs}
