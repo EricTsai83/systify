@@ -90,16 +90,31 @@ const artifactKind = v.union(
  * Architectural reversal section: frontend and backend share one vocabulary.
  *
  * - `discuss`  — LLM training only; no repo, no sandbox.
- * - `docs`     — RAG over the user's accumulated artifacts for the attached
- *                repository. Requires `thread.repositoryId`.
- * - `sandbox`  — live filesystem + execution in a Daytona sandbox. Requires
- *                `thread.repositoryId` and the repo's latest sandbox to be
- *                in `ready` state at send time.
+ * - `docs`     — Legacy. RAG over the user's accumulated artifacts for the
+ *                attached repository. Phase 3 of the three-mode restructure
+ *                will narrow this out; until then, existing rows remain valid
+ *                and `chat.sendMessage` continues to honour them.
+ * - `sandbox`  — Legacy alias for `lab`. Live filesystem + execution in a
+ *                Daytona sandbox. Phase 3 will rename existing rows to `lab`
+ *                and narrow this literal away.
+ * - `ask`      — Library Ask sub-mode. Hybrid RAG over chunked artifacts.
+ *                Provisioned in Phase 1; first wired through to the user in
+ *                Phase 2. NEVER has access to sandbox tools.
+ * - `lab`      — Sandbox-backed mode (the new name for `sandbox`). Distinct
+ *                literal so new threads can be persisted with the post-
+ *                restructure vocabulary while legacy `sandbox` rows continue
+ *                to work.
  *
  * Mode preconditions (repo-required, sandbox-required) are enforced in
  * `chat.sendMessage` / `chat.createThread`, not in the schema.
  */
-const threadMode = v.union(v.literal("discuss"), v.literal("docs"), v.literal("sandbox"));
+const threadMode = v.union(
+  v.literal("discuss"),
+  v.literal("docs"),
+  v.literal("sandbox"),
+  v.literal("ask"),
+  v.literal("lab"),
+);
 
 const messageRole = v.union(v.literal("system"), v.literal("user"), v.literal("assistant"), v.literal("tool"));
 
@@ -344,13 +359,104 @@ export default defineSchema({
     contentMarkdown: v.string(),
     source: v.union(v.literal("heuristic"), v.literal("llm"), v.literal("sandbox")),
     version: v.number(),
+    /**
+     * Phase A folder model — `folderId` ties a feature/decision-level artifact
+     * (ADR, failure_mode_analysis, trade_off_matrix, …) to a user-created
+     * `artifactFolders` row. Optional + widen-only: existing rows have no
+     * folder and surface in the navigator's "Uncategorized" virtual node.
+     * Repo-level kinds (manifest, deep_analysis, architecture_overview, …)
+     * intentionally stay folderless and are pinned at the navigator's
+     * "Repository" root.
+     */
+    folderId: v.optional(v.id("artifactFolders")),
+    /**
+     * Three-mode restructure — origin tag for the freshness UI.
+     *
+     *   - `discuss` — produced from a no-repo discussion thread.
+     *   - `lab`     — produced or last verified by a sandbox-backed Lab
+     *                 session (this is the only origin that grants the
+     *                 "verified against current source" badge).
+     *   - `legacy`  — pre-restructure rows backfilled by `migrations.ts`.
+     *
+     * Optional so existing rows are valid; the backfill rewrites them to
+     * `legacy`.
+     */
+    producedIn: v.optional(v.union(v.literal("discuss"), v.literal("lab"), v.literal("legacy"))),
+    /**
+     * Wall-clock ms epoch of the most recent Lab-session verification.
+     * Stamped by the Lab session when the LLM reads / re-reads the live
+     * tree to confirm the artifact is still accurate. Phase 3's Library
+     * tree pills derive freshness purely from this column.
+     */
+    lastVerifiedAt: v.optional(v.number()),
+    /**
+     * Phase 2 chunking pipeline status.
+     *   - `pending`  — backfilled or just-updated; the indexer hasn't
+     *                  produced chunks yet.
+     *   - `indexed`  — `artifactChunks` rows match the current
+     *                  `lastChunkedVersion`; embeddings may still be
+     *                  partial when an embed fallback is in effect.
+     *   - `failed`   — embedding pipeline exhausted retries; the
+     *                  `retryFailedArtifactIndexing` cron will pick the
+     *                  row up again.
+     *
+     * Phase 1 lays the column down; Phase 2 mutates it.
+     */
+    chunkingStatus: v.optional(v.union(v.literal("pending"), v.literal("indexed"), v.literal("failed"))),
+    /**
+     * Wall-clock ms epoch of the most recent successful chunk write. Used
+     * by the cron to detect stuck `failed` rows and retry them after the
+     * configured backoff.
+     */
+    lastChunkedAt: v.optional(v.number()),
+    /**
+     * Snapshot of `version` at the time the chunks were written. Used by
+     * the indexer to detect "an update raced past me — my chunk write is
+     * stale, abort" and by reads to confirm the chunks correspond to the
+     * artifact's current version.
+     */
+    lastChunkedVersion: v.optional(v.number()),
   })
     .index("by_repositoryId", ["repositoryId"])
     .index("by_repositoryId_and_kind", ["repositoryId", "kind"])
+    .index("by_repositoryId_and_folderId", ["repositoryId", "folderId"])
+    .index("by_repositoryId_and_lastVerifiedAt", ["repositoryId", "lastVerifiedAt"])
+    .index("by_folderId", ["folderId"])
     .index("by_threadId", ["threadId"])
     .index("by_threadId_and_kind", ["threadId", "kind"])
     .index("by_jobId", ["jobId"])
-    .index("by_jobId_and_kind", ["jobId", "kind"]),
+    .index("by_jobId_and_kind", ["jobId", "kind"])
+    .index("by_chunkingStatus", ["chunkingStatus"]),
+
+  /**
+   * Phase A folder model. Folders are workspace-scoped (one tree per
+   * `repositoryId`), nestable through `parentFolderId`, and hold zero or
+   * more artifacts via `artifacts.folderId`. The owner token enforces
+   * per-viewer access in queries.
+   *
+   * Design notes:
+   *   - `repositoryId` is required: folders don't make sense outside a
+   *     repository workspace. The `optional` validator is only there so the
+   *     same query helpers can short-circuit when callers pass `null` for
+   *     no-repo workspaces (Home).
+   *   - `parentFolderId` is optional; root folders have it unset. The
+   *     `by_repositoryId_and_parentFolderId` index lets the navigator pull a
+   *     single level on demand and build the tree client-side.
+   *   - `sortOrder` lets the user reorder siblings without touching
+   *     `_creationTime`. New folders take the current max+1 within their
+   *     parent so they land at the bottom of the list.
+   */
+  artifactFolders: defineTable({
+    ownerTokenIdentifier: v.string(),
+    repositoryId: v.id("repositories"),
+    parentFolderId: v.optional(v.id("artifactFolders")),
+    name: v.string(),
+    description: v.optional(v.string()),
+    sortOrder: v.optional(v.number()),
+  })
+    .index("by_repositoryId", ["repositoryId"])
+    .index("by_repositoryId_and_parentFolderId", ["repositoryId", "parentFolderId"])
+    .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
 
   repoFiles: defineTable({
     repositoryId: v.id("repositories"),
@@ -409,10 +515,34 @@ export default defineSchema({
     mode: threadMode,
     lastMessageAt: v.number(),
     lastAssistantMessageAt: v.optional(v.number()),
+    /**
+     * Library Ask scope filter. Phase 1 widen, Phase 2 read by RAG retriever.
+     * Empty / undefined means "search the whole workspace" — does NOT mean
+     * "load these artifacts as context"; the actual context shrink happens
+     * via per-query top-N chunk retrieval. Capped at 20 ids by mutation
+     * validators so the filter list itself stays small.
+     */
+    artifactContext: v.optional(v.array(v.id("artifacts"))),
+    /**
+     * Lab thread → workspace-level lab session pointer. Workspace's single
+     * active session is shared across every Lab thread in that workspace, so
+     * thread switching never re-provisions a sandbox. Phase 1 carries the
+     * column for schema parity; Phase 2 wires the lifecycle. Optional and
+     * unused on `discuss` / `ask` / legacy threads.
+     */
+    labSessionId: v.optional(v.id("labSessions")),
+    /**
+     * Phase 3 — non-null timestamp when a legacy `docs` thread is locked
+     * during the docs → ask narrowing. `chat.sendMessage` rejects writes
+     * to locked threads so users get pointed at the Library Ask
+     * replacement instead of accidentally adding more legacy turns.
+     */
+    lockedAt: v.optional(v.number()),
   })
     .index("by_repositoryId_and_lastMessageAt", ["repositoryId", "lastMessageAt"])
     .index("by_ownerTokenIdentifier_and_lastMessageAt", ["ownerTokenIdentifier", "lastMessageAt"])
-    .index("by_workspaceId_and_lastMessageAt", ["workspaceId", "lastMessageAt"]),
+    .index("by_workspaceId_and_lastMessageAt", ["workspaceId", "lastMessageAt"])
+    .index("by_workspaceId_and_mode", ["workspaceId", "mode"]),
 
   messages: defineTable({
     repositoryId: v.optional(v.id("repositories")),
@@ -459,6 +589,21 @@ export default defineSchema({
         v.object({
           index: v.number(),
           artifactId: v.id("artifacts"),
+          /**
+           * Three-mode restructure — chunk-level citation. Phase 1 widen,
+           * Phase 2 the Library Ask flow writes one entry per retrieved
+           * chunk so `[A1#section]` deep-links jump to the matching
+           * heading. Optional so legacy `docs` rows that only carry
+           * `index + artifactId` continue to validate.
+           */
+          chunkId: v.optional(v.id("artifactChunks")),
+          /**
+           * Heading path snapshot frozen at retrieval time. Used by the
+           * frontend to render "Section X.Y" beside the citation chip and
+           * to scroll the artifact tab to the right heading without an
+           * extra round-trip into the chunk row.
+           */
+          headingPath: v.optional(v.array(v.string())),
         }),
       ),
     ),
@@ -712,4 +857,113 @@ export default defineSchema({
   })
     .index("by_state", ["state"])
     .index("by_expiresAt", ["expiresAt"]),
+
+  /**
+   * Three-mode restructure (Phase 1 widen, Phase 2 writes / reads).
+   *
+   * Markdown-aware chunks of every artifact, indexed for hybrid lexical +
+   * embedding retrieval by Library Ask. Only the *latest* version's chunks
+   * live here — the indexing pipeline replaces the row set in one
+   * transaction when an artifact bumps version. Historical versions are
+   * still recoverable from `artifacts.contentMarkdown`, but Ask only ever
+   * answers against the current snapshot.
+   *
+   * Why a separate table:
+   *   - Per-chunk vector + search indexes need a row-per-chunk anyway.
+   *   - Chunks churn (every artifact update rewrites them) and would
+   *     otherwise contend with the artifact row's stable fields.
+   *   - Cascading delete on artifact removal stays bounded.
+   *
+   * Field notes:
+   *   - `artifactVersion` is the snapshot of `artifacts.version` at write
+   *     time so a stale indexer continuation aborts cleanly when the
+   *     parent has moved on.
+   *   - `embedding` is optional so a transient OpenAI failure doesn't
+   *     block lexical retrieval. The retrieval layer treats `undefined`
+   *     embeddings as "lexical-only candidate" and the cron retries the
+   *     embed.
+   *   - `headingPath` is the H1/H2/H3 stack the chunker accumulated as it
+   *     walked the markdown — `["Architecture", "Components", "API
+   *     Layer"]` etc. Surfaces both as a citation chip tooltip and as a
+   *     deep-link anchor to the exact heading inside the artifact.
+   */
+  artifactChunks: defineTable({
+    ownerTokenIdentifier: v.string(),
+    workspaceId: v.id("workspaces"),
+    repositoryId: v.id("repositories"),
+    artifactId: v.id("artifacts"),
+    artifactVersion: v.number(),
+    chunkIndex: v.number(),
+    headingPath: v.array(v.string()),
+    startOffset: v.number(),
+    endOffset: v.number(),
+    content: v.string(),
+    summary: v.optional(v.string()),
+    embedding: v.optional(v.array(v.float64())),
+  })
+    .index("by_artifactId_and_chunkIndex", ["artifactId", "chunkIndex"])
+    .index("by_workspaceId", ["workspaceId"])
+    .index("by_repositoryId", ["repositoryId"])
+    .vectorIndex("by_embedding", {
+      vectorField: "embedding",
+      dimensions: 1536,
+      filterFields: ["workspaceId", "repositoryId", "artifactId"],
+    })
+    .searchIndex("search_content", {
+      searchField: "content",
+      filterFields: ["workspaceId", "repositoryId", "artifactId"],
+    })
+    .searchIndex("search_summary", {
+      searchField: "summary",
+      filterFields: ["workspaceId", "repositoryId", "artifactId"],
+    }),
+
+  /**
+   * Three-mode restructure (Phase 1 widen, Phase 2 lifecycle wiring).
+   *
+   * Workspace-level Lab session: at most one `active` row per workspace at
+   * any time, shared across every Lab thread in that workspace. Session
+   * lifecycle:
+   *
+   *   `starting` → `active` → `paused` (idle auto-pause) → `active`
+   *                                  ↘                        ↗
+   *                                   `stopped` (user) / `ended` (cleanup)
+   *
+   * Cost transparency lives entirely on this row — `spentCents` is the
+   * per-session running total, the Lab status bar reads it through a
+   * subscription. `idleAutoPauseMinutes` drives the cron in
+   * `convex/crons.ts` so the value is observable in the dashboard rather
+   * than hidden in env-var-only config.
+   *
+   * Indexes:
+   *   - `by_workspaceId_and_status` answers "is there an active / paused
+   *     session for this workspace right now?" in O(1).
+   *   - `by_status_and_lastActivityAt` powers the auto-pause cron — find
+   *     all `active` sessions with `lastActivityAt < now - 10m`.
+   *   - `by_ownerTokenIdentifier_and_startedAt` is for the daily cost
+   *     rollup over a viewer's sessions.
+   */
+  labSessions: defineTable({
+    ownerTokenIdentifier: v.string(),
+    workspaceId: v.id("workspaces"),
+    repositoryId: v.id("repositories"),
+    sandboxId: v.optional(v.id("sandboxes")),
+    status: v.union(
+      v.literal("starting"),
+      v.literal("active"),
+      v.literal("paused"),
+      v.literal("stopped"),
+      v.literal("ended"),
+    ),
+    startedAt: v.number(),
+    lastActivityAt: v.number(),
+    lastResumedAt: v.optional(v.number()),
+    pausedAt: v.optional(v.number()),
+    endedAt: v.optional(v.number()),
+    idleAutoPauseMinutes: v.number(),
+    spentCents: v.number(),
+  })
+    .index("by_workspaceId_and_status", ["workspaceId", "status"])
+    .index("by_status_and_lastActivityAt", ["status", "lastActivityAt"])
+    .index("by_ownerTokenIdentifier_and_startedAt", ["ownerTokenIdentifier", "startedAt"]),
 });

@@ -3,7 +3,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { internalQuery } from "../_generated/server";
 import { MAX_CONTEXT_ARTIFACTS, MAX_CONTEXT_MESSAGES } from "../lib/constants";
-import type { ChatMode } from "../chatModeResolver";
+import type { ExtendedChatMode } from "./prompting";
 
 export type ReplyContext = {
   ownerTokenIdentifier: string;
@@ -20,8 +20,12 @@ export type ReplyContext = {
    *
    * Exposed on the context so `generation.ts` can hand it to
    * `buildSystemPrompt` without re-deriving the rule.
+   *
+   * Three-mode restructure: this widens to `ExtendedChatMode` so the field
+   * can carry the new persisted literals (`ask`, `lab`). Ask threads stay
+   * repository-backed, but generation keeps them tool-free.
    */
-  mode: ChatMode;
+  mode: ExtendedChatMode;
   repositorySummary?: string;
   readmeSummary?: string;
   architectureSummary?: string;
@@ -182,7 +186,7 @@ const REPLY_CONTEXT_OVERFETCH_FACTOR = 4;
 async function loadReplyContextMessages(
   ctx: Pick<QueryCtx, "db">,
   threadId: Id<"threads">,
-  effectiveMode: ChatMode,
+  effectiveMode: ExtendedChatMode,
   limit: number,
 ) {
   const overfetchLimit = limit * REPLY_CONTEXT_OVERFETCH_FACTOR;
@@ -192,12 +196,19 @@ async function loadReplyContextMessages(
     .order("desc")
     .take(overfetchLimit);
 
+  const canonicalEffectiveMode =
+    effectiveMode === "lab" || effectiveMode === "sandbox" ? ("sandbox" as const) : effectiveMode;
+
   const filtered = candidateMessages.filter((message) => {
     if (message.content.trim().length === 0) {
       return false;
     }
-    if (message.role === "assistant" && message.mode !== undefined && message.mode !== effectiveMode) {
-      return false;
+    if (message.role === "assistant" && message.mode !== undefined) {
+      const canonicalMessageMode =
+        message.mode === "lab" || message.mode === "sandbox" ? ("sandbox" as const) : message.mode;
+      if (canonicalMessageMode !== canonicalEffectiveMode) {
+        return false;
+      }
     }
     return true;
   });
@@ -254,6 +265,10 @@ export const getReplyContext = internalQuery({
     // return the same shape as the repo-less branch and skip every
     // repo-scoped lookup. This is also why `discuss` is grouped with the
     // no-repo case here rather than with `docs`/`sandbox` below.
+    //
+    // Ask also requires a repository (enforced at thread/send creation) and
+    // must not fall through to the empty discuss shape; it uses the
+    // repository-backed context below while `generation.ts` keeps it tool-free.
     if (!thread.repositoryId || effectiveMode === "discuss") {
       return {
         ownerTokenIdentifier: thread.ownerTokenIdentifier,
@@ -314,7 +329,12 @@ export const getReplyContext = internalQuery({
     // failure mid-stream, which is much worse UX than answering without
     // tools and telling the user the sandbox isn't ready.
     let sandboxTooling: ReplyContext["sandboxTooling"];
-    if (effectiveMode === "sandbox" && repository.latestSandboxId) {
+    // Three-mode restructure: `lab` is the new persisted literal for what
+    // used to be `sandbox`. Treat them as synonyms here so a Phase 2 Lab
+    // session that persists `mode = "lab"` still gets sandbox tools wired
+    // through. Phase 3 narrows `sandbox` away.
+    const isLiveTreeMode = effectiveMode === "sandbox" || effectiveMode === "lab";
+    if (isLiveTreeMode && repository.latestSandboxId) {
       const sandbox = await ctx.db.get(repository.latestSandboxId);
       if (sandbox?.status === "ready" && sandbox.remoteId && sandbox.repoPath) {
         sandboxTooling = {

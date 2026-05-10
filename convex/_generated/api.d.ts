@@ -11,6 +11,7 @@
 import type * as analysis from "../analysis.js";
 import type * as analysisNode from "../analysisNode.js";
 import type * as architectureDiagram from "../architectureDiagram.js";
+import type * as artifactFolders from "../artifactFolders.js";
 import type * as artifactStore from "../artifactStore.js";
 import type * as artifacts from "../artifacts.js";
 import type * as chat_cancel from "../chat/cancel.js";
@@ -43,6 +44,7 @@ import type * as imports from "../imports.js";
 import type * as importsNode from "../importsNode.js";
 import type * as jobLifecycle from "../jobLifecycle.js";
 import type * as lib_architectureDiagram from "../lib/architectureDiagram.js";
+import type * as lib_artifactWrites from "../lib/artifactWrites.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_constants from "../lib/constants.js";
 import type * as lib_daytonaWebhookVerification from "../lib/daytonaWebhookVerification.js";
@@ -59,6 +61,7 @@ import type * as lib_sandboxNames from "../lib/sandboxNames.js";
 import type * as lib_sandboxRollout from "../lib/sandboxRollout.js";
 import type * as lib_userPreferences from "../lib/userPreferences.js";
 import type * as lib_workspaces from "../lib/workspaces.js";
+import type * as migrations from "../migrations.js";
 import type * as ops from "../ops.js";
 import type * as opsNode from "../opsNode.js";
 import type * as repositories from "../repositories.js";
@@ -76,6 +79,7 @@ declare const fullApi: ApiFromModules<{
   analysis: typeof analysis;
   analysisNode: typeof analysisNode;
   architectureDiagram: typeof architectureDiagram;
+  artifactFolders: typeof artifactFolders;
   artifactStore: typeof artifactStore;
   artifacts: typeof artifacts;
   "chat/cancel": typeof chat_cancel;
@@ -108,6 +112,7 @@ declare const fullApi: ApiFromModules<{
   importsNode: typeof importsNode;
   jobLifecycle: typeof jobLifecycle;
   "lib/architectureDiagram": typeof lib_architectureDiagram;
+  "lib/artifactWrites": typeof lib_artifactWrites;
   "lib/auth": typeof lib_auth;
   "lib/constants": typeof lib_constants;
   "lib/daytonaWebhookVerification": typeof lib_daytonaWebhookVerification;
@@ -124,6 +129,7 @@ declare const fullApi: ApiFromModules<{
   "lib/sandboxRollout": typeof lib_sandboxRollout;
   "lib/userPreferences": typeof lib_userPreferences;
   "lib/workspaces": typeof lib_workspaces;
+  migrations: typeof migrations;
   ops: typeof ops;
   opsNode: typeof opsNode;
   repositories: typeof repositories;

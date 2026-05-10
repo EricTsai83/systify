@@ -45,7 +45,9 @@ export const sendMessage = mutation({
   args: {
     threadId: v.id("threads"),
     content: v.string(),
-    mode: v.optional(v.union(v.literal("discuss"), v.literal("docs"), v.literal("sandbox"))),
+    mode: v.optional(
+      v.union(v.literal("discuss"), v.literal("docs"), v.literal("sandbox"), v.literal("ask"), v.literal("lab")),
+    ),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -74,10 +76,16 @@ export const sendMessage = mutation({
     // disabled-mode tooltips also encode these, but a direct mutation caller
     // (or a UI race where the user picked `sandbox` and then the sandbox
     // expired before they hit Send) needs the same gate enforced server-side.
-    if ((mode === "docs" || mode === "sandbox") && !repository) {
+    //
+    // Three-mode restructure: `ask` (Library Ask) and `lab` (sandbox synonym)
+    // join the repo-required set. Ask cannot retrieve chunks without a repo;
+    // Lab cannot provision a sandbox without a repo.
+    if ((mode === "docs" || mode === "sandbox" || mode === "ask" || mode === "lab") && !repository) {
       throw new Error(`'${mode}' mode requires an attached repository.`);
     }
-    if (mode === "sandbox") {
+    // Lab is the new persisted literal; treat it as sandbox for gate /
+    // sandbox-ready checks until Phase 3 narrows `sandbox` away.
+    if (mode === "sandbox" || mode === "lab") {
       // Plan 04: re-check the feature gate at the write boundary. The
       // selector already disables sandbox mode for viewers outside the
       // allowlist, but a stale UI / a bypassed selector / a direct mutation
@@ -134,7 +142,10 @@ export const sendMessage = mutation({
     // Discuss / docs sends skip this entirely — they bill against
     // the cheaper `chat` cost category and aren't subject to the
     // sandbox cap.
-    if (mode === "sandbox") {
+    // Three-mode restructure: `lab` shares the cost-cap budget with the
+    // legacy `sandbox` literal — both consume the same Daytona compute
+    // category.
+    if (mode === "sandbox" || mode === "lab") {
       await assertSandboxDailyCostBudget(ctx, {
         ownerTokenIdentifier: identity.tokenIdentifier,
         workspaceId: thread.workspaceId ?? null,
@@ -154,10 +165,12 @@ export const sendMessage = mutation({
       status: "queued",
       stage: "queued",
       progress: 0,
-      // Sandbox mode is the only one that consumes Daytona compute, so it
-      // bills against the `deep_analysis` cost category. `discuss` and `docs`
-      // both stay on the standard `chat` category.
-      costCategory: mode === "sandbox" ? "deep_analysis" : "chat",
+      // Sandbox / Lab modes are the only ones that consume Daytona
+      // compute, so they bill against the `deep_analysis` cost category.
+      // `discuss`, `docs`, and `ask` all stay on the standard `chat`
+      // category — Ask runs entirely on chunk retrieval + LLM, no
+      // sandbox.
+      costCategory: mode === "sandbox" || mode === "lab" ? "deep_analysis" : "chat",
       triggerSource: "user",
       leaseExpiresAt: now + CHAT_JOB_LEASE_MS,
     });

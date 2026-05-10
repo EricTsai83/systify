@@ -186,7 +186,10 @@ function lintSandboxClaims(
   message: Pick<Doc<"messages">, "mode">,
   finalContent: string,
 ): UnverifiedClaimRange[] | undefined {
-  if (message.mode !== "sandbox") {
+  // Three-mode restructure: `lab` reuses the sandbox citation contract
+  // verbatim (the system prompt is identical), so the lint applies to
+  // both literals.
+  if (message.mode !== "sandbox" && message.mode !== "lab") {
     return undefined;
   }
   if (finalContent.length === 0) {
@@ -991,7 +994,7 @@ export const recoverStaleChatJob = internalMutation({
       // as a known shortfall: the daily cap may be slightly under-
       // recorded for stalled replies. Logged so ops can correlate
       // billing reconciliation findings with stale-recovery events.
-      if (assistantMessage && assistantMessage.mode === "sandbox") {
+      if (assistantMessage && (assistantMessage.mode === "sandbox" || assistantMessage.mode === "lab")) {
         logWarn("chat", "sandbox_cost_settlement_skipped_on_stale_recovery", {
           jobId: args.jobId,
           assistantMessageId: assistantMessage._id,

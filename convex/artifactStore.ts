@@ -16,6 +16,12 @@ interface CreateArtifactArgs {
   summary: string;
   contentMarkdown: string;
   source: ArtifactSource;
+  /**
+   * Optional folder placement (Phase A folder model). The store re-reads
+   * the folder before insert so callers can pass the id while this module
+   * enforces folder existence, owner, and repository scope.
+   */
+  folderId?: Id<"artifactFolders">;
 }
 
 /**
@@ -38,6 +44,19 @@ export function validateParentPresence(
 async function createArtifactInternal(ctx: MutationCtx, args: CreateArtifactArgs): Promise<Id<"artifacts">> {
   validateParentPresence(args.threadId, args.repositoryId);
 
+  if (args.folderId) {
+    const folder = await ctx.db.get(args.folderId);
+    if (!folder || folder.ownerTokenIdentifier !== args.ownerTokenIdentifier) {
+      throw new Error("Folder not found.");
+    }
+    if (!args.repositoryId) {
+      throw new Error("Cannot place a repo-less artifact in a repository folder.");
+    }
+    if (folder.repositoryId !== args.repositoryId) {
+      throw new Error("Cannot place an artifact in a folder from a different repository.");
+    }
+  }
+
   return await ctx.db.insert("artifacts", {
     threadId: args.threadId,
     repositoryId: args.repositoryId,
@@ -49,6 +68,7 @@ async function createArtifactInternal(ctx: MutationCtx, args: CreateArtifactArgs
     contentMarkdown: args.contentMarkdown,
     source: args.source,
     version: 1,
+    folderId: args.folderId,
   });
 }
 
@@ -170,6 +190,7 @@ export const createArtifact = internalMutation({
     summary: v.string(),
     contentMarkdown: v.string(),
     source: artifactSourceValidator,
+    folderId: v.optional(v.id("artifactFolders")),
   },
   handler: (ctx, args) => createArtifactInternal(ctx, args),
 });

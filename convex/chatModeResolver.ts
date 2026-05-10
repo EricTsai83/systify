@@ -51,6 +51,65 @@ export interface ChatModeResolution {
 }
 
 /**
+ * Three-mode restructure — the new top-level user-intent enum.
+ *
+ *   - `discuss` — no repo, free-form discussion; same persisted thread mode
+ *                 as before.
+ *   - `library` — read-mostly artifact reader. `Read` sub-mode renders the
+ *                 markdown body; `Ask` sub-mode opens an ask thread that
+ *                 retrieves chunks via hybrid RAG. NEVER provisions a
+ *                 sandbox, by invariant.
+ *   - `lab`     — sandbox-backed mode (the new name for `sandbox`).
+ *                 Distinct lifecycle (`labSessions`) so cost is visible
+ *                 and idle sandboxes auto-pause.
+ */
+export type ServiceMode = "discuss" | "library" | "lab";
+
+/**
+ * UI-only state inside a Library service mode. Never persisted; the URL is
+ * the source of truth (`/library` vs `/library/ask/:tid`). Carried as a
+ * separate enum so consumers can pattern-match on the sub-mode without
+ * reaching for URL parsing.
+ */
+export type LibrarySubMode = "read" | "ask";
+
+export interface ServiceModeResolution {
+  /**
+   * Modes the user is currently allowed to enter. A mode is in this list
+   * iff the underlying preconditions (repo attached, an artifact exists,
+   * sandbox feature gate open, …) are all satisfied.
+   */
+  availableServiceModes: ReadonlyArray<ServiceMode>;
+  /**
+   * Mode the URL should land on when the user opens the workspace. Never
+   * `lab` — Lab mode is opt-in to keep cost transparent.
+   */
+  defaultServiceMode: ServiceMode;
+  /**
+   * Per-mode reason a user can read in a tooltip when the mode is greyed
+   * out. The mode is, by construction, NOT in `availableServiceModes` when
+   * a string is present.
+   */
+  disabledReasons: Partial<Record<ServiceMode, string>>;
+  /** Phase 2 will read these to gate Lab session start / Ask thread bind. */
+  labReadiness: { canStart: boolean; reason: string | null };
+  askReadiness: { canBind: boolean; reason: string | null };
+}
+
+const DISABLED_REASON_LIBRARY_NO_REPO = "Attach a repository and run the first deep analysis to use Library mode.";
+const DISABLED_REASON_LIBRARY_NO_ARTIFACT =
+  "Library opens once your repository has at least one artifact (deep analysis runs automatically after import).";
+const DISABLED_REASON_LAB_NO_REPO = "Attach a repository to use Lab mode.";
+
+const ASK_REASON_NO_REPO = "Attach a repository and produce at least one artifact before asking a question.";
+const ASK_REASON_NO_ARTIFACT = "Library Ask needs at least one artifact in this workspace.";
+const LAB_REASON_NO_REPO = "Lab requires an attached repository.";
+const LAB_REASON_NO_SANDBOX = "Provision a sandbox to use Lab mode.";
+const LAB_REASON_PROVISIONING = "Sandbox is provisioning — Lab mode unlocks once it is ready.";
+const LAB_REASON_EXPIRED = "Sandbox expired — provision a new one to use Lab mode.";
+const LAB_REASON_FAILED = "Sandbox provisioning failed — provision a new one to use Lab mode.";
+
+/**
  * Plan 10 — sandbox daily-cost-cap gate. Closed when the per-user OR
  * per-workspace daily spend cap is reached; the resolver removes
  * `sandbox` from `availableModes` and surfaces the cost-cap tooltip so
@@ -250,5 +309,125 @@ function resolveChatModesIgnoringFeatureGate(
         defaultMode: getDefaultThreadMode(true),
         disabledReasons: { sandbox: DISABLED_REASON_SANDBOX_NO_SANDBOX },
       };
+  }
+}
+
+/**
+ * Three-mode restructure — pick the URL-landing service mode for a viewer.
+ *
+ * Resolution order:
+ *   1. Has a repo + at least one artifact → `library`. Library Read needs
+ *      no sandbox and no LLM call to render, so it's the cheapest place to
+ *      land a returning viewer.
+ *   2. Otherwise → `discuss`. We never auto-default to `lab` because Lab
+ *      provisions Daytona compute the moment the user sends a message.
+ */
+export function getDefaultServiceMode(hasAttachedRepo: boolean, hasAtLeastOneArtifact: boolean): ServiceMode {
+  if (hasAttachedRepo && hasAtLeastOneArtifact) {
+    return "library";
+  }
+  return "discuss";
+}
+
+/**
+ * Three-mode restructure — translate the (repo, artifact, sandbox, gates)
+ * tuple into the `(availableServiceModes, defaultServiceMode,
+ * disabledReasons, askReadiness, labReadiness)` quintuple the new
+ * workspace shell consumes.
+ *
+ * Independent of {@link resolveChatModes}: the legacy resolver still
+ * answers the per-thread mode-selector question (which the legacy chat
+ * panel and the docs/sandbox threads keep using through Phase 2). The new
+ * resolver answers "which top-level service can the user enter from the
+ * workspace shell". Both stay pure — no `process.env`, no Convex `ctx`.
+ */
+export function resolveServiceModes(
+  hasAttachedRepo: boolean,
+  hasAtLeastOneArtifact: boolean,
+  sandboxStatus: ChatModeSandboxStatus,
+  sandboxFeatureGate: SandboxFeatureGate,
+  sandboxCostCapGate: SandboxCostCapGate = OPEN_SANDBOX_COST_CAP_GATE,
+): ServiceModeResolution {
+  const available = new Set<ServiceMode>(["discuss"]);
+  const disabledReasons: Partial<Record<ServiceMode, string>> = {};
+
+  // Library availability — needs both a repo and at least one artifact in
+  // it. Pre-restructure workspaces always pass at least the repo check on
+  // the fast path because deep_analysis is auto-triggered on import.
+  if (!hasAttachedRepo) {
+    disabledReasons.library = DISABLED_REASON_LIBRARY_NO_REPO;
+  } else if (!hasAtLeastOneArtifact) {
+    disabledReasons.library = DISABLED_REASON_LIBRARY_NO_ARTIFACT;
+  } else {
+    available.add("library");
+  }
+
+  // Lab availability layers the existing chat-mode resolver: anything that
+  // disables `sandbox` over there should disable `lab` here. We re-use the
+  // same gate precedence (feature gate beats cap-gate beats lifecycle
+  // tooltip) so the user gets one consistent reason regardless of which
+  // entry point they came from.
+  const legacyResolution = resolveChatModes(hasAttachedRepo, sandboxStatus, sandboxFeatureGate, sandboxCostCapGate);
+  if (legacyResolution.availableModes.includes("sandbox")) {
+    available.add("lab");
+  } else {
+    disabledReasons.lab = legacyResolution.disabledReasons.sandbox ?? DISABLED_REASON_LAB_NO_REPO;
+  }
+
+  const askReadiness: ServiceModeResolution["askReadiness"] = !hasAttachedRepo
+    ? { canBind: false, reason: ASK_REASON_NO_REPO }
+    : !hasAtLeastOneArtifact
+      ? { canBind: false, reason: ASK_REASON_NO_ARTIFACT }
+      : { canBind: true, reason: null };
+
+  const labReadiness: ServiceModeResolution["labReadiness"] = !hasAttachedRepo
+    ? { canStart: false, reason: LAB_REASON_NO_REPO }
+    : sandboxStatus === "ready" && legacyResolution.availableModes.includes("sandbox")
+      ? { canStart: true, reason: null }
+      : sandboxStatus === "provisioning"
+        ? { canStart: false, reason: LAB_REASON_PROVISIONING }
+        : sandboxStatus === "expired"
+          ? { canStart: false, reason: LAB_REASON_EXPIRED }
+          : sandboxStatus === "failed"
+            ? { canStart: false, reason: LAB_REASON_FAILED }
+            : sandboxStatus === "none"
+              ? { canStart: false, reason: LAB_REASON_NO_SANDBOX }
+              : { canStart: false, reason: legacyResolution.disabledReasons.sandbox ?? LAB_REASON_NO_SANDBOX };
+
+  // Pick the URL-landing default. The function is intentionally
+  // independent of `available` so it never lands the user on a disabled
+  // mode (Lab is opt-in and Library only when an artifact exists).
+  const defaultServiceMode = getDefaultServiceMode(hasAttachedRepo, hasAtLeastOneArtifact);
+
+  return {
+    availableServiceModes: Array.from(available) as ReadonlyArray<ServiceMode>,
+    defaultServiceMode,
+    disabledReasons,
+    askReadiness,
+    labReadiness,
+  };
+}
+
+/**
+ * Three-mode restructure — promote a persisted thread mode into the
+ * service-mode bucket the workspace shell uses for routing. Used to redirect
+ * `/w/:wid/t/:tid` (legacy URL) to the right new URL based on the persisted
+ * thread mode.
+ *
+ *   - `discuss`           → `discuss`
+ *   - `docs`  / `ask`     → `library` (legacy docs threads ride along until
+ *                            Phase 3 narrows them out)
+ *   - `sandbox` / `lab`   → `lab`
+ */
+export function serviceModeForThreadMode(threadMode: "discuss" | "docs" | "sandbox" | "ask" | "lab"): ServiceMode {
+  switch (threadMode) {
+    case "discuss":
+      return "discuss";
+    case "docs":
+    case "ask":
+      return "library";
+    case "sandbox":
+    case "lab":
+      return "lab";
   }
 }

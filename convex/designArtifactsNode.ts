@@ -21,6 +21,12 @@ export const runFailureModeAnalysis = internalAction({
     threadId: v.id("threads"),
     subsystem: v.string(),
     jobId: v.id("jobs"),
+    /**
+     * Optional folder placement carried over from `requestFailureModeAnalysis`.
+     * Threaded through to `completeFailureModeAnalysis` so the artifact lands
+     * in the user-selected folder when the job finishes.
+     */
+    folderId: v.optional(v.id("artifactFolders")),
   },
   handler: async (ctx, args) => {
     const start = (await ctx.runMutation(internal.designArtifacts.markFailureModeRunning, {
@@ -56,6 +62,7 @@ export const runFailureModeAnalysis = internalAction({
         subsystem: args.subsystem,
         summary,
         contentMarkdown,
+        folderId: args.folderId,
       });
     } catch (error) {
       const errorId = logErrorWithId("designArtifacts", "failure_mode_analysis_failed", error, {

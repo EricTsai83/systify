@@ -44,7 +44,7 @@
  *     `generation.ts` with conditional model selection.
  */
 
-import type { ChatMode } from "../chatModeResolver";
+import type { ExtendedChatMode } from "./prompting";
 
 /**
  * Per-mode default model identifier. Wired to the pricing table in
@@ -58,23 +58,31 @@ import type { ChatMode } from "../chatModeResolver";
  * use the mini tier since they are single-step text replies where the
  * mini tier is empirically indistinguishable on this workload while
  * costing ~5–8× less.
+ *
+ * Three-mode restructure: `lab` shares the sandbox tier (it is the same
+ * tool-driven workload under a new persisted name); `ask` shares the
+ * mini tier (single-step text reply over retrieved chunks).
  */
-const DEFAULT_MODEL_BY_MODE: Record<ChatMode, string> = {
+const DEFAULT_MODEL_BY_MODE: Record<ExtendedChatMode, string> = {
   sandbox: "gpt-5",
+  lab: "gpt-5",
   docs: "gpt-5-mini",
   discuss: "gpt-5-mini",
+  ask: "gpt-5-mini",
 };
 
 /**
  * Mode → mode-specific override env var name. Kept as a typed
- * `Record<ChatMode, string>` so adding a new `ChatMode` literal forces
+ * `Record<ExtendedChatMode, string>` so adding a new mode literal forces
  * a compile error here, mirroring the exhaustiveness pattern used in
  * `convex/chat/prompting.ts:SYSTEM_PROMPTS`.
  */
-const MODE_ENV_VAR: Record<ChatMode, string> = {
+const MODE_ENV_VAR: Record<ExtendedChatMode, string> = {
   sandbox: "OPENAI_MODEL_SANDBOX",
+  lab: "OPENAI_MODEL_LAB",
   docs: "OPENAI_MODEL_DOCS",
   discuss: "OPENAI_MODEL_DISCUSS",
+  ask: "OPENAI_MODEL_ASK",
 };
 
 /**
@@ -104,7 +112,7 @@ function readEnv(name: string): string | undefined {
  * throws — a missing API key is detected upstream by `generation.ts`
  * before this resolver is ever consulted.
  */
-export function resolveModelForMode(mode: ChatMode): string {
+export function resolveModelForMode(mode: ExtendedChatMode): string {
   const override = readEnv(MODE_ENV_VAR[mode]);
   if (override !== undefined) {
     return override;

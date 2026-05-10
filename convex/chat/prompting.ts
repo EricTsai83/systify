@@ -120,18 +120,66 @@ const SYSTEM_PROMPT_SANDBOX = [
 ].join(" ");
 
 /**
- * Lookup keyed by `ChatMode` so adding a new mode literal forces a compile
- * error here (TypeScript exhaustiveness on `Record<Union, T>` is stricter
- * than on a `switch` statement, which only errors on accidental fall-through
- * if the function signature explicitly returns a non-union type).
+ * Three-mode restructure — Library Ask system prompt.
+ *
+ * Phase 1 ships the constant; Phase 2's `chat/context.ts` Ask branch is
+ * what feeds it into the LLM. The contract:
+ *
+ *   - LLM is told it has NO live source access and NO tools. The
+ *     generation action enforces this by passing `tools: undefined` for
+ *     `mode === "ask"` (assertion in `generation.ts`).
+ *   - Each retrieved chunk arrives as `[A1#section]`, `[A2#section]`,
+ *     etc. The LLM cites every factual claim with the matching token, and
+ *     the frontend turns the token into a deep-link to the artifact +
+ *     heading.
+ *   - When the user's question genuinely needs live source, the LLM emits
+ *     a single-line structured handoff (`{"type":"lab_handoff_offer",
+ *     ...}`) and stops. Phase 2's `chat/parsing.ts` parses that line and
+ *     the frontend renders two buttons (Best-effort / Open in Lab). This
+ *     keeps the cost-transparency invariant intact: Library Ask never
+ *     silently spins up a sandbox.
  */
-const SYSTEM_PROMPTS: Record<ChatMode, string> = {
+const SYSTEM_PROMPT_ASK = [
+  "You answer questions about the design artifacts retrieved for this conversation.",
+  "The user's question is augmented with the most relevant chunks from the workspace's artifact corpus, shown as `[A1#section]`, `[A2#section]`, … . Your sole source of truth is those retrieved chunks.",
+  "You do NOT have access to live source code, the file system, or any tools. Cite every factual claim with the matching `[A#]` token. If a chunk does not contain enough information to answer, say so explicitly — do not extrapolate.",
+  'If the user\'s question requires reading the live tree (specific file contents, line numbers, current code state, or verifying that an artifact still matches reality), STOP and respond with this exact structured JSON object on its own line, followed by a brief explanation:\n\n```{"type":"lab_handoff_offer","reason":"<one sentence>","suggestedLabPrompt":"<draft prompt>"}```\n\nThen wait for the user\'s choice. NEVER fabricate file paths, line numbers, or function signatures.',
+].join(" ");
+
+/**
+ * Three-mode restructure — superset of `ChatMode` covering the new
+ * persisted thread modes (`ask`, `lab`). The legacy `ChatMode` stays
+ * narrow so the existing 3-arg resolver tests and the per-thread mode
+ * selector keep their exhaustiveness; this superset is what the prompt
+ * builder and the generation action read so they can serve every
+ * thread-mode literal that may live in the database during the
+ * transition.
+ */
+export type ExtendedChatMode = ChatMode | "ask" | "lab";
+
+/**
+ * Lookup keyed by `ExtendedChatMode` so adding a new mode literal forces
+ * a compile error here (TypeScript exhaustiveness on `Record<Union, T>`
+ * is stricter than on a `switch` statement, which only errors on
+ * accidental fall-through if the function signature explicitly returns a
+ * non-union type).
+ *
+ * Rules of the table:
+ *   - `ask` returns the new chunk-cited prompt and is enforced tool-free
+ *     by `generation.ts`.
+ *   - `lab` reuses the existing sandbox prompt verbatim — Phase 1
+ *     persists `lab` as a synonym for `sandbox`, and the prompt language
+ *     is identical (Phase 3 narrows `sandbox` away).
+ */
+const SYSTEM_PROMPTS: Record<ExtendedChatMode, string> = {
   discuss: SYSTEM_PROMPT_DISCUSS,
   docs: SYSTEM_PROMPT_DOCS,
   sandbox: SYSTEM_PROMPT_SANDBOX,
+  ask: SYSTEM_PROMPT_ASK,
+  lab: SYSTEM_PROMPT_SANDBOX,
 };
 
-export function buildSystemPrompt(mode: ChatMode): string {
+export function buildSystemPrompt(mode: ExtendedChatMode): string {
   return SYSTEM_PROMPTS[mode];
 }
 
@@ -309,7 +357,10 @@ export function buildHeuristicAnswer(
 ) {
   const language = getUILanguage(context);
 
-  if (context.mode === "sandbox") {
+  // Three-mode restructure: `lab` is the new persisted literal that
+  // replaces `sandbox`. The heuristic answer is identical (no API key →
+  // no LLM tools → degrade to "set OPENAI_API_KEY to enable Lab").
+  if (context.mode === "sandbox" || context.mode === "lab") {
     return HEURISTIC_MESSAGES[language].sandbox(question).join("\n");
   }
 
