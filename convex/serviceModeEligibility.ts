@@ -288,18 +288,20 @@ function augmentResolution(
   }
 
   // Lab readiness
-  const labReadiness: ServiceModeEligibility["labReadiness"] = resolution.labReadiness.canStart
-    ? { canStart: true, reason: null }
-    : {
-        canStart: false,
-        reason: {
-          code: deriveLabDisabledCode(inputs),
-          message: resolution.labReadiness.reason ?? "Lab is unavailable.",
-          ...(deriveLabRetryAfterMs(inputs.sandboxCostCapGate, inputs.sandboxFeatureGate, now) !== undefined
-            ? { retryAfterMs: deriveLabRetryAfterMs(inputs.sandboxCostCapGate, inputs.sandboxFeatureGate, now)! }
-            : {}),
-        },
-      };
+  let labReadiness: ServiceModeEligibility["labReadiness"];
+  if (resolution.labReadiness.canStart) {
+    labReadiness = { canStart: true, reason: null };
+  } else {
+    const retryAfterMs = deriveLabRetryAfterMs(inputs.sandboxCostCapGate, inputs.sandboxFeatureGate, now);
+    labReadiness = {
+      canStart: false,
+      reason: {
+        code: deriveLabDisabledCode(inputs),
+        message: resolution.labReadiness.reason ?? "Lab is unavailable.",
+        ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
+      },
+    };
+  }
 
   // Ask readiness — same disabled codes as Library since Ask is the
   // interactive surface inside Library mode.
