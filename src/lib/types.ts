@@ -10,6 +10,8 @@ export type FolderId = Id<"artifactFolders">;
 export type LabSessionId = Id<"labSessions">;
 export type ArtifactChunkId = Id<"artifactChunks">;
 
+export type ArtifactFreshness = "fresh" | "aging" | "stale" | "unverified";
+
 /**
  * UI-level chat mode the user picks in the ChatPanel selector. The frontend
  * type and the schema-level `threads.mode` / `messages.mode` enum share the

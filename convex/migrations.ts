@@ -22,6 +22,8 @@ import { internalMutation } from "./_generated/server";
  */
 
 const ARTIFACT_BACKFILL_BATCH_SIZE = 200;
+const THREAD_MIGRATION_BATCH_SIZE = 100;
+const MESSAGE_MIGRATION_BATCH_SIZE = 200;
 
 /**
  * Backfill `producedIn` and `chunkingStatus` on every existing artifact.
@@ -98,6 +100,99 @@ export const backfillArtifactChunks = internalMutation({
   args: {},
   handler: async (ctx) => {
     await ctx.scheduler.runAfter(0, internal.artifactIndexing.backfillPendingArtifactChunks, {});
+    return { scheduled: true };
+  },
+});
+
+/**
+ * Phase 3: archive legacy Design Docs threads and move their persisted mode
+ * literal to `ask` so the eventual schema narrow has no `docs` rows left.
+ *
+ * This is intentionally a lock, not a delete. Users can still read the
+ * history, but `chat.sendMessage` rejects additional writes and points them
+ * at Library Ask / Lab so no new `docs` turns are created during the narrow.
+ */
+export const lockLegacyDocsThreads = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db
+      .query("threads")
+      .withIndex("by_mode", (q) => q.eq("mode", "docs"))
+      .take(THREAD_MIGRATION_BATCH_SIZE);
+
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_mode", (q) => q.eq("mode", "docs"))
+      .take(MESSAGE_MIGRATION_BATCH_SIZE);
+
+    if (rows.length === 0 && messages.length === 0) {
+      return { processedThreads: 0, processedMessages: 0, done: true };
+    }
+
+    const now = Date.now();
+    for (const thread of rows) {
+      await ctx.db.patch(thread._id, {
+        mode: "ask",
+        lockedAt: thread.lockedAt ?? now,
+      });
+    }
+    for (const message of messages) {
+      await ctx.db.patch(message._id, { mode: "ask" });
+    }
+
+    const hasMore = rows.length === THREAD_MIGRATION_BATCH_SIZE || messages.length === MESSAGE_MIGRATION_BATCH_SIZE;
+    if (hasMore) {
+      await ctx.scheduler.runAfter(0, internal.migrations.lockLegacyDocsThreads, {});
+      return { processedThreads: rows.length, processedMessages: messages.length, done: false };
+    }
+
+    return { processedThreads: rows.length, processedMessages: messages.length, done: true };
+  },
+});
+
+/**
+ * Phase 3: convert legacy `sandbox` rows to the post-restructure `lab`
+ * literal. Threads and messages are processed independently so the migration
+ * remains bounded and can resume safely.
+ */
+export const convertSandboxToLab = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const sandboxThreads = await ctx.db
+      .query("threads")
+      .withIndex("by_mode", (q) => q.eq("mode", "sandbox"))
+      .take(THREAD_MIGRATION_BATCH_SIZE);
+    for (const thread of sandboxThreads) {
+      await ctx.db.patch(thread._id, { mode: "lab" });
+    }
+
+    const sandboxMessages = await ctx.db
+      .query("messages")
+      .withIndex("by_mode", (q) => q.eq("mode", "sandbox"))
+      .take(MESSAGE_MIGRATION_BATCH_SIZE);
+    for (const message of sandboxMessages) {
+      await ctx.db.patch(message._id, { mode: "lab" });
+    }
+
+    const hasMore =
+      sandboxThreads.length === THREAD_MIGRATION_BATCH_SIZE || sandboxMessages.length === MESSAGE_MIGRATION_BATCH_SIZE;
+    if (hasMore) {
+      await ctx.scheduler.runAfter(0, internal.migrations.convertSandboxToLab, {});
+    }
+
+    return {
+      processedThreads: sandboxThreads.length,
+      processedMessages: sandboxMessages.length,
+      done: !hasMore,
+    };
+  },
+});
+
+export const startLegacyModeMigration = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    await ctx.scheduler.runAfter(0, internal.migrations.lockLegacyDocsThreads, {});
+    await ctx.scheduler.runAfter(0, internal.migrations.convertSandboxToLab, {});
     return { scheduled: true };
   },
 });

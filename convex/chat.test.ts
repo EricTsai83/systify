@@ -66,7 +66,7 @@ describe("chat thread defaults", () => {
     expect(detachedThread?.mode).toBe(emptyThread?.mode);
   });
 
-  test("createThread defaults to docs when a repository is attached", async () => {
+  test("createThread defaults to ask when a repository is attached", async () => {
     const ownerTokenIdentifier = "user|chat-default-attached-mode";
     const t = convexTest(schema, modules);
     const repositoryId = await insertRepository(t, ownerTokenIdentifier);
@@ -75,7 +75,7 @@ describe("chat thread defaults", () => {
     const threadId = await viewer.mutation(api.chat.threads.createThread, { repositoryId });
 
     const thread = await t.run(async (ctx) => await ctx.db.get(threadId));
-    expect(thread?.mode).toBe("docs");
+    expect(thread?.mode).toBe("ask");
     expect(thread?.repositoryId).toBe(repositoryId);
   });
 
@@ -100,9 +100,9 @@ describe("chat thread defaults", () => {
     const thread = await t.run(async (ctx) => await ctx.db.get(threadId));
     expect(thread?.repositoryId).toBe(repositoryId);
     // Attaching a repo must lift the thread out of `discuss` and into the
-    // repo-default mode (currently `docs`), mirroring createThread so the
-    // persisted mode stays in lockstep with the resolver.
-    expect(thread?.mode).toBe("docs");
+    // post-restructure artifact-grounded mode, mirroring createThread so the
+    // persisted mode stays in lockstep with Phase 3's no-new-docs invariant.
+    expect(thread?.mode).toBe("ask");
   });
 
   test("setThreadRepository preserves the user-chosen mode when swapping between repositories", async () => {

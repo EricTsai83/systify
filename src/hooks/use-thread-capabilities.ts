@@ -48,6 +48,8 @@ export interface ThreadCapabilities {
   defaultMode: ChatMode;
   /** Tooltip text keyed by mode for the greyed-out options. */
   disabledReasons: ChatModeResolution["disabledReasons"];
+  /** Non-null when a legacy thread has been archived for read-only browsing. */
+  lockedAt: number | null;
   /**
    * Plan 10 — visible sandbox cost budget for the ticker. `null` when
    * sandbox mode isn't currently relevant (no repo attached). When
@@ -78,6 +80,7 @@ const NO_THREAD_CAPABILITIES: ThreadCapabilities = {
   defaultMode: getDefaultThreadMode(false),
   disabledReasons: NO_THREAD_DISABLED_REASONS,
   sandboxCostBudget: null,
+  lockedAt: null,
 };
 
 const NO_THREAD_LOADING_CAPABILITIES: ThreadCapabilities = {
@@ -139,6 +142,7 @@ export function useThreadCapabilities(threadId: ThreadId | null): ThreadCapabili
     availableModes: ctx.chatModes.availableModes,
     defaultMode: ctx.chatModes.defaultMode,
     disabledReasons: ctx.chatModes.disabledReasons,
+    lockedAt: ctx.thread.lockedAt ?? null,
     sandboxCostBudget: deriveSandboxCostBudget(ctx.sandboxCostBudgets),
   };
 }

@@ -8,6 +8,37 @@ const ARTIFACTS_PER_THREAD_LIMIT = 40;
 const ARTIFACTS_PER_FOLDER_LIMIT = 200;
 const ARTIFACTS_PER_REPOSITORY_LIMIT = 200;
 
+type Freshness = "fresh" | "aging" | "stale" | "unverified";
+
+const DEFAULT_FRESHNESS_AGING_DAYS = 7;
+const DEFAULT_FRESHNESS_STALE_DAYS = 30;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function readPositiveNumberEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number.parseFloat(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function computeFreshness(args: {
+  producedIn?: "discuss" | "lab" | "legacy";
+  lastVerifiedAt?: number;
+  now: number;
+}): Freshness {
+  if (args.producedIn !== "lab" || args.lastVerifiedAt === undefined) {
+    return "unverified";
+  }
+
+  const ageDays = Math.max(0, (args.now - args.lastVerifiedAt) / MS_PER_DAY);
+  const agingDays = readPositiveNumberEnv("ARTIFACT_FRESHNESS_AGING_DAYS", DEFAULT_FRESHNESS_AGING_DAYS);
+  const staleDays = readPositiveNumberEnv("ARTIFACT_FRESHNESS_STALE_DAYS", DEFAULT_FRESHNESS_STALE_DAYS);
+
+  if (ageDays <= agingDays) return "fresh";
+  if (ageDays <= staleDays) return "aging";
+  return "stale";
+}
+
 /**
  * Public, owner-scoped list of artifacts attached to a thread.
  *
@@ -80,6 +111,40 @@ export const listByRepository = query({
       .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
       .order("desc")
       .take(ARTIFACTS_PER_REPOSITORY_LIMIT);
+  },
+});
+
+/**
+ * Repository artifact listing with Phase 3 freshness metadata.
+ *
+ * Freshness is derived from Lab verification only: legacy and discussion
+ * artifacts are deliberately `unverified` even when they were recently
+ * created, because Library must not imply that snapshots match live code.
+ */
+export const listByRepositoryWithFreshness = query({
+  args: { repositoryId: v.id("repositories") },
+  handler: async (ctx, args) => {
+    const identity = await requireViewerIdentity(ctx);
+    const repository = await ctx.db.get(args.repositoryId);
+    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      return [];
+    }
+
+    const now = Date.now();
+    const artifacts = await ctx.db
+      .query("artifacts")
+      .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
+      .order("desc")
+      .take(ARTIFACTS_PER_REPOSITORY_LIMIT);
+
+    return artifacts.map((artifact) => ({
+      ...artifact,
+      freshness: computeFreshness({
+        producedIn: artifact.producedIn,
+        lastVerifiedAt: artifact.lastVerifiedAt,
+        now,
+      }),
+    }));
   },
 });
 

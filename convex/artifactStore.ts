@@ -270,6 +270,21 @@ export const markChunkingStatus = internalMutation({
   },
 });
 
+export const markVerified = internalMutation({
+  args: { artifactId: v.id("artifacts") },
+  handler: async (ctx, args) => {
+    const artifact = await ctx.db.get(args.artifactId);
+    if (!artifact) {
+      return { patched: false };
+    }
+    await ctx.db.patch(args.artifactId, {
+      producedIn: "lab",
+      lastVerifiedAt: Date.now(),
+    });
+    return { patched: true };
+  },
+});
+
 export const listByThread = internalQuery({
   args: { threadId: v.id("threads"), limit: v.optional(v.number()) },
   handler: (ctx, args) => listByThreadInternal(ctx, args.threadId, args.limit),

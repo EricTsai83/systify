@@ -809,6 +809,13 @@ export function RepositoryShell({
   // prop drift between desktop and mobile renders. React still unmounts
   // and remounts on a breakpoint switch (different parent), but that
   // only happens when the viewport actually crosses 1280px.
+  const isLegacyThreadLocked = capabilities.lockedAt !== null;
+  const chatReadOnlyHint = isRepoArchived
+    ? "Restore this repository to send messages or run analyses."
+    : isLegacyThreadLocked
+      ? "This archived Design Docs thread is read-only. Continue in Library Ask or open a new Lab thread."
+      : undefined;
+
   const chatContainerNode = (
     <ChatContainer
       selectedThreadId={effectiveSelectedThreadId}
@@ -834,8 +841,8 @@ export function RepositoryShell({
       onImported={handleImported}
       onThreadMovedToWorkspace={handleThreadMovedToWorkspace}
       onSelectArtifact={handleSelectArtifact}
-      isReadOnly={isRepoArchived}
-      readOnlyHint={isRepoArchived ? "Restore this repository to send messages or run analyses." : undefined}
+      isReadOnly={isRepoArchived || isLegacyThreadLocked}
+      readOnlyHint={chatReadOnlyHint}
     />
   );
 

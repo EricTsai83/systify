@@ -17,6 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -35,10 +36,14 @@ import {
   type FolderTreeNode,
 } from "@/lib/artifact-folders";
 import { formatArtifactKind } from "@/lib/operations";
-import type { ArtifactId, FolderId, RepositoryId } from "@/lib/types";
+import type { ArtifactFreshness, ArtifactId, FolderId, RepositoryId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-const EMPTY_ARTIFACTS: Doc<"artifacts">[] = [];
+type NavigatorArtifact = Doc<"artifacts"> & {
+  freshness?: ArtifactFreshness;
+};
+
+const EMPTY_ARTIFACTS: NavigatorArtifact[] = [];
 
 type FolderNavigatorProps = {
   repositoryId: RepositoryId;
@@ -48,7 +53,7 @@ type FolderNavigatorProps = {
    * Sourced from `repoDetail.artifacts` so the panel doesn't have to
    * subscribe a second query — the shell already pulls this list.
    */
-  artifacts?: ReadonlyArray<Doc<"artifacts">>;
+  artifacts?: ReadonlyArray<NavigatorArtifact>;
   selectedArtifactId?: ArtifactId | null;
   onSelectArtifact: (artifactId: ArtifactId) => void;
   onOpenInReader?: (artifactId: ArtifactId) => void;
@@ -122,7 +127,7 @@ export function FolderNavigator({
   );
 
   const artifactsByFolder = useMemo(() => {
-    const map = new Map<string, Doc<"artifacts">[]>();
+    const map = new Map<string, NavigatorArtifact[]>();
     for (const artifact of artifacts) {
       if (!isFeatureLevelArtifactKind(artifact.kind)) continue;
       const folderId = artifact.folderId;
@@ -146,7 +151,7 @@ export function FolderNavigator({
   const filterPredicate = useMemo(() => {
     const needle = search.trim().toLowerCase();
     if (!needle) return null;
-    return (artifact: Doc<"artifacts">) => {
+    return (artifact: NavigatorArtifact) => {
       const haystack = `${artifact.title} ${artifact.summary} ${formatArtifactKind(artifact.kind)}`.toLowerCase();
       return haystack.includes(needle);
     };
@@ -306,7 +311,7 @@ function NavigatorSection({
   );
 }
 
-type FilterFn = ((artifact: Doc<"artifacts">) => boolean) | null;
+type FilterFn = ((artifact: NavigatorArtifact) => boolean) | null;
 
 function FolderTreeBranch({
   repositoryId,
@@ -323,7 +328,7 @@ function FolderTreeBranch({
 }: {
   repositoryId: RepositoryId;
   node: FolderTreeNode;
-  artifactsByFolder: ReadonlyMap<string, Doc<"artifacts">[]>;
+  artifactsByFolder: ReadonlyMap<string, NavigatorArtifact[]>;
   indent: number;
   selectedArtifactId: ArtifactId | null;
   selectedFolderId: FolderId | null;
@@ -501,7 +506,7 @@ const ArtifactRow = memo(function ArtifactRow({
   onOpenInReader,
   indent,
 }: {
-  artifact: Doc<"artifacts">;
+  artifact: NavigatorArtifact;
   isSelected: boolean;
   onSelect: (artifactId: ArtifactId) => void;
   onOpenInReader?: (artifactId: ArtifactId) => void;
@@ -514,7 +519,7 @@ const ArtifactRow = memo(function ArtifactRow({
         "group flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] hover:bg-muted/60",
         isSelected ? "bg-primary/10 ring-1 ring-primary/30" : "",
       )}
-      style={{ paddingLeft: `${indent * 12 + 22}px` }}
+      style={{ paddingLeft: `${indent * 12 + 22}px`, contentVisibility: "auto", containIntrinsicSize: "28px" }}
     >
       <button
         type="button"
@@ -524,6 +529,7 @@ const ArtifactRow = memo(function ArtifactRow({
         <ArtifactKindGlyph kind={artifact.kind} />
         <span className="truncate font-medium text-foreground">{artifact.title}</span>
         {recentlyChanged ? <span aria-hidden className="ml-1 inline-flex h-1.5 w-1.5 rounded-full bg-primary" /> : null}
+        <FreshnessPill artifact={artifact} />
         <Badge variant="outline" className="ml-auto shrink-0 px-1 py-0 text-[9px] uppercase">
           v{artifact.version}
         </Badge>
@@ -546,6 +552,87 @@ const ArtifactRow = memo(function ArtifactRow({
     </div>
   );
 });
+
+function FreshnessPill({ artifact }: { artifact: NavigatorArtifact }) {
+  if (!artifact.freshness) {
+    return null;
+  }
+
+  const meta = getFreshnessMeta(artifact);
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className={cn("inline-flex h-2 w-2 shrink-0 rounded-full", meta.dotClass)} aria-label={meta.label} />
+        </TooltipTrigger>
+        <TooltipContent side="right" className="max-w-64 text-xs">
+          {meta.tooltip}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+}
+
+function getFreshnessMeta(artifact: NavigatorArtifact): {
+  label: string;
+  tooltip: string;
+  dotClass: string;
+} {
+  const verifiedLabel = artifact.lastVerifiedAt
+    ? `Last verified ${formatRelativeAge(artifact.lastVerifiedAt)} ago`
+    : null;
+
+  switch (artifact.freshness) {
+    case "fresh":
+      return {
+        label: "Fresh artifact",
+        tooltip: `${verifiedLabel ?? "Verified recently"} · Fresh`,
+        dotClass: "bg-emerald-500",
+      };
+    case "aging":
+      return {
+        label: "Aging artifact",
+        tooltip: `${verifiedLabel ?? "Verified previously"} · Aging`,
+        dotClass: "bg-amber-500",
+      };
+    case "stale":
+      return {
+        label: "Stale artifact",
+        tooltip: `${verifiedLabel ?? "Verified a while ago"} · Re-verify in Lab`,
+        dotClass: "bg-red-500",
+      };
+    case "unverified":
+      return {
+        label: "Unverified artifact",
+        tooltip:
+          artifact.producedIn === "legacy"
+            ? "Unverified legacy artifact · Re-verify in Lab"
+            : "Not verified against live code · Re-verify in Lab",
+        dotClass: "bg-muted-foreground/45",
+      };
+    default:
+      return {
+        label: "Unverified artifact",
+        tooltip: "Not verified against live code · Re-verify in Lab",
+        dotClass: "bg-muted-foreground/45",
+      };
+  }
+}
+
+function formatRelativeAge(timestamp: number): string {
+  const elapsedMs = Math.max(0, Date.now() - timestamp);
+  const minutes = Math.floor(elapsedMs / 60_000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo`;
+  const years = Math.floor(months / 12);
+  return `${years}y`;
+}
 
 function ArtifactKindGlyph({ kind }: { kind: Doc<"artifacts">["kind"] }) {
   // Lightweight kind indicator — three letters, like a file extension.

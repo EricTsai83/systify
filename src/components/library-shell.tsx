@@ -71,7 +71,7 @@ export function LibraryShell({
   // tab strip's title resolution, and the quick-open dialog. The query
   // is bounded at 200 rows server-side; Phase 3 swaps the navigator for
   // a virtualized variant when artifacts.length > 50.
-  const allArtifacts = useQuery(api.artifacts.listByRepository, { repositoryId });
+  const allArtifacts = useQuery(api.artifacts.listByRepositoryWithFreshness, { repositoryId });
 
   const tabs = useLibraryTabs(workspaceId, activeArtifactId);
 
