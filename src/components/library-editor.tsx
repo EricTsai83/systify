@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useState } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { CaretRightIcon, CheckIcon, CopySimpleIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
@@ -55,22 +55,22 @@ export const LibraryEditor = forwardRef<
     }
   });
 
-  // Compute headings each render. The list is small (artifacts are at
-  // most a few hundred headings) and recomputing keeps the API
-  // declarative. The `useEffect` that bubbles `headings` up to the
-  // shell does the change detection by reference.
-  const headings = artifact ? extractHeadings(artifact.contentMarkdown) : [];
+  const contentMarkdown = artifact?.contentMarkdown ?? null;
+  // Recompute headings only when the artifact body changes so the
+  // effect below does not re-emit on unrelated renders.
+  const headings = useMemo(() => (contentMarkdown ? extractHeadings(contentMarkdown) : []), [contentMarkdown]);
   const headingsHandler = useCallback(
     (next: ReadonlyArray<MarkdownHeading>) => {
       onHeadingsChange?.(next);
     },
     [onHeadingsChange],
   );
-  // Stable signature for the handler so we don't re-emit on every
-  // render — only when the artifact body changes meaningfully.
-  if (artifact) {
-    headingsHandler(headings);
-  }
+  // Notify the shell after render to avoid update-during-render warnings.
+  useEffect(() => {
+    if (artifact) {
+      headingsHandler(headings);
+    }
+  }, [artifact, headings, headingsHandler]);
 
   if (artifact === undefined) {
     return <EditorSkeleton className={className} />;

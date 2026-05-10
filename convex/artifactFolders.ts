@@ -4,6 +4,7 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
 import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
+import { replaceArtifactFolder } from "./lib/artifactWrites";
 
 const FOLDERS_PER_REPO_LIMIT = 200;
 const ARTIFACTS_PER_FOLDER_LIMIT = 200;
@@ -206,27 +207,12 @@ export const rename = mutation({
       ownerTokenIdentifier: identity.tokenIdentifier,
     });
 
-    const patch: { name?: string; description?: string } = {};
+    const patch: { name?: string; description?: string | undefined } = {};
     if (args.name !== undefined) {
       patch.name = normalizeFolderName(args.name);
     }
     if (args.description !== undefined) {
-      const normalized = normalizeFolderDescription(args.description);
-      // Convex `patch` treats undefined as "set to undefined", which fails
-      // validation on optional v.string fields. Use replace path-style:
-      // when the caller clears the field, we explicitly delete it via a
-      // shallow replace (`name` re-applied to keep the row valid).
-      if (normalized === undefined) {
-        await ctx.db.replace(folder._id, {
-          ownerTokenIdentifier: folder.ownerTokenIdentifier,
-          repositoryId: folder.repositoryId,
-          parentFolderId: folder.parentFolderId,
-          name: patch.name ?? folder.name,
-          sortOrder: folder.sortOrder,
-        });
-        return null;
-      }
-      patch.description = normalized;
+      patch.description = normalizeFolderDescription(args.description);
     }
     if (Object.keys(patch).length === 0) return null;
     await ctx.db.patch(folder._id, patch);
@@ -264,14 +250,8 @@ export const move = mutation({
       parentFolderId: args.parentFolderId,
     });
 
-    // Replace path-style so we can clear `parentFolderId` to undefined when
-    // moving to root (Convex `patch` cannot unset optional id fields).
-    await ctx.db.replace(folder._id, {
-      ownerTokenIdentifier: folder.ownerTokenIdentifier,
-      repositoryId: folder.repositoryId,
+    await ctx.db.patch(folder._id, {
       parentFolderId: args.parentFolderId,
-      name: folder.name,
-      description: folder.description,
       sortOrder,
     });
     return null;
@@ -315,13 +295,8 @@ export const remove = mutation({
         )
         .take(FOLDERS_PER_REPO_LIMIT);
       for (const child of childFolders) {
-        await ctx.db.replace(child._id, {
-          ownerTokenIdentifier: child.ownerTokenIdentifier,
-          repositoryId: child.repositoryId,
+        await ctx.db.patch(child._id, {
           parentFolderId: newParentId,
-          name: child.name,
-          description: child.description,
-          sortOrder: child.sortOrder,
         });
       }
       const ownArtifacts = await ctx.db
@@ -371,30 +346,6 @@ export const remove = mutation({
     return null;
   },
 });
-
-/**
- * Convex's `patch` cannot unset an optional id field, so use a full replace
- * to clear/repoint `folderId`. Callers must own the artifact already.
- */
-async function replaceArtifactFolder(
-  ctx: MutationCtx,
-  artifact: Doc<"artifacts">,
-  folderId: Id<"artifactFolders"> | undefined,
-) {
-  await ctx.db.replace(artifact._id, {
-    repositoryId: artifact.repositoryId,
-    threadId: artifact.threadId,
-    jobId: artifact.jobId,
-    ownerTokenIdentifier: artifact.ownerTokenIdentifier,
-    kind: artifact.kind,
-    title: artifact.title,
-    summary: artifact.summary,
-    contentMarkdown: artifact.contentMarkdown,
-    source: artifact.source,
-    version: artifact.version,
-    folderId,
-  });
-}
 
 /**
  * Internal helper: returns the viewer's identity *if* they own the

@@ -868,6 +868,81 @@ describe("chat reply context", () => {
     expect(context.artifacts[0]?.title).toBe("Architecture diagram");
   });
 
+  test("ask mode uses repository-backed artifacts instead of the discuss fallback", async () => {
+    const ownerTokenIdentifier = "user|ask-repo-backed-context";
+    const t = convexTest(schema, modules);
+
+    const { threadId, userMessageId, expectedArtifactId } = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/ask-context",
+        sourceRepoFullName: "acme/ask-context",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "ask-context",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 0,
+      });
+
+      const threadId = await ctx.db.insert("threads", {
+        repositoryId,
+        ownerTokenIdentifier,
+        title: "Ask context thread",
+        mode: "ask",
+        lastMessageAt: Date.now(),
+      });
+
+      await ctx.db.insert("artifacts", {
+        repositoryId,
+        threadId,
+        ownerTokenIdentifier,
+        kind: "manifest",
+        title: "Manifest excluded from Ask fallback",
+        summary: "Should not appear",
+        contentMarkdown: "manifest body",
+        source: "heuristic",
+        version: 1,
+      });
+      const expectedArtifactId = await ctx.db.insert("artifacts", {
+        repositoryId,
+        threadId,
+        ownerTokenIdentifier,
+        kind: "deep_analysis",
+        title: "Deep analysis for Ask",
+        summary: "Grounded artifact summary",
+        contentMarkdown: "deep analysis body",
+        source: "sandbox",
+        version: 1,
+      });
+
+      const userMessageId = await ctx.db.insert("messages", {
+        repositoryId,
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "ask",
+        content: "What do the artifacts say?",
+      });
+
+      return { threadId, userMessageId, expectedArtifactId };
+    });
+
+    const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
+
+    expect(context.mode).toBe("ask");
+    expect(context.sourceRepoFullName).toBe("acme/ask-context");
+    expect(context.artifacts.map((artifact) => artifact.id)).toEqual([expectedArtifactId]);
+    expect(context.chunks).toEqual([]);
+    expect(context.sandboxTooling).toBeUndefined();
+  });
+
   test("rejects a userMessageId that points to an assistant message", async () => {
     // Role guard: assistant messages have a `mode` column too (the mode
     // they were produced under), but anchoring to one would mean

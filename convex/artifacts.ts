@@ -1,8 +1,8 @@
 import { v } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
-import type { MutationCtx } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
+import { replaceArtifactFolder } from "./lib/artifactWrites";
 
 const ARTIFACTS_PER_THREAD_LIMIT = 40;
 const ARTIFACTS_PER_FOLDER_LIMIT = 200;
@@ -171,37 +171,3 @@ export const moveToFolder = mutation({
     return null;
   },
 });
-
-/**
- * Convex `patch` cannot clear an optional id field — use a full replace
- * so we can transition `folderId` between defined/undefined cleanly.
- * Mirrors the helper in `artifactFolders.ts`; kept independent here so
- * each module owns the artifact-write path it needs.
- */
-async function replaceArtifactFolder(
-  ctx: MutationCtx,
-  artifact: Doc<"artifacts">,
-  folderId: Id<"artifactFolders"> | undefined,
-) {
-  await ctx.db.replace(artifact._id, {
-    repositoryId: artifact.repositoryId,
-    threadId: artifact.threadId,
-    jobId: artifact.jobId,
-    ownerTokenIdentifier: artifact.ownerTokenIdentifier,
-    kind: artifact.kind,
-    title: artifact.title,
-    summary: artifact.summary,
-    contentMarkdown: artifact.contentMarkdown,
-    source: artifact.source,
-    version: artifact.version,
-    folderId,
-    // Preserve three-mode restructure fields (Phase 1 widen). `replace`
-    // would otherwise blank them out — that would orphan the freshness UI
-    // and re-trigger Phase 2's chunking pipeline on every move.
-    producedIn: artifact.producedIn,
-    lastVerifiedAt: artifact.lastVerifiedAt,
-    chunkingStatus: artifact.chunkingStatus,
-    lastChunkedAt: artifact.lastChunkedAt,
-    lastChunkedVersion: artifact.lastChunkedVersion,
-  });
-}

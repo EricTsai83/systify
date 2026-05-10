@@ -105,10 +105,11 @@ export function ServiceModeSwitcher({
                     value={entry.value}
                     aria-pressed={serviceMode === entry.value}
                     aria-label={entry.label}
-                    disabled={!isAvailable}
+                    aria-disabled={!isAvailable}
                     className={cn(
                       "h-9 w-full justify-start gap-2 rounded-md text-xs",
                       "data-[state=on]:bg-primary/10 data-[state=on]:text-primary",
+                      !isAvailable && "cursor-not-allowed opacity-50",
                     )}
                   >
                     <Icon size={16} weight={serviceMode === entry.value ? "fill" : "regular"} />

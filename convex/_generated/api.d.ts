@@ -44,6 +44,7 @@ import type * as imports from "../imports.js";
 import type * as importsNode from "../importsNode.js";
 import type * as jobLifecycle from "../jobLifecycle.js";
 import type * as lib_architectureDiagram from "../lib/architectureDiagram.js";
+import type * as lib_artifactWrites from "../lib/artifactWrites.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_constants from "../lib/constants.js";
 import type * as lib_daytonaWebhookVerification from "../lib/daytonaWebhookVerification.js";
@@ -111,6 +112,7 @@ declare const fullApi: ApiFromModules<{
   importsNode: typeof importsNode;
   jobLifecycle: typeof jobLifecycle;
   "lib/architectureDiagram": typeof lib_architectureDiagram;
+  "lib/artifactWrites": typeof lib_artifactWrites;
   "lib/auth": typeof lib_auth;
   "lib/constants": typeof lib_constants;
   "lib/daytonaWebhookVerification": typeof lib_daytonaWebhookVerification;

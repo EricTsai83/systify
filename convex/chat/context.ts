@@ -22,9 +22,8 @@ export type ReplyContext = {
    * `buildSystemPrompt` without re-deriving the rule.
    *
    * Three-mode restructure: this widens to `ExtendedChatMode` so the field
-   * can carry the new persisted literals (`ask`, `lab`). Phase 2 wires the
-   * Ask retrieval branch; until then, Ask threads land in the discuss-shape
-   * fallback below.
+   * can carry the new persisted literals (`ask`, `lab`). Ask threads stay
+   * repository-backed, but generation keeps them tool-free.
    */
   mode: ExtendedChatMode;
   repositorySummary?: string;
@@ -260,14 +259,10 @@ export const getReplyContext = internalQuery({
     // repo-scoped lookup. This is also why `discuss` is grouped with the
     // no-repo case here rather than with `docs`/`sandbox` below.
     //
-    // Three-mode restructure: `ask` mode rides the same fast path during
-    // Phase 1. The Library Ask UI is not wired yet (Phase 2 builds it),
-    // and the Ask system prompt explicitly tells the LLM that no source
-    // is available. Returning the discuss shape here keeps the assertion
-    // in `generation.ts` (`mode === "ask" → tools === undefined`) trivial
-    // — there is nothing in the context that could surface tooling. Phase
-    // 2 replaces this branch with the RAG retrieval path.
-    if (!thread.repositoryId || effectiveMode === "discuss" || effectiveMode === "ask") {
+    // Ask also requires a repository (enforced at thread/send creation) and
+    // must not fall through to the empty discuss shape; it uses the
+    // repository-backed context below while `generation.ts` keeps it tool-free.
+    if (!thread.repositoryId || effectiveMode === "discuss") {
       return {
         ownerTokenIdentifier: thread.ownerTokenIdentifier,
         mode: effectiveMode,

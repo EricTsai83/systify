@@ -17,10 +17,9 @@ interface CreateArtifactArgs {
   contentMarkdown: string;
   source: ArtifactSource;
   /**
-   * Optional folder placement (Phase A folder model). Passed through to
-   * the row insert as-is — caller validates folder ownership / repo
-   * scope before invoking this helper because the helper doesn't have
-   * easy access to the viewer identity.
+   * Optional folder placement (Phase A folder model). The store re-reads
+   * the folder before insert so callers can pass the id while this module
+   * enforces folder existence, owner, and repository scope.
    */
   folderId?: Id<"artifactFolders">;
 }
@@ -44,6 +43,19 @@ export function validateParentPresence(
 
 async function createArtifactInternal(ctx: MutationCtx, args: CreateArtifactArgs): Promise<Id<"artifacts">> {
   validateParentPresence(args.threadId, args.repositoryId);
+
+  if (args.folderId) {
+    const folder = await ctx.db.get(args.folderId);
+    if (!folder || folder.ownerTokenIdentifier !== args.ownerTokenIdentifier) {
+      throw new Error("Folder not found.");
+    }
+    if (!args.repositoryId) {
+      throw new Error("Cannot place a repo-less artifact in a repository folder.");
+    }
+    if (folder.repositoryId !== args.repositoryId) {
+      throw new Error("Cannot place an artifact in a folder from a different repository.");
+    }
+  }
 
   return await ctx.db.insert("artifacts", {
     threadId: args.threadId,

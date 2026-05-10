@@ -160,11 +160,12 @@ function LibraryWorkspace({ workspaceId, artifactId }: { workspaceId: WorkspaceI
   const artifactProbe = useQuery(api.artifacts.getById, artifactId ? { artifactId } : "skip");
   useEffect(() => {
     if (!artifactId) return;
+    if (workspaces === undefined || !currentWorkspace || !repositoryId) return;
     if (artifactProbe === undefined) return;
     if (artifactProbe === null || artifactProbe.repositoryId !== repositoryId) {
       void navigate(libraryPath(workspaceId), { replace: true });
     }
-  }, [artifactId, artifactProbe, navigate, repositoryId, workspaceId]);
+  }, [artifactId, artifactProbe, currentWorkspace, navigate, repositoryId, workspaceId, workspaces]);
 
   if (workspaces === undefined || repositories === undefined) {
     return <ScreenState title="Loading…" description="Loading your workspace." isLoading />;
