@@ -292,11 +292,12 @@ function slugSectionPath(headingPath: string[]): string {
   if (headingPath.length === 0) {
     return "overview";
   }
-  return headingPath
+  const slug = headingPath
     .join("-")
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "");
+  return slug.length > 0 ? slug : "section";
 }
 
 /**

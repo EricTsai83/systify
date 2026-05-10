@@ -143,7 +143,7 @@ export const getLabSessionCostSummary = query({
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todaySpentCents = sessions
-      .filter((session) => session.startedAt >= todayStart.getTime())
+      .filter((session) => session.workspaceId === args.workspaceId && session.startedAt >= todayStart.getTime())
       .reduce((sum, session) => sum + session.spentCents, 0);
     return {
       current,
@@ -213,9 +213,13 @@ export const recordLabActivity = internalMutation({
     if (!session || session.status === "stopped" || session.status === "ended") {
       return { recorded: false };
     }
+    const delta = args.spentCentsDelta ?? 0;
+    if (delta < 0) {
+      throw new Error("spentCentsDelta cannot be negative");
+    }
     await ctx.db.patch(args.sessionId, {
       lastActivityAt: Date.now(),
-      spentCents: Math.max(0, session.spentCents + (args.spentCentsDelta ?? 0)),
+      spentCents: Math.max(0, session.spentCents + delta),
     });
     return { recorded: true };
   },

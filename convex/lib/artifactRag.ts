@@ -70,8 +70,8 @@ export async function retrieveArtifactChunks(ctx: ActionCtx, args: RetrieveArgs)
   }
 
   const candidates = new Map<Id<"artifactChunks">, RankedCandidate>();
-  addRankedCandidates(candidates, filterScope(lexical, scope), "lexical");
-  addRankedCandidates(candidates, filterScope(semantic, scope), "semantic");
+  addRankedCandidates(candidates, selectScopedCandidates(lexical, scope, candidateK), "lexical");
+  addRankedCandidates(candidates, selectScopedCandidates(semantic, scope, candidateK), "semantic");
 
   const ranked = [...candidates.values()]
     .sort((left, right) => {
@@ -109,7 +109,7 @@ async function retrieveLexical(
   args: RetrieveArgs,
   candidateK: number,
 ): Promise<ArtifactChunkSearchHit[]> {
-  const overfetchLimit = args.artifactScope && args.artifactScope.length > 1 ? candidateK * 4 : candidateK;
+  const overfetchLimit = args.artifactScope && args.artifactScope.length > 0 ? candidateK * 4 : candidateK;
   const [contentHits, summaryHits] = await Promise.all([
     ctx.runQuery(internal.artifactChunkStore.searchContent, {
       repositoryId: args.repositoryId,
@@ -130,7 +130,7 @@ async function retrieveLexical(
       merged.set(hit.chunkId, hit);
     }
   }
-  return [...merged.values()].slice(0, candidateK);
+  return [...merged.values()].sort((a, b) => b.lexicalScore - a.lexicalScore).slice(0, overfetchLimit);
 }
 
 async function retrieveSemantic(ctx: ActionCtx, args: RetrieveArgs, candidateK: number): Promise<RetrievalHit[]> {
@@ -140,7 +140,7 @@ async function retrieveSemantic(ctx: ActionCtx, args: RetrieveArgs, candidateK: 
     value: args.query,
   });
 
-  const overfetchLimit = args.artifactScope && args.artifactScope.length > 1 ? candidateK * 4 : candidateK;
+  const overfetchLimit = args.artifactScope && args.artifactScope.length > 0 ? candidateK * 4 : candidateK;
   const results = await ctx.vectorSearch("artifactChunks", "by_embedding", {
     vector: embedding,
     limit: overfetchLimit,
@@ -150,13 +150,11 @@ async function retrieveSemantic(ctx: ActionCtx, args: RetrieveArgs, candidateK: 
     chunkIds: results.map((result) => result._id),
   });
   const scoreById = new Map(results.map((result) => [result._id, result._score]));
-  return rows
-    .map((row) => ({
-      ...row,
-      lexicalScore: 0,
-      semanticScore: scoreById.get(row.chunkId) ?? 0,
-    }))
-    .slice(0, candidateK);
+  return rows.map((row) => ({
+    ...row,
+    lexicalScore: 0,
+    semanticScore: scoreById.get(row.chunkId) ?? 0,
+  }));
 }
 
 function addRankedCandidates(
@@ -189,6 +187,14 @@ function filterScope<T extends { artifactId: Id<"artifacts"> }>(hits: T[], scope
     return hits;
   }
   return hits.filter((hit) => scope.has(hit.artifactId));
+}
+
+function selectScopedCandidates<T extends { artifactId: Id<"artifacts"> }>(
+  hits: T[],
+  scope: Set<Id<"artifacts">>,
+  candidateK: number,
+): T[] {
+  return filterScope(hits, scope).slice(0, candidateK);
 }
 
 function normalizeLimit(value: number | undefined, fallback: number): number {

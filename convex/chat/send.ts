@@ -105,13 +105,6 @@ export const sendMessage = mutation({
       }
     }
 
-    let labSessionId: Id<"labSessions"> | undefined;
-    if (mode === "lab") {
-      labSessionId = await ctx.runMutation(internal.labSessions.ensureLabSessionForThread, {
-        threadId: args.threadId,
-      });
-    }
-
     const trimmedContent = args.content.trim();
     if (!trimmedContent) {
       throw new Error("Message content cannot be empty.");
@@ -162,6 +155,13 @@ export const sendMessage = mutation({
 
     await consumeChatRateLimit(ctx, identity.tokenIdentifier);
     await consumeChatGlobalRateLimit(ctx);
+
+    let labSessionId: Id<"labSessions"> | undefined;
+    if (mode === "lab") {
+      labSessionId = await ctx.runMutation(internal.labSessions.ensureLabSessionForThread, {
+        threadId: args.threadId,
+      });
+    }
 
     const jobId = await ctx.db.insert("jobs", {
       repositoryId: thread.repositoryId,

@@ -108,7 +108,7 @@ export function chunkArtifactMarkdown(
       };
     }
 
-    if (estimateTokens(blockText) > hardTokenCap && block.kind !== "code") {
+    if (exceedsHardCap(blockText, hardTokenCap)) {
       const pieces = splitLongText(blockText, hardTokenCap);
       for (const piece of pieces) {
         current ??= {
@@ -117,7 +117,7 @@ export function chunkArtifactMarkdown(
           endOffset: block.endOffset,
           content: "",
         };
-        if (current.content.trim().length > 0 && estimateTokens(`${current.content}\n\n${piece}`) > hardTokenCap) {
+        if (current.content.trim().length > 0 && exceedsHardCap(`${current.content}\n\n${piece}`, hardTokenCap)) {
           flush();
           current = {
             headingPath,
@@ -128,7 +128,7 @@ export function chunkArtifactMarkdown(
         }
         current.content = appendBlock(current.content, piece);
         current.endOffset = block.endOffset;
-        if (estimateTokens(current.content) >= hardTokenCap) {
+        if (exceedsHardCap(current.content, hardTokenCap) || estimateTokens(current.content) >= hardTokenCap) {
           flush();
           current = null;
         }
@@ -294,9 +294,14 @@ function splitLongText(text: string, hardTokenCap: number): string[] {
     }
   }
   if (current.trim().length > 0) {
-    pieces.push(current.trim());
+    const trimmed = current.trim();
+    if (estimateTokens(trimmed) > hardTokenCap) {
+      pieces.push(...splitByWords(trimmed, hardTokenCap));
+    } else {
+      pieces.push(trimmed);
+    }
   }
-  return pieces;
+  return enforceHardCapPieces(pieces, hardTokenCap);
 }
 
 function splitByWords(text: string, hardTokenCap: number): string[] {
@@ -305,15 +310,43 @@ function splitByWords(text: string, hardTokenCap: number): string[] {
   let current: string[] = [];
   for (const word of words) {
     const candidate = [...current, word].join(" ");
-    if (current.length > 0 && estimateTokens(candidate) > hardTokenCap) {
-      pieces.push(current.join(" "));
+    if (current.length > 0 && exceedsHardCap(candidate, hardTokenCap)) {
+      pieces.push(...enforceHardCapPieces([current.join(" ")], hardTokenCap));
       current = [word];
     } else {
       current.push(word);
     }
   }
   if (current.length > 0) {
-    pieces.push(current.join(" "));
+    pieces.push(...enforceHardCapPieces([current.join(" ")], hardTokenCap));
+  }
+  return pieces;
+}
+
+function enforceHardCapPieces(pieces: string[], hardTokenCap: number): string[] {
+  return pieces.flatMap((piece) =>
+    exceedsHardCap(piece, hardTokenCap) ? forceChunkByCharacters(piece, hardTokenCap) : [piece],
+  );
+}
+
+function exceedsHardCap(text: string, hardTokenCap: number): boolean {
+  return text.length > hardTokenCap || estimateTokens(text) > hardTokenCap;
+}
+
+function forceChunkByCharacters(text: string, hardTokenCap: number): string[] {
+  const pieces: string[] = [];
+  let chunk = "";
+  for (const char of text) {
+    const candidate = chunk + char;
+    if (chunk.length > 0 && exceedsHardCap(candidate, hardTokenCap)) {
+      pieces.push(chunk);
+      chunk = char;
+    } else {
+      chunk = candidate;
+    }
+  }
+  if (chunk.length > 0) {
+    pieces.push(chunk);
   }
   return pieces;
 }

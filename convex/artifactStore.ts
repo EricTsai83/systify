@@ -121,12 +121,17 @@ async function updateArtifactInternal(
 }
 
 async function deleteArtifactInternal(ctx: MutationCtx, artifactId: Id<"artifacts">): Promise<void> {
-  const chunks = await ctx.db
-    .query("artifactChunks")
-    .withIndex("by_artifactId_and_chunkIndex", (q) => q.eq("artifactId", artifactId))
-    .take(201);
-  for (const chunk of chunks) {
-    await ctx.db.delete(chunk._id);
+  const PAGE_SIZE = 100;
+  let hasMore = true;
+  while (hasMore) {
+    const chunks = await ctx.db
+      .query("artifactChunks")
+      .withIndex("by_artifactId_and_chunkIndex", (q) => q.eq("artifactId", artifactId))
+      .take(PAGE_SIZE);
+    for (const chunk of chunks) {
+      await ctx.db.delete(chunk._id);
+    }
+    hasMore = chunks.length === PAGE_SIZE;
   }
   await ctx.db.delete(artifactId);
 }
@@ -288,11 +293,15 @@ export const listByRepositoryAndKind = internalQuery({
 export const listFailedArtifactsForReindex = internalQuery({
   args: { cutoff: v.number(), limit: v.number() },
   handler: async (ctx, args) => {
+    const limit = Math.max(1, Math.floor(args.limit));
+    const overfetchLimit = Math.min(Math.max(1, Math.floor(limit * 5)), 1000);
     const rows = await ctx.db
       .query("artifacts")
       .withIndex("by_chunkingStatus", (q) => q.eq("chunkingStatus", "failed"))
-      .take(Math.max(1, Math.floor(args.limit)));
-    return rows.filter((artifact) => (artifact.lastChunkedAt ?? 0) < args.cutoff && artifact.repositoryId);
+      .take(overfetchLimit);
+    return rows
+      .filter((artifact) => (artifact.lastChunkedAt ?? 0) < args.cutoff && artifact.repositoryId)
+      .slice(0, limit);
   },
 });
 

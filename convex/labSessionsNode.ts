@@ -51,8 +51,13 @@ export const autoPauseIdleLabSessions = internalAction({
       limit: AUTO_PAUSE_BATCH_SIZE,
     });
     for (const session of sessions) {
-      await ctx.runMutation(internal.labSessions.markSessionPausedByIdle, { sessionId: session._id, now });
-      await ctx.runAction(internal.labSessionsNode.stopRemoteSandboxForSession, { sessionId: session._id });
+      const pauseResult = await ctx.runMutation(internal.labSessions.markSessionPausedByIdle, {
+        sessionId: session._id,
+        now,
+      });
+      if (pauseResult.paused) {
+        await ctx.runAction(internal.labSessionsNode.stopRemoteSandboxForSession, { sessionId: session._id });
+      }
     }
     return { paused: sessions.length };
   },

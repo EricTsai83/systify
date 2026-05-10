@@ -216,6 +216,12 @@ function LibraryWorkspace({
               isAskOpen={isAskOpen || askThreadId !== null}
               askThreadId={askThreadId}
               onOpenAsk={() => setIsAskOpen(true)}
+              onCloseAsk={() => {
+                setIsAskOpen(false);
+                if (askThreadId) {
+                  void navigate(libraryPath(workspaceId));
+                }
+              }}
               onAskThreadCreated={(threadId) => {
                 setIsAskOpen(true);
                 void navigate(libraryAskPath(workspaceId, threadId));

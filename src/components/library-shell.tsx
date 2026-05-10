@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { FolderIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
@@ -55,6 +55,7 @@ export function LibraryShell({
   isAskOpen,
   askThreadId,
   onOpenAsk,
+  onCloseAsk,
   onAskThreadCreated,
 }: {
   workspaceId: WorkspaceId;
@@ -63,6 +64,7 @@ export function LibraryShell({
   isAskOpen: boolean;
   askThreadId: ThreadId | null;
   onOpenAsk: () => void;
+  onCloseAsk: () => void;
   onAskThreadCreated: (threadId: ThreadId) => void;
 }) {
   // Pull the workspace's full artifact list once: powers the tree, the
@@ -86,8 +88,19 @@ export function LibraryShell({
   const [isMinimapHidden, setIsMinimapHidden] = useState(false);
   const [isQuickOpenOpen, setIsQuickOpenOpen] = useState(false);
   const [headings, setHeadings] = useState<ReadonlyArray<MarkdownHeading>>([]);
+  const [isLargeViewport, setIsLargeViewport] = useState(
+    () => typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches,
+  );
 
   const editorScrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(min-width: 1024px)");
+    const handleChange = () => setIsLargeViewport(mediaQuery.matches);
+    handleChange();
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
 
   const handleSelectArtifact = useCallback(
     (artifactId: ArtifactId) => {
@@ -194,14 +207,33 @@ export function LibraryShell({
       ) : null}
 
       {isAskOpen ? (
-        <LibraryAskPanel
-          workspaceId={workspaceId}
-          threadId={askThreadId}
-          activeArtifactId={tabs.activeArtifactId}
-          onThreadCreated={onAskThreadCreated}
-          onSelectArtifact={tabs.openTab}
-        />
+        <div className="hidden lg:block">
+          <LibraryAskPanel
+            workspaceId={workspaceId}
+            threadId={askThreadId}
+            activeArtifactId={tabs.activeArtifactId}
+            onThreadCreated={onAskThreadCreated}
+            onSelectArtifact={tabs.openTab}
+          />
+        </div>
       ) : null}
+
+      {/* Mobile Ask sheet */}
+      <Sheet open={isAskOpen && !isLargeViewport} onOpenChange={(open) => (open ? onOpenAsk() : onCloseAsk())}>
+        <SheetContent side="right" className="w-full p-0 sm:max-w-md lg:hidden">
+          <SheetTitle className="sr-only">Library Ask</SheetTitle>
+          <SheetDescription className="sr-only">
+            Ask questions using retrieved artifact chunks from this workspace.
+          </SheetDescription>
+          <LibraryAskPanel
+            workspaceId={workspaceId}
+            threadId={askThreadId}
+            activeArtifactId={tabs.activeArtifactId}
+            onThreadCreated={onAskThreadCreated}
+            onSelectArtifact={tabs.openTab}
+          />
+        </SheetContent>
+      </Sheet>
 
       {/* Mobile tree sheet */}
       <Sheet open={isTreeOpenMobile} onOpenChange={setIsTreeOpenMobile}>

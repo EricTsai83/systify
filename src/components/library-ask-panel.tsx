@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import { BookOpenIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -30,6 +30,7 @@ export function LibraryAskPanel({
   const [isStarting, setIsStarting] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const submissionLockRef = useRef(false);
 
   const latestAssistantInFlight = useMemo(() => {
     if (!messages) return false;
@@ -50,9 +51,12 @@ export function LibraryAskPanel({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (submissionLockRef.current) return;
     const content = input.trim();
     if (!content || latestAssistantInFlight) return;
+    submissionLockRef.current = true;
     setError(null);
+    setIsStarting(!threadId);
     setIsSending(true);
     try {
       const targetThreadId = await ensureThread();
@@ -65,6 +69,7 @@ export function LibraryAskPanel({
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to ask Library.");
     } finally {
+      submissionLockRef.current = false;
       setIsSending(false);
       setIsStarting(false);
     }
@@ -73,7 +78,7 @@ export function LibraryAskPanel({
   return (
     <aside
       className={cn(
-        "flex h-full w-[360px] shrink-0 flex-col border-l border-amber-500/40 bg-background shadow-xl",
+        "flex h-full w-full shrink-0 flex-col border-l border-amber-500/40 bg-background shadow-xl sm:w-[360px] lg:w-[360px]",
         "motion-safe:animate-in motion-safe:slide-in-from-right-4",
       )}
       aria-label="Library Ask"
@@ -122,12 +127,7 @@ export function LibraryAskPanel({
           disabled={isSending || latestAssistantInFlight}
         />
         <div className="mt-2 flex justify-end">
-          <Button
-            type="submit"
-            size="sm"
-            disabled={!input.trim() || isSending || latestAssistantInFlight}
-            onClick={() => setIsStarting(!threadId)}
-          >
+          <Button type="submit" size="sm" disabled={!input.trim() || isSending || latestAssistantInFlight}>
             <PaperPlaneTiltIcon size={14} weight="fill" />
             {isSending || isStarting ? "Asking..." : "Ask"}
           </Button>

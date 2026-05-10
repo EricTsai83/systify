@@ -6,6 +6,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
+import type { ActionCtx } from "./_generated/server";
 import {
   chunkArtifactMarkdown,
   DEFAULT_ARTIFACT_CHUNK_HARD_TOKEN_CAP,
@@ -18,10 +19,11 @@ const DEFAULT_EMBEDDING_BATCH_SIZE = 100;
 const FAILED_INDEXING_RETRY_BACKOFF_MS = 30 * 60_000;
 const FAILED_INDEXING_RETRY_LIMIT = 50;
 const PENDING_INDEXING_BACKFILL_LIMIT = 20;
+const REINDEX_ACTION_CONCURRENCY = 5;
 
 export const reindexArtifact = internalAction({
   args: { artifactId: v.id("artifacts") },
-  handler: async (ctx, args): Promise<{ indexed: boolean; chunks?: number; reason?: string }> => {
+  handler: async (ctx: ActionCtx, args): Promise<{ indexed: boolean; chunks?: number; reason?: string }> => {
     const artifact: Doc<"artifacts"> | null = await ctx.runQuery(internal.artifactStore.getArtifact, {
       artifactId: args.artifactId,
     });
@@ -103,34 +105,47 @@ export const reindexArtifact = internalAction({
 
 export const retryFailedArtifactIndexing = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ scheduled: number }> => {
+  handler: async (ctx: ActionCtx): Promise<{ scheduled: number }> => {
     const cutoff = Date.now() - FAILED_INDEXING_RETRY_BACKOFF_MS;
     const artifacts: Doc<"artifacts">[] = await ctx.runQuery(internal.artifactStore.listFailedArtifactsForReindex, {
       cutoff,
       limit: FAILED_INDEXING_RETRY_LIMIT,
     });
-    for (const artifact of artifacts) {
-      await ctx.runAction(internal.artifactIndexing.reindexArtifact, { artifactId: artifact._id });
-    }
+    await reindexArtifactsWithConcurrency(ctx, artifacts);
     return { scheduled: artifacts.length };
   },
 });
 
 export const backfillPendingArtifactChunks = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ scheduled: number; done: boolean }> => {
+  handler: async (ctx: ActionCtx): Promise<{ scheduled: number; done: boolean }> => {
     const artifacts: Doc<"artifacts">[] = await ctx.runQuery(internal.artifactStore.listPendingArtifactsForReindex, {
       limit: PENDING_INDEXING_BACKFILL_LIMIT,
     });
-    for (const artifact of artifacts) {
-      await ctx.runAction(internal.artifactIndexing.reindexArtifact, { artifactId: artifact._id });
-    }
+    await reindexArtifactsWithConcurrency(ctx, artifacts);
     if (artifacts.length === PENDING_INDEXING_BACKFILL_LIMIT) {
       await ctx.scheduler.runAfter(0, internal.artifactIndexing.backfillPendingArtifactChunks, {});
     }
     return { scheduled: artifacts.length, done: artifacts.length < PENDING_INDEXING_BACKFILL_LIMIT };
   },
 });
+
+async function reindexArtifactsWithConcurrency(ctx: ActionCtx, artifacts: Doc<"artifacts">[]): Promise<void> {
+  for (let index = 0; index < artifacts.length; index += REINDEX_ACTION_CONCURRENCY) {
+    const batch = artifacts.slice(index, index + REINDEX_ACTION_CONCURRENCY);
+    const results = await Promise.allSettled(
+      batch.map((artifact) => ctx.runAction(internal.artifactIndexing.reindexArtifact, { artifactId: artifact._id })),
+    );
+    results.forEach((result, resultIndex) => {
+      if (result.status === "rejected") {
+        logWarn("artifactIndexing", "artifact_reindex_action_failed", {
+          artifactId: batch[resultIndex]?._id,
+          error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+        });
+      }
+    });
+  }
+}
 
 async function embedArtifactChunks(values: string[]): Promise<number[][]> {
   const modelName = process.env.ARTIFACT_EMBEDDING_MODEL ?? DEFAULT_EMBEDDING_MODEL;
@@ -158,5 +173,6 @@ function readNumberEnv(name: string, fallback: number): number {
     return fallback;
   }
   const parsed = Number(raw);
+  // ARTIFACT_EMBEDDING_BATCH_SIZE intentionally truncates fractional values via Math.floor(parsed).
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
