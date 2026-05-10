@@ -3,20 +3,18 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import type { MutationCtx } from "../_generated/server";
 import { mutation } from "../_generated/server";
+import { serviceModeForThreadMode } from "../chatModeResolver";
+import { assertServiceModeEligible } from "../serviceModeEligibility";
 import { requireViewerIdentity } from "../lib/auth";
 import { requireActiveRepositoryForOwner } from "../lib/repositoryAccess";
 import {
   CHAT_JOB_LEASE_MS,
-  assertSandboxDailyCostBudget,
   consumeChatGlobalRateLimit,
   consumeChatRateLimit,
   getLeaseRetryAfterMs,
-  getSandboxReplyEstimateCents,
   isLeaseActive,
   throwOperationAlreadyInProgress,
 } from "../lib/rateLimit";
-import { getSandboxAvailability } from "../lib/sandboxAvailability";
-import { getSandboxFeatureGate } from "../lib/sandboxFeatureFlag";
 
 async function getActiveChatJobForThread(ctx: MutationCtx, threadId: Id<"threads">, now: number) {
   const queuedJob = await ctx.db
@@ -81,37 +79,18 @@ export const sendMessage = mutation({
     const requestedMode = args.mode ?? thread.mode;
     const mode = requestedMode === "sandbox" ? "lab" : requestedMode === "docs" ? "ask" : requestedMode;
 
-    // Mirror the resolver's preconditions on the write path. The UI
-    // disabled-mode tooltips also encode these, but a direct mutation caller
-    // (or a UI race where the user picked `sandbox` and then the sandbox
-    // expired before they hit Send) needs the same gate enforced server-side.
-    //
-    // Three-mode restructure: `ask` (Library Ask) and `lab` (sandbox synonym)
-    // join the repo-required set. Ask cannot retrieve chunks without a repo;
-    // Lab cannot provision a sandbox without a repo.
-    if ((mode === "ask" || mode === "lab") && !repository) {
-      throw new Error(`'${mode}' mode requires an attached repository.`);
-    }
-    if (mode === "lab") {
-      // Plan 04: re-check the feature gate at the write boundary. The
-      // selector already disables sandbox mode for viewers outside the
-      // allowlist, but a stale UI / a bypassed selector / a direct mutation
-      // call would otherwise still queue a sandbox-mode reply. The gate
-      // result is a value (not a throw) so we can surface a tooltip-quality
-      // message verbatim.
-      const sandboxGate = getSandboxFeatureGate(identity.tokenIdentifier);
-      if (!sandboxGate.enabled) {
-        throw new Error(sandboxGate.tooltip);
-      }
-      // `repository` is guaranteed non-null by the previous check, but TS
-      // can't narrow across the `||` without restating it.
-      const repo = repository!;
-      const sandbox = repo.latestSandboxId ? await ctx.db.get(repo.latestSandboxId) : null;
-      const sandboxAvailability = getSandboxAvailability(sandbox);
-      if (!sandboxAvailability.available) {
-        throw new Error(sandboxAvailability.message ?? "Lab requires an available sandbox.");
-      }
-    }
+    // Single source of truth for "can this viewer use mode X for this
+    // workspace right now?" — composes feature gate + sandbox availability +
+    // daily cost cap + (for Library) artifact existence and throws a
+    // structured ConvexError with a stable code on disabled. The reactive
+    // service-mode-switcher query subscribes to the same evaluator; the
+    // write-path check here keeps a stale UI / direct mutation caller / UI
+    // race (mode picked then sandbox expired) from slipping through.
+    await assertServiceModeEligible(ctx, {
+      repositoryId: thread.repositoryId,
+      workspaceId: thread.workspaceId,
+      mode: serviceModeForThreadMode(mode),
+    });
 
     const trimmedContent = args.content.trim();
     if (!trimmedContent) {
@@ -127,38 +106,6 @@ export const sendMessage = mutation({
         "An assistant reply is already in progress for this thread.",
         getLeaseRetryAfterMs(activeJob.leaseExpiresAt, now),
       );
-    }
-
-    // Plan 10 — daily-cost-cap pre-check, sandbox-only.
-    //
-    // Order matters: this fires *before* the per-owner / global chat
-    // rate limits because (a) a quota-exceeded error is a more
-    // user-actionable signal than "too many requests" and (b) the
-    // structured `SANDBOX_DAILY_CAP_EXCEEDED` error code carries a
-    // precise reset timestamp the UI uses to render a countdown,
-    // whereas a rate-limited request would advise generic retry. The
-    // resolver / threadContext also disables sandbox mode preemptively
-    // when the cap is reached, but the write-path check is necessary
-    // for two reasons:
-    //
-    //   1. A stale UI tab that loaded before the user hit their cap
-    //      could still queue a sandbox send.
-    //   2. The reactive resolver subscribes to *peek* values which
-    //      can momentarily race with concurrent settlements; only the
-    //      mutation-context check is authoritative.
-    //
-    // Discuss / docs sends skip this entirely — they bill against
-    // the cheaper `chat` cost category and aren't subject to the
-    // sandbox cap.
-    // Three-mode restructure: `lab` shares the cost-cap budget with the
-    // legacy `sandbox` literal — both consume the same Daytona compute
-    // category.
-    if (mode === "lab") {
-      await assertSandboxDailyCostBudget(ctx, {
-        ownerTokenIdentifier: identity.tokenIdentifier,
-        workspaceId: thread.workspaceId ?? null,
-        estimateCents: getSandboxReplyEstimateCents(),
-      });
     }
 
     await consumeChatRateLimit(ctx, identity.tokenIdentifier);

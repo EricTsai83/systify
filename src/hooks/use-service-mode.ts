@@ -4,14 +4,20 @@ import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { LibrarySubMode, ServiceMode, WorkspaceId } from "@/lib/types";
 
+interface ServiceModeDisabledLike {
+  code: string;
+  message: string;
+  retryAfterMs?: number;
+}
+
 const NULL_RESOLUTION = {
   availableServiceModes: ["discuss"] as ReadonlyArray<ServiceMode>,
   defaultServiceMode: "discuss" as ServiceMode,
-  disabledReasons: {} as Partial<Record<ServiceMode, string>>,
+  disabledReasons: {} as Partial<Record<ServiceMode, ServiceModeDisabledLike>>,
   hasAttachedRepo: false,
   hasAtLeastOneArtifact: false,
-  askReadiness: { canBind: false, reason: null as string | null },
-  labReadiness: { canStart: false, reason: null as string | null },
+  askReadiness: { canBind: false, reason: null as ServiceModeDisabledLike | null },
+  labReadiness: { canStart: false, reason: null as ServiceModeDisabledLike | null },
 };
 
 /**
@@ -40,7 +46,7 @@ const NULL_RESOLUTION = {
 export function useServiceMode(workspaceId: WorkspaceId | null) {
   const location = useLocation();
   const params = useParams<{ workspaceId?: string; threadId?: string; artifactId?: string }>();
-  const availability = useQuery(api.threadContext.getWorkspaceServiceModes, workspaceId ? { workspaceId } : "skip");
+  const availability = useQuery(api.serviceModeEligibility.evaluate, workspaceId ? { workspaceId } : "skip");
 
   const serviceMode = useMemo<ServiceMode>(() => {
     // The URL prefix tells us which mode is mounted. We match the path
