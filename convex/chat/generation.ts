@@ -35,6 +35,7 @@ import type { Id } from "../_generated/dataModel";
 import { internalAction } from "../_generated/server";
 import { getSandboxFsClient } from "../daytona";
 import { STREAM_FLUSH_THRESHOLD } from "../lib/constants";
+import { retrieveArtifactChunks } from "../lib/artifactRag";
 import { emitMetric, logInfo, logWarn } from "../lib/observability";
 import { estimateCostUsd } from "../lib/openaiPricing";
 import { bucketForTokenIdentifier } from "../lib/sandboxRollout";
@@ -427,7 +428,19 @@ export const generateAssistantReply = internalAction({
         throw new Error("Queued user message not present in conversational window for this assistant reply.");
       }
       const userPrompt = queuedUserMessage.content;
-      const relevantChunks = selectRelevantChunks(replyContext.chunks, userPrompt);
+      const askArtifactChunks =
+        replyContext.mode === "ask" && replyContext.workspaceId && replyContext.repositoryId
+          ? await retrieveArtifactChunks(ctx, {
+              workspaceId: replyContext.workspaceId,
+              repositoryId: replyContext.repositoryId,
+              artifactScope: replyContext.artifactContext,
+              query: userPrompt,
+            })
+          : [];
+      const groundedReplyContext: ReplyContext =
+        askArtifactChunks.length > 0 ? { ...replyContext, artifactChunks: askArtifactChunks } : replyContext;
+      const relevantChunks =
+        groundedReplyContext.mode === "ask" ? [] : selectRelevantChunks(groundedReplyContext.chunks, userPrompt);
 
       // Build the citation map *before* the heuristic / streaming branches so
       // both paths persist the same `[A#] → artifactId` lookup the prompt is
@@ -435,7 +448,7 @@ export const generateAssistantReply = internalAction({
       // artifacts were selected — `discuss` and unattached threads have an
       // empty list, so persisting `[]` would just add noise to the message
       // row without any frontend usefulness.
-      const citationMap = buildCitationMap(replyContext);
+      const citationMap = buildCitationMap(groundedReplyContext);
       const persistedCitationMap = citationMap.length > 0 ? citationMap : undefined;
 
       if (!process.env.OPENAI_API_KEY) {
@@ -470,7 +483,7 @@ export const generateAssistantReply = internalAction({
           emitSessionExit("aborted_orphan");
           return;
         }
-        const heuristicAnswer = buildHeuristicAnswer(replyContext, userPrompt, relevantChunks);
+        const heuristicAnswer = buildHeuristicAnswer(groundedReplyContext, userPrompt, relevantChunks);
         await ctx.runMutation(internal.chat.streaming.finalizeAssistantReply, {
           threadId: args.threadId,
           assistantMessageId: args.assistantMessageId,
@@ -489,8 +502,8 @@ export const generateAssistantReply = internalAction({
       // (mode-specific override → legacy `OPENAI_MODEL` → default).
       modelName = resolveModelForMode(replyContext.mode);
       telemetry.modelName = modelName;
-      const systemPrompt = buildSystemPrompt(replyContext.mode);
-      const userPromptText = buildUserPrompt(replyContext, userPrompt, relevantChunks);
+      const systemPrompt = buildSystemPrompt(groundedReplyContext.mode);
+      const userPromptText = buildUserPrompt(groundedReplyContext, userPrompt, relevantChunks);
 
       // Resolve sandbox tooling once. We only attach tools when:
       //   1. The reply is in sandbox mode (or its three-mode-restructure

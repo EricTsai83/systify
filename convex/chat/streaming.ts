@@ -120,7 +120,7 @@ async function settleSandboxReplyCost(
   // `costCategory` would also work today (sandbox ↔ deep_analysis), but
   // the message-level mode keeps this code resilient if the costCategory
   // mapping ever changes.
-  if (!args.assistantMessage || args.assistantMessage.mode !== "sandbox") {
+  if (!args.assistantMessage || (args.assistantMessage.mode !== "sandbox" && args.assistantMessage.mode !== "lab")) {
     return;
   }
   const cents = costUsdToCents(args.costUsd);
@@ -154,6 +154,30 @@ async function settleSandboxReplyCost(
     ownerTokenIdentifier: args.assistantMessage.ownerTokenIdentifier,
     workspaceId,
     cents,
+  });
+}
+
+async function recordLabSessionActivityForReply(
+  ctx: MutationCtx,
+  args: {
+    assistantMessage: Doc<"messages"> | null;
+    costUsd: number | undefined;
+  },
+): Promise<void> {
+  if (!args.assistantMessage || args.assistantMessage.mode !== "lab") {
+    return;
+  }
+  const thread = await ctx.db.get(args.assistantMessage.threadId);
+  if (!thread?.labSessionId) {
+    return;
+  }
+  const session = await ctx.db.get(thread.labSessionId);
+  if (!session || session.status === "stopped" || session.status === "ended") {
+    return;
+  }
+  await ctx.db.patch(session._id, {
+    lastActivityAt: Date.now(),
+    spentCents: Math.max(0, session.spentCents + (costUsdToCents(args.costUsd) ?? 0)),
   });
 }
 
@@ -513,6 +537,8 @@ export const finalizeAssistantReply = internalMutation({
         v.object({
           index: v.number(),
           artifactId: v.id("artifacts"),
+          chunkId: v.optional(v.id("artifactChunks")),
+          headingPath: v.optional(v.array(v.string())),
         }),
       ),
     ),
@@ -621,6 +647,10 @@ export const finalizeAssistantReply = internalMutation({
         assistantMessage: message ?? null,
         costUsd: args.costUsd,
       });
+      await recordLabSessionActivityForReply(ctx, {
+        assistantMessage: message ?? null,
+        costUsd: args.costUsd,
+      });
     } finally {
       // Always remove persisted stream state on completion. Note: Convex
       // mutations are transactional, so if any write above throws the
@@ -722,6 +752,10 @@ export const failAssistantReply = internalMutation({
       // bypassing the daily cap by repeatedly triggering errors.
       await settleSandboxReplyCost(ctx, {
         jobId: args.jobId,
+        assistantMessage: message ?? null,
+        costUsd: args.costUsd,
+      });
+      await recordLabSessionActivityForReply(ctx, {
         assistantMessage: message ?? null,
         costUsd: args.costUsd,
       });
@@ -904,6 +938,10 @@ export const markAssistantReplyCancelled = internalMutation({
       // for non-sandbox replies and for `costUsd === undefined`.
       await settleSandboxReplyCost(ctx, {
         jobId: args.jobId,
+        assistantMessage: message ?? null,
+        costUsd: args.costUsd,
+      });
+      await recordLabSessionActivityForReply(ctx, {
         assistantMessage: message ?? null,
         costUsd: args.costUsd,
       });

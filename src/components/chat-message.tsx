@@ -8,11 +8,12 @@ import { cn } from "@/lib/utils";
 import type { ActiveMessageStream, ArtifactId } from "@/lib/types";
 
 /**
- * Token regex for the citation rewriter: matches `[A#]` (1+ digits) anywhere
- * in the assistant's body. Captures the index so the replacement walker can
- * resolve it against `messages.citationMap`.
+ * Token regex for the citation rewriter: matches legacy `[A#]` and Library
+ * Ask's chunk-level `[A#section-path]` tokens anywhere in the assistant's
+ * body. Captures the numeric index so the replacement walker can resolve it
+ * against `messages.citationMap`.
  */
-const CITATION_TOKEN_REGEX = /\[A(\d+)\]/g;
+const CITATION_TOKEN_REGEX = /\[A(\d+)(?:#[^\]]+)?\]/g;
 
 /**
  * One assistant- or user-message bubble. Pure presentational: every

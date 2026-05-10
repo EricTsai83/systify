@@ -156,6 +156,13 @@ export const sendMessage = mutation({
     await consumeChatRateLimit(ctx, identity.tokenIdentifier);
     await consumeChatGlobalRateLimit(ctx);
 
+    let labSessionId: Id<"labSessions"> | undefined;
+    if (mode === "lab") {
+      labSessionId = await ctx.runMutation(internal.labSessions.ensureLabSessionForThread, {
+        threadId: args.threadId,
+      });
+    }
+
     const jobId = await ctx.db.insert("jobs", {
       repositoryId: thread.repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
@@ -213,6 +220,7 @@ export const sendMessage = mutation({
     await ctx.db.patch(args.threadId, {
       mode,
       lastMessageAt: now,
+      labSessionId,
     });
 
     await ctx.scheduler.runAfter(0, internal.chat.generation.generateAssistantReply, {

@@ -189,7 +189,12 @@ export function buildSystemPrompt(mode: ExtendedChatMode): string {
  * id, so the frontend can turn `[A1]` in the assistant's reply into a link
  * that scrolls to / highlights that artifact in the side panel.
  */
-export type CitationMapEntry = { index: number; artifactId: Id<"artifacts"> };
+export type CitationMapEntry = {
+  index: number;
+  artifactId: Id<"artifacts">;
+  chunkId?: Id<"artifactChunks">;
+  headingPath?: string[];
+};
 
 /**
  * Numbered artifact list that ends up in the assistant message's
@@ -199,6 +204,14 @@ export type CitationMapEntry = { index: number; artifactId: Id<"artifacts"> };
  * resolve to a citation client-side either.
  */
 export function buildCitationMap(context: ReplyContext): CitationMapEntry[] {
+  if (context.mode === "ask") {
+    return (context.artifactChunks ?? []).map((chunk, index) => ({
+      index: index + 1,
+      artifactId: chunk.artifactId,
+      chunkId: chunk.chunkId,
+      headingPath: chunk.headingPath,
+    }));
+  }
   return context.artifacts
     .slice(0, MAX_CONTEXT_ARTIFACTS)
     .map((artifact, index) => ({ index: index + 1, artifactId: artifact.id }));
@@ -209,6 +222,28 @@ export function buildUserPrompt(
   question: string,
   relevantChunks: Array<{ path: string; summary: string; content: string }>,
 ) {
+  if (context.mode === "ask") {
+    const artifactChunkSection = (context.artifactChunks ?? [])
+      .map((chunk, index) => {
+        const sectionPath = chunk.headingPath.length > 0 ? chunk.headingPath.join(" › ") : "Overview";
+        const citationToken = `[A${index + 1}#${slugSectionPath(chunk.headingPath)}]`;
+        return `## ${citationToken} ${chunk.artifactTitle} › ${sectionPath}\n${chunk.content.slice(0, 1400)}`;
+      })
+      .join("\n\n");
+
+    return [
+      context.sourceRepoFullName ? `Repository: ${context.sourceRepoFullName}` : undefined,
+      "Retrieved artifact chunks:",
+      artifactChunkSection || "No artifact chunks were retrieved for this question.",
+      "",
+      `The user's question:\n${question}`,
+      "",
+      "Cite every factual claim with the matching [A#] token. If chunks are insufficient, say so.",
+    ]
+      .filter((line): line is string => line !== undefined)
+      .join("\n");
+  }
+
   // Each artifact gets a `[A1]`, `[A2]`, … prefix matching the citation
   // contract in `SYSTEM_PROMPT_DOCS`. Numbering is 1-based and order-stable
   // with `buildCitationMap` (same slice, same iteration order) so the
@@ -251,6 +286,18 @@ export function buildUserPrompt(
   ]
     .filter((line): line is string => line !== undefined)
     .join("\n");
+}
+
+function slugSectionPath(headingPath: string[]): string {
+  if (headingPath.length === 0) {
+    return "overview";
+  }
+  const slug = headingPath
+    .join("-")
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug.length > 0 ? slug : "section";
 }
 
 /**

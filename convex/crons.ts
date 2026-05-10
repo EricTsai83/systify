@@ -10,6 +10,15 @@ crons.interval("sweep expired sandboxes", { hours: 1 }, internal.opsNode.sweepEx
 
 crons.interval("reconcile stale interactive jobs", { minutes: 5 }, internal.opsNode.reconcileStaleInteractiveJobs, {});
 
+crons.interval("auto pause idle lab sessions", { minutes: 1 }, internal.labSessionsNode.autoPauseIdleLabSessions, {});
+
+crons.interval(
+  "retry failed artifact indexing",
+  { minutes: 30 },
+  internal.artifactIndexing.retryFailedArtifactIndexing,
+  {},
+);
+
 crons.interval("reconcile daytona orphans", { hours: 6 }, internal.opsNode.reconcileDaytonaOrphans, {});
 
 crons.interval("repair daytona webhook backlog", { minutes: 5 }, internal.daytonaWebhooks.repairBacklog, {});
