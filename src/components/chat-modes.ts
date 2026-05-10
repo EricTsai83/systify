@@ -116,16 +116,28 @@ export const MODE_EXAMPLES: Record<ChatMode, ReadonlyArray<string>> = MODE_CATAL
 );
 
 /**
- * Lookup keyed by `ChatMode` so the per-message badge (Plan 02) and any
- * future onboarding popovers (Plan 14) all read from the same display
- * vocabulary. Building this off of `MODE_CATALOG` rather than re-typing the
- * labels keeps the badge and the selector pill in lockstep — renaming a mode
- * in `MODE_CATALOG` automatically renames the badge.
+ * Three-mode restructure — message-mode literals that may appear on
+ * persisted messages, including the new `ask` / `lab` modes from the
+ * three-mode restructure. Distinct from `ChatMode` (which is the
+ * legacy dropdown vocabulary) so adding new persisted modes doesn't
+ * smear them into the dropdown.
  */
-export const MODE_LABELS: Record<ChatMode, string> = MODE_CATALOG.reduce(
-  (acc, entry) => {
-    acc[entry.value] = entry.label;
-    return acc;
-  },
-  {} as Record<ChatMode, string>,
-);
+export type MessageBadgeMode = ChatMode | "ask" | "lab";
+
+/**
+ * Lookup keyed by every persisted message mode so the per-message
+ * badge (Plan 02) renders a label even for the new `ask` / `lab`
+ * literals. The legacy entries come from `MODE_CATALOG`; the new
+ * entries get hand-written labels matching the service-mode switcher.
+ */
+export const MODE_LABELS: Record<MessageBadgeMode, string> = {
+  ...MODE_CATALOG.reduce(
+    (acc, entry) => {
+      acc[entry.value] = entry.label;
+      return acc;
+    },
+    {} as Record<ChatMode, string>,
+  ),
+  ask: "Library Ask",
+  lab: "Lab",
+};

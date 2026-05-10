@@ -3,7 +3,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { internalQuery } from "../_generated/server";
 import { MAX_CONTEXT_ARTIFACTS, MAX_CONTEXT_MESSAGES } from "../lib/constants";
-import type { ChatMode } from "../chatModeResolver";
+import type { ExtendedChatMode } from "./prompting";
 
 export type ReplyContext = {
   ownerTokenIdentifier: string;
@@ -20,8 +20,13 @@ export type ReplyContext = {
    *
    * Exposed on the context so `generation.ts` can hand it to
    * `buildSystemPrompt` without re-deriving the rule.
+   *
+   * Three-mode restructure: this widens to `ExtendedChatMode` so the field
+   * can carry the new persisted literals (`ask`, `lab`). Phase 2 wires the
+   * Ask retrieval branch; until then, Ask threads land in the discuss-shape
+   * fallback below.
    */
-  mode: ChatMode;
+  mode: ExtendedChatMode;
   repositorySummary?: string;
   readmeSummary?: string;
   architectureSummary?: string;
@@ -182,7 +187,7 @@ const REPLY_CONTEXT_OVERFETCH_FACTOR = 4;
 async function loadReplyContextMessages(
   ctx: Pick<QueryCtx, "db">,
   threadId: Id<"threads">,
-  effectiveMode: ChatMode,
+  effectiveMode: ExtendedChatMode,
   limit: number,
 ) {
   const overfetchLimit = limit * REPLY_CONTEXT_OVERFETCH_FACTOR;
@@ -254,7 +259,15 @@ export const getReplyContext = internalQuery({
     // return the same shape as the repo-less branch and skip every
     // repo-scoped lookup. This is also why `discuss` is grouped with the
     // no-repo case here rather than with `docs`/`sandbox` below.
-    if (!thread.repositoryId || effectiveMode === "discuss") {
+    //
+    // Three-mode restructure: `ask` mode rides the same fast path during
+    // Phase 1. The Library Ask UI is not wired yet (Phase 2 builds it),
+    // and the Ask system prompt explicitly tells the LLM that no source
+    // is available. Returning the discuss shape here keeps the assertion
+    // in `generation.ts` (`mode === "ask" → tools === undefined`) trivial
+    // — there is nothing in the context that could surface tooling. Phase
+    // 2 replaces this branch with the RAG retrieval path.
+    if (!thread.repositoryId || effectiveMode === "discuss" || effectiveMode === "ask") {
       return {
         ownerTokenIdentifier: thread.ownerTokenIdentifier,
         mode: effectiveMode,
@@ -314,7 +327,12 @@ export const getReplyContext = internalQuery({
     // failure mid-stream, which is much worse UX than answering without
     // tools and telling the user the sandbox isn't ready.
     let sandboxTooling: ReplyContext["sandboxTooling"];
-    if (effectiveMode === "sandbox" && repository.latestSandboxId) {
+    // Three-mode restructure: `lab` is the new persisted literal for what
+    // used to be `sandbox`. Treat them as synonyms here so a Phase 2 Lab
+    // session that persists `mode = "lab"` still gets sandbox tools wired
+    // through. Phase 3 narrows `sandbox` away.
+    const isLiveTreeMode = effectiveMode === "sandbox" || effectiveMode === "lab";
+    if (isLiveTreeMode && repository.latestSandboxId) {
       const sandbox = await ctx.db.get(repository.latestSandboxId);
       if (sandbox?.status === "ready" && sandbox.remoteId && sandbox.repoPath) {
         sandboxTooling = {

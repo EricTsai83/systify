@@ -1,5 +1,5 @@
 import type { Id } from "../../convex/_generated/dataModel";
-import type { ChatMode } from "../../convex/chatModeResolver";
+import type { ChatMode, LibrarySubMode, ServiceMode } from "../../convex/chatModeResolver";
 
 export type WorkspaceId = Id<"workspaces">;
 export type RepositoryId = Id<"repositories">;
@@ -7,6 +7,8 @@ export type ThreadId = Id<"threads">;
 export type MessageId = Id<"messages">;
 export type ArtifactId = Id<"artifacts">;
 export type FolderId = Id<"artifactFolders">;
+export type LabSessionId = Id<"labSessions">;
+export type ArtifactChunkId = Id<"artifactChunks">;
 
 /**
  * UI-level chat mode the user picks in the ChatPanel selector. The frontend
@@ -17,6 +19,14 @@ export type FolderId = Id<"artifactFolders">;
  * frontend imports do not have to reach into `convex/` for the type.
  */
 export type { ChatMode };
+
+/**
+ * Three-mode restructure — top-level user-intent enum surfaced by the
+ * workspace shell's vertical service mode switcher. Re-exported via
+ * `lib/types` so frontend code never reaches into `convex/` directly
+ * (the project's import boundary).
+ */
+export type { ServiceMode, LibrarySubMode };
 
 export type ActiveMessageStream = {
   assistantMessageId: MessageId;

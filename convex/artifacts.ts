@@ -195,5 +195,13 @@ async function replaceArtifactFolder(
     source: artifact.source,
     version: artifact.version,
     folderId,
+    // Preserve three-mode restructure fields (Phase 1 widen). `replace`
+    // would otherwise blank them out — that would orphan the freshness UI
+    // and re-trigger Phase 2's chunking pipeline on every move.
+    producedIn: artifact.producedIn,
+    lastVerifiedAt: artifact.lastVerifiedAt,
+    chunkingStatus: artifact.chunkingStatus,
+    lastChunkedAt: artifact.lastChunkedAt,
+    lastChunkedVersion: artifact.lastChunkedVersion,
   });
 }

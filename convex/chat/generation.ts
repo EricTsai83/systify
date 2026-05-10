@@ -33,7 +33,6 @@ import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction } from "../_generated/server";
-import type { ChatMode } from "../chatModeResolver";
 import { getSandboxFsClient } from "../daytona";
 import { STREAM_FLUSH_THRESHOLD } from "../lib/constants";
 import { emitMetric, logInfo, logWarn } from "../lib/observability";
@@ -41,7 +40,13 @@ import { estimateCostUsd } from "../lib/openaiPricing";
 import { bucketForTokenIdentifier } from "../lib/sandboxRollout";
 import type { ReplyContext } from "./context";
 import { resolveModelForMode } from "./modelSelection";
-import { buildCitationMap, buildHeuristicAnswer, buildSystemPrompt, buildUserPrompt } from "./prompting";
+import {
+  buildCitationMap,
+  buildHeuristicAnswer,
+  buildSystemPrompt,
+  buildUserPrompt,
+  type ExtendedChatMode,
+} from "./prompting";
 import { selectRelevantChunks } from "./relevance";
 import {
   countUtf8Bytes,
@@ -120,8 +125,13 @@ type SessionTerminalStatus = "completed" | "failed" | "cancelled" | "aborted_orp
  */
 interface SessionTelemetry {
   startedAt: number;
-  /** Filled in once `getReplyContext` returns; remains undefined on pre-context throws. */
-  mode?: ChatMode;
+  /**
+   * Filled in once `getReplyContext` returns; remains undefined on
+   * pre-context throws. Three-mode restructure: widened to
+   * {@link ExtendedChatMode} so the new `ask` / `lab` literals can
+   * tag their session metric without coercion.
+   */
+  mode?: ExtendedChatMode;
   /**
    * Plan 13 — pre-computed rollout cohort bucket in `[0, 100)`. Set
    * once `getReplyContext` returns so both the session-finished metric
@@ -483,7 +493,8 @@ export const generateAssistantReply = internalAction({
       const userPromptText = buildUserPrompt(replyContext, userPrompt, relevantChunks);
 
       // Resolve sandbox tooling once. We only attach tools when:
-      //   1. The reply is in sandbox mode.
+      //   1. The reply is in sandbox mode (or its three-mode-restructure
+      //      synonym `lab`).
       //   2. `getReplyContext` saw a `ready` sandbox attached to the repo
       //      (it returns `sandboxTooling: undefined` otherwise — see
       //      context.ts for the full eligibility rules).
@@ -494,6 +505,17 @@ export const generateAssistantReply = internalAction({
         ? await buildSandboxTools(replyContext.sandboxTooling)
         : undefined;
       telemetry.hadTools = sandboxTools !== undefined;
+
+      // Three-mode restructure invariant: Library Ask MUST NEVER receive
+      // tools. The Ask system prompt explicitly tells the LLM it has no
+      // live source access; surfacing tools would let the model defy that
+      // and silently spend Daytona compute. The cost-transparency
+      // contract is "Library never starts a sandbox" — this assertion is
+      // the last line of defense if a future refactor accidentally
+      // wires `replyContext.sandboxTooling` for an Ask thread.
+      if (replyContext.mode === "ask" && sandboxTools !== undefined) {
+        throw new Error("Invariant violated: Library Ask reply received sandbox tools. Ask is read-only by design.");
+      }
 
       const flushIfNeeded = async () => {
         if (pendingDelta.length >= STREAM_FLUSH_THRESHOLD) {

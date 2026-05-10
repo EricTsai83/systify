@@ -28,6 +28,22 @@ vi.mock("react-router-dom", () => ({
       {children}
     </a>
   ),
+  // Three-mode restructure — `useServiceMode` (now used inside the
+  // sidebar header) calls `useLocation` / `useParams` / `useNavigate`.
+  // Stub them with the minimal shape the hook reads so the existing
+  // sidebar tests keep passing without re-introducing react-router's
+  // BrowserRouter context.
+  useLocation: () => ({ pathname: "/", search: "", hash: "", state: null, key: "default" }),
+  useParams: () => ({}),
+  useNavigate: () => () => {},
+}));
+
+// Three-mode restructure — `ServiceModeSwitcher` lives inside the
+// sidebar but its rendering is irrelevant to these sidebar-specific
+// tests. Mock it out so we don't have to wire a real router context
+// just for the switcher's `useNavigate` call inside its click handler.
+vi.mock("@/components/service-mode-switcher", () => ({
+  ServiceModeSwitcher: () => <div data-testid="service-mode-switcher" />,
 }));
 
 vi.mock("@/components/profile-card", () => ({

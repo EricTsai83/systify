@@ -5,11 +5,13 @@ import { ArchiveIcon, ChatCircleIcon, GlobeIcon, LockIcon, PlusIcon, TrashIcon }
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { ProfileCard } from "@/components/profile-card";
+import { ServiceModeSwitcher } from "@/components/service-mode-switcher";
 import { WorkspaceSelector } from "@/components/workspace-switcher";
 import { Button } from "@/components/ui/button";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarMenuButton } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { useServiceMode } from "@/hooks/use-service-mode";
 import { toUserErrorMessage } from "@/lib/errors";
 import { ARCHIVE_PATH } from "@/route-paths";
 import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
@@ -48,6 +50,11 @@ export function AppSidebar({
 }) {
   const threads = useQuery(api.chat.threads.listThreads, activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {});
   const createThreadMutation = useMutation(api.chat.threads.createThread);
+  // Three-mode restructure — derive the current service mode from the URL
+  // so the vertical switcher can highlight the active row. The hook also
+  // surfaces availability so disabled modes show their unlock-hint
+  // tooltip instead of being clickable.
+  const { serviceMode, availability } = useServiceMode(activeWorkspaceId);
 
   const activeWorkspace = useMemo(
     () => workspaces?.find((ws) => ws._id === activeWorkspaceId) ?? null,
@@ -87,6 +94,13 @@ export function AppSidebar({
           <div className="truncate text-[11px] text-muted-foreground">Design copilot for your codebase</div>
         </div>
       </SidebarHeader>
+
+      {/*
+       * Three-mode restructure — vertical switcher between the top-level
+       * service modes. Sits above the threads list so the user's current
+       * mode is the first thing they see and switching is one click away.
+       */}
+      <ServiceModeSwitcher workspaceId={activeWorkspaceId} serviceMode={serviceMode} availability={availability} />
 
       {/* New thread button */}
       <div className="border-b border-border px-3 py-2">

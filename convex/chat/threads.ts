@@ -10,6 +10,16 @@ import { loadRecentMessages } from "./context";
 import { deleteMessageStreamState } from "./streamStore";
 import { drainMessageToolCallEvents } from "./toolCallEventStore";
 
+/**
+ * Three-mode restructure — upper bound on the per-thread Ask scope filter.
+ * 20 ids keeps the filter lookup small (the scope filter is applied during
+ * RAG retrieval, where each candidate chunk is filtered by `artifactId IN
+ * scope`). A workspace with more than 20 artifacts the user wants to scope
+ * the question to almost certainly wants the unbounded "whole workspace"
+ * variant (empty array) instead.
+ */
+const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
+
 export const listThreads = query({
   args: {
     repositoryId: v.optional(v.id("repositories")),
@@ -86,7 +96,9 @@ export const createThread = mutation({
     repositoryId: v.optional(v.id("repositories")),
     workspaceId: v.optional(v.id("workspaces")),
     title: v.optional(v.string()),
-    mode: v.optional(v.union(v.literal("discuss"), v.literal("docs"), v.literal("sandbox"))),
+    mode: v.optional(
+      v.union(v.literal("discuss"), v.literal("docs"), v.literal("sandbox"), v.literal("ask"), v.literal("lab")),
+    ),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -109,12 +121,16 @@ export const createThread = mutation({
       }
     }
 
-    // `docs` and `sandbox` both require an attached repo; the resolver's
-    // capability ladder already prevents the UI from offering them in the
-    // no-repo case, but we re-check here so direct callers (and racing UI
-    // states) can't bypass it. We do NOT enforce sandbox-ready at thread
-    // creation; `sendMessage` re-validates at the actual send moment.
-    if ((args.mode === "docs" || args.mode === "sandbox") && !repositoryId) {
+    // `docs`, `sandbox`, `ask`, and `lab` all require an attached repo; the
+    // resolver's capability ladder already prevents the UI from offering
+    // them in the no-repo case, but we re-check here so direct callers
+    // (and racing UI states) can't bypass it. We do NOT enforce
+    // sandbox-ready at thread creation; `sendMessage` re-validates at the
+    // actual send moment.
+    if (
+      (args.mode === "docs" || args.mode === "sandbox" || args.mode === "ask" || args.mode === "lab") &&
+      !repositoryId
+    ) {
       throw new Error(`'${args.mode}' mode requires an attached repository.`);
     }
 
@@ -143,6 +159,74 @@ export const createThread = mutation({
       title,
       mode: args.mode ?? defaultMode,
       lastMessageAt: Date.now(),
+    });
+  },
+});
+
+/**
+ * Three-mode restructure — create a Library Ask thread bound to a
+ * workspace. Distinct from {@link createThread} because Ask carries a
+ * scope-filter (`artifactContext`) and never accepts a `mode` other than
+ * `"ask"`; routing it through `createThread` would smear that distinction
+ * across the legacy mode validator.
+ *
+ * Phase 1 widens the schema and ships the mutation; the frontend does not
+ * call it yet (Library Ask UI lands in Phase 2). Wiring the mutation early
+ * lets contract tests (Phase 1.7 verification) assert that `mode === "ask"`
+ * survives a round-trip through the validator and the persistence layer
+ * before the read path goes live.
+ */
+export const createAskThread = mutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    artifactContext: v.optional(v.array(v.id("artifacts"))),
+    title: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireViewerIdentity(ctx);
+    const workspace = await ctx.db.get(args.workspaceId);
+    if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      throw new Error("Workspace not found.");
+    }
+    if (!workspace.repositoryId) {
+      throw new Error("Library Ask requires a workspace bound to a repository.");
+    }
+
+    const artifactContext = args.artifactContext ?? [];
+    if (artifactContext.length > ASK_THREAD_MAX_ARTIFACT_CONTEXT) {
+      // Validate up-front so callers get a single, actionable error
+      // instead of a runtime fail later in the RAG retriever.
+      throw new Error(
+        `Library Ask scope filter accepts at most ${ASK_THREAD_MAX_ARTIFACT_CONTEXT} artifacts (got ${artifactContext.length}).`,
+      );
+    }
+
+    // Validate every artifact id in the scope filter at thread-create time:
+    //   - artifact must exist;
+    //   - viewer must own it;
+    //   - artifact must live in the same workspace's repo (cross-repo
+    //     scoping would either return zero hits or — worse — leak chunks
+    //     from another workspace through the vector index filter).
+    for (const artifactId of artifactContext) {
+      const artifact = await ctx.db.get(artifactId);
+      if (!artifact || artifact.ownerTokenIdentifier !== identity.tokenIdentifier) {
+        throw new Error("Artifact not found.");
+      }
+      if (artifact.repositoryId !== workspace.repositoryId) {
+        throw new Error("Artifact is not in this workspace's repository.");
+      }
+    }
+
+    return await ctx.db.insert("threads", {
+      workspaceId: args.workspaceId,
+      repositoryId: workspace.repositoryId,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      title: args.title ?? "Library Ask",
+      mode: "ask",
+      lastMessageAt: Date.now(),
+      // Stored as `undefined` when empty so the "whole workspace" sentinel
+      // and a deliberately-empty user filter both share one shape.
+      artifactContext: artifactContext.length > 0 ? artifactContext : undefined,
     });
   },
 });

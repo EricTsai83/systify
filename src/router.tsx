@@ -25,6 +25,29 @@ async function loadArtifactReaderRoute() {
 }
 
 /**
+ * Three-mode restructure — lazy loaders for the new top-level service
+ * modes. Each route mounts its own shell so the mode the user is in maps
+ * 1:1 to the URL, and code-splitting separates the Library Read bundle
+ * (no chat streaming, no sandbox SDK) from the Lab bundle (Daytona-aware
+ * status bar, file viewer in Phase 2). Phase 3 will use these split
+ * points to land the bundle-size cuts the plan calls for.
+ */
+async function loadDiscussRoute() {
+  const module = await import("@/pages/discuss");
+  return { Component: module.DiscussPage };
+}
+
+async function loadLibraryRoute() {
+  const module = await import("@/pages/library");
+  return { Component: module.LibraryPage };
+}
+
+async function loadLabRoute() {
+  const module = await import("@/pages/lab");
+  return { Component: module.LabPage };
+}
+
+/**
  * Routes mounted under {@link ProtectedLayout}. Defining them as a named const
  * (rather than inline in `appRoutes`) lets {@link isProtectedReturnTo} match
  * against the same data the router actually uses, so the post-login redirect
@@ -48,13 +71,20 @@ const protectedRoutes: RouteObject[] = [
   // round-trip required to know which repo's chrome to render. PRD #19 user
   // story 25 ("stable, shareable URLs for design threads").
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceThread, lazy: loadChatRoute },
-  // `/w/:workspaceId/a/:artifactId` is the Artifact Reader — a folder-aware,
-  // wide-format reader for a single artifact. Lives alongside `/t/:threadId`
-  // under the same workspace prefix so the sidebar, top-bar, and workspace
-  // chrome stay consistent on entry. Direct entries (bookmarks, shared
-  // links) are resolved via `api.artifacts.getById`; missing artifacts
-  // surface a not-found state inside the reader.
+  // `/w/:workspaceId/a/:artifactId` is the legacy Artifact Reader. Three-
+  // mode restructure points new entries at `/w/:wid/library/a/:aid`;
+  // this route stays for one release cycle so old bookmarks resolve.
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceArtifact, lazy: loadArtifactReaderRoute },
+  // Three-mode restructure — top-level service modes live under their own
+  // path prefixes. The page components wrap the shared workspace chrome
+  // (sidebar, top-bar) and pivot the inset content based on mode.
+  { path: PROTECTED_ROUTE_SEGMENTS.workspaceDiscuss, lazy: loadDiscussRoute },
+  { path: PROTECTED_ROUTE_SEGMENTS.workspaceDiscussThread, lazy: loadDiscussRoute },
+  { path: PROTECTED_ROUTE_SEGMENTS.workspaceLibrary, lazy: loadLibraryRoute },
+  { path: PROTECTED_ROUTE_SEGMENTS.workspaceLibraryArtifact, lazy: loadLibraryRoute },
+  { path: PROTECTED_ROUTE_SEGMENTS.workspaceLibraryAsk, lazy: loadLibraryRoute },
+  { path: PROTECTED_ROUTE_SEGMENTS.workspaceLab, lazy: loadLabRoute },
+  { path: PROTECTED_ROUTE_SEGMENTS.workspaceLabThread, lazy: loadLabRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.archive, lazy: loadArchiveRoute },
 ];
 

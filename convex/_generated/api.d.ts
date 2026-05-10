@@ -60,6 +60,7 @@ import type * as lib_sandboxNames from "../lib/sandboxNames.js";
 import type * as lib_sandboxRollout from "../lib/sandboxRollout.js";
 import type * as lib_userPreferences from "../lib/userPreferences.js";
 import type * as lib_workspaces from "../lib/workspaces.js";
+import type * as migrations from "../migrations.js";
 import type * as ops from "../ops.js";
 import type * as opsNode from "../opsNode.js";
 import type * as repositories from "../repositories.js";
@@ -126,6 +127,7 @@ declare const fullApi: ApiFromModules<{
   "lib/sandboxRollout": typeof lib_sandboxRollout;
   "lib/userPreferences": typeof lib_userPreferences;
   "lib/workspaces": typeof lib_workspaces;
+  migrations: typeof migrations;
   ops: typeof ops;
   opsNode: typeof opsNode;
   repositories: typeof repositories;
