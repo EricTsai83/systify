@@ -46,8 +46,16 @@ export function WorkspaceReadyBanner({ repository, latestDeepAnalysis, onView, c
   }
 
   const handleView = () => {
-    onView(latestDeepAnalysis._id);
-    setIsDismissed(true);
+    try {
+      const result = onView(latestDeepAnalysis._id);
+      Promise.resolve(result)
+        .then(() => setIsDismissed(true))
+        .catch((error) => {
+          console.error("Failed to navigate to artifact", error);
+        });
+    } catch (error) {
+      console.error("Failed to navigate to artifact", error);
+    }
   };
 
   return (

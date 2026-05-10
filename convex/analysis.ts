@@ -15,6 +15,7 @@ import {
 } from "./lib/rateLimit";
 import { getSandboxAvailability } from "./lib/sandboxAvailability";
 import { completeRunningJob, failRunningJob, failStaleActiveJob, markQueuedJobRunning } from "./jobLifecycle";
+import { logWarn } from "./lib/observability";
 
 const DEEP_ANALYSIS_SANDBOX_TTL_EXTENSION_MS = 30 * 60_000;
 
@@ -192,7 +193,11 @@ export const scheduleAutoDeepAnalysis = internalMutation({
 
     try {
       await consumeDaytonaGlobalRateLimit(ctx);
-    } catch {
+    } catch (err) {
+      logWarn("analysis", "auto_deep_analysis_rate_limited", {
+        repositoryId: args.repositoryId,
+        error: err instanceof Error ? err.message : String(err),
+      });
       return { scheduled: false as const };
     }
     await extendSandboxTtlForDeepAnalysis(ctx, sandbox._id, sandbox.ttlExpiresAt, now);
