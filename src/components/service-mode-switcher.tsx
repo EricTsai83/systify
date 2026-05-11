@@ -68,8 +68,7 @@ const LABEL_OUT: Transition = { duration: 0.14, ease: [0.7, 0, 0.84, 0] };
  * The component never persists state of its own — clicking a mode navigates
  * to the canonical URL (`/w/:wid/discuss`, `/w/:wid/library`, or
  * `/w/:wid/lab`), and `serviceMode` is computed by `useServiceMode` from that
- * URL. Disabled modes still render so the user can hover and read the
- * unlock-hint tooltip; clicking a disabled mode is a no-op.
+ * URL. Disabled modes render for keyboard accessibility; clicking one is a no-op.
  *
  * Cost-transparency invariant: clicking `Library` NEVER provisions a sandbox.
  * This is a property of the URL the click navigates to (the Library shell
@@ -111,7 +110,7 @@ export function ServiceModeSwitcher({
   return (
     <div className={cn("border-b border-border px-2 py-2", className)}>
       <div
-        role="radiogroup"
+        role="group"
         aria-label="Service mode"
         className="flex h-9 gap-1 rounded-md border border-border bg-muted/40 p-1"
       >
@@ -124,8 +123,7 @@ export function ServiceModeSwitcher({
             <motion.button
               key={entry.value}
               type="button"
-              role="radio"
-              aria-checked={isActive}
+              aria-pressed={isActive}
               aria-label={entry.label}
               aria-disabled={!isAvailable}
               // Don't use the native `disabled` attribute — handleSelect
