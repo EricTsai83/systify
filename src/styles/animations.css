@@ -147,54 +147,88 @@
 }
 
 /*
- * Sequential cartoon ZZZ — three keyframes that share a single cycle so
- * the z's stay in lock-step. The cycle:
+ * Cartoon ZZZ — three keyframes that share a single 6s cycle. Long pause
+ * and gentle phases keep this peaceful since it's a sleeping animation,
+ * not an attention-grabber. The cycle:
  *
- *   appear   →  z1 in,  z2 in,  z3 in     (each fade-in is gentle, ~10% of cycle)
- *   peak     →  all three visible          (long hold)
- *   dissipate→  z1 out, z2 out, z3 out    (each fade-out is ~6% of cycle)
- *   pause    →  brief gap before the loop restarts
+ *   appear   →  z1 in,  z2 in,  z3 in    (sequential, each ~10% of cycle, ease-out)
+ *   peak     →  all three visible         (long hold)
+ *   dissipate→  all three pop out together (6% of cycle, ease-out)
+ *   pause    →  long quiet stretch        (~28% of cycle ≈ 1.7s)
  *
- * Appearance and dissipation share the same FIFO order — first in, first
- * out — and each dissipation phase is staged so the previous z is fully
- * gone before the next one starts fading out. Net effect is three
- * discrete soft removals that read as a sequence rather than a smear.
+ * Appearance is FIFO and staged — bubbles emerge one at a time, bottom to
+ * top. Dissipation is synchronized — all three z's share the same 66%→72%
+ * fade-out window so they pop out together as a single event, which gives
+ * the cycle a clear close-bracket: build up, hold, vanish, rest, repeat.
+ *
+ * Easing rationale: the cycle has three sequential fade-ins at very
+ * different cycle offsets. A single top-level ease-in-out warps each
+ * phase differently (a z at 10% rides a different part of the global
+ * curve than a z at 30%, so they look like they're moving at different
+ * speeds). Holding the global function flat at `linear` and shaping each
+ * fade with its own `ease-out` keeps the three z's identical: a natural
+ * bloom on the way in, and a quick-then-trailing dispersal on the way
+ * out. `ease-out` on the dissipation reads as "彈出 + dissolve" rather
+ * than "snap" — opacity loses most of its visibility fast then trails
+ * gently to zero, which is what natural dispersal looks like.
  */
 @keyframes z-puff-1 {
-  0%,
-  78%,
+  0% {
+    opacity: 0;
+    animation-timing-function: ease-out;
+  }
+  10% {
+    opacity: 1;
+  }
+  66% {
+    opacity: 1;
+    animation-timing-function: ease-out;
+  }
+  72%,
   100% {
     opacity: 0;
-  }
-  10%,
-  72% {
-    opacity: 1;
   }
 }
 
 @keyframes z-puff-2 {
-  0%,
-  10%,
-  84%,
-  100% {
+  0% {
     opacity: 0;
   }
-  20%,
-  78% {
+  10% {
+    opacity: 0;
+    animation-timing-function: ease-out;
+  }
+  20% {
     opacity: 1;
+  }
+  66% {
+    opacity: 1;
+    animation-timing-function: ease-out;
+  }
+  72%,
+  100% {
+    opacity: 0;
   }
 }
 
 @keyframes z-puff-3 {
-  0%,
-  20%,
-  90%,
-  100% {
+  0% {
     opacity: 0;
   }
-  30%,
-  84% {
+  20% {
+    opacity: 0;
+    animation-timing-function: ease-out;
+  }
+  30% {
     opacity: 1;
+  }
+  66% {
+    opacity: 1;
+    animation-timing-function: ease-out;
+  }
+  72%,
+  100% {
+    opacity: 0;
   }
 }
 
@@ -278,15 +312,15 @@
   }
 
   .animate-z-puff-1 {
-    animation: z-puff-1 4s ease-in-out infinite;
+    animation: z-puff-1 6s linear infinite;
   }
 
   .animate-z-puff-2 {
-    animation: z-puff-2 4s ease-in-out infinite;
+    animation: z-puff-2 6s linear infinite;
   }
 
   .animate-z-puff-3 {
-    animation: z-puff-3 4s ease-in-out infinite;
+    animation: z-puff-3 6s linear infinite;
   }
 
   .animate-fade-in {

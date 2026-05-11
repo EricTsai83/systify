@@ -278,12 +278,13 @@ function SearchPendingState() {
  * blink frame so the closed-eye state reads as part of the same owl
  * family. The owl body is static; the three dream `z` chars each run
  * their own keyframe pre-staged with the others, so the cycle goes
- * z1 (bottom) in → z2 (mid) in → z3 (top) in → hold all three → z1 out
- * → z2 out → z3 out → pause → loop. Appearance and dissipation share the
- * same FIFO order, but each dissipation is a fast blip so the removal
- * reads as three discrete events. Single `<pre>` rather than the awake
- * owl's double-pre overlay — the dream chars never overlap the body, so
- * no opaque cover is needed.
+ * z1 (bottom) in → z2 (mid) in → z3 (top) in → hold all three → all
+ * three pop out together → pause → loop. Appearance is sequential
+ * (bubbles emerging one at a time, FIFO), dissipation is synchronized
+ * (a single closing event), and the pause gives the cycle a peaceful
+ * sleeping-breath rhythm. Single `<pre>` rather than the awake owl's
+ * double-pre overlay — the dream chars never overlap the body, so no
+ * opaque cover is needed.
  */
 function SleepingOwlAsciiArt() {
   return (
