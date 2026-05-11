@@ -1,7 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
-import { Link } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import { ArchiveIcon, ChatCircleIcon, GlobeIcon, LockIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
+import { ChatCircleIcon, GlobeIcon, LockIcon, PlusIcon, TrashIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { ProfileCard } from "@/components/profile-card";
@@ -13,7 +12,6 @@ import { Logo } from "@/components/logo";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useServiceMode } from "@/hooks/use-service-mode";
 import { toUserErrorMessage } from "@/lib/errors";
-import { ARCHIVE_PATH } from "@/route-paths";
 import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 
 /**
@@ -50,10 +48,10 @@ export function AppSidebar({
 }) {
   const threads = useQuery(api.chat.threads.listThreads, activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {});
   const createThreadMutation = useMutation(api.chat.threads.createThread);
-  // Three-mode restructure — derive the current service mode from the URL
-  // so the vertical switcher can highlight the active row. The hook also
-  // surfaces availability so disabled modes show their unlock-hint
-  // tooltip instead of being clickable.
+  // Derive the current service mode from the URL so the segmented switcher
+  // can highlight the active mode. Availability lets the switcher mark
+  // unavailable modes (e.g. Library/Lab in a no-repo Home workspace) as
+  // disabled with their unlock-hint tooltip.
   const { serviceMode, availability } = useServiceMode(activeWorkspaceId);
 
   const activeWorkspace = useMemo(
@@ -96,9 +94,10 @@ export function AppSidebar({
       </SidebarHeader>
 
       {/*
-       * Three-mode restructure — vertical switcher between the top-level
-       * service modes. Sits above the threads list so the user's current
-       * mode is the first thing they see and switching is one click away.
+       * Service-mode switcher — sits above the "+ New thread" button so the
+       * top-level mode is the first thing the user encounters when about to
+       * act. The collapsed-icon design keeps the row to a single line so
+       * threads list stays close to the top.
        */}
       <ServiceModeSwitcher workspaceId={activeWorkspaceId} serviceMode={serviceMode} availability={availability} />
 
@@ -128,13 +127,7 @@ export function AppSidebar({
         />
       </SidebarContent>
 
-      <SidebarFooter className="gap-2 px-3 py-2">
-        <Button asChild variant="ghost" size="sm" className="h-8 w-full justify-start gap-2 text-xs">
-          <Link to={ARCHIVE_PATH}>
-            <ArchiveIcon size={14} weight="bold" />
-            Archive
-          </Link>
-        </Button>
+      <SidebarFooter className="px-3 py-2">
         <div className="flex items-center gap-2">
           <ProfileCard />
           <WorkspaceSelector

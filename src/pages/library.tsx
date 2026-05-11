@@ -205,7 +205,7 @@ function LibraryWorkspace({
           <h1 className="text-sm font-semibold tracking-tight text-foreground">
             {currentWorkspace?.name ?? "Library"}
           </h1>
-          <span className="text-[11px] text-muted-foreground">Library · Read</span>
+          <span className="text-[11px] text-muted-foreground">Read Only</span>
         </header>
         <div className="flex min-h-0 min-w-0 flex-1">
           {repositoryId ? (
