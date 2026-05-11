@@ -1,5 +1,6 @@
 import { useAuth } from "@workos-inc/authkit-react";
-import { Moon, Sun, SignOut, UserCircle, Stack, ChartLineUp } from "@phosphor-icons/react";
+import { Link } from "react-router-dom";
+import { Archive, Moon, Sun, SignOut, UserCircle, Stack, ChartLineUp } from "@phosphor-icons/react";
 import { useTheme } from "@/providers/theme-provider";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -10,6 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { ARCHIVE_PATH } from "@/route-paths";
 
 /**
  * Compact profile avatar with dropdown menu. Shows only the avatar circle —
@@ -66,6 +68,12 @@ export function ProfileCard() {
           {user.email && <p className="truncate text-xs text-muted-foreground">{user.email}</p>}
         </div>
         <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link to={ARCHIVE_PATH}>
+            <Archive weight="bold" />
+            <span>Archive</span>
+          </Link>
+        </DropdownMenuItem>
         <DropdownMenuItem disabled title="Coming soon">
           <Stack weight="bold" />
           <span>Resources</span>
