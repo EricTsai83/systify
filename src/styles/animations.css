@@ -231,63 +231,50 @@
 }
 
 /*
- * Sleeping-owl head nod — `translateY` drop-and-snap that mimics
- * "打瞌睡" (dozing off) as a SMALL-THEN-BIG double-nod choreographed
- * to the ZZZ appearance: the head gives a small first nod as the
- * first dream bubble appears, then sinks into a deeper second nod as
- * the dreams accumulate. By the time all three z's are visible, the
- * head has reached its lowest point — that's the "deepest droop"
- * beat that ties the two animations into one cohesive moment.
+ * Sleeping-owl head nod — a gentle `scaleY` compression that mimics
+ * "打瞌睡" (dozing off) as the head settling down into the shoulders
+ * rather than a hard drop-and-snap. Choreographed to the ZZZ cycle as
+ * a single peaceful exhale per loop:
  *
- *   0%–12%   small drift down to +1px      (z1 fading in, owl just dipping)
- *   12%–18%  quick snap back to 0          (alert recovery)
- *   18%–38%  bigger, slower drop to +2.5px (z2, z3 fading in — head sinks
- *                                           deeper; peak ~when all 3 z's visible)
- *   38%–44%  quick snap back to 0          (the bigger startle)
- *   44%–72%  still (head settled, z's holding then popping out)
- *   72%–100% still, in sync with z-puff pause
+ *   0%–32%   slow compression to scaleY(0.92)  (head sinks as z1→z2→z3
+ *                                               accumulate; peak just as
+ *                                               all three are visible)
+ *   32%–66%  smooth release back to scaleY(1)  (head rises as the z's
+ *                                               hold then begin to fade)
+ *   66%–100% still                              (in sync with the z-puff
+ *                                               dissipation + pause)
  *
- * The "small then big" order (1px → 2.5px) reads as the owl
- * progressively losing the fight against sleep — the first nod is a
- * small dip the owl easily catches, but the second is a full drowsy
- * collapse before the startle reflex jerks the head back up.
+ * `transform-origin: bottom` (set on the utility) anchors the bottom of
+ * the head row to the body, so the compression reads as the ears row
+ * sinking down toward the eyes row — a sleepy slump — rather than
+ * scaling around the center. Earlier versions used a `translateY`
+ * drop-and-snap with a deep ease-in curve; that reads as "fighting
+ * drowsiness then jerking awake", which is too active for a peaceful
+ * sleeping state. A smooth scaleY breath is softer and matches the
+ * dream-bubble rhythm without any startle beats.
  *
- * Every segment uses `ease-in` — drops AND snaps. For the drops this
- * is the natural "fighting drowsiness then losing" shape (slow start,
- * accelerating fall). For the snaps, ease-in gives a "stunned pause
- * then sudden recovery" feel: the head lingers at the bottom of the
- * droop for a beat before snapping back up. That delayed startle
- * reads more like real dozing-off than a clean ease-out reflex.
- * Top-level animation timing is `linear` so the per-segment functions
- * aren't double-warped.
+ * Top-level easing is `cubic-bezier(0.4, 0, 0.6, 1)` (a symmetric
+ * ease-in-out): slow-start / fast-middle / slow-end on both the
+ * compression and the release. The flat tail of the cycle (66%–100%)
+ * has no motion to ease, so the curve only governs the two active
+ * halves.
  *
- * Why 5s, matching z-puff: identical cycle length means the head and
- * the dream bubbles march in lock-step. The two animations aren't
- * independent — they're choreographed so the bigger nod peaks during
- * the "all three z's visible" hold, making the whole thing read as
- * one coordinated dozing-off moment rather than two parallel effects.
+ * Why 5s, matching z-puff: identical cycle length keeps the head and
+ * the dream bubbles in lock-step. The compression peaks during the
+ * "all three z's visible" hold and the head returns to rest as the
+ * z's fade, so the whole thing reads as one coordinated dozing moment
+ * rather than two parallel effects.
  */
 @keyframes owl-head-nod {
   0% {
-    transform: translateY(0);
-    animation-timing-function: ease-in;
+    transform: scaleY(1);
   }
-  12% {
-    transform: translateY(1px);
-    animation-timing-function: ease-out;
+  32% {
+    transform: scaleY(0.92);
   }
-  18% {
-    transform: translateY(0);
-    animation-timing-function: ease-in;
-  }
-  38% {
-    transform: translateY(2.5px);
-    animation-timing-function: ease-out;
-  }
-  44%,
-  72%,
+  66%,
   100% {
-    transform: translateY(0);
+    transform: scaleY(1);
   }
 }
 
@@ -385,12 +372,15 @@
   .animate-owl-head-nod {
     /* inline-block lets transform apply to a span inside `<pre>` without
      * disturbing the surrounding monospaced glyphs. The span wraps two
-     * lines of ASCII (ears + eyes) so the whole head translates as a
-     * single unit. Top-level `linear` — the per-keyframe ease functions
-     * shape each drift/snap segment, so the global timing only governs
-     * the unmoving pause portion. */
+     * lines of ASCII (ears + eyes) so the whole head scales as a single
+     * unit. `transform-origin: bottom` anchors the bottom of the head
+     * row to the body so scaleY reads as the head settling down rather
+     * than scaling around the center. Top-level ease-in-out gives the
+     * compression and release a soft breath-like shape; the still tail
+     * (66%–100%) has no motion to ease. */
     display: inline-block;
-    animation: owl-head-nod 5s linear infinite;
+    transform-origin: bottom;
+    animation: owl-head-nod 5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
   }
 
   .animate-fade-in {
