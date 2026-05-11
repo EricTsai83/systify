@@ -1,13 +1,26 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const { getMock, MockDaytonaError, MockDaytonaNotFoundError } = vi.hoisted(() => {
+const { getMock, MockDaytonaError, MockDaytonaValidationError, MockDaytonaNotFoundError } = vi.hoisted(() => {
+  // Constructor mirrors the real `@daytona/sdk` `DaytonaError` signature
+  // `(message, statusCode, headers, errorCode)` so tests can simulate the
+  // structured error fields the SDK populates on a 4xx response. Subclassing
+  // here ensures `instanceof DaytonaError` works in production code paths.
   class HoistedMockDaytonaError extends Error {
     constructor(
       message: string,
       readonly statusCode?: number,
+      readonly headers?: Record<string, string>,
+      readonly errorCode?: string,
     ) {
       super(message);
       this.name = "DaytonaError";
+    }
+  }
+
+  class HoistedMockDaytonaValidationError extends HoistedMockDaytonaError {
+    constructor(message: string, statusCode?: number, headers?: Record<string, string>, errorCode?: string) {
+      super(message, statusCode, headers, errorCode);
+      this.name = "DaytonaValidationError";
     }
   }
 
@@ -21,6 +34,7 @@ const { getMock, MockDaytonaError, MockDaytonaNotFoundError } = vi.hoisted(() =>
   return {
     getMock: vi.fn(),
     MockDaytonaError: HoistedMockDaytonaError,
+    MockDaytonaValidationError: HoistedMockDaytonaValidationError,
     MockDaytonaNotFoundError: HoistedMockDaytonaNotFoundError,
   };
 });
@@ -37,7 +51,14 @@ vi.mock("@daytona/sdk", () => ({
     }
   },
   DaytonaError: MockDaytonaError,
+  DaytonaValidationError: MockDaytonaValidationError,
   DaytonaNotFoundError: MockDaytonaNotFoundError,
+  // `daytona.ts` imports `DaytonaTimeoutError` at module load even though
+  // the only `instanceof` check sits inside the sandbox-shell adapter and
+  // is unreachable from these tests. We still export a class so the import
+  // resolves to a real symbol (otherwise `instanceof undefined` would
+  // throw if any future test exercised that path).
+  DaytonaTimeoutError: MockDaytonaError,
 }));
 
 import {
@@ -600,5 +621,179 @@ describe("assertSandboxProvisioningConfigured", () => {
     process.env.DAYTONA_API_KEY = "test-api-key";
     process.env.DAYTONA_NETWORK_ALLOW_LIST = "140.82.112.0/20, github.com:443";
     expect(() => assertSandboxProvisioningConfigured()).toThrow(/github\.com:443/);
+  });
+});
+
+/**
+ * Clone error enrichment.
+ *
+ * The Daytona toolbox surfaces `git.clone` failures as `DaytonaError`
+ * subclasses whose `message` is often the bare axios default
+ * ("Request failed with status code 400") because the toolbox returns
+ * an empty body for many validation rejections. Without status code,
+ * SDK error code, and clone context (host / branch / auth posture),
+ * post-mortem is guesswork.
+ *
+ * These tests pin the wrapper's contract: it must (1) embed the
+ * structured fields in a single human-readable `message`, (2) preserve
+ * the original error's `name` so log filters keyed on
+ * `DaytonaValidationError` keep matching, (3) forward the original
+ * error as `cause` so observability can recurse and surface
+ * `statusCode`/`errorCode` as structured fields, and (4) never include
+ * the installation token in the wrapped message.
+ */
+describe("cloneRepositoryInSandbox — error enrichment", () => {
+  const SANDBOX_REMOTE_ID = "sandbox-clone-err-1";
+
+  beforeEach(() => {
+    process.env.DAYTONA_API_KEY = "test-api-key";
+    process.env.DAYTONA_POST_CLONE_BLOCK_NETWORK = "true";
+    getMock.mockReset();
+  });
+
+  afterEach(() => {
+    delete process.env.DAYTONA_API_KEY;
+    delete process.env.DAYTONA_POST_CLONE_BLOCK_NETWORK;
+  });
+
+  test("wraps a Daytona validation error with host, branch, auth posture, status, and SDK code", async () => {
+    const underlying = new MockDaytonaValidationError(
+      "Request failed with status code 400",
+      400,
+      { "x-daytona-request-id": "req-abc" },
+      "GIT_CLONE_FAILED",
+    );
+    const { sandbox } = makeSandboxMock();
+    sandbox.git.clone = vi.fn(async () => {
+      throw underlying;
+    });
+    getMock.mockResolvedValue(sandbox);
+
+    const fakeInstallationToken = `ghs_${"x".repeat(40)}`;
+    try {
+      await cloneRepositoryInSandbox({
+        remoteId: SANDBOX_REMOTE_ID,
+        url: "https://github.com/acme/private-widget.git",
+        branch: "main",
+        token: fakeInstallationToken,
+      });
+      throw new Error("expected cloneRepositoryInSandbox to throw");
+    } catch (caught) {
+      // The wrapper preserves the original SDK error class name so
+      // existing log filters / dashboards keyed on
+      // `DaytonaValidationError` keep matching after enrichment.
+      expect(caught).toBeInstanceOf(Error);
+      const err = caught as Error;
+      expect(err.name).toBe("DaytonaValidationError");
+
+      // Diagnostic context is embedded in `message` so it propagates to
+      // both Convex logs (via `serializeError`) and the import row's
+      // `errorMessage` column (rendered in the UI).
+      expect(err.message).toContain("host=github.com");
+      expect(err.message).toContain("branch=main");
+      expect(err.message).toContain("with installation token");
+      expect(err.message).toContain("Daytona HTTP 400");
+      expect(err.message).toContain("code=GIT_CLONE_FAILED");
+      expect(err.message).toContain("Request failed with status code 400");
+
+      // Original error chained as cause so observability can walk the
+      // chain and surface structured fields automatically.
+      expect(err.cause).toBe(underlying);
+
+      // SECURITY INVARIANT: the installation token is never part of the
+      // wrapped message. The wrapper carries a boolean ("with installation
+      // token") rather than the credential itself.
+      expect(err.message).not.toContain(fakeInstallationToken);
+      expect(err.message).not.toContain("ghs_");
+    }
+  });
+
+  test("describes branch as `(default)` when the caller did not specify one", async () => {
+    // Most imports omit `branch` and rely on the remote's default. The
+    // wrapper must distinguish this from "branch=undefined" / "branch="
+    // so an operator triaging logs can tell at a glance whether the
+    // caller asked for a specific branch.
+    const underlying = new MockDaytonaValidationError("upstream rejected", 400);
+    const { sandbox } = makeSandboxMock();
+    sandbox.git.clone = vi.fn(async () => {
+      throw underlying;
+    });
+    getMock.mockResolvedValue(sandbox);
+
+    await expect(
+      cloneRepositoryInSandbox({
+        remoteId: SANDBOX_REMOTE_ID,
+        url: "https://github.com/acme/widget.git",
+      }),
+    ).rejects.toThrow(/branch=\(default\)/);
+  });
+
+  test("describes auth posture as `without auth` for an unauthenticated public clone", async () => {
+    const underlying = new MockDaytonaValidationError("upstream rejected", 400);
+    const { sandbox } = makeSandboxMock();
+    sandbox.git.clone = vi.fn(async () => {
+      throw underlying;
+    });
+    getMock.mockResolvedValue(sandbox);
+
+    await expect(
+      cloneRepositoryInSandbox({
+        remoteId: SANDBOX_REMOTE_ID,
+        url: "https://github.com/acme/public-widget.git",
+        branch: "main",
+      }),
+    ).rejects.toThrow(/without auth/);
+  });
+
+  test("falls back gracefully when the URL cannot be parsed (helper must not panic on the error path)", async () => {
+    // The wrapper executes after a clone has already failed; a second
+    // exception from URL parsing would mask the original failure. Pin
+    // that the fallback ("(unparseable url)") is used instead.
+    const underlying = new MockDaytonaValidationError("upstream rejected", 400);
+    const { sandbox } = makeSandboxMock();
+    sandbox.git.clone = vi.fn(async () => {
+      throw underlying;
+    });
+    getMock.mockResolvedValue(sandbox);
+
+    await expect(
+      cloneRepositoryInSandbox({
+        remoteId: SANDBOX_REMOTE_ID,
+        url: "not-a-valid-url-at-all",
+        branch: "main",
+      }),
+    ).rejects.toThrow(/host=\(unparseable url\)/);
+  });
+
+  test("passes plain Error subclasses through with minimal wrapping (no Daytona-specific fields)", async () => {
+    // Non-Daytona errors — e.g. a network timeout that surfaces as a
+    // plain `Error` — should still gain clone context but must not have
+    // fabricated `statusCode` / `errorCode` fragments in the message.
+    const underlying = new Error("Connection reset by peer");
+    underlying.name = "NetworkError";
+    const { sandbox } = makeSandboxMock();
+    sandbox.git.clone = vi.fn(async () => {
+      throw underlying;
+    });
+    getMock.mockResolvedValue(sandbox);
+
+    try {
+      await cloneRepositoryInSandbox({
+        remoteId: SANDBOX_REMOTE_ID,
+        url: "https://github.com/acme/widget.git",
+        branch: "main",
+      });
+      throw new Error("expected cloneRepositoryInSandbox to throw");
+    } catch (caught) {
+      const err = caught as Error;
+      expect(err.name).toBe("NetworkError");
+      expect(err.message).toContain("host=github.com");
+      expect(err.message).toContain("Connection reset by peer");
+      // No fabricated Daytona-specific fragments when the underlying
+      // error is not a `DaytonaError`.
+      expect(err.message).not.toMatch(/Daytona HTTP/);
+      expect(err.message).not.toMatch(/\bcode=/);
+      expect(err.cause).toBe(underlying);
+    }
   });
 });

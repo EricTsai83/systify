@@ -146,6 +146,138 @@
   }
 }
 
+/*
+ * Cartoon ZZZ — three keyframes that share a single 5s cycle. The cycle:
+ *
+ *   appear   →  z1 in,  z2 in,  z3 in    (sequential, each ~10% of cycle, ease-out)
+ *   peak     →  all three visible         (hold — head's bigger nod peaks here)
+ *   dissipate→  all three pop out together (6% of cycle, ease-out)
+ *   pause    →  quiet stretch             (~28% of cycle ≈ 1.4s)
+ *
+ * Appearance is FIFO and staged — bubbles emerge one at a time, bottom to
+ * top. Dissipation is synchronized — all three z's share the same 66%→72%
+ * fade-out window so they pop out together as a single event, which gives
+ * the cycle a clear close-bracket: build up, hold, vanish, rest, repeat.
+ *
+ * Easing rationale: the cycle has three sequential fade-ins at very
+ * different cycle offsets. A single top-level ease-in-out warps each
+ * phase differently (a z at 10% rides a different part of the global
+ * curve than a z at 30%, so they look like they're moving at different
+ * speeds). Holding the global function flat at `linear` and shaping each
+ * fade with its own `ease-out` keeps the three z's identical: a natural
+ * bloom on the way in, and a quick-then-trailing dispersal on the way
+ * out. `ease-out` on the dissipation reads as "彈出 + dissolve" rather
+ * than "snap" — opacity loses most of its visibility fast then trails
+ * gently to zero, which is what natural dispersal looks like.
+ */
+@keyframes z-puff-1 {
+  0% {
+    opacity: 0;
+    animation-timing-function: ease-out;
+  }
+  10% {
+    opacity: 1;
+  }
+  66% {
+    opacity: 1;
+    animation-timing-function: ease-out;
+  }
+  72%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes z-puff-2 {
+  0% {
+    opacity: 0;
+  }
+  10% {
+    opacity: 0;
+    animation-timing-function: ease-out;
+  }
+  20% {
+    opacity: 1;
+  }
+  66% {
+    opacity: 1;
+    animation-timing-function: ease-out;
+  }
+  72%,
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes z-puff-3 {
+  0% {
+    opacity: 0;
+  }
+  20% {
+    opacity: 0;
+    animation-timing-function: ease-out;
+  }
+  30% {
+    opacity: 1;
+  }
+  66% {
+    opacity: 1;
+    animation-timing-function: ease-out;
+  }
+  72%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/*
+ * Sleeping-owl head nod — a gentle `scaleY` compression that mimics
+ * "打瞌睡" (dozing off) as the head settling down into the shoulders
+ * rather than a hard drop-and-snap. Choreographed to the ZZZ cycle as
+ * a single peaceful exhale per loop:
+ *
+ *   0%–32%   slow compression to scaleY(0.92)  (head sinks as z1→z2→z3
+ *                                               accumulate; peak just as
+ *                                               all three are visible)
+ *   32%–66%  smooth release back to scaleY(1)  (head rises as the z's
+ *                                               hold then begin to fade)
+ *   66%–100% still                              (in sync with the z-puff
+ *                                               dissipation + pause)
+ *
+ * `transform-origin: bottom` (set on the utility) anchors the bottom of
+ * the head row to the body, so the compression reads as the ears row
+ * sinking down toward the eyes row — a sleepy slump — rather than
+ * scaling around the center. Earlier versions used a `translateY`
+ * drop-and-snap with a deep ease-in curve; that reads as "fighting
+ * drowsiness then jerking awake", which is too active for a peaceful
+ * sleeping state. A smooth scaleY breath is softer and matches the
+ * dream-bubble rhythm without any startle beats.
+ *
+ * Top-level easing is `cubic-bezier(0.4, 0, 0.6, 1)` (a symmetric
+ * ease-in-out): slow-start / fast-middle / slow-end on both the
+ * compression and the release. The flat tail of the cycle (66%–100%)
+ * has no motion to ease, so the curve only governs the two active
+ * halves.
+ *
+ * Why 5s, matching z-puff: identical cycle length keeps the head and
+ * the dream bubbles in lock-step. The compression peaks during the
+ * "all three z's visible" hold and the head returns to rest as the
+ * z's fade, so the whole thing reads as one coordinated dozing moment
+ * rather than two parallel effects.
+ */
+@keyframes owl-head-nod {
+  0% {
+    transform: scaleY(1);
+  }
+  32% {
+    transform: scaleY(0.92);
+  }
+  66%,
+  100% {
+    transform: scaleY(1);
+  }
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;
@@ -225,6 +357,32 @@
     animation: pulse-soft 2.4s ease-in-out infinite;
   }
 
+  .animate-z-puff-1 {
+    animation: z-puff-1 5s linear infinite;
+  }
+
+  .animate-z-puff-2 {
+    animation: z-puff-2 5s linear infinite;
+  }
+
+  .animate-z-puff-3 {
+    animation: z-puff-3 5s linear infinite;
+  }
+
+  .animate-owl-head-nod {
+    /* inline-block lets transform apply to a span inside `<pre>` without
+     * disturbing the surrounding monospaced glyphs. The span wraps two
+     * lines of ASCII (ears + eyes) so the whole head scales as a single
+     * unit. `transform-origin: bottom` anchors the bottom of the head
+     * row to the body so scaleY reads as the head settling down rather
+     * than scaling around the center. Top-level ease-in-out gives the
+     * compression and release a soft breath-like shape; the still tail
+     * (66%–100%) has no motion to ease. */
+    display: inline-block;
+    transform-origin: bottom;
+    animation: owl-head-nod 5s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+
   .animate-fade-in {
     animation: fade-in 0.25s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
@@ -264,6 +422,10 @@
     .animate-reveal-up,
     .animate-message-rail,
     .animate-pulse-soft,
+    .animate-z-puff-1,
+    .animate-z-puff-2,
+    .animate-z-puff-3,
+    .animate-owl-head-nod,
     .animate-fade-in,
     .animate-typing,
     .animate-fade-out,

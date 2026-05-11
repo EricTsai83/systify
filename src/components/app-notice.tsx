@@ -66,23 +66,16 @@ export function AppNotice({
   const hasDismiss = Boolean(onDismiss);
 
   return (
-    <Alert
-      variant={isError ? "destructive" : "default"}
-      className={cn("grid-cols-[auto_1fr]", toneClasses[tone], className)}
-    >
+    <Alert variant={isError ? "destructive" : "default"} className={cn(toneClasses[tone], className)}>
       <Icon
         size={18}
         weight="fill"
         className={cn("mt-0.5 shrink-0", isError ? "text-destructive" : "text-muted-foreground")}
       />
-      <div className="min-w-0">
-        <AlertTitle className="text-sm">{title}</AlertTitle>
-        <AlertDescription
-          className={cn("mt-0.5 text-xs leading-5", isError ? "text-destructive" : "text-muted-foreground")}
-        >
-          {message}
-        </AlertDescription>
-      </div>
+      <AlertTitle className="text-sm">{title}</AlertTitle>
+      <AlertDescription className={cn("text-xs leading-5", isError ? "text-destructive" : "text-muted-foreground")}>
+        {message}
+      </AlertDescription>
       {hasAction || hasDismiss ? (
         <AlertAction className="flex items-center gap-1">
           {hasAction ? (

@@ -230,14 +230,22 @@ export async function cloneRepositoryInSandbox(args: {
   token?: string;
 }) {
   const sandbox = await getSandbox(args.remoteId);
-  await sandbox.git.clone(
-    args.url,
-    "repo",
-    args.branch,
-    undefined,
-    args.token ? "x-access-token" : undefined,
-    args.token,
-  );
+  try {
+    await sandbox.git.clone(
+      args.url,
+      "repo",
+      args.branch,
+      undefined,
+      args.token ? "x-access-token" : undefined,
+      args.token,
+    );
+  } catch (error) {
+    throw wrapDaytonaCloneError(error, {
+      url: args.url,
+      branch: args.branch,
+      hasToken: Boolean(args.token),
+    });
+  }
 
   // Plan 05 — Token scrub. `sandbox.git.clone` with credentials embeds
   // the token into `.git/config` (`https://x-access-token:<token>@…`).
@@ -329,6 +337,91 @@ export async function cloneRepositoryInSandbox(args: {
  */
 function posixSingleQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * Enrich a `sandbox.git.clone` failure with the diagnostic context the
+ * Daytona SDK strips out by default.
+ *
+ * The Daytona toolbox surfaces clone failures as `DaytonaError` subclasses
+ * whose `message` is often the bare axios default ("Request failed with
+ * status code 400") — because the toolbox returns an empty body for most
+ * validation failures and the SDK's `extractAxiosErrorMessage` falls
+ * through to `error.message`. Without the status code, the SDK error
+ * code, and which repo / branch / auth posture failed, post-mortem turns
+ * into guesswork.
+ *
+ * The wrapper embeds the relevant fields in its own `message` so they
+ * propagate to BOTH the Convex log (via `logErrorWithId` → `serializeError`)
+ * AND the import record's `errorMessage` column (which the UI renders to
+ * the user). The original error is forwarded via `cause` so observability
+ * walks the chain and surfaces `statusCode` / `errorCode` as structured
+ * fields too. The original `name` is preserved so log filters and dashboards
+ * keyed on `DaytonaValidationError` keep matching.
+ *
+ * Security invariants:
+ *   - The token itself is NEVER part of the wrapped message — only a
+ *     boolean indicating whether one was supplied. Even though the
+ *     wrapper runs inside the Convex backend, the resulting message
+ *     lands in `imports.errorMessage` and is rendered to the user, so
+ *     the audit posture is "no credentials leave this function".
+ *   - Only the URL's host is embedded — never the full URL, which could
+ *     include a `userinfo` component (e.g. `https://user:pass@host/...`)
+ *     if a future caller pre-bakes credentials into the URL.
+ */
+function wrapDaytonaCloneError(error: unknown, context: { url: string; branch?: string; hasToken: boolean }): Error {
+  const urlHost = safeUrlHost(context.url);
+  const branchDescriptor = context.branch ?? "(default)";
+  const authDescriptor = context.hasToken ? "with installation token" : "without auth";
+
+  const fragments: string[] = [
+    `Sandbox git clone failed (host=${urlHost}, branch=${branchDescriptor}, ${authDescriptor})`,
+  ];
+
+  if (error instanceof DaytonaError) {
+    if (error.statusCode !== undefined) {
+      fragments.push(`Daytona HTTP ${error.statusCode}`);
+    }
+    if (error.errorCode) {
+      fragments.push(`code=${error.errorCode}`);
+    }
+    fragments.push(error.message);
+  } else if (error instanceof Error) {
+    fragments.push(error.message);
+  } else {
+    fragments.push(String(error));
+  }
+
+  // `new Error(msg, { cause })` is ES2022; the frontend tsconfig still ships
+  // an ES2020 `lib` so we attach `cause` as a property after construction.
+  // The runtime semantics are identical — V8's two-arg `Error` constructor
+  // is sugar for the same property assignment — and `serializeError` reads
+  // `cause` through the same localised cast.
+  const wrapped = new Error(fragments.join(" — ")) as Error & { cause?: unknown };
+  wrapped.cause = error;
+  if (error instanceof Error) {
+    // Forward the original name so log filters / dashboards that key on
+    // `DaytonaValidationError` keep matching after wrapping. We only do
+    // this for `Error` subclasses — a string `cause` would leave `name`
+    // as the default "Error", which is the right fallback.
+    wrapped.name = error.name;
+  }
+  return wrapped;
+}
+
+/**
+ * Extract the host of a URL without throwing on malformed input. The
+ * `WHATWG URL` parser accepts every URL the import pipeline produces
+ * today, but the helper is on the error path where any second exception
+ * would mask the original failure — so the fallback is preferred over a
+ * panic.
+ */
+function safeUrlHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "(unparseable url)";
+  }
 }
 
 /**
