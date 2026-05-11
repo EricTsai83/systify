@@ -274,17 +274,26 @@ function SearchPendingState() {
 
 /**
  * Sleeping-owl counterpart to the awake {@link OwlAsciiArt} in
- * chat-empty-state.tsx. Eyes use the same `-,-` glyph as the awake owl's
- * blink frame so the closed-eye state reads as part of the same owl
- * family. The owl body is static; the three dream `z` chars each run
+ * chat-empty-state.tsx. Eyes use a `~,~` glyph — deliberately softer
+ * than the awake owl's flat `-,-` blink — so the closed-eye state reads
+ * as "dreaming" rather than "mid-blink". They're wrapped in their own
+ * span so a gentle `translateY` wave (~1px peak) can bob them while the
+ * dream bubbles are visible, without decoupling them from the
+ * surrounding `/` and `\` brackets.
+ *
+ * The owl body is otherwise static; the three dream `z` chars each run
  * their own keyframe pre-staged with the others, so the cycle goes
  * z1 (bottom) in → z2 (mid) in → z3 (top) in → hold all three → all
  * three pop out together → pause → loop. Appearance is sequential
  * (bubbles emerging one at a time, FIFO), dissipation is synchronized
  * (a single closing event), and the pause gives the cycle a peaceful
- * sleeping-breath rhythm. Single `<pre>` rather than the awake owl's
- * double-pre overlay — the dream chars never overlap the body, so no
- * opaque cover is needed.
+ * sleeping-breath rhythm. The eye wave shares the 6s z-puff cycle and
+ * is shaped so it bobs during 0%→72% (the window when at least one z
+ * is visible) and holds still during 72%→100% (the silent pause). The
+ * eyes resume waving the moment z1 starts fading back in next cycle.
+ * Single `<pre>` rather than
+ * the awake owl's double-pre overlay — the dream chars never overlap the
+ * body, so no opaque cover is needed.
  */
 function SleepingOwlAsciiArt() {
   return (
@@ -298,7 +307,9 @@ function SleepingOwlAsciiArt() {
       <span className="animate-z-puff-2">Z</span>
       {"   \n        "}
       <span className="animate-z-puff-1">z</span>
-      {"    \n    ^...^    \n   / -,- \\   \n   |):::(|   \n ====w=w==== "}
+      {"    \n    ^...^    \n   / "}
+      <span className="animate-owl-eye-wave">~,~</span>
+      {" \\   \n   |):::(|   \n ====w=w==== "}
     </pre>
   );
 }

@@ -959,7 +959,12 @@ export function RepositoryShell({
          * until the user restores.
          */}
         {!isRepoArchived && repoDetail?.repository.importStatus === "failed" ? (
-          <div className="flex shrink-0 items-start gap-2 border-b border-destructive/40 bg-destructive/5 px-6 py-3 text-destructive">
+          <div
+            className="flex shrink-0 items-start gap-2 border-b border-destructive/40 bg-destructive/5 px-6 py-3 text-destructive"
+            role="alert"
+            aria-live="assertive"
+            aria-atomic="true"
+          >
             <WarningCircleIcon size={18} weight="fill" className="mt-0.5 shrink-0" />
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium">Repository import failed</p>

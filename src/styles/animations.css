@@ -232,6 +232,64 @@
   }
 }
 
+/*
+ * Sleeping-owl eye wave — a gentle `translateY` oscillation that runs
+ * only while the ZZZ dream bubbles are on screen, then holds the eyes
+ * still during the pause phase. Two full sinusoidal bobs (~1px peak
+ * amplitude) span 0%→72% of the cycle, then 72%→100% is dead still.
+ *
+ * Sync rationale: this cycle is 6s, identical to z-puff-*. Because both
+ * animations share the same duration and start, they march in perfect
+ * lock-step — the eyes bob while at least one z is visible and freeze
+ * during the dream-less pause, then resume the moment z1 begins fading
+ * back in. Conceptually: the owl's face is "active" while it's
+ * dreaming, "quiet" while it's between breaths.
+ *
+ * `ease-in-out` on each segment of the wave so the bobs are smooth
+ * sinusoidal arcs rather than the linear zig-zag you'd get with hard
+ * keyframe interpolation. The pause portion (72%→100%) has matching
+ * `transform: translateY(0)` endpoints so the eye sits perfectly still
+ * with no residual drift.
+ */
+@keyframes owl-eye-wave {
+  0% {
+    transform: translateY(0);
+    animation-timing-function: ease-in-out;
+  }
+  9% {
+    transform: translateY(-1px);
+    animation-timing-function: ease-in-out;
+  }
+  18% {
+    transform: translateY(0);
+    animation-timing-function: ease-in-out;
+  }
+  27% {
+    transform: translateY(1px);
+    animation-timing-function: ease-in-out;
+  }
+  36% {
+    transform: translateY(0);
+    animation-timing-function: ease-in-out;
+  }
+  45% {
+    transform: translateY(-1px);
+    animation-timing-function: ease-in-out;
+  }
+  54% {
+    transform: translateY(0);
+    animation-timing-function: ease-in-out;
+  }
+  63% {
+    transform: translateY(1px);
+    animation-timing-function: ease-in-out;
+  }
+  72%,
+  100% {
+    transform: translateY(0);
+  }
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;
@@ -323,6 +381,15 @@
     animation: z-puff-3 6s linear infinite;
   }
 
+  .animate-owl-eye-wave {
+    /* inline-block lets transform apply to a span inside `<pre>` without
+     * disturbing the surrounding monospaced glyphs. Top-level `linear` —
+     * the per-keyframe `ease-in-out` declarations shape each bob arc, so
+     * the global timing function only governs the unmoving pause segment. */
+    display: inline-block;
+    animation: owl-eye-wave 6s linear infinite;
+  }
+
   .animate-fade-in {
     animation: fade-in 0.25s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
@@ -365,6 +432,7 @@
     .animate-z-puff-1,
     .animate-z-puff-2,
     .animate-z-puff-3,
+    .animate-owl-eye-wave,
     .animate-fade-in,
     .animate-typing,
     .animate-fade-out,
