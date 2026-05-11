@@ -146,6 +146,58 @@
   }
 }
 
+/*
+ * Sequential cartoon ZZZ — three keyframes that share a single cycle so
+ * the z's stay in lock-step. The cycle:
+ *
+ *   appear   →  z1 in,  z2 in,  z3 in     (each fade-in is gentle, ~10% of cycle)
+ *   peak     →  all three visible          (long hold)
+ *   dissipate→  z1 out, z2 out, z3 out    (each fade-out is ~6% of cycle)
+ *   pause    →  brief gap before the loop restarts
+ *
+ * Appearance and dissipation share the same FIFO order — first in, first
+ * out — and each dissipation phase is staged so the previous z is fully
+ * gone before the next one starts fading out. Net effect is three
+ * discrete soft removals that read as a sequence rather than a smear.
+ */
+@keyframes z-puff-1 {
+  0%,
+  78%,
+  100% {
+    opacity: 0;
+  }
+  10%,
+  72% {
+    opacity: 1;
+  }
+}
+
+@keyframes z-puff-2 {
+  0%,
+  10%,
+  84%,
+  100% {
+    opacity: 0;
+  }
+  20%,
+  78% {
+    opacity: 1;
+  }
+}
+
+@keyframes z-puff-3 {
+  0%,
+  20%,
+  90%,
+  100% {
+    opacity: 0;
+  }
+  30%,
+  84% {
+    opacity: 1;
+  }
+}
+
 @keyframes fade-in {
   from {
     opacity: 0;
@@ -225,6 +277,18 @@
     animation: pulse-soft 2.4s ease-in-out infinite;
   }
 
+  .animate-z-puff-1 {
+    animation: z-puff-1 4s ease-in-out infinite;
+  }
+
+  .animate-z-puff-2 {
+    animation: z-puff-2 4s ease-in-out infinite;
+  }
+
+  .animate-z-puff-3 {
+    animation: z-puff-3 4s ease-in-out infinite;
+  }
+
   .animate-fade-in {
     animation: fade-in 0.25s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
@@ -264,6 +328,9 @@
     .animate-reveal-up,
     .animate-message-rail,
     .animate-pulse-soft,
+    .animate-z-puff-1,
+    .animate-z-puff-2,
+    .animate-z-puff-3,
     .animate-fade-in,
     .animate-typing,
     .animate-fade-out,

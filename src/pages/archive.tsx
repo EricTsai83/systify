@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, usePaginatedQuery } from "convex/react";
 import {
   ArchiveIcon,
   ArrowCounterClockwiseIcon,
   CaretLeftIcon,
+  CaretRightIcon,
   CircleNotchIcon,
   ClockCounterClockwiseIcon,
   MagnifyingGlassIcon,
@@ -14,6 +15,7 @@ import {
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
+import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -57,18 +59,23 @@ export function ArchivePage() {
   return (
     <div className="flex h-dvh w-full flex-1 flex-col overflow-y-auto bg-background">
       <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-        <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4">
-          <div className="flex min-w-0 items-center gap-2.5">
-            <div className="flex size-8 shrink-0 items-center justify-center border border-border bg-card text-muted-foreground">
-              <ArchiveIcon size={15} weight="bold" />
-            </div>
-            <h1 className="truncate text-base font-semibold tracking-tight sm:text-lg">Archive</h1>
-          </div>
-          <Button variant="ghost" size="sm" onClick={handleBack} className="shrink-0" aria-label="Back to chat">
-            <CaretLeftIcon weight="bold" />
-            <span className="hidden sm:inline">Back to chat</span>
-            <span className="sm:hidden">Back</span>
-          </Button>
+        <div className="mx-auto flex h-14 w-full max-w-4xl items-center gap-3 px-4 sm:px-6">
+          <Link
+            to={DEFAULT_AUTHENTICATED_PATH}
+            className="group flex min-w-0 shrink-0 items-center gap-2.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            aria-label="Systify · back to chat"
+            title="Back to chat"
+          >
+            <Logo size={26} />
+            <span className="truncate font-mono text-[15px] font-semibold tracking-tight text-foreground transition-colors group-hover:text-muted-foreground">
+              Systify
+            </span>
+          </Link>
+          <CaretRightIcon size={12} weight="bold" aria-hidden="true" className="shrink-0 text-muted-foreground/60" />
+          <h1 className="flex min-w-0 items-center gap-2">
+            <ArchiveIcon size={14} weight="bold" className="shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="truncate text-sm font-semibold tracking-tight text-foreground">Archive</span>
+          </h1>
         </div>
       </header>
 
@@ -120,16 +127,9 @@ function ArchiveContent({
   onBackToChat: () => void;
   onRequestPermanentDelete: (repo: Doc<"repositories">) => void;
 }) {
-  // First mount, browsing, no items yet — full skeleton.
-  if (isLoadingFirstPage && !isSearching && archived.length === 0) {
-    return <ArchiveListSkeleton />;
-  }
-
-  // Settled, browsing, archive is genuinely empty.
-  if (!isSearching && archived.length === 0 && isExhausted) {
-    return <ArchiveEmptyState onBackToChat={onBackToChat} />;
-  }
-
+  // Description + search input always render so the layout stays stable
+  // across loading, empty, and populated states. Only the area below them
+  // swaps between skeleton, empty state, no-results, or the list itself.
   return (
     <>
       <p className="mb-4 text-sm leading-relaxed text-muted-foreground sm:mb-5">
@@ -139,8 +139,12 @@ function ArchiveContent({
 
       <ArchiveSearchInput query={query} onQueryChange={onQueryChange} />
 
-      {isLoadingFirstPage ? (
+      {isLoadingFirstPage && !isSearching ? (
+        <ArchiveListSkeleton />
+      ) : isLoadingFirstPage && isSearching ? (
         <SearchPendingState />
+      ) : !isSearching && archived.length === 0 && isExhausted ? (
+        <ArchiveEmptyState onBackToChat={onBackToChat} />
       ) : archived.length === 0 ? (
         <SearchNoResults query={query} onClear={() => onQueryChange("")} />
       ) : (
@@ -233,31 +237,27 @@ function ArchiveList({
 
 function ArchiveListSkeleton() {
   return (
-    <div aria-hidden="true">
-      <Skeleton className="mb-4 h-4 w-3/4 max-w-md" />
-      <Skeleton className="mb-4 h-10 w-full" />
-      <ul className="flex flex-col gap-2.5">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <li key={index}>
-            <Card className="p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                <div className="flex min-w-0 items-start gap-3">
-                  <Skeleton className="size-8 shrink-0" />
-                  <div className="flex min-w-0 flex-1 flex-col gap-2">
-                    <Skeleton className="h-4 w-40" />
-                    <Skeleton className="h-3 w-28" />
-                  </div>
-                </div>
-                <div className="flex gap-2 sm:shrink-0">
-                  <Skeleton className="h-8 flex-1 sm:w-24 sm:flex-none" />
-                  <Skeleton className="h-8 flex-1 sm:w-32 sm:flex-none" />
+    <ul aria-hidden="true" className="mt-4 flex flex-col gap-2.5">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <li key={index}>
+          <Card className="p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div className="flex min-w-0 items-start gap-3">
+                <Skeleton className="size-8 shrink-0" />
+                <div className="flex min-w-0 flex-1 flex-col gap-2">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-3 w-28" />
                 </div>
               </div>
-            </Card>
-          </li>
-        ))}
-      </ul>
-    </div>
+              <div className="flex gap-2 sm:shrink-0">
+                <Skeleton className="h-8 flex-1 sm:w-24 sm:flex-none" />
+                <Skeleton className="h-8 flex-1 sm:w-32 sm:flex-none" />
+              </div>
+            </div>
+          </Card>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -272,15 +272,43 @@ function SearchPendingState() {
   );
 }
 
+/**
+ * Sleeping-owl counterpart to the awake {@link OwlAsciiArt} in
+ * chat-empty-state.tsx. Eyes use the same `-,-` glyph as the awake owl's
+ * blink frame so the closed-eye state reads as part of the same owl
+ * family. The owl body is static; the three dream `z` chars each run
+ * their own keyframe pre-staged with the others, so the cycle goes
+ * z1 (bottom) in → z2 (mid) in → z3 (top) in → hold all three → z1 out
+ * → z2 out → z3 out → pause → loop. Appearance and dissipation share the
+ * same FIFO order, but each dissipation is a fast blip so the removal
+ * reads as three discrete events. Single `<pre>` rather than the awake
+ * owl's double-pre overlay — the dream chars never overlap the body, so
+ * no opaque cover is needed.
+ */
+function SleepingOwlAsciiArt() {
+  return (
+    <pre
+      aria-hidden="true"
+      className="pointer-events-none mb-1 select-none font-mono text-[12px] leading-4 tracking-tight text-muted-foreground"
+    >
+      {"          "}
+      <span className="animate-z-puff-3">z</span>
+      {"  \n         "}
+      <span className="animate-z-puff-2">Z</span>
+      {"   \n        "}
+      <span className="animate-z-puff-1">z</span>
+      {"    \n    ^...^    \n   / -,- \\   \n   |):::(|   \n ====w=w==== "}
+    </pre>
+  );
+}
+
 function ArchiveEmptyState({ onBackToChat }: { onBackToChat: () => void }) {
   return (
-    <div className="flex min-h-[55vh] flex-col items-center justify-center px-4 py-10 text-center sm:py-16">
-      <div className="flex size-16 items-center justify-center border border-border bg-card text-muted-foreground sm:size-20">
-        <ArchiveIcon size={28} weight="duotone" />
-      </div>
+    <div className="mt-4 flex flex-col items-center justify-center px-4 py-12 text-center sm:py-16">
+      <SleepingOwlAsciiArt />
       <h2 className="mt-5 text-base font-semibold tracking-tight sm:text-lg">Nothing in your archive</h2>
       <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
-        Archived repositories appear here. Restore or delete any time.
+        Archived repositories rest here. Restore or delete any time.
       </p>
       <Button variant="secondary" size="sm" className="mt-6" onClick={onBackToChat}>
         <CaretLeftIcon weight="bold" />

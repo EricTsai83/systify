@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { METRIC_SCOPE, emitMetric } from "./observability";
+import { METRIC_SCOPE, emitMetric, logErrorWithId } from "./observability";
 
 /**
  * Plan 13 — emitMetric contract tests.
@@ -124,5 +124,153 @@ describe("emitMetric", () => {
       });
     }).not.toThrow();
     expect(logSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * `serializeError` contract — exercised via `logErrorWithId` which is
+ * the public surface that uses it. Two reasons to test through the
+ * public API rather than exporting the helper:
+ *
+ *   1. The shape we care about is *what lands in the log*, not the
+ *      intermediate value. Pinning the helper directly would let a
+ *      future refactor that bypasses it slip through.
+ *   2. `logErrorWithId` is what every node-runtime module already
+ *      reaches for; the integration is the contract.
+ *
+ * The extensions tested here exist so Daytona SDK errors (which carry
+ * `statusCode` / `errorCode` as own properties) and wrapped errors
+ * (`new Error(msg, { cause: ... })`) produce structured log records
+ * — turning a generic "Request failed with status code 400" into a
+ * queryable `statusCode: 400` plus the wrapped cause's fields.
+ */
+describe("logErrorWithId — structured error serialization", () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    errorSpy.mockRestore();
+  });
+
+  function getLoggedErrorPayload(): Record<string, unknown> {
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    const [, payload] = errorSpy.mock.calls[0];
+    return (payload as { error: Record<string, unknown> }).error;
+  }
+
+  test("surfaces `statusCode` (number) as a top-level structured field", () => {
+    // Daytona SDK errors carry `statusCode` as an own property. Lifting it
+    // out of the freeform message lets ops query "all Daytona 4xx clones
+    // in the last hour" without regex-parsing.
+    class DaytonaLikeError extends Error {
+      readonly statusCode = 400;
+      constructor(message: string) {
+        super(message);
+        this.name = "DaytonaValidationError";
+      }
+    }
+    logErrorWithId("import", "clone_failed", new DaytonaLikeError("Request failed"));
+    expect(getLoggedErrorPayload()).toMatchObject({
+      name: "DaytonaValidationError",
+      message: "Request failed",
+      statusCode: 400,
+    });
+  });
+
+  test("surfaces `errorCode` (string) when present", () => {
+    class DaytonaLikeError extends Error {
+      readonly statusCode = 400;
+      readonly errorCode = "GIT_CLONE_FAILED";
+      constructor(message: string) {
+        super(message);
+        this.name = "DaytonaValidationError";
+      }
+    }
+    logErrorWithId("import", "clone_failed", new DaytonaLikeError("Request failed"));
+    expect(getLoggedErrorPayload()).toMatchObject({
+      statusCode: 400,
+      errorCode: "GIT_CLONE_FAILED",
+    });
+  });
+
+  test("ignores `statusCode` / `errorCode` of the wrong shape (defensive duck-typing)", () => {
+    // A library that happens to set `statusCode` to a string ("404") or
+    // `errorCode` to a number must not pollute the log record's shape —
+    // dashboards that key on `statusCode: number` would otherwise break
+    // silently. The extractor is strictly typed.
+    class WeirdError extends Error {
+      readonly statusCode = "400" as unknown as number;
+      readonly errorCode = 42 as unknown as string;
+    }
+    logErrorWithId("import", "clone_failed", new WeirdError("weird"));
+    const payload = getLoggedErrorPayload();
+    expect(payload).not.toHaveProperty("statusCode");
+    expect(payload).not.toHaveProperty("errorCode");
+  });
+
+  test("walks the `cause` chain so wrapped errors expose the original SDK fields", () => {
+    // The clone wrapper in `daytona.ts` chains the original Daytona error
+    // via `cause`. Without recursion, the structured fields would only
+    // appear if the outer error happened to mirror them — defeating the
+    // point of wrapping. Recursion makes the chain self-describing.
+    class DaytonaLikeError extends Error {
+      readonly statusCode = 400;
+      readonly errorCode = "GIT_CLONE_FAILED";
+      constructor(message: string) {
+        super(message);
+        this.name = "DaytonaValidationError";
+      }
+    }
+    const inner = new DaytonaLikeError("Request failed");
+    const outer = new Error("Sandbox git clone failed", { cause: inner });
+    logErrorWithId("import", "clone_failed", outer);
+    expect(getLoggedErrorPayload()).toMatchObject({
+      message: "Sandbox git clone failed",
+      cause: {
+        name: "DaytonaValidationError",
+        statusCode: 400,
+        errorCode: "GIT_CLONE_FAILED",
+      },
+    });
+  });
+
+  test("caps recursion depth so a runaway library cannot blow the log record up", () => {
+    // Construct a chain deeper than the documented cap (4) and confirm
+    // the serializer stops descending. The exact depth boundary isn't
+    // user-visible — what matters is that recursion is bounded.
+    let chain: Error = new Error("root");
+    for (let i = 0; i < 10; i += 1) {
+      chain = new Error(`wrap-${i}`, { cause: chain });
+    }
+    logErrorWithId("import", "clone_failed", chain);
+    const payload = getLoggedErrorPayload();
+    let depth = 0;
+    let cursor: unknown = payload;
+    while (cursor && typeof cursor === "object" && "cause" in cursor) {
+      cursor = (cursor as { cause: unknown }).cause;
+      depth += 1;
+      // Bail out if we ever exceed any plausible cap — failure mode is
+      // unbounded recursion, which would have hung the test runner
+      // already, so this is just a hard safety net.
+      if (depth > 20) {
+        throw new Error("serializer descended too far");
+      }
+    }
+    expect(depth).toBeLessThanOrEqual(4);
+  });
+
+  test("breaks cause cycles instead of recursing forever", () => {
+    // A pathological caller could set `error.cause = error` (or build a
+    // longer cycle). The serializer must not loop; it marks the
+    // revisited error with a sentinel `cause-cycle-detected` message.
+    const a = new Error("a");
+    const b = new Error("b", { cause: a });
+    (a as { cause?: unknown }).cause = b;
+    expect(() => logErrorWithId("import", "clone_failed", a)).not.toThrow();
+    const serialized = JSON.stringify(getLoggedErrorPayload());
+    expect(serialized).toContain("cause-cycle-detected");
   });
 });

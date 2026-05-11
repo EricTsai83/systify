@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import type { OptimisticLocalStore } from "convex/browser";
-import { ArchiveIcon, ArrowCounterClockwiseIcon } from "@phosphor-icons/react";
+import { ArchiveIcon, ArrowCounterClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import type { Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
@@ -959,15 +959,24 @@ export function RepositoryShell({
          * until the user restores.
          */}
         {!isRepoArchived && repoDetail?.repository.importStatus === "failed" ? (
-          <div className="border-b border-destructive/40 bg-destructive/5 px-6 py-3">
-            <AppNotice
-              title="Repository import failed"
-              message="The latest sync did not finish. Retry to restore repo-aware features for this workspace."
-              tone="error"
-              actionLabel={isSyncing || isRepositorySyncing ? "Retrying…" : "Retry sync"}
-              actionDisabled={isSyncing || isRepositorySyncing}
-              onAction={() => void handleSync()}
-            />
+          <div className="flex shrink-0 items-start gap-2 border-b border-destructive/40 bg-destructive/5 px-6 py-3 text-destructive">
+            <WarningCircleIcon size={18} weight="fill" className="mt-0.5 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">Repository import failed</p>
+              <p className="mt-0.5 text-xs leading-5">
+                The latest sync did not finish. Retry to restore repo-aware features for this workspace.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="gap-1.5 text-xs"
+              disabled={isSyncing || isRepositorySyncing}
+              onClick={() => void handleSync()}
+            >
+              {isSyncing || isRepositorySyncing ? "Retrying…" : "Retry sync"}
+            </Button>
           </div>
         ) : null}
 

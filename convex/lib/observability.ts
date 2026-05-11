@@ -44,13 +44,54 @@ function normalizeScope(scope: string) {
   );
 }
 
-function serializeError(error: unknown): SerializableValue {
+/**
+ * Maximum depth to walk the `cause` chain when serializing an error.
+ *
+ * Cause chains are short in practice (typically 1-2 wraps), but a runaway
+ * library that wraps eagerly could produce arbitrarily deep nesting. The
+ * cap keeps log records bounded; cycle detection via `seen` is the second
+ * guard for the case where `error.cause === error` (or a deeper loop).
+ */
+const ERROR_CAUSE_MAX_DEPTH = 4;
+
+function serializeError(error: unknown, depth = 0, seen?: WeakSet<object>): SerializableValue {
   if (error instanceof Error) {
-    return {
+    const visited = seen ?? new WeakSet<object>();
+    if (visited.has(error)) {
+      return { name: error.name, message: "[cause-cycle-detected]" };
+    }
+    visited.add(error);
+
+    const serialized: { [key: string]: SerializableValue } = {
       name: error.name,
       message: error.message,
       stack: error.stack,
     };
+
+    // Daytona SDK errors carry `statusCode` (number) and `errorCode` (string)
+    // as own properties. Surfacing them as structured log fields — rather
+    // than relying on the message — lets ops query "all Daytona 4xx clones
+    // in the last hour" without regex-parsing free-form text. Duck-typed
+    // because observability.ts is shared across v8 and node runtimes and
+    // cannot import `@daytona/sdk` (Node-only).
+    const indexed = error as unknown as Record<string, unknown>;
+    if (typeof indexed.statusCode === "number") {
+      serialized.statusCode = indexed.statusCode;
+    }
+    if (typeof indexed.errorCode === "string") {
+      serialized.errorCode = indexed.errorCode;
+    }
+
+    // `Error.cause` is ES2022; the frontend tsconfig still ships an ES2020
+    // `lib` so we read the property through a localised cast rather than
+    // bumping global config. The cast is type-only — the value is a real
+    // property on every modern V8 runtime the Convex / Vite stack targets.
+    const causeValue = (error as Error & { cause?: unknown }).cause;
+    if (causeValue !== undefined && depth < ERROR_CAUSE_MAX_DEPTH) {
+      serialized.cause = serializeError(causeValue, depth + 1, visited);
+    }
+
+    return serialized;
   }
   if (typeof error === "string") {
     return error;
