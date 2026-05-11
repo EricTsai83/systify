@@ -276,10 +276,11 @@ function SearchPendingState() {
  * Sleeping-owl counterpart to the awake {@link OwlAsciiArt} in
  * chat-empty-state.tsx. Eyes use a `~,~` glyph — deliberately softer
  * than the awake owl's flat `-,-` blink — so the closed-eye state reads
- * as "dreaming" rather than "mid-blink". They're wrapped in their own
- * span so a gentle `translateY` wave (~1px peak) can bob them while the
- * dream bubbles are visible, without decoupling them from the
- * surrounding `/` and `\` brackets.
+ * as "dreaming" rather than "mid-blink". The eyes don't animate on
+ * their own — instead the entire head (ears row + eyes row) is wrapped
+ * in a single span so a `translateY` "nodding off" animation can drop
+ * the whole head forward and snap it back as one unit, the way a
+ * drowsy creature's head actually moves.
  *
  * The owl body is otherwise static; the three dream `z` chars each run
  * their own keyframe pre-staged with the others, so the cycle goes
@@ -287,12 +288,16 @@ function SearchPendingState() {
  * three pop out together → pause → loop. Appearance is sequential
  * (bubbles emerging one at a time, FIFO), dissipation is synchronized
  * (a single closing event), and the pause gives the cycle a peaceful
- * sleeping-breath rhythm. The eye wave shares the 6s z-puff cycle and
- * is shaped so it bobs during 0%→72% (the window when at least one z
- * is visible) and holds still during 72%→100% (the silent pause). The
- * eyes resume waving the moment z1 starts fading back in next cycle.
- * Single `<pre>` rather than
- * the awake owl's double-pre overlay — the dream chars never overlap the
+ * sleeping-breath rhythm. The head-nod shares the 5s z-puff cycle and
+ * is choreographed to it: a small first nod as the first dream bubble
+ * appears, then a bigger second nod that peaks around the moment all
+ * three z's are visible. Both animations resolve together so the
+ * dream-less pause is also a head-still pause. The small-then-big
+ * shape (1px → 2.5px) reads as the owl progressively losing the
+ * fight against sleep, with the deepest droop tied to peak dreaming.
+ * Single `<pre>`
+ * rather than the awake owl's double-pre overlay — the dream chars
+ * never overlap the
  * body, so no opaque cover is needed.
  */
 function SleepingOwlAsciiArt() {
@@ -307,9 +312,9 @@ function SleepingOwlAsciiArt() {
       <span className="animate-z-puff-2">Z</span>
       {"   \n        "}
       <span className="animate-z-puff-1">z</span>
-      {"    \n    ^...^    \n   / "}
-      <span className="animate-owl-eye-wave">~,~</span>
-      {" \\   \n   |):::(|   \n ====w=w==== "}
+      {"    \n"}
+      <span className="animate-owl-head-nod">{"    ^...^    \n   / ~,~ \\   "}</span>
+      {"\n   |):::(|   \n ====w=w==== "}
     </pre>
   );
 }

@@ -147,14 +147,12 @@
 }
 
 /*
- * Cartoon ZZZ — three keyframes that share a single 6s cycle. Long pause
- * and gentle phases keep this peaceful since it's a sleeping animation,
- * not an attention-grabber. The cycle:
+ * Cartoon ZZZ — three keyframes that share a single 5s cycle. The cycle:
  *
  *   appear   →  z1 in,  z2 in,  z3 in    (sequential, each ~10% of cycle, ease-out)
- *   peak     →  all three visible         (long hold)
+ *   peak     →  all three visible         (hold — head's bigger nod peaks here)
  *   dissipate→  all three pop out together (6% of cycle, ease-out)
- *   pause    →  long quiet stretch        (~28% of cycle ≈ 1.7s)
+ *   pause    →  quiet stretch             (~28% of cycle ≈ 1.4s)
  *
  * Appearance is FIFO and staged — bubbles emerge one at a time, bottom to
  * top. Dissipation is synchronized — all three z's share the same 66%→72%
@@ -233,57 +231,60 @@
 }
 
 /*
- * Sleeping-owl eye wave — a gentle `translateY` oscillation that runs
- * only while the ZZZ dream bubbles are on screen, then holds the eyes
- * still during the pause phase. Two full sinusoidal bobs (~1px peak
- * amplitude) span 0%→72% of the cycle, then 72%→100% is dead still.
+ * Sleeping-owl head nod — `translateY` drop-and-snap that mimics
+ * "打瞌睡" (dozing off) as a SMALL-THEN-BIG double-nod choreographed
+ * to the ZZZ appearance: the head gives a small first nod as the
+ * first dream bubble appears, then sinks into a deeper second nod as
+ * the dreams accumulate. By the time all three z's are visible, the
+ * head has reached its lowest point — that's the "deepest droop"
+ * beat that ties the two animations into one cohesive moment.
  *
- * Sync rationale: this cycle is 6s, identical to z-puff-*. Because both
- * animations share the same duration and start, they march in perfect
- * lock-step — the eyes bob while at least one z is visible and freeze
- * during the dream-less pause, then resume the moment z1 begins fading
- * back in. Conceptually: the owl's face is "active" while it's
- * dreaming, "quiet" while it's between breaths.
+ *   0%–12%   small drift down to +1px      (z1 fading in, owl just dipping)
+ *   12%–18%  quick snap back to 0          (alert recovery)
+ *   18%–38%  bigger, slower drop to +2.5px (z2, z3 fading in — head sinks
+ *                                           deeper; peak ~when all 3 z's visible)
+ *   38%–44%  quick snap back to 0          (the bigger startle)
+ *   44%–72%  still (head settled, z's holding then popping out)
+ *   72%–100% still, in sync with z-puff pause
  *
- * `ease-in-out` on each segment of the wave so the bobs are smooth
- * sinusoidal arcs rather than the linear zig-zag you'd get with hard
- * keyframe interpolation. The pause portion (72%→100%) has matching
- * `transform: translateY(0)` endpoints so the eye sits perfectly still
- * with no residual drift.
+ * The "small then big" order (1px → 2.5px) reads as the owl
+ * progressively losing the fight against sleep — the first nod is a
+ * small dip the owl easily catches, but the second is a full drowsy
+ * collapse before the startle reflex jerks the head back up.
+ *
+ * Every segment uses `ease-in` — drops AND snaps. For the drops this
+ * is the natural "fighting drowsiness then losing" shape (slow start,
+ * accelerating fall). For the snaps, ease-in gives a "stunned pause
+ * then sudden recovery" feel: the head lingers at the bottom of the
+ * droop for a beat before snapping back up. That delayed startle
+ * reads more like real dozing-off than a clean ease-out reflex.
+ * Top-level animation timing is `linear` so the per-segment functions
+ * aren't double-warped.
+ *
+ * Why 5s, matching z-puff: identical cycle length means the head and
+ * the dream bubbles march in lock-step. The two animations aren't
+ * independent — they're choreographed so the bigger nod peaks during
+ * the "all three z's visible" hold, making the whole thing read as
+ * one coordinated dozing-off moment rather than two parallel effects.
  */
-@keyframes owl-eye-wave {
+@keyframes owl-head-nod {
   0% {
     transform: translateY(0);
-    animation-timing-function: ease-in-out;
+    animation-timing-function: ease-in;
   }
-  9% {
-    transform: translateY(-1px);
-    animation-timing-function: ease-in-out;
+  12% {
+    transform: translateY(1px);
+    animation-timing-function: ease-out;
   }
   18% {
     transform: translateY(0);
-    animation-timing-function: ease-in-out;
+    animation-timing-function: ease-in;
   }
-  27% {
-    transform: translateY(1px);
-    animation-timing-function: ease-in-out;
+  38% {
+    transform: translateY(2.5px);
+    animation-timing-function: ease-out;
   }
-  36% {
-    transform: translateY(0);
-    animation-timing-function: ease-in-out;
-  }
-  45% {
-    transform: translateY(-1px);
-    animation-timing-function: ease-in-out;
-  }
-  54% {
-    transform: translateY(0);
-    animation-timing-function: ease-in-out;
-  }
-  63% {
-    transform: translateY(1px);
-    animation-timing-function: ease-in-out;
-  }
+  44%,
   72%,
   100% {
     transform: translateY(0);
@@ -370,24 +371,26 @@
   }
 
   .animate-z-puff-1 {
-    animation: z-puff-1 6s linear infinite;
+    animation: z-puff-1 5s linear infinite;
   }
 
   .animate-z-puff-2 {
-    animation: z-puff-2 6s linear infinite;
+    animation: z-puff-2 5s linear infinite;
   }
 
   .animate-z-puff-3 {
-    animation: z-puff-3 6s linear infinite;
+    animation: z-puff-3 5s linear infinite;
   }
 
-  .animate-owl-eye-wave {
+  .animate-owl-head-nod {
     /* inline-block lets transform apply to a span inside `<pre>` without
-     * disturbing the surrounding monospaced glyphs. Top-level `linear` —
-     * the per-keyframe `ease-in-out` declarations shape each bob arc, so
-     * the global timing function only governs the unmoving pause segment. */
+     * disturbing the surrounding monospaced glyphs. The span wraps two
+     * lines of ASCII (ears + eyes) so the whole head translates as a
+     * single unit. Top-level `linear` — the per-keyframe ease functions
+     * shape each drift/snap segment, so the global timing only governs
+     * the unmoving pause portion. */
     display: inline-block;
-    animation: owl-eye-wave 6s linear infinite;
+    animation: owl-head-nod 5s linear infinite;
   }
 
   .animate-fade-in {
@@ -432,7 +435,7 @@
     .animate-z-puff-1,
     .animate-z-puff-2,
     .animate-z-puff-3,
-    .animate-owl-eye-wave,
+    .animate-owl-head-nod,
     .animate-fade-in,
     .animate-typing,
     .animate-fade-out,
