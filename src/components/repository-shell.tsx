@@ -23,8 +23,10 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useCheckForUpdates } from "@/hooks/use-check-for-updates";
 import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
+import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useRepositoryActions } from "@/hooks/use-repository-actions";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
+import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
 import type { ArtifactId, RepositoryId, ThreadId, WorkspaceId, ChatMode, SandboxModeStatus } from "@/lib/types";
 import { toUserErrorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -433,6 +435,13 @@ export function RepositoryShell({
   const effectiveSelectedRepositoryId: RepositoryId | null = currentWorkspace?.repositoryId ?? null;
 
   const effectiveSelectedThreadId: ThreadId | null = urlThreadId;
+
+  // Keep messages + active-stream subscriptions open for the most recently
+  // viewed threads so switching between them is instant and live-reactive.
+  // Convex de-duplicates subscriptions by (query, args), so this shares the
+  // subscription with `ChatContainer`'s `useQuery` for the active thread.
+  const recentThreadIds = useRecentThreads(effectiveSelectedThreadId);
+  useWarmThreadSubscriptions(recentThreadIds);
 
   const repoDetail = useQuery(
     api.repositories.getRepositoryDetail,

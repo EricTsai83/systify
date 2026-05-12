@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader, SidebarMenuButton } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { usePrewarmThread } from "@/hooks/use-prewarm-thread";
 import { useServiceMode } from "@/hooks/use-service-mode";
 import { toUserErrorMessage } from "@/lib/errors";
 import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
@@ -181,6 +182,7 @@ function ThreadsSection({
 }) {
   const previousThreadCountRef = useRef<number | null>(null);
   const liveRegionRef = useRef<HTMLSpanElement | null>(null);
+  const prewarmThread = usePrewarmThread();
 
   useEffect(() => {
     if (threads === undefined) {
@@ -229,6 +231,7 @@ function ThreadsSection({
                 repositoriesById={repositoriesById}
                 selectedThreadId={selectedThreadId}
                 onSelectThread={onSelectThread}
+                onPrewarmThread={prewarmThread}
                 onDeleteThread={onDeleteThread}
                 onTogglePin={onTogglePin}
                 showRepoBadge={showRepoBadge}
@@ -253,6 +256,7 @@ function ThreadsSection({
                   repositoriesById={repositoriesById}
                   selectedThreadId={selectedThreadId}
                   onSelectThread={onSelectThread}
+                  onPrewarmThread={prewarmThread}
                   onDeleteThread={onDeleteThread}
                   onTogglePin={onTogglePin}
                   showRepoBadge={showRepoBadge}
@@ -271,6 +275,7 @@ const ThreadsList = memo(function ThreadsList({
   repositoriesById,
   selectedThreadId,
   onSelectThread,
+  onPrewarmThread,
   onDeleteThread,
   onTogglePin,
   showRepoBadge,
@@ -279,6 +284,7 @@ const ThreadsList = memo(function ThreadsList({
   repositoriesById: Map<RepositoryId, Doc<"repositories">>;
   selectedThreadId: ThreadId | null;
   onSelectThread: (id: ThreadId | null) => void;
+  onPrewarmThread: (id: ThreadId) => void;
   onDeleteThread: (id: ThreadId) => void;
   onTogglePin: (id: ThreadId, pinned: boolean) => void;
   showRepoBadge: boolean;
@@ -294,6 +300,8 @@ const ThreadsList = memo(function ThreadsList({
             <SidebarMenuButton
               selected={isSelected}
               onClick={() => onSelectThread(thread._id)}
+              onMouseEnter={() => onPrewarmThread(thread._id)}
+              onFocus={() => onPrewarmThread(thread._id)}
               className="py-1.5 pr-16"
             >
               <div className="min-w-0 flex-1">

@@ -90,30 +90,13 @@ type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream
   isShellLoading: boolean;
 };
 
-// Per-thread message cache. Convex's `useQuery` briefly returns `undefined`
-// when its args change (thread switch) before resolving from its own client
-// cache — that gap causes a blank flash and makes thread switching feel
-// non-instant. Storing the most recent payload per thread lets us paint the
-// previous result immediately and then swap in the fresh array once it
-// arrives. Module-scoped (not React state) so cache reads/writes don't
-// trigger re-renders and survive ChatContainer remounts within a session.
-const messagesByThreadCache = new Map<ThreadId, Doc<"messages">[]>();
-
 export function ChatContainer({ selectedThreadId, isShellLoading, ...panelProps }: ChatContainerProps) {
-  const liveMessages = useQuery(
-    api.chat.threads.listMessages,
-    selectedThreadId ? { threadId: selectedThreadId } : "skip",
-  );
+  const messages = useQuery(api.chat.threads.listMessages, selectedThreadId ? { threadId: selectedThreadId } : "skip");
   const activeMessageStream = useQuery(
     api.chat.streaming.getActiveMessageStream,
     selectedThreadId ? { threadId: selectedThreadId } : "skip",
   );
 
-  if (selectedThreadId && liveMessages) {
-    messagesByThreadCache.set(selectedThreadId, liveMessages);
-  }
-
-  const messages = liveMessages ?? (selectedThreadId ? messagesByThreadCache.get(selectedThreadId) : undefined);
   const isChatLoading = isShellLoading || (selectedThreadId !== null && messages === undefined);
 
   return (

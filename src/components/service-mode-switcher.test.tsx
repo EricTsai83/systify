@@ -3,6 +3,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ServiceModeSwitcher } from "./service-mode-switcher";
+import { libraryPath } from "@/route-paths";
 import type { WorkspaceId } from "@/lib/types";
 
 const { useNavigateMock } = vi.hoisted(() => ({
@@ -60,7 +61,7 @@ describe("ServiceModeSwitcher", () => {
     fireEvent.click(libraryBtn);
 
     await waitFor(() => {
-      expect(useNavigateMock).toHaveBeenCalled();
+      expect(useNavigateMock).toHaveBeenCalledWith(libraryPath("workspace_1" as WorkspaceId));
     });
   });
 
@@ -131,7 +132,7 @@ describe("ServiceModeSwitcher", () => {
     expect(useNavigateMock).not.toHaveBeenCalled();
   });
 
-  test("applies whileTap scale animation only when available and not reduced motion", () => {
+  test("available mode renders as interactive (aria-disabled=false)", () => {
     render(
       <ServiceModeSwitcher
         workspaceId={"workspace_1" as WorkspaceId}
@@ -155,6 +156,8 @@ describe("ServiceModeSwitcher", () => {
 
     const discussBtn = screen.getByRole("button", { name: "Discuss" });
     expect(discussBtn).toHaveTextContent("Discuss");
+    const pillElement = discussBtn.querySelector("span.absolute.inset-0.rounded-sm.bg-background");
+    expect(pillElement).toBeInTheDocument();
   });
 
   test("inactive modes hide label text content", () => {

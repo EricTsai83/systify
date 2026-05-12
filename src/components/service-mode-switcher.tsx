@@ -56,8 +56,10 @@ const INACTIVE_FLEX = {
 
 // Survives unmount/remount so we can detect mode switches that happen
 // via route navigation (each mode is a separate route that fully
-// re-creates the component tree).
-let persistedPreviousMode: ServiceMode | null = null;
+// re-creates the component tree). Keyed by workspaceId so a switch in
+// one workspace doesn't trigger a phantom mount transition when the
+// user later opens a different workspace.
+const persistedModeByWorkspace = new Map<WorkspaceId | null, ServiceMode>();
 
 export function ServiceModeSwitcher({
   workspaceId,
@@ -73,14 +75,15 @@ export function ServiceModeSwitcher({
   const navigate = useNavigate();
   const shouldReduceMotion = useReducedMotion();
 
-  const [transitionFrom] = useState<ServiceMode | null>(() =>
-    persistedPreviousMode !== null && persistedPreviousMode !== serviceMode ? persistedPreviousMode : null,
-  );
+  const [transitionFrom] = useState<ServiceMode | null>(() => {
+    const prev = persistedModeByWorkspace.get(workspaceId);
+    return prev !== undefined && prev !== serviceMode ? prev : null;
+  });
   const [exitPillDone, setExitPillDone] = useState(transitionFrom === null);
 
   useEffect(() => {
-    persistedPreviousMode = serviceMode;
-  }, [serviceMode]);
+    persistedModeByWorkspace.set(workspaceId, serviceMode);
+  }, [serviceMode, workspaceId]);
 
   const isMountTransition = transitionFrom !== null && !exitPillDone && !shouldReduceMotion;
 
