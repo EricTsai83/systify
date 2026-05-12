@@ -529,7 +529,7 @@ const ArtifactRow = memo(function ArtifactRow({
       style={{ paddingLeft: `${indent * 12 + 22}px`, contentVisibility: "auto", containIntrinsicSize: "28px" }}
       onClick={handleSelect}
       onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
+        if ((event.key === "Enter" || event.key === " ") && event.currentTarget === event.target) {
           event.preventDefault();
           handleSelect();
         }

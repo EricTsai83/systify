@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion, type Transition } from "framer-motion";
 import { BookOpenIcon, ChatCircleIcon, FlaskIcon } from "@phosphor-icons/react";
@@ -24,64 +25,40 @@ const SERVICE_MODE_ENTRIES: ReadonlyArray<{
   { value: "lab", label: "Lab", icon: FlaskIcon },
 ];
 
-// 220ms ease-in-out-quart — the "morph beat" for cell width + pill scale.
-// ease-in-out reads as "slowly shrinking / slowly growing" because both ends
-// decelerate; pairs the old-cell-shrink and new-cell-grow as one symmetric
-// motion. No spring bounce — width animations with bounce feel rubbery, not
-// "gradual".
 const MORPH_DURATION = 0.22;
 const MORPH: Transition = { duration: MORPH_DURATION, ease: [0.77, 0, 0.175, 1] };
-// Label entry waits for the pill + cell to finish growing, then slides in.
-// ease-out-expo gives a settle-in feel after the heavier morph.
 const LABEL_IN: Transition = { delay: MORPH_DURATION, duration: 0.1, ease: [0.16, 1, 0.3, 1] };
-// Label exit clears quickly so it doesn't fight the narrowing cell — the cell
-// finishes its 220ms morph already empty of content.
 const LABEL_OUT: Transition = { duration: 0.12, ease: [0.77, 0, 0.175, 1] };
 
-/**
- * Segmented toggle that pivots the workspace shell between the three top-level
- * service modes. Lives in the sidebar between the header and the "+ New thread"
- * button so the user's current mode is right where they are about to act.
- *
- * Design beat — only the active mode wears its label; the other two collapse
- * to icon-only chips. On switch, the OLD active cell + pill + label
- * collectively collapse back into an icon in-place (no traveling), and the
- * NEW cell's lone icon unfolds into the full framed button. Two independent
- * shrinking/growing motions running at the same instant (no shared `layoutId`)
- * — the discrete "this contracts here, that expands there" reads as switching
- * rather than a sliding pane. Within the new cell, the label is staggered to
- * appear AFTER the frame has finished growing, so the sequence reads "small
- * icon → grows into a framed button → name appears next to it".
- *
- * No hover tooltip: in a sidebar the user touches dozens of times per session
- * a hover-fired tooltip becomes visual noise. The active cell's own label
- * teaches the icon→mode mapping after one switch; screen reader users get
- * the mode name through each button's `aria-label`. The trade-off is that the
- * unlock-hint for disabled modes lives elsewhere (the workspace setup banner
- * + empty state already explain "attach a repo to unlock Library/Lab"), so
- * losing it here is redundancy reduction, not information loss.
- *
- * Motion stack (top to bottom):
- *   - `whileTap` scale on the button — instant tactile reply on press (100ms).
- *   - `AnimatePresence` pill — scale 0.5↔1 + opacity, 220ms ease-in-out.
- *   - `layout` on each button — cells resize via FLIP, 220ms ease-in-out.
- *   - `AnimatePresence` label — entry delayed 220ms (after frame settles),
- *     exit is fast (~120ms) so it clears before the narrowing cell clips it.
- *
- * All motion is gated by `useReducedMotion`: under `prefers-reduced-motion`
- * the transitions collapse to 0-duration, state still toggles correctly, no
- * `whileTap`, no entry/exit offsets.
- *
- * The component never persists state of its own — clicking a mode navigates
- * to the canonical URL (`/w/:wid/discuss`, `/w/:wid/library`, or
- * `/w/:wid/lab`), and `serviceMode` is computed by `useServiceMode` from that
- * URL. Disabled modes render for keyboard accessibility; clicking one is a no-op.
- *
- * Cost-transparency invariant: clicking `Library` NEVER provisions a sandbox.
- * This is a property of the URL the click navigates to (the Library shell
- * never starts a Lab session); the switcher itself just routes — but the
- * invariant should not be hidden behind a layer of indirection.
- */
+// `flexBasis` and `gap` aren't in Framer Motion's `numberValueTypes` map, so a
+// bare number (e.g. `28`) is written to `element.style` as `"28"` — which the
+// browser rejects as invalid for any non-zero length. The rejected frames leave
+// `flex-basis` stuck at its last valid value (typically `0`), collapsing the
+// inactive button to width 0 and clipping the icon under `overflow-hidden`.
+// Passing strings with explicit `px` units routes through Framer's pixel
+// interpolator so every frame produces a valid declaration.
+const ACTIVE_FLEX = {
+  flexGrow: 1,
+  flexShrink: 1,
+  flexBasis: "0px",
+  gap: "6px",
+  paddingLeft: 8,
+  paddingRight: 8,
+};
+const INACTIVE_FLEX = {
+  flexGrow: 0,
+  flexShrink: 0,
+  flexBasis: "28px",
+  gap: "0px",
+  paddingLeft: 0,
+  paddingRight: 0,
+};
+
+// Survives unmount/remount so we can detect mode switches that happen
+// via route navigation (each mode is a separate route that fully
+// re-creates the component tree).
+let persistedPreviousMode: ServiceMode | null = null;
+
 export function ServiceModeSwitcher({
   workspaceId,
   serviceMode,
@@ -96,6 +73,17 @@ export function ServiceModeSwitcher({
   const navigate = useNavigate();
   const shouldReduceMotion = useReducedMotion();
 
+  const [transitionFrom] = useState<ServiceMode | null>(() =>
+    persistedPreviousMode !== null && persistedPreviousMode !== serviceMode ? persistedPreviousMode : null,
+  );
+  const [exitPillDone, setExitPillDone] = useState(transitionFrom === null);
+
+  useEffect(() => {
+    persistedPreviousMode = serviceMode;
+  }, [serviceMode]);
+
+  const isMountTransition = transitionFrom !== null && !exitPillDone && !shouldReduceMotion;
+
   const handleSelect = (value: ServiceMode, isAvailable: boolean) => {
     if (!workspaceId) return;
     if (value === serviceMode) return;
@@ -109,11 +97,6 @@ export function ServiceModeSwitcher({
     }
   };
 
-  // Reduced-motion: collapse the layout morph to zero so the cell snaps to its
-  // new width on the same frame. Pill and label exits/entries get their own
-  // zero-duration overrides at the call site.
-  const layoutTransition: Transition = shouldReduceMotion ? { duration: 0 } : MORPH;
-
   return (
     <div className={cn("border-b border-border px-2 py-2", className)}>
       <div
@@ -124,7 +107,15 @@ export function ServiceModeSwitcher({
         {SERVICE_MODE_ENTRIES.map((entry) => {
           const isActive = serviceMode === entry.value;
           const isAvailable = availability ? availability.availableServiceModes.includes(entry.value) : true;
+          const isFromMode = entry.value === transitionFrom;
           const Icon = entry.icon;
+
+          const animateStyles = isActive ? ACTIVE_FLEX : INACTIVE_FLEX;
+          let initialStyles: typeof ACTIVE_FLEX | typeof INACTIVE_FLEX | false = false;
+          if (isMountTransition) {
+            if (isActive) initialStyles = INACTIVE_FLEX;
+            else if (isFromMode) initialStyles = ACTIVE_FLEX;
+          }
 
           return (
             <motion.button
@@ -133,43 +124,33 @@ export function ServiceModeSwitcher({
               aria-pressed={isActive}
               aria-label={entry.label}
               aria-disabled={!isAvailable}
-              // Don't use the native `disabled` attribute — handleSelect
-              // already short-circuits on unavailable, and keeping the button
-              // focusable means keyboard users can still Tab through every
-              // mode (consistent reading order, no surprise skips).
               onClick={() => handleSelect(entry.value, isAvailable)}
-              layout
-              transition={layoutTransition}
+              initial={initialStyles}
+              animate={animateStyles}
+              transition={shouldReduceMotion ? { duration: 0 } : MORPH}
               whileTap={isAvailable && !shouldReduceMotion ? { scale: 0.96, transition: { duration: 0.1 } } : undefined}
               className={cn(
                 "relative flex h-full items-center justify-center overflow-hidden rounded-sm outline-none",
                 "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-                isActive
-                  ? "flex-1 gap-1.5 px-2 text-foreground"
-                  : "w-7 flex-none text-muted-foreground hover:bg-background/60 hover:text-foreground",
+                isActive ? "text-foreground" : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
                 !isAvailable && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground",
               )}
             >
-              {/*
-               * Per-cell pill — when `isActive` flips, the pill in the old
-               * cell exits in-place (scale 1→0.5 + fade) and a fresh pill in
-               * the new cell enters from scale 0.5. Replaces the previous
-               * shared `layoutId` pill so the visual reads as "this collapses,
-               * that unfolds" instead of "a single background slides across".
-               */}
-              <AnimatePresence initial={false}>
+              {/* Active pill — AnimatePresence handles within-mount switches;
+                  isMountTransition enables the enter animation on cross-mount switches. */}
+              <AnimatePresence initial={isMountTransition}>
                 {isActive ? (
                   <motion.span
                     key="pill"
                     aria-hidden="true"
-                    initial={shouldReduceMotion ? false : { scale: 0.5, opacity: 0 }}
+                    initial={shouldReduceMotion ? false : { scale: 0.95, opacity: 0 }}
                     animate={{
                       scale: 1,
                       opacity: 1,
                       transition: shouldReduceMotion ? { duration: 0 } : MORPH,
                     }}
                     exit={{
-                      scale: shouldReduceMotion ? 1 : 0.5,
+                      scale: shouldReduceMotion ? 1 : 0.95,
                       opacity: 0,
                       transition: shouldReduceMotion ? { duration: 0 } : MORPH,
                     }}
@@ -177,8 +158,22 @@ export function ServiceModeSwitcher({
                   />
                 ) : null}
               </AnimatePresence>
+
+              {/* Exit pill — fades out on the previously-active button during mount transitions */}
+              {isMountTransition && isFromMode ? (
+                <motion.span
+                  aria-hidden="true"
+                  initial={{ opacity: 1 }}
+                  animate={{ opacity: 0 }}
+                  transition={MORPH}
+                  onAnimationComplete={() => setExitPillDone(true)}
+                  className="absolute inset-0 rounded-sm bg-background shadow-sm"
+                />
+              ) : null}
+
               <Icon size={14} weight={isActive ? "fill" : "regular"} className="relative z-10 shrink-0" />
-              <AnimatePresence initial={false}>
+
+              <AnimatePresence initial={isMountTransition}>
                 {isActive ? (
                   <motion.span
                     key="label"

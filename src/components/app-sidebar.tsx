@@ -53,6 +53,7 @@ export function AppSidebar({
   const threads = useQuery(api.chat.threads.listThreads, activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {});
   const createThreadMutation = useMutation(api.chat.threads.createThread);
   const setThreadPinnedMutation = useMutation(api.chat.threads.setThreadPinned);
+
   // Derive the current service mode from the URL so the segmented switcher
   // can highlight the active mode. Availability lets the switcher mark
   // unavailable modes (e.g. Library/Lab in a no-repo Home workspace) as
