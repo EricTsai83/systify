@@ -200,12 +200,12 @@ function LibraryWorkspace({
         }}
       />
       <SidebarInset>
-        <header className="flex items-center gap-2 border-b border-border bg-background/80 px-3 py-2 backdrop-blur">
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
           <SidebarTrigger />
-          <h1 className="text-sm font-semibold tracking-tight text-foreground">
+          <h1 className="min-w-0 truncate text-sm font-semibold tracking-tight text-foreground md:text-base">
             {currentWorkspace?.name ?? "Library"}
           </h1>
-          <span className="text-[11px] text-muted-foreground">Read Only</span>
+          <span className="shrink-0 text-[11px] text-muted-foreground">Read Only</span>
         </header>
         <div className="flex min-h-0 min-w-0 flex-1">
           {repositoryId ? (

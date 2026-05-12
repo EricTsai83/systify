@@ -30,6 +30,8 @@ const navigateMock = vi.fn();
 vi.mock("convex/react", () => ({
   useMutation: useMutationMock,
   useQuery: useQueryMock,
+  useQueries: () => ({}),
+  useConvex: () => ({ prewarmQuery: () => undefined }),
 }));
 
 vi.mock("react-router-dom", () => ({

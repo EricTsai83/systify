@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useMemo, useState, type AnimationEvent, type FormEvent } from "react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -140,6 +140,26 @@ export function ChatPanel({
   readOnlyHint,
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
+
+  const [seenThreads, setSeenThreads] = useState(() => new Set<ThreadId>());
+  const skipEntrance = selectedThreadId !== null && seenThreads.has(selectedThreadId);
+  const markCurrentThreadSeen = useCallback(
+    (event: AnimationEvent<HTMLDivElement>) => {
+      // Filter out bubbled animationend events from children (e.g. streaming
+      // message bubbles) so we only mark the thread as seen when the entrance
+      // animation on this container itself completes.
+      if (event.target !== event.currentTarget) return;
+      if (!selectedThreadId) return;
+      setSeenThreads((prev) => {
+        if (prev.has(selectedThreadId)) return prev;
+        const next = new Set(prev);
+        next.add(selectedThreadId);
+        return next;
+      });
+    },
+    [selectedThreadId],
+  );
+
   const availableModeSet = useMemo(() => new Set(availableModes), [availableModes]);
   const sandboxModeAvailable = sandboxModeStatus?.reasonCode === "available";
 
@@ -271,9 +291,16 @@ export function ChatPanel({
         <ScrollArea className="flex-1 min-h-0">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6">
             {sandboxWarning}
-            {!isChatLoading && (
-              <div className="flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out">
-                {messages!.map((message) => {
+            {messages && (
+              <div
+                className={
+                  skipEntrance
+                    ? "flex flex-col gap-3"
+                    : "flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out"
+                }
+                onAnimationEnd={skipEntrance ? undefined : markCurrentThreadSeen}
+              >
+                {messages.map((message) => {
                   const messageStream =
                     activeMessageStream?.assistantMessageId === message._id ? activeMessageStream : null;
                   return (

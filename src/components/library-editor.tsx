@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "convex/react";
 import { CaretRightIcon, CheckIcon, CopySimpleIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
-import { extractHeadings, type MarkdownHeading } from "@/lib/markdown-headings";
 import { formatArtifactKind } from "@/lib/operations";
 import type { ArtifactId } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -17,27 +16,11 @@ import { cn } from "@/lib/utils";
  * Three-mode restructure — Library editor (center pane).
  *
  * Renders one artifact in the IDE-style shell: breadcrumb at top,
- * artifact metadata header, then the rendered body. Forwards a ref to
- * the scrolling viewport so the minimap can observe scroll events
- * directly without prop-drilling another callback.
- *
- * LibraryEditor is the canonical long-form artifact surface: no back button,
- * no folder sheet (the shell already mounts the tree), and scrolling is
- * observable to the minimap via the forwarded ref.
+ * artifact metadata header, then the rendered body. The shell relies
+ * on the inner ScrollArea for long-form reading — no minimap, no
+ * outline rail.
  */
-export const LibraryEditor = forwardRef<
-  HTMLDivElement,
-  {
-    artifactId: ArtifactId;
-    /**
-     * Optional callback invoked once the headings list resolves. The
-     * shell uses this to feed the minimap and to support `findHeading
-     * IdByPath` deep-link resolution.
-     */
-    onHeadingsChange?: (headings: ReadonlyArray<MarkdownHeading>) => void;
-    className?: string;
-  }
->(function LibraryEditor({ artifactId, onHeadingsChange, className }, scrollViewportRef) {
+export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactId; className?: string }) {
   const artifact = useQuery(api.artifacts.getById, { artifactId });
   const folder = useQuery(api.artifactFolders.getById, artifact?.folderId ? { folderId: artifact.folderId } : "skip");
 
@@ -52,23 +35,6 @@ export const LibraryEditor = forwardRef<
       // Browsers without clipboard API support — leave the affordance idle.
     }
   });
-
-  const contentMarkdown = artifact?.contentMarkdown ?? null;
-  // Recompute headings only when the artifact body changes so the
-  // effect below does not re-emit on unrelated renders.
-  const headings = useMemo(() => (contentMarkdown ? extractHeadings(contentMarkdown) : []), [contentMarkdown]);
-  const headingsHandler = useCallback(
-    (next: ReadonlyArray<MarkdownHeading>) => {
-      onHeadingsChange?.(next);
-    },
-    [onHeadingsChange],
-  );
-  // Notify the shell after render to avoid update-during-render warnings.
-  useEffect(() => {
-    if (artifact) {
-      headingsHandler(headings);
-    }
-  }, [artifact, headings, headingsHandler]);
 
   if (artifact === undefined) {
     return <EditorSkeleton className={className} />;
@@ -87,8 +53,8 @@ export const LibraryEditor = forwardRef<
   }
 
   return (
-    <div className={cn("flex min-w-0 flex-1 flex-col", className)}>
-      <div className="flex flex-wrap items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur">
+    <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur">
         <LibraryBreadcrumb folderName={folder?.name ?? null} title={artifact.title} />
         <div className="ml-auto flex items-center gap-1">
           <Button
@@ -105,7 +71,7 @@ export const LibraryEditor = forwardRef<
         </div>
       </div>
 
-      <ScrollArea className="min-h-0 flex-1" viewportRef={scrollViewportRef}>
+      <ScrollArea className="min-h-0 flex-1">
         <article className="mx-auto flex w-full max-w-[68ch] flex-col gap-4 px-6 py-8">
           <header className="flex flex-col gap-3 border-b border-border pb-5">
             <div className="flex flex-wrap items-center gap-2">
@@ -137,7 +103,7 @@ export const LibraryEditor = forwardRef<
       </ScrollArea>
     </div>
   );
-});
+}
 
 export function LibraryBreadcrumb({ folderName, title }: { folderName: string | null; title: string }) {
   return (

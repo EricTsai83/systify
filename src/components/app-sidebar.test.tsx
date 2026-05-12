@@ -16,6 +16,7 @@ const { createThreadMutationMock, useMutationMock, useQueryMock } = vi.hoisted((
 vi.mock("convex/react", () => ({
   useMutation: useMutationMock,
   useQuery: useQueryMock,
+  useConvex: () => ({ prewarmQuery: () => undefined }),
 }));
 
 vi.mock("react-router-dom", () => ({

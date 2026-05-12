@@ -19,6 +19,40 @@ type SidebarContextValue = {
 const SidebarContext = React.createContext<SidebarContextValue | null>(null);
 const SIDEBAR_DOCKED_QUERY = "(min-width: 1280px)";
 
+// Desktop sidebar is user-resizable from the right edge. The minimum is the
+// designed content width — chrome (logo, switcher, thread rows) is laid out to
+// stay legible at this size; below it the workspace switcher and thread titles
+// start clipping. The maximum keeps the sidebar from eating more than a
+// reasonable share of the viewport at 1280px (the smallest docked breakpoint).
+const SIDEBAR_MIN_WIDTH = 240;
+const SIDEBAR_MAX_WIDTH = 480;
+const SIDEBAR_WIDTH_STORAGE_KEY = "systify.sidebar.width";
+
+function clampSidebarWidth(value: number): number {
+  if (!Number.isFinite(value)) return SIDEBAR_MIN_WIDTH;
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.round(value)));
+}
+
+function readStoredSidebarWidth(): number {
+  if (typeof window === "undefined") return SIDEBAR_MIN_WIDTH;
+  try {
+    const stored = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    if (!stored) return SIDEBAR_MIN_WIDTH;
+    return clampSidebarWidth(Number.parseInt(stored, 10));
+  } catch {
+    return SIDEBAR_MIN_WIDTH;
+  }
+}
+
+function persistSidebarWidth(value: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(value));
+  } catch {
+    // localStorage can throw in restricted environments — keep in-memory width.
+  }
+}
+
 export function useSidebar() {
   const ctx = React.useContext(SidebarContext);
   if (!ctx) throw new Error("useSidebar must be used within a SidebarProvider");
@@ -70,6 +104,85 @@ export function SidebarProvider({
 
 export function Sidebar({ children, className }: { children: React.ReactNode; className?: string }) {
   const { isSheetMode, open, openMobile, setOpenMobile } = useSidebar();
+  const [width, setWidth] = React.useState<number>(readStoredSidebarWidth);
+  const [isResizing, setIsResizing] = React.useState(false);
+
+  // Restore body cursor/select if the component unmounts mid-drag so the page
+  // doesn't end up stuck with a col-resize cursor or text selection disabled.
+  React.useEffect(() => {
+    return () => {
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, []);
+
+  const handleResizePointerDown = React.useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      event.preventDefault();
+
+      const startX = event.clientX;
+      const startWidth = width;
+      setIsResizing(true);
+      // Anchor cursor + suppress selection globally so the user can drag past
+      // the 4px hit strip without the cursor flipping back to default over
+      // chat content.
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      const handleMove = (moveEvent: PointerEvent) => {
+        const next = clampSidebarWidth(startWidth + (moveEvent.clientX - startX));
+        setWidth(next);
+      };
+
+      const handleEnd = () => {
+        setIsResizing(false);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleEnd);
+        window.removeEventListener("pointercancel", handleEnd);
+        setWidth((current) => {
+          persistSidebarWidth(current);
+          return current;
+        });
+      };
+
+      window.addEventListener("pointermove", handleMove);
+      window.addEventListener("pointerup", handleEnd);
+      window.addEventListener("pointercancel", handleEnd);
+    },
+    [width],
+  );
+
+  const handleResizeKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? 32 : 8;
+    let next: number | null = null;
+    if (event.key === "ArrowLeft") next = -step;
+    else if (event.key === "ArrowRight") next = step;
+    else if (event.key === "Home") {
+      event.preventDefault();
+      setWidth(() => {
+        persistSidebarWidth(SIDEBAR_MIN_WIDTH);
+        return SIDEBAR_MIN_WIDTH;
+      });
+      return;
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setWidth(() => {
+        persistSidebarWidth(SIDEBAR_MAX_WIDTH);
+        return SIDEBAR_MAX_WIDTH;
+      });
+      return;
+    }
+    if (next === null) return;
+    event.preventDefault();
+    setWidth((current) => {
+      const updated = clampSidebarWidth(current + (next ?? 0));
+      persistSidebarWidth(updated);
+      return updated;
+    });
+  }, []);
 
   if (isSheetMode) {
     return (
@@ -95,15 +208,36 @@ export function Sidebar({ children, className }: { children: React.ReactNode; cl
     // SidebarTrigger lives at TopBar's left edge, so an absolute-positioned
     // overlay would cover the close affordance. `will-change: width` promotes
     // the wrapper to its own compositor layer to keep the 200ms toggle cheap.
+    // Transition is suppressed during active drag so the right edge tracks
+    // the cursor 1:1; open/close toggles still animate.
     <aside
       data-state={open ? "open" : "closed"}
+      style={{ width: open ? width : 0 }}
       className={cn(
-        "hidden shrink-0 flex-col overflow-hidden border-r border-border bg-background motion-safe:transition-[width] motion-safe:duration-200 motion-safe:ease-out motion-reduce:transition-none [will-change:width] xl:flex",
-        open ? "w-72" : "w-0 border-r-0",
+        "relative hidden shrink-0 flex-col overflow-hidden border-r border-border bg-background motion-safe:duration-200 motion-safe:ease-out [will-change:width] xl:flex",
+        isResizing ? "transition-none" : "motion-safe:transition-[width] motion-reduce:transition-none",
+        open ? "" : "border-r-0",
         className,
       )}
     >
-      <div className="flex h-full w-72 flex-col">{children}</div>
+      <div className="flex h-full flex-col" style={{ width }}>
+        {children}
+      </div>
+      {open ? (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={SIDEBAR_MAX_WIDTH}
+          aria-valuenow={width}
+          tabIndex={0}
+          data-resizing={isResizing ? "true" : "false"}
+          onPointerDown={handleResizePointerDown}
+          onKeyDown={handleResizeKeyDown}
+          className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent transition-colors hover:bg-primary/40 focus-visible:bg-primary/60 focus-visible:outline-none data-[resizing=true]:bg-primary/60"
+        />
+      ) : null}
     </aside>
   );
 }

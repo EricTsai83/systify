@@ -272,62 +272,10 @@ function SearchPendingState() {
   );
 }
 
-/**
- * Sleeping-owl counterpart to the awake {@link OwlAsciiArt} in
- * chat-empty-state.tsx. Eyes use a `~,~` glyph — deliberately softer
- * than the awake owl's flat `-,-` blink — so the closed-eye state reads
- * as "dreaming" rather than "mid-blink". The eyes don't animate on
- * their own — instead the entire head (ears row + eyes row) is wrapped
- * in a single span so a `scaleY` compression can gently squish the
- * whole head downward as one unit, the way a drowsy creature's head
- * settles into its shoulders when nodding off. `transform-origin:
- * bottom` (set on the utility) anchors the bottom of the head to the
- * body so the compression reads as a sleepy slump rather than a
- * center-scale.
- *
- * The owl body is otherwise static; the three dream `z` chars each run
- * their own keyframe pre-staged with the others, so the cycle goes
- * z1 (bottom) in → z2 (mid) in → z3 (top) in → hold all three → all
- * three pop out together → pause → loop. Appearance is sequential
- * (bubbles emerging one at a time, FIFO), dissipation is synchronized
- * (a single closing event), and the pause gives the cycle a peaceful
- * sleeping-breath rhythm. The head-nod shares the 5s z-puff cycle and
- * is choreographed to it: a single gentle compression that peaks just
- * as all three z's become visible, then smoothly releases before the
- * dreams start to fade. Both animations resolve together so the
- * dream-less pause is also a head-still pause. The smooth scaleY
- * cycle (1 → 0.92 → 1 with ease-in-out) reads as a quiet sleepy
- * breath — softer than a translateY drop-and-snap, which would feel
- * like the owl jerking awake instead of dozing peacefully.
- * Single `<pre>`
- * rather than the awake owl's double-pre overlay — the dream chars
- * never overlap the
- * body, so no opaque cover is needed.
- */
-function SleepingOwlAsciiArt() {
-  return (
-    <pre
-      aria-hidden="true"
-      className="pointer-events-none mb-1 select-none font-mono text-[12px] leading-4 tracking-tight text-muted-foreground"
-    >
-      {"          "}
-      <span className="animate-z-puff-3">z</span>
-      {"  \n         "}
-      <span className="animate-z-puff-2">Z</span>
-      {"   \n        "}
-      <span className="animate-z-puff-1">z</span>
-      {"    \n"}
-      <span className="animate-owl-head-nod">{"    ^...^    \n   / ~,~ \\   "}</span>
-      {"\n   |):::(|   \n ====w=w==== "}
-    </pre>
-  );
-}
-
 function ArchiveEmptyState({ onBackToChat }: { onBackToChat: () => void }) {
   return (
     <div className="mt-4 flex flex-col items-center justify-center px-4 py-12 text-center sm:py-16">
-      <SleepingOwlAsciiArt />
-      <h2 className="mt-5 text-base font-semibold tracking-tight sm:text-lg">Nothing in your archive</h2>
+      <h2 className="text-base font-semibold tracking-tight sm:text-lg">Nothing in your archive</h2>
       <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
         Archived repositories rest here. Restore or delete any time.
       </p>
