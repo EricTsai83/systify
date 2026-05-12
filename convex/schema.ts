@@ -538,10 +538,18 @@ export default defineSchema({
      * replacement instead of accidentally adding more legacy turns.
      */
     lockedAt: v.optional(v.number()),
+    /**
+     * Wall-clock ms epoch when the viewer pinned this thread to the top of
+     * their sidebar. Unset on unpin (drop the field via patch). The value
+     * doubles as a tiebreaker — most-recently-pinned threads sort above
+     * earlier-pinned ones when multiple are pinned in the same workspace.
+     */
+    pinnedAt: v.optional(v.number()),
   })
     .index("by_repositoryId_and_lastMessageAt", ["repositoryId", "lastMessageAt"])
     .index("by_ownerTokenIdentifier_and_lastMessageAt", ["ownerTokenIdentifier", "lastMessageAt"])
     .index("by_workspaceId_and_lastMessageAt", ["workspaceId", "lastMessageAt"])
+    .index("by_workspaceId_and_pinnedAt", ["workspaceId", "pinnedAt"])
     .index("by_workspaceId_and_mode", ["workspaceId", "mode"])
     .index("by_mode", ["mode"]),
 

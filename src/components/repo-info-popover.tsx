@@ -68,7 +68,7 @@ export function RepoInfoPopover({ repoDetail, title }: { repoDetail: TopBarRepoD
           type="button"
           variant="ghost"
           size="sm"
-          className="h-auto min-w-0 truncate px-0 text-left text-sm font-semibold tracking-tight hover:underline md:text-base"
+          className="h-auto min-w-0 truncate px-0 text-left text-sm font-semibold tracking-tight text-foreground hover:bg-transparent hover:underline md:text-base"
         >
           {title}
         </Button>

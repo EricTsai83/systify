@@ -24,14 +24,19 @@ const SERVICE_MODE_ENTRIES: ReadonlyArray<{
   { value: "lab", label: "Lab", icon: FlaskIcon },
 ];
 
-// iOS-style critically-damped spring. `duration` + `bounce` is Framer's
-// "Apple form" — easier to reason about than stiffness/damping. Subtle bounce
-// (0.18) reads as "settle" rather than "playful".
-const SPRING: Transition = { type: "spring", duration: 0.35, bounce: 0.18 };
-// Label entry curve — ease-out-expo. Fast start, soft tail, fits an entering
-// element. Delayed so the cell has expanded before the label arrives.
-const LABEL_IN: Transition = { duration: 0.18, ease: [0.16, 1, 0.3, 1], delay: 0.1 };
-const LABEL_OUT: Transition = { duration: 0.14, ease: [0.7, 0, 0.84, 0] };
+// 220ms ease-in-out-quart — the "morph beat" for cell width + pill scale.
+// ease-in-out reads as "slowly shrinking / slowly growing" because both ends
+// decelerate; pairs the old-cell-shrink and new-cell-grow as one symmetric
+// motion. No spring bounce — width animations with bounce feel rubbery, not
+// "gradual".
+const MORPH_DURATION = 0.22;
+const MORPH: Transition = { duration: MORPH_DURATION, ease: [0.77, 0, 0.175, 1] };
+// Label entry waits for the pill + cell to finish growing, then slides in.
+// ease-out-expo gives a settle-in feel after the heavier morph.
+const LABEL_IN: Transition = { delay: MORPH_DURATION, duration: 0.1, ease: [0.16, 1, 0.3, 1] };
+// Label exit clears quickly so it doesn't fight the narrowing cell — the cell
+// finishes its 220ms morph already empty of content.
+const LABEL_OUT: Transition = { duration: 0.12, ease: [0.77, 0, 0.175, 1] };
 
 /**
  * Segmented toggle that pivots the workspace shell between the three top-level
@@ -39,12 +44,14 @@ const LABEL_OUT: Transition = { duration: 0.14, ease: [0.7, 0, 0.84, 0] };
  * button so the user's current mode is right where they are about to act.
  *
  * Design beat — only the active mode wears its label; the other two collapse
- * to icon-only chips. The active background is a single shared element
- * (`layoutId="service-mode-active-pill"`): when the user picks a new mode the
- * pill physically slides from the old cell to the new one rather than
- * cross-fading. Combined with FLIP-driven cell resize (`layout` prop) and a
- * staggered label entry, the morph reads as a coherent gesture instead of an
- * uncoordinated shimmy.
+ * to icon-only chips. On switch, the OLD active cell + pill + label
+ * collectively collapse back into an icon in-place (no traveling), and the
+ * NEW cell's lone icon unfolds into the full framed button. Two independent
+ * shrinking/growing motions running at the same instant (no shared `layoutId`)
+ * — the discrete "this contracts here, that expands there" reads as switching
+ * rather than a sliding pane. Within the new cell, the label is staggered to
+ * appear AFTER the frame has finished growing, so the sequence reads "small
+ * icon → grows into a framed button → name appears next to it".
  *
  * No hover tooltip: in a sidebar the user touches dozens of times per session
  * a hover-fired tooltip becomes visual noise. The active cell's own label
@@ -55,11 +62,11 @@ const LABEL_OUT: Transition = { duration: 0.14, ease: [0.7, 0, 0.84, 0] };
  * losing it here is redundancy reduction, not information loss.
  *
  * Motion stack (top to bottom):
- *   - `whileTap` scale on the button — instant tactile reply on press.
- *   - `layoutId` pill — the headline move; slides between active cells.
- *   - `layout` on each button — cells resize via FLIP (transform-only).
- *   - `AnimatePresence` label — fades + slides in/out with a 100ms delay so
- *     it arrives after the cell has cleared room for it.
+ *   - `whileTap` scale on the button — instant tactile reply on press (100ms).
+ *   - `AnimatePresence` pill — scale 0.5↔1 + opacity, 220ms ease-in-out.
+ *   - `layout` on each button — cells resize via FLIP, 220ms ease-in-out.
+ *   - `AnimatePresence` label — entry delayed 220ms (after frame settles),
+ *     exit is fast (~120ms) so it clears before the narrowing cell clips it.
  *
  * All motion is gated by `useReducedMotion`: under `prefers-reduced-motion`
  * the transitions collapse to 0-duration, state still toggles correctly, no
@@ -102,10 +109,10 @@ export function ServiceModeSwitcher({
     }
   };
 
-  // Reduced-motion: collapse every transition to zero. Don't disable layout
-  // entirely — the cell widths still need to settle on their new sizes; we
-  // just want the change to happen on the same frame.
-  const layoutTransition: Transition = shouldReduceMotion ? { duration: 0 } : SPRING;
+  // Reduced-motion: collapse the layout morph to zero so the cell snaps to its
+  // new width on the same frame. Pill and label exits/entries get their own
+  // zero-duration overrides at the call site.
+  const layoutTransition: Transition = shouldReduceMotion ? { duration: 0 } : MORPH;
 
   return (
     <div className={cn("border-b border-border px-2 py-2", className)}>
@@ -133,7 +140,7 @@ export function ServiceModeSwitcher({
               onClick={() => handleSelect(entry.value, isAvailable)}
               layout
               transition={layoutTransition}
-              whileTap={isAvailable && !shouldReduceMotion ? { scale: 0.96 } : undefined}
+              whileTap={isAvailable && !shouldReduceMotion ? { scale: 0.96, transition: { duration: 0.1 } } : undefined}
               className={cn(
                 "relative flex h-full items-center justify-center overflow-hidden rounded-sm outline-none",
                 "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
@@ -144,30 +151,37 @@ export function ServiceModeSwitcher({
               )}
             >
               {/*
-               * The sliding pill — a single shared element that animates
-               * between active cells via `layoutId`. When the active mode
-               * changes the pill in the old cell unmounts and the one in
-               * the new cell mounts; Framer Motion matches them by id and
-               * runs a FLIP transform between the two positions. Net
-               * effect: the white card "slides" instead of cross-fading.
+               * Per-cell pill — when `isActive` flips, the pill in the old
+               * cell exits in-place (scale 1→0.5 + fade) and a fresh pill in
+               * the new cell enters from scale 0.5. Replaces the previous
+               * shared `layoutId` pill so the visual reads as "this collapses,
+               * that unfolds" instead of "a single background slides across".
                */}
-              {isActive ? (
-                <motion.span
-                  layoutId="service-mode-active-pill"
-                  transition={layoutTransition}
-                  aria-hidden="true"
-                  className="absolute inset-0 rounded-sm bg-background shadow-sm"
-                />
-              ) : null}
+              <AnimatePresence initial={false}>
+                {isActive ? (
+                  <motion.span
+                    key="pill"
+                    aria-hidden="true"
+                    initial={shouldReduceMotion ? false : { scale: 0.5, opacity: 0 }}
+                    animate={{
+                      scale: 1,
+                      opacity: 1,
+                      transition: shouldReduceMotion ? { duration: 0 } : MORPH,
+                    }}
+                    exit={{
+                      scale: shouldReduceMotion ? 1 : 0.5,
+                      opacity: 0,
+                      transition: shouldReduceMotion ? { duration: 0 } : MORPH,
+                    }}
+                    className="absolute inset-0 rounded-sm bg-background shadow-sm"
+                  />
+                ) : null}
+              </AnimatePresence>
               <Icon size={14} weight={isActive ? "fill" : "regular"} className="relative z-10 shrink-0" />
               <AnimatePresence initial={false}>
                 {isActive ? (
                   <motion.span
                     key="label"
-                    // Per-state `transition` so entry and exit can use
-                    // different curves: entry is ease-out-expo with a
-                    // 100ms delay (lets the cell expand first), exit is
-                    // a faster ease-in (exits ~20% faster than entries).
                     initial={shouldReduceMotion ? false : { opacity: 0, x: -4 }}
                     animate={{
                       opacity: 1,
@@ -176,7 +190,6 @@ export function ServiceModeSwitcher({
                     }}
                     exit={{
                       opacity: 0,
-                      x: shouldReduceMotion ? 0 : -4,
                       transition: shouldReduceMotion ? { duration: 0 } : LABEL_OUT,
                     }}
                     className="relative z-10 truncate text-xs font-medium"

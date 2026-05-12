@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { FolderIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
@@ -6,31 +6,28 @@ import { LibraryAskPanel } from "@/components/library-ask-panel";
 import { LibraryEditor } from "@/components/library-editor";
 import { LibraryTabs } from "@/components/library-tabs";
 import { LibraryTree } from "@/components/library-tree";
-import { MinimapPanel } from "@/components/minimap-panel";
 import { QuickOpenDialog } from "@/components/quick-open-dialog";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { useLibraryShortcuts } from "@/hooks/use-library-shortcuts";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
-import type { MarkdownHeading } from "@/lib/markdown-headings";
 import type { ArtifactId, ArtifactListItem, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
  * Three-mode restructure — Library shell.
  *
- * Three-column desktop layout (≥1280px):
+ * Two-column desktop layout (≥1024px):
  *
- *   ┌──────────┬───────────────────────────┬──────────┐
- *   │ Library  │  Tab bar                  │ Minimap  │
- *   │ Tree     ├───────────────────────────┤          │
- *   │ (280px)  │  Breadcrumb / Editor body │ (120px)  │
- *   │          │                           │          │
- *   └──────────┴───────────────────────────┴──────────┘
+ *   ┌──────────┬───────────────────────────┐
+ *   │ Library  │  Tab bar                  │
+ *   │ Tree     ├───────────────────────────┤
+ *   │ (280px)  │  Breadcrumb / Editor body │
+ *   │          │                           │
+ *   └──────────┴───────────────────────────┘
  *
- * Mid (1024–1279px): minimap hidden, tree collapses to a 48px icon
- * column; Cmd+B toggles. Small (<1024px): single column with the tree
- * in a Sheet.
+ * Mid viewports collapse the tree to a 48px icon column; Cmd+B
+ * toggles. Small (<1024px): single column with the tree in a Sheet.
  *
  * The shell does not render any chat surface — Library Read is, by
  * invariant, not a streaming chat (Library Ask in Phase 2 mounts a
@@ -39,8 +36,7 @@ import { cn } from "@/lib/utils";
  *
  * Wiring:
  *   - `useLibraryTabs` owns the tab strip (URL ↔ localStorage round-trip).
- *   - `useLibraryShortcuts` binds Cmd+P, Cmd+W, Cmd+B, Cmd+\\, Alt+1..9.
- *   - The minimap subscribes to the editor's scroll viewport via a ref.
+ *   - `useLibraryShortcuts` binds Cmd+P, Cmd+W, Cmd+B, Alt+1..9.
  */
 export function LibraryShell({
   workspaceId,
@@ -84,14 +80,10 @@ export function LibraryShell({
 
   const [isTreeOpenMobile, setIsTreeOpenMobile] = useState(false);
   const [isTreeCollapsedDesktop, setIsTreeCollapsedDesktop] = useState(false);
-  const [isMinimapHidden, setIsMinimapHidden] = useState(false);
   const [isQuickOpenOpen, setIsQuickOpenOpen] = useState(false);
-  const [headings, setHeadings] = useState<ReadonlyArray<MarkdownHeading>>([]);
   const [isLargeViewport, setIsLargeViewport] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches,
   );
-
-  const editorScrollRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(min-width: 1024px)");
@@ -127,7 +119,6 @@ export function LibraryShell({
         setIsTreeOpenMobile((open) => !open);
       }
     },
-    onToggleMinimap: () => setIsMinimapHidden((hidden) => !hidden),
     onFocusTab: (index) => {
       const target = tabs.openArtifactIds[index];
       if (target) tabs.activateTab(target);
@@ -166,8 +157,8 @@ export function LibraryShell({
       </aside>
 
       {/* Center column — tab strip + editor */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <div className="flex flex-wrap items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur lg:hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur lg:hidden">
           <Button type="button" variant="ghost" size="sm" className="gap-1.5" onClick={() => setIsTreeOpenMobile(true)}>
             <FolderIcon size={13} weight="duotone" /> Folders
           </Button>
@@ -183,27 +174,17 @@ export function LibraryShell({
           onActivate={tabs.activateTab}
           onClose={tabs.closeTab}
           onReorder={tabs.reorderTabs}
+          className="shrink-0"
         />
 
-        <div className="hidden justify-end border-b border-border bg-background/60 px-4 py-2 lg:flex">
+        <div className="hidden shrink-0 justify-end border-b border-border bg-background/60 px-4 py-2 lg:flex">
           <Button type="button" variant="outline" size="sm" onClick={onOpenAsk}>
             Ask Library
           </Button>
         </div>
 
-        {tabs.activeArtifactId ? (
-          <LibraryEditor ref={editorScrollRef} artifactId={tabs.activeArtifactId} onHeadingsChange={setHeadings} />
-        ) : (
-          <LibraryEmptyState />
-        )}
+        {tabs.activeArtifactId ? <LibraryEditor artifactId={tabs.activeArtifactId} /> : <LibraryEmptyState />}
       </div>
-
-      {/* Desktop minimap rail */}
-      {!isMinimapHidden && tabs.activeArtifactId ? (
-        <div className="hidden xl:block">
-          <MinimapPanel headings={headings} scrollContainerRef={editorScrollRef} />
-        </div>
-      ) : null}
 
       {isAskOpen ? (
         <div className="hidden lg:block">

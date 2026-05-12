@@ -21,14 +21,12 @@ const EMPTY_CHAT_OWL = ["   ^...^   ", "  / o,o \\  ", "  |):::(|  ", "====w=w==
 const EMPTY_CHAT_OWL_BLINK = ["   ^...^   ", "  / -,- \\  ", "  |):::(|  ", "====w=w===="].join("\n");
 
 /**
- * Two stacked `<pre>` blocks render the empty-state owl: the bottom one
+ * Two stacked `<pre>` blocks render the awake owl: the bottom one
  * holds the open-eyes frame, the top one holds the squint frame on an
  * opaque background and animates its opacity to produce the periodic
- * blink. Extracted because both `EmptyChatHint` and `EmptyNoRepoHint`
- * render the exact same markup — duplicating the 12 lines of `<pre>`
- * tags would let the two surfaces drift on a future style tweak.
+ * blink.
  */
-function OwlAsciiArt() {
+function AwakeOwlAsciiArt() {
   return (
     <div className="relative mb-1 inline-grid place-items-center">
       <pre
@@ -44,6 +42,77 @@ function OwlAsciiArt() {
         {EMPTY_CHAT_OWL_BLINK}
       </pre>
     </div>
+  );
+}
+
+/**
+ * Sleeping-owl counterpart to {@link AwakeOwlAsciiArt}. Eyes use a
+ * `~,~` glyph — deliberately softer than the awake owl's flat `-,-`
+ * blink — so the closed-eye state reads as "dreaming" rather than
+ * "mid-blink". The eyes don't animate on their own — instead the
+ * entire head (ears row + eyes row) is wrapped in a single span so a
+ * `scaleY` compression can gently squish the whole head downward as
+ * one unit, the way a drowsy creature's head settles into its
+ * shoulders when nodding off. `transform-origin: bottom` (set on the
+ * utility) anchors the bottom of the head to the body so the
+ * compression reads as a sleepy slump rather than a center-scale.
+ *
+ * The owl body is otherwise static; the three dream `z` chars each
+ * run their own keyframe pre-staged with the others, so the cycle
+ * goes z1 (bottom) in → z2 (mid) in → z3 (top) in → hold all three →
+ * all three pop out together → pause → loop. Appearance is sequential
+ * (bubbles emerging one at a time, FIFO), dissipation is synchronized
+ * (a single closing event), and the pause gives the cycle a peaceful
+ * sleeping-breath rhythm. The head-nod shares the 5s z-puff cycle and
+ * is choreographed to it: a single gentle compression that peaks just
+ * as all three z's become visible, then smoothly releases before the
+ * dreams start to fade. Both animations resolve together so the
+ * dream-less pause is also a head-still pause. The smooth scaleY
+ * cycle (1 → 0.92 → 1 with ease-in-out) reads as a quiet sleepy
+ * breath — softer than a translateY drop-and-snap, which would feel
+ * like the owl jerking awake instead of dozing peacefully. Single
+ * `<pre>` rather than the awake owl's double-pre overlay — the dream
+ * chars never overlap the body, so no opaque cover is needed.
+ */
+function SleepingOwlAsciiArt() {
+  return (
+    <pre
+      aria-hidden="true"
+      className="pointer-events-none mb-1 select-none font-mono text-[12px] leading-4 tracking-tight text-muted-foreground"
+    >
+      {"             "}
+      <span className="animate-z-puff-3">z</span>
+      {"\n           "}
+      <span className="animate-z-puff-2">Z</span>
+      {"\n         "}
+      <span className="animate-z-puff-1">z</span>
+      {"\n"}
+      <span className="animate-owl-head-nod">{"    ^...^    \n   / ~,~ \\   "}</span>
+      {"\n   |):::(|   \n ====w=w==== "}
+    </pre>
+  );
+}
+
+/**
+ * Empty-state owl that adapts to the active theme. Light mode shows
+ * the sleeping/dreaming variant (cozy moonlit Zs read well against
+ * light surfaces); dark mode shows the awake blinking owl (the
+ * wide-eyed "ready to chat" reading suits the terminal feel of the
+ * dark theme). ThemeProvider materializes the active theme as a
+ * `light`/`dark` class on `<html>`, so a single `dark:` swap is
+ * enough. `display: none` on the inactive variant keeps its
+ * animations from running in the background.
+ */
+function OwlAsciiArt() {
+  return (
+    <>
+      <div className="dark:hidden">
+        <SleepingOwlAsciiArt />
+      </div>
+      <div className="hidden dark:block">
+        <AwakeOwlAsciiArt />
+      </div>
+    </>
   );
 }
 

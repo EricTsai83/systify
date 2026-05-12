@@ -34,11 +34,26 @@ export const listThreads = query({
       if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
         return [];
       }
-      return await ctx.db
+      // Pinning preserves visibility independent of recency, so pinned rows
+      // are fetched through a dedicated index range (`pinnedAt > 0` filters
+      // out unpinned rows whose optional field is unset) instead of being
+      // hoped to fall inside the top-N by lastMessageAt. The unpinned tail
+      // is then truncated with the same 20-row cap as before; pinned rows
+      // are capped separately so a pathological pin-all user can't blow
+      // the query budget.
+      const workspaceId = args.workspaceId;
+      const pinned = await ctx.db
         .query("threads")
-        .withIndex("by_workspaceId_and_lastMessageAt", (q) => q.eq("workspaceId", args.workspaceId))
+        .withIndex("by_workspaceId_and_pinnedAt", (q) => q.eq("workspaceId", workspaceId).gt("pinnedAt", 0))
         .order("desc")
         .take(20);
+      const recent = await ctx.db
+        .query("threads")
+        .withIndex("by_workspaceId_and_lastMessageAt", (q) => q.eq("workspaceId", workspaceId))
+        .order("desc")
+        .take(20);
+      const pinnedIds = new Set(pinned.map((thread) => thread._id));
+      return [...pinned, ...recent.filter((thread) => !pinnedIds.has(thread._id))];
     }
 
     const filterRepositoryId = args.repositoryId;
@@ -306,6 +321,31 @@ export const setThreadRepository = mutation({
       mode: getDefaultThreadMode(false),
     });
     return { repositoryId: null as null, workspaceId };
+  },
+});
+
+/**
+ * Toggle a thread's pinned state. Pinning stamps `pinnedAt` with the
+ * current wall-clock so `listThreads` can both detect the pinned state
+ * (via the `by_workspaceId_and_pinnedAt` range filter) and order pinned
+ * rows by recency-of-pin. Unpinning drops the field (patch with
+ * `pinnedAt: undefined`) so the row falls out of the pinned-range query
+ * and back into the regular recency tail.
+ */
+export const setThreadPinned = mutation({
+  args: {
+    threadId: v.id("threads"),
+    pinned: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireViewerIdentity(ctx);
+    const thread = await ctx.db.get(args.threadId);
+    if (!thread || thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      throw new Error("Thread not found.");
+    }
+    await ctx.db.patch(args.threadId, {
+      pinnedAt: args.pinned ? Date.now() : undefined,
+    });
   },
 });
 

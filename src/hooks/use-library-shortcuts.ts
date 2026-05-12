@@ -7,8 +7,6 @@ interface LibraryShortcuts {
   onCloseActiveTab: () => void;
   /** Toggle the left tree (Cmd/Ctrl-B). */
   onToggleTree: () => void;
-  /** Toggle the right minimap (Cmd/Ctrl-\\). */
-  onToggleMinimap: () => void;
   /**
    * Focus the Nth tab where `index` is 0-based (Alt+1..9 → indices 0..8).
    * No-op when fewer than `index + 1` tabs are open — the caller is
@@ -65,11 +63,6 @@ export function useLibraryShortcuts(shortcuts: LibraryShortcuts) {
         if (event.key === "b" || event.key === "B") {
           event.preventDefault();
           shortcuts.onToggleTree();
-          return;
-        }
-        if (event.key === "\\") {
-          event.preventDefault();
-          shortcuts.onToggleMinimap();
           return;
         }
       }

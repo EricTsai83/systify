@@ -511,19 +511,31 @@ const ArtifactRow = memo(function ArtifactRow({
   indent: number;
 }) {
   const recentlyChanged = isRecentlyChanged(artifact._creationTime);
+  const handleSelect = () => onSelect(artifact._id as ArtifactId);
   return (
+    // The entire row is the click target so the hoverable area matches
+    // the clickable one — a previous version made only the inner text
+    // clickable, so users hovering the row's vertical padding got hover
+    // feedback but no click. role="button" + tabIndex keeps it
+    // keyboard-reachable; the icon Button stops propagation.
     <div
+      role="button"
+      tabIndex={0}
+      aria-current={isSelected ? "true" : undefined}
       className={cn(
-        "group flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] hover:bg-muted/60",
+        "group flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-left text-[12px] hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
         isSelected ? "bg-primary/10 ring-1 ring-primary/30" : "",
       )}
       style={{ paddingLeft: `${indent * 12 + 22}px`, contentVisibility: "auto", containIntrinsicSize: "28px" }}
+      onClick={handleSelect}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          handleSelect();
+        }
+      }}
     >
-      <button
-        type="button"
-        className="flex flex-1 items-center gap-1.5 truncate text-left"
-        onClick={() => onSelect(artifact._id as ArtifactId)}
-      >
+      <div className="flex flex-1 items-center gap-1.5 truncate">
         <ArtifactKindGlyph kind={artifact.kind} />
         <span className="truncate font-medium text-foreground">{artifact.title}</span>
         {recentlyChanged ? <span aria-hidden className="ml-1 inline-flex h-1.5 w-1.5 rounded-full bg-primary" /> : null}
@@ -531,7 +543,7 @@ const ArtifactRow = memo(function ArtifactRow({
         <Badge variant="outline" className="ml-auto shrink-0 px-1 py-0 text-[9px] uppercase">
           v{artifact.version}
         </Badge>
-      </button>
+      </div>
       {onOpenInReader ? (
         <Button
           type="button"
