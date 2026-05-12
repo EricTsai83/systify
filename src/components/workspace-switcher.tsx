@@ -48,7 +48,7 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
             type="button"
             variant="outline"
             size="sm"
-            className="min-w-0 flex-1 justify-start gap-2 bg-background px-2"
+            className="min-w-0 flex-1 justify-start gap-2 bg-background px-2 active:scale-100"
           >
             <span className="min-w-0 flex-1 truncate text-sm font-medium">
               {activeWorkspace?.name ?? "Select workspace"}

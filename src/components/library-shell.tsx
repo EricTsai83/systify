@@ -11,7 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { useLibraryShortcuts } from "@/hooks/use-library-shortcuts";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
-import type { ArtifactId, ArtifactListItem, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import { useWarmArtifactSubscriptions } from "@/hooks/use-warm-artifact-subscriptions";
+import type { ArtifactId, ArtifactListItem, FolderId, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -77,6 +78,20 @@ export function LibraryShell({
     }
     return map;
   }, [allArtifacts]);
+
+  // Hold Convex subscriptions open for every open tab so switching between
+  // tabs is instant — see `useWarmArtifactSubscriptions`. The tab strip is
+  // already MRU-bounded (`MAX_OPEN_TABS`), so the working set stays small
+  // without a separate retention hook.
+  const openFolderIds = useMemo(() => {
+    const set = new Set<FolderId>();
+    for (const id of tabs.openArtifactIds) {
+      const folder = artifactsById.get(id)?.folderId;
+      if (folder) set.add(folder as FolderId);
+    }
+    return Array.from(set);
+  }, [tabs.openArtifactIds, artifactsById]);
+  useWarmArtifactSubscriptions(tabs.openArtifactIds, openFolderIds);
 
   const [isTreeOpenMobile, setIsTreeOpenMobile] = useState(false);
   const [isTreeCollapsedDesktop, setIsTreeCollapsedDesktop] = useState(false);

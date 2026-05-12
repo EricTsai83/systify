@@ -1,16 +1,16 @@
-# Instant Thread Switching System Design
+# Instant View Switching System Design
 
 ## Purpose
 
-This document explains the architecture that makes switching between chat threads in Systify feel **instantaneous**, while keeping the data fully live-reactive and free of any client-side staleness.
+This document explains the architecture that makes switching between **chat threads** and **Library document tabs** in Systify feel **instantaneous**, while keeping the data fully live-reactive and free of any client-side staleness.
 
-The design splits the problem into three cooperating layers:
+The pattern is one set of cooperating layers, applied in two places:
 
-- **MRU subscription retention** — keep the last N viewed threads subscribed in the background
-- **Speculative prefetch** — start subscriptions on hover/focus before the user clicks
-- **Entrance-animation gating** — play the fade-in only the first time a thread is shown in a session
+- **Bounded-set subscription retention** — keep a small, bounded set of recently-viewed views subscribed in the background. For chat threads the set is an MRU window over selected threads; for Library tabs it is the open-tab list (already capped by the tab strip).
+- **Speculative prefetch** — start subscriptions on hover/focus before the user clicks (currently wired for chat threads via the sidebar; the Library tree could adopt the same hook without changes if a future use case warrants it).
+- **Entrance-animation gating** — play the fade-in only the first time a view is shown in a session (currently wired in `ChatPanel`; not required in the Library editor because the editor does not run an entrance animation).
 
-That separation removes the perceived loading flash for the threads users are most likely to revisit, without introducing a client-side cache or any stale-read risk.
+That separation removes the perceived loading flash for views users are most likely to revisit, without introducing a client-side cache or any stale-read risk.
 
 ## The Problem
 
@@ -71,18 +71,21 @@ The lesson: the right place to keep "data for the thread the user just left" ali
 
 The system uses three cooperating mechanisms, each owning one concern.
 
-### Layer 1 — MRU subscription retention
+### Layer 1 — Bounded-set subscription retention
 
-A small custom hook (`useRecentThreads`) tracks the most-recently-used N (default 5) thread ids in MRU order, where index `[0]` is the active thread. Re-selecting a thread moves it to the front rather than appending; the list is capped so the working set stays bounded.
+A "warm" hook takes a small array of ids that name views the user might switch back to, and registers a live `useQueries` subscription for each id's view-rendering queries. Convex de-duplicates subscriptions by `(query, args)`, so:
 
-A second hook (`useWarmThreadSubscriptions`) takes that array and registers a live `useQueries` subscription for both `listMessages` and `getActiveMessageStream` on each id. Convex de-duplicates subscriptions by `(query, args)`, so:
+- When the view's primary component's `useQuery` runs for the active id, it shares the subscription already established by `useQueries`.
+- When the user switches to another id in the bounded set, that view's data is already in the client's subscription store; the new `useQuery` reads it synchronously.
 
-- When `ChatContainer`'s `useQuery` runs for the active thread, it shares the subscription already established by `useQueries`.
-- When the user switches to another MRU thread, that thread's data is already in the client's subscription store; the new `useQuery` reads it synchronously.
-
-Both hooks are mounted at the `RepositoryShell` level, which is the lowest component that survives all thread switches within a workspace.
+The hook is mounted at the lowest parent that survives all switches within the relevant scope.
 
 This is **not a cache**. Every entry is a real, server-pushed subscription. Server-side edits stream in normally.
+
+The bounded id list comes from different places depending on the view:
+
+- **Chat threads.** A small companion hook (`useRecentThreads`) tracks the most-recently-used N (default 5) thread ids in MRU order, where index `[0]` is the active thread. Re-selecting a thread moves it to the front rather than appending; the list is capped so the working set stays bounded. The warm hook (`useWarmThreadSubscriptions`) warms `listMessages` + `getActiveMessageStream` for each id.
+- **Library tabs.** The tab strip is already the bounded set — `useLibraryTabs` maintains `openArtifactIds` capped at `MAX_OPEN_TABS` (10), with VS Code-style least-recently-used eviction. No separate MRU hook is needed; the open-tab list is fed directly to `useWarmArtifactSubscriptions`, which warms `artifacts.getById` for each tab plus `artifactFolders.getById` for each unique folder referenced by those tabs (the folder id is read off `ArtifactListItem.folderId` from the shell's already-loaded metadata query, so no extra round-trip is required to discover what to warm).
 
 ### Layer 2 — Speculative prefetch
 
@@ -104,6 +107,8 @@ The set is keyed by `ThreadId`, not by message identity, so a thread that gains 
 
 ## Component Reference
 
+### Chat threads
+
 | File                                       | Role |
 | ------------------------------------------ | ---- |
 | `src/hooks/use-recent-threads.ts`          | MRU tracking of viewed thread ids. Updates state during render (React-documented derived-state pattern) so the new list is observable in the same render that observes the new active id. |
@@ -113,7 +118,18 @@ The set is keyed by `ThreadId`, not by message identity, so a thread that gains 
 | `src/components/app-sidebar.tsx`           | Calls `usePrewarmThread()` and wires the callback to `onMouseEnter` / `onFocus` on each thread row. |
 | `src/components/chat-panel.tsx`            | Houses `seenThreads`/`skipEntrance` for entrance-animation gating. Renders messages behind `{messages && …}` (not `{!isChatLoading && …}`) so capability-query loading does not unmount the content. |
 
+### Library tabs
+
+| File                                       | Role |
+| ------------------------------------------ | ---- |
+| `src/hooks/use-library-tabs.ts`            | Owns the open-tab list. Already MRU-bounded at `MAX_OPEN_TABS` with least-recently-used eviction, so it doubles as the bounded id set fed to the warm hook — no separate retention hook required. |
+| `src/hooks/use-warm-artifact-subscriptions.ts` | Holds live `useQueries` subscriptions for `artifacts.getById` per open tab and `artifactFolders.getById` per unique folder referenced by those tabs. Mirrors `useWarmThreadSubscriptions`; no data is consumed. |
+| `src/components/library-shell.tsx`         | Derives the unique folder id set from `allArtifacts` (the metadata query already loaded for the tree and tab strip) and calls `useWarmArtifactSubscriptions(tabs.openArtifactIds, openFolderIds)`. |
+| `src/components/library-editor.tsx`        | Reads `useQuery(api.artifacts.getById, { artifactId })` and `useQuery(api.artifactFolders.getById, …)`. With the warm hook upstream, these resolve synchronously for any open tab; `EditorSkeleton` only shows on the first-ever load of an artifact. |
+
 ## Runtime Flow
+
+### Chat threads
 
 ```mermaid
 flowchart TD
@@ -140,21 +156,42 @@ flowchart TD
 
 The critical property: by the time `ChatContainer.useQuery` runs for the new thread, **the subscription is already alive** because one of {MRU retention, hover prefetch, previous active state} has registered it.
 
+### Library tabs
+
+```mermaid
+flowchart TD
+  click[Select / open artifact] --> tabs[useLibraryTabs: openArtifactIds updated]
+  tabs --> folders[Derive openFolderIds from allArtifacts]
+  folders --> warm[useWarmArtifactSubscriptions]
+  warm --> useQueries[useQueries: artifacts.getById + artifactFolders.getById]
+  useQueries --> store[(Convex client store)]
+
+  tabs --> active[activeArtifactId changes]
+  active --> editor[LibraryEditor]
+  editor --> useQuery[useQuery: getById for active artifact + folder]
+  useQuery -. shared by query+args .- store
+```
+
+There is no separate MRU hook because the tab strip already enforces the bounded set, and no entrance-animation gate because the editor does not animate on mount. Speculative hover prefetch is not currently wired for the Library tree; if needed, the same pattern as `usePrewarmThread` would apply.
+
 ## Trade-offs and Limits
 
 ### Subscription budget
 
-Default upper bound: `N × 2 = 10` subscriptions held by the MRU retention layer, plus transient hover prefetches that drop after 8 s. Both `listMessages` and `getActiveMessageStream` are small bounded queries; ten of each over a single multiplexed WebSocket is a negligible client and server cost.
+- **Chat threads.** Default upper bound: `N × 2 = 10` subscriptions held by the MRU retention layer, plus transient hover prefetches that drop after 8 s. Both `listMessages` and `getActiveMessageStream` are small bounded queries; ten of each over a single multiplexed WebSocket is a negligible client and server cost.
+- **Library tabs.** Upper bound is `MAX_OPEN_TABS + unique folders` — at most `10 + 10 = 20`, and in practice far fewer because most tabs share a handful of folders. `artifacts.getById` returns a single document and `artifactFolders.getById` returns a single folder row; the budget is comparable to chat.
 
-If a future use case needs to extend the MRU window, raise the `limit` parameter on `useRecentThreads` rather than introducing a second mechanism.
+If a future use case needs to extend either window, raise the `limit` parameter on `useRecentThreads` (or `MAX_OPEN_TABS` in `use-library-tabs.ts`) rather than introducing a second mechanism.
 
 ### First visit is still a loading state
 
-A thread the user has never opened in this session, never hovered, and is not in the MRU set will still show a brief loading state on click. This is unavoidable — there is no data to display instantly. The hover-prefetch layer mitigates the predictable case (user reads the sidebar before clicking); the MRU layer mitigates the revisit case.
+A view the user has never opened in this session, never hovered, and is not in the bounded set will still show a brief loading state on click. This is unavoidable — there is no data to display instantly. The hover-prefetch layer mitigates the predictable case (user reads the sidebar before clicking); the bounded-set retention layer mitigates the revisit case.
 
-### MRU window is session-scoped
+For Library tabs specifically, the first artifact opened in a session always pays this cost; subsequent switches between any open tab are instant.
 
-`useRecentThreads`'s state lives in component state, not in storage. A page refresh resets it. Persisting across reloads would couple this hook to a storage layer for marginal benefit — the user's first navigation after a reload re-populates the MRU naturally, and most "I want this instant" paths involve switching within a session, not across reloads.
+### Bounded set is session-scoped
+
+`useRecentThreads`'s state lives in component state, not in storage — a page refresh resets it. The Library tab strip *does* persist across reloads (URL + localStorage), so on reload the warm hook re-establishes subscriptions for the restored tab set on first paint. Persisting MRU state for chat would couple that hook to a storage layer for marginal benefit — the user's first navigation after a reload re-populates the MRU naturally, and most "I want this instant" paths involve switching within a session.
 
 ### Hover prefetch is opportunistic
 
@@ -162,7 +199,7 @@ A thread the user has never opened in this session, never hovered, and is not in
 
 ### Why we did not use `keepPreviousData`
 
-Convex does not expose a `keepPreviousData` flag on `useQuery`. Implementing one in user space (e.g., storing the previous `messages` value in a ref while the new args resolve) would briefly show one thread's messages under another thread's header — a correctness bug masquerading as a perf optimization. The subscription-retention approach has the same instant-feel without the swap.
+Convex does not expose a `keepPreviousData` flag on `useQuery`. Implementing one in user space (e.g., storing the previous value in a ref while the new args resolve) would briefly show one view's data under another view's header — a correctness bug masquerading as a perf optimization. The subscription-retention approach has the same instant-feel without the swap. This applies equally to chat threads and Library tabs.
 
 ## Failure Modes and Recovery
 
@@ -186,8 +223,8 @@ These are explicitly out of scope for the initial design — the three-layer arc
 
 The instant-switching UX is achieved by three orthogonal mechanisms, each owning one cause of the original flash:
 
-- **MRU subscription retention** prevents the subscription-teardown gap for revisited threads.
-- **Hover/focus prefetch** prevents it for anticipated-but-not-yet-clicked threads.
-- **Animation gating** prevents the 300 ms entrance replay on revisit.
+- **Bounded-set subscription retention** prevents the subscription-teardown gap for revisited views (chat MRU window, Library open-tabs list).
+- **Hover/focus prefetch** prevents it for anticipated-but-not-yet-clicked views (currently chat sidebar only).
+- **Animation gating** prevents the 300 ms entrance replay on revisit (currently chat only — the Library editor does not animate).
 
-None of them introduces a client-side cache. None of them creates a stale-read surface. All of them use Convex's documented APIs in their intended way. The subscription store remains the single source of truth.
+None of them introduces a client-side cache. None of them creates a stale-read surface. All of them use Convex's documented APIs in their intended way. The subscription store remains the single source of truth, and the same hook shape (`useQueries` over a bounded id list at a parent that survives view switches) is reused across both applications.

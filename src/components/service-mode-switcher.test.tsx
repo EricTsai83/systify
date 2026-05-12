@@ -160,12 +160,19 @@ describe("ServiceModeSwitcher", () => {
     expect(pillElement).toBeInTheDocument();
   });
 
-  test("inactive modes hide label text content", () => {
+  test("inactive label sits outside the visible button area (clipped by overflow)", () => {
     render(
       <ServiceModeSwitcher workspaceId={"workspace_1" as WorkspaceId} serviceMode="discuss" availability={null} />,
     );
 
     const libraryBtn = screen.getByRole("button", { name: "Library" });
-    expect(libraryBtn).not.toHaveTextContent("Library");
+    expect(libraryBtn).toHaveClass("overflow-hidden");
+
+    // The label is always rendered (for the "always inside, gradually revealed"
+    // animation), but absolutely positioned at left-[30px] — exactly the
+    // inactive button's width — so overflow-hidden clips it entirely.
+    const labelSpan = libraryBtn.querySelector("span[aria-hidden='true']");
+    expect(labelSpan).toHaveTextContent("Library");
+    expect(labelSpan).toHaveClass("left-[30px]");
   });
 });
