@@ -124,7 +124,6 @@ export function ArtifactPanel({
           artifacts={artifacts}
           selectedFolderId={selectedFolderId ?? null}
           onSelectArtifact={(artifactId) => onOpenInReader?.(artifactId)}
-          onOpenInReader={onOpenInReader}
           onSelectFolder={onSelectFolder}
           className="border-l-0"
         />

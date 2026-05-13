@@ -1,7 +1,6 @@
 import { memo, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
-  BookOpenIcon,
   CaretDownIcon,
   CaretRightIcon,
   DotsThreeVerticalIcon,
@@ -12,7 +11,6 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
-import type { Doc } from "../../convex/_generated/dataModel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,7 +52,6 @@ type FolderNavigatorProps = {
   artifacts?: ReadonlyArray<NavigatorArtifact>;
   selectedArtifactId?: ArtifactId | null;
   onSelectArtifact: (artifactId: ArtifactId) => void;
-  onOpenInReader?: (artifactId: ArtifactId) => void;
   /**
    * Optional handler to flip into a "folder overview" surface — used by the
    * Reader's left rail when the user clicks a folder header. Panels that
@@ -90,15 +87,13 @@ type FolderNavigatorProps = {
  * don't reset the user's mental model of what they've explored. Selection
  * is *passive* — clicking a folder header invokes `onSelectFolder` (if
  * provided) and toggles its caret; clicking an artifact invokes
- * `onSelectArtifact`. Open-in-reader is a separate explicit affordance to
- * keep "I'm browsing" cleanly distinct from "open this for full reading".
+ * `onSelectArtifact`.
  */
 export function FolderNavigator({
   repositoryId,
   artifacts = EMPTY_ARTIFACTS,
   selectedArtifactId = null,
   onSelectArtifact,
-  onOpenInReader,
   onSelectFolder,
   selectedFolderId = null,
   className,
@@ -228,7 +223,6 @@ export function FolderNavigator({
                     artifact={artifact}
                     isSelected={selectedArtifactId === artifact._id}
                     onSelect={onSelectArtifact}
-                    onOpenInReader={onOpenInReader}
                     indent={0}
                   />
                 );
@@ -254,7 +248,6 @@ export function FolderNavigator({
                     selectedArtifactId={selectedArtifactId}
                     selectedFolderId={selectedFolderId}
                     onSelectArtifact={onSelectArtifact}
-                    onOpenInReader={onOpenInReader}
                     onSelectFolder={onSelectFolder}
                     filterArtifact={filterPredicate}
                     folderMatchesSearch={folderMatchesSearch}
@@ -276,7 +269,6 @@ export function FolderNavigator({
                     artifact={artifact}
                     isSelected={selectedArtifactId === artifact._id}
                     onSelect={onSelectArtifact}
-                    onOpenInReader={onOpenInReader}
                     indent={0}
                   />
                 );
@@ -319,7 +311,6 @@ function FolderTreeBranch({
   selectedArtifactId,
   selectedFolderId,
   onSelectArtifact,
-  onOpenInReader,
   onSelectFolder,
   filterArtifact,
   folderMatchesSearch,
@@ -331,7 +322,6 @@ function FolderTreeBranch({
   selectedArtifactId: ArtifactId | null;
   selectedFolderId: FolderId | null;
   onSelectArtifact: (artifactId: ArtifactId) => void;
-  onOpenInReader?: (artifactId: ArtifactId) => void;
   onSelectFolder?: (folderId: FolderId | null) => void;
   filterArtifact: FilterFn;
   folderMatchesSearch: (node: FolderTreeNode) => boolean;
@@ -464,7 +454,6 @@ function FolderTreeBranch({
                 selectedArtifactId={selectedArtifactId}
                 selectedFolderId={selectedFolderId}
                 onSelectArtifact={onSelectArtifact}
-                onOpenInReader={onOpenInReader}
                 onSelectFolder={onSelectFolder}
                 filterArtifact={filterArtifact}
                 folderMatchesSearch={folderMatchesSearch}
@@ -478,7 +467,6 @@ function FolderTreeBranch({
                 artifact={artifact}
                 isSelected={selectedArtifactId === artifact._id}
                 onSelect={onSelectArtifact}
-                onOpenInReader={onOpenInReader}
                 indent={indent + 1}
               />
             );
@@ -501,23 +489,18 @@ const ArtifactRow = memo(function ArtifactRow({
   artifact,
   isSelected,
   onSelect,
-  onOpenInReader,
   indent,
 }: {
   artifact: NavigatorArtifact;
   isSelected: boolean;
   onSelect: (artifactId: ArtifactId) => void;
-  onOpenInReader?: (artifactId: ArtifactId) => void;
   indent: number;
 }) {
   const recentlyChanged = isRecentlyChanged(artifact._creationTime);
   const handleSelect = () => onSelect(artifact._id as ArtifactId);
   return (
     // The entire row is the click target so the hoverable area matches
-    // the clickable one — a previous version made only the inner text
-    // clickable, so users hovering the row's vertical padding got hover
-    // feedback but no click. role="button" + tabIndex keeps it
-    // keyboard-reachable; the icon Button stops propagation.
+    // the clickable one. role="button" + tabIndex keeps it keyboard-reachable.
     <div
       role="button"
       tabIndex={0}
@@ -536,7 +519,6 @@ const ArtifactRow = memo(function ArtifactRow({
       }}
     >
       <div className="flex flex-1 items-center gap-1.5 truncate">
-        <ArtifactKindGlyph kind={artifact.kind} />
         <span className="truncate font-medium text-foreground">{artifact.title}</span>
         {recentlyChanged ? <span aria-hidden className="ml-1 inline-flex h-1.5 w-1.5 rounded-full bg-primary" /> : null}
         <FreshnessPill artifact={artifact} />
@@ -544,21 +526,6 @@ const ArtifactRow = memo(function ArtifactRow({
           v{artifact.version}
         </Badge>
       </div>
-      {onOpenInReader ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          aria-label="Open in reader"
-          className="h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100"
-          onClick={(event) => {
-            event.stopPropagation();
-            onOpenInReader(artifact._id as ArtifactId);
-          }}
-        >
-          <BookOpenIcon size={12} weight="bold" />
-        </Button>
-      ) : null}
     </div>
   );
 });
@@ -642,21 +609,4 @@ function formatRelativeAge(timestamp: number): string {
   if (months < 12) return `${months}mo`;
   const years = Math.floor(months / 12);
   return `${years}y`;
-}
-
-function ArtifactKindGlyph({ kind }: { kind: Doc<"artifacts">["kind"] }) {
-  // Lightweight kind indicator — three letters, like a file extension.
-  // Keeps the tree dense without requiring per-kind icons.
-  const label = formatArtifactKind(kind)
-    .split(/\s+/)
-    .map((part) => part[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-  return (
-    <span className="inline-flex h-4 w-5 shrink-0 items-center justify-center rounded-sm bg-muted text-[8px] font-semibold uppercase tracking-wider text-muted-foreground">
-      {label}
-    </span>
-  );
 }
