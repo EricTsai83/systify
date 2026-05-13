@@ -258,8 +258,6 @@ function FolderArtifactCard({
         </Badge>
       </div>
       <div className="flex items-center justify-end gap-2 text-[10px] text-muted-foreground">
-        <span>v{artifact.version}</span>
-        <span aria-hidden>·</span>
         <span className="inline-flex items-center gap-1 text-primary opacity-0 transition-opacity group-hover:opacity-100">
           <BookOpenIcon size={11} weight="bold" /> Open
         </span>

@@ -152,7 +152,6 @@ export function QuickOpenDialog({
                       <div className="truncate text-[13px] font-medium text-foreground">{artifact.title}</div>
                       <div className="truncate text-[11px] text-muted-foreground">{artifact.summary}</div>
                     </div>
-                    <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">v{artifact.version}</span>
                   </button>
                 </li>
               ))

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
-import { BookOpenIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
+import { BookOpenIcon, PaperPlaneTiltIcon, SidebarSimpleIcon } from "@phosphor-icons/react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { MessageBubble } from "@/components/chat-message";
@@ -15,12 +15,19 @@ export function LibraryAskPanel({
   activeArtifactId,
   onThreadCreated,
   onSelectArtifact,
+  onClose,
 }: {
   workspaceId: WorkspaceId;
   threadId: ThreadId | null;
   activeArtifactId: ArtifactId | null;
   onThreadCreated: (threadId: ThreadId) => void;
   onSelectArtifact: (artifactId: ArtifactId) => void;
+  /**
+   * Dismiss handler. When provided, the panel renders a close button in
+   * the header so the user can collapse it from inside the surface —
+   * complements the toggle on the tab strip without depending on it.
+   */
+  onClose?: () => void;
 }) {
   const createAskThread = useMutation(api.chat.threads.createAskThread);
   const sendMessage = useMutation(api.chat.send.sendMessage);
@@ -78,7 +85,7 @@ export function LibraryAskPanel({
   return (
     <aside
       className={cn(
-        "flex h-full w-full shrink-0 flex-col border-l border-amber-500/40 bg-background shadow-xl sm:w-[360px] lg:w-[360px]",
+        "flex h-full w-full flex-col border-l border-amber-500/40 bg-background shadow-xl",
         "motion-safe:animate-in motion-safe:slide-in-from-right-4",
       )}
       aria-label="Library Ask"
@@ -87,6 +94,22 @@ export function LibraryAskPanel({
         <div className="flex items-center gap-2">
           <BookOpenIcon size={16} weight="duotone" className="text-amber-600" />
           <h2 className="text-sm font-semibold text-foreground">Library Ask</h2>
+          {onClose ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="ml-auto h-6 w-6 text-muted-foreground hover:text-foreground"
+              onClick={onClose}
+              aria-label="Collapse Library Ask"
+              title="Collapse Library Ask"
+            >
+              {/* SidebarSimple ships with the rail on the left; mirror it so
+                  the icon's "panel side" matches the right-edge surface the
+                  user is collapsing. */}
+              <SidebarSimpleIcon size={14} weight="duotone" className="-scale-x-100" />
+            </Button>
+          ) : null}
         </div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
           Answers use retrieved artifact chunks only. For current code state, open the question in Lab.

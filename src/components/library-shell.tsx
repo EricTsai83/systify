@@ -15,6 +15,16 @@ import { useWarmArtifactSubscriptions } from "@/hooks/use-warm-artifact-subscrip
 import type { ArtifactId, ArtifactListItem, FolderId, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
+const ASK_PANEL_WIDTH_STORAGE_KEY = "systify.library.askPanelWidth";
+const ASK_PANEL_DEFAULT_WIDTH = 360;
+const ASK_PANEL_MIN_WIDTH = 280;
+const ASK_PANEL_MAX_WIDTH = 800;
+
+function clampAskPanelWidth(value: number): number {
+  if (!Number.isFinite(value)) return ASK_PANEL_DEFAULT_WIDTH;
+  return Math.max(ASK_PANEL_MIN_WIDTH, Math.min(ASK_PANEL_MAX_WIDTH, Math.round(value)));
+}
+
 /**
  * Three-mode restructure — Library shell.
  *
@@ -99,6 +109,66 @@ export function LibraryShell({
   const [isLargeViewport, setIsLargeViewport] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches,
   );
+
+  // Width of the Library Ask panel on desktop. Min/max are enforced both
+  // here (so the persisted value never drifts out of range) and via CSS
+  // (so a smaller viewport on a later visit can't make the panel cover
+  // the editor). Mobile renders inside a Sheet and ignores this value.
+  const [askPanelWidth, setAskPanelWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return ASK_PANEL_DEFAULT_WIDTH;
+    try {
+      const stored = window.localStorage.getItem(ASK_PANEL_WIDTH_STORAGE_KEY);
+      if (stored !== null) {
+        const parsed = Number(stored);
+        if (Number.isFinite(parsed)) {
+          return clampAskPanelWidth(parsed);
+        }
+      }
+    } catch {
+      // localStorage unavailable — fall through to default.
+    }
+    return ASK_PANEL_DEFAULT_WIDTH;
+  });
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ASK_PANEL_WIDTH_STORAGE_KEY, String(askPanelWidth));
+    } catch {
+      // localStorage denied — width remains in-memory for this session.
+    }
+  }, [askPanelWidth]);
+
+  const handleAskPanelResizeStart = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = askPanelWidth;
+
+      const handleMove = (moveEvent: MouseEvent) => {
+        // Handle sits on the panel's left edge: dragging left widens, right narrows.
+        const delta = startX - moveEvent.clientX;
+        setAskPanelWidth(clampAskPanelWidth(startWidth + delta));
+      };
+      const handleUp = () => {
+        window.removeEventListener("mousemove", handleMove);
+        window.removeEventListener("mouseup", handleUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      window.addEventListener("mousemove", handleMove);
+      window.addEventListener("mouseup", handleUp);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    },
+    [askPanelWidth],
+  );
+
+  const handleAskPanelResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    const step = event.shiftKey ? 40 : 16;
+    // Left arrow widens (handle is on the left edge); right arrow narrows.
+    setAskPanelWidth((current) => clampAskPanelWidth(current + (event.key === "ArrowLeft" ? step : -step)));
+  }, []);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(min-width: 1024px)");
@@ -189,33 +259,53 @@ export function LibraryShell({
           onActivate={tabs.activateTab}
           onClose={tabs.closeTab}
           onReorder={tabs.reorderTabs}
+          actions={
+            <Button
+              type="button"
+              variant={isAskOpen ? "secondary" : "outline"}
+              size="sm"
+              onClick={isAskOpen ? onCloseAsk : onOpenAsk}
+              aria-pressed={isAskOpen}
+              aria-expanded={isAskOpen}
+            >
+              Ask Library
+            </Button>
+          }
+          actionsClassName="hidden lg:flex"
           className="shrink-0"
         />
-
-        <div className="hidden shrink-0 justify-end border-b border-border bg-background/60 px-4 py-2 lg:flex">
-          <Button type="button" variant="outline" size="sm" onClick={onOpenAsk}>
-            Ask Library
-          </Button>
-        </div>
 
         {tabs.activeArtifactId ? <LibraryEditor artifactId={tabs.activeArtifactId} /> : <LibraryEmptyState />}
       </div>
 
       {isAskOpen ? (
-        <div className="hidden lg:block">
+        <div
+          className="relative hidden shrink-0 lg:block"
+          style={{ width: askPanelWidth, minWidth: ASK_PANEL_MIN_WIDTH, maxWidth: "60vw" }}
+        >
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize Library Ask panel"
+            tabIndex={0}
+            className="absolute inset-y-0 left-0 z-10 w-1 -translate-x-1/2 cursor-col-resize bg-transparent transition-colors hover:bg-primary/40 active:bg-primary/60"
+            onMouseDown={handleAskPanelResizeStart}
+            onKeyDown={handleAskPanelResizeKeyDown}
+          />
           <LibraryAskPanel
             workspaceId={workspaceId}
             threadId={askThreadId}
             activeArtifactId={tabs.activeArtifactId}
             onThreadCreated={onAskThreadCreated}
             onSelectArtifact={tabs.openTab}
+            onClose={onCloseAsk}
           />
         </div>
       ) : null}
 
-      {/* Mobile Ask sheet */}
+      {/* Mobile Ask sheet — panel header already exposes a close button, so suppress Sheet's built-in X to avoid two dismiss affordances. */}
       <Sheet open={isAskOpen && !isLargeViewport} onOpenChange={(open) => (open ? onOpenAsk() : onCloseAsk())}>
-        <SheetContent side="right" className="w-full p-0 sm:max-w-md lg:hidden">
+        <SheetContent side="right" hideClose className="w-full p-0 sm:max-w-md lg:hidden">
           <SheetTitle className="sr-only">Library Ask</SheetTitle>
           <SheetDescription className="sr-only">
             Ask questions using retrieved artifact chunks from this workspace.
@@ -226,6 +316,7 @@ export function LibraryShell({
             activeArtifactId={tabs.activeArtifactId}
             onThreadCreated={onAskThreadCreated}
             onSelectArtifact={tabs.openTab}
+            onClose={onCloseAsk}
           />
         </SheetContent>
       </Sheet>

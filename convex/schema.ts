@@ -551,6 +551,7 @@ export default defineSchema({
     .index("by_workspaceId_and_lastMessageAt", ["workspaceId", "lastMessageAt"])
     .index("by_workspaceId_and_pinnedAt", ["workspaceId", "pinnedAt"])
     .index("by_workspaceId_and_mode", ["workspaceId", "mode"])
+    .index("by_workspaceId_mode_and_lastMessageAt", ["workspaceId", "mode", "lastMessageAt"])
     .index("by_mode", ["mode"]),
 
   messages: defineTable({
