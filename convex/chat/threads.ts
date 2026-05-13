@@ -24,6 +24,20 @@ export const listThreads = query({
   args: {
     repositoryId: v.optional(v.id("repositories")),
     workspaceId: v.optional(v.id("workspaces")),
+    /**
+     * Three-mode restructure — service-mode-scoped listing. Each service
+     * mode (Discuss / Library Ask / Lab) owns its own thread slice, so
+     * the sidebar query forwards the active mode and the backend serves
+     * only the matching rows. Without this filter, a Library Ask thread
+     * would surface in the Discuss sidebar (and the discuss-page
+     * landing's most-recent-thread redirect would bounce the user into a
+     * mode-mismatched chat). Only the workspace-scoped path honours the
+     * filter; repo / owner listings are admin / debug paths and stay
+     * mode-blind.
+     */
+    mode: v.optional(
+      v.union(v.literal("discuss"), v.literal("docs"), v.literal("sandbox"), v.literal("ask"), v.literal("lab")),
+    ),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -42,18 +56,39 @@ export const listThreads = query({
       // are capped separately so a pathological pin-all user can't blow
       // the query budget.
       const workspaceId = args.workspaceId;
+      const mode = args.mode;
       const pinned = await ctx.db
         .query("threads")
         .withIndex("by_workspaceId_and_pinnedAt", (q) => q.eq("workspaceId", workspaceId).gt("pinnedAt", 0))
         .order("desc")
         .take(20);
-      const recent = await ctx.db
-        .query("threads")
-        .withIndex("by_workspaceId_and_lastMessageAt", (q) => q.eq("workspaceId", workspaceId))
-        .order("desc")
-        .take(20);
-      const pinnedIds = new Set(pinned.map((thread) => thread._id));
-      return [...pinned, ...recent.filter((thread) => !pinnedIds.has(thread._id))];
+      // Mode-scoped recent listing uses the compound (workspaceId, mode,
+      // lastMessageAt) index so the equality filter on mode does not need
+      // a `.filter()` clause; without that index Convex would either scan
+      // the full workspace + mode set (no `.take(20)` short-circuit on a
+      // sorted result) or rely on `.filter()` (forbidden by the project
+      // guidelines). When no mode is supplied, fall back to the legacy
+      // workspace-only index so existing callers stay on the same plan.
+      const recent = mode
+        ? await ctx.db
+            .query("threads")
+            .withIndex("by_workspaceId_mode_and_lastMessageAt", (q) =>
+              q.eq("workspaceId", workspaceId).eq("mode", mode),
+            )
+            .order("desc")
+            .take(20)
+        : await ctx.db
+            .query("threads")
+            .withIndex("by_workspaceId_and_lastMessageAt", (q) => q.eq("workspaceId", workspaceId))
+            .order("desc")
+            .take(20);
+      // Pinned rows are bounded at 20 and may include threads of any mode
+      // (the user can pin across modes). Drop the off-mode pins post-query
+      // so the sidebar in, say, Discuss never surfaces a pinned Ask thread
+      // — pinning is a per-mode affordance from the user's point of view.
+      const pinnedForMode = mode ? pinned.filter((thread) => thread.mode === mode) : pinned;
+      const pinnedIds = new Set(pinnedForMode.map((thread) => thread._id));
+      return [...pinnedForMode, ...recent.filter((thread) => !pinnedIds.has(thread._id))];
     }
 
     const filterRepositoryId = args.repositoryId;

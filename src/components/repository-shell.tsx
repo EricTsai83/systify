@@ -25,15 +25,38 @@ import { useCheckForUpdates } from "@/hooks/use-check-for-updates";
 import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
 import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useRepositoryActions } from "@/hooks/use-repository-actions";
+import { useServiceMode } from "@/hooks/use-service-mode";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
-import type { ArtifactId, RepositoryId, ThreadId, WorkspaceId, ChatMode, SandboxModeStatus } from "@/lib/types";
+import type {
+  ArtifactId,
+  RepositoryId,
+  ServiceMode,
+  ThreadId,
+  WorkspaceId,
+  ChatMode,
+  SandboxModeStatus,
+} from "@/lib/types";
 import { toUserErrorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { DEFAULT_AUTHENTICATED_PATH, libraryArtifactPath, workspacePath, workspaceThreadPath } from "@/route-paths";
 
 type RepositoryWorkspaceStatus = "initializing" | "no-repo" | "ready";
 const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
+
+/**
+ * Service-mode → thread-mode mapping for the most-recent-thread redirect.
+ * Library has its own shell and never routes through RepositoryShell, so
+ * the table only covers Discuss and Lab; falling through to "discuss"
+ * gives `/chat` and `/w/:wid` (where the URL carries no service-mode
+ * suffix and `useServiceMode` returns the workspace's default) a safe
+ * landing mode.
+ */
+const SERVICE_MODE_TO_REDIRECT_THREAD_MODE: Record<ServiceMode, "discuss" | "ask" | "lab"> = {
+  discuss: "discuss",
+  library: "ask",
+  lab: "lab",
+};
 
 /**
  * Mobile drawer height. 95dvh keeps a 5dvh sliver of the underlying page
@@ -325,13 +348,25 @@ export function RepositoryShell({
    */
   const currentWorkspaceId: WorkspaceId | null = urlWorkspaceId ?? activeWorkspaceId;
 
+  // RepositoryShell is mounted by Chat, Discuss, and Lab — three of the
+  // service modes. The redirect must scope to threads of the mode the
+  // user is currently in, otherwise a Library Ask thread (mode="ask")
+  // would be the "most recent thread" returned to the discuss-page
+  // landing and the user would silently end up rendering an Ask thread
+  // inside the Discuss chat panel. Library has its own shell and never
+  // routes through here.
+  const { serviceMode } = useServiceMode(currentWorkspaceId);
+  const redirectThreadMode = SERVICE_MODE_TO_REDIRECT_THREAD_MODE[serviceMode];
+
   // Loaded for the redirect-to-most-recent-thread logic: scope by the
   // workspace the user is currently "in" so the sidebar/empty-state CTAs
   // and the redirect target all line up. Skipped once a thread is selected
   // (we already have what we need).
   const ownerThreads = useQuery(
     api.chat.threads.listThreads,
-    urlThreadId === null && currentWorkspaceId !== null ? { workspaceId: currentWorkspaceId } : "skip",
+    urlThreadId === null && currentWorkspaceId !== null
+      ? { workspaceId: currentWorkspaceId, mode: redirectThreadMode }
+      : "skip",
   );
 
   const [threadToDelete, setThreadToDelete] = useState<ThreadId | null>(null);
@@ -1016,9 +1051,9 @@ export function RepositoryShell({
                 <div
                   aria-hidden={!(isArtifactPanelHydrated && isArtifactPanelOpen)}
                   data-state={isArtifactPanelHydrated && isArtifactPanelOpen ? "open" : "closed"}
-                  className="shrink-0 overflow-hidden border-l border-border motion-safe:transition-[width] motion-safe:duration-200 motion-safe:ease-out motion-reduce:transition-none [will-change:width] data-[state=closed]:w-0 data-[state=closed]:border-l-0 xl:data-[state=open]:w-96 2xl:data-[state=open]:w-[28rem]"
+                  className="shrink-0 overflow-hidden border-l border-border motion-safe:transition-[width] motion-safe:duration-200 motion-safe:ease-out motion-reduce:transition-none will-change-[width] data-[state=closed]:w-0 data-[state=closed]:border-l-0 xl:data-[state=open]:w-96 2xl:data-[state=open]:w-md"
                 >
-                  <div className="h-full xl:w-96 2xl:w-[28rem]">
+                  <div className="h-full xl:w-96 2xl:w-md">
                     <ArtifactPanel
                       threadId={effectiveSelectedThreadId}
                       repositoryId={effectiveSelectedRepositoryId}

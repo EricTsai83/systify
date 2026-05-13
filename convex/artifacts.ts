@@ -99,6 +99,12 @@ export const listByThread = query({
  * the artifact does not exist or the viewer does not own it — the caller
  * is expected to render a not-found state rather than throw, so a stale
  * URL doesn't surface as an error boundary.
+ *
+ * Includes computed `freshness` so the Reader can surface verification
+ * status inline with the artifact metadata. The value is a snapshot at
+ * query-evaluation time, not a live subscription to wall-clock time —
+ * if the user keeps a tab open for days, freshness may drift; navigating
+ * away and back re-evaluates.
  */
 export const getById = query({
   args: { artifactId: v.id("artifacts") },
@@ -108,7 +114,14 @@ export const getById = query({
     if (!artifact || artifact.ownerTokenIdentifier !== identity.tokenIdentifier) {
       return null;
     }
-    return artifact;
+    return {
+      ...artifact,
+      freshness: computeFreshness({
+        producedIn: artifact.producedIn,
+        lastVerifiedAt: artifact.lastVerifiedAt,
+        now: Date.now(),
+      }),
+    };
   },
 });
 

@@ -58,7 +58,7 @@ export function ArchivePage() {
 
   return (
     <div className="flex h-dvh w-full flex-1 flex-col overflow-y-auto bg-background">
-      <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80">
         <div className="mx-auto flex h-14 w-full max-w-4xl items-center gap-3 px-4 sm:px-6">
           <Link
             to={DEFAULT_AUTHENTICATED_PATH}

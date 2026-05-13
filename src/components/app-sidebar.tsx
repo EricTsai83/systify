@@ -13,8 +13,20 @@ import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { usePrewarmThread } from "@/hooks/use-prewarm-thread";
 import { useServiceMode } from "@/hooks/use-service-mode";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { RepositoryId, ServiceMode, ThreadId, WorkspaceId } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+/**
+ * Service-mode → thread-mode mapping for the sidebar's thread query. Each
+ * service mode owns a single thread mode (Discuss → discuss threads,
+ * Library → Library Ask threads, Lab → lab threads); filtering the list
+ * by this mode keeps each mode's sidebar from showing the others' threads.
+ */
+const SERVICE_MODE_TO_THREAD_MODE: Record<ServiceMode, "discuss" | "ask" | "lab"> = {
+  discuss: "discuss",
+  library: "ask",
+  lab: "lab",
+};
 
 /**
  * Thread-first sidebar with workspace switcher.
@@ -51,7 +63,6 @@ export function AppSidebar({
   onImported: (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => void;
   onError: (message: string | null) => void;
 }) {
-  const threads = useQuery(api.chat.threads.listThreads, activeWorkspaceId ? { workspaceId: activeWorkspaceId } : {});
   const createThreadMutation = useMutation(api.chat.threads.createThread);
   const setThreadPinnedMutation = useMutation(api.chat.threads.setThreadPinned);
 
@@ -60,6 +71,16 @@ export function AppSidebar({
   // unavailable modes (e.g. Library/Lab in a no-repo Home workspace) as
   // disabled with their unlock-hint tooltip.
   const { serviceMode, availability } = useServiceMode(activeWorkspaceId);
+
+  // Scope the sidebar's thread list to the active service mode so each
+  // mode shows only its own threads. Without this filter, a Library Ask
+  // thread (mode="ask") would surface in the Discuss sidebar, and the
+  // user would see Library Ask conversations alongside Discuss ones.
+  const threadModeFilter = SERVICE_MODE_TO_THREAD_MODE[serviceMode];
+  const threads = useQuery(
+    api.chat.threads.listThreads,
+    activeWorkspaceId ? { workspaceId: activeWorkspaceId, mode: threadModeFilter } : {},
+  );
 
   const activeWorkspace = useMemo(
     () => workspaces?.find((ws) => ws._id === activeWorkspaceId) ?? null,

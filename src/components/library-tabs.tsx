@@ -1,9 +1,7 @@
 import { memo, useRef, useState } from "react";
-import { XIcon } from "@phosphor-icons/react";
-import { Badge } from "@/components/ui/badge";
+import { BracketsAngleIcon, CaretDownIcon, XIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
-import { formatArtifactKind } from "@/lib/operations";
 import type { ArtifactId, ArtifactListItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -33,6 +31,18 @@ export interface LibraryTabsProps {
   onActivate: (artifactId: ArtifactId) => void;
   onClose: (artifactId: ArtifactId) => void;
   onReorder: (nextOrder: ReadonlyArray<ArtifactId>) => void;
+  /**
+   * Optional trailing slot pinned to the right of the tab strip. Lets
+   * the shell hang affordances like "Ask Library" alongside the tabs
+   * instead of burning a whole row on a single button.
+   */
+  actions?: React.ReactNode;
+  /**
+   * Classes merged onto the actions wrapper — use `hidden lg:flex` when
+   * the contents are desktop-only so the wrapper's padding/border don't
+   * leave an empty bar at narrower viewports.
+   */
+  actionsClassName?: string;
   className?: string;
 }
 
@@ -43,13 +53,26 @@ export const LibraryTabs = memo(function LibraryTabs({
   onActivate,
   onClose,
   onReorder,
+  actions,
+  actionsClassName,
   className,
 }: LibraryTabsProps) {
   const dragSourceRef = useRef<ArtifactId | null>(null);
   const [dragOverId, setDragOverId] = useState<ArtifactId | null>(null);
 
   if (openArtifactIds.length === 0) {
-    return null;
+    if (!actions) return null;
+    return (
+      <div
+        className={cn(
+          "items-center justify-end border-b border-border bg-background px-2 py-1",
+          actionsClassName ?? "flex",
+          className,
+        )}
+      >
+        {actions}
+      </div>
+    );
   }
 
   const handleDragStart = (artifactId: ArtifactId) => (event: React.DragEvent) => {
@@ -99,8 +122,8 @@ export const LibraryTabs = memo(function LibraryTabs({
   };
 
   return (
-    <div className={cn("relative border-b border-border bg-background", className)}>
-      <ScrollArea className="w-full">
+    <div className={cn("relative flex items-center border-b border-border bg-background", className)}>
+      <ScrollArea className="min-w-0 flex-1">
         <ul role="tablist" aria-label="Open artifacts" className="flex items-center gap-px px-1 py-1">
           {openArtifactIds.map((artifactId) => {
             const artifact = artifactsById.get(artifactId);
@@ -132,11 +155,7 @@ export const LibraryTabs = memo(function LibraryTabs({
                     isDropTarget && "ring-1 ring-primary/40",
                   )}
                 >
-                  {artifact ? (
-                    <Badge variant="outline" className="shrink-0 px-1 py-0 text-[8px] uppercase tracking-wider">
-                      {formatArtifactKind(artifact.kind).slice(0, 4)}
-                    </Badge>
-                  ) : null}
+                  {artifact ? <ArtifactFormatIcon kind={artifact.kind} /> : null}
                   <span className="min-w-0 truncate">{artifact?.title ?? "Untitled"}</span>
                   <Button
                     type="button"
@@ -162,10 +181,32 @@ export const LibraryTabs = memo(function LibraryTabs({
         aria-hidden
         className="pointer-events-none absolute inset-y-0 left-0 w-4 bg-gradient-to-r from-background to-transparent"
       />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-y-0 right-0 w-4 bg-gradient-to-l from-background to-transparent"
-      />
+      {actions ? (
+        <div className={cn("shrink-0 items-center border-l border-border px-2 py-1", actionsClassName ?? "flex")}>
+          {actions}
+        </div>
+      ) : (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-y-0 right-0 w-4 bg-gradient-to-l from-background to-transparent"
+        />
+      )}
     </div>
   );
 });
+
+// Architecture diagrams render as Mermaid (HTML/SVG); every other kind is
+// long-form markdown. The tab icon reflects how the artifact is *displayed*
+// in the editor, matching how VS Code keys file icons off the file's format.
+function ArtifactFormatIcon({ kind }: { kind: ArtifactListItem["kind"] }) {
+  const isHtml = kind === "architecture_diagram";
+  const Icon = isHtml ? BracketsAngleIcon : CaretDownIcon;
+  return (
+    <span
+      className={cn("inline-flex shrink-0 items-center justify-center", isHtml ? "text-orange-500" : "text-blue-500")}
+      aria-hidden
+    >
+      <Icon size={14} weight="fill" />
+    </span>
+  );
+}

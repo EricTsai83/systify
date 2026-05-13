@@ -36,6 +36,8 @@ vi.mock("convex/react", () => ({
 
 vi.mock("react-router-dom", () => ({
   useNavigate: () => navigateMock,
+  useLocation: () => ({ pathname: "/", search: "", hash: "", state: null, key: "default" }),
+  useParams: () => ({}),
 }));
 
 vi.mock("@/components/app-sidebar", () => ({
@@ -326,6 +328,21 @@ beforeEach(() => {
         return [];
       case "chat/streaming:getActiveMessageStream":
         return null;
+      case "serviceModeEligibility:evaluate":
+        // The shell only reads `serviceMode` from this hook for the
+        // mode-scoped most-recent-thread redirect. A no-repo placeholder
+        // keeps `serviceMode` resolving to "discuss", matching the
+        // tests' implicit assumption (these scenarios all run inside the
+        // legacy chat shell, not Library or Lab).
+        return {
+          availableServiceModes: ["discuss"],
+          defaultServiceMode: "discuss",
+          disabledReasons: {},
+          hasAttachedRepo: false,
+          hasAtLeastOneArtifact: false,
+          askReadiness: { canBind: false, reason: null },
+          labReadiness: { canStart: false, reason: null },
+        };
       default:
         return undefined;
     }

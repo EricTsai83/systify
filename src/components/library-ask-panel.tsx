@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
-import { BookOpenIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
+import { BookOpenIcon, PaperPlaneTiltIcon, SidebarSimpleIcon } from "@phosphor-icons/react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { MessageBubble } from "@/components/chat-message";
@@ -15,12 +15,19 @@ export function LibraryAskPanel({
   activeArtifactId,
   onThreadCreated,
   onSelectArtifact,
+  onClose,
 }: {
   workspaceId: WorkspaceId;
   threadId: ThreadId | null;
   activeArtifactId: ArtifactId | null;
   onThreadCreated: (threadId: ThreadId) => void;
   onSelectArtifact: (artifactId: ArtifactId) => void;
+  /**
+   * Dismiss handler. When provided, the panel renders a close button in
+   * the header so the user can collapse it from inside the surface —
+   * complements the toggle on the tab strip without depending on it.
+   */
+  onClose?: () => void;
 }) {
   const createAskThread = useMutation(api.chat.threads.createAskThread);
   const sendMessage = useMutation(api.chat.send.sendMessage);
@@ -38,17 +45,6 @@ export function LibraryAskPanel({
     return latestAssistant?.status === "pending" || latestAssistant?.status === "streaming";
   }, [messages]);
 
-  const ensureThread = async (): Promise<ThreadId> => {
-    if (threadId) return threadId;
-    const created = await createAskThread({
-      workspaceId,
-      artifactContext: activeArtifactId ? [activeArtifactId] : undefined,
-      title: "Library Ask",
-    });
-    onThreadCreated(created as ThreadId);
-    return created as ThreadId;
-  };
-
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (submissionLockRef.current) return;
@@ -59,13 +55,38 @@ export function LibraryAskPanel({
     setIsStarting(!threadId);
     setIsSending(true);
     try {
-      const targetThreadId = await ensureThread();
+      // Create the thread (if needed) and persist the user message BEFORE
+      // navigating. The Library routes (`/library` and `/library/ask/:tid`)
+      // are sibling route entries — navigating between them remounts the
+      // entire LibraryPage subtree, which would unmount this panel mid-
+      // submit. If we navigated right after createAskThread, a sendMessage
+      // failure (e.g. eligibility check, rate limit) would `setError` on
+      // the already-unmounted component and the user would see nothing —
+      // the bug this ordering avoids.
+      let targetThreadId = threadId;
+      let createdNew = false;
+      if (!targetThreadId) {
+        const created = await createAskThread({
+          workspaceId,
+          artifactContext: activeArtifactId ? [activeArtifactId] : undefined,
+          title: "Library Ask",
+        });
+        targetThreadId = created as ThreadId;
+        createdNew = true;
+      }
       await sendMessage({
         threadId: targetThreadId,
         content,
         mode: "ask",
       });
       setInput("");
+      // Only now, once both the thread row and the user message are in
+      // the database, do we tell the parent to flip to the threaded URL.
+      // The remounted panel's `listMessages` query will resolve with the
+      // freshly-persisted user + pending-assistant pair on first read.
+      if (createdNew) {
+        onThreadCreated(targetThreadId);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to ask Library.");
     } finally {
@@ -78,7 +99,7 @@ export function LibraryAskPanel({
   return (
     <aside
       className={cn(
-        "flex h-full w-full shrink-0 flex-col border-l border-amber-500/40 bg-background shadow-xl sm:w-[360px] lg:w-[360px]",
+        "flex h-full w-full flex-col border-l border-amber-500/40 bg-background shadow-xl",
         "motion-safe:animate-in motion-safe:slide-in-from-right-4",
       )}
       aria-label="Library Ask"
@@ -87,6 +108,22 @@ export function LibraryAskPanel({
         <div className="flex items-center gap-2">
           <BookOpenIcon size={16} weight="duotone" className="text-amber-600" />
           <h2 className="text-sm font-semibold text-foreground">Library Ask</h2>
+          {onClose ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="ml-auto h-6 w-6 text-muted-foreground hover:text-foreground"
+              onClick={onClose}
+              aria-label="Collapse Library Ask"
+              title="Collapse Library Ask"
+            >
+              {/* SidebarSimple ships with the rail on the left; mirror it so
+                  the icon's "panel side" matches the right-edge surface the
+                  user is collapsing. */}
+              <SidebarSimpleIcon size={14} weight="duotone" className="-scale-x-100" />
+            </Button>
+          ) : null}
         </div>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
           Answers use retrieved artifact chunks only. For current code state, open the question in Lab.

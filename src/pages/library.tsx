@@ -128,11 +128,12 @@ function LibraryWorkspace({
         void navigate(workspacePath(workspaceId));
         return;
       }
-      // From the Library shell, picking a thread bounces back to the
-      // canonical thread URL — the workspace shell then routes the user
-      // to the right service mode based on the thread's persisted mode.
-      // Phase 3 will add the thread-mode → service-mode redirect.
-      void navigate(workspaceThreadPath(workspaceId, threadId));
+      // The Library sidebar is mode-filtered to Ask threads, so clicking
+      // one keeps the user inside the Library shell instead of bouncing
+      // them through the canonical /t/:tid URL (which would re-render
+      // the thread in the Discuss chat panel — the bug the sidebar
+      // filter is meant to prevent in the first place).
+      void navigate(libraryAskPath(workspaceId, threadId));
     },
     [navigate, workspaceId],
   );

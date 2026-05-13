@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { formatRelativeTime } from "@/lib/format";
 import { formatArtifactKind } from "@/lib/operations";
-import type { ArtifactId } from "@/lib/types";
+import type { ArtifactFreshness, ArtifactId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -78,14 +79,13 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
               <Badge variant="outline" className="text-[10px] uppercase">
                 {formatArtifactKind(artifact.kind)}
               </Badge>
-              <Badge variant="outline" className="text-[10px] uppercase">
-                v{artifact.version}
-              </Badge>
               <span className="text-[11px] text-muted-foreground">
                 {new Date(artifact._creationTime).toLocaleString()}
               </span>
               <span className="text-[11px] text-muted-foreground">·</span>
               <span className="text-[11px] capitalize text-muted-foreground">{artifact.source}</span>
+              <span className="text-[11px] text-muted-foreground">·</span>
+              <FreshnessStatus freshness={artifact.freshness} lastVerifiedAt={artifact.lastVerifiedAt} />
             </div>
             <h1 className="text-2xl font-semibold leading-tight tracking-tight">{artifact.title}</h1>
             <p className="text-[14px] text-muted-foreground">{artifact.summary}</p>
@@ -103,6 +103,52 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
       </ScrollArea>
     </div>
   );
+}
+
+/**
+ * Inline verification status shown in the Reader header. Replaces the
+ * colored-dot freshness indicator that used to live in the folder
+ * navigator — the navigator is for finding artifacts, but verification
+ * is a property of the artifact itself, so it belongs next to the rest
+ * of the metadata (kind, version, source) where the user is already
+ * scanning for context. Colors mirror the canonical freshness ramp
+ * (fresh = emerald, aging = amber, stale = red, unverified = muted).
+ */
+function FreshnessStatus({
+  freshness,
+  lastVerifiedAt,
+}: {
+  freshness: ArtifactFreshness;
+  lastVerifiedAt: number | undefined;
+}) {
+  const verifiedAge = lastVerifiedAt ? formatRelativeTime(lastVerifiedAt) : null;
+
+  switch (freshness) {
+    case "fresh":
+      return (
+        <span className="text-[11px] text-emerald-600 dark:text-emerald-400">
+          {verifiedAge ? `Verified ${verifiedAge} · Fresh` : "Fresh"}
+        </span>
+      );
+    case "aging":
+      return (
+        <span className="text-[11px] text-amber-600 dark:text-amber-400">
+          {verifiedAge ? `Verified ${verifiedAge} · Aging` : "Aging"}
+        </span>
+      );
+    case "stale":
+      return (
+        <span className="text-[11px] text-red-600 dark:text-red-500">
+          {verifiedAge ? `Verified ${verifiedAge} · Stale — re-verify in Lab` : "Stale — re-verify in Lab"}
+        </span>
+      );
+    case "unverified":
+      return <span className="text-[11px] text-muted-foreground">Not verified against live code</span>;
+    default: {
+      const _exhaustive: never = freshness;
+      return _exhaustive;
+    }
+  }
 }
 
 export function LibraryBreadcrumb({ folderName, title }: { folderName: string | null; title: string }) {
