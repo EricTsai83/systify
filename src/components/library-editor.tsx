@@ -144,6 +144,10 @@ function FreshnessStatus({
       );
     case "unverified":
       return <span className="text-[11px] text-muted-foreground">Not verified against live code</span>;
+    default: {
+      const _exhaustive: never = freshness;
+      return _exhaustive;
+    }
   }
 }
 

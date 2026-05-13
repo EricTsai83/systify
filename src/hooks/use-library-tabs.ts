@@ -160,6 +160,18 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
     if (!workspaceId) return;
     if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
     writeTimerRef.current = setTimeout(() => {
+      // Library Ask URLs (`/library/ask/:threadId`) sit on a sibling route
+      // pattern but still mount the same shell — so this hook stays active
+      // there. Writing the tab strip's URL on those routes would clobber
+      // the ask thread URL on every state-change tick. Bail out if the
+      // user is currently inside Ask. The `replace: true` write below is
+      // only intended to keep `/library` and `/library/a/:artifactId` in
+      // sync with the open-tab state, not to fight other surfaces for the
+      // URL.
+      const currentPath = typeof window === "undefined" ? "" : window.location.pathname;
+      if (currentPath.includes(`/w/${workspaceId}/library/ask/`)) {
+        return;
+      }
       const params = new URLSearchParams();
       if (state.openArtifactIds.length > 1) {
         // `?open=…` only matters when more than one tab is open; a single

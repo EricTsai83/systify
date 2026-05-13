@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "convex/react";
 import { FolderIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
@@ -137,6 +137,12 @@ export function LibraryShell({
     }
   }, [askPanelWidth]);
 
+  const resizeDragStateRef = useRef<{
+    isDragging: boolean;
+    handleMove: ((event: MouseEvent) => void) | null;
+    handleUp: (() => void) | null;
+  }>({ isDragging: false, handleMove: null, handleUp: null });
+
   const handleAskPanelResizeStart = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       event.preventDefault();
@@ -149,11 +155,13 @@ export function LibraryShell({
         setAskPanelWidth(clampAskPanelWidth(startWidth + delta));
       };
       const handleUp = () => {
+        resizeDragStateRef.current.isDragging = false;
         window.removeEventListener("mousemove", handleMove);
         window.removeEventListener("mouseup", handleUp);
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
       };
+      resizeDragStateRef.current = { isDragging: true, handleMove, handleUp };
       window.addEventListener("mousemove", handleMove);
       window.addEventListener("mouseup", handleUp);
       document.body.style.cursor = "col-resize";
@@ -161,6 +169,18 @@ export function LibraryShell({
     },
     [askPanelWidth],
   );
+
+  useEffect(() => {
+    return () => {
+      const state = resizeDragStateRef.current;
+      if (state.isDragging && state.handleMove && state.handleUp) {
+        window.removeEventListener("mousemove", state.handleMove);
+        window.removeEventListener("mouseup", state.handleUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      }
+    };
+  }, []);
 
   const handleAskPanelResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;

@@ -45,17 +45,6 @@ export function LibraryAskPanel({
     return latestAssistant?.status === "pending" || latestAssistant?.status === "streaming";
   }, [messages]);
 
-  const ensureThread = async (): Promise<ThreadId> => {
-    if (threadId) return threadId;
-    const created = await createAskThread({
-      workspaceId,
-      artifactContext: activeArtifactId ? [activeArtifactId] : undefined,
-      title: "Library Ask",
-    });
-    onThreadCreated(created as ThreadId);
-    return created as ThreadId;
-  };
-
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (submissionLockRef.current) return;
@@ -66,13 +55,38 @@ export function LibraryAskPanel({
     setIsStarting(!threadId);
     setIsSending(true);
     try {
-      const targetThreadId = await ensureThread();
+      // Create the thread (if needed) and persist the user message BEFORE
+      // navigating. The Library routes (`/library` and `/library/ask/:tid`)
+      // are sibling route entries — navigating between them remounts the
+      // entire LibraryPage subtree, which would unmount this panel mid-
+      // submit. If we navigated right after createAskThread, a sendMessage
+      // failure (e.g. eligibility check, rate limit) would `setError` on
+      // the already-unmounted component and the user would see nothing —
+      // the bug this ordering avoids.
+      let targetThreadId = threadId;
+      let createdNew = false;
+      if (!targetThreadId) {
+        const created = await createAskThread({
+          workspaceId,
+          artifactContext: activeArtifactId ? [activeArtifactId] : undefined,
+          title: "Library Ask",
+        });
+        targetThreadId = created as ThreadId;
+        createdNew = true;
+      }
       await sendMessage({
         threadId: targetThreadId,
         content,
         mode: "ask",
       });
       setInput("");
+      // Only now, once both the thread row and the user message are in
+      // the database, do we tell the parent to flip to the threaded URL.
+      // The remounted panel's `listMessages` query will resolve with the
+      // freshly-persisted user + pending-assistant pair on first read.
+      if (createdNew) {
+        onThreadCreated(targetThreadId);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Failed to ask Library.");
     } finally {
