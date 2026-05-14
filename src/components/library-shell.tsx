@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
-import { BookOpenIcon, FolderIcon } from "@phosphor-icons/react";
+import { FolderIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
-import { LibraryAskPanel } from "@/components/library-ask-panel";
 import { LibraryEditor } from "@/components/library-editor";
 import { LibraryTabs } from "@/components/library-tabs";
 import { LibraryTree } from "@/components/library-tree";
@@ -10,42 +9,26 @@ import { QuickOpenDialog } from "@/components/quick-open-dialog";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { useLibraryShortcuts } from "@/hooks/use-library-shortcuts";
-import { useLibraryTabs } from "@/hooks/use-library-tabs";
+import type { LibraryTabsApi } from "@/hooks/use-library-tabs";
 import { useWarmArtifactSubscriptions } from "@/hooks/use-warm-artifact-subscriptions";
-import type { ArtifactId, ArtifactListItem, FolderId, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, ArtifactListItem, FolderId, RepositoryId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
- * Library shell — three-column desktop layout:
+ * Library shell — two-column desktop layout:
  *
- *   LEFT   — Library Ask (always visible): thread tabs, conversation, input.
- *   MIDDLE — Document: artifact tab strip + editor.
- *   RIGHT  — Folder tree (collapsible via Cmd+B).
+ *   LEFT  — Document: artifact tab strip + editor.
+ *   RIGHT — Folder tree (collapsible via Cmd+B).
  *
- * On narrow viewports the document column is the base layer and both side
- * columns move into Sheets — Ask on the left, the folder tree on the right.
+ * Library Ask is no longer a column here — it lives in the app sidebar.
+ * The tab-strip state is owned by the Library page and handed in via
+ * `tabs` so the sidebar's Ask panel and this document column stay in sync.
+ *
+ * On narrow viewports the document column is the base layer and the folder
+ * tree moves into a Sheet.
  */
-export function LibraryShell({
-  workspaceId,
-  repositoryId,
-  activeArtifactId,
-  askThreadId,
-  onSelectLibraryThread,
-}: {
-  workspaceId: WorkspaceId;
-  repositoryId: RepositoryId;
-  activeArtifactId: ArtifactId | null;
-  askThreadId: ThreadId | null;
-  /**
-   * Set or clear the active Ask thread (`?ask=`). The Ask panel owns thread
-   * creation, the open-tab set, and deletion internally — it only needs to
-   * tell the page which thread is now active.
-   */
-  onSelectLibraryThread: (threadId: ThreadId | null) => void;
-}) {
+export function LibraryShell({ repositoryId, tabs }: { repositoryId: RepositoryId; tabs: LibraryTabsApi }) {
   const allArtifacts = useQuery(api.artifacts.listMetadataByRepositoryWithFreshness, { repositoryId });
-
-  const tabs = useLibraryTabs(workspaceId, activeArtifactId);
 
   const artifactsById = useMemo(() => {
     const map = new Map<ArtifactId, ArtifactListItem>();
@@ -66,7 +49,6 @@ export function LibraryShell({
   useWarmArtifactSubscriptions(tabs.openArtifactIds, openFolderIds);
 
   const [isTreeOpenMobile, setIsTreeOpenMobile] = useState(false);
-  const [isAskOpenMobile, setIsAskOpenMobile] = useState(false);
   const [isTreeCollapsedDesktop, setIsTreeCollapsedDesktop] = useState(false);
   const [isQuickOpenOpen, setIsQuickOpenOpen] = useState(false);
   const [isLargeViewport, setIsLargeViewport] = useState(
@@ -109,21 +91,6 @@ export function LibraryShell({
     },
   });
 
-  // The Ask column is mounted exactly once — either as the desktop column or
-  // inside the mobile Sheet, never both. `LibraryAskPanel` owns stateful
-  // local hooks (`useLibraryAskTabs`), so a CSS-hidden second mount would
-  // diverge from the visible one. The folder tree below stays CSS-toggled
-  // because it carries no such cross-mount state.
-  const askPanel = (
-    <LibraryAskPanel
-      workspaceId={workspaceId}
-      threadId={askThreadId}
-      activeArtifactId={tabs.activeArtifactId}
-      onSelectArtifact={tabs.openTab}
-      onSelectThread={onSelectLibraryThread}
-    />
-  );
-
   const navigatorPanel = (
     <LibraryTree
       repositoryId={repositoryId}
@@ -136,29 +103,9 @@ export function LibraryShell({
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col lg:flex-row">
-      {/* LEFT: Library Ask — its own column on desktop, a Sheet on mobile.
-          Rendered in exactly one place (see the `askPanel` comment). */}
-      {isLargeViewport ? (
-        <aside
-          aria-label="Library Ask"
-          className="flex min-h-0 shrink-0 overflow-hidden border-r border-border lg:w-[min(24rem,32vw)] xl:w-[min(26rem,28vw)]"
-        >
-          {askPanel}
-        </aside>
-      ) : null}
-
-      {/* MIDDLE: Document stack */}
+      {/* LEFT: Document stack */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur lg:hidden">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="gap-1.5"
-            onClick={() => setIsAskOpenMobile(true)}
-          >
-            <BookOpenIcon size={13} weight="duotone" /> Ask
-          </Button>
           <Button
             type="button"
             variant="outline"
@@ -206,18 +153,6 @@ export function LibraryShell({
           <div className="min-h-0 flex-1 overflow-hidden">{navigatorPanel}</div>
         )}
       </aside>
-
-      {!isLargeViewport ? (
-        <Sheet open={isAskOpenMobile} onOpenChange={setIsAskOpenMobile}>
-          <SheetContent side="left" className="w-full p-0 sm:max-w-md">
-            <SheetTitle className="sr-only">Library Ask</SheetTitle>
-            <SheetDescription className="sr-only">
-              Ask questions using retrieved artifact chunks from this workspace.
-            </SheetDescription>
-            {askPanel}
-          </SheetContent>
-        </Sheet>
-      ) : null}
 
       <Sheet open={isTreeOpenMobile && !isLargeViewport} onOpenChange={setIsTreeOpenMobile}>
         <SheetContent side="right" className="flex w-[min(100vw,24rem)] flex-col p-0 sm:w-[min(100vw,28rem)] lg:hidden">

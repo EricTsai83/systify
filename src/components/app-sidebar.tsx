@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import type { Doc } from "../../convex/_generated/dataModel";
+import { LibraryAskPanel } from "@/components/library-ask-panel";
 import { ProfileCard } from "@/components/profile-card";
 import { ServiceModeSwitcher } from "@/components/service-mode-switcher";
 import { WorkspaceThreadsRail } from "@/components/workspace-threads-rail";
@@ -7,7 +8,7 @@ import { WorkspaceSelector } from "@/components/workspace-switcher";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
 import { useServiceMode } from "@/hooks/use-service-mode";
-import type { RepositoryId, ServiceMode, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, RepositoryId, ServiceMode, ThreadId, WorkspaceId } from "@/lib/types";
 
 /**
  * Service-mode → thread-mode mapping for the sidebar's thread query. Each
@@ -22,10 +23,25 @@ const SERVICE_MODE_TO_THREAD_MODE: Record<ServiceMode, "discuss" | "ask" | "lab"
 };
 
 /**
- * Props are a discriminated union on `suppressThreadNavigation`: the Library
- * IDE page moves thread navigation into the Library shell, so that variant
- * carries only chrome and does not accept (or need) thread-navigation
- * callbacks. Every other surface drives a thread list and must supply them.
+ * Library Ask gets its own width memory + a roomier default — it carries a
+ * full chat surface (thread tabs, conversation, composer) where Discuss/Lab
+ * show only the slim thread rail. Still resizable within the shared bounds.
+ */
+const LIBRARY_ASK_WIDTH_STORAGE_KEY = "systify.sidebar.width.libraryAsk";
+const LIBRARY_ASK_DEFAULT_WIDTH = 360;
+
+/**
+ * Props are a discriminated union on `variant`:
+ *
+ *   - `"threads"` (default) — Discuss/Lab. The content slot is the
+ *     workspace thread rail, so the caller supplies thread-navigation
+ *     callbacks.
+ *   - `"libraryAsk"` — Library. The content slot is the full Library Ask
+ *     panel (thread tabs, conversation, composer), so the caller supplies
+ *     the active Ask thread + artifact wiring instead.
+ *
+ * The type system enforces the boundary — neither variant can be handed
+ * the other's callbacks.
  */
 type AppSidebarProps = {
   repositories: Doc<"repositories">[] | undefined;
@@ -35,24 +51,32 @@ type AppSidebarProps = {
   onImported: (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => void;
   onError: (message: string | null) => void;
 } & (
-  | { suppressThreadNavigation: true }
   | {
-      suppressThreadNavigation?: false;
+      variant?: "threads";
       selectedThreadId: ThreadId | null;
       onSelectThread: (id: ThreadId | null) => void;
       onDeleteThread: (id: ThreadId) => void;
     }
+  | {
+      variant: "libraryAsk";
+      askThreadId: ThreadId | null;
+      activeArtifactId: ArtifactId | null;
+      onSelectArtifact: (id: ArtifactId) => void;
+      onSelectAskThread: (id: ThreadId | null) => void;
+    }
 );
 
 /**
- * Thread-first sidebar with workspace switcher.
+ * Workspace sidebar with the service-mode switcher.
  *
  * Layout, top to bottom:
  *
  *   1. Header — logo + product name. Branding is "Systify".
- *   2. "+ New thread" CTA — creates a thread scoped to the active workspace.
- *   3. Pinned + threads — see {@link WorkspaceThreadsRail}.
- *   5. Footer — profile card + workspace switcher dropdown side-by-side.
+ *   2. Service-mode switcher — Discuss / Library / Lab.
+ *   3. Content — the workspace thread rail (Discuss/Lab, see
+ *      {@link WorkspaceThreadsRail}) or the full Library Ask panel
+ *      (Library, see {@link LibraryAskPanel}); selected by `variant`.
+ *   4. Footer — profile card + workspace switcher dropdown side-by-side.
  */
 export function AppSidebar(props: AppSidebarProps) {
   const { repositories, workspaces, activeWorkspaceId, onSwitchWorkspace, onImported, onError } = props;
@@ -64,8 +88,48 @@ export function AppSidebar(props: AppSidebarProps) {
     [workspaces, activeWorkspaceId],
   );
 
+  const isLibraryAsk = props.variant === "libraryAsk";
+
+  let content: ReactNode;
+  if (props.variant === "libraryAsk") {
+    // `LibraryAskPanel` needs a concrete workspace. On the Library route
+    // `activeWorkspaceId` is always set, but guard so null never reaches it.
+    content =
+      activeWorkspaceId !== null ? (
+        <div className="flex min-h-0 flex-1 flex-col">
+          <LibraryAskPanel
+            workspaceId={activeWorkspaceId}
+            threadId={props.askThreadId}
+            activeArtifactId={props.activeArtifactId}
+            onSelectArtifact={props.onSelectArtifact}
+            onSelectThread={props.onSelectAskThread}
+          />
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col" />
+      );
+  } else {
+    content = (
+      <SidebarContent className="flex min-h-0 flex-1 flex-col">
+        <WorkspaceThreadsRail
+          workspaceId={activeWorkspaceId}
+          repositories={repositories}
+          threadMode={threadModeFilter}
+          selectedThreadId={props.selectedThreadId}
+          onSelectThread={props.onSelectThread}
+          onDeleteThread={props.onDeleteThread}
+          onError={onError}
+          showRepoBadge={!activeWorkspace?.repositoryId}
+        />
+      </SidebarContent>
+    );
+  }
+
   return (
-    <Sidebar>
+    <Sidebar
+      widthStorageKey={isLibraryAsk ? LIBRARY_ASK_WIDTH_STORAGE_KEY : undefined}
+      defaultWidth={isLibraryAsk ? LIBRARY_ASK_DEFAULT_WIDTH : undefined}
+    >
       <SidebarHeader>
         <Logo size={30} />
         <div className="min-w-0 leading-tight">
@@ -75,24 +139,7 @@ export function AppSidebar(props: AppSidebarProps) {
 
       <ServiceModeSwitcher workspaceId={activeWorkspaceId} serviceMode={serviceMode} availability={availability} />
 
-      {props.suppressThreadNavigation ? (
-        <SidebarContent className="flex min-h-0 flex-1 flex-col">
-          <div className="sr-only">Thread navigation moves into the Library column in this mode.</div>
-        </SidebarContent>
-      ) : (
-        <SidebarContent className="flex min-h-0 flex-1 flex-col">
-          <WorkspaceThreadsRail
-            workspaceId={activeWorkspaceId}
-            repositories={repositories}
-            threadMode={threadModeFilter}
-            selectedThreadId={props.selectedThreadId}
-            onSelectThread={props.onSelectThread}
-            onDeleteThread={props.onDeleteThread}
-            onError={onError}
-            showRepoBadge={!activeWorkspace?.repositoryId}
-          />
-        </SidebarContent>
-      )}
+      {content}
 
       <SidebarFooter className="px-3 py-2">
         <div className="flex items-center gap-2">

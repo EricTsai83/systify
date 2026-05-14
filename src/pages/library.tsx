@@ -8,6 +8,7 @@ import { AppSidebar } from "@/components/app-sidebar";
 import { LibraryShell } from "@/components/library-shell";
 import { ScreenState } from "@/components/screen-state";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { useLibraryTabs } from "@/hooks/use-library-tabs";
 import {
   DEFAULT_AUTHENTICATED_PATH,
   discussPath,
@@ -118,6 +119,13 @@ function LibraryWorkspace({
   );
   const repositoryId = currentWorkspace?.repositoryId ?? null;
 
+  // The Library tab strip drives both the document column (LibraryShell)
+  // and the Ask panel's artifact context (the sidebar). State is owned
+  // here and handed to both. It mounts ahead of the repo-guard redirect
+  // below — that is the hooks rule, and the redirect's unmount cleanly
+  // cancels this hook's debounced URL write.
+  const tabs = useLibraryTabs(workspaceId, artifactId);
+
   const handleSwitchWorkspace = useCallback(
     (id: WorkspaceId) => {
       void navigate(workspacePath(id));
@@ -221,7 +229,11 @@ function LibraryWorkspace({
         workspaces={workspaces}
         activeWorkspaceId={workspaceId}
         onSwitchWorkspace={handleSwitchWorkspace}
-        suppressThreadNavigation
+        variant="libraryAsk"
+        askThreadId={askThreadId}
+        activeArtifactId={tabs.activeArtifactId}
+        onSelectArtifact={tabs.openTab}
+        onSelectAskThread={handleSelectLibraryThread}
         onImported={handleImported}
         onError={handleRailError}
       />
@@ -234,15 +246,7 @@ function LibraryWorkspace({
           <span className="shrink-0 text-[11px] text-muted-foreground">Read Only</span>
         </header>
         <div className="flex min-h-0 min-w-0 flex-1">
-          {repositoryId ? (
-            <LibraryShell
-              workspaceId={workspaceId}
-              repositoryId={repositoryId}
-              activeArtifactId={artifactId}
-              askThreadId={askThreadId}
-              onSelectLibraryThread={handleSelectLibraryThread}
-            />
-          ) : null}
+          {repositoryId ? <LibraryShell repositoryId={repositoryId} tabs={tabs} /> : null}
         </div>
       </SidebarInset>
     </>

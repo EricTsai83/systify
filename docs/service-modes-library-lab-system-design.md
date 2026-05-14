@@ -30,21 +30,22 @@ flowchart TD
 
 ## Library Shell Composition
 
-The Library page does not reuse the global chat shell. It mounts `AppSidebar` in `suppressThreadNavigation` mode — the sidebar renders only chrome (logo, service-mode switcher, workspace switcher) and **no thread list**, because the Library shell owns thread navigation for this mode.
+The Library page does not reuse the global chat shell. It mounts `AppSidebar` in its `libraryAsk` variant — the sidebar's content slot renders the full **Library Ask** panel in place of the workspace thread rail. The page itself reconstructs only the remaining chrome (header, workspace switcher) plus the Library shell.
 
-The Library shell is a three-column desktop layout:
+In the `libraryAsk` variant the sidebar carries a complete chat surface: an IDE-style thread tab strip on top (`LibraryAskThreadTabs`) — one tab per *open* thread, not the full list — over the conversation and the input. The `+` button starts a thread; the clock button opens `LibraryAskHistoryDialog`. Because the panel lives in the resizable sidebar, it gets its own stored width and a roomier default than the slim Discuss/Lab thread rail.
 
-- **Left — Library Ask** (always visible): an IDE-style thread tab strip on top (`LibraryAskThreadTabs`) — one tab per *open* thread, not the full list — over the conversation and the input. The `+` button starts a thread; the clock button opens `LibraryAskHistoryDialog`. There is no collapse toggle — Ask is a permanent column.
-- **Middle — Document**: the artifact tab strip (`LibraryTabs`) and the editor.
+The Library shell is then a two-column desktop layout:
+
+- **Left — Document**: the artifact tab strip (`LibraryTabs`) and the editor.
 - **Right — Folder tree**: the artifact folder navigator, collapsible via Cmd+B.
 
-On narrow viewports the document column is the base layer; Library Ask and the folder tree each move into a Sheet (left and right respectively), with the thread tabs riding inside the Ask Sheet. The Ask column is mounted in exactly one place (desktop column *or* mobile Sheet, never both) because it carries cross-render local state (`useLibraryAskTabs`); the folder tree, which carries none, stays CSS-toggled.
+On narrow viewports the document column is the base layer and the folder tree moves into a Sheet; Library Ask rides inside the sidebar's own Sheet, opened by the header's sidebar trigger. The Library tab-strip state (`useLibraryTabs`) is owned by the page and handed to both the document column and the sidebar's Ask panel, so the artifact context stays in sync across the two. `Sidebar` mounts its children in exactly one place (docked `<aside>` *or* mobile Sheet, never both), so the Ask panel's cross-render local state (`useLibraryAskTabs`) is never split across two mounts.
 
 The Ask thread strip is an *open set*, mirroring how the document column works: tabs are threads the user has explicitly opened (persisted per-workspace in localStorage by `useLibraryAskTabs`, caching `{ id, title }` since `listThreads` is capped), the X closes a tab without deleting the thread, and the full searchable history — recall a past thread, pin it, or delete it — lives in `LibraryAskHistoryDialog`. The *active* thread is the page-owned `?ask=` URL param. Thread deletion is intentionally confined to the history dialog so it is never a stray click beside a close button; `LibraryAskPanel` owns that flow (confirm dialog included) so the deleted thread is dropped from the open set in one place.
 
-`WorkspaceThreadsRail` remains the single *vertical* thread-list implementation, used now only by the global sidebar (Discuss and Lab threads). Both thread surfaces still scope their query to one mode (`listThreads({ mode })`): a Library Ask thread surfacing in the Discuss sidebar would be a mode leak.
+`WorkspaceThreadsRail` remains the single *vertical* thread-list implementation, used by the sidebar's default `threads` variant for Discuss and Lab. Both thread surfaces still scope their query to one mode (`listThreads({ mode })`): a Library Ask thread surfacing in the Discuss sidebar would be a mode leak.
 
-`AppSidebar`'s props are a discriminated union on `suppressThreadNavigation`, so the chrome-only variant cannot be handed thread-navigation callbacks it would never invoke — the type system enforces the composition boundary rather than callers passing no-op handlers.
+`AppSidebar`'s props are a discriminated union on `variant` (`threads` vs `libraryAsk`), so each variant only accepts the callbacks it actually uses — the type system enforces the composition boundary rather than callers passing no-op handlers.
 
 ## Data Model
 

@@ -227,7 +227,9 @@ export function LibraryAskPanel({
   };
 
   return (
-    <aside className="flex h-full w-full flex-col bg-background" aria-label="Library Ask">
+    // Plain container, not a landmark: this panel renders inside the app
+    // sidebar's <aside>, so its own section is just content within it.
+    <div className="flex h-full w-full flex-col bg-background">
       <LibraryAskThreadTabs
         tabs={tabs}
         activeThreadId={threadId}
@@ -309,6 +311,6 @@ export function LibraryAskPanel({
         isPending={isDeletingThread}
         onConfirm={() => void handleConfirmDelete()}
       />
-    </aside>
+    </div>
   );
 }

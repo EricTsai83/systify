@@ -256,6 +256,14 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
 }
 
 /**
+ * Public shape of {@link useLibraryTabs}. The strip is owned by the Library
+ * page and threaded through props to both the document column and the
+ * sidebar's Ask panel, so the return type is named rather than re-derived
+ * at each call site.
+ */
+export type LibraryTabsApi = ReturnType<typeof useLibraryTabs>;
+
+/**
  * Enforce {@link MAX_OPEN_TABS}. When the cap is hit and a new tab needs
  * to be opened, evict the oldest tab that is NOT the new tab. The active
  * tab is always preserved; if the active tab IS the new tab we evict
