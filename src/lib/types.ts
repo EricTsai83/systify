@@ -1,5 +1,5 @@
 import type { Doc, Id } from "../../convex/_generated/dataModel";
-import type { ChatMode, LibrarySubMode, ServiceMode } from "../../convex/chatModeResolver";
+import type { ChatMode, ServiceMode } from "../../convex/chatModeResolver";
 
 export type WorkspaceId = Id<"workspaces">;
 export type RepositoryId = Id<"repositories">;
@@ -32,6 +32,7 @@ export type ArtifactListItem = Pick<
   | "lastChunkedVersion"
 > & {
   freshness?: ArtifactFreshness;
+  importDriftFromLatestSync?: true;
 };
 
 /**
@@ -50,7 +51,7 @@ export type { ChatMode };
  * `lib/types` so frontend code never reaches into `convex/` directly
  * (the project's import boundary).
  */
-export type { ServiceMode, LibrarySubMode };
+export type { ServiceMode };
 
 export type ActiveMessageStream = {
   assistantMessageId: MessageId;

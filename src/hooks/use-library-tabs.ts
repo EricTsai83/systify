@@ -6,9 +6,13 @@ import { libraryArtifactPath, libraryPath } from "@/route-paths";
 /**
  * Three-mode restructure — Library tab strip state.
  *
- * The URL is the canonical source of truth (`?open=id1,id2&active=id1`),
- * with localStorage as a first-paint cache so re-entering the workspace
- * restores the user's tab strip without waiting for the URL to read in.
+ * The URL is the canonical source of truth — the active tab lives in the
+ * path (`/library/a/:artifactId`) and the rest of the open set in
+ * `?open=id1,id2` — with localStorage as a first-paint cache so re-entering
+ * the workspace restores the user's tab strip without waiting for the URL
+ * to read in. This hook owns only `?open=`; it coexists with the page-owned
+ * `?ask=:threadId` param (the active Library Ask thread) and preserves it
+ * on every write.
  *
  * Mutation contract:
  *
@@ -160,25 +164,25 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
     if (!workspaceId) return;
     if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
     writeTimerRef.current = setTimeout(() => {
-      // Library Ask URLs (`/library/ask/:threadId`) sit on a sibling route
-      // pattern but still mount the same shell — so this hook stays active
-      // there. Writing the tab strip's URL on those routes would clobber
-      // the ask thread URL on every state-change tick. Bail out if the
-      // user is currently inside Ask. The `replace: true` write below is
-      // only intended to keep `/library` and `/library/a/:artifactId` in
-      // sync with the open-tab state, not to fight other surfaces for the
-      // URL.
-      const currentPath = typeof window === "undefined" ? "" : window.location.pathname;
-      if (currentPath.includes(`/w/${workspaceId}/library/ask/`)) {
-        return;
-      }
-      const params = new URLSearchParams();
+      // Seed the query string from the *live* URL at flush time so params
+      // this hook does not own survive the write — notably `?ask=:threadId`,
+      // the active Library Ask thread, which the Library page owns. This
+      // hook owns only `?open=`. Reading `window.location.search` inside the
+      // debounced callback (not at arm time) means we pick up whatever the
+      // page committed in the meantime; the History API updates
+      // `window.location` synchronously, so by flush time it is settled.
+      const liveParams = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
       if (state.openArtifactIds.length > 1) {
         // `?open=…` only matters when more than one tab is open; a single
         // tab is fully described by the path's `:artifactId`.
-        params.set("open", state.openArtifactIds.join(","));
+        liveParams.set("open", state.openArtifactIds.join(","));
+      } else {
+        // Explicit clear: because we now seed from the live URL, a stale
+        // `?open=` left over from a previous multi-tab state would linger
+        // without this.
+        liveParams.delete("open");
       }
-      const search = params.toString();
+      const search = liveParams.toString();
       const targetPath = state.activeArtifactId
         ? libraryArtifactPath(workspaceId, state.activeArtifactId)
         : libraryPath(workspaceId);

@@ -17,6 +17,7 @@ interface CreateArtifactArgs {
   summary: string;
   contentMarkdown: string;
   source: ArtifactSource;
+  alignedImportCommitSha?: string;
   /**
    * Optional folder placement (Phase A folder model). The store re-reads
    * the folder before insert so callers can pass the id while this module
@@ -70,6 +71,7 @@ export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArt
     source: args.source,
     version: 1,
     folderId: args.folderId,
+    alignedImportCommitSha: args.alignedImportCommitSha,
     producedIn: args.source === "sandbox" ? "lab" : args.repositoryId ? "legacy" : "discuss",
     lastVerifiedAt: args.source === "sandbox" ? now : undefined,
     chunkingStatus: args.repositoryId ? "pending" : undefined,

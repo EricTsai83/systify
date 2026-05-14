@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import type { LibrarySubMode, ServiceMode, WorkspaceId } from "@/lib/types";
+import type { ServiceMode, WorkspaceId } from "@/lib/types";
 
 interface ServiceModeDisabledLike {
   code: string;
@@ -29,9 +29,6 @@ const NULL_RESOLUTION = {
  *     `library`, or `lab`). The URL is the source of truth; this hook
  *     just normalizes it. Falls back to the resolver's default for the
  *     `/w/:wid` plain workspace landing.
- *   - `librarySubMode` — `read` (default) or `ask` when the URL is on
- *     `/library/ask/:tid`. Pure UI state derived from the URL — never
- *     persisted.
  *   - `availability` — the resolver output keyed by service mode, used
  *     by the switcher to decide which buttons to grey out and the
  *     tooltip to render.
@@ -80,16 +77,8 @@ export function useServiceMode(workspaceId: WorkspaceId | null) {
     return availability?.defaultServiceMode ?? NULL_RESOLUTION.defaultServiceMode;
   }, [location.pathname, params.workspaceId, availability?.defaultServiceMode]);
 
-  const librarySubMode = useMemo<LibrarySubMode>(() => {
-    if (serviceMode !== "library") {
-      return "read";
-    }
-    return location.pathname.includes("/library/ask/") ? "ask" : "read";
-  }, [location.pathname, serviceMode]);
-
   return {
     serviceMode,
-    librarySubMode,
     /**
      * `undefined` while the workspace query loads. Consumers that need a
      * never-undefined value can fall back to {@link NULL_RESOLUTION}.

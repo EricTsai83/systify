@@ -3,6 +3,7 @@ import {
   AppLayout,
   AuthCallbackRoute,
   LandingRoute,
+  LibraryAskLegacyRedirect,
   NotFoundRoute,
   ProtectedLayout,
   RouteErrorBoundary,
@@ -73,7 +74,12 @@ const protectedRoutes: RouteObject[] = [
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceDiscussThread, lazy: loadDiscussRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceLibrary, lazy: loadLibraryRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceLibraryArtifact, lazy: loadLibraryRoute },
-  { path: PROTECTED_ROUTE_SEGMENTS.workspaceLibraryAsk, lazy: loadLibraryRoute },
+  // Legacy Library Ask URL — the standalone route was removed when Library
+  // Ask became an always-visible column addressed by `?ask=`. Redirect old
+  // bookmarks/links so they don't 404. Kept as a literal (not a
+  // `PROTECTED_ROUTE_SEGMENTS` entry) so it stays out of the post-login
+  // return-to allowlist — see `LibraryAskLegacyRedirect`.
+  { path: "w/:workspaceId/library/ask/:threadId", Component: LibraryAskLegacyRedirect },
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceLab, lazy: loadLabRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceLabThread, lazy: loadLabRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.archive, lazy: loadArchiveRoute },

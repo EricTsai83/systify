@@ -141,6 +141,29 @@ export const listMessages = query({
   },
 });
 
+/**
+ * Lightweight thread-existence probe. Unlike {@link listMessages} (which
+ * throws "Thread not found." so a broken thread surfaces as an error
+ * boundary), this returns `null` when the thread is missing or owned by
+ * another viewer. The Library page uses it to validate the
+ * `?ask=:threadId` URL param — a stale bookmark or a since-deleted thread
+ * is cleared gracefully instead of crashing the page. Mirrors the
+ * artifact-id guard pattern (`artifacts.getById`).
+ */
+export const getThreadSummary = query({
+  args: {
+    threadId: v.id("threads"),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireViewerIdentity(ctx);
+    const thread = await ctx.db.get(args.threadId);
+    if (!thread || thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      return null;
+    }
+    return thread;
+  },
+});
+
 export const createThread = mutation({
   args: {
     repositoryId: v.optional(v.id("repositories")),
@@ -277,23 +300,26 @@ export const createAskThread = mutation({
 /**
  * Attach, swap, or detach the repository bound to a thread.
  *
- * The current UI (`AttachRepoMenu` in the TopBar) only surfaces the
- * **attach** path — once a thread is bound to a repo, the binding is
- * permanent from the user's perspective. Swap and detach were intentionally
- * removed from the UI: this mutation does not re-ground historical messages
- * (only new messages pick up the new repo's context via `getReplyContext`),
- * so swapping mid-conversation produces a Frankenstein thread where the
- * scrollback references repo A and new replies reference repo B. To work
- * against a different repo, users start a new thread.
+ * Two of the three transitions have a UI entry point, both from the TopBar:
+ *   - **attach** (no-repo → repo) via `AttachRepoMenu`;
+ *   - **swap** (repo-A → repo-B) via `SwapThreadRepositoryControl`, gated
+ *     behind an explicit confirmation dialog.
+ * **Detach** has no UI affordance — to drop a repo, users start a new thread.
  *
- * The mutation itself stays general (accepts `null` and any repo id) so a
- * future "Fork thread to repo X" feature — which would copy a thread before
- * re-pointing the binding, sidestepping the Frankenstein problem — can reuse
- * it without a backend change.
+ * This mutation does not re-ground historical messages: only new messages
+ * pick up the new repo's context via `getReplyContext`. A swap therefore
+ * leaves the scrollback referencing repo A while new replies reference repo
+ * B — the "Frankenstein scrollback" the swap dialog warns about. The
+ * confirmation step is the guardrail; the backend stays permissive (accepts
+ * `null` and any repo id) so a future "Fork thread to repo X" feature —
+ * which would copy the thread before re-pointing the binding, sidestepping
+ * the problem entirely — can reuse this mutation without a backend change.
  *
- * Passing `repositoryId: null` clears the optional `threads.repositoryId`
- * field; Convex `patch` accepts `undefined` to drop optional fields, which
- * is what we forward.
+ * On a swap, the return value carries `swappedFromRepositoryId` so the caller
+ * can surface the scrollback warning; attach and detach omit it. Passing
+ * `repositoryId: null` clears the optional `threads.repositoryId` field;
+ * Convex `patch` accepts `undefined` to drop optional fields, which is what
+ * we forward.
  */
 export const setThreadRepository = mutation({
   args: {
@@ -337,12 +363,19 @@ export const setThreadRepository = mutation({
         : defaultRepoMode === "docs"
           ? "ask"
           : defaultRepoMode;
+      const previousRepositoryId = thread.repositoryId;
+      const swappedFromRepositoryId =
+        previousRepositoryId && previousRepositoryId !== args.repositoryId ? previousRepositoryId : undefined;
       await ctx.db.patch(args.threadId, {
         repositoryId: args.repositoryId,
         workspaceId,
         mode: nextMode,
       });
-      return { repositoryId: args.repositoryId, workspaceId };
+      return {
+        repositoryId: args.repositoryId,
+        workspaceId,
+        ...(swappedFromRepositoryId ? { swappedFromRepositoryId } : {}),
+      };
     }
 
     // Detach atomically: dropping the repository while resetting the persisted

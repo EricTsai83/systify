@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import type { OptimisticLocalStore } from "convex/browser";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -12,11 +12,12 @@ import {
   DEFAULT_AUTHENTICATED_PATH,
   discussPath,
   libraryPath,
-  libraryAskPath,
+  withLibraryAskParam,
   workspacePath,
   workspaceThreadPath,
 } from "@/route-paths";
 import type { ArtifactId, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import { toast } from "sonner";
 
 const ACTIVE_WORKSPACE_STORAGE_KEY = "systify.activeWorkspaceId";
 
@@ -24,20 +25,20 @@ const ACTIVE_WORKSPACE_STORAGE_KEY = "systify.activeWorkspaceId";
  * Three-mode restructure — Library service mode entry point.
  *
  * Mounted at:
- *   - `/w/:workspaceId/library`                    → folder overview
- *                                                    placeholder.
- *   - `/w/:workspaceId/library/a/:artifactId`      → IDE shell with the
- *                                                    artifact open in
- *                                                    the active tab.
- *   - `/w/:workspaceId/library/ask/:threadId`      → Library Ask panel
- *                                                    (Phase 2 wires the
- *                                                    UI; Phase 1 routes
- *                                                    to a placeholder).
+ *   - `/w/:workspaceId/library`               → folder overview, no
+ *                                               artifact open.
+ *   - `/w/:workspaceId/library/a/:artifactId` → shell with the artifact
+ *                                               open in the active tab.
  *
- * Library Read needs neither a chat subscription nor sandbox SDK
- * tooling, so the page deliberately does NOT mount the heavy
- * RepositoryShell. We reconstruct just the workspace chrome (sidebar
- * + workspace switcher, both reused) plus the Library IDE.
+ * The active Library Ask thread is carried as a `?ask=:threadId` query
+ * param on either of those URLs — the Ask panel is always visible, so the
+ * thread is secondary view-state rather than its own route. The legacy
+ * `/library/ask/:threadId` route redirects to the `?ask=` form.
+ *
+ * Library needs neither a chat subscription nor sandbox SDK tooling, so
+ * the page deliberately does NOT mount the heavy RepositoryShell. We
+ * reconstruct just the workspace chrome (sidebar + workspace switcher,
+ * both reused) plus the Library shell.
  *
  * Two cost-transparency invariants the page honours:
  *
@@ -51,10 +52,11 @@ const ACTIVE_WORKSPACE_STORAGE_KEY = "systify.activeWorkspaceId";
  *      to Discuss.
  */
 export function LibraryPage() {
-  const params = useParams<{ workspaceId?: string; artifactId?: string; threadId?: string }>();
+  const params = useParams<{ workspaceId?: string; artifactId?: string }>();
+  const [searchParams] = useSearchParams();
   const urlWorkspaceId = (params.workspaceId ?? null) as WorkspaceId | null;
   const urlArtifactId = (params.artifactId ?? null) as ArtifactId | null;
-  const urlThreadId = (params.threadId ?? null) as ThreadId | null;
+  const urlAskThreadId = (searchParams.get("ask") ?? null) as ThreadId | null;
 
   if (!urlWorkspaceId) {
     return (
@@ -67,14 +69,14 @@ export function LibraryPage() {
 
   return (
     <SidebarProvider>
-      <LibraryWorkspace workspaceId={urlWorkspaceId} artifactId={urlArtifactId} askThreadId={urlThreadId} />
+      <LibraryWorkspace workspaceId={urlWorkspaceId} artifactId={urlArtifactId} askThreadId={urlAskThreadId} />
     </SidebarProvider>
   );
 }
 
 /**
  * Inner shell that owns the workspace activation effect and renders the
- * Library IDE. Split from the outer page so {@link SidebarProvider} can
+ * Library shell. Split from the outer page so {@link SidebarProvider} can
  * mount before any sidebar-aware hook runs.
  */
 function LibraryWorkspace({
@@ -87,7 +89,8 @@ function LibraryWorkspace({
   askThreadId: ThreadId | null;
 }) {
   const navigate = useNavigate();
-  const [isAskOpen, setIsAskOpen] = useState(askThreadId !== null);
+  const [, setSearchParams] = useSearchParams();
+
   const repositories = useQuery(api.repositories.listRepositories);
   const workspaces = useQuery(api.workspaces.listWorkspaces);
   const baseTouchWorkspace = useMutation(api.workspaces.touchWorkspace);
@@ -122,22 +125,34 @@ function LibraryWorkspace({
     [navigate],
   );
 
-  const handleSelectThread = useCallback(
-    (threadId: ThreadId | null) => {
-      if (threadId === null) {
-        void navigate(workspacePath(workspaceId));
-        return;
-      }
-      // The Library sidebar is mode-filtered to Ask threads, so clicking
-      // one keeps the user inside the Library shell instead of bouncing
-      // them through the canonical /t/:tid URL (which would re-render
-      // the thread in the Discuss chat panel — the bug the sidebar
-      // filter is meant to prevent in the first place).
-      void navigate(libraryAskPath(workspaceId, threadId));
+  // Set or clear the `?ask=:threadId` query param while keeping the
+  // current pathname (and any `?open=` the tab strip owns) intact. The
+  // functional updater reads the live params, so this never clobbers a
+  // concurrent `useLibraryTabs` write. `replace` is opt-in: an explicit
+  // user thread pick is a navigation worth keeping in history; a
+  // validity-guard clear is not.
+  const handleSelectLibraryThread = useCallback(
+    (threadId: ThreadId | null, options?: { replace?: boolean }) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (threadId) {
+            next.set("ask", threadId);
+          } else {
+            next.delete("ask");
+          }
+          return next;
+        },
+        { replace: options?.replace ?? false },
+      );
     },
-    [navigate, workspaceId],
+    [setSearchParams],
   );
 
+  const handleRailError = useCallback((message: string | null) => {
+    if (!message) return;
+    toast.error(message);
+  }, []);
   const handleImported = useCallback(
     (_repoId: RepositoryId, threadId: ThreadId | null, importedWorkspaceId: WorkspaceId) => {
       if (threadId) {
@@ -168,16 +183,32 @@ function LibraryWorkspace({
 
   // If the URL carries an artifact id but it is missing / not in this
   // workspace, drop back to the Library landing rather than mounting
-  // the editor against a broken row.
+  // the editor against a broken row. Preserve `?ask=` — the bad artifact
+  // says nothing about the validity of the active Ask thread.
   const artifactProbe = useQuery(api.artifacts.getById, artifactId ? { artifactId } : "skip");
   useEffect(() => {
     if (!artifactId) return;
     if (workspaces === undefined || !currentWorkspace || !repositoryId) return;
     if (artifactProbe === undefined) return;
     if (artifactProbe === null || artifactProbe.repositoryId !== repositoryId) {
-      void navigate(libraryPath(workspaceId), { replace: true });
+      void navigate(withLibraryAskParam(libraryPath(workspaceId), askThreadId), { replace: true });
     }
-  }, [artifactId, artifactProbe, currentWorkspace, navigate, repositoryId, workspaceId, workspaces]);
+  }, [artifactId, artifactProbe, askThreadId, currentWorkspace, navigate, repositoryId, workspaceId, workspaces]);
+
+  // Guard against a stale `?ask=` — a since-deleted thread, or one from
+  // another workspace. `getThreadSummary` returns `null` instead of
+  // throwing (unlike `listMessages`), so a bad bookmark clears the param
+  // gracefully rather than crashing the Ask panel into the route error
+  // boundary. Mirrors the artifact-id guard above; replaces history so
+  // the dead URL does not linger in the back stack.
+  const askThreadProbe = useQuery(api.chat.threads.getThreadSummary, askThreadId ? { threadId: askThreadId } : "skip");
+  useEffect(() => {
+    if (!askThreadId) return;
+    if (askThreadProbe === undefined) return;
+    if (askThreadProbe === null || askThreadProbe.workspaceId !== workspaceId || askThreadProbe.mode !== "ask") {
+      handleSelectLibraryThread(null, { replace: true });
+    }
+  }, [askThreadId, askThreadProbe, handleSelectLibraryThread, workspaceId]);
 
   if (workspaces === undefined || repositories === undefined) {
     return <ScreenState title="Loading…" description="Loading your workspace." isLoading />;
@@ -190,15 +221,9 @@ function LibraryWorkspace({
         workspaces={workspaces}
         activeWorkspaceId={workspaceId}
         onSwitchWorkspace={handleSwitchWorkspace}
-        selectedThreadId={null}
-        onSelectThread={handleSelectThread}
-        onDeleteThread={() => {
-          /* Library doesn't surface threads for deletion — handled in chat. */
-        }}
+        suppressThreadNavigation
         onImported={handleImported}
-        onError={() => {
-          /* Errors from the sidebar's import dialog bubble through Sonner; Library has no banner slot of its own yet. */
-        }}
+        onError={handleRailError}
       />
       <SidebarInset>
         <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
@@ -214,19 +239,8 @@ function LibraryWorkspace({
               workspaceId={workspaceId}
               repositoryId={repositoryId}
               activeArtifactId={artifactId}
-              isAskOpen={isAskOpen || askThreadId !== null}
               askThreadId={askThreadId}
-              onOpenAsk={() => setIsAskOpen(true)}
-              onCloseAsk={() => {
-                setIsAskOpen(false);
-                if (askThreadId) {
-                  void navigate(libraryPath(workspaceId));
-                }
-              }}
-              onAskThreadCreated={(threadId) => {
-                setIsAskOpen(true);
-                void navigate(libraryAskPath(workspaceId, threadId));
-              }}
+              onSelectLibraryThread={handleSelectLibraryThread}
             />
           ) : null}
         </div>

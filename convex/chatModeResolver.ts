@@ -55,23 +55,15 @@ export interface ChatModeResolution {
  *
  *   - `discuss` — no repo, free-form discussion; same persisted thread mode
  *                 as before.
- *   - `library` — read-mostly artifact reader. `Read` sub-mode renders the
- *                 markdown body; `Ask` sub-mode opens an ask thread that
- *                 retrieves chunks via hybrid RAG. NEVER provisions a
- *                 sandbox, by invariant.
+ *   - `library` — read-mostly artifact reader with an always-visible
+ *                 Library Ask column (chunk-retrieval RAG over the
+ *                 workspace's artifacts). NEVER provisions a sandbox, by
+ *                 invariant.
  *   - `lab`     — sandbox-backed mode (the new name for `sandbox`).
  *                 Distinct lifecycle (`labSessions`) so cost is visible
  *                 and idle sandboxes auto-pause.
  */
 export type ServiceMode = "discuss" | "library" | "lab";
-
-/**
- * UI-only state inside a Library service mode. Never persisted; the URL is
- * the source of truth (`/library` vs `/library/ask/:tid`). Carried as a
- * separate enum so consumers can pattern-match on the sub-mode without
- * reaching for URL parsing.
- */
-export type LibrarySubMode = "read" | "ask";
 
 export interface ServiceModeResolution {
   /**

@@ -5,7 +5,7 @@ interface LibraryShortcuts {
   onQuickOpen: () => void;
   /** Close the active tab (Cmd/Ctrl-W). */
   onCloseActiveTab: () => void;
-  /** Toggle the left tree (Cmd/Ctrl-B). */
+  /** Toggle the folder tree panel (Cmd/Ctrl-B). */
   onToggleTree: () => void;
   /**
    * Focus the Nth tab where `index` is 0-based (Alt+1..9 → indices 0..8).

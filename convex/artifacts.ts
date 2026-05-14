@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { mutation, query } from "./_generated/server";
+import { mutation, query, type QueryCtx } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
 import { replaceArtifactFolder } from "./lib/artifactWrites";
 
@@ -39,7 +39,46 @@ function computeFreshness(args: {
   return "stale";
 }
 
-function toArtifactMetadata(artifact: Doc<"artifacts">, freshness?: Freshness) {
+/**
+ * Resolves the commit SHA of a repository's most recent import. Returns
+ * `undefined` when the repo has never completed an import, or the import
+ * row predates commit-SHA tracking — callers treat that as "no drift
+ * signal available" rather than "drifted".
+ *
+ * The latest import is a per-query constant, so this is resolved once per
+ * repository-scoped listing. Resolving it per artifact would re-read the
+ * same import row for every row in the list (up to
+ * `ARTIFACTS_PER_REPOSITORY_LIMIT` redundant reads).
+ */
+async function resolveLatestImportSha(ctx: QueryCtx, repository: Doc<"repositories">): Promise<string | undefined> {
+  if (!repository.latestImportId) {
+    return undefined;
+  }
+  const latestImport = await ctx.db.get(repository.latestImportId);
+  return latestImport?.commitSha;
+}
+
+/**
+ * Coarse drift signal: true when the artifact was anchored to a specific
+ * import revision (`alignedImportCommitSha`) and that revision differs from
+ * the repository's latest import SHA. Pure — the latest SHA is resolved once
+ * by the caller via {@link resolveLatestImportSha}.
+ */
+function hasImportSnapshotDrift(artifact: Doc<"artifacts">, latestImportSha: string | undefined): boolean {
+  if (!artifact.alignedImportCommitSha || !latestImportSha) {
+    return false;
+  }
+  return artifact.alignedImportCommitSha !== latestImportSha;
+}
+
+function toArtifactMetadata(
+  artifact: Doc<"artifacts">,
+  opts?: {
+    freshness?: Freshness;
+    /** True when anchored import SHA differs from the repository latest import SHA. */
+    importDriftFromLatestSync?: true;
+  },
+) {
   return {
     _id: artifact._id,
     _creationTime: artifact._creationTime,
@@ -57,7 +96,8 @@ function toArtifactMetadata(artifact: Doc<"artifacts">, freshness?: Freshness) {
     chunkingStatus: artifact.chunkingStatus,
     lastChunkedAt: artifact.lastChunkedAt,
     lastChunkedVersion: artifact.lastChunkedVersion,
-    ...(freshness ? { freshness } : {}),
+    ...(opts?.freshness ? { freshness: opts.freshness } : {}),
+    ...(opts?.importDriftFromLatestSync ? { importDriftFromLatestSync: true as const } : {}),
   };
 }
 
@@ -166,6 +206,7 @@ export const listByRepositoryWithFreshness = query({
     }
 
     const now = Date.now();
+    const latestImportSha = await resolveLatestImportSha(ctx, repository);
     const artifacts = await ctx.db
       .query("artifacts")
       .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
@@ -179,6 +220,7 @@ export const listByRepositoryWithFreshness = query({
         lastVerifiedAt: artifact.lastVerifiedAt,
         now,
       }),
+      ...(hasImportSnapshotDrift(artifact, latestImportSha) ? { importDriftFromLatestSync: true as const } : {}),
     }));
   },
 });
@@ -198,6 +240,7 @@ export const listMetadataByRepositoryWithFreshness = query({
     }
 
     const now = Date.now();
+    const latestImportSha = await resolveLatestImportSha(ctx, repository);
     const artifacts = await ctx.db
       .query("artifacts")
       .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
@@ -205,14 +248,14 @@ export const listMetadataByRepositoryWithFreshness = query({
       .take(ARTIFACTS_PER_REPOSITORY_LIMIT);
 
     return artifacts.map((artifact) =>
-      toArtifactMetadata(
-        artifact,
-        computeFreshness({
+      toArtifactMetadata(artifact, {
+        freshness: computeFreshness({
           producedIn: artifact.producedIn,
           lastVerifiedAt: artifact.lastVerifiedAt,
           now,
         }),
-      ),
+        ...(hasImportSnapshotDrift(artifact, latestImportSha) ? { importDriftFromLatestSync: true } : {}),
+      }),
     );
   },
 });

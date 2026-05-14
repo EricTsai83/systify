@@ -510,6 +510,7 @@ export const persistImportHeader = internalMutation({
           producedIn: artifact.source === "sandbox" ? "lab" : "legacy",
           lastVerifiedAt: artifact.source === "sandbox" ? Date.now() : undefined,
           chunkingStatus: "pending",
+          alignedImportCommitSha: args.commitSha,
         });
         continue;
       }
@@ -518,6 +519,7 @@ export const persistImportHeader = internalMutation({
         repositoryId: state.repository._id,
         jobId: args.jobId,
         ownerTokenIdentifier: state.repository.ownerTokenIdentifier,
+        alignedImportCommitSha: args.commitSha,
         ...artifact,
       });
     }

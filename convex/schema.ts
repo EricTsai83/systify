@@ -416,6 +416,12 @@ export default defineSchema({
      * artifact's current version.
      */
     lastChunkedVersion: v.optional(v.number()),
+    /**
+     * Import traceability — commit SHA from the owning import snapshot when
+     * prose was anchored to a particular clone. Compared against
+     * `repositories.latestImportId` commit for the coarse import-drift signal.
+     */
+    alignedImportCommitSha: v.optional(v.string()),
   })
     .index("by_repositoryId", ["repositoryId"])
     .index("by_repositoryId_and_kind", ["repositoryId", "kind"])

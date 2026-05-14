@@ -12,6 +12,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { RepoInfoPopover } from "@/components/repo-info-popover";
 import { RepoStatusIndicator } from "@/components/repo-status-indicator";
 import { AttachRepoMenu } from "@/components/attach-repo-menu";
+import { SwapThreadRepositoryControl } from "@/components/swap-thread-repository-control";
 import { StatusPill } from "@/components/status-pill";
 import { StatusPanel } from "@/components/status-panel";
 import type { AttachedRepositorySummary } from "@/hooks/use-thread-capabilities";
@@ -172,6 +173,19 @@ export function TopBar({
           <AttachRepoMenu
             threadId={threadId}
             availableRepositories={availableRepositories}
+            onMovedToWorkspace={onThreadMovedToWorkspace}
+          />
+        </div>
+      ) : null}
+
+      {threadId !== null &&
+      attachedRepository !== null &&
+      availableRepositories.some((candidate) => candidate._id !== attachedRepository.id) ? (
+        <div className="hidden md:flex">
+          <SwapThreadRepositoryControl
+            threadId={threadId}
+            attachedRepositoryFullName={attachedRepository.fullName}
+            candidates={availableRepositories.filter((candidate) => candidate._id !== attachedRepository.id)}
             onMovedToWorkspace={onThreadMovedToWorkspace}
           />
         </div>
