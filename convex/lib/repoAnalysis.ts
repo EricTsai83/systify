@@ -206,10 +206,6 @@ export function createArchitectureArtifactMarkdown(manifest: RepositoryManifest,
   return lines.join("\n");
 }
 
-export function createDeepAnalysisMarkdown(prompt: string, inspectionLog: string) {
-  return ["# Deep Analysis", "", `Prompt: ${prompt}`, "", "## Sandbox Notes", inspectionLog].join("\n");
-}
-
 function detectPackageManagers(snapshot: RepositorySnapshot) {
   const paths = new Set(snapshot.files.map((file) => file.path));
   const managers: string[] = [];

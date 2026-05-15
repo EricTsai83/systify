@@ -33,9 +33,6 @@ This folder contains the system design documentation for the current Systify cod
 - `streaming-reply-optimization-system-design.md`
   - Why are active stream state and durable history stored in separate tables?
   - How does compaction plus finalize-once keep streaming reliable?
-- `deep-analysis-installation-cost-system-design.md`
-  - Why should deep-analysis requests extend sandbox TTL right before execution?
-  - Why is installation conflict handled as an explicit product path instead of silent replacement?
 - `architecture-diagram-artifact-system-design.md`
   - Why is architecture diagram generation an end-to-end system-design concern, not only frontend rendering?
   - How do deterministic generation, bounded output caps, and renderer recovery work together?
@@ -70,7 +67,6 @@ The current codebase keeps system-design documentation for all implemented high-
 - Discuss / Library / Lab service modes: `service-modes-library-lab-system-design.md`
 - Repository file-count denormalization: `repository-filecount-rollout-system-design.md`
 - Chat streaming architecture: `streaming-reply-optimization-system-design.md`
-- Deep analysis TTL, installation conflict handling, and chat usage-cost writing: `deep-analysis-installation-cost-system-design.md`
 - Vercel + Convex deployment model: `vercel-convex-deployment-system-design.md`
 - GitHub callback returnTo allowlist boundary: `github-callback-returnto-allowlist-system-design.md`
 - Workspace persistence and cross-device continuity: `workspace-persistence-system-design.md`
@@ -106,9 +102,9 @@ The current codebase keeps system-design documentation for all implemented high-
 
 ### `chat-and-analysis-pipeline.md`
 
-- What data sources do Discuss, Library Ask, and Lab depend on, and how do they differ from Deep analysis?
+- What data sources do Discuss, Library Ask, and Lab depend on, and how do they differ from System Design generation?
 - How is an assistant reply created, streamed, completed, or failed?
-- Why can Lab and Deep analysis become unavailable because of sandbox state?
+- Why can Lab and System Design generation become unavailable because of sandbox state?
 
 ### `integrations-and-operations.md`
 

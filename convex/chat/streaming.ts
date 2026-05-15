@@ -117,7 +117,7 @@ async function settleSandboxReplyCost(
 ): Promise<void> {
   // Only sandbox-mode replies bill against the daily cap. The check on
   // `assistantMessage.mode` is the source of truth — using the job's
-  // `costCategory` would also work today (sandbox ↔ deep_analysis), but
+  // `costCategory` would also work today (sandbox ↔ system_design), but
   // the message-level mode keeps this code resilient if the costCategory
   // mapping ever changes.
   if (!args.assistantMessage || (args.assistantMessage.mode !== "sandbox" && args.assistantMessage.mode !== "lab")) {

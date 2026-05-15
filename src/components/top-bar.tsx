@@ -35,14 +35,12 @@ export type TopBarRepoDetail = {
   fileCount: number;
   fileCountLabel: string;
   jobs: Doc<"jobs">[];
-  activeDeepAnalysisJob: Doc<"jobs"> | null;
   /**
    * Artifacts attached to the repository. Used by the embedded StatusPanel to
-   * surface the latest deep-analysis card and to map activity rows back to
-   * their generated artifact for the inline "View …" affordance. The shell
-   * passes these through from the same `getRepositoryDetail` query that
-   * populates the rest of `repoDetail`, so the field is always coherent with
-   * the other status surfaces.
+   * map activity rows back to their generated artifact for the inline
+   * "View …" affordance. The shell passes these through from the same
+   * `getRepositoryDetail` query that populates the rest of `repoDetail`, so
+   * the field is always coherent with the other status surfaces.
    */
   artifacts: Doc<"artifacts">[];
 };
@@ -72,7 +70,6 @@ export function TopBar({
   isAttachedRepositoryLoading,
   availableRepositories,
   isSyncing,
-  isInitialSetup,
   isStatusPanelOpen,
   onSetStatusPanelOpen,
   onArchiveRepo,
@@ -81,7 +78,6 @@ export function TopBar({
   onThreadMovedToWorkspace,
   isDesktopLayout,
   onSync,
-  onRunAnalysis,
   onViewArtifact,
 }: {
   repoDetail?: TopBarRepoDetail;
@@ -98,14 +94,6 @@ export function TopBar({
   isAttachedRepositoryLoading: boolean;
   availableRepositories: ReadonlyArray<Doc<"repositories">>;
   isSyncing: boolean;
-  /**
-   * Mirrors {@link WorkspaceSetupBanner}'s render condition — true while the
-   * workspace has not yet produced its first deep_analysis artifact and a
-   * setup-related job is in flight. Lets the StatusPill swap "Syncing…" /
-   * "Analyzing…" for a unified "Setting up…" so the chrome speaks one
-   * vocabulary during the initial-setup window.
-   */
-  isInitialSetup: boolean;
   isStatusPanelOpen: boolean;
   onSetStatusPanelOpen: (open: boolean) => void;
   /** Archive an active repository. Triggered when `repoDetail.isArchived` is false. */
@@ -117,7 +105,6 @@ export function TopBar({
   onThreadMovedToWorkspace: (workspaceId: WorkspaceId | null) => void;
   isDesktopLayout: boolean;
   onSync: () => void;
-  onRunAnalysis: () => void;
   onViewArtifact: (artifactId: ArtifactId) => void;
 }) {
   return (
@@ -205,10 +192,8 @@ export function TopBar({
                   repository={repoDetail.repository}
                   sandboxModeStatus={repoDetail.sandboxModeStatus}
                   jobs={repoDetail.jobs}
-                  activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
                   hasRemoteUpdates={repoDetail.hasRemoteUpdates}
                   isSyncing={isSyncing}
-                  isInitialSetup={isInitialSetup}
                   isOpen={isStatusPanelOpen}
                 />
               </PopoverTrigger>
@@ -228,12 +213,10 @@ export function TopBar({
                   sandboxModeStatus={repoDetail.sandboxModeStatus}
                   sandbox={repoDetail.sandbox}
                   jobs={repoDetail.jobs}
-                  activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
                   artifacts={repoDetail.artifacts}
                   hasRemoteUpdates={repoDetail.hasRemoteUpdates}
                   isSyncing={isSyncing}
                   onSync={onSync}
-                  onRunAnalysis={onRunAnalysis}
                   onViewArtifact={onViewArtifact}
                   onClose={() => onSetStatusPanelOpen(false)}
                 />
@@ -248,10 +231,8 @@ export function TopBar({
               repository={repoDetail.repository}
               sandboxModeStatus={repoDetail.sandboxModeStatus}
               jobs={repoDetail.jobs}
-              activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
               hasRemoteUpdates={repoDetail.hasRemoteUpdates}
               isSyncing={isSyncing}
-              isInitialSetup={isInitialSetup}
               isOpen={isStatusPanelOpen}
               onClick={() => onSetStatusPanelOpen(!isStatusPanelOpen)}
             />

@@ -15,7 +15,7 @@ import {
   markQueuedJobRunning,
   updateRunningJobProgress,
 } from "./jobLifecycle";
-import { createArtifactInMutation } from "./artifactStore";
+import { ensureSystemDesignFolders } from "./lib/systemDesign";
 
 const REPOSITORY_DELETION_CANCEL_REASON =
   "Repository deletion is in progress. The import was cancelled before it could finish.";
@@ -57,22 +57,6 @@ const repoChunkRecordValidator = v.object({
   summary: v.string(),
   content: v.string(),
 });
-const artifactRecordValidator = v.object({
-  kind: v.union(
-    v.literal("manifest"),
-    v.literal("readme_summary"),
-    v.literal("architecture_overview"),
-    v.literal("entrypoints"),
-    v.literal("dependency_overview"),
-    v.literal("deep_analysis"),
-    v.literal("risk_report"),
-  ),
-  title: v.string(),
-  summary: v.string(),
-  contentMarkdown: v.string(),
-  source: v.union(v.literal("heuristic"), v.literal("llm"), v.literal("sandbox")),
-});
-
 type PersistGuardResult =
   | {
       kind: "ready";
@@ -470,7 +454,6 @@ export const persistImportHeader = internalMutation({
     jobId: v.id("jobs"),
     commitSha: v.string(),
     branch: v.optional(v.string()),
-    artifacts: v.array(artifactRecordValidator),
   },
   handler: async (ctx, args) => {
     const state = await guardPersistStage(ctx, {
@@ -494,35 +477,10 @@ export const persistImportHeader = internalMutation({
       };
     }
 
-    for (const artifact of args.artifacts) {
-      const existingArtifact = await ctx.db
-        .query("artifacts")
-        .withIndex("by_jobId_and_kind", (q) => q.eq("jobId", args.jobId).eq("kind", artifact.kind))
-        .unique();
-
-      if (existingArtifact) {
-        await ctx.db.patch(existingArtifact._id, {
-          title: artifact.title,
-          summary: artifact.summary,
-          contentMarkdown: artifact.contentMarkdown,
-          source: artifact.source,
-          version: 1,
-          producedIn: artifact.source === "sandbox" ? "lab" : "legacy",
-          lastVerifiedAt: artifact.source === "sandbox" ? Date.now() : undefined,
-          chunkingStatus: "pending",
-          alignedImportCommitSha: args.commitSha,
-        });
-        continue;
-      }
-
-      await createArtifactInMutation(ctx, {
-        repositoryId: state.repository._id,
-        jobId: args.jobId,
-        ownerTokenIdentifier: state.repository.ownerTokenIdentifier,
-        alignedImportCommitSha: args.commitSha,
-        ...artifact,
-      });
-    }
+    await ensureSystemDesignFolders(ctx, {
+      repositoryId: state.repository._id,
+      ownerTokenIdentifier: state.repository.ownerTokenIdentifier,
+    });
 
     await ctx.db.patch(args.importId, {
       commitSha: args.commitSha,
@@ -712,16 +670,6 @@ export const finalizeImportCompletion = internalMutation({
         sandboxId: previousSandboxId,
       });
     }
-
-    // Auto-trigger the first deep analysis. Setup phase: the workspace
-    // isn't really "ready" until a deep_analysis artifact exists, so we
-    // kick it off as part of import completion rather than asking the
-    // user to find and click a Start button. The internal mutation
-    // no-ops when an artifact already exists (re-imports), so this is
-    // safe to call unconditionally.
-    await ctx.scheduler.runAfter(0, internal.analysis.scheduleAutoDeepAnalysis, {
-      repositoryId: state.repository._id,
-    });
 
     return {
       kind: "completed" as const,

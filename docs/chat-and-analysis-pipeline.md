@@ -8,20 +8,20 @@ This document describes the two AI interaction paths currently available in Syst
   - `discuss` — no repository context
   - `ask` — Library Ask, grounded in artifact chunks
   - `lab` — sandbox-backed answers grounded in the live source tree
-- Deep analysis — a sandbox-backed background job that produces a reusable `deep_analysis` artifact
+- System Design generation — a sandbox-backed background job, triggered by the user clicking **Generate System Design** from the empty Library page, that writes a starter set of System Design artifacts (`manifest`, `readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`).
 
-Both are repository-centered, but they depend on different data sources and execution models. Chat and deep analysis are also complementary: deep analysis writes artifacts that later Library Ask and Lab replies can cite.
+Both are repository-centered, but they depend on different data sources and execution models. Chat and System Design generation are also complementary: System Design generation writes artifacts that later Library Ask and Lab replies can cite.
 
 ## Differences Between the Two Paths
 
 
-| Capability               | Chat (per mode)                                                                                                                                | Deep analysis                               |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- |
-| Main entry point         | `chat.sendMessage`                                                                                                                             | `analysis.requestDeepAnalysis`              |
-| Primary data source      | `discuss`: none · `ask`: `artifactChunks` + artifact metadata · `lab`: live sandbox tools plus durable artifacts                             | live sandbox                                |
-| Execution location       | Convex action                                                                                                                                  | Convex Node action + Daytona                |
-| UI presentation          | stable history + active stream merge                                                                                                           | a new deep-analysis artifact plus job state |
-| Availability requirement | `discuss`: always · `ask`: repository has artifacts and indexed chunks · `lab`: repository has a usable sandbox                                | repository has a usable sandbox             |
+| Capability               | Chat (per mode)                                                                                                                                | System Design generation                                              |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Main entry point         | `chat.sendMessage`                                                                                                                             | `systemDesign.requestSystemDesignGeneration`                          |
+| Primary data source      | `discuss`: none · `ask`: `artifactChunks` + artifact metadata · `lab`: live sandbox tools plus durable artifacts                             | live sandbox                                                          |
+| Execution location       | Convex action                                                                                                                                  | Convex Node action + Daytona                                          |
+| UI presentation          | stable history + active stream merge                                                                                                           | a starter set of System Design artifacts plus job state               |
+| Availability requirement | `discuss`: always · `ask`: repository has artifacts and indexed chunks · `lab`: repository has a usable sandbox                                | repository has a usable sandbox                                       |
 
 
 ## Chat Flow
@@ -200,96 +200,123 @@ flowchart TD
 
 This state model lets the UI faithfully represent four different states: created-but-not-yet-answered, answering, answered, and failed.
 
-## Deep Analysis Flow
+## System Design Generation Flow
 
 ```mermaid
 flowchart TD
-  Request[RequestDeepAnalysis]
-  CheckSandbox[CheckDeepModeAvailability]
-  ExtendTTL[ExtendSandboxTTL]
-  CreateJob[CreateDeepAnalysisJob]
-  RunNodeAction[RunDeepAnalysis]
-  FocusedInspection[RunFocusedInspectionInSandbox]
-  PersistArtifact[InsertDeepAnalysisArtifact]
-  Finish[CompleteJob]
+  Click[ClickGenerateSystemDesign]
+  Dialog[PickKindsInDialog]
+  Request[RequestSystemDesignGeneration]
+  Preflight[SandboxPreflightIfLlmKindsSelected]
+  Dedup[DedupAgainstActiveLibraryJob]
+  RateLimit[ConsumeSystemDesignAndDaytonaBuckets]
+  SeedFolders[EnsureSystemDesignFolders]
+  CreateJob[CreateSystemDesignJobWithLease]
+  Schedule[ScheduleNodeAction]
+  HeuristicPass[ParallelHeuristicGenerators]
+  LlmPass[SerialLlmGeneratorsWithLeaseRefresh]
+  Persist[PersistEachArtifactInItsFolder]
+  Finish[CompleteOrFailJob]
 
-  Request --> CheckSandbox
-  CheckSandbox --> ExtendTTL
-  ExtendTTL --> CreateJob
-  CreateJob --> RunNodeAction
-  RunNodeAction --> FocusedInspection
-  FocusedInspection --> PersistArtifact
-  PersistArtifact --> Finish
+  Click --> Dialog
+  Dialog --> Request
+  Request --> Preflight
+  Preflight --> Dedup
+  Dedup --> RateLimit
+  RateLimit --> SeedFolders
+  SeedFolders --> CreateJob
+  CreateJob --> Schedule
+  Schedule --> HeuristicPass
+  Schedule --> LlmPass
+  HeuristicPass --> Persist
+  LlmPass --> Persist
+  Persist --> Finish
 ```
 
+System Design generation is **user-initiated, not import-driven**. Imports no longer auto-trigger any analysis; they only seed the default System Design folders inside `artifactFolders`. When the user navigates to Library on a repository that has no artifact bodies yet, the empty Library page renders a **Generate System Design** CTA button. Clicking it opens a dialog that lets the user pick which kinds to publish; on submit, the dialog calls `requestSystemDesignGeneration` with the selected subset.
 
+### Kinds and dispatch
 
-### 1. Request deep analysis
+Library System Design produces up to eight artifact kinds, split by generator type:
 
-`requestDeepAnalysis` first checks:
+- **Heuristic** (no LLM, no sandbox) — `manifest`, `readme_summary`, `architecture_overview`. Derived from imported `repoFiles` + `repoChunks` rows.
+- **LLM-backed** (uses sandbox tools) — `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`. Each spins a `generateText` call against the sandbox-backed model with the same `read_file` / `list_dir` / `run_shell` tool factory the Lab chat path uses.
 
-- that the repository belongs to the current signed-in user
-- that `latestSandboxId` exists
-- that the sandbox state allows deep mode
+The dialog flags each kind with a **Free** or **~1 LLM call** badge driven by `SYSTEM_DESIGN_KIND_GENERATOR` in `convex/lib/systemDesign.ts`.
 
-If the sandbox is unavailable, the mutation throws immediately instead of creating an analysis workflow that cannot run.
+### 1. Request validation
 
-If validation succeeds, the mutation also extends `sandboxes.ttlExpiresAt` to at least 30 minutes in the future before queuing work. This reduces the race where the request is accepted but the sandbox gets swept before `runDeepAnalysis` starts.
+`requestSystemDesignGeneration` (in `convex/systemDesign.ts`) performs the following checks in order:
+
+1. **Identity + repository ownership** — `requireViewerIdentity` + `requireActiveRepositoryForOwner` reject archived, deleted, or non-owned repos with the standard error messages.
+2. **Non-empty selection** — at least one kind must be checked.
+3. **Sandbox preflight** — runs *only when at least one LLM-backed kind is selected*. Reads `repository.latestSandboxId` and passes it through `getSandboxAvailability`; rejects the whole request with the helper's user-facing message if the sandbox is missing, provisioning, archived, stopped, expired, or failed. Heuristic-only requests skip this check entirely.
+4. **Idempotency dedup** — scans `jobs` by the `by_repositoryId_and_kind_and_status_and_leaseExpiresAt` index for an active (`queued` or `running`, lease still alive) `system_design` job that is *not* a Failure Mode Analysis. If one is found, the mutation returns that existing `jobId` instead of creating a duplicate. FMA jobs are filtered out via their `failure_mode_analysis:` `requestedCommand` prefix, so an in-flight FMA on the same repo does not block a Library generation.
+5. **Rate limiting** — always consumes the per-owner `systemDesignRequests` bucket (10/hour by default). Additionally consumes the global `daytonaRequestsGlobal` bucket *only when an LLM-backed kind is selected*, mirroring the actual Daytona use.
+6. **Folder seeding** — `ensureSystemDesignFolders` is idempotent and creates the default System Design folder tree if it does not already exist.
 
 ### 2. Create the job
 
-After validation passes, the system creates:
+The mutation inserts one `jobs` row with `kind: "system_design"`, `costCategory: "system_design"`, the selected `sandboxId` (when LLM kinds are present), an `outputSummary` summarising the selection, and a non-null `leaseExpiresAt = now + SYSTEM_DESIGN_JOB_LEASE_MS` (default 60 minutes).
 
-- one `deep_analysis` job
-- and points `repository.latestAnalysisJobId` to it
+The lease is set **at insert time** rather than only at the `queued → running` transition. This matters because the stale-job sweep (`opsNode.listStaleInteractiveJobs`) queries the `by_status_and_kind_and_leaseExpiresAt` index with `lt("leaseExpiresAt", now)`, which never matches rows where `leaseExpiresAt` is undefined. A pre-running job without a lease would be invisible to recovery if the Node action never started.
 
-### 3. Run focused inspection inside the sandbox
+The job and the FMA flow share the `system_design` kind. Disambiguation is by `requestedCommand`: FMA writes the `failure_mode_analysis:<subsystem>` prefix; Library System Design jobs leave it unset. Both the active-job dedup and the stale-job recovery branch use the same `isFailureModeJob` predicate.
 
-`analysisNode.runDeepAnalysis`:
+### 3. Run the generators
 
-- marks the job as running
-- checks sandbox availability again
-- calls `runFocusedInspection(remoteSandboxId, repoPath, prompt)`
+`runSystemDesignGeneration` (in `convex/systemDesignNode.ts`) transitions the job to `running` via `markGenerationStarted`, which refreshes the lease for a fresh window, then splits the work into two concurrent passes:
 
-This inspection is not a large direct LLM analysis over the whole repository. It first finds more relevant file paths inside the sandbox based on the prompt, then produces a focused inspection log.
+- **Heuristic pass** — runs all heuristic kinds in parallel via `Promise.all`. The shared `RepositorySnapshot` is loaded once via `listRepoFilesForHeuristics` (bounded by `take(2000)`; a `logWarn` fires if the take cap was reached) and `findReadmeChunkForHeuristics`.
+- **LLM pass** — runs LLM-backed kinds serially in their submission order, refreshing the job lease via `refreshGenerationLease` *before each kind*. Serial execution is intentional: it honours both the per-sandbox tool budget and OpenAI rate limits.
 
-### 4. Persist the artifact
+Both passes run concurrently against each other so a long LLM session does not gate the cheap heuristic publication. Per-kind failures are isolated in a `try/catch`; the failing kind is logged with an `errorId` and skipped without affecting later kinds. After every kind completes (success or failure) the action updates `jobs.stage` / `jobs.progress` via `updateGenerationProgress`.
 
-The analysis result is ultimately written as:
+### 4. Persist the artifacts
 
-- `artifacts.kind = deep_analysis`
-- `source = sandbox`
+`persistGeneratedArtifact` resolves the destination folder via the kind→folder map and `artifactFolders.systemKey`, then replaces any existing artifact of the same kind in that folder so re-running the publication overwrites rather than accumulates. The artifact is written through the standard `createArtifactInMutation` path so the chunking + embedding pipeline kicks in automatically.
 
-That means deep analysis output does not exist only at execution time. It becomes reusable repository knowledge for later flows.
+The `source` field encodes how the artifact was produced and drives the freshness UI:
+
+- Heuristic kinds carry `source: "heuristic"`. `createArtifactInMutation` translates that to `producedIn: "legacy"` and leaves `lastVerifiedAt` unset — the freshness UI does not award a "verified" badge to heuristic output.
+- LLM-backed kinds carry `source: "sandbox"` because they read live source through the sandbox tool factory. `createArtifactInMutation` translates that to `producedIn: "lab"` + `lastVerifiedAt: now`, which gates the "verified against current source" badge in the Library freshness UI.
+
+### 5. Finalize
+
+After both passes complete, `completeGeneration` marks the job `completed` with a final `outputSummary` (`Generated X of Y documents.` / `; N failed.`). Progress and final status flow back to the UI through the standard job subscription.
+
+If the action dies (process restart, panic) before `completeGeneration`, the daily cron `reconcileStaleInteractiveJobs` will eventually call `recoverStaleSystemDesignJob`, which fails the job with the standard stale-lease message — the lease semantics above guarantee the row is discoverable by the sweep.
 
 ## Sandbox Availability
 
-Two distinct surfaces depend on a live Daytona sandbox: Lab mode and the deep-analysis background job. Both gate themselves through `convex/lib/sandboxAvailability.ts`. If the sandbox:
+Two distinct surfaces depend on a live Daytona sandbox: Lab mode and the LLM-backed kinds of the System Design generation background job. Both gate themselves through `convex/lib/sandboxAvailability.ts`. If the sandbox:
 
 - has passed its TTL
 - is archived
 - has failed
 - is missing required remote path information
 
-then Lab is unavailable and `requestDeepAnalysis` rejects new analysis requests.
+then Lab is unavailable and `requestSystemDesignGeneration` rejects requests *that include at least one LLM-backed kind*. A request that selects only heuristic kinds (`manifest`, `readme_summary`, `architecture_overview`) skips the sandbox preflight and runs even when no sandbox exists, so a freshly imported repo can publish the starter heuristic set immediately.
 
 The frontend uses this state to tell the user to:
 
 - sync the repository to provision a new sandbox, or
 - switch to Discuss or Library for degraded but still useful work
 
+Library mode is **not** gated on having artifacts. Any repository with a valid attached repo can open Library; if no artifacts exist yet, the page shows the **Generate System Design** CTA.
+
 ## How The Two Pipelines Complement Each Other
 
-Chat and deep analysis are not mutually exclusive. They form layered capabilities:
+Chat and System Design generation are not mutually exclusive. They form layered capabilities:
 
 - Chat (`discuss` / `ask` / `lab`): fast, interactive, with cost and grounding scaling per mode
-- Deep analysis: slower and sandbox-dependent, but able to add observations closer to the live repository state
+- System Design generation: slower and sandbox-dependent, but produces durable, repository-grounded prose covering the main system surfaces in one pass
 
-Artifacts produced by deep analysis flow back into later Library Ask and Lab context, so the overall system forms a cumulative knowledge loop.
+Artifacts produced by System Design generation flow back into later Library Ask and Lab context, so the overall system forms a cumulative knowledge loop.
 
 ## Known Limitations
 
 - Lab tooling (`read_file`, `list_dir`, `run_shell`) is gated by the sandbox feature flag and per-viewer allowlist. `run_shell` is gated by a deny list of obviously destructive patterns, a 32 KiB output cap, a 60 s timeout ceiling, and a workdir pinned inside the repository.
-- Chat and deep analysis are both AI features, but their outputs and tracking models are still split between thread replies and artifacts.
-- Deep analysis is currently closer to focused file discovery plus a markdown report than to a full agentic repository-reasoning pipeline.
+- Chat and System Design generation are both AI features, but their outputs and tracking models are still split between thread replies and artifacts.
+- The current System Design generation pass is a fixed starter set of overviews. Per-folder regeneration, additional artifact kinds, and partial re-runs are future work.
 

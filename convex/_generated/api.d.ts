@@ -8,8 +8,6 @@
  * @module
  */
 
-import type * as analysis from "../analysis.js";
-import type * as analysisNode from "../analysisNode.js";
 import type * as architectureDiagram from "../architectureDiagram.js";
 import type * as artifactChunkStore from "../artifactChunkStore.js";
 import type * as artifactFolders from "../artifactFolders.js";
@@ -65,6 +63,7 @@ import type * as lib_sandboxAvailability from "../lib/sandboxAvailability.js";
 import type * as lib_sandboxFeatureFlag from "../lib/sandboxFeatureFlag.js";
 import type * as lib_sandboxNames from "../lib/sandboxNames.js";
 import type * as lib_sandboxRollout from "../lib/sandboxRollout.js";
+import type * as lib_systemDesign from "../lib/systemDesign.js";
 import type * as lib_userPreferences from "../lib/userPreferences.js";
 import type * as lib_workspaces from "../lib/workspaces.js";
 import type * as migrations from "../migrations.js";
@@ -72,6 +71,8 @@ import type * as ops from "../ops.js";
 import type * as opsNode from "../opsNode.js";
 import type * as repositories from "../repositories.js";
 import type * as serviceModeEligibility from "../serviceModeEligibility.js";
+import type * as systemDesign from "../systemDesign.js";
+import type * as systemDesignNode from "../systemDesignNode.js";
 import type * as threadContext from "../threadContext.js";
 import type * as userPreferences from "../userPreferences.js";
 import type * as workspaces from "../workspaces.js";
@@ -83,8 +84,6 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  analysis: typeof analysis;
-  analysisNode: typeof analysisNode;
   architectureDiagram: typeof architectureDiagram;
   artifactChunkStore: typeof artifactChunkStore;
   artifactFolders: typeof artifactFolders;
@@ -140,6 +139,7 @@ declare const fullApi: ApiFromModules<{
   "lib/sandboxFeatureFlag": typeof lib_sandboxFeatureFlag;
   "lib/sandboxNames": typeof lib_sandboxNames;
   "lib/sandboxRollout": typeof lib_sandboxRollout;
+  "lib/systemDesign": typeof lib_systemDesign;
   "lib/userPreferences": typeof lib_userPreferences;
   "lib/workspaces": typeof lib_workspaces;
   migrations: typeof migrations;
@@ -147,6 +147,8 @@ declare const fullApi: ApiFromModules<{
   opsNode: typeof opsNode;
   repositories: typeof repositories;
   serviceModeEligibility: typeof serviceModeEligibility;
+  systemDesign: typeof systemDesign;
+  systemDesignNode: typeof systemDesignNode;
   threadContext: typeof threadContext;
   userPreferences: typeof userPreferences;
   workspaces: typeof workspaces;

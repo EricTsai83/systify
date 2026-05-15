@@ -183,7 +183,7 @@ describe("repository detail metadata", () => {
     expect(repository?.latestImportJobId).toBeDefined();
   });
 
-  test("getRepositoryDetail limits artifacts to 20 without thread fan-out lookups", async () => {
+  test("getRepositoryDetail caps artifacts to the most recent import-job rows", async () => {
     const ownerTokenIdentifier = "user|repo-detail-artifacts";
     const t = createTestConvex();
 
@@ -220,7 +220,8 @@ describe("repository detail metadata", () => {
         latestImportJobId: importJobId,
       });
 
-      for (let index = 0; index < 10; index += 1) {
+      // Seed 25 import-job artifacts so the take() cap is exercised.
+      for (let index = 0; index < 25; index += 1) {
         await ctx.db.insert("artifacts", {
           repositoryId,
           ownerTokenIdentifier,
@@ -234,19 +235,6 @@ describe("repository detail metadata", () => {
         });
       }
 
-      for (let index = 0; index < 40; index += 1) {
-        await ctx.db.insert("artifacts", {
-          repositoryId,
-          ownerTokenIdentifier,
-          kind: "deep_analysis",
-          title: `deep-artifact-${index}`,
-          summary: `Deep artifact ${index}`,
-          contentMarkdown: "deep content",
-          source: "llm",
-          version: 1,
-        });
-      }
-
       return repositoryId;
     });
 
@@ -254,7 +242,7 @@ describe("repository detail metadata", () => {
     const detail = await viewer.query(api.repositories.getRepositoryDetail, { repositoryId });
 
     expect(detail).not.toBeNull();
-    expect(detail!.artifacts).toHaveLength(20);
+    expect(detail!.artifacts).toHaveLength(10);
     const uniqueArtifactIds = new Set(detail!.artifacts.map((artifact) => artifact._id));
     expect(uniqueArtifactIds.size).toBe(detail!.artifacts.length);
   });

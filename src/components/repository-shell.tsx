@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import type { OptimisticLocalStore } from "convex/browser";
@@ -16,10 +16,6 @@ import { EmptyState } from "@/components/empty-state";
 import { AppNotice } from "@/components/app-notice";
 import { ChatContainer } from "@/components/chat-panel";
 import { StatusPanel } from "@/components/status-panel";
-import { WorkspaceSetupBanner } from "@/components/workspace-setup-banner";
-import { WorkspaceReadyBanner } from "@/components/workspace-ready-banner";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useCheckForUpdates } from "@/hooks/use-check-for-updates";
 import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
@@ -106,10 +102,6 @@ function applyTouchWorkspaceOptimistic(store: OptimisticLocalStore, args: { work
     store.setQuery(api.workspaces.listWorkspaces, queryArgs, updated);
   }
 }
-
-const DeepAnalysisDialog = lazy(() =>
-  import("@/components/deep-analysis-dialog").then((module) => ({ default: module.DeepAnalysisDialog })),
-);
 
 /**
  * URL ↔ workspace-state bridge. The route layer (`/chat`, `/w/:workspaceId`,
@@ -358,6 +350,15 @@ export function RepositoryShell({
   const { serviceMode } = useServiceMode(currentWorkspaceId);
   const redirectThreadMode = SERVICE_MODE_TO_REDIRECT_THREAD_MODE[serviceMode];
 
+  // Discuss is "free-form discussion with no repository grounding" per
+  // docs/service-modes-library-lab-system-design.md. The right-rail
+  // ArtifactPanel — repo-scoped folder tree plus sandbox-backed
+  // launchers — is therefore mounted only outside Discuss. The toggle
+  // button, the desktop column, the mobile drawer, and the keyboard
+  // shortcut all gate on this single flag so the surface and its
+  // affordances stay consistent.
+  const isArtifactPanelEnabled = serviceMode !== "discuss";
+
   // Loaded for the redirect-to-most-recent-thread logic: scope by the
   // workspace the user is currently "in" so the sidebar/empty-state CTAs
   // and the redirect target all line up. Skipped once a thread is selected
@@ -372,9 +373,6 @@ export function RepositoryShell({
   const [threadToDelete, setThreadToDelete] = useState<ThreadId | null>(null);
   const [showArchiveDialog, setShowArchiveDialog] = useState(false);
   const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] = useState(false);
-  const [analysisPrompt, setAnalysisPrompt] = useState(
-    "Summarize the main modules, data flow, and risk areas for this repository.",
-  );
   const [chatInput, setChatInput] = useState("");
   // The user's last explicit mode pick, scoped to the thread it was made for.
   // When `urlThreadId` changes, the scope check fails and the effective mode
@@ -398,9 +396,7 @@ export function RepositoryShell({
     },
     [urlThreadId],
   );
-  const [showAnalysisDialog, setShowAnalysisDialog] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
   /**
    * Transient info-level banner — used to confirm async background work was
    * successfully queued (e.g. "Deep analysis queued") even before the next
@@ -487,18 +483,6 @@ export function RepositoryShell({
   const isRepositorySyncing =
     !isRepoArchived &&
     (repoDetail?.repository.importStatus === "queued" || repoDetail?.repository.importStatus === "running");
-  // Initial-setup window: the workspace has been imported but has not yet
-  // produced its first `deep_analysis` artifact. Both the WorkspaceSetupBanner
-  // (always shown below the top-bar in this state) and the StatusPill ("Setting
-  // up…" label) read this so the chrome speaks one vocabulary while the user
-  // waits for the workspace to become operational.
-  const hasDeepAnalysisArtifact = repoDetail?.artifacts.some((artifact) => artifact.kind === "deep_analysis") ?? false;
-  const isInitialWorkspaceSetup =
-    !isRepoArchived &&
-    repoDetail !== null &&
-    repoDetail !== undefined &&
-    !hasDeepAnalysisArtifact &&
-    (isRepositorySyncing || Boolean(repoDetail.activeDeepAnalysisJob));
   const effectiveSandboxModeStatus: SandboxModeStatus | null =
     effectiveSelectedThreadId !== null ? capabilities.sandboxModeStatus : (repoDetail?.sandboxModeStatus ?? null);
 
@@ -587,7 +571,6 @@ export function RepositoryShell({
   const handleSelectThread = useCallback(
     (threadId: ThreadId | null) => {
       setActionError(null);
-      setAnalysisError(null);
       if (threadId === null) {
         // Drop selection but keep the user inside the current workspace
         // when one is known — the workspace-landing redirect will then
@@ -619,7 +602,7 @@ export function RepositoryShell({
   );
 
   const handleToggleArtifactPanel = useCallback(() => {
-    if (workspaceStatus === "no-repo") {
+    if (workspaceStatus === "no-repo" || !isArtifactPanelEnabled) {
       return;
     }
     if (isDesktopLayout) {
@@ -637,7 +620,7 @@ export function RepositoryShell({
       }
       return next;
     });
-  }, [isDesktopLayout, setIsArtifactPanelOpen, workspaceStatus]);
+  }, [isArtifactPanelEnabled, isDesktopLayout, setIsArtifactPanelOpen, workspaceStatus]);
 
   /**
    * Setter for the StatusPanel open state, shared by Radix Popover (desktop)
@@ -680,7 +663,7 @@ export function RepositoryShell({
   );
 
   useEffect(() => {
-    if (workspaceStatus === "no-repo") {
+    if (workspaceStatus === "no-repo" || !isArtifactPanelEnabled) {
       return;
     }
     const onKeyDown = (event: KeyboardEvent) => {
@@ -707,12 +690,11 @@ export function RepositoryShell({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleToggleArtifactPanel, workspaceStatus]);
+  }, [handleToggleArtifactPanel, isArtifactPanelEnabled, workspaceStatus]);
 
   const handleImported = useCallback(
     (_repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => {
       setActionError(null);
-      setAnalysisError(null);
       // The URL→state sync effect will pull `activeWorkspaceId` and the DB
       // preference into agreement with the new workspace once we navigate;
       // we don't need to setState here. Going via the URL also means the
@@ -786,8 +768,6 @@ export function RepositoryShell({
     handleSendMessage,
     isCancellingReply,
     handleCancelInFlightReply,
-    isRunningAnalysis,
-    handleRunAnalysis,
     isSyncing,
     handleSync,
     isDeletingThread,
@@ -802,13 +782,10 @@ export function RepositoryShell({
     selectedRepositoryId: effectiveSelectedRepositoryId,
     selectedThreadId: effectiveSelectedThreadId,
     threadToDelete,
-    analysisPrompt,
     chatInput,
     chatMode,
     setChatInput,
     setActionError,
-    setAnalysisError,
-    setActionNotice,
     onAfterDeleteThread: () => {
       // Stay inside the current workspace so the user keeps their context
       // (sidebar selection, repo chrome). The workspace-landing redirect
@@ -840,7 +817,6 @@ export function RepositoryShell({
     setThreadToDelete,
     setShowArchiveDialog,
     setShowPermanentDeleteDialog,
-    setShowAnalysisDialog,
   });
 
   // The chat surface is identical across breakpoints — only the layout
@@ -875,7 +851,7 @@ export function RepositoryShell({
       onSync={() => void handleSync()}
       isArtifactPanelOpen={isDesktopLayout ? isArtifactPanelOpen : isArtifactSheetOpen}
       onToggleArtifactPanel={handleToggleArtifactPanel}
-      showArtifactToggle
+      showArtifactToggle={isArtifactPanelEnabled}
       hasAttachedRepository={capabilities.attachedRepository !== null}
       availableRepositories={repositories ?? []}
       onImported={handleImported}
@@ -904,7 +880,6 @@ export function RepositoryShell({
         <TopBar
           repoDetail={repoDetail ?? undefined}
           isSyncing={isSyncing || isRepositorySyncing}
-          isInitialSetup={isInitialWorkspaceSetup}
           isStatusPanelOpen={isStatusOpen}
           onSetStatusPanelOpen={handleSetStatusOpen}
           onArchiveRepo={() => setShowArchiveDialog(true)}
@@ -917,13 +892,6 @@ export function RepositoryShell({
           onThreadMovedToWorkspace={handleThreadMovedToWorkspace}
           isDesktopLayout={isDesktopLayout}
           onSync={() => void handleSync()}
-          onRunAnalysis={() => {
-            if (!repoDetail || repoDetail.sandboxModeStatus.reasonCode !== "available") {
-              return;
-            }
-            setAnalysisError(null);
-            setShowAnalysisDialog(true);
-          }}
           onViewArtifact={handleSelectArtifact}
         />
 
@@ -961,36 +929,6 @@ export function RepositoryShell({
           <div className="border-b border-border px-6 py-3">
             <AppNotice title={actionNotice.title} message={actionNotice.message} tone="info" />
           </div>
-        ) : null}
-
-        {/*
-         * Workspace setup banner — visible while the very first import +
-         * deep-analysis pass is still in flight. Renders nothing once the
-         * workspace has its first `deep_analysis` artifact (subsequent
-         * re-syncs and re-analyses are signalled through the StatusPill
-         * instead). Same horizontal strip on desktop and mobile so the
-         * "is my workspace ready yet?" signal is in the same place
-         * regardless of breakpoint.
-         *
-         * The WorkspaceReadyBanner that follows takes over the moment
-         * the first artifact lands, giving the user an explicit "your
-         * workspace is ready" handoff with a one-click jump to the
-         * generated analysis. Dismissal is per-repo and persisted, so
-         * the celebration only fires once.
-         */}
-        {!isRepoArchived && repoDetail ? (
-          <>
-            <WorkspaceSetupBanner
-              repository={repoDetail.repository}
-              activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
-              hasDeepAnalysisArtifact={hasDeepAnalysisArtifact}
-            />
-            <WorkspaceReadyBanner
-              repository={repoDetail.repository}
-              latestDeepAnalysis={repoDetail.artifacts.find((artifact) => artifact.kind === "deep_analysis") ?? null}
-              onView={handleSelectArtifact}
-            />
-          </>
         ) : null}
 
         {/*
@@ -1041,13 +979,16 @@ export function RepositoryShell({
           ) : (
             <>
               {chatContainerNode}
-              {isDesktopLayout ? (
+              {isDesktopLayout && isArtifactPanelEnabled ? (
                 // Status lives in the top-bar Popover, so the inline rail is
                 // owned exclusively by the artifact panel — both surfaces can
                 // stay open at once. Width scales up at 2xl so mermaid diagrams
                 // and code blocks don't need horizontal scroll. Width (not
                 // transform) is animated so chat reflows alongside the panel
                 // — `will-change: width` keeps the 200ms toggle composited.
+                //
+                // Discuss mode opts out of the artifact panel entirely — see
+                // `isArtifactPanelEnabled` above for the rationale.
                 <div
                   aria-hidden={!(isArtifactPanelHydrated && isArtifactPanelOpen)}
                   data-state={isArtifactPanelHydrated && isArtifactPanelOpen ? "open" : "closed"}
@@ -1072,7 +1013,7 @@ export function RepositoryShell({
         </div>
       </SidebarInset>
 
-      {workspaceStatus !== "no-repo" && !isDesktopLayout ? (
+      {workspaceStatus !== "no-repo" && !isDesktopLayout && isArtifactPanelEnabled ? (
         <Drawer open={isArtifactSheetOpen} onOpenChange={setIsArtifactSheetOpen} aria-label="artifact-drawer">
           {/*
            * Fixed height (rather than Vaul snap points) so the inner flex
@@ -1117,18 +1058,10 @@ export function RepositoryShell({
                 sandboxModeStatus={repoDetail.sandboxModeStatus}
                 sandbox={repoDetail.sandbox}
                 jobs={repoDetail.jobs}
-                activeDeepAnalysisJob={repoDetail.activeDeepAnalysisJob}
                 artifacts={repoDetail.artifacts}
                 hasRemoteUpdates={repoDetail.hasRemoteUpdates}
                 isSyncing={isSyncing || isRepositorySyncing}
                 onSync={() => void handleSync()}
-                onRunAnalysis={() => {
-                  if (repoDetail.sandboxModeStatus.reasonCode !== "available") {
-                    return;
-                  }
-                  setAnalysisError(null);
-                  setShowAnalysisDialog(true);
-                }}
                 onViewArtifact={handleSelectArtifact}
                 onClose={() => setIsStatusOpen(false)}
               />
@@ -1169,31 +1102,6 @@ export function RepositoryShell({
         isPending={isPermanentDeletingRepo}
         onConfirm={() => void handlePermanentDeleteRepo()}
       />
-
-      {showAnalysisDialog ? (
-        <Suspense fallback={<DeepAnalysisDialogSkeleton />}>
-          <DeepAnalysisDialog
-            open={showAnalysisDialog}
-            onOpenChange={(open) => {
-              setShowAnalysisDialog(open);
-              if (!open) {
-                setAnalysisError(null);
-              }
-            }}
-            analysisPrompt={analysisPrompt}
-            onAnalysisPromptChange={setAnalysisPrompt}
-            sandboxModeStatus={
-              effectiveSandboxModeStatus ?? {
-                reasonCode: "missing_sandbox",
-                message: "A live sandbox is unavailable right now. Sync the repository to provision a fresh sandbox.",
-              }
-            }
-            errorMessage={analysisError}
-            isRunning={isRunningAnalysis}
-            onRun={handleRunAnalysis}
-          />
-        </Suspense>
-      ) : null}
     </>
   );
 }
@@ -1211,22 +1119,5 @@ function RepositoryMissingState({ onBack }: { onBack: () => void }) {
         </Button>
       </div>
     </div>
-  );
-}
-
-function DeepAnalysisDialogSkeleton() {
-  return (
-    <Dialog open>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Deep analysis</DialogTitle>
-          <DialogDescription>Loading the analysis workspace…</DialogDescription>
-        </DialogHeader>
-        <div className="space-y-3">
-          <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-24 w-full" />
-        </div>
-      </DialogContent>
-    </Dialog>
   );
 }

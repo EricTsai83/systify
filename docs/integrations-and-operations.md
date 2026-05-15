@@ -109,7 +109,7 @@ The webhook first verifies the payload with HMAC-SHA256 using `GITHUB_APP_WEBHOO
 
 ## Daytona
 
-Daytona provides the executable sandbox for repositories and is the core infrastructure behind import and deep analysis.
+Daytona provides the executable sandbox for repositories and is the core infrastructure behind import, Lab, and System Design generation.
 
 ### Daytona's role in the system
 
@@ -131,11 +131,11 @@ Each sandbox is created with:
 
 The Convex `sandboxes` table stores the local projection of the Daytona runtime so the system can:
 
-- determine deep mode availability
+- determine Lab and System Design generation availability
 - display sandbox summaries
 - execute later cleanup flows
 
-When a user requests deep analysis, the request path now also extends the sandbox TTL before the background action is queued. This keeps the sandbox alive long enough for `runDeepAnalysis` to start and reduces request-versus-sweep races.
+When a user clicks **Generate System Design**, the request path now also extends the sandbox TTL before the background action is queued. This keeps the sandbox alive long enough for the System Design Node action to start and reduces request-versus-sweep races.
 
 The import pipeline now writes the Convex-side sandbox row before calling Daytona create:
 
@@ -150,7 +150,7 @@ This removes the old crash window where Daytona could successfully create a sand
 After import finishes, the system stops the sandbox instead of deleting it immediately because:
 
 - indexed data has already been persisted into Convex, so continuous CPU use is unnecessary
-- deep analysis may still need a live repository environment
+- Lab and System Design generation may still need a live repository environment
 - Daytona can automatically wake the sandbox on later access
 
 This is Systify's trade-off between cost and functionality.
@@ -212,7 +212,7 @@ backend integration:
 
 - sandbox lifecycle operations (create/get/list/stop/delete)
 - sandbox filesystem reads used during indexing and snapshot collection
-- sandbox command execution used by focused/deep analysis flows
+- sandbox command execution used by Lab tools and the System Design generation flow
 
 Webhook trust is separate from API-key trust:
 
@@ -331,10 +331,10 @@ This sequence is intentional: the system rejects the cheapest failure paths firs
   - mutations: `createRepositoryImport`, `syncRepository`
   - override: `RATE_LIMIT_IMPORT_PER_HOUR`
   - error: `RATE_LIMIT_EXCEEDED`
-- `deepAnalysisRequests`
+- `systemDesignRequests`
   - default: `10 / hour`
-  - mutations: `requestDeepAnalysis`
-  - override: `RATE_LIMIT_DEEP_ANALYSIS_PER_HOUR`
+  - mutations: `requestSystemDesignGeneration`, `requestFailureModeAnalysis`
+  - override: `RATE_LIMIT_SYSTEM_DESIGN_PER_HOUR`
   - error: `RATE_LIMIT_EXCEEDED`
 - `chatRequestsPerOwner`
   - default: `30 / minute`, burst capacity `6`
@@ -348,7 +348,7 @@ This sequence is intentional: the system rejects the cheapest failure paths firs
   - error: `RATE_LIMIT_EXCEEDED`
 - `daytonaRequestsGlobal`
   - default: `30 / hour`, sharded
-  - mutations: `createRepositoryImport`, `syncRepository`, `requestDeepAnalysis`
+  - mutations: `createRepositoryImport`, `syncRepository`, `requestFailureModeAnalysis`, and `requestSystemDesignGeneration` *only when the request includes at least one LLM-backed kind*. Heuristic-only Library System Design requests skip this bucket because they do not touch Daytona.
   - override: `RATE_LIMIT_DAYTONA_GLOBAL_PER_HOUR`
   - error: `RATE_LIMIT_EXCEEDED`
 
@@ -357,20 +357,26 @@ This sequence is intentional: the system rejects the cheapest failure paths firs
 - repository import / sync
   - guard source: `repositories.importStatus`
   - error: `OPERATION_ALREADY_IN_PROGRESS`
-- deep analysis
-  - guard source: active `jobs` rows where `kind === 'deep_analysis'`, `status in ('queued', 'running')`, and `leaseExpiresAt > now`
-  - lease override: `DEEP_ANALYSIS_JOB_LEASE_MS`
+- Library System Design generation
+  - guard source: active `jobs` rows where `kind === 'system_design'`, `status in ('queued', 'running')`, `leaseExpiresAt > now`, and `requestedCommand` does **not** start with `failure_mode_analysis:`. The FMA filter keeps a thread-scoped FMA job from blocking a repo-scoped Library generation.
+  - lease override: `SYSTEM_DESIGN_JOB_LEASE_MS`
+  - behavior: **idempotent** — returns the existing `jobId` instead of throwing, so the dialog can converge on the same job from a duplicate submit without an error toast.
+- Failure Mode Analysis
+  - guard source: active `jobs` rows where `kind === 'system_design'`, `status in ('queued', 'running')`, `leaseExpiresAt > now`, and `threadId === <current thread>`. Thread-scoped; an active Library System Design on the same repository does not block FMA.
+  - lease override: `SYSTEM_DESIGN_JOB_LEASE_MS`
   - error: `OPERATION_ALREADY_IN_PROGRESS`
 - chat replies
   - guard source: active `jobs` rows where `kind === 'chat'`, `status in ('queued', 'running')`, and `leaseExpiresAt > now`
   - lease override: `CHAT_JOB_LEASE_MS`
   - error: `OPERATION_ALREADY_IN_PROGRESS`
 
+The `system_design` job kind is shared across Library generation and FMA. Both write `leaseExpiresAt` at insert time so the stale-job sweep can recover a row whose action never ran; the recovery branch dispatches on the `failure_mode_analysis:` `requestedCommand` prefix to pick the correct cleanup mutation.
+
 ### Recovery behavior
 
 - `crons.ts` runs `reconcileStaleInteractiveJobs` every 5 minutes
 - expired chat leases mark both the `jobs` row and assistant `messages` row as `failed`
-- expired deep-analysis leases mark the `jobs` row as `failed`
+- expired System Design generation leases mark the `jobs` row as `failed`
 - structured Convex errors include `code`, `bucket`, `retryAfterMs`, and `message` so the frontend can show stable user-facing text
 
 ## Environment Variable Layers
@@ -399,14 +405,14 @@ These values must exist in the Convex environment, not frontend `.env.local`:
 - `DAYTONA_WEBHOOK_SIGNING_SECRET`
 - `DAYTONA_WEBHOOK_ORGANIZATION_ID`
 - `RATE_LIMIT_IMPORT_PER_HOUR`
-- `RATE_LIMIT_DEEP_ANALYSIS_PER_HOUR`
+- `RATE_LIMIT_SYSTEM_DESIGN_PER_HOUR`
 - `RATE_LIMIT_CHAT_PER_MINUTE`
 - `RATE_LIMIT_CHAT_BURST_CAPACITY`
 - `RATE_LIMIT_GLOBAL_CHAT_PER_MINUTE`
 - `RATE_LIMIT_GLOBAL_CHAT_BURST_CAPACITY`
 - `RATE_LIMIT_DAYTONA_GLOBAL_PER_HOUR`
 - `CHAT_JOB_LEASE_MS`
-- `DEEP_ANALYSIS_JOB_LEASE_MS`
+- `SYSTEM_DESIGN_JOB_LEASE_MS`
 - `DAYTONA_AUTO_STOP_MINUTES`
 - `DAYTONA_AUTO_ARCHIVE_MINUTES`
 - `DAYTONA_AUTO_DELETE_MINUTES`

@@ -47,10 +47,10 @@ type FolderPickerProps = {
  *      picker to the new id so the user can confirm the dialog without a
  *      second round-trip.
  *
- * The repo level kinds (manifest, deep_analysis, …) bypass this picker
- * entirely — they auto-place at the navigator's "Repository" root in the
- * write path, so the picker is only mounted for feature-level kinds where
- * folder placement is meaningful.
+ * The repo level kinds (manifest, architecture_overview, …) bypass this
+ * picker entirely — they auto-place at the navigator's "Repository" root
+ * in the write path, so the picker is only mounted for feature-level kinds
+ * where folder placement is meaningful.
  */
 export function FolderPicker({ repositoryId, value, onChange, hint, className, disabled }: FolderPickerProps) {
   const folders = useQuery(api.artifactFolders.listByRepository, repositoryId ? { repositoryId } : "skip");

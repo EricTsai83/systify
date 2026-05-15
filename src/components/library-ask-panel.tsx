@@ -5,7 +5,6 @@ import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { MessageBubble } from "@/components/chat-message";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { LibraryAskHistoryDialog } from "@/components/library-ask-history-dialog";
 import { LibraryAskThreadTabs } from "@/components/library-ask-thread-tabs";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -64,7 +63,6 @@ export function LibraryAskPanel({
   const [isStarting, setIsStarting] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<ThreadId | null>(null);
   const [isDeletingThread, setIsDeletingThread] = useState(false);
   const submissionLockRef = useRef(false);
@@ -236,8 +234,11 @@ export function LibraryAskPanel({
         onSelectTab={onSelectThread}
         onCloseTab={handleCloseTab}
         onNewThread={() => void handleCreateThread()}
-        onOpenHistory={() => setIsHistoryOpen(true)}
         isCreating={isCreatingThread}
+        threads={threads}
+        onSelectFromHistory={handleSelectFromHistory}
+        onTogglePin={handleTogglePin}
+        onDeleteThread={setPendingDeleteThreadId}
       />
 
       <div className="border-b border-border bg-amber-500/5 px-4 py-3">
@@ -290,16 +291,6 @@ export function LibraryAskPanel({
           </Button>
         </div>
       </form>
-
-      <LibraryAskHistoryDialog
-        open={isHistoryOpen}
-        onOpenChange={setIsHistoryOpen}
-        threads={threads}
-        activeThreadId={threadId}
-        onSelectThread={handleSelectFromHistory}
-        onTogglePin={handleTogglePin}
-        onDeleteThread={setPendingDeleteThreadId}
-      />
 
       <ConfirmDialog
         open={pendingDeleteThreadId !== null}

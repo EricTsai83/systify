@@ -7,7 +7,7 @@ import type { ThreadId, WorkspaceId } from "@/lib/types";
  * The Ask thread tab strip is an IDE-style *open set*, not the full thread
  * list: tabs are threads the user has explicitly opened, persisted to
  * localStorage so they survive a reload. The full searchable history lives
- * in `LibraryAskHistoryDialog`; the *active* tab is the page-owned `?ask=`
+ * in `LibraryAskHistoryPopover`; the *active* tab is the page-owned `?ask=`
  * URL param.
  *
  * Tabs cache `{ id, title }` rather than bare ids because `listThreads` is

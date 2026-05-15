@@ -94,7 +94,7 @@ export interface ServiceModeEligibility {
   readonly askReadiness: { canBind: boolean; reason: ServiceModeDisabled | null };
   /** Convenience flag — frontend uses it to short-circuit "import a repo" CTAs. */
   readonly hasAttachedRepo: boolean;
-  /** Convenience flag — frontend uses it to gate first-deep-analysis UI. */
+  /** Convenience flag — frontend uses it to gate first-system-design UI. */
   readonly hasAtLeastOneArtifact: boolean;
 }
 
@@ -235,11 +235,11 @@ function deriveLabRetryAfterMs(
  * the resolver used) and the optional `retryAfterMs` (only meaningful for
  * cost-cap codes).
  *
- * Library disabled-reason codes derive from `(hasAttachedRepo,
- * hasAtLeastOneArtifact)`; the resolver never produces a third Library
- * disabled reason, so the pair `library_no_repo / library_no_artifact`
- * is exhaustive. Lab disabled-reason codes derive via
- * {@link deriveLabDisabledCode} from the (sandboxStatus, gates) matrix.
+ * Library disabled-reason codes collapse to `no_repository_attached` —
+ * the only reason the resolver disables Library after the
+ * `hasAtLeastOneArtifact` gate was removed. Lab disabled-reason codes
+ * derive via {@link deriveLabDisabledCode} from the (sandboxStatus,
+ * gates) matrix.
  *
  * The resolver may surface a mode as disabled even when the message is
  * unknown to us — we keep that contract by wrapping any unfamiliar
@@ -265,13 +265,12 @@ function augmentResolution(
   // Discuss is always available — the resolver never disables it. No code
   // needed; the `disabledReasons.discuss` slot stays unset.
 
-  // Library
+  // Library — only one disabled reason after the no-artifact gate was
+  // dropped: a missing repository. Empty repos land on the Library page
+  // and surface the Generate System Design CTA from the empty state.
   if (resolution.disabledReasons.library !== undefined) {
-    const code: ServiceModeDisabledReasonCode = !inputs.hasAttachedRepo
-      ? "no_repository_attached"
-      : "library_no_artifact";
     disabledReasons.library = {
-      code,
+      code: "no_repository_attached",
       message: resolution.disabledReasons.library,
     };
   }
@@ -506,5 +505,17 @@ export async function assertServiceModeEligible(
     tokenIdentifier: identity.tokenIdentifier,
     now: Date.now(),
   });
+  // Library mode is read-mostly: navigation is available whenever a repo is
+  // attached (the empty Library page surfaces a Generate System Design CTA),
+  // but the write surface — Library Ask — still needs at least one indexed
+  // artifact to retrieve against. Defer to askReadiness so the write-path
+  // contract stays tied to the actual RAG precondition.
+  if (args.mode === "library" && !verdict.askReadiness.canBind && verdict.askReadiness.reason) {
+    throw new ConvexError({
+      code: verdict.askReadiness.reason.code,
+      mode: "library",
+      message: verdict.askReadiness.reason.message,
+    });
+  }
   throwIfDisabled(verdict, args.mode);
 }

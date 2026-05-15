@@ -9,7 +9,7 @@ This document explains Systify's core domain entities, data responsibility bound
 The current data model has three clear centers:
 
 - **Code facts** — imports pin concrete trees (`imports.commitSha`), then `repoFiles` / `repoChunks` indexed from that snapshot. This is what Lab tools and Sandbox execution ultimately reason about.
-- **Narratives** — `artifacts` hold longer-lived prose (summaries, deep analysis, ADRs). They link to repos (and optionally threads) via `repositoryId` / `threadId` and citations in chat—not a substitute for chunk-level grounding.
+- **Narratives** — `artifacts` hold longer-lived prose (System Design overviews, ADRs, notes). They link to repos (and optionally threads) via `repositoryId` / `threadId` and citations in chat—not a substitute for chunk-level grounding.
 - **Workspace shell** — `workspaces` are the UX container; attaching a repo means `workspaces.repositoryId` is populated so Sandbox/Lab/import share the **same workspace binding**.
 - **Tenant isolation** — `ownerTokenIdentifier` scopes every viewer-owned row.
 - **Workflow progress** — `imports`, `jobs`, `sandboxes`, `messages`, `labSessions` carry lifecycle fields.
@@ -75,7 +75,6 @@ flowchart TD
 
 - `latestImportId`
 - `latestImportJobId`
-- `latestAnalysisJobId`
 - `latestSandboxId`
 - `defaultThreadId`
 
@@ -113,7 +112,7 @@ In other words, `repositories` is the long-lived entity, while `imports` is a on
 - `ttlExpiresAt`
 - auto-stop, auto-archive, and auto-delete intervals
 
-Its existence lets the system distinguish between a live sandbox that can support deep analysis and a repository that has only been indexed into static data.
+Its existence lets the system distinguish between a live sandbox that can support System Design generation or Lab and a repository that has only been indexed into static data.
 
 ### `jobs`
 
@@ -121,7 +120,7 @@ Its existence lets the system distinguish between a live sandbox that can suppor
 
 - `import`
 - `index`
-- `deep_analysis`
+- `system_design`
 - `chat`
 - `cleanup`
 
@@ -145,7 +144,11 @@ Because of this, the UI does not need to know the internal implementation of eve
 - `architecture_diagram`
 - `entrypoints`
 - `dependency_overview`
-- `deep_analysis`
+- `data_model_overview`
+- `api_surface_overview`
+- `deployment_overview`
+- `security_overview`
+- `operations_overview`
 - `risk_report`
 - `adr`
 - `failure_mode_analysis`
@@ -156,8 +159,8 @@ Because of this, the UI does not need to know the internal implementation of eve
 
 This table plays two roles:
 
-1. Initial knowledge snapshots produced alongside import pipelines (titles/summaries/bodies seeded from heuristic or sandbox writers).
-2. Reusable prose from deeper analysis jobs or user-authored Library notes.
+1. Reusable knowledge produced by **System Design generation**: the user opts into this from the empty Library page, and the sandbox-backed job writes user-selected artifact kinds (defaults: `manifest`, `readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`). Import itself no longer seeds artifact bodies — it only seeds the default folder tree so the Library has a place to put them.
+2. Additional prose authored later by the user as Library notes, or produced by future per-folder generation jobs.
 
 Artifacts may optionally carry **`alignedImportCommitSha`**: best-effort record of which import revision the prose was authored against—used alongside Lab verification timestamps to distinguish “checked against sandbox” freshness from **import snapshot drift**.
 

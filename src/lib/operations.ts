@@ -27,7 +27,7 @@ const JOB_TITLES: Record<Doc<"jobs">["kind"], string> = {
   import: "Repository sync",
   index: "Repository indexing",
   chat: "Assistant reply",
-  deep_analysis: "Deep analysis",
+  system_design: "System design",
   cleanup: "Repository cleanup",
 };
 
@@ -82,7 +82,7 @@ export function presentOperation(job: Doc<"jobs">): PresentedOperation {
  * active-job badge — see the design doc Surface 3 ("badge only counts
  * user-relevant active jobs, not system maintenance").
  */
-const USER_RELEVANT_JOB_KINDS: ReadonlySet<Doc<"jobs">["kind"]> = new Set(["import", "index", "chat", "deep_analysis"]);
+const USER_RELEVANT_JOB_KINDS: ReadonlySet<Doc<"jobs">["kind"]> = new Set(["import", "index", "chat", "system_design"]);
 
 /**
  * UX-rule-of-thumb gate: only background work the user explicitly cares about
@@ -109,7 +109,6 @@ export function isUserRelevantJob(job: Doc<"jobs">) {
 export function formatArtifactKind(kind: Doc<"artifacts">["kind"]) {
   const labels: Partial<Record<Doc<"artifacts">["kind"], string>> = {
     manifest: "Repository manifest",
-    deep_analysis: "Deep analysis",
     architecture_diagram: "Architecture diagram",
     adr: "ADR",
     failure_mode_analysis: "Failure mode",
@@ -139,7 +138,7 @@ function humanizeToken(value: string) {
 // ---------------------------------------------------------------------------
 // Surface descriptors for the Repository Status Deck.
 // Each surface answers one of the three "can I use this repo right now?"
-// questions — repository intelligence, live sandbox, deep analysis. We keep
+// questions — repository intelligence, live sandbox, system design. We keep
 // the (title, description, tone) decision in one module so the StatusDeck,
 // the chat empty-state, and any future status surfaces all read the same
 // vocabulary. Pure functions, no React deps — easy to unit-test and to
@@ -202,7 +201,7 @@ export function presentSandboxSurface(input: SandboxSurfaceInput): SandboxSurfac
   if (reasonCode === "available") {
     return {
       title: "Sandbox ready",
-      description: "Sandbox-backed chat, scans, and deep analysis can inspect the live filesystem.",
+      description: "Sandbox-backed chat, scans, and system design can inspect the live filesystem.",
       tone: "success",
       ttlExpiresAt: input.sandbox?.ttlExpiresAt,
     };
@@ -235,36 +234,5 @@ export function presentSandboxSurface(input: SandboxSurfaceInput): SandboxSurfac
     title: "Sandbox unavailable",
     description: input.sandboxModeStatus.message ?? "Provision or refresh the sandbox to unlock live analysis.",
     tone: "warning",
-  };
-}
-
-export type DeepAnalysisSurfaceInput = {
-  activeJob: Doc<"jobs"> | null;
-  latestArtifact: Doc<"artifacts"> | undefined;
-};
-
-export function presentDeepAnalysisSurface(input: DeepAnalysisSurfaceInput): SurfaceStatus & {
-  lastCompletedAt?: number;
-} {
-  if (input.activeJob) {
-    const operation = presentOperation(input.activeJob);
-    return {
-      title: operation.stageLabel,
-      description: "A repository-wide analysis is running in the background.",
-      tone: "active",
-    };
-  }
-  if (input.latestArtifact) {
-    return {
-      title: "Latest analysis ready",
-      description: input.latestArtifact.summary,
-      tone: "success",
-      lastCompletedAt: input.latestArtifact._creationTime,
-    };
-  }
-  return {
-    title: "No analysis yet",
-    description: "Run a reusable source-tree analysis for future conversations.",
-    tone: "neutral",
   };
 }

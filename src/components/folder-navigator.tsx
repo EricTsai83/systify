@@ -43,8 +43,8 @@ const EMPTY_ARTIFACTS: NavigatorArtifact[] = [];
 type FolderNavigatorProps = {
   repositoryId: RepositoryId;
   /**
-   * Repository-scoped artifacts (manifest, deep_analysis, …) plus any
-   * feature-level artifacts that already carry a `folderId` for this repo.
+   * Repository-scoped artifacts (manifest, architecture_overview, …) plus
+   * any feature-level artifacts that already carry a `folderId` for this repo.
    * Sourced from `repoDetail.artifacts` so the panel doesn't have to
    * subscribe a second query — the shell already pulls this list.
    */
@@ -67,9 +67,9 @@ type FolderNavigatorProps = {
  * intelligence + Thread outputs" sectioning of the original
  * `ArtifactPanel`. Three logical sections at the root:
  *
- *   1. **Repository** — repo-level kinds (manifest, deep_analysis, …)
- *      pinned at the top. There is exactly one canonical row per kind here
- *      (latest version), so this section reads as "the one-page summary
+ *   1. **Repository** — repo-level kinds (manifest, architecture_overview,
+ *      …) pinned at the top. There is exactly one canonical row per kind
+ *      here (latest version), so this section reads as "the one-page summary
  *      of this repo".
  *
  *   2. **Folders** — user-created folders. Each folder collapses; its

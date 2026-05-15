@@ -10,15 +10,15 @@ import schema from "./schema";
 const modules = import.meta.glob("./**/*.ts");
 
 describe("chat reply context", () => {
-  test("sandbox mode (Plan 04) returns no chunks and only deep_analysis artifacts", async () => {
+  test("sandbox mode (Plan 04) returns no chunks and no pre-loaded artifacts", async () => {
     // Plan 04 contract: sandbox mode is now LLM-driven retrieval — the
     // model runs `read_file` / `list_dir` against the live sandbox via
     // tools. Pre-loading indexed `repoChunks` (the legacy behavior) is
     // wasted work and would silently outvote tool results when the index
-    // is stale. We still surface deep-analysis artifacts because they
-    // summarise design decisions the model can't trivially re-derive
-    // from the source tree alone — but other artifact kinds (manifests,
-    // entrypoints, dependency overviews, …) are excluded.
+    // is stale. All artifact kinds (including system-design artifacts) are
+    // excluded from context.artifacts in sandbox mode — the model retrieves
+    // live source state via tools rather than cached summaries to avoid
+    // divergence when the index is stale.
     const ownerTokenIdentifier = "user|sandbox-plan-04-context";
     const t = convexTest(schema, modules);
 
@@ -97,8 +97,9 @@ describe("chat reply context", () => {
         content: "const value = 1;",
       });
 
-      // Manifest artifact (NOT deep_analysis) — must be excluded from
-      // sandbox-mode artifacts since Plan 04 narrows to deep_analysis.
+      // Manifest artifact retained as a control row — sandbox mode no
+      // longer pre-loads any artifacts (design context is read on demand
+      // via tools), so this row must NOT appear in `context.artifacts`.
       await ctx.db.insert("artifacts", {
         repositoryId,
         jobId: latestJobId,
@@ -110,29 +111,6 @@ describe("chat reply context", () => {
         source: "heuristic",
         version: 1,
       });
-      // Deep-analysis artifact — must be included.
-      const deepJobId = await ctx.db.insert("jobs", {
-        repositoryId,
-        ownerTokenIdentifier,
-        kind: "deep_analysis",
-        status: "completed",
-        stage: "completed",
-        progress: 1,
-        costCategory: "deep_analysis",
-        triggerSource: "user",
-      });
-      await ctx.db.insert("artifacts", {
-        repositoryId,
-        jobId: deepJobId,
-        ownerTokenIdentifier,
-        kind: "deep_analysis",
-        title: "Deep analysis (included)",
-        summary: "Architectural deep dive",
-        contentMarkdown: "deep body",
-        source: "sandbox",
-        version: 1,
-      });
-
       await ctx.db.patch(repositoryId, {
         latestImportId,
         latestImportJobId: latestJobId,
@@ -155,8 +133,9 @@ describe("chat reply context", () => {
 
     // Plan 04 contract — chunks always [] in sandbox mode.
     expect(context.chunks).toEqual([]);
-    // Only deep_analysis kind survives the sandbox-mode artifact filter.
-    expect(context.artifacts.map((artifact) => artifact.title)).toEqual(["Deep analysis (included)"]);
+    // Sandbox mode no longer pre-loads artifacts; design context is read on
+    // demand through sandbox tools instead.
+    expect(context.artifacts).toEqual([]);
     // No sandbox row exists yet, so sandboxTooling stays undefined.
     expect(context.sandboxTooling).toBeUndefined();
   });
@@ -868,11 +847,15 @@ describe("chat reply context", () => {
     expect(context.artifacts[0]?.title).toBe("Architecture diagram");
   });
 
-  test("ask mode uses repository-backed artifacts instead of the discuss fallback", async () => {
+  test("ask mode skips the prompt-level artifact pre-load (retrieval lives on the chunks path)", async () => {
+    // Library Ask retrieves through `artifactChunks` (lexical + embedding
+    // RAG) rather than pre-loading whole artifacts into the prompt. Ask is
+    // therefore a non-docs mode that produces an empty `artifacts` array —
+    // the chunks path is the authoritative context source.
     const ownerTokenIdentifier = "user|ask-repo-backed-context";
     const t = convexTest(schema, modules);
 
-    const { threadId, userMessageId, expectedArtifactId } = await t.run(async (ctx) => {
+    const { threadId, userMessageId } = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
@@ -909,17 +892,6 @@ describe("chat reply context", () => {
         source: "heuristic",
         version: 1,
       });
-      const expectedArtifactId = await ctx.db.insert("artifacts", {
-        repositoryId,
-        threadId,
-        ownerTokenIdentifier,
-        kind: "deep_analysis",
-        title: "Deep analysis for Ask",
-        summary: "Grounded artifact summary",
-        contentMarkdown: "deep analysis body",
-        source: "sandbox",
-        version: 1,
-      });
 
       const userMessageId = await ctx.db.insert("messages", {
         repositoryId,
@@ -931,14 +903,14 @@ describe("chat reply context", () => {
         content: "What do the artifacts say?",
       });
 
-      return { threadId, userMessageId, expectedArtifactId };
+      return { threadId, userMessageId };
     });
 
     const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
     expect(context.mode).toBe("ask");
     expect(context.sourceRepoFullName).toBe("acme/ask-context");
-    expect(context.artifacts.map((artifact) => artifact.id)).toEqual([expectedArtifactId]);
+    expect(context.artifacts).toEqual([]);
     expect(context.chunks).toEqual([]);
     expect(context.sandboxTooling).toBeUndefined();
   });

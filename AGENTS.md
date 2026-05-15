@@ -10,7 +10,7 @@ Convex agent skills for common tasks can be installed by running `npx convex ai-
 
 ## Project Snapshot
 
-Systify is an open source repository analysis app. Users sign in with WorkOS, connect a GitHub App, import repositories into Daytona sandboxes, index repository knowledge into Convex, and explore the result through (a) a three-mode chat — `discuss` (no repo), `docs` (design artifacts), `sandbox` (live source tree) — and (b) `Deep analysis`, a sandbox-backed background job that writes a reusable `deep_analysis` artifact for later chat replies to cite.
+Systify is an open source repository analysis app. Users sign in with WorkOS, connect a GitHub App, import repositories into Daytona sandboxes, index repository knowledge into Convex, and explore the result through (a) a three-mode chat — `discuss` (no repo), `docs` (design artifacts), `sandbox` (live source tree) — and (b) `Generate System Design`, a sandbox-backed background job that writes reusable System Design artifacts (manifest, README summary, architecture / data model / API / deployment / security / operations overviews) into the Library for later chat replies to cite.
 
 This is an early-access Bun project. Prefer direct, maintainable changes that improve correctness, reliability, and operability.
 

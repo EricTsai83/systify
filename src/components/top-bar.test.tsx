@@ -113,7 +113,6 @@ function makeRepoDetail(overrides: Partial<TopBarRepoDetail> = {}): TopBarRepoDe
     fileCount: 12,
     fileCountLabel: "12",
     jobs: [],
-    activeDeepAnalysisJob: null,
     artifacts: [],
     ...overrides,
   };
@@ -127,7 +126,6 @@ function createTopBarProps(overrides: Partial<TopBarTestProps> = {}): TopBarTest
     isAttachedRepositoryLoading: false,
     availableRepositories: [],
     isSyncing: false,
-    isInitialSetup: false,
     isStatusPanelOpen: false,
     onSetStatusPanelOpen: vi.fn(),
     onArchiveRepo: vi.fn(),
@@ -136,7 +134,6 @@ function createTopBarProps(overrides: Partial<TopBarTestProps> = {}): TopBarTest
     onThreadMovedToWorkspace: vi.fn(),
     isDesktopLayout: true,
     onSync: vi.fn(),
-    onRunAnalysis: vi.fn(),
     onViewArtifact: vi.fn(),
     ...overrides,
   };

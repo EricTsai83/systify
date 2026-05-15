@@ -12,13 +12,7 @@ import {
   stopSandbox,
 } from "./daytona";
 import { getInstallationAccessToken } from "./githubAppNode";
-import {
-  buildRepositoryManifest,
-  createArchitectureArtifactMarkdown,
-  createChunkRecords,
-  createManifestArtifactMarkdown,
-  createRepoFileRecords,
-} from "./lib/repoAnalysis";
+import { buildRepositoryManifest, createChunkRecords, createRepoFileRecords } from "./lib/repoAnalysis";
 import { logErrorWithId, logInfo, logWarn } from "./lib/observability";
 
 const PERSIST_BATCH_SIZE = 200;
@@ -219,35 +213,6 @@ export const runImportPipeline = internalAction({
         jobId: importContext.jobId,
         commitSha: cloneResult.commitSha,
         branch: cloneResult.branch,
-        artifacts: [
-          {
-            kind: "manifest" as const,
-            title: "Repository Manifest",
-            summary: manifest.summary,
-            contentMarkdown: createManifestArtifactMarkdown(manifest),
-            source: "heuristic" as const,
-          },
-          {
-            kind: "readme_summary" as const,
-            title: "README Summary",
-            summary: summarizeReadme(snapshot.readmeContent),
-            contentMarkdown:
-              snapshot.readmeContent && snapshot.readmePath
-                ? `# README Summary\n\nSource: \`${snapshot.readmePath}\`\n\n${snapshot.readmeContent.slice(0, 6000)}`
-                : "# README Summary\n\nNo README detected during import.",
-            source: "heuristic" as const,
-          },
-          {
-            kind: "architecture_overview" as const,
-            title: "Architecture Overview",
-            summary: "Initial architecture map created from repository layout.",
-            contentMarkdown: createArchitectureArtifactMarkdown(manifest, {
-              ...snapshot,
-              files: fileRecords,
-            }),
-            source: "heuristic" as const,
-          },
-        ],
       })) as { kind: "ready" } | { kind: "completed" } | { kind: "cancelled" };
 
       if (headerResult.kind !== "ready") {

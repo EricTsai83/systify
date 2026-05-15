@@ -20,13 +20,10 @@ export function useRepositoryActions({
   selectedRepositoryId,
   selectedThreadId,
   threadToDelete,
-  analysisPrompt,
   chatInput,
   chatMode,
   setChatInput,
   setActionError,
-  setAnalysisError,
-  setActionNotice,
   onAfterDeleteThread,
   onAfterArchiveRepo,
   onAfterRestoreRepo,
@@ -34,18 +31,14 @@ export function useRepositoryActions({
   setThreadToDelete,
   setShowArchiveDialog,
   setShowPermanentDeleteDialog,
-  setShowAnalysisDialog,
 }: {
   selectedRepositoryId: RepositoryId | null;
   selectedThreadId: ThreadId | null;
   threadToDelete: ThreadId | null;
-  analysisPrompt: string;
   chatInput: string;
   chatMode: ChatMode;
   setChatInput: (value: string) => void;
   setActionError: (value: string | null) => void;
-  setAnalysisError: (value: string | null) => void;
-  setActionNotice?: (value: { title: string; message: string } | null) => void;
   onAfterDeleteThread: (deletedThreadId: ThreadId) => void;
   onAfterArchiveRepo: () => void;
   onAfterRestoreRepo: () => void;
@@ -53,10 +46,8 @@ export function useRepositoryActions({
   setThreadToDelete: (value: ThreadId | null) => void;
   setShowArchiveDialog: (value: boolean) => void;
   setShowPermanentDeleteDialog: (value: boolean) => void;
-  setShowAnalysisDialog: (value: boolean) => void;
 }) {
   const navigate = useNavigate();
-  const requestDeepAnalysis = useMutation(api.analysis.requestDeepAnalysis);
   const sendMessageMutation = useMutation(api.chat.send.sendMessage);
   const cancelInFlightReplyMutation = useMutation(api.chat.cancel.cancelInFlightReply);
   const syncRepositoryMutation = useMutation(api.repositories.syncRepository);
@@ -96,34 +87,6 @@ export function useRepositoryActions({
         setActionError(toUserErrorMessage(error, "Failed to stop the reply."));
       }
     }, [cancelInFlightReplyMutation, selectedThreadId, setActionError]),
-  );
-
-  const [isRunningAnalysis, handleRunAnalysis] = useAsyncCallback(
-    useCallback(async () => {
-      if (!selectedRepositoryId) return;
-      setActionError(null);
-      setAnalysisError(null);
-      try {
-        await requestDeepAnalysis({ repositoryId: selectedRepositoryId, prompt: analysisPrompt });
-        setShowAnalysisDialog(false);
-        setActionNotice?.({
-          title: "Deep analysis queued",
-          message: "Track progress in the Activity timeline above.",
-        });
-      } catch (error) {
-        const message = toUserErrorMessage(error, "Failed to start deep analysis.");
-        setActionError(message);
-        setAnalysisError(message);
-      }
-    }, [
-      analysisPrompt,
-      requestDeepAnalysis,
-      selectedRepositoryId,
-      setActionError,
-      setActionNotice,
-      setAnalysisError,
-      setShowAnalysisDialog,
-    ]),
   );
 
   const [isSyncing, handleSync] = useAsyncCallback(
@@ -230,8 +193,6 @@ export function useRepositoryActions({
     handleSendMessage,
     isCancellingReply,
     handleCancelInFlightReply,
-    isRunningAnalysis,
-    handleRunAnalysis,
     isSyncing,
     handleSync,
     isDeletingThread,

@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { internalQuery } from "../_generated/server";
-import { MAX_CONTEXT_ARTIFACTS, MAX_CONTEXT_MESSAGES } from "../lib/constants";
+import { MAX_CONTEXT_MESSAGES } from "../lib/constants";
 import type { ExtendedChatMode } from "./prompting";
 
 export type ReplyContext = {
@@ -91,7 +91,6 @@ const DOCS_ARTIFACT_KINDS: Array<Doc<"artifacts">["kind"]> = [
   "architecture_diagram",
   "adr",
   "failure_mode_analysis",
-  "deep_analysis",
   "architecture_overview",
   "design_review",
   "migration_plan",
@@ -314,24 +313,12 @@ export const getReplyContext = internalQuery({
     // `read_file` / `list_dir` tools to fetch exactly what it needs from the
     // live sandbox. Pre-loading indexed `repoChunks` is therefore wasted
     // work (and would silently outvote tool results when the index is
-    // stale). We still surface deep-analysis artifacts because they
-    // summarise design decisions the model can't trivially re-derive from
-    // the source tree alone.
+    // stale). Design context for sandbox/lab modes is acquired on demand
+    // through tool reads of the System Design artifacts.
     //
-    // `docs` mode keeps its existing artifact-only retrieval. The
-    // legacy "kitchen sink" branch (everything from latestImportJob +
-    // deep_analysis) is no longer reachable: every code path is now an
-    // explicit per-mode contract.
-    const artifacts =
-      effectiveMode === "docs"
-        ? await loadLatestDocsArtifacts(ctx, repository._id)
-        : await ctx.db
-            .query("artifacts")
-            .withIndex("by_repositoryId_and_kind", (q) =>
-              q.eq("repositoryId", repository._id).eq("kind", "deep_analysis"),
-            )
-            .order("desc")
-            .take(MAX_CONTEXT_ARTIFACTS);
+    // `docs` mode keeps its existing artifact-only retrieval. Every code
+    // path is now an explicit per-mode contract — no implicit fallback.
+    const artifacts = effectiveMode === "docs" ? await loadLatestDocsArtifacts(ctx, repository._id) : [];
 
     // Phase 4 rollout: `docs` mode is artifact-only retrieval and `sandbox`
     // mode is tool-driven retrieval. Both intentionally skip pre-loaded

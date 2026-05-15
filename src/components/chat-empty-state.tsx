@@ -117,14 +117,9 @@ function OwlAsciiArt() {
 }
 
 /**
- * Empty-state hint for repo-attached threads with no messages yet. The
- * deep-analysis "Start analysis" CTA that used to live here has been
- * retired — the first analysis is now scheduled automatically as part of
- * the import flow ({@link convex/analysis.ts:scheduleAutoDeepAnalysis}),
- * so the {@link WorkspaceSetupBanner} below the top-bar is the user's
- * single source of truth for "is my workspace ready?". Keeping a duplicate
- * CTA here would split the user's attention between two surfaces that
- * trigger the same job.
+ * Empty-state hint for repo-attached threads with no messages yet. Users
+ * generate System Design artifacts from the Library page; the chat shell
+ * stays focused on conversation-starter affordances.
  */
 export function EmptyChatHint() {
   return (

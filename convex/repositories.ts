@@ -24,7 +24,6 @@ import {
 } from "./lib/rateLimit";
 
 const FILE_COUNT_DISPLAY_LIMIT = 400;
-const REPOSITORY_DETAIL_ARTIFACT_LIMIT = 20;
 const REPOSITORY_DETAIL_IMPORT_ARTIFACT_LIMIT = 10;
 const REPOSITORY_DELETE_RETRY_MS = 5_000;
 const STREAM_CHUNK_DRAIN_PASS_LIMIT = 8;
@@ -203,57 +202,17 @@ export const getRepositoryDetail = query({
 
     const isArchived = isRepositoryArchived(repository);
 
-    const currentImportArtifacts = repository.latestImportJobId
+    const artifacts = repository.latestImportJobId
       ? await ctx.db
           .query("artifacts")
           .withIndex("by_jobId", (q) => q.eq("jobId", repository.latestImportJobId!))
           .take(REPOSITORY_DETAIL_IMPORT_ARTIFACT_LIMIT)
       : [];
-    const remainingArtifactSlots = Math.max(0, REPOSITORY_DETAIL_ARTIFACT_LIMIT - currentImportArtifacts.length);
-    const recentDeepAnalysisArtifacts =
-      remainingArtifactSlots > 0
-        ? await ctx.db
-            .query("artifacts")
-            .withIndex("by_repositoryId_and_kind", (q) =>
-              q.eq("repositoryId", args.repositoryId).eq("kind", "deep_analysis"),
-            )
-            .order("desc")
-            .take(remainingArtifactSlots)
-        : [];
-
-    const artifactsById = new Map<string, (typeof currentImportArtifacts)[number]>();
-    for (const artifact of [...currentImportArtifacts, ...recentDeepAnalysisArtifacts]) {
-      if (!artifactsById.has(artifact._id)) {
-        artifactsById.set(artifact._id, artifact);
-      }
-    }
-    const artifacts = Array.from(artifactsById.values());
     const jobs = await ctx.db
       .query("jobs")
       .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
       .order("desc")
       .take(30);
-    const now = Date.now();
-    const activeQueuedDeepAnalysisJob = await ctx.db
-      .query("jobs")
-      .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-        q
-          .eq("repositoryId", args.repositoryId)
-          .eq("kind", "deep_analysis")
-          .eq("status", "queued")
-          .gt("leaseExpiresAt", now),
-      )
-      .first();
-    const activeRunningDeepAnalysisJob = await ctx.db
-      .query("jobs")
-      .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-        q
-          .eq("repositoryId", args.repositoryId)
-          .eq("kind", "deep_analysis")
-          .eq("status", "running")
-          .gt("leaseExpiresAt", now),
-      )
-      .first();
     const threads = await ctx.db
       .query("threads")
       .withIndex("by_repositoryId_and_lastMessageAt", (q) => q.eq("repositoryId", args.repositoryId))
@@ -279,7 +238,6 @@ export const getRepositoryDetail = query({
       archivedAt: repository.archivedAt ?? null,
       artifacts,
       jobs,
-      activeDeepAnalysisJob: activeRunningDeepAnalysisJob ?? activeQueuedDeepAnalysisJob,
       threads,
       fileCount,
       fileCountLabel,
