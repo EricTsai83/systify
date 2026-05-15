@@ -416,7 +416,7 @@ export function RepositoryShell({
   }, [actionNotice]);
   const [isArtifactPanelOpen, setIsArtifactPanelOpen, isArtifactPanelHydrated] = useLocalStorageBoolean(
     "systify.artifactPanel.open",
-    true,
+    false,
   );
   const [isArtifactSheetOpen, setIsArtifactSheetOpen] = useState(false);
   // StatusPanel surfaces on demand from the top-bar pill: a Popover overlay on

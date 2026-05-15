@@ -6,6 +6,7 @@ import {
   Link,
   isRouteErrorResponse,
   useLocation,
+  useParams,
   useRouteError,
   useSearchParams,
 } from "react-router-dom";
@@ -231,6 +232,29 @@ export function NotFoundRoute() {
       </div>
     </div>
   );
+}
+
+/**
+ * Legacy Library Ask URL redirect. The standalone `/library/ask/:threadId`
+ * route was removed when Library Ask became an always-visible column
+ * addressed by `?ask=:threadId`. Old bookmarks/links land here and bounce
+ * to the canonical query-param URL; `replace` keeps the dead URL out of
+ * history so Back doesn't ping-pong between the two forms.
+ *
+ * This path is deliberately NOT registered in `PROTECTED_ROUTE_SEGMENTS` /
+ * `isProtectedReturnTo` — re-adding the literal there would reintroduce the
+ * route-table drift that allowlist is designed to prevent. The narrow cost:
+ * a logged-out user hitting a stale Ask bookmark returns to the default
+ * path after sign-in rather than to the thread.
+ */
+export function LibraryAskLegacyRedirect() {
+  const { workspaceId, threadId } = useParams<{ workspaceId: string; threadId: string }>();
+  if (!workspaceId) {
+    return <Navigate to={LANDING_PATH} replace />;
+  }
+  const base = `/w/${workspaceId}/library`;
+  const target = threadId ? `${base}?ask=${threadId}` : base;
+  return <Navigate to={target} replace />;
 }
 
 function AuthLoadingScreen() {

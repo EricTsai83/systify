@@ -97,6 +97,13 @@ vi.mock("@/components/confirm-dialog", () => ({
   ConfirmDialog: () => null,
 }));
 
+// `LibraryAskPanel` is only rendered by the `libraryAsk` variant; the
+// thread-list tests below exercise the `threads` variant. Mock it so the
+// suite doesn't pull in the Ask panel's transitive module graph.
+vi.mock("@/components/library-ask-panel", () => ({
+  LibraryAskPanel: () => <div data-testid="library-ask-panel" />,
+}));
+
 const threadOne = {
   _id: "thread_1",
   title: "First thread",
@@ -147,6 +154,20 @@ describe("AppSidebar", () => {
     });
   });
 
+  test("forwards the active service mode so the new thread matches the sidebar filter", async () => {
+    createThreadMutationMock.mockResolvedValueOnce("thread_new" as ThreadId);
+
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: /new thread/i }));
+
+    // Without an explicit `mode`, the backend defaults a repo-bound
+    // workspace's thread to `ask`, which the `discuss` sidebar filter hides.
+    await waitFor(() => {
+      expect(createThreadMutationMock).toHaveBeenCalledWith(expect.objectContaining({ mode: "discuss" }));
+    });
+  });
+
   test("announces thread-count deltas with distinct live-region text", () => {
     threadsResult = [threadOne];
     const { rerender } = renderSidebar();
@@ -167,6 +188,27 @@ describe("AppSidebar", () => {
 
     expect(screen.queryByText(/new workspace/i)).not.toBeInTheDocument();
     expect(screen.getByText(/import repo/i)).toBeInTheDocument();
+  });
+
+  test("renders the Library Ask panel instead of the thread rail for the libraryAsk variant", () => {
+    render(
+      <AppSidebar
+        repositories={[] as Doc<"repositories">[]}
+        workspaces={[] as Doc<"workspaces">[]}
+        activeWorkspaceId={"workspace_1" as WorkspaceId}
+        onSwitchWorkspace={vi.fn()}
+        variant="libraryAsk"
+        askThreadId={null}
+        activeArtifactId={null}
+        onSelectArtifact={vi.fn()}
+        onSelectAskThread={vi.fn()}
+        onImported={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("library-ask-panel")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /new thread/i })).not.toBeInTheDocument();
   });
 });
 

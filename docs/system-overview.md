@@ -6,12 +6,23 @@ This document describes the overall system boundaries of Systify. Its goal is to
 
 ## Product Positioning
 
-Systify is a repository-centered architecture analysis product. A user first authorizes repository access through a GitHub App, then the system imports the repository into a Daytona sandbox, extracts files and chunks, persists them into Convex, and finally offers three service modes plus background analysis:
+Systify is an architecture analysis workspace that treats **live imported code as the eventual source of truth (SSOT)**: indexing and Sandbox/Lab tooling operate on facts from GitHub clones and Daytona runs. Users may **begin without attaching a repository** (Discuss on a Home workspace) and later bind a repo so import, Sandbox, Lab, and RAG surfaces come online. **`artifacts`** are markdown (and optionally structured traces) alongside the codebase: explanatory, citable outputs—not a substitute for the tree chunks in `repoFiles` / `repoChunks`. Over time artifacts can expose **minimal import-level drift cues** (`alignedImportCommitSha` vs the repository’s latest import SHA) separate from Lab “verification” freshness (`producedIn` / `lastVerifiedAt`).
 
-- Discuss: free-form, no repository grounding.
-- Library: read artifacts and ask questions over artifact chunks.
-- Lab: sandbox-backed work against the live source tree.
-- Deep analysis: a sandbox-backed background job that performs focused inspection directly against the sandboxed repository and writes a reusable `deep_analysis` artifact, which later Library Ask and Lab replies can cite.
+The product separates **Discuss** from **Library** by task:
+
+| Surface | Primary job |
+| ------- | ----------- |
+| **Discuss** | Open-ended exploration across topics; artifact rail is ancillary—long-form reading is biased toward Library. |
+| **Library** | Artifact-first: the **opened artifact** anchors context; Ask chat is chunked-RAG against artifacts for that repo. Threads for Library Ask stay next to Ask in layout. |
+
+**Attach repository** attaches the GitHub **`repositories`** record to the thread’s **`workspaces`** row (workspace gains `repositoryId`); Sandbox and Lab reuse that workspace binding—they are **not** “thread-only decoration.” Attaching **does not rewrite** historical messages; only newer replies gain the new grounding via `getReplyContext`. Swapping the bound repo mid-thread is discouraged; UI may expose it behind an explicit confirmation that scrollback stays on the older context unless the user forks to a new thread.
+
+After GitHub authorization, the system can import repositories into Daytona sandboxes, extract files and chunks, persist into Convex, and offer three foreground service modes plus background analysis:
+
+- **Discuss**: free-form chat; defaults to **no repo** until the user attaches one to the workspace.
+- **Library**: read and edit artifact markdown plus **Ask** (hybrid retrieval over artifact chunks), with layout favoring documents on one side and thread + Ask on the other.
+- **Lab**: sandbox-backed exploration and guarded tools against the live tree.
+- **Deep analysis**: a sandbox-backed job that inspects the repository and emits a reusable `deep_analysis` artifact for Library Ask / Lab citations.
 
 ## Main Runtime Boundaries
 

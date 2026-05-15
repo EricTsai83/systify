@@ -1,6 +1,7 @@
 import { memo, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
+  ArrowsClockwiseIcon,
   CaretDownIcon,
   CaretRightIcon,
   DotsThreeVerticalIcon,
@@ -518,6 +519,16 @@ const ArtifactRow = memo(function ArtifactRow({
     >
       <div className="flex flex-1 items-center gap-1.5 truncate">
         <span className="truncate font-medium text-foreground">{artifact.title}</span>
+        {artifact.importDriftFromLatestSync ? (
+          <span
+            role="img"
+            title="This artifact's aligned import revision differs from the latest repository sync."
+            className="inline-flex shrink-0 text-amber-600 dark:text-amber-400"
+            aria-label="Import snapshot drift versus latest sync"
+          >
+            <ArrowsClockwiseIcon size={12} weight="bold" />
+          </span>
+        ) : null}
         {recentlyChanged ? <span aria-hidden className="ml-1 inline-flex h-1.5 w-1.5 rounded-full bg-primary" /> : null}
       </div>
     </div>

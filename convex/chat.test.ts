@@ -144,9 +144,14 @@ describe("chat thread defaults", () => {
     });
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
-    await viewer.mutation(api.chat.threads.setThreadRepository, {
+    const swapOut = await viewer.mutation(api.chat.threads.setThreadRepository, {
       threadId,
       repositoryId: repositoryBId,
+    });
+
+    expect(swapOut).toMatchObject({
+      repositoryId: repositoryBId,
+      swappedFromRepositoryId: repositoryAId,
     });
 
     const thread = await t.run(async (ctx) => await ctx.db.get(threadId));

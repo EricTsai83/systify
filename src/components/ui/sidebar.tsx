@@ -33,21 +33,24 @@ function clampSidebarWidth(value: number): number {
   return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.round(value)));
 }
 
-function readStoredSidebarWidth(): number {
-  if (typeof window === "undefined") return SIDEBAR_MIN_WIDTH;
+// Width is keyed so each surface can keep its own memory: Discuss/Lab share
+// the slim default; Library Ask carries a full chat panel and passes a
+// roomier key + default. Both still clamp to the shared min/max bounds.
+function readStoredSidebarWidth(storageKey: string, fallback: number): number {
+  if (typeof window === "undefined") return clampSidebarWidth(fallback);
   try {
-    const stored = window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
-    if (!stored) return SIDEBAR_MIN_WIDTH;
+    const stored = window.localStorage.getItem(storageKey);
+    if (!stored) return clampSidebarWidth(fallback);
     return clampSidebarWidth(Number.parseInt(stored, 10));
   } catch {
-    return SIDEBAR_MIN_WIDTH;
+    return clampSidebarWidth(fallback);
   }
 }
 
-function persistSidebarWidth(value: number): void {
+function persistSidebarWidth(storageKey: string, value: number): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(value));
+    window.localStorage.setItem(storageKey, String(value));
   } catch {
     // localStorage can throw in restricted environments — keep in-memory width.
   }
@@ -102,10 +105,26 @@ export function SidebarProvider({
   return <SidebarContext.Provider value={value}>{children}</SidebarContext.Provider>;
 }
 
-export function Sidebar({ children, className }: { children: React.ReactNode; className?: string }) {
+export function Sidebar({
+  children,
+  className,
+  widthStorageKey = SIDEBAR_WIDTH_STORAGE_KEY,
+  defaultWidth = SIDEBAR_MIN_WIDTH,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  /** localStorage key for the resizable width. Defaults to the shared key. */
+  widthStorageKey?: string;
+  /** Width to use when nothing is stored yet. Clamped to the min/max bounds. */
+  defaultWidth?: number;
+}) {
   const { isSheetMode, open, openMobile, setOpenMobile } = useSidebar();
-  const [width, setWidth] = React.useState<number>(readStoredSidebarWidth);
+  const [width, setWidth] = React.useState<number>(() => readStoredSidebarWidth(widthStorageKey, defaultWidth));
   const [isResizing, setIsResizing] = React.useState(false);
+
+  React.useEffect(() => {
+    setWidth(readStoredSidebarWidth(widthStorageKey, defaultWidth));
+  }, [widthStorageKey, defaultWidth]);
 
   // Restore body cursor/select if the component unmounts mid-drag so the page
   // doesn't end up stuck with a col-resize cursor or text selection disabled.
@@ -143,7 +162,7 @@ export function Sidebar({ children, className }: { children: React.ReactNode; cl
         window.removeEventListener("pointerup", handleEnd);
         window.removeEventListener("pointercancel", handleEnd);
         setWidth((current) => {
-          persistSidebarWidth(current);
+          persistSidebarWidth(widthStorageKey, current);
           return current;
         });
       };
@@ -152,37 +171,40 @@ export function Sidebar({ children, className }: { children: React.ReactNode; cl
       window.addEventListener("pointerup", handleEnd);
       window.addEventListener("pointercancel", handleEnd);
     },
-    [width],
+    [width, widthStorageKey],
   );
 
-  const handleResizeKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    const step = event.shiftKey ? 32 : 8;
-    let next: number | null = null;
-    if (event.key === "ArrowLeft") next = -step;
-    else if (event.key === "ArrowRight") next = step;
-    else if (event.key === "Home") {
+  const handleResizeKeyDown = React.useCallback(
+    (event: React.KeyboardEvent<HTMLDivElement>) => {
+      const step = event.shiftKey ? 32 : 8;
+      let next: number | null = null;
+      if (event.key === "ArrowLeft") next = -step;
+      else if (event.key === "ArrowRight") next = step;
+      else if (event.key === "Home") {
+        event.preventDefault();
+        setWidth(() => {
+          persistSidebarWidth(widthStorageKey, SIDEBAR_MIN_WIDTH);
+          return SIDEBAR_MIN_WIDTH;
+        });
+        return;
+      } else if (event.key === "End") {
+        event.preventDefault();
+        setWidth(() => {
+          persistSidebarWidth(widthStorageKey, SIDEBAR_MAX_WIDTH);
+          return SIDEBAR_MAX_WIDTH;
+        });
+        return;
+      }
+      if (next === null) return;
       event.preventDefault();
-      setWidth(() => {
-        persistSidebarWidth(SIDEBAR_MIN_WIDTH);
-        return SIDEBAR_MIN_WIDTH;
+      setWidth((current) => {
+        const updated = clampSidebarWidth(current + (next ?? 0));
+        persistSidebarWidth(widthStorageKey, updated);
+        return updated;
       });
-      return;
-    } else if (event.key === "End") {
-      event.preventDefault();
-      setWidth(() => {
-        persistSidebarWidth(SIDEBAR_MAX_WIDTH);
-        return SIDEBAR_MAX_WIDTH;
-      });
-      return;
-    }
-    if (next === null) return;
-    event.preventDefault();
-    setWidth((current) => {
-      const updated = clampSidebarWidth(current + (next ?? 0));
-      persistSidebarWidth(updated);
-      return updated;
-    });
-  }, []);
+    },
+    [widthStorageKey],
+  );
 
   if (isSheetMode) {
     return (

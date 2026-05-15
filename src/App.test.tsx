@@ -40,6 +40,10 @@ vi.mock("@/pages/chat", () => ({
   ChatPage: () => <div>chat page</div>,
 }));
 
+vi.mock("@/pages/library", () => ({
+  LibraryPage: () => <div>library page</div>,
+}));
+
 vi.mock("convex/react", async () => {
   const React = await import("react");
 
@@ -298,6 +302,22 @@ describe("App auth token failures", () => {
 
     expect(await screen.findByText("This page does not exist.")).toBeInTheDocument();
     expect(await screen.findByText("Go to home")).toBeInTheDocument();
+  });
+
+  test("redirects the legacy /library/ask/:threadId URL to the ?ask= query param form", async () => {
+    function useAuth() {
+      return {
+        isLoading: false,
+        user: { id: "user_1" },
+        getAccessToken: getAccessTokenMock,
+      };
+    }
+
+    const router = renderWithAuth(useAuth, ["/w/workspace_legacy/library/ask/thread_legacy"]);
+
+    expect(await screen.findByText("library page")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/w/workspace_legacy/library");
+    expect(router.state.location.search).toBe("?ask=thread_legacy");
   });
 });
 

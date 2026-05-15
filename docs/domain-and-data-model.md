@@ -8,10 +8,24 @@ This document explains Systify's core domain entities, data responsibility bound
 
 The current data model has three clear centers:
 
-- the product core centered on `repositories`
-- the workspace shell centered on `workspaces`
-- tenant isolation centered on `ownerTokenIdentifier`
-- workflow progress expressed through the state fields on `imports`, `jobs`, `sandboxes`, `messages`, and `labSessions`
+- **Code facts** — imports pin concrete trees (`imports.commitSha`), then `repoFiles` / `repoChunks` indexed from that snapshot. This is what Lab tools and Sandbox execution ultimately reason about.
+- **Narratives** — `artifacts` hold longer-lived prose (summaries, deep analysis, ADRs). They link to repos (and optionally threads) via `repositoryId` / `threadId` and citations in chat—not a substitute for chunk-level grounding.
+- **Workspace shell** — `workspaces` are the UX container; attaching a repo means `workspaces.repositoryId` is populated so Sandbox/Lab/import share the **same workspace binding**.
+- **Tenant isolation** — `ownerTokenIdentifier` scopes every viewer-owned row.
+- **Workflow progress** — `imports`, `jobs`, `sandboxes`, `messages`, `labSessions` carry lifecycle fields.
+
+Discuss vs Library (behavioral SSOT boundary):
+
+| Mode | Repo | Default focus |
+| ---- | ----- | ------------- |
+| `discuss` | Optional | Ungrounded or multi-topic ideation |
+| `ask` (“Library Ask”) | Required (`threads.repositoryId`) | Queries scoped to chunked artifacts |
+
+### Traceability snapshot (minimal v1)
+
+`artifacts` optionally record `alignedImportCommitSha`. When populated, Convex read paths compare that SHA against the owning repository’s **`latestImportId` → `imports.commitSha`** and surface a coarse **drift vs latest sync** flag for UI—not content-level reconciliation. See the Artifact Import Drift System Design for the full design, including the deliberately-deferred path-scoped variant.
+
+Historical messages intentionally **stay put** after attach-repo or rare repo swaps: only downstream replies consume the new grounding.
 
 ## Core Entities
 
@@ -123,7 +137,7 @@ Because of this, the UI does not need to know the internal implementation of eve
 
 ### `artifacts`
 
-`artifacts` stores outputs with long-term value for a repository rather than temporary in-flight execution data. Current artifact kinds include:
+`artifacts` stores outputs with long-term value relative to repositories (and optionally threads) rather than ephemeral stream state. Current artifact kinds include:
 
 - `manifest`
 - `readme_summary`
@@ -142,14 +156,16 @@ Because of this, the UI does not need to know the internal implementation of eve
 
 This table plays two roles:
 
-1. the initial knowledge base produced after import
-2. reusable outputs from later deep analysis runs
+1. Initial knowledge snapshots produced alongside import pipelines (titles/summaries/bodies seeded from heuristic or sandbox writers).
+2. Reusable prose from deeper analysis jobs or user-authored Library notes.
 
-Library list surfaces read artifact metadata only; the markdown body is loaded through artifact-specific reads when an artifact editor tab is active.
+Artifacts may optionally carry **`alignedImportCommitSha`**: best-effort record of which import revision the prose was authored against—used alongside Lab verification timestamps to distinguish “checked against sandbox” freshness from **import snapshot drift**.
+
+Library navigators consume metadata-only subscriptions; the markdown body loads when an editor tab is active.
 
 ### `workspaces` and `userPreferences`
 
-`workspaces` is the URL and shell container. A workspace either points at one repository or represents the user's no-repo home space. `userPreferences.lastActiveWorkspaceId` stores the viewer's current workspace for cross-device continuity, while localStorage is only a first-paint cache.
+`workspaces` is the URL and shell container. A workspace either binds **exactly one** `repositories` id (`workspace.repositoryId`) or represents the **Home** workspace with no repo. **Attach Repository** UX calls `setThreadRepository`: it invokes `ensureRepositoryWorkspace` so the canonical binding is **`workspaces.repositoryId`**, updates the thread’s `workspaceId`, and aligns Sandbox/Lab/import with that workspace—product copy should emphasize **workspace/repo binding**, not “repo metadata on a lone thread”. `userPreferences.lastActiveWorkspaceId` stores the viewer's current workspace for cross-device continuity, while localStorage is only a first-paint cache.
 
 ### `artifactFolders` and `artifactChunks`
 
@@ -301,4 +317,5 @@ This split allows the UI, background workflows, and analysis features to share t
 - `jobs` provides a unified tracking layer that simplifies the UI, but the details of each job kind still require reading the implementation.
 - `jobs.kind = 'index'` is currently a reserved enum value; the codebase does not insert jobs with `kind: 'index'`, and indexing still happens inside the import pipeline.
 - `artifacts.version` is currently always inserted as `1`, so artifact version management is not implemented yet.
+- Import-drift indicators need `artifacts.alignedImportCommitSha`; legacy rows without it stay silent until a writer backfills the field.
 

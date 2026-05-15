@@ -39,11 +39,10 @@ export const PROTECTED_ROUTE_SEGMENTS = {
    * Three-mode restructure — top-level service modes:
    *
    *   - `discuss/:threadId?` — free-form chat, with or without a thread.
-   *   - `library` / `library/a/:artifactId` / `library/ask/:threadId` —
-   *     read-mostly artifact reader (Read sub-mode renders markdown,
-   *     Ask sub-mode lands a Library Ask thread). The Ask URL form is
-   *     wired in Phase 1 so the route table is stable; Library Ask
-   *     turns on for users in Phase 2.
+   *   - `library` / `library/a/:artifactId` — read-mostly artifact reader.
+   *     The artifact owns the path; the active Library Ask thread travels
+   *     as a `?ask=:threadId` query param. The Ask panel is always visible,
+   *     so the thread is secondary view-state, not its own route.
    *   - `lab/:threadId?` — sandbox-backed mode. Same chat surface as
    *     Discuss for Phase 1; Phase 2 adds the LabStatusBar and explicit
    *     session lifecycle.
@@ -52,7 +51,6 @@ export const PROTECTED_ROUTE_SEGMENTS = {
   workspaceDiscussThread: "w/:workspaceId/discuss/:threadId",
   workspaceLibrary: "w/:workspaceId/library",
   workspaceLibraryArtifact: "w/:workspaceId/library/a/:artifactId",
-  workspaceLibraryAsk: "w/:workspaceId/library/ask/:threadId",
   workspaceLab: "w/:workspaceId/lab",
   workspaceLabThread: "w/:workspaceId/lab/:threadId",
 } as const;
@@ -92,11 +90,12 @@ export function discussPath(workspaceId: WorkspaceId, threadId?: ThreadId): stri
 }
 
 /**
- * Library Read mode landing. With an artifact id, opens the IDE-style
- * reader directly on that artifact; without one, the shell shows the
- * folder overview. The `open` option is the multi-tab list to restore
+ * Library mode landing. With an artifact id, opens the IDE-style reader
+ * directly on that artifact; without one, the shell shows the folder
+ * overview. The `open` option is the multi-tab list to restore
  * (round-tripped through `?open=id1,id2`); empty / undefined means
- * "open just the active tab".
+ * "open just the active tab". An `?ask=:threadId` query param may also
+ * be present — that one is owned by the page, not these builders.
  */
 export function libraryPath(workspaceId: WorkspaceId): string {
   return `/w/${workspaceId}/library`;
@@ -120,13 +119,23 @@ export function libraryArtifactPath(
 }
 
 /**
- * Library Ask thread URL — Phase 1 builds the route, Phase 2 wires the
- * thread-creation flow and turns on the panel. Until then, hitting this
- * URL renders the Library shell with a "Library Ask is rolling out"
- * placeholder.
+ * Append or clear the `?ask=:threadId` query param on a Library URL,
+ * preserving any other query params already present (notably `?open=`).
+ * The active Library Ask thread is secondary view-state — the artifact
+ * owns the path — so it travels as a query param rather than its own
+ * route. Used by the legacy `/library/ask/:threadId` redirect; the page
+ * itself mutates `?ask=` through `useSearchParams` directly.
  */
-export function libraryAskPath(workspaceId: WorkspaceId, threadId: ThreadId): string {
-  return `/w/${workspaceId}/library/ask/${threadId}`;
+export function withLibraryAskParam(base: string, askThreadId: ThreadId | null): string {
+  const [path, existingQuery] = base.split("?");
+  const params = new URLSearchParams(existingQuery ?? "");
+  if (askThreadId) {
+    params.set("ask", askThreadId);
+  } else {
+    params.delete("ask");
+  }
+  const query = params.toString();
+  return query ? `${path}?${query}` : path;
 }
 
 /**
