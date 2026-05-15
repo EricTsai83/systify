@@ -206,6 +206,11 @@ const artifactKindValidator = v.union(
   v.literal("migration_plan"),
   v.literal("capacity_estimate"),
   v.literal("design_review"),
+  v.literal("data_model_overview"),
+  v.literal("api_surface_overview"),
+  v.literal("deployment_overview"),
+  v.literal("security_overview"),
+  v.literal("operations_overview"),
 );
 
 const artifactSourceValidator = v.union(v.literal("heuristic"), v.literal("llm"), v.literal("sandbox"));

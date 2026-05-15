@@ -82,6 +82,11 @@ const artifactKind = v.union(
   v.literal("migration_plan"),
   v.literal("capacity_estimate"),
   v.literal("design_review"),
+  v.literal("data_model_overview"),
+  v.literal("api_surface_overview"),
+  v.literal("deployment_overview"),
+  v.literal("security_overview"),
+  v.literal("operations_overview"),
 );
 
 /**
@@ -360,13 +365,15 @@ export default defineSchema({
     source: v.union(v.literal("heuristic"), v.literal("llm"), v.literal("sandbox")),
     version: v.number(),
     /**
-     * Phase A folder model — `folderId` ties a feature/decision-level artifact
-     * (ADR, failure_mode_analysis, trade_off_matrix, …) to a user-created
-     * `artifactFolders` row. Optional + widen-only: existing rows have no
-     * folder and surface in the navigator's "Uncategorized" virtual node.
-     * Repo-level kinds (manifest, deep_analysis, architecture_overview, …)
-     * intentionally stay folderless and are pinned at the navigator's
-     * "Repository" root.
+     * `folderId` ties an artifact to a user-created `artifactFolders` row.
+     * Optional: artifacts with no `folderId` surface in the navigator's
+     * "Uncategorized" virtual node.
+     *
+     * System Design model: every artifact kind — including the previously
+     * repo-pinned `manifest`, `readme_summary`, and `architecture_overview` —
+     * lives inside the default System Design folder tree that is seeded on
+     * repository import. The folders themselves are user-editable (rename,
+     * move, delete) via `artifactFolders.systemKey` for stable lookup.
      */
     folderId: v.optional(v.id("artifactFolders")),
     /**
@@ -459,9 +466,18 @@ export default defineSchema({
     name: v.string(),
     description: v.optional(v.string()),
     sortOrder: v.optional(v.number()),
+    /**
+     * Stable identifier for folders seeded by the System Design generator
+     * (`overview`, `architecture`, `data_model`, `api`, `infrastructure`,
+     * `security`, `operations`). Lets `generateSystemDesignDocs` find the
+     * destination folder even after the user renames it, and lets the seeding
+     * routine avoid recreating folders that already exist.
+     */
+    systemKey: v.optional(v.string()),
   })
     .index("by_repositoryId", ["repositoryId"])
     .index("by_repositoryId_and_parentFolderId", ["repositoryId", "parentFolderId"])
+    .index("by_repositoryId_and_systemKey", ["repositoryId", "systemKey"])
     .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
 
   repoFiles: defineTable({

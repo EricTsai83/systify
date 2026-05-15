@@ -44,20 +44,6 @@ type PersistFlowArgs = {
     summary: string;
     content: string;
   }>;
-  artifacts: Array<{
-    kind:
-      | "manifest"
-      | "readme_summary"
-      | "architecture_overview"
-      | "entrypoints"
-      | "dependency_overview"
-      | "deep_analysis"
-      | "risk_report";
-    title: string;
-    summary: string;
-    contentMarkdown: string;
-    source: "heuristic" | "llm" | "sandbox";
-  }>;
 };
 
 async function runPersistFlow(t: ReturnType<typeof convexTest>, args: PersistFlowArgs) {
@@ -66,7 +52,6 @@ async function runPersistFlow(t: ReturnType<typeof convexTest>, args: PersistFlo
     jobId: args.jobId,
     commitSha: args.commitSha,
     branch: args.branch,
-    artifacts: args.artifacts,
   });
   if (headerResult.kind !== "ready") {
     return headerResult;
@@ -441,29 +426,6 @@ describe("batched import persistence", () => {
           content: "export function util() { return 1; }",
         },
       ],
-      artifacts: [
-        {
-          kind: "manifest",
-          title: "Repository Manifest",
-          summary: "Manifest summary",
-          contentMarkdown: "# Manifest",
-          source: "heuristic",
-        },
-        {
-          kind: "readme_summary",
-          title: "README Summary",
-          summary: "README summary",
-          contentMarkdown: "# README",
-          source: "heuristic",
-        },
-        {
-          kind: "architecture_overview",
-          title: "Architecture Overview",
-          summary: "Architecture summary",
-          contentMarkdown: "# Architecture",
-          source: "heuristic",
-        },
-      ],
     };
 
     expect(await runPersistFlow(t, payload)).toEqual({ kind: "completed" });
@@ -485,6 +447,10 @@ describe("batched import persistence", () => {
         .query("artifacts")
         .withIndex("by_jobId", (q) => q.eq("jobId", ids.jobId))
         .take(10),
+      folders: await ctx.db
+        .query("artifactFolders")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", ids.repositoryId))
+        .take(20),
     }));
 
     expect(state.repository?.importStatus).toBe("completed");
@@ -494,7 +460,8 @@ describe("batched import persistence", () => {
     expect(state.job?.status).toBe("completed");
     expect(state.files).toHaveLength(2);
     expect(state.chunks).toHaveLength(3);
-    expect(state.artifacts).toHaveLength(3);
+    expect(state.artifacts).toHaveLength(0);
+    expect(state.folders).toHaveLength(7);
   });
 
   test("cancellation after partial persistence cleans staged rows", async () => {
@@ -575,15 +542,6 @@ describe("batched import persistence", () => {
         jobId: ids.jobId,
         commitSha: "abc123",
         branch: "main",
-        artifacts: [
-          {
-            kind: "manifest",
-            title: "Repository Manifest",
-            summary: "Manifest summary",
-            contentMarkdown: "# Manifest",
-            source: "heuristic",
-          },
-        ],
       }),
     ).toEqual({ kind: "ready" });
 
@@ -829,15 +787,6 @@ describe("repository deletion during import", () => {
         jobId: ids.failedJobId,
         commitSha: "new-sha",
         branch: "main",
-        artifacts: [
-          {
-            kind: "manifest",
-            title: "New Manifest",
-            summary: "New summary",
-            contentMarkdown: "# Manifest",
-            source: "heuristic",
-          },
-        ],
       }),
     ).toEqual({ kind: "ready" });
 
@@ -1222,15 +1171,6 @@ describe("sandbox reservation during import", () => {
           chunkKind: "code",
           summary: "Main chunk",
           content: "export const value = 1;",
-        },
-      ],
-      artifacts: [
-        {
-          kind: "manifest",
-          title: "Manifest",
-          summary: "New summary",
-          contentMarkdown: "# Manifest",
-          source: "heuristic",
         },
       ],
     });
