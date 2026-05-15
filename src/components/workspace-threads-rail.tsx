@@ -67,8 +67,14 @@ export function WorkspaceThreadsRail({
           }
           threadId = await createAskThreadMutation({ workspaceId });
         } else {
+          // Forward the rail's service mode so the new thread is persisted
+          // with the mode the sidebar filters on. Without this, the backend
+          // falls back to `getDefaultThreadMode(hasAttachedRepo)` — which is
+          // `docs`/`ask` for a repo-bound workspace — and the freshly created
+          // thread never matches the `discuss` filter, so it never appears.
           threadId = await createThreadMutation({
             workspaceId: workspaceId ?? undefined,
+            mode: threadMode,
           });
         }
         onSelectThread(threadId);
@@ -82,6 +88,7 @@ export function WorkspaceThreadsRail({
       onError,
       onSelectThread,
       requireWorkspaceForCreate,
+      threadMode,
       workspaceId,
     ]),
   );

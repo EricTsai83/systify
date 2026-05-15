@@ -154,6 +154,20 @@ describe("AppSidebar", () => {
     });
   });
 
+  test("forwards the active service mode so the new thread matches the sidebar filter", async () => {
+    createThreadMutationMock.mockResolvedValueOnce("thread_new" as ThreadId);
+
+    renderSidebar();
+
+    fireEvent.click(screen.getByRole("button", { name: /new thread/i }));
+
+    // Without an explicit `mode`, the backend defaults a repo-bound
+    // workspace's thread to `ask`, which the `discuss` sidebar filter hides.
+    await waitFor(() => {
+      expect(createThreadMutationMock).toHaveBeenCalledWith(expect.objectContaining({ mode: "discuss" }));
+    });
+  });
+
   test("announces thread-count deltas with distinct live-region text", () => {
     threadsResult = [threadOne];
     const { rerender } = renderSidebar();
