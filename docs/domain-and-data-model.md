@@ -159,7 +159,7 @@ Because of this, the UI does not need to know the internal implementation of eve
 
 This table plays two roles:
 
-1. Reusable knowledge produced by **System Design generation**: the user opts into this from the empty Library page, and the sandbox-backed job writes a starter set of artifacts (`manifest`, `readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`). Import itself no longer seeds artifact bodies — it only seeds the default folder tree so the Library has a place to put them.
+1. Reusable knowledge produced by **System Design generation**: the user opts into this from the empty Library page, and the sandbox-backed job writes user-selected artifact kinds (defaults: `manifest`, `readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`). Import itself no longer seeds artifact bodies — it only seeds the default folder tree so the Library has a place to put them.
 2. Additional prose authored later by the user as Library notes, or produced by future per-folder generation jobs.
 
 Artifacts may optionally carry **`alignedImportCommitSha`**: best-effort record of which import revision the prose was authored against—used alongside Lab verification timestamps to distinguish “checked against sandbox” freshness from **import snapshot drift**.

@@ -135,7 +135,7 @@ export function LibraryShell({ repositoryId, tabs }: { repositoryId: RepositoryI
 
         {tabs.activeArtifactId ? (
           <LibraryEditor artifactId={tabs.activeArtifactId} />
-        ) : (
+        ) : allArtifacts === undefined ? null : (
           <LibraryEmptyState hasArtifacts={hasArtifacts} onGenerate={openGenerateDialog} />
         )}
       </div>

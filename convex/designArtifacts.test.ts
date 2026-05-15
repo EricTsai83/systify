@@ -130,7 +130,7 @@ describe("design artifacts phase 4", () => {
     expect(jobs).toHaveLength(0);
   });
 
-  test("requestFailureModeAnalysis queues a deep-analysis job for the thread", async () => {
+  test("requestFailureModeAnalysis queues a system_design job for the thread", async () => {
     const ownerTokenIdentifier = "user|phase4-fma-queue";
     const t = createTestConvex();
     const { threadId, repositoryId } = await seedThreadWithRepository(t, ownerTokenIdentifier, "ready");

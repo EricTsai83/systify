@@ -15,10 +15,10 @@ describe("chat reply context", () => {
     // model runs `read_file` / `list_dir` against the live sandbox via
     // tools. Pre-loading indexed `repoChunks` (the legacy behavior) is
     // wasted work and would silently outvote tool results when the index
-    // is stale. We still surface deep-analysis artifacts because they
-    // summarise design decisions the model can't trivially re-derive
-    // from the source tree alone — but other artifact kinds (manifests,
-    // entrypoints, dependency overviews, …) are excluded.
+    // is stale. All artifact kinds (including system-design artifacts) are
+    // excluded from context.artifacts in sandbox mode — the model retrieves
+    // live source state via tools rather than cached summaries to avoid
+    // divergence when the index is stale.
     const ownerTokenIdentifier = "user|sandbox-plan-04-context";
     const t = convexTest(schema, modules);
 

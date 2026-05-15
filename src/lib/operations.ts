@@ -138,7 +138,7 @@ function humanizeToken(value: string) {
 // ---------------------------------------------------------------------------
 // Surface descriptors for the Repository Status Deck.
 // Each surface answers one of the three "can I use this repo right now?"
-// questions — repository intelligence, live sandbox, deep analysis. We keep
+// questions — repository intelligence, live sandbox, system design. We keep
 // the (title, description, tone) decision in one module so the StatusDeck,
 // the chat empty-state, and any future status surfaces all read the same
 // vocabulary. Pure functions, no React deps — easy to unit-test and to
@@ -201,7 +201,7 @@ export function presentSandboxSurface(input: SandboxSurfaceInput): SandboxSurfac
   if (reasonCode === "available") {
     return {
       title: "Sandbox ready",
-      description: "Sandbox-backed chat, scans, and deep analysis can inspect the live filesystem.",
+      description: "Sandbox-backed chat, scans, and system design can inspect the live filesystem.",
       tone: "success",
       ttlExpiresAt: input.sandbox?.ttlExpiresAt,
     };

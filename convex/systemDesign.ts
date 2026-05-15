@@ -26,6 +26,7 @@ import {
   consumeSystemDesignRateLimit,
   SYSTEM_DESIGN_JOB_LEASE_MS,
 } from "./lib/rateLimit";
+import { logWarn } from "./lib/observability";
 
 const FAILURE_MODE_REQUESTED_COMMAND_PREFIX = "failure_mode_analysis:";
 
@@ -405,16 +406,19 @@ export const listRepoFilesForHeuristics = internalQuery({
  * Find a single README chunk for the repo so the heuristic README-summary
  * generator can drop a representative excerpt into the artifact. The first
  * `readme`-kinded chunk is sufficient: the import pipeline only writes one
- * chunk per README file at byte zero.
+ * chunk per README file at byte zero. Bounded via the
+ * `by_repositoryId_and_chunkKind` index so we don't pull every chunk row
+ * just to find one.
  */
 export const findReadmeChunkForHeuristics = internalQuery({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args): Promise<{ path: string; content: string } | null> => {
-    const candidates = await ctx.db
+    const readme = await ctx.db
       .query("repoChunks")
-      .withIndex("by_repositoryId_and_path", (q) => q.eq("repositoryId", args.repositoryId))
-      .collect();
-    const readme = candidates.find((row) => row.chunkKind === "readme");
+      .withIndex("by_repositoryId_and_chunkKind", (q) =>
+        q.eq("repositoryId", args.repositoryId).eq("chunkKind", "readme"),
+      )
+      .first();
     if (!readme) return null;
     return { path: readme.path, content: readme.content };
   },
@@ -434,15 +438,29 @@ export const persistGeneratedArtifact = internalMutation({
   },
   handler: async (ctx, args): Promise<{ artifactId: Id<"artifacts"> }> => {
     const folderKey = SYSTEM_DESIGN_KIND_TO_FOLDER[args.kind as SystemDesignKind];
-    const targetFolder = await ctx.db
+    // Tolerant lookup: `by_repositoryId_and_systemKey` is non-unique, so
+    // `.unique()` would throw if two seeded folders ever share a key (e.g.
+    // a race between concurrent `ensureSystemDesignFolders` callers). Take
+    // up to 2 and pick the oldest deterministically (Convex orders by
+    // `_creationTime` within an index), warning when we see a collision so
+    // ops can dedup the table out-of-band.
+    const candidates = await ctx.db
       .query("artifactFolders")
       .withIndex("by_repositoryId_and_systemKey", (q) =>
         q.eq("repositoryId", args.repositoryId).eq("systemKey", folderKey),
       )
-      .unique();
+      .take(2);
 
+    const targetFolder = candidates[0] ?? null;
     if (targetFolder === null) {
       throw new Error(`Destination folder for ${args.kind} (systemKey=${folderKey}) is missing.`);
+    }
+    if (candidates.length > 1) {
+      logWarn("system_design", "duplicate_seeded_folder", {
+        repositoryId: args.repositoryId,
+        systemKey: folderKey,
+        chosenFolderId: targetFolder._id,
+      });
     }
 
     const existing = await ctx.db

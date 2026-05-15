@@ -428,7 +428,7 @@ function safeUrlHost(url: string): string {
  * Try to read a project manifest, returning `undefined` if the file does not
  * exist on disk. The distinction between "missing" (`undefined`) and "empty"
  * (`""`) is part of the `RepositorySnapshot` contract: downstream consumers
- * (deep analysis, artifact synthesis, prompt building) treat them as
+ * (system design, artifact synthesis, prompt building) treat them as
  * different signals — "this repo has no package.json at all" vs "package.json
  * exists but is intentionally empty". Collapsing both into `""` would break
  * "is this a JS/Python/Rust project?" inference at the source.

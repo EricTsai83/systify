@@ -94,7 +94,7 @@ export interface ServiceModeEligibility {
   readonly askReadiness: { canBind: boolean; reason: ServiceModeDisabled | null };
   /** Convenience flag — frontend uses it to short-circuit "import a repo" CTAs. */
   readonly hasAttachedRepo: boolean;
-  /** Convenience flag — frontend uses it to gate first-deep-analysis UI. */
+  /** Convenience flag — frontend uses it to gate first-system-design UI. */
   readonly hasAtLeastOneArtifact: boolean;
 }
 

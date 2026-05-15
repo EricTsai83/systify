@@ -363,7 +363,7 @@ const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
       "",
       chunks.length > 0
         ? `Most relevant code references: ${chunks.map((chunk) => `\`${chunk.path}\``).join(", ")}`
-        : "Not enough code snippets were selected; consider running a deep analysis first.",
+        : "Not enough code snippets were selected; consider running a system design first.",
     ],
   },
   zh: {

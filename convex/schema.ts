@@ -514,6 +514,7 @@ export default defineSchema({
     content: v.string(),
   })
     .index("by_repositoryId_and_path", ["repositoryId", "path"])
+    .index("by_repositoryId_and_chunkKind", ["repositoryId", "chunkKind"])
     .index("by_fileId_and_chunkIndex", ["fileId", "chunkIndex"])
     .index("by_importId_and_path_and_chunkIndex", ["importId", "path", "chunkIndex"])
     .searchIndex("search_summary", {

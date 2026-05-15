@@ -546,7 +546,7 @@ describe("rate limits and interactive job guards", () => {
           status: "running",
           stage: "generating_reply",
           progress: 0.6,
-          costCategory: "system_design",
+          costCategory: "chat",
           triggerSource: "user",
           startedAt: Date.now(),
           leaseExpiresAt: Date.now() + 60_000,
@@ -777,7 +777,7 @@ describe("rate limits and interactive job guards", () => {
     });
   });
 
-  test("stale deep analysis recovery fails the expired job", async () => {
+  test("stale system design recovery fails the expired job", async () => {
     const ownerTokenIdentifier = "user|stale-analysis";
     const t = createTestConvex();
     const { repositoryId, sandboxId } = await createRepositoryFixture(t, ownerTokenIdentifier, "stale-analysis", {
