@@ -122,6 +122,10 @@ export function Sidebar({
   const [width, setWidth] = React.useState<number>(() => readStoredSidebarWidth(widthStorageKey, defaultWidth));
   const [isResizing, setIsResizing] = React.useState(false);
 
+  React.useEffect(() => {
+    setWidth(readStoredSidebarWidth(widthStorageKey, defaultWidth));
+  }, [widthStorageKey, defaultWidth]);
+
   // Restore body cursor/select if the component unmounts mid-drag so the page
   // doesn't end up stuck with a col-resize cursor or text selection disabled.
   React.useEffect(() => {

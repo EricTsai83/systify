@@ -81,7 +81,13 @@ export function SwapThreadRepositoryControl({
         Switch repo
       </Button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={(newOpen) => {
+          if (!newOpen) setPicked(null);
+          setOpen(newOpen);
+        }}
+      >
         <DialogContent className="max-w-md gap-4">
           <DialogHeader className="text-left">
             <DialogTitle>Switch repository?</DialogTitle>
@@ -116,7 +122,15 @@ export function SwapThreadRepositoryControl({
           </div>
 
           <DialogFooter className="gap-2 sm:flex-row sm:justify-end">
-            <Button type="button" variant="ghost" onClick={() => setOpen(false)} disabled={pending}>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setPicked(null);
+                setOpen(false);
+              }}
+              disabled={pending}
+            >
               Cancel
             </Button>
             <Button

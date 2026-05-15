@@ -521,6 +521,7 @@ const ArtifactRow = memo(function ArtifactRow({
         <span className="truncate font-medium text-foreground">{artifact.title}</span>
         {artifact.importDriftFromLatestSync ? (
           <span
+            role="img"
             title="This artifact's aligned import revision differs from the latest repository sync."
             className="inline-flex shrink-0 text-amber-600 dark:text-amber-400"
             aria-label="Import snapshot drift versus latest sync"

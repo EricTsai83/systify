@@ -111,7 +111,11 @@ export function WorkspaceThreadsRail({
           variant="default"
           size="sm"
           className={cn("h-8 w-full justify-start gap-1.5 text-xs", compact && "h-8")}
-          disabled={(requireWorkspaceForCreate && !workspaceId) || isCreatingThread}
+          disabled={
+            (requireWorkspaceForCreate && !workspaceId) ||
+            (newThreadVariant === "libraryAsk" && !workspaceId) ||
+            isCreatingThread
+          }
           onClick={() => void handleCreateThread()}
         >
           <PlusIcon size={13} weight="bold" />

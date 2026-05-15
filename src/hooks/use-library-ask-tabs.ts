@@ -64,13 +64,14 @@ function writeCache(workspaceId: WorkspaceId, tabs: ReadonlyArray<OpenAskThread>
 
 export function useLibraryAskTabs(workspaceId: WorkspaceId) {
   const [openThreads, setOpenThreads] = useState<OpenAskThread[]>(() => readCache(workspaceId));
+  const workspaceRef = useRef(workspaceId);
 
   useEffect(() => {
+    if (workspaceRef.current !== workspaceId) return;
     writeCache(workspaceId, openThreads);
   }, [workspaceId, openThreads]);
 
   // Re-seed when the workspace id changes under a reused hook instance.
-  const workspaceRef = useRef(workspaceId);
   useEffect(() => {
     if (workspaceRef.current === workspaceId) return;
     workspaceRef.current = workspaceId;
