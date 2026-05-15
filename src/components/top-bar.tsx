@@ -221,7 +221,7 @@ export function TopBar({
                 // density stays stable; max-height caps the overlay so a long
                 // activity timeline scrolls inside the popover instead of
                 // bleeding past the viewport.
-                className="w-[22rem] max-h-[min(36rem,calc(100vh-5rem))] overflow-hidden p-0"
+                className="w-88 max-h-[min(36rem,calc(100vh-5rem))] overflow-hidden p-0"
               >
                 <StatusPanel
                   repository={repoDetail.repository}
