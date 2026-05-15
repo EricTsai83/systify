@@ -17,9 +17,11 @@ import {
   type RepositorySnapshot,
 } from "./lib/repoAnalysis";
 import { logErrorWithId, logInfo, logWarn } from "./lib/observability";
-import { SYSTEM_DESIGN_KIND_GENERATOR, type SystemDesignKind } from "./lib/systemDesign";
+import type { SystemDesignKind } from "./lib/systemDesign";
 
 const SYSTEM_DESIGN_STEP_BUDGET = 12;
+
+const HEURISTIC_FILES_TAKE_LIMIT = 2000;
 
 const systemDesignKindValidator = v.union(
   v.literal("manifest"),
@@ -32,16 +34,30 @@ const systemDesignKindValidator = v.union(
   v.literal("operations_overview"),
 );
 
+type HeuristicKind = Extract<SystemDesignKind, "manifest" | "readme_summary" | "architecture_overview">;
+
+function isHeuristicKind(kind: SystemDesignKind): kind is HeuristicKind {
+  return kind === "manifest" || kind === "readme_summary" || kind === "architecture_overview";
+}
+
 /**
- * Library System Design generator. Runs each selected kind sequentially so
- * one failing generator doesn't poison the others, and so per-kind progress
- * can flow back through `updateGenerationProgress` after each completes.
+ * Library System Design generator.
  *
- * The 3 heuristic kinds (`manifest` / `readme_summary` / `architecture_overview`)
- * derive from the imported `repoFiles` + `repoChunks` tables and never touch a
- * sandbox or an LLM. The 5 LLM kinds spin a `generateText` call against the
- * sandbox-backed model with the same `read_file` / `list_dir` / `run_shell`
- * tool factory the chat-sandbox path uses, so the doc tracks live source state.
+ * Concurrency model:
+ *   - Heuristic kinds (`manifest` / `readme_summary` / `architecture_overview`)
+ *     derive from imported `repoFiles` + `repoChunks` rows and only touch
+ *     Convex. They run concurrently against the shared snapshot.
+ *   - LLM kinds (`*_overview`) each spin a `generateText` call against the
+ *     sandbox-backed model with the same `read_file` / `list_dir` /
+ *     `run_shell` tool factory the chat-sandbox path uses. They run serially
+ *     to honour the per-sandbox tool budget and the OpenAI rate limit; the
+ *     job lease is refreshed before each one so a long publication does not
+ *     trip the stale-recovery sweep.
+ *
+ * The two passes run in parallel so a long LLM run does not gate the cheap
+ * heuristic publication. Per-kind failures are isolated: the catch logs an
+ * errorId and the next kind continues. Progress flows back through
+ * `updateGenerationProgress` after every kind completes (success or fail).
  */
 export const runSystemDesignGeneration = internalAction({
   args: {
@@ -72,26 +88,35 @@ export const runSystemDesignGeneration = internalAction({
       return;
     }
 
-    const heuristicSnapshot = await loadHeuristicSnapshot(ctx, args.repositoryId);
+    const selections = args.selections as ReadonlyArray<SystemDesignKind>;
+    const heuristicKinds = selections.filter(isHeuristicKind);
+    const llmKinds = selections.filter(
+      (kind): kind is Exclude<SystemDesignKind, HeuristicKind> => !isHeuristicKind(kind),
+    );
 
+    const heuristicSnapshot =
+      heuristicKinds.length > 0 ? await loadHeuristicSnapshot(ctx, args.repositoryId, args.jobId) : null;
+
+    const totalCount = selections.length;
+    let completedCount = 0;
     let succeeded = 0;
     let failed = 0;
 
-    for (let index = 0; index < args.selections.length; index += 1) {
-      const kind = args.selections[index] as SystemDesignKind;
-      const generator = SYSTEM_DESIGN_KIND_GENERATOR[kind];
+    const reportProgress = async (kindLabel: string) => {
+      await ctx.runMutation(internal.systemDesign.updateGenerationProgress, {
+        jobId: args.jobId,
+        completedCount,
+        totalCount,
+        stage: `Generated ${completedCount} of ${totalCount}: ${kindLabel}`,
+      });
+    };
 
+    const runKind = async (
+      kind: SystemDesignKind,
+      produce: () => Promise<{ contentMarkdown: string; summary: string; source: "heuristic" | "sandbox" }>,
+    ) => {
       try {
-        let result: { contentMarkdown: string; summary: string; source: "heuristic" | "llm" };
-        if (generator === "heuristic") {
-          if (kind !== "manifest" && kind !== "readme_summary" && kind !== "architecture_overview") {
-            throw new Error(`Heuristic generator missing for kind ${kind}`);
-          }
-          result = generateHeuristic(kind, heuristicSnapshot, context.repository);
-        } else {
-          result = await generateLlm(ctx, kind, context.activeSandbox, context.repository);
-        }
-
+        const result = await produce();
         await ctx.runMutation(internal.systemDesign.persistGeneratedArtifact, {
           repositoryId: args.repositoryId,
           ownerTokenIdentifier: args.ownerTokenIdentifier,
@@ -116,14 +141,33 @@ export const runSystemDesignGeneration = internalAction({
           errorId,
         });
       }
+      completedCount += 1;
+      await reportProgress(HEADINGS[kind]);
+    };
 
-      await ctx.runMutation(internal.systemDesign.updateGenerationProgress, {
-        jobId: args.jobId,
-        completedCount: index + 1,
-        totalCount: args.selections.length,
-        stage: `Generated ${index + 1} of ${args.selections.length}`,
-      });
-    }
+    const heuristicPass = Promise.all(
+      heuristicKinds.map((kind) =>
+        runKind(kind, async () => {
+          if (heuristicSnapshot === null) {
+            throw new Error("Heuristic snapshot was not loaded.");
+          }
+          return generateHeuristic(kind, heuristicSnapshot);
+        }),
+      ),
+    );
+
+    const llmPass = (async () => {
+      for (const kind of llmKinds) {
+        // Refresh the running job's lease before each LLM kind so a long
+        // multi-kind publication does not overrun the initial lease window
+        // and trigger spurious stale-recovery while progress is still
+        // happening.
+        await ctx.runMutation(internal.systemDesign.refreshGenerationLease, { jobId: args.jobId });
+        await runKind(kind, () => generateLlm(kind, context.activeSandbox, context.repository));
+      }
+    })();
+
+    await Promise.all([heuristicPass, llmPass]);
 
     await ctx.runMutation(internal.systemDesign.completeGeneration, {
       jobId: args.jobId,
@@ -137,7 +181,7 @@ export const runSystemDesignGeneration = internalAction({
       repositoryId: args.repositoryId,
       succeeded,
       failed,
-      total: args.selections.length,
+      total: totalCount,
     });
   },
 });
@@ -159,13 +203,28 @@ type HeuristicSnapshot = {
   readmeContent: string | undefined;
 };
 
-async function loadHeuristicSnapshot(ctx: ActionCtx, repositoryId: Id<"repositories">): Promise<HeuristicSnapshot> {
-  const files = await ctx.runQuery(internal.systemDesign.listRepoFilesForHeuristics, {
-    repositoryId,
-  });
-  const readme = await ctx.runQuery(internal.systemDesign.findReadmeChunkForHeuristics, {
-    repositoryId,
-  });
+async function loadHeuristicSnapshot(
+  ctx: ActionCtx,
+  repositoryId: Id<"repositories">,
+  jobId: Id<"jobs">,
+): Promise<HeuristicSnapshot> {
+  const [files, readme] = await Promise.all([
+    ctx.runQuery(internal.systemDesign.listRepoFilesForHeuristics, { repositoryId }),
+    ctx.runQuery(internal.systemDesign.findReadmeChunkForHeuristics, { repositoryId }),
+  ]);
+
+  if (files.length === HEURISTIC_FILES_TAKE_LIMIT) {
+    // We hit the per-query `take` cap. The heuristic generators still
+    // produce a usable doc, but it will under-represent very large repos —
+    // surface that explicitly so we can spot the silent truncation in
+    // logs without having to repro.
+    logWarn("systemDesign", "heuristic_file_list_truncated", {
+      jobId,
+      repositoryId,
+      takeLimit: HEURISTIC_FILES_TAKE_LIMIT,
+      hint: "Heuristic generators saw a truncated repo file list; consider paging the query or accepting partial coverage.",
+    });
+  }
 
   const snapshot: RepositorySnapshot = {
     readmePath: readme?.path,
@@ -189,9 +248,8 @@ async function loadHeuristicSnapshot(ctx: ActionCtx, repositoryId: Id<"repositor
 }
 
 function generateHeuristic(
-  kind: Extract<SystemDesignKind, "manifest" | "readme_summary" | "architecture_overview">,
+  kind: HeuristicKind,
   data: HeuristicSnapshot,
-  _repository: Doc<"repositories">,
 ): { contentMarkdown: string; summary: string; source: "heuristic" } {
   const manifest = buildRepositoryManifest(data.snapshot);
 
@@ -317,12 +375,11 @@ emit metrics or has no run-books, say so directly rather than padding.`,
 };
 
 async function generateLlm(
-  _ctx: ActionCtx,
   kind: SystemDesignKind,
   sandbox: Doc<"sandboxes"> | null,
   repository: Doc<"repositories">,
-): Promise<{ contentMarkdown: string; summary: string; source: "llm" }> {
-  if (kind === "manifest" || kind === "readme_summary" || kind === "architecture_overview") {
+): Promise<{ contentMarkdown: string; summary: string; source: "sandbox" }> {
+  if (isHeuristicKind(kind)) {
     throw new Error(`generateLlm should not be called for heuristic kind ${kind}`);
   }
   if (!sandbox || !sandbox.remoteId || !sandbox.repoPath) {
@@ -360,10 +417,15 @@ async function generateLlm(
   if (text.length === 0) {
     throw new Error("LLM returned an empty document.");
   }
+  // `source: "sandbox"` carries the semantic load here: the artifact was
+  // produced by an LLM session that read live source through the sandbox
+  // tool factory. `createArtifactInMutation` translates that to
+  // `producedIn: "lab"` + `lastVerifiedAt: now`, which gates the
+  // "verified against current source" badge in the Library freshness UI.
   return {
     contentMarkdown: text,
     summary: extractSummary(text),
-    source: "llm",
+    source: "sandbox",
   };
 }
 

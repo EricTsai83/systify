@@ -83,7 +83,24 @@ flowchart TD
 
 System Design generation and other sandbox-backed jobs must re-check repository liveness before writing durable artifacts. If a repository is archived or deletion has started, the job fails instead of publishing new knowledge.
 
-Long-running jobs use leases. Actions refresh the lease before and after external sandbox work so stale-job recovery does not race normal completion.
+Long-running jobs use leases. The contract for any `system_design`-kind job (Library publication or Failure Mode Analysis) is:
+
+- `leaseExpiresAt` is set at job-insert time, not only at the `queued → running` transition. This keeps the stale-job sweep (`by_status_and_kind_and_leaseExpiresAt` + `lt(leaseExpiresAt, now)`) able to recover a job that died before the Node action ran.
+- The `queued → running` mutation refreshes the lease for a fresh window.
+- Long actions refresh the lease *between* internally-serialised steps — for Library generation, this happens before each LLM-backed kind via `refreshGenerationLease` so a 5-kind publication does not overrun a single lease window.
+- `recoverStaleSystemDesignJob` only fires when both `leaseExpiresAt` is set *and* has passed `now`, so a lease-less job (which is now impossible by construction) would not be falsely failed.
+
+Library generation and Failure Mode Analysis both ride `kind: "system_design"`. Disambiguation is by `requestedCommand`: FMA writes `failure_mode_analysis:<subsystem>`, Library generation leaves it unset. The active-job dedup, the stale-recovery branch, and the UI's "in-flight" pill all share the same predicate so an FMA on the same repo does not block a Library generation, and vice versa.
+
+## Artifact Provenance
+
+The `artifacts.source` field is the input to the freshness UI:
+
+- `source: "heuristic"` — derived from imported repo metadata (no LLM). Translated by `createArtifactInMutation` to `producedIn: "legacy"`; the Library freshness UI does not award a "verified" badge.
+- `source: "sandbox"` — produced by an LLM session that read live source through the sandbox tool factory (the `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview` kinds of Library System Design, and all Failure Mode Analysis outputs). Translated to `producedIn: "lab"` + `lastVerifiedAt: now`, which gates the "verified against current source" badge.
+- `source: "llm"` — reserved for pure-LLM artifacts that did not read live source. Currently unused; future generators that do not need sandbox tools would write this.
+
+A re-publication overwrites the previous artifact in the same folder, so the badge always reflects the most recent verification.
 
 ## Performance Rules
 

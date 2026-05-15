@@ -333,7 +333,7 @@ This sequence is intentional: the system rejects the cheapest failure paths firs
   - error: `RATE_LIMIT_EXCEEDED`
 - `systemDesignRequests`
   - default: `10 / hour`
-  - mutations: `requestSystemDesignGeneration`
+  - mutations: `requestSystemDesignGeneration`, `requestFailureModeAnalysis`
   - override: `RATE_LIMIT_SYSTEM_DESIGN_PER_HOUR`
   - error: `RATE_LIMIT_EXCEEDED`
 - `chatRequestsPerOwner`
@@ -348,7 +348,7 @@ This sequence is intentional: the system rejects the cheapest failure paths firs
   - error: `RATE_LIMIT_EXCEEDED`
 - `daytonaRequestsGlobal`
   - default: `30 / hour`, sharded
-  - mutations: `createRepositoryImport`, `syncRepository`, `requestSystemDesignGeneration`
+  - mutations: `createRepositoryImport`, `syncRepository`, `requestFailureModeAnalysis`, and `requestSystemDesignGeneration` *only when the request includes at least one LLM-backed kind*. Heuristic-only Library System Design requests skip this bucket because they do not touch Daytona.
   - override: `RATE_LIMIT_DAYTONA_GLOBAL_PER_HOUR`
   - error: `RATE_LIMIT_EXCEEDED`
 
@@ -357,14 +357,20 @@ This sequence is intentional: the system rejects the cheapest failure paths firs
 - repository import / sync
   - guard source: `repositories.importStatus`
   - error: `OPERATION_ALREADY_IN_PROGRESS`
-- System Design generation
-  - guard source: active `jobs` rows where `kind === 'system_design'`, `status in ('queued', 'running')`, and `leaseExpiresAt > now`
+- Library System Design generation
+  - guard source: active `jobs` rows where `kind === 'system_design'`, `status in ('queued', 'running')`, `leaseExpiresAt > now`, and `requestedCommand` does **not** start with `failure_mode_analysis:`. The FMA filter keeps a thread-scoped FMA job from blocking a repo-scoped Library generation.
+  - lease override: `SYSTEM_DESIGN_JOB_LEASE_MS`
+  - behavior: **idempotent** — returns the existing `jobId` instead of throwing, so the dialog can converge on the same job from a duplicate submit without an error toast.
+- Failure Mode Analysis
+  - guard source: active `jobs` rows where `kind === 'system_design'`, `status in ('queued', 'running')`, `leaseExpiresAt > now`, and `threadId === <current thread>`. Thread-scoped; an active Library System Design on the same repository does not block FMA.
   - lease override: `SYSTEM_DESIGN_JOB_LEASE_MS`
   - error: `OPERATION_ALREADY_IN_PROGRESS`
 - chat replies
   - guard source: active `jobs` rows where `kind === 'chat'`, `status in ('queued', 'running')`, and `leaseExpiresAt > now`
   - lease override: `CHAT_JOB_LEASE_MS`
   - error: `OPERATION_ALREADY_IN_PROGRESS`
+
+The `system_design` job kind is shared across Library generation and FMA. Both write `leaseExpiresAt` at insert time so the stale-job sweep can recover a row whose action never ran; the recovery branch dispatches on the `failure_mode_analysis:` `requestedCommand` prefix to pick the correct cleanup mutation.
 
 ### Recovery behavior
 

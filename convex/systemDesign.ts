@@ -9,17 +9,33 @@ import {
   SYSTEM_DESIGN_KIND_GENERATOR,
   SYSTEM_DESIGN_KIND_TITLES,
   SYSTEM_DESIGN_KIND_TO_FOLDER,
-  SYSTEM_DESIGN_KINDS,
   type SystemDesignKind,
 } from "./lib/systemDesign";
 import { createArtifactInMutation } from "./artifactStore";
+import { getSandboxAvailability } from "./lib/sandboxAvailability";
 import {
   completeRunningJob,
   failRunningJob,
   failStaleActiveJob,
   markQueuedJobRunning,
+  refreshRunningJobLease,
   updateRunningJobProgress,
 } from "./jobLifecycle";
+import {
+  consumeDaytonaGlobalRateLimit,
+  consumeSystemDesignRateLimit,
+  SYSTEM_DESIGN_JOB_LEASE_MS,
+} from "./lib/rateLimit";
+
+const FAILURE_MODE_REQUESTED_COMMAND_PREFIX = "failure_mode_analysis:";
+
+function isFailureModeJob(job: Doc<"jobs">): boolean {
+  return job.requestedCommand?.startsWith(FAILURE_MODE_REQUESTED_COMMAND_PREFIX) ?? false;
+}
+
+function hasLlmSelection(selections: ReadonlyArray<SystemDesignKind>): boolean {
+  return selections.some((kind) => SYSTEM_DESIGN_KIND_GENERATOR[kind] === "llm");
+}
 
 /**
  * Library System Design generation entry point.
@@ -63,21 +79,38 @@ export const requestSystemDesignGeneration = mutation({
     }
 
     const uniqueSelections = Array.from(new Set(args.selections)) as SystemDesignKind[];
+    const requiresSandbox = hasLlmSelection(uniqueSelections);
+    const now = Date.now();
 
-    const existingJob = await ctx.db
-      .query("jobs")
-      .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repository._id))
-      .filter((q) =>
-        q.and(
-          q.eq(q.field("kind"), "system_design"),
-          q.or(q.eq(q.field("status"), "queued"), q.eq(q.field("status"), "running")),
-          q.eq(q.field("ownerTokenIdentifier"), identity.tokenIdentifier),
-        ),
-      )
-      .first();
+    // Sandbox preflight: LLM-backed kinds need a ready sandbox. We reject the
+    // whole request here so the user gets one clear error instead of N
+    // per-kind failures in the job summary later.
+    let sandboxId: Id<"sandboxes"> | undefined;
+    if (requiresSandbox) {
+      const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
+      const availability = getSandboxAvailability(sandbox, now);
+      if (!availability.available || !sandbox) {
+        throw new Error(
+          availability.message ??
+            "A live sandbox is required for the selected documents. Sync the repository to provision one.",
+        );
+      }
+      sandboxId = sandbox._id;
+    }
 
-    if (existingJob) {
-      return { jobId: existingJob._id };
+    // Library System Design generation and Failure Mode Analysis both ride the
+    // `system_design` job kind. FMA jobs are distinguished by a
+    // `failure_mode_analysis:` requestedCommand prefix; the dedup below
+    // ignores those so an in-flight FMA does not block a Library
+    // generation (and vice versa via FMA's own thread-scoped guard).
+    const activeJob = await findActiveLibrarySystemDesignJob(ctx, repository._id, now);
+    if (activeJob) {
+      return { jobId: activeJob._id };
+    }
+
+    await consumeSystemDesignRateLimit(ctx, identity.tokenIdentifier);
+    if (requiresSandbox) {
+      await consumeDaytonaGlobalRateLimit(ctx);
     }
 
     await ensureSystemDesignFolders(ctx, {
@@ -88,6 +121,7 @@ export const requestSystemDesignGeneration = mutation({
     const jobId = await ctx.db.insert("jobs", {
       repositoryId: repository._id,
       ownerTokenIdentifier: identity.tokenIdentifier,
+      sandboxId,
       kind: "system_design",
       status: "queued",
       stage: "queued",
@@ -95,6 +129,11 @@ export const requestSystemDesignGeneration = mutation({
       costCategory: "system_design",
       triggerSource: "user",
       outputSummary: buildJobSummary(uniqueSelections, "queued"),
+      // Set the lease at insert time so the stale-job sweep
+      // (`by_status_and_kind_and_leaseExpiresAt` + `lt(leaseExpiresAt, now)`)
+      // can pick this row up if the Node action never runs or dies before
+      // `markGenerationStarted` patches the lease.
+      leaseExpiresAt: now + SYSTEM_DESIGN_JOB_LEASE_MS,
     });
 
     await ctx.scheduler.runAfter(0, internal.systemDesignNode.runSystemDesignGeneration, {
@@ -107,6 +146,49 @@ export const requestSystemDesignGeneration = mutation({
     return { jobId };
   },
 });
+
+const LIBRARY_SYSTEM_DESIGN_ACTIVE_SCAN_LIMIT = 8;
+
+async function findActiveLibrarySystemDesignJob(
+  ctx: QueryCtx,
+  repositoryId: Id<"repositories">,
+  now: number,
+): Promise<Doc<"jobs"> | null> {
+  // Bounded scan via the existing `(repositoryId, kind, status, leaseExpiresAt)`
+  // index. We page a few rows per (queued, running) bucket and exclude FMA
+  // jobs in JS — FMA volume per repo is small, so a couple of `.take(8)`s
+  // beats `.collect()` + JS filter on the unindexed status/kind pair. We
+  // prefer `running` over `queued` so the dialog shows the most-advanced
+  // active job when both states coexist.
+  const [queuedCandidates, runningCandidates] = await Promise.all([
+    ctx.db
+      .query("jobs")
+      .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+        q
+          .eq("repositoryId", repositoryId)
+          .eq("kind", "system_design")
+          .eq("status", "queued")
+          .gte("leaseExpiresAt", now),
+      )
+      .take(LIBRARY_SYSTEM_DESIGN_ACTIVE_SCAN_LIMIT),
+    ctx.db
+      .query("jobs")
+      .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+        q
+          .eq("repositoryId", repositoryId)
+          .eq("kind", "system_design")
+          .eq("status", "running")
+          .gte("leaseExpiresAt", now),
+      )
+      .take(LIBRARY_SYSTEM_DESIGN_ACTIVE_SCAN_LIMIT),
+  ]);
+  for (const job of [...runningCandidates, ...queuedCandidates]) {
+    if (!isFailureModeJob(job)) {
+      return job;
+    }
+  }
+  return null;
+}
 
 /**
  * Listing helper: surface the most recent generation job for the repo so the
@@ -121,30 +203,25 @@ export const getActiveSystemDesignJob = query({
     if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
       return null;
     }
-    return await mostRecentActiveDesignJob(ctx, args.repositoryId);
+    return await findActiveLibrarySystemDesignJob(ctx, args.repositoryId, Date.now());
   },
 });
-
-async function mostRecentActiveDesignJob(ctx: QueryCtx, repositoryId: Id<"repositories">): Promise<Doc<"jobs"> | null> {
-  const jobs = await ctx.db
-    .query("jobs")
-    .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
-    .order("desc")
-    .collect();
-  return (
-    jobs.find((job) => job.kind === "system_design" && (job.status === "queued" || job.status === "running")) ?? null
-  );
-}
 
 export const markGenerationStarted = internalMutation({
   args: { jobId: v.id("jobs"), selections: v.array(systemDesignKindValidator) },
   handler: async (ctx, args): Promise<{ started: boolean }> => {
+    const now = Date.now();
     const result = await markQueuedJobRunning(ctx, {
       jobId: args.jobId,
       expectedKind: "system_design",
       stage: "running",
       progress: 0,
-      startedAt: Date.now(),
+      startedAt: now,
+      // Refresh the lease at the queued→running transition so we get a
+      // fresh window for the generator work. The mutation already wrote a
+      // lease at insert time so the stale-sweep guard never sees an
+      // unset value.
+      leaseExpiresAt: now + SYSTEM_DESIGN_JOB_LEASE_MS,
     });
     if (result) {
       await ctx.db.patch(args.jobId, {
@@ -152,6 +229,24 @@ export const markGenerationStarted = internalMutation({
       });
     }
     return { started: result !== null };
+  },
+});
+
+/**
+ * Extend the running job's lease between LLM kinds. Each LLM-backed kind
+ * can take tens of seconds on a slow sandbox; without a periodic refresh
+ * a long publication (e.g. all five LLM kinds with high step budgets)
+ * could overrun the initial lease window and trigger a spurious stale-
+ * recovery while the action is still making progress.
+ */
+export const refreshGenerationLease = internalMutation({
+  args: { jobId: v.id("jobs") },
+  handler: async (ctx, args) => {
+    await refreshRunningJobLease(ctx, {
+      jobId: args.jobId,
+      expectedKind: "system_design",
+      leaseExpiresAt: Date.now() + SYSTEM_DESIGN_JOB_LEASE_MS,
+    });
   },
 });
 
@@ -226,7 +321,7 @@ export const recoverStaleSystemDesignJob = internalMutation({
       !job ||
       job.kind !== "system_design" ||
       (job.status !== "queued" && job.status !== "running") ||
-      job.requestedCommand?.startsWith("failure_mode_analysis:") ||
+      isFailureModeJob(job) ||
       typeof job.leaseExpiresAt !== "number" ||
       job.leaseExpiresAt > now
     ) {
@@ -389,14 +484,3 @@ function buildJobSummary(selections: SystemDesignKind[], state: "queued" | "runn
   }
   return `${verb} ${titles.length} System Design documents`;
 }
-
-/**
- * Convenience export consumed by the dialog catalog so the client doesn't
- * need to re-derive the per-kind metadata table. Co-locating it here keeps
- * the source of truth on the server.
- */
-export const SYSTEM_DESIGN_CATALOG = SYSTEM_DESIGN_KINDS.map((kind) => ({
-  kind,
-  title: SYSTEM_DESIGN_KIND_TITLES[kind],
-  generator: SYSTEM_DESIGN_KIND_GENERATOR[kind],
-}));
