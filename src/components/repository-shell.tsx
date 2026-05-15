@@ -358,6 +358,15 @@ export function RepositoryShell({
   const { serviceMode } = useServiceMode(currentWorkspaceId);
   const redirectThreadMode = SERVICE_MODE_TO_REDIRECT_THREAD_MODE[serviceMode];
 
+  // Discuss is "free-form discussion with no repository grounding" per
+  // docs/service-modes-library-lab-system-design.md. The right-rail
+  // ArtifactPanel — repo-scoped folder tree plus sandbox-backed
+  // launchers — is therefore mounted only outside Discuss. The toggle
+  // button, the desktop column, the mobile drawer, and the keyboard
+  // shortcut all gate on this single flag so the surface and its
+  // affordances stay consistent.
+  const isArtifactPanelEnabled = serviceMode !== "discuss";
+
   // Loaded for the redirect-to-most-recent-thread logic: scope by the
   // workspace the user is currently "in" so the sidebar/empty-state CTAs
   // and the redirect target all line up. Skipped once a thread is selected
@@ -619,7 +628,7 @@ export function RepositoryShell({
   );
 
   const handleToggleArtifactPanel = useCallback(() => {
-    if (workspaceStatus === "no-repo") {
+    if (workspaceStatus === "no-repo" || !isArtifactPanelEnabled) {
       return;
     }
     if (isDesktopLayout) {
@@ -637,7 +646,7 @@ export function RepositoryShell({
       }
       return next;
     });
-  }, [isDesktopLayout, setIsArtifactPanelOpen, workspaceStatus]);
+  }, [isArtifactPanelEnabled, isDesktopLayout, setIsArtifactPanelOpen, workspaceStatus]);
 
   /**
    * Setter for the StatusPanel open state, shared by Radix Popover (desktop)
@@ -680,7 +689,7 @@ export function RepositoryShell({
   );
 
   useEffect(() => {
-    if (workspaceStatus === "no-repo") {
+    if (workspaceStatus === "no-repo" || !isArtifactPanelEnabled) {
       return;
     }
     const onKeyDown = (event: KeyboardEvent) => {
@@ -707,7 +716,7 @@ export function RepositoryShell({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleToggleArtifactPanel, workspaceStatus]);
+  }, [handleToggleArtifactPanel, isArtifactPanelEnabled, workspaceStatus]);
 
   const handleImported = useCallback(
     (_repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => {
@@ -875,7 +884,7 @@ export function RepositoryShell({
       onSync={() => void handleSync()}
       isArtifactPanelOpen={isDesktopLayout ? isArtifactPanelOpen : isArtifactSheetOpen}
       onToggleArtifactPanel={handleToggleArtifactPanel}
-      showArtifactToggle
+      showArtifactToggle={isArtifactPanelEnabled}
       hasAttachedRepository={capabilities.attachedRepository !== null}
       availableRepositories={repositories ?? []}
       onImported={handleImported}
@@ -1041,13 +1050,16 @@ export function RepositoryShell({
           ) : (
             <>
               {chatContainerNode}
-              {isDesktopLayout ? (
+              {isDesktopLayout && isArtifactPanelEnabled ? (
                 // Status lives in the top-bar Popover, so the inline rail is
                 // owned exclusively by the artifact panel — both surfaces can
                 // stay open at once. Width scales up at 2xl so mermaid diagrams
                 // and code blocks don't need horizontal scroll. Width (not
                 // transform) is animated so chat reflows alongside the panel
                 // — `will-change: width` keeps the 200ms toggle composited.
+                //
+                // Discuss mode opts out of the artifact panel entirely — see
+                // `isArtifactPanelEnabled` above for the rationale.
                 <div
                   aria-hidden={!(isArtifactPanelHydrated && isArtifactPanelOpen)}
                   data-state={isArtifactPanelHydrated && isArtifactPanelOpen ? "open" : "closed"}
@@ -1072,7 +1084,7 @@ export function RepositoryShell({
         </div>
       </SidebarInset>
 
-      {workspaceStatus !== "no-repo" && !isDesktopLayout ? (
+      {workspaceStatus !== "no-repo" && !isDesktopLayout && isArtifactPanelEnabled ? (
         <Drawer open={isArtifactSheetOpen} onOpenChange={setIsArtifactSheetOpen} aria-label="artifact-drawer">
           {/*
            * Fixed height (rather than Vaul snap points) so the inner flex

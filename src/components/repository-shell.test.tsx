@@ -20,9 +20,10 @@ const queryName = (query: unknown) => {
   }
 };
 
-const { useMutationMock, useQueryMock } = vi.hoisted(() => ({
+const { useMutationMock, useQueryMock, useServiceModeMock } = vi.hoisted(() => ({
   useMutationMock: vi.fn(),
   useQueryMock: vi.fn(),
+  useServiceModeMock: vi.fn(),
 }));
 
 const navigateMock = vi.fn();
@@ -38,6 +39,15 @@ vi.mock("react-router-dom", () => ({
   useNavigate: () => navigateMock,
   useLocation: () => ({ pathname: "/", search: "", hash: "", state: null, key: "default" }),
   useParams: () => ({}),
+}));
+
+// `useServiceMode` is mocked at the hook level so tests can dictate the
+// active service mode without depending on URL-shape mocks. The shell now
+// gates the artifact panel surface on `serviceMode !== "discuss"`, so the
+// suite defaults to `lab` to keep the legacy "ready state" artifact-toggle
+// assertions intact; the dedicated discuss test below overrides it.
+vi.mock("@/hooks/use-service-mode", () => ({
+  useServiceMode: useServiceModeMock,
 }));
 
 vi.mock("@/components/app-sidebar", () => ({
@@ -276,6 +286,20 @@ beforeEach(() => {
 
   useMutationMock.mockReset();
   useQueryMock.mockReset();
+  useServiceModeMock.mockReset();
+  useServiceModeMock.mockReturnValue({
+    serviceMode: "lab",
+    availability: undefined,
+    placeholderAvailability: {
+      availableServiceModes: ["discuss", "lab"],
+      defaultServiceMode: "lab",
+      disabledReasons: {},
+      hasAttachedRepo: true,
+      hasAtLeastOneArtifact: false,
+      askReadiness: { canBind: false, reason: null },
+      labReadiness: { canStart: true, reason: null },
+    },
+  });
   // Dispatch by mutation name so each call site gets its own spy. Falls
   // back to a fresh resolved-null mock for mutations the tests don't assert on.
   useMutationMock.mockImplementation((mutation: unknown) => {
@@ -329,11 +353,9 @@ beforeEach(() => {
       case "chat/streaming:getActiveMessageStream":
         return null;
       case "serviceModeEligibility:evaluate":
-        // The shell only reads `serviceMode` from this hook for the
-        // mode-scoped most-recent-thread redirect. A no-repo placeholder
-        // keeps `serviceMode` resolving to "discuss", matching the
-        // tests' implicit assumption (these scenarios all run inside the
-        // legacy chat shell, not Library or Lab).
+        // `useServiceMode` is mocked at the hook level above, so this case
+        // is defensive: returning a placeholder keeps the underlying query
+        // shape coherent for any code path that might subscribe directly.
         return {
           availableServiceModes: ["discuss"],
           defaultServiceMode: "discuss",
@@ -452,6 +474,40 @@ describe("RepositoryShell artifact toggle behavior", () => {
       mediaListener?.({ matches: true } as MediaQueryListEvent);
     });
     expect(screen.queryByLabelText("artifact-drawer")).not.toBeInTheDocument();
+  });
+
+  test("hides the artifact panel surface entirely in discuss mode", () => {
+    // Discuss is "free-form discussion with no repository grounding"
+    // (docs/service-modes-library-lab-system-design.md). The right-rail
+    // artifact panel — repo-scoped folder tree plus sandbox-backed
+    // launchers — must not surface in Discuss even when the workspace is
+    // otherwise ready, because the user can read and ask over those
+    // artifacts from Library instead. This pins all three artifact
+    // affordances (the ChatPanel toggle, the mobile drawer, the desktop
+    // column container) so a future refactor can't quietly bring one of
+    // them back without a failing test.
+    useServiceModeMock.mockReturnValue({
+      serviceMode: "discuss",
+      availability: undefined,
+      placeholderAvailability: {
+        availableServiceModes: ["discuss"],
+        defaultServiceMode: "discuss",
+        disabledReasons: {},
+        hasAttachedRepo: true,
+        hasAtLeastOneArtifact: false,
+        askReadiness: { canBind: false, reason: null },
+        labReadiness: { canStart: false, reason: null },
+      },
+    });
+    repositoriesResult = [makeRepository()];
+    const { workspaceId, workspace } = makeRepoWorkspace();
+    workspacesResult = [workspace];
+
+    render(<RepositoryShell urlWorkspaceId={workspaceId} urlThreadId={null} />);
+
+    expect(screen.queryByTestId("artifact-panel-toggle")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("artifact-drawer")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("artifact-panel")).not.toBeInTheDocument();
   });
 });
 

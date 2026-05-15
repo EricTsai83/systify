@@ -1,5 +1,7 @@
 import { memo } from "react";
-import { ClockCounterClockwiseIcon, PlusIcon, XIcon } from "@phosphor-icons/react";
+import { PlusIcon, XIcon } from "@phosphor-icons/react";
+import type { Doc } from "../../convex/_generated/dataModel";
+import { LibraryAskHistoryPopover } from "@/components/library-ask-history-popover";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import { usePrewarmThread } from "@/hooks/use-prewarm-thread";
@@ -14,7 +16,7 @@ import { cn } from "@/lib/utils";
  * the artifact tab strip's chrome (`LibraryTabs`) — horizontal scroll with a
  * left edge gradient, a trailing pinned slot. Click activates; the X (and
  * middle-click) **close the tab only** — they do not delete the thread.
- * Deleting a thread lives in the history dialog, opened by the trailing
+ * Deleting a thread lives in the history popover, opened by the trailing
  * clock button, so it is always a deliberate, searched-for action.
  *
  * This is a sibling of `LibraryTabs`, not a generalization of it: the two
@@ -28,9 +30,14 @@ export interface LibraryAskThreadTabsProps {
   onSelectTab: (threadId: ThreadId) => void;
   onCloseTab: (threadId: ThreadId) => void;
   onNewThread: () => void;
-  onOpenHistory: () => void;
   /** Disables the "+" while a thread create is in flight. */
   isCreating: boolean;
+  /** All Ask threads for this workspace, fed to the history popover. */
+  threads: Doc<"threads">[] | undefined;
+  /** History row click — the panel must `ensureOpen` the picked thread. */
+  onSelectFromHistory: (thread: Doc<"threads">) => void;
+  onTogglePin: (threadId: ThreadId, pinned: boolean) => void;
+  onDeleteThread: (threadId: ThreadId) => void;
   className?: string;
 }
 
@@ -40,8 +47,11 @@ export const LibraryAskThreadTabs = memo(function LibraryAskThreadTabs({
   onSelectTab,
   onCloseTab,
   onNewThread,
-  onOpenHistory,
   isCreating,
+  threads,
+  onSelectFromHistory,
+  onTogglePin,
+  onDeleteThread,
   className,
 }: LibraryAskThreadTabsProps) {
   const prewarmThread = usePrewarmThread();
@@ -69,7 +79,7 @@ export const LibraryAskThreadTabs = memo(function LibraryAskThreadTabs({
                   }}
                   onAuxClick={(event) => {
                     // Middle-click closes the tab — same as the X. Neither
-                    // deletes the thread; deletion lives in the history dialog.
+                    // deletes the thread; deletion lives in the history popover.
                     if (event.button === 1) {
                       event.preventDefault();
                       onCloseTab(tab.id);
@@ -121,17 +131,13 @@ export const LibraryAskThreadTabs = memo(function LibraryAskThreadTabs({
         >
           <PlusIcon size={14} weight="bold" />
         </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          aria-label="Thread history"
-          title="Thread history — search, reopen, or delete past threads"
-          onClick={onOpenHistory}
-        >
-          <ClockCounterClockwiseIcon size={14} weight="bold" />
-        </Button>
+        <LibraryAskHistoryPopover
+          threads={threads}
+          activeThreadId={activeThreadId}
+          onSelectThread={onSelectFromHistory}
+          onTogglePin={onTogglePin}
+          onDeleteThread={onDeleteThread}
+        />
       </div>
     </div>
   );
