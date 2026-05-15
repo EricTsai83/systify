@@ -402,28 +402,6 @@ export const listRepoFilesForHeuristics = internalQuery({
   },
 });
 
-/**
- * Find a single README chunk for the repo so the heuristic README-summary
- * generator can drop a representative excerpt into the artifact. The first
- * `readme`-kinded chunk is sufficient: the import pipeline only writes one
- * chunk per README file at byte zero. Bounded via the
- * `by_repositoryId_and_chunkKind` index so we don't pull every chunk row
- * just to find one.
- */
-export const findReadmeChunkForHeuristics = internalQuery({
-  args: { repositoryId: v.id("repositories") },
-  handler: async (ctx, args): Promise<{ path: string; content: string } | null> => {
-    const readme = await ctx.db
-      .query("repoChunks")
-      .withIndex("by_repositoryId_and_chunkKind", (q) =>
-        q.eq("repositoryId", args.repositoryId).eq("chunkKind", "readme"),
-      )
-      .first();
-    if (!readme) return null;
-    return { path: readme.path, content: readme.content };
-  },
-});
-
 export const persistGeneratedArtifact = internalMutation({
   args: {
     repositoryId: v.id("repositories"),

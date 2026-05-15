@@ -73,10 +73,11 @@ export async function ensureSystemDesignFolders(
 
 /**
  * The 8 artifact kinds that the Library System Design publication can produce.
- * The 3 heuristic kinds (`manifest`, `readme_summary`, `architecture_overview`)
- * derive from the imported repo snapshot without an LLM call; the 5 LLM-backed
- * kinds (`*_overview`) read live source via sandbox tools so the doc tracks
- * the current code state.
+ * The 2 heuristic kinds (`manifest`, `architecture_overview`) derive from the
+ * imported repo snapshot without an LLM call; the 6 LLM-backed kinds read live
+ * source via sandbox tools so the doc tracks the current code state. README
+ * Summary used to be heuristic but moved to LLM so the output is a real
+ * condensation rather than a prefix slice of the README file.
  */
 export const SYSTEM_DESIGN_KINDS = [
   "manifest",
@@ -119,7 +120,7 @@ export const SYSTEM_DESIGN_KIND_TO_FOLDER: Record<SystemDesignKind, SystemDesign
  */
 export const SYSTEM_DESIGN_KIND_GENERATOR: Record<SystemDesignKind, "heuristic" | "llm"> = {
   manifest: "heuristic",
-  readme_summary: "heuristic",
+  readme_summary: "llm",
   architecture_overview: "heuristic",
   data_model_overview: "llm",
   api_surface_overview: "llm",

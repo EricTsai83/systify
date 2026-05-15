@@ -34,25 +34,25 @@ const systemDesignKindValidator = v.union(
   v.literal("operations_overview"),
 );
 
-type HeuristicKind = Extract<SystemDesignKind, "manifest" | "readme_summary" | "architecture_overview">;
+type HeuristicKind = Extract<SystemDesignKind, "manifest" | "architecture_overview">;
 
 function isHeuristicKind(kind: SystemDesignKind): kind is HeuristicKind {
-  return kind === "manifest" || kind === "readme_summary" || kind === "architecture_overview";
+  return kind === "manifest" || kind === "architecture_overview";
 }
 
 /**
  * Library System Design generator.
  *
  * Concurrency model:
- *   - Heuristic kinds (`manifest` / `readme_summary` / `architecture_overview`)
- *     derive from imported `repoFiles` + `repoChunks` rows and only touch
- *     Convex. They run concurrently against the shared snapshot.
- *   - LLM kinds (`*_overview`) each spin a `generateText` call against the
- *     sandbox-backed model with the same `read_file` / `list_dir` /
- *     `run_shell` tool factory the chat-sandbox path uses. They run serially
- *     to honour the per-sandbox tool budget and the OpenAI rate limit; the
- *     job lease is refreshed before each one so a long publication does not
- *     trip the stale-recovery sweep.
+ *   - Heuristic kinds (`manifest` / `architecture_overview`) derive from
+ *     imported `repoFiles` rows and only touch Convex. They run concurrently
+ *     against the shared snapshot.
+ *   - LLM kinds (`readme_summary` + `*_overview`) each spin a `generateText`
+ *     call against the sandbox-backed model with the same `read_file` /
+ *     `list_dir` / `run_shell` tool factory the chat-sandbox path uses. They
+ *     run serially to honour the per-sandbox tool budget and the OpenAI rate
+ *     limit; the job lease is refreshed before each one so a long publication
+ *     does not trip the stale-recovery sweep.
  *
  * The two passes run in parallel so a long LLM run does not gate the cheap
  * heuristic publication. Per-kind failures are isolated: the catch logs an
@@ -199,8 +199,6 @@ const HEADINGS: Record<SystemDesignKind, string> = {
 
 type HeuristicSnapshot = {
   snapshot: RepositorySnapshot;
-  readmePath: string | undefined;
-  readmeContent: string | undefined;
 };
 
 async function loadHeuristicSnapshot(
@@ -208,10 +206,7 @@ async function loadHeuristicSnapshot(
   repositoryId: Id<"repositories">,
   jobId: Id<"jobs">,
 ): Promise<HeuristicSnapshot> {
-  const [files, readme] = await Promise.all([
-    ctx.runQuery(internal.systemDesign.listRepoFilesForHeuristics, { repositoryId }),
-    ctx.runQuery(internal.systemDesign.findReadmeChunkForHeuristics, { repositoryId }),
-  ]);
+  const files = await ctx.runQuery(internal.systemDesign.listRepoFilesForHeuristics, { repositoryId });
 
   if (files.length === HEURISTIC_FILES_TAKE_LIMIT) {
     // We hit the per-query `take` cap. The heuristic generators still
@@ -227,8 +222,6 @@ async function loadHeuristicSnapshot(
   }
 
   const snapshot: RepositorySnapshot = {
-    readmePath: readme?.path,
-    readmeContent: readme?.content,
     importantFileContents: [],
     files: files.map((file) => ({
       path: file.path,
@@ -244,7 +237,7 @@ async function loadHeuristicSnapshot(
     })),
   };
 
-  return { snapshot, readmePath: readme?.path, readmeContent: readme?.content };
+  return { snapshot };
 }
 
 function generateHeuristic(
@@ -260,17 +253,6 @@ function generateHeuristic(
       source: "heuristic",
     };
   }
-  if (kind === "readme_summary") {
-    const md =
-      data.readmeContent && data.readmePath
-        ? `# README Summary\n\nSource: \`${data.readmePath}\`\n\n${data.readmeContent.slice(0, 6000)}`
-        : "# README Summary\n\nNo README was detected during import.";
-    return {
-      contentMarkdown: md,
-      summary: summarizeReadmeText(data.readmeContent),
-      source: "heuristic",
-    };
-  }
   return {
     contentMarkdown: createArchitectureArtifactMarkdown(manifest, data.snapshot),
     summary: "Initial architecture map derived from the repository layout.",
@@ -278,24 +260,28 @@ function generateHeuristic(
   };
 }
 
-function summarizeReadmeText(readme: string | undefined): string {
-  if (!readme) return "No README was detected during import.";
-  const firstParagraph = readme
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .slice(0, 4)
-    .join(" ");
-  return firstParagraph.slice(0, 280) || "README captured at import time.";
-}
+const LLM_PROMPTS: Record<Exclude<SystemDesignKind, HeuristicKind>, string> = {
+  readme_summary: `You are summarising the README of a software repository for a new engineer
+joining the team. Use the sandbox tools (read_file, list_dir, run_shell) to
+locate the README (usually README.md / README.rst / README.txt at the repo
+root) and read its contents. If the README references other docs
+(CONTRIBUTING, ARCHITECTURE, docs/), you may follow them, but ground the
+summary in what the README itself states. Identify:
 
-const LLM_PROMPTS: Record<
-  Extract<
-    SystemDesignKind,
-    "data_model_overview" | "api_surface_overview" | "deployment_overview" | "security_overview" | "operations_overview"
-  >,
-  string
-> = {
+- what the project is and the problem it solves (one or two sentences);
+- the intended audience or users;
+- headline features and capabilities the README actually advertises;
+- how to get started (install / run commands as documented);
+- notable status callouts: licence, maturity (early-access / beta / archived),
+  external dependencies the user must provision.
+
+Write a Markdown document titled "# README Summary" with these sections in
+order: 'Overview', 'Audience', 'Features', 'Getting Started', 'Notable
+Callouts', 'Source'. Under 'Source', cite the README file path in backticks.
+Stay faithful to what the README actually says — do not invent features or
+audiences. If the README is missing, empty, or boilerplate-only, say so
+explicitly in 'Overview' and write "Not documented in README." in the other
+sections rather than padding.`,
   data_model_overview: `You are documenting the data model of a software repository for a new
 engineer joining the team. Use the sandbox tools (read_file, list_dir,
 run_shell) to inspect the repository and identify:
@@ -393,7 +379,7 @@ async function generateLlm(
   const tools = createSandboxTools(client, sandbox.repoPath);
 
   const modelName = resolveModelForMode("lab");
-  const systemPrompt = LLM_PROMPTS[kind as keyof typeof LLM_PROMPTS];
+  const systemPrompt = LLM_PROMPTS[kind];
   const userPrompt = [
     `Repository: ${repository.sourceRepoFullName ?? "(unknown)"}`,
     repository.defaultBranch ? `Default branch: ${repository.defaultBranch}` : null,

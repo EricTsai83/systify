@@ -21,7 +21,8 @@ import type { RepositoryId } from "@/lib/types";
  * are deliberately hardcoded here so the dialog matches the publication
  * narrative even if the backend catalog grows additional kinds — new kinds
  * will appear as an "unrendered" warning instead of silently changing the UI
- * vocabulary.
+ * vocabulary. Free (heuristic) kinds are listed first so a user scanning
+ * the dialog sees the no-cost options up top.
  */
 const CATALOG: ReadonlyArray<{
   kind:
@@ -46,18 +47,18 @@ const CATALOG: ReadonlyArray<{
     defaultChecked: true,
   },
   {
-    kind: "readme_summary",
-    title: "README Summary",
-    description: "First-paragraph excerpt from the repository README.",
-    cost: "free",
-    defaultChecked: true,
-  },
-  {
     kind: "architecture_overview",
     title: "Architecture Overview",
     description: "High-signal files and suggested reading order.",
     cost: "free",
     defaultChecked: true,
+  },
+  {
+    kind: "readme_summary",
+    title: "README Summary",
+    description: "Purpose, audience, features, and quickstart distilled from the README.",
+    cost: "llm",
+    defaultChecked: false,
   },
   {
     kind: "data_model_overview",

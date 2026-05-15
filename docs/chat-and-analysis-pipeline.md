@@ -239,8 +239,8 @@ System Design generation is **user-initiated, not import-driven**. Imports no lo
 
 Library System Design produces up to eight artifact kinds, split by generator type:
 
-- **Heuristic** (no LLM, no sandbox) — `manifest`, `readme_summary`, `architecture_overview`. Derived from imported `repoFiles` + `repoChunks` rows.
-- **LLM-backed** (uses sandbox tools) — `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`. Each spins a `generateText` call against the sandbox-backed model with the same `read_file` / `list_dir` / `run_shell` tool factory the Lab chat path uses.
+- **Heuristic** (no LLM, no sandbox) — `manifest`, `architecture_overview`. Derived from imported `repoFiles` rows. The `isEntryPoint` / `isConfig` / `isImportant` / `language` fields are computed at import time (`createRepoFileRecords` in `convex/lib/repoAnalysis.ts`) and cached on each row, so changes to those heuristic rules only affect newly imported or **re-synced** repos. To pick up updated rules on an existing repo, trigger Re-sync from the repository detail page.
+- **LLM-backed** (uses sandbox tools) — `readme_summary`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`. Each spins a `generateText` call against the sandbox-backed model with the same `read_file` / `list_dir` / `run_shell` tool factory the Lab chat path uses.
 
 The dialog flags each kind with a **Free** or **~1 LLM call** badge driven by `SYSTEM_DESIGN_KIND_GENERATOR` in `convex/lib/systemDesign.ts`.
 
@@ -267,7 +267,7 @@ The job and the FMA flow share the `system_design` kind. Disambiguation is by `r
 
 `runSystemDesignGeneration` (in `convex/systemDesignNode.ts`) transitions the job to `running` via `markGenerationStarted`, which refreshes the lease for a fresh window, then splits the work into two concurrent passes:
 
-- **Heuristic pass** — runs all heuristic kinds in parallel via `Promise.all`. The shared `RepositorySnapshot` is loaded once via `listRepoFilesForHeuristics` (bounded by `take(2000)`; a `logWarn` fires if the take cap was reached) and `findReadmeChunkForHeuristics`.
+- **Heuristic pass** — runs all heuristic kinds in parallel via `Promise.all`. The shared `RepositorySnapshot` is loaded once via `listRepoFilesForHeuristics` (bounded by `take(2000)`; a `logWarn` fires if the take cap was reached).
 - **LLM pass** — runs LLM-backed kinds serially in their submission order, refreshing the job lease via `refreshGenerationLease` *before each kind*. Serial execution is intentional: it honours both the per-sandbox tool budget and OpenAI rate limits.
 
 Both passes run concurrently against each other so a long LLM session does not gate the cheap heuristic publication. Per-kind failures are isolated in a `try/catch`; the failing kind is logged with an `errorId` and skipped without affecting later kinds. After every kind completes (success or failure) the action updates `jobs.stage` / `jobs.progress` via `updateGenerationProgress`.
@@ -296,7 +296,7 @@ Two distinct surfaces depend on a live Daytona sandbox: Lab mode and the LLM-bac
 - has failed
 - is missing required remote path information
 
-then Lab is unavailable and `requestSystemDesignGeneration` rejects requests *that include at least one LLM-backed kind*. A request that selects only heuristic kinds (`manifest`, `readme_summary`, `architecture_overview`) skips the sandbox preflight and runs even when no sandbox exists, so a freshly imported repo can publish the starter heuristic set immediately.
+then Lab is unavailable and `requestSystemDesignGeneration` rejects requests *that include at least one LLM-backed kind*. A request that selects only heuristic kinds (`manifest`, `architecture_overview`) skips the sandbox preflight and runs even when no sandbox exists, so a freshly imported repo can publish the starter heuristic set immediately.
 
 The frontend uses this state to tell the user to:
 
