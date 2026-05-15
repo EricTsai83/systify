@@ -4,7 +4,6 @@ import type { SandboxModeStatus } from "./types";
 import {
   isUserRelevantActiveJob,
   isUserRelevantJob,
-  presentDeepAnalysisSurface,
   presentRepositoryIntelligenceSurface,
   presentSandboxSurface,
 } from "./operations";
@@ -35,7 +34,7 @@ function makeStatus(overrides: Partial<SandboxModeStatus> = {}): SandboxModeStat
 
 describe("isUserRelevantActiveJob / isUserRelevantJob", () => {
   test("admits user-initiated kinds in active states", () => {
-    for (const kind of ["import", "index", "chat", "deep_analysis"] as const) {
+    for (const kind of ["import", "index", "chat", "system_design"] as const) {
       expect(isUserRelevantActiveJob(makeJob({ kind, status: "queued" }))).toBe(true);
       expect(isUserRelevantActiveJob(makeJob({ kind, status: "running" }))).toBe(true);
     }
@@ -54,7 +53,7 @@ describe("isUserRelevantActiveJob / isUserRelevantJob", () => {
 
   test("any-status gate accepts user kinds at every status", () => {
     for (const status of ["queued", "running", "completed", "failed", "cancelled"] as const) {
-      expect(isUserRelevantJob(makeJob({ kind: "deep_analysis", status }))).toBe(true);
+      expect(isUserRelevantJob(makeJob({ kind: "system_design", status }))).toBe(true);
     }
   });
 });
@@ -152,39 +151,5 @@ describe("presentSandboxSurface", () => {
     });
     expect(surface.description).toBe("Daytona reported a quota error.");
     expect(surface.tone).toBe("error");
-  });
-});
-
-describe("presentDeepAnalysisSurface", () => {
-  test("active job dominates over a stale latest artifact", () => {
-    const surface = presentDeepAnalysisSurface({
-      activeJob: makeJob({ kind: "deep_analysis", status: "running", stage: "focused_inspection" }),
-      latestArtifact: { _creationTime: 100, summary: "old", kind: "deep_analysis" } as Doc<"artifacts">,
-    });
-    expect(surface.tone).toBe("active");
-    // Reuses the user-facing stage label rather than the snake_case token.
-    expect(surface.title).toBe("Inspecting the live source tree");
-    expect(surface.lastCompletedAt).toBeUndefined();
-  });
-
-  test("falls back to latest artifact when no active job", () => {
-    const surface = presentDeepAnalysisSurface({
-      activeJob: null,
-      latestArtifact: {
-        _creationTime: 12_345,
-        summary: "Persistent context for the next thread.",
-        kind: "deep_analysis",
-      } as Doc<"artifacts">,
-    });
-    expect(surface.tone).toBe("success");
-    expect(surface.title).toBe("Latest analysis ready");
-    expect(surface.description).toBe("Persistent context for the next thread.");
-    expect(surface.lastCompletedAt).toBe(12_345);
-  });
-
-  test("empty state when nothing has run yet", () => {
-    const surface = presentDeepAnalysisSurface({ activeJob: null, latestArtifact: undefined });
-    expect(surface.tone).toBe("neutral");
-    expect(surface.title).toBe("No analysis yet");
   });
 });

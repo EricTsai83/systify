@@ -43,97 +43,6 @@ describe("rate limits and interactive job guards", () => {
     expect(await getOwnerImportCounts(t, ownerTokenIdentifier)).toEqual(before);
   });
 
-  test("requestDeepAnalysis rejects active leased jobs without creating another job", async () => {
-    const ownerTokenIdentifier = "user|deep-analysis-in-flight";
-    const t = createTestConvex();
-    const { repositoryId, sandboxId } = await createRepositoryFixture(t, ownerTokenIdentifier, "deep-analysis-active", {
-      withSandbox: true,
-    });
-
-    await t.run(async (ctx) => {
-      await ctx.db.insert("jobs", {
-        repositoryId,
-        ownerTokenIdentifier,
-        sandboxId,
-        kind: "deep_analysis",
-        status: "running",
-        stage: "focused_inspection",
-        progress: 0.4,
-        costCategory: "deep_analysis",
-        triggerSource: "user",
-        startedAt: Date.now(),
-        leaseExpiresAt: Date.now() + 60_000,
-      });
-    });
-
-    const before = await countRepositoryJobs(t, repositoryId);
-    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
-    const error = await viewer
-      .mutation(api.analysis.requestDeepAnalysis, {
-        repositoryId,
-        prompt: "Trace the data flow.",
-      })
-      .catch((caughtError) => caughtError);
-
-    expectStructuredError(error, "OPERATION_ALREADY_IN_PROGRESS", "repositoryDeepAnalysisInFlight");
-    expect(await countRepositoryJobs(t, repositoryId)).toBe(before);
-  });
-
-  test("requestDeepAnalysis finds active jobs past recent unrelated queued work", async () => {
-    const ownerTokenIdentifier = "user|deep-analysis-shadowed";
-    const t = createTestConvex();
-    const { repositoryId, sandboxId } = await createRepositoryFixture(
-      t,
-      ownerTokenIdentifier,
-      "deep-analysis-shadowed",
-      {
-        withSandbox: true,
-      },
-    );
-
-    await t.run(async (ctx) => {
-      await ctx.db.insert("jobs", {
-        repositoryId,
-        ownerTokenIdentifier,
-        sandboxId,
-        kind: "deep_analysis",
-        status: "queued",
-        stage: "queued",
-        progress: 0,
-        costCategory: "deep_analysis",
-        triggerSource: "user",
-        leaseExpiresAt: Date.now() + 60_000,
-      });
-
-      for (let index = 0; index < 25; index += 1) {
-        await ctx.db.insert("jobs", {
-          repositoryId,
-          ownerTokenIdentifier,
-          sandboxId,
-          kind: "import",
-          status: "queued",
-          stage: "queued",
-          progress: 0,
-          costCategory: "indexing",
-          triggerSource: "user",
-          leaseExpiresAt: Date.now() + 60_000,
-        });
-      }
-    });
-
-    const before = await countRepositoryJobs(t, repositoryId);
-    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
-    const error = await viewer
-      .mutation(api.analysis.requestDeepAnalysis, {
-        repositoryId,
-        prompt: "Trace the data flow.",
-      })
-      .catch((caughtError) => caughtError);
-
-    expectStructuredError(error, "OPERATION_ALREADY_IN_PROGRESS", "repositoryDeepAnalysisInFlight");
-    expect(await countRepositoryJobs(t, repositoryId)).toBe(before);
-  });
-
   test("sendMessage rejects active chat jobs without creating extra jobs or messages", async () => {
     const ownerTokenIdentifier = "user|chat-in-flight";
     const t = createTestConvex();
@@ -204,11 +113,11 @@ describe("rate limits and interactive job guards", () => {
           repositoryId,
           ownerTokenIdentifier,
           threadId,
-          kind: "deep_analysis",
+          kind: "system_design",
           status: "running",
           stage: "focused_inspection",
           progress: 0.4,
-          costCategory: "deep_analysis",
+          costCategory: "system_design",
           triggerSource: "user",
           startedAt: Date.now(),
           leaseExpiresAt: Date.now() + 60_000,
@@ -637,7 +546,7 @@ describe("rate limits and interactive job guards", () => {
           status: "running",
           stage: "generating_reply",
           progress: 0.6,
-          costCategory: "deep_analysis",
+          costCategory: "system_design",
           triggerSource: "user",
           startedAt: Date.now(),
           leaseExpiresAt: Date.now() + 60_000,
@@ -880,11 +789,11 @@ describe("rate limits and interactive job guards", () => {
         repositoryId,
         ownerTokenIdentifier,
         sandboxId,
-        kind: "deep_analysis",
+        kind: "system_design",
         status: "queued",
         stage: "queued",
         progress: 0,
-        costCategory: "deep_analysis",
+        costCategory: "system_design",
         triggerSource: "user",
         leaseExpiresAt: Date.now() - 1_000,
       });
@@ -1010,16 +919,6 @@ async function getOwnerImportCounts(t: AppTestConvex, ownerTokenIdentifier: stri
       jobs: jobs.length,
       workspaces: workspaces.length,
     };
-  });
-}
-
-async function countRepositoryJobs(t: AppTestConvex, repositoryId: Id<"repositories">) {
-  return await t.run(async (ctx) => {
-    const jobs = await ctx.db
-      .query("jobs")
-      .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
-      .take(100);
-    return jobs.length;
   });
 }
 

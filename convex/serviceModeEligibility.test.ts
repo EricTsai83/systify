@@ -210,7 +210,12 @@ describe("serviceModeEligibility.evaluate (open feature gate)", () => {
     expect(result!.disabledReasons.lab?.code).toBe("no_repository_attached");
   });
 
-  test("workspace + repo + no artifact: library disabled with library_no_artifact code", async () => {
+  test("workspace + repo + no artifact: library is navigable, ask binding blocked", async () => {
+    // Library navigation no longer gates on an existing artifact — the empty
+    // Library page now carries the Generate System Design CTA, so landing
+    // there is the intended starting surface for a fresh repo. Library Ask
+    // (the write surface) still needs at least one artifact to retrieve
+    // against, so `askReadiness.canBind` stays false with the legacy code.
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
       withRepository: true,
@@ -220,10 +225,10 @@ describe("serviceModeEligibility.evaluate (open feature gate)", () => {
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.availableServiceModes).toEqual(expect.arrayContaining(["discuss", "lab"]));
-    expect(result!.availableServiceModes).not.toContain("library");
-    expect(result!.disabledReasons.library?.code).toBe("library_no_artifact");
-    expect(result!.disabledReasons.library?.message).toBeTruthy();
+    expect(result!.availableServiceModes.slice().sort()).toEqual(["discuss", "lab", "library"]);
+    expect(result!.disabledReasons.library).toBeUndefined();
+    expect(result!.askReadiness.canBind).toBe(false);
+    expect(result!.askReadiness.reason?.code).toBe("library_no_artifact");
   });
 
   test("workspace + repo + artifact + ready sandbox: all three modes available, no disabled reasons", async () => {

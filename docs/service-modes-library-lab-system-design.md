@@ -47,6 +47,10 @@ The Ask thread strip is an *open set*, mirroring how the document column works: 
 
 `AppSidebar`'s props are a discriminated union on `variant` (`threads` vs `libraryAsk`), so each variant only accepts the callbacks it actually uses — the type system enforces the composition boundary rather than callers passing no-op handlers.
 
+## Library Access and the Empty State
+
+Library is reachable whenever the workspace has an attached repository. It is **not** gated on the repository having at least one artifact: a freshly imported repository can open Library immediately. When no artifact bodies exist yet, the page renders a **Generate System Design** CTA button. Clicking it confirms and then calls `requestSystemDesignGeneration`, which queues a sandbox-backed job that writes the starter set of System Design artifacts (`manifest`, `readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`) into the default folders seeded at import time.
+
 ## Data Model
 
 Library reads artifact metadata through a metadata-only query and fetches the markdown body only for the active editor tab. This keeps tree, tabs, and quick-open subscriptions small.
@@ -67,19 +71,17 @@ flowchart TD
   Availability[getSandboxAvailability]
   ChatSend[chat.sendMessage]
   ThreadContext[threadContext]
-  DesignJobs[design artifact jobs]
-  DeepAnalysis[deep analysis]
+  SystemDesignJob[system design generation]
 
   SandboxRow --> Availability
   Availability --> ChatSend
   Availability --> ThreadContext
-  Availability --> DesignJobs
-  Availability --> DeepAnalysis
+  Availability --> SystemDesignJob
 ```
 
 ## Job Lifecycle
 
-Deep analysis and sandbox-backed design jobs must re-check repository liveness before writing durable artifacts. If a repository is archived or deletion has started, the job fails instead of publishing new knowledge.
+System Design generation and other sandbox-backed jobs must re-check repository liveness before writing durable artifacts. If a repository is archived or deletion has started, the job fails instead of publishing new knowledge.
 
 Long-running jobs use leases. Actions refresh the lease before and after external sandbox work so stale-job recovery does not race normal completion.
 

@@ -3,12 +3,11 @@ import type { Doc } from "../../convex/_generated/dataModel";
 /**
  * Artifact-kind taxonomy used by the folder navigator.
  *
- * `repo-level` kinds describe the repository as a whole (the manifest, the
- * pre-canned deep analysis the auto-trigger writes on import, the
- * architecture overview generated from the indexer). They are pinned to a
- * dedicated "Repository" section at the navigator's root and are *not*
- * eligible to be moved into user-created folders — there is exactly one
- * canonical place per kind, and that's their home.
+ * `repo-level` kinds describe the repository as a whole (the manifest,
+ * architecture overview, etc.). They are pinned to a dedicated
+ * "Repository" section at the navigator's root and are *not* eligible to
+ * be moved into user-created folders — there is exactly one canonical
+ * place per kind, and that's their home.
  *
  * `feature-level` kinds describe a feature, decision, or subsystem
  * (architecture diagrams the user generates per-thread, ADRs, failure-mode
@@ -25,7 +24,6 @@ const REPO_LEVEL_KINDS = new Set<Doc<"artifacts">["kind"]>([
   "architecture_overview",
   "entrypoints",
   "dependency_overview",
-  "deep_analysis",
   "risk_report",
 ]);
 

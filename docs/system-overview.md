@@ -22,7 +22,7 @@ After GitHub authorization, the system can import repositories into Daytona sand
 - **Discuss**: free-form chat; defaults to **no repo** until the user attaches one to the workspace.
 - **Library**: read and edit artifact markdown plus **Ask** (hybrid retrieval over artifact chunks), with layout favoring documents on one side and thread + Ask on the other.
 - **Lab**: sandbox-backed exploration and guarded tools against the live tree.
-- **Deep analysis**: a sandbox-backed job that inspects the repository and emits a reusable `deep_analysis` artifact for Library Ask / Lab citations.
+- **System Design generation**: a sandbox-backed job kicked off from the **Generate System Design** button on an empty Library page. It inspects the repository and emits a starter set of System Design artifacts (`manifest`, `readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`) for Library Ask / Lab citations.
 
 ## Main Runtime Boundaries
 
@@ -71,7 +71,7 @@ Layout composition and route-guard behavior now live in `src/router-layouts.tsx`
 
 The main application shell is still centered on `src/components/repository-shell.tsx`, but it no longer owns all product-level orchestration directly. The component now coordinates several extracted hooks:
 
-- `useRepositoryActions`: sync, repository deletion, thread deletion, deep analysis, and message sending
+- `useRepositoryActions`: sync, repository deletion, thread deletion, System Design generation, and message sending
 - `useRepositorySelection`: effective repository selection and repository-loading state
 - `useCheckForUpdates`: lightweight remote-commit checks on focus and repository switch
 - `useGitHubConnection`, `useAsyncCallback`, `useRelativeTime`, and `useIsMobile`: focused frontend utilities used elsewhere in the shell and surrounding UI
@@ -83,7 +83,7 @@ The main application shell is still centered on `src/components/repository-shell
 The backend is built entirely on Convex, with no separate Express or Nest API layer. The logic is split across five entry types:
 
 - `query`: reads frontend-facing data such as repositories, threads, messages, and artifacts
-- `mutation`: creates imports, sends messages, requests deep analysis, and deletes data
+- `mutation`: creates imports, sends messages, requests System Design generation, and deletes data
 - `action` / `internalAction`: runs Node-runtime work such as GitHub App, Daytona, and OpenAI logic
 - `httpAction`: handles GitHub callbacks plus GitHub and Daytona webhooks
 - `cron`: periodically cleans up sandboxes and repairs webhook backlog
@@ -109,8 +109,9 @@ That means Convex simultaneously serves as the application database, application
   - provision a sandbox
   - clone the repository
   - scan files and important content
-  - generate manifest, README, and architecture artifacts
-  - write results back into `repoFiles`, `repoChunks`, and `artifacts`
+  - seed the default System Design folder tree for the repository
+  - write `repoFiles` and `repoChunks` for retrieval
+- Import does **not** generate any artifact bodies on its own. The user later opts into artifact creation by clicking **Generate System Design** from the empty Library page.
 
 ### 3. Chat and analysis
 
@@ -119,7 +120,7 @@ That means Convex simultaneously serves as the application database, application
 - Durable chat history lives in `messages`, while active in-flight stream state lives in `messageStreams` and `messageStreamChunks`.
 - When provider usage is available, chat finalization also writes token counts to `messages` and `jobs`, plus an estimated job cost.
 - Library Ask retrieves artifact chunks from `artifactChunks`; Lab uses the repository sandbox through guarded tools.
-- Deep analysis creates a `deep_analysis` job and runs focused inspection against the sandbox.
+- System Design generation creates a `system_design` job and runs focused inspection against the sandbox to produce a starter set of System Design artifacts (`manifest`, `readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`).
 
 ### 4. GitHub integration
 
@@ -134,8 +135,8 @@ That means Convex simultaneously serves as the application database, application
 - A repository import provisions a Daytona sandbox.
 - The system reserves the Convex sandbox row before calling Daytona so cleanup can still find the resource if provisioning fails mid-flight.
 - After import completes, the system proactively stops the sandbox to save resources.
-- The sandbox can still be reawakened later for deep analysis.
-- Deep-analysis requests extend sandbox TTL before queuing the background action so a valid sandbox is less likely to expire between request acceptance and execution start.
+- The sandbox can still be reawakened later for Lab usage or System Design generation.
+- System Design generation requests extend sandbox TTL before queuing the background action so a valid sandbox is less likely to expire between request acceptance and execution start.
 - Daytona webhook ingestion writes a durable event inbox plus a remote-observation projection so Convex can converge faster when Daytona state changes.
 - Cron-based reconciliation still handles expired sandboxes, Daytona-side orphan resources, and stuck webhook backlog, making sandbox cleanup a core reliability concern rather than a best-effort background task.
 
@@ -148,14 +149,14 @@ flowchart TD
   ImportRepo[ImportRepository]
   IndexRepo[IndexAndPersist]
   ChatQuick[QuickChat]
-  DeepAnalysis[DeepAnalysis]
+  GenerateSystemDesign[GenerateSystemDesign]
   SyncRepo[SyncRepository]
 
   SignIn --> ConnectGitHub
   ConnectGitHub --> ImportRepo
   ImportRepo --> IndexRepo
   IndexRepo --> ChatQuick
-  IndexRepo --> DeepAnalysis
+  IndexRepo --> GenerateSystemDesign
   IndexRepo --> SyncRepo
 ```
 
@@ -180,7 +181,7 @@ flowchart TD
 ### Trade-Offs
 
 - `RepositoryShell` still carries a large amount of UI orchestration even after the hook extraction, so frontend state boundaries remain fairly centralized.
-- Library depends on artifact indexing quality; Lab and deep analysis depend on sandbox availability.
+- Library depends on artifact indexing quality; Lab and System Design generation depend on sandbox availability.
 - The system still relies mainly on table status fields plus the scheduler; only Daytona webhook handling currently uses an explicit inbox-and-projection pattern.
 
 ## Further Reading

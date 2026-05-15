@@ -8,8 +8,6 @@
  * @module
  */
 
-import type * as analysis from "../analysis.js";
-import type * as analysisNode from "../analysisNode.js";
 import type * as architectureDiagram from "../architectureDiagram.js";
 import type * as artifactChunkStore from "../artifactChunkStore.js";
 import type * as artifactFolders from "../artifactFolders.js";
@@ -32,6 +30,7 @@ import type * as chat_streaming from "../chat/streaming.js";
 import type * as chat_threads from "../chat/threads.js";
 import type * as chat_toolCallEventStore from "../chat/toolCallEventStore.js";
 import type * as chatModeResolver from "../chatModeResolver.js";
+import type * as cleanup from "../cleanup.js";
 import type * as crons from "../crons.js";
 import type * as daytona from "../daytona.js";
 import type * as daytonaWebhooks from "../daytonaWebhooks.js";
@@ -86,8 +85,6 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  analysis: typeof analysis;
-  analysisNode: typeof analysisNode;
   architectureDiagram: typeof architectureDiagram;
   artifactChunkStore: typeof artifactChunkStore;
   artifactFolders: typeof artifactFolders;
@@ -110,6 +107,7 @@ declare const fullApi: ApiFromModules<{
   "chat/threads": typeof chat_threads;
   "chat/toolCallEventStore": typeof chat_toolCallEventStore;
   chatModeResolver: typeof chatModeResolver;
+  cleanup: typeof cleanup;
   crons: typeof crons;
   daytona: typeof daytona;
   daytonaWebhooks: typeof daytonaWebhooks;

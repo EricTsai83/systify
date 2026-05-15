@@ -366,8 +366,8 @@ describe("getRepositoryDetail behaviour with archived repos", () => {
 });
 
 describe("write paths reject archived repositories with a clear message", () => {
-  test("requestDeepAnalysis on an archived repo throws the archived message", async () => {
-    const ownerTokenIdentifier = "user|deep-analysis-archived";
+  test("requestSystemDesignGeneration on an archived repo throws the archived message", async () => {
+    const ownerTokenIdentifier = "user|system-design-archived";
     const t = createTestConvex();
     const repositoryId = await seedRepository(t, {
       ownerTokenIdentifier,
@@ -376,7 +376,10 @@ describe("write paths reject archived repositories with a clear message", () => 
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
     await expect(
-      viewer.mutation(api.analysis.requestDeepAnalysis, { repositoryId, prompt: "summarize" }),
+      viewer.mutation(api.systemDesign.requestSystemDesignGeneration, {
+        repositoryId,
+        selections: ["manifest"],
+      }),
     ).rejects.toThrow(/archived/i);
   });
 });

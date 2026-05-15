@@ -9,11 +9,11 @@ rather than a stored flag or a content-level reconciliation.
 
 ## The Problem
 
-An `artifacts` row (a `readme_summary`, a `deep_analysis`, a user-authored
-Library note) is written once, against the repository tree as it existed at
-some import. The repository keeps moving: the user syncs, a new import lands,
-`repoFiles` / `repoChunks` are re-indexed from a newer commit. The artifact's
-markdown does not move with it.
+An `artifacts` row (a `readme_summary`, an `architecture_overview`, a
+user-authored Library note) is written once, against the repository tree as it
+existed at some import. The repository keeps moving: the user syncs, a new
+import lands, `repoFiles` / `repoChunks` are re-indexed from a newer commit.
+The artifact's markdown does not move with it.
 
 The product needs to surface "this was written against an older snapshot"
 without:
@@ -31,9 +31,9 @@ Artifacts carry two unrelated staleness signals. They must not be merged.
 | **Lab verification freshness** (`freshness`) | `producedIn`, `lastVerifiedAt` | "Was this checked against a live sandbox, and how long ago?" |
 | **Import snapshot drift** (`importDriftFromLatestSync`) | `alignedImportCommitSha` vs latest import SHA | "Has the repository been re-imported since this was written?" |
 
-A `deep_analysis` artifact can be Lab-verified (`fresh`) and *also* drifted from
-the latest import — the two are orthogonal. The UI surfaces them as separate
-indicators.
+An `architecture_overview` artifact can be Lab-verified (`fresh`) and *also*
+drifted from the latest import — the two are orthogonal. The UI surfaces them
+as separate indicators.
 
 ## Chosen Design
 
@@ -161,9 +161,9 @@ actually changed between the aligned import and the latest one.
 This was scoped out of v1 deliberately, and the placeholder schema field for it
 was removed rather than shipped empty. A complete implementation needs all of:
 
-1. **A writer** — realistically only `deep_analysis` jobs, which know which
-   paths they inspected. Import-pipeline artifacts (`manifest`, `readme_summary`)
-   are repo-wide and have no meaningful path scope.
+1. **A writer** — realistically only `system_design` generation jobs, which
+   know which paths they inspected. Repo-wide overview artifacts (`manifest`,
+   `readme_summary`) have no meaningful path scope.
 2. **A reader** — drift computation that diffs `repoFiles` (already
    import-scoped via `repoFiles.importId`) under those path prefixes between
    the aligned import and the latest import, within Convex read limits.

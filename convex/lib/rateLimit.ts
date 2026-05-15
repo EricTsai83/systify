@@ -7,14 +7,14 @@ import { logInfo, logWarn } from "./observability";
 
 export type RateLimitBucket =
   | "importRequests"
-  | "deepAnalysisRequests"
+  | "systemDesignRequests"
   | "chatRequestsPerOwner"
   | "chatRequestsGlobal"
   | "daytonaRequestsGlobal"
   | "sandboxCostUsdPerUserDaily"
   | "sandboxCostUsdPerWorkspaceDaily";
 
-export type InFlightBucket = "repositoryImportInFlight" | "repositoryDeepAnalysisInFlight" | "threadChatInFlight";
+export type InFlightBucket = "repositoryImportInFlight" | "repositorySystemDesignInFlight" | "threadChatInFlight";
 
 type AppErrorCode =
   | "RATE_LIMIT_EXCEEDED"
@@ -38,7 +38,7 @@ function readPositiveIntEnv(name: string, fallback: number) {
 
 const RATE_LIMIT_MESSAGES: Record<RateLimitBucket, string> = {
   importRequests: "Too many repository import requests. Please retry later.",
-  deepAnalysisRequests: "Too many deep analysis requests. Please retry later.",
+  systemDesignRequests: "Too many System Design generation requests. Please retry later.",
   chatRequestsPerOwner: "Too many chat requests. Please retry later.",
   chatRequestsGlobal: "Chat capacity is temporarily full. Please retry later.",
   daytonaRequestsGlobal: "Analysis capacity is temporarily full. Please retry later.",
@@ -47,7 +47,7 @@ const RATE_LIMIT_MESSAGES: Record<RateLimitBucket, string> = {
 };
 
 const DEFAULT_IMPORTS_PER_HOUR = 5;
-const DEFAULT_DEEP_ANALYSIS_PER_HOUR = 10;
+const DEFAULT_SYSTEM_DESIGN_PER_HOUR = 10;
 const DEFAULT_CHAT_PER_MINUTE = 30;
 const DEFAULT_CHAT_BURST_CAPACITY = 6;
 const DEFAULT_GLOBAL_CHAT_PER_MINUTE = 300;
@@ -139,7 +139,7 @@ export function workspaceCostKey(workspaceId: Id<"workspaces">) {
 }
 
 export const CHAT_JOB_LEASE_MS = readPositiveIntEnv("CHAT_JOB_LEASE_MS", 10 * 60_000);
-export const DEEP_ANALYSIS_JOB_LEASE_MS = readPositiveIntEnv("DEEP_ANALYSIS_JOB_LEASE_MS", 60 * 60_000);
+export const SYSTEM_DESIGN_JOB_LEASE_MS = readPositiveIntEnv("SYSTEM_DESIGN_JOB_LEASE_MS", 60 * 60_000);
 
 export function isLeaseActive(leaseExpiresAt: number | undefined, now = Date.now()) {
   return typeof leaseExpiresAt === "number" && leaseExpiresAt > now;
@@ -159,9 +159,9 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
     rate: readPositiveIntEnv("RATE_LIMIT_IMPORT_PER_HOUR", DEFAULT_IMPORTS_PER_HOUR),
     period: HOUR,
   },
-  deepAnalysisRequests: {
+  systemDesignRequests: {
     kind: "fixed window",
-    rate: readPositiveIntEnv("RATE_LIMIT_DEEP_ANALYSIS_PER_HOUR", DEFAULT_DEEP_ANALYSIS_PER_HOUR),
+    rate: readPositiveIntEnv("RATE_LIMIT_SYSTEM_DESIGN_PER_HOUR", DEFAULT_SYSTEM_DESIGN_PER_HOUR),
     period: HOUR,
   },
   chatRequestsPerOwner: {
@@ -307,8 +307,8 @@ export async function consumeImportRateLimit(ctx: MutationCtx, ownerTokenIdentif
   await consumeRateLimit(ctx, "importRequests", { key: ownerTokenIdentifier });
 }
 
-export async function consumeDeepAnalysisRateLimit(ctx: MutationCtx, ownerTokenIdentifier: string) {
-  await consumeRateLimit(ctx, "deepAnalysisRequests", { key: ownerTokenIdentifier });
+export async function consumeSystemDesignRateLimit(ctx: MutationCtx, ownerTokenIdentifier: string) {
+  await consumeRateLimit(ctx, "systemDesignRequests", { key: ownerTokenIdentifier });
 }
 
 export async function consumeChatRateLimit(ctx: MutationCtx, ownerTokenIdentifier: string) {

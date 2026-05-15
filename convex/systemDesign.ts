@@ -13,7 +13,13 @@ import {
   type SystemDesignKind,
 } from "./lib/systemDesign";
 import { createArtifactInMutation } from "./artifactStore";
-import { completeRunningJob, failRunningJob, markQueuedJobRunning, updateRunningJobProgress } from "./jobLifecycle";
+import {
+  completeRunningJob,
+  failRunningJob,
+  failStaleActiveJob,
+  markQueuedJobRunning,
+  updateRunningJobProgress,
+} from "./jobLifecycle";
 
 /**
  * Library System Design generation entry point.
@@ -23,10 +29,11 @@ import { completeRunningJob, failRunningJob, markQueuedJobRunning, updateRunning
  * request, ensures the default folder tree exists, creates a tracking job,
  * and schedules the Node action that performs the actual generation.
  *
- * The job uses the existing `deep_analysis` kind because generation is
- * sandbox-backed and LLM-driven; folding it into the existing accounting and
- * cost-cap path keeps the operational surface area small. Progress and final
- * status flow back to the UI through the standard job subscription.
+ * Jobs are tagged with `kind: "system_design"` so the existing job-runner
+ * accounting, cost-cap path, and stale-recovery infrastructure pick them up
+ * uniformly with the other sandbox-backed analyses (Failure Mode Analysis).
+ * Progress and final status flow back to the UI through the standard job
+ * subscription.
  */
 const systemDesignKindValidator = v.union(
   v.literal("manifest"),
@@ -57,6 +64,22 @@ export const requestSystemDesignGeneration = mutation({
 
     const uniqueSelections = Array.from(new Set(args.selections)) as SystemDesignKind[];
 
+    const existingJob = await ctx.db
+      .query("jobs")
+      .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repository._id))
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("kind"), "system_design"),
+          q.or(q.eq(q.field("status"), "queued"), q.eq(q.field("status"), "running")),
+          q.eq(q.field("ownerTokenIdentifier"), identity.tokenIdentifier),
+        ),
+      )
+      .first();
+
+    if (existingJob) {
+      return { jobId: existingJob._id };
+    }
+
     await ensureSystemDesignFolders(ctx, {
       repositoryId: repository._id,
       ownerTokenIdentifier: identity.tokenIdentifier,
@@ -65,11 +88,11 @@ export const requestSystemDesignGeneration = mutation({
     const jobId = await ctx.db.insert("jobs", {
       repositoryId: repository._id,
       ownerTokenIdentifier: identity.tokenIdentifier,
-      kind: "deep_analysis",
+      kind: "system_design",
       status: "queued",
       stage: "queued",
       progress: 0,
-      costCategory: "deep_analysis",
+      costCategory: "system_design",
       triggerSource: "user",
       outputSummary: buildJobSummary(uniqueSelections, "queued"),
     });
@@ -107,9 +130,9 @@ async function mostRecentActiveDesignJob(ctx: QueryCtx, repositoryId: Id<"reposi
     .query("jobs")
     .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
     .order("desc")
-    .take(20);
+    .collect();
   return (
-    jobs.find((job) => job.kind === "deep_analysis" && (job.status === "queued" || job.status === "running")) ?? null
+    jobs.find((job) => job.kind === "system_design" && (job.status === "queued" || job.status === "running")) ?? null
   );
 }
 
@@ -118,7 +141,7 @@ export const markGenerationStarted = internalMutation({
   handler: async (ctx, args): Promise<{ started: boolean }> => {
     const result = await markQueuedJobRunning(ctx, {
       jobId: args.jobId,
-      expectedKind: "deep_analysis",
+      expectedKind: "system_design",
       stage: "running",
       progress: 0,
       startedAt: Date.now(),
@@ -143,7 +166,7 @@ export const updateGenerationProgress = internalMutation({
     const progress = args.totalCount === 0 ? 0 : args.completedCount / args.totalCount;
     await updateRunningJobProgress(ctx, {
       jobId: args.jobId,
-      expectedKind: "deep_analysis",
+      expectedKind: "system_design",
       stage: args.stage,
       progress,
     });
@@ -166,7 +189,7 @@ export const completeGeneration = internalMutation({
         : `Generated ${args.succeededCount} of ${args.selections.length}; ${args.failedCount} failed.`;
     await completeRunningJob(ctx, {
       jobId: args.jobId,
-      expectedKind: "deep_analysis",
+      expectedKind: "system_design",
       completedAt: Date.now(),
       outputSummary: summary,
       progress: 1,
@@ -179,9 +202,41 @@ export const failGeneration = internalMutation({
   handler: async (ctx, args) => {
     await failRunningJob(ctx, {
       jobId: args.jobId,
-      expectedKind: "deep_analysis",
+      expectedKind: "system_design",
       completedAt: Date.now(),
       errorMessage: args.errorMessage,
+    });
+  },
+});
+
+const STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE =
+  "The System Design generation stalled and was automatically marked as failed.";
+
+/**
+ * Background stale-job recovery for System Design generation. Called by
+ * `opsNode.recoverStaleInteractiveJobs` when a `system_design`-kind job
+ * without the FMA `requestedCommand` prefix has overrun its lease.
+ */
+export const recoverStaleSystemDesignJob = internalMutation({
+  args: { jobId: v.id("jobs") },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    const now = Date.now();
+    if (
+      !job ||
+      job.kind !== "system_design" ||
+      (job.status !== "queued" && job.status !== "running") ||
+      job.requestedCommand?.startsWith("failure_mode_analysis:") ||
+      typeof job.leaseExpiresAt !== "number" ||
+      job.leaseExpiresAt > now
+    ) {
+      return;
+    }
+    await failStaleActiveJob(ctx, {
+      jobId: args.jobId,
+      expectedKind: "system_design",
+      now,
+      errorMessage: STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE,
     });
   },
 });
@@ -193,7 +248,7 @@ export const failGeneration = internalMutation({
  * cancellation and skips work.
  */
 export const getGenerationContext = internalQuery({
-  args: { repositoryId: v.id("repositories") },
+  args: { repositoryId: v.id("repositories"), ownerTokenIdentifier: v.string() },
   handler: async (
     ctx,
     args,
@@ -203,7 +258,7 @@ export const getGenerationContext = internalQuery({
     activeSandbox: Doc<"sandboxes"> | null;
   } | null> => {
     const repository = await ctx.db.get(args.repositoryId);
-    if (!repository) return null;
+    if (!repository || repository.ownerTokenIdentifier !== args.ownerTokenIdentifier) return null;
 
     const folders = await ctx.db
       .query("artifactFolders")
@@ -263,7 +318,7 @@ export const findReadmeChunkForHeuristics = internalQuery({
     const candidates = await ctx.db
       .query("repoChunks")
       .withIndex("by_repositoryId_and_path", (q) => q.eq("repositoryId", args.repositoryId))
-      .take(50);
+      .collect();
     const readme = candidates.find((row) => row.chunkKind === "readme");
     if (!readme) return null;
     return { path: readme.path, content: readme.content };

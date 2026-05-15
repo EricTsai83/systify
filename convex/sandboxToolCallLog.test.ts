@@ -629,7 +629,7 @@ async function createAuditLogFixture(t: ReturnType<typeof convexTest>, ownerToke
       status: "running",
       stage: "generating_reply",
       progress: 0.5,
-      costCategory: "deep_analysis",
+      costCategory: "system_design",
       triggerSource: "user",
       startedAt: Date.now(),
     });

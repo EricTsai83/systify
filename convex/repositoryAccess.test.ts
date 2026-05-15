@@ -142,9 +142,9 @@ describe("repository access helpers", () => {
     ).rejects.toThrow("Thread not found.");
 
     await expect(
-      viewer.mutation(api.analysis.requestDeepAnalysis, {
+      viewer.mutation(api.systemDesign.requestSystemDesignGeneration, {
         repositoryId,
-        prompt: "Trace the write path.",
+        selections: ["manifest"],
       }),
     ).rejects.toThrow("Repository not found.");
 

@@ -340,7 +340,6 @@ beforeEach(() => {
           archivedAt: null,
           artifacts: [],
           jobs: [],
-          activeDeepAnalysisJob: null,
           threads: [],
           fileCount: 0,
           fileCountLabel: "0",

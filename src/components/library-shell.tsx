@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
-import { FolderIcon } from "@phosphor-icons/react";
+import { FolderIcon, SparkleIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
+import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
 import { LibraryEditor } from "@/components/library-editor";
 import { LibraryTabs } from "@/components/library-tabs";
 import { LibraryTree } from "@/components/library-tree";
@@ -51,9 +52,13 @@ export function LibraryShell({ repositoryId, tabs }: { repositoryId: RepositoryI
   const [isTreeOpenMobile, setIsTreeOpenMobile] = useState(false);
   const [isTreeCollapsedDesktop, setIsTreeCollapsedDesktop] = useState(false);
   const [isQuickOpenOpen, setIsQuickOpenOpen] = useState(false);
+  const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false);
   const [isLargeViewport, setIsLargeViewport] = useState(
     () => typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches,
   );
+
+  const hasArtifacts = (allArtifacts?.length ?? 0) > 0;
+  const openGenerateDialog = useCallback(() => setIsGenerateDialogOpen(true), []);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(min-width: 1024px)");
@@ -97,6 +102,7 @@ export function LibraryShell({ repositoryId, tabs }: { repositoryId: RepositoryI
       artifacts={allArtifacts ?? []}
       selectedArtifactId={tabs.activeArtifactId}
       onSelectArtifact={handleSelectArtifact}
+      onGenerate={openGenerateDialog}
       className="min-h-[160px]"
     />
   );
@@ -127,7 +133,11 @@ export function LibraryShell({ repositoryId, tabs }: { repositoryId: RepositoryI
           className="shrink-0"
         />
 
-        {tabs.activeArtifactId ? <LibraryEditor artifactId={tabs.activeArtifactId} /> : <LibraryEmptyState />}
+        {tabs.activeArtifactId ? (
+          <LibraryEditor artifactId={tabs.activeArtifactId} />
+        ) : (
+          <LibraryEmptyState hasArtifacts={hasArtifacts} onGenerate={openGenerateDialog} />
+        )}
       </div>
 
       {/* RIGHT: Folder tree — collapsible */}
@@ -172,11 +182,34 @@ export function LibraryShell({ repositoryId, tabs }: { repositoryId: RepositoryI
           handleSelectArtifact(artifactId);
         }}
       />
+
+      <GenerateSystemDesignDialog
+        open={isGenerateDialogOpen}
+        onOpenChange={setIsGenerateDialogOpen}
+        repositoryId={repositoryId}
+      />
     </div>
   );
 }
 
-function LibraryEmptyState() {
+function LibraryEmptyState({ hasArtifacts, onGenerate }: { hasArtifacts: boolean; onGenerate: () => void }) {
+  if (!hasArtifacts) {
+    return (
+      <div className="flex flex-1 items-center justify-center px-6 py-10">
+        <div className="w-full max-w-md text-center">
+          <h2 className="text-base font-semibold text-foreground">No documents yet</h2>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Generate the System Design starter set — a manifest, README summary, and an architecture overview — straight
+            into your Library.
+          </p>
+          <Button type="button" size="sm" className="mt-5 gap-1.5" onClick={onGenerate}>
+            <SparkleIcon size={14} weight="bold" />
+            Generate System Design
+          </Button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="flex flex-1 items-center justify-center px-6 py-10">
       <div className="w-full max-w-md text-center">

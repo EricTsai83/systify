@@ -288,7 +288,7 @@ export const listByFolder = query({
  * landing place for legacy (pre-folder) artifacts and any artifact whose
  * folder was deleted with `moveContentsToParent` while at root.
  *
- * Repo-level kinds (manifest, deep_analysis, …) are intentionally excluded
+ * Repo-level kinds (manifest, architecture_overview, …) are intentionally excluded
  * here because they have a dedicated "Repository" root section in the
  * navigator. The caller decides which kinds belong in "Uncategorized";
  * we surface the raw list and let the UI filter.

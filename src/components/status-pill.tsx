@@ -35,17 +35,8 @@ type StatusPillProps = {
   repository: Doc<"repositories">;
   sandboxModeStatus: SandboxModeStatus;
   jobs: Doc<"jobs">[];
-  activeDeepAnalysisJob: Doc<"jobs"> | null;
   hasRemoteUpdates: boolean;
   isSyncing: boolean;
-  /**
-   * True until the workspace has produced its first `deep_analysis` artifact.
-   * During this initial-setup window the pill shows a unified "Setting up…"
-   * label instead of the operational "Syncing…/Analyzing…" pair, so the user
-   * sees the same vocabulary the {@link WorkspaceSetupBanner} uses below
-   * the top-bar.
-   */
-  isInitialSetup: boolean;
   isOpen: boolean;
   ref?: Ref<HTMLButtonElement>;
 } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children" | "type" | "aria-pressed" | "aria-label" | "data-testid">;
@@ -55,9 +46,9 @@ type StatusPillProps = {
  * always-visible Repository Status Deck as the primary entry point — clicking
  * the pill opens the StatusPanel where the user can see the full breakdown.
  *
- * The pill condenses three independent surfaces (repository intelligence,
- * sandbox, deep analysis) into a single worst-state-wins tone so the user sees
- * one coherent signal:
+ * The pill condenses two independent surfaces (repository intelligence and
+ * sandbox) plus any in-flight user-relevant jobs into a single
+ * worst-state-wins tone so the user sees one coherent signal:
  *
  *   error   → import or sandbox failed (something is genuinely blocking)
  *   warning → updates available, sandbox expired, sandbox missing
@@ -72,10 +63,8 @@ export function StatusPill({
   repository,
   sandboxModeStatus,
   jobs,
-  activeDeepAnalysisJob,
   hasRemoteUpdates,
   isSyncing,
-  isInitialSetup,
   isOpen,
   ref,
   className,
@@ -87,12 +76,10 @@ export function StatusPill({
         repository,
         sandboxModeStatus,
         jobs,
-        activeDeepAnalysisJob,
         hasRemoteUpdates,
         isSyncing,
-        isInitialSetup,
       }),
-    [repository, sandboxModeStatus, jobs, activeDeepAnalysisJob, hasRemoteUpdates, isSyncing, isInitialSetup],
+    [repository, sandboxModeStatus, jobs, hasRemoteUpdates, isSyncing],
   );
 
   const lastSyncedLabel = useRelativeTime(repository.lastImportedAt);
@@ -149,10 +136,8 @@ function derivePillState(input: {
   repository: Doc<"repositories">;
   sandboxModeStatus: SandboxModeStatus;
   jobs: Doc<"jobs">[];
-  activeDeepAnalysisJob: Doc<"jobs"> | null;
   hasRemoteUpdates: boolean;
   isSyncing: boolean;
-  isInitialSetup: boolean;
 }): PillState {
   const intelligence = presentRepositoryIntelligenceSurface({
     importStatus: input.repository.importStatus,
@@ -179,28 +164,12 @@ function derivePillState(input: {
 
   // Active beats warning — when something is running, the user wants progress
   // visibility more than they want a "consider syncing" nudge.
-  const hasActiveJob = input.jobs.some(isUserRelevantActiveJob) || Boolean(input.activeDeepAnalysisJob);
-  if (hasActiveJob || input.isSyncing) {
-    // Initial setup: collapse "Syncing…" / "Analyzing…" into a single
-    // "Setting up…" label so the pill matches the WorkspaceSetupBanner
-    // vocabulary the user sees below the top-bar. Splitting them only
-    // makes sense once the user is operational and re-running things
-    // by choice.
-    if (input.isInitialSetup) {
-      return {
-        tone: "active",
-        label: "Setting up…",
-        icon: "spinner",
-        detail: "Preparing your workspace for the first time. Usually 2–3 minutes.",
-      };
-    }
+  if (input.jobs.some(isUserRelevantActiveJob) || input.isSyncing) {
     return {
       tone: "active",
-      label: input.activeDeepAnalysisJob ? "Analyzing…" : "Syncing…",
+      label: "Working…",
       icon: "spinner",
-      detail: input.activeDeepAnalysisJob
-        ? "A repository-wide deep analysis is running."
-        : "Repository sync is running.",
+      detail: "Background work is running for this repository.",
     };
   }
 

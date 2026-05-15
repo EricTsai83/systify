@@ -8,7 +8,7 @@ Systify is an open source repository analysis app for understanding unfamiliar c
   - `discuss` (UI label "General Chat") — training-only, no repo context; for shaping a question before grounding
   - `docs` (UI label "Design Docs") — answers grounded in design artifacts (ADRs, diagrams, deep analyses)
   - `sandbox` (UI label "Sandbox") — answers grounded in the live sandbox source tree
-- `Deep analysis`: a sandbox-backed background job that runs focused inspection inside Daytona and writes a reusable `deep_analysis` artifact, which later chat replies in `docs` and `sandbox` modes can cite
+- `Generate System Design`: a sandbox-backed background job that produces a starter set of System Design artifacts (manifest, README summary, architecture / data model / API / deployment / security / operations overviews) in the Library, which later chat replies in `docs` and `sandbox` modes can cite
 
 The app uses a React frontend and a Convex backend. Convex owns the database, backend functions, background jobs, cron work, and HTTP endpoints, so there is no separate Express or Nest server in this repo.
 
@@ -23,7 +23,7 @@ This repository is standardized on Bun for package management and script executi
 - Import GitHub repositories through a GitHub App instead of personal access tokens
 - Index repository structure, files, chunks, summaries, and reusable analysis artifacts
 - Answer architecture, data-flow, and risk-oriented questions from grounded repository data
-- Run sandbox-backed deep analysis when indexed data needs live validation
+- Run sandbox-backed System Design generation when indexed data needs live validation
 - Persist threads, messages, jobs, and artifacts for later review
 - Sync imported repositories against newer upstream commits
 - Reconcile sandbox lifecycle through request-path cleanup, webhooks, and cron sweeps
@@ -35,7 +35,7 @@ This repository is standardized on Bun for package management and script executi
 3. Systify verifies repository access and creates an import workflow.
 4. A Daytona sandbox is provisioned and the repository is cloned.
 5. The import pipeline scans the repository and writes files, chunks, summaries, and artifacts into Convex.
-6. The user explores the repository through chat (`discuss` / `docs` / `sandbox` modes) or by requesting a `Deep analysis` job.
+6. The user explores the repository through chat (`discuss` / `docs` / `sandbox` modes) or by running `Generate System Design` from the Library.
 7. Later syncs refresh the active snapshot without mixing old and new import data.
 
 ## Stack
@@ -138,14 +138,14 @@ Common runtime variables:
 Optional rate-limit and lease overrides are also supported:
 
 - `RATE_LIMIT_IMPORT_PER_HOUR`
-- `RATE_LIMIT_DEEP_ANALYSIS_PER_HOUR`
+- `RATE_LIMIT_SYSTEM_DESIGN_PER_HOUR`
 - `RATE_LIMIT_CHAT_PER_MINUTE`
 - `RATE_LIMIT_CHAT_BURST_CAPACITY`
 - `RATE_LIMIT_GLOBAL_CHAT_PER_MINUTE`
 - `RATE_LIMIT_GLOBAL_CHAT_BURST_CAPACITY`
 - `RATE_LIMIT_DAYTONA_GLOBAL_PER_HOUR`
 - `CHAT_JOB_LEASE_MS`
-- `DEEP_ANALYSIS_JOB_LEASE_MS`
+- `SYSTEM_DESIGN_JOB_LEASE_MS`
 
 The fully annotated example lives in `.env.example`.
 
@@ -218,7 +218,7 @@ Recommended setup:
 - Most backend flows derive the current owner from authenticated identity and verify ownership server-side.
 - Every import creates a new snapshot-oriented workflow instead of mutating repository knowledge in place.
 - Chat reads from indexed repository knowledge stored in Convex; the per-mode contract is: `discuss` uses no repo context, `docs` uses design artifacts only, and `sandbox` is wired (Plan 04 onward) to live sandbox file tools.
-- `Deep analysis` depends on a usable Daytona sandbox and stores its result back as a reusable `deep_analysis` artifact, which `docs`/`sandbox` chat modes can then cite.
+- `Generate System Design` depends on a usable Daytona sandbox and stores its outputs as System Design artifacts in the Library, which `docs`/`sandbox` chat modes can then cite.
 - Cleanup and reconciliation rely on cron jobs plus webhook-driven convergence so external Daytona resources do not drift too far from Convex state.
 
 ## Recommended reading

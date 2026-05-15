@@ -66,7 +66,7 @@ type ExpiredSandbox = {
 
 type StaleInteractiveJob = {
   jobId: Id<"jobs">;
-  kind: "chat" | "deep_analysis";
+  kind: "chat" | "system_design";
   requestedCommand?: string;
 };
 
@@ -77,7 +77,6 @@ type SandboxLookupResult = {
 type SandboxCleanupStart = { started: true; remoteId: string } | { started: false };
 
 const STALE_CHAT_JOB_ERROR_MESSAGE = "The assistant reply stalled and was automatically marked as failed.";
-const STALE_DEEP_ANALYSIS_ERROR_MESSAGE = "The deep analysis job stalled and was automatically marked as failed.";
 const DAYTONA_ORPHAN_RECONCILIATION_MIN_AGE_MS = 10 * 60_000;
 
 export const sweepExpiredSandboxes = internalAction({
@@ -174,10 +173,8 @@ export const reconcileStaleInteractiveJobs = internalAction({
           jobId: job.jobId,
         });
       } else {
-        await ctx.runMutation(internal.analysis.failDeepAnalysis, {
+        await ctx.runMutation(internal.systemDesign.recoverStaleSystemDesignJob, {
           jobId: job.jobId,
-          errorMessage: STALE_DEEP_ANALYSIS_ERROR_MESSAGE,
-          onlyIfStale: true,
         });
       }
     }

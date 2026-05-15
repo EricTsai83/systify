@@ -7,7 +7,6 @@ import {
   DatabaseIcon,
   EyeIcon,
   LightningIcon,
-  SparkleIcon,
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
@@ -22,7 +21,6 @@ import {
   formatArtifactKind,
   isUserRelevantActiveJob,
   isUserRelevantJob,
-  presentDeepAnalysisSurface,
   presentOperation,
   presentRepositoryIntelligenceSurface,
   presentSandboxSurface,
@@ -35,12 +33,10 @@ type StatusPanelProps = {
   sandboxModeStatus: SandboxModeStatus;
   sandbox: { status: string; ttlExpiresAt: number } | null;
   jobs: Doc<"jobs">[];
-  activeDeepAnalysisJob: Doc<"jobs"> | null;
   artifacts: Doc<"artifacts">[];
   hasRemoteUpdates: boolean;
   isSyncing: boolean;
   onSync: () => void;
-  onRunAnalysis: () => void;
   /**
    * Opens the artifact panel and scrolls/highlights the given artifact card.
    * Closes this status panel as part of mutual exclusion (see the shell
@@ -58,14 +54,11 @@ type StatusPanelProps = {
  * chat surface stays uncluttered; opened and closed as a peer of the artifact
  * panel under mutual exclusion (only one of the two can be open at a time).
  *
- * Three sections, top-to-bottom:
- *   1. Status cards — Repository intelligence, Live sandbox, Deep analysis.
- *      Same `present*Surface` helpers as the previous deck, so wording stays
- *      aligned with the empty-state nudge and the chat ticker.
- *   2. Operations — currently just "Run deep analysis"; the architecture /
- *      ADR / failure-mode launchers live inside the artifact panel where
- *      they have visual context for what they produce.
- *   3. Activity — user-relevant jobs with relative timestamps so two
+ * Two sections, top-to-bottom:
+ *   1. Status cards — Repository intelligence and Live sandbox. Same
+ *      `present*Surface` helpers as the previous deck, so wording stays
+ *      aligned with the chat ticker.
+ *   2. Activity — user-relevant jobs with relative timestamps so two
  *      successive "Repository sync · Complete" rows can be told apart.
  */
 export function StatusPanel({
@@ -73,21 +66,14 @@ export function StatusPanel({
   sandboxModeStatus,
   sandbox,
   jobs,
-  activeDeepAnalysisJob,
   artifacts,
   hasRemoteUpdates,
   isSyncing,
   onSync,
-  onRunAnalysis,
   onViewArtifact,
   onClose,
   className,
 }: StatusPanelProps) {
-  const latestDeepAnalysis = useMemo(
-    () => artifacts.find((artifact) => artifact.kind === "deep_analysis"),
-    [artifacts],
-  );
-
   const repositoryIntelligence = useMemo(
     () =>
       presentRepositoryIntelligenceSurface({
@@ -103,25 +89,8 @@ export function StatusPanel({
     [sandboxModeStatus, sandbox],
   );
 
-  const deepAnalysisStatus = useMemo(
-    () =>
-      presentDeepAnalysisSurface({
-        activeJob: activeDeepAnalysisJob,
-        latestArtifact: latestDeepAnalysis,
-      }),
-    [activeDeepAnalysisJob, latestDeepAnalysis],
-  );
-
-  const isSandboxAvailable = sandboxModeStatus.reasonCode === "available";
   const repositoryBusy = isSyncing || repository.importStatus === "queued" || repository.importStatus === "running";
   const repositoryFailed = repository.importStatus === "failed";
-
-  const handleRunAnalysis = () => {
-    if (activeDeepAnalysisJob || !isSandboxAvailable) {
-      return;
-    }
-    onRunAnalysis();
-  };
 
   return (
     <div className={cn("flex h-full min-h-0 w-full flex-col bg-card", className)}>
@@ -175,72 +144,10 @@ export function StatusPanel({
               icon={<LightningIcon weight="bold" />}
               meta={sandboxStatus.ttlExpiresAt ? <RelativeExpiry timestamp={sandboxStatus.ttlExpiresAt} /> : null}
             />
-
-            <StatusCard
-              eyebrow="Deep analysis"
-              surface={deepAnalysisStatus}
-              icon={<SparkleIcon weight="bold" />}
-              meta={
-                deepAnalysisStatus.lastCompletedAt ? (
-                  <RelativeCompletion timestamp={deepAnalysisStatus.lastCompletedAt} />
-                ) : null
-              }
-              action={
-                latestDeepAnalysis ? (
-                  // Operational state: artifact exists, so the user is past
-                  // setup. Surface the two natural follow-ups — review the
-                  // current analysis or refresh it after code changes.
-                  <div className="flex flex-col gap-1.5">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="default"
-                      onClick={() => onViewArtifact(latestDeepAnalysis._id)}
-                      className="w-full"
-                    >
-                      <EyeIcon weight="bold" />
-                      View analysis
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={Boolean(activeDeepAnalysisJob) || !isSandboxAvailable}
-                      onClick={handleRunAnalysis}
-                      className="w-full"
-                    >
-                      <SparkleIcon weight="bold" />
-                      {activeDeepAnalysisJob ? "Refreshing…" : "Refresh analysis"}
-                    </Button>
-                  </div>
-                ) : activeDeepAnalysisJob ? null : (
-                  // Edge case: no artifact and no active job. Normally the
-                  // post-import auto-trigger ({@link
-                  // convex/analysis.ts:scheduleAutoDeepAnalysis}) keeps us
-                  // out of this branch — but a global-rate-limit failure or
-                  // a sandbox glitch can leave us here, so the panel keeps
-                  // a manual fallback. The dashed-border "Run a deep
-                  // analysis" nudge that used to live below this card has
-                  // been retired so the panel speaks one CTA per state.
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={!isSandboxAvailable}
-                    onClick={handleRunAnalysis}
-                    className="w-full"
-                  >
-                    <SparkleIcon weight="bold" />
-                    Generate analysis
-                  </Button>
-                )
-              }
-            />
           </section>
 
           <ActivitySection
             jobs={jobs}
-            activeDeepAnalysisJob={activeDeepAnalysisJob}
             artifacts={artifacts}
             onViewArtifact={onViewArtifact}
             onRetrySync={onSync}
@@ -283,12 +190,6 @@ function StatusCard({
   );
 }
 
-function RelativeCompletion({ timestamp }: { timestamp: number }) {
-  const label = useRelativeTime(timestamp);
-  if (!label) return null;
-  return <span>Completed {label}</span>;
-}
-
 function RelativeExpiry({ timestamp }: { timestamp: number }) {
   const label = useTimeUntil(timestamp);
   if (!label) return null;
@@ -299,30 +200,22 @@ const TIMELINE_VISIBLE_LIMIT = 8;
 
 function ActivitySection({
   jobs,
-  activeDeepAnalysisJob,
   artifacts,
   onViewArtifact,
   onRetrySync,
   repositoryFailed,
 }: {
   jobs: Doc<"jobs">[];
-  activeDeepAnalysisJob: Doc<"jobs"> | null;
   artifacts: Doc<"artifacts">[];
   onViewArtifact: (artifactId: ArtifactId) => void;
   onRetrySync: () => void;
   repositoryFailed: boolean;
 }) {
-  const mergedJobs = useMemo(() => {
-    if (!activeDeepAnalysisJob) return jobs;
-    if (jobs.some((job) => job._id === activeDeepAnalysisJob._id)) return jobs;
-    return [activeDeepAnalysisJob, ...jobs];
-  }, [activeDeepAnalysisJob, jobs]);
-
   const visibleJobs = useMemo(() => {
     const active: Doc<"jobs">[] = [];
     const failed: Doc<"jobs">[] = [];
     const recent: Doc<"jobs">[] = [];
-    for (const job of mergedJobs) {
+    for (const job of jobs) {
       if (!isUserRelevantJob(job)) continue;
       if (isUserRelevantActiveJob(job)) {
         active.push(job);
@@ -333,7 +226,7 @@ function ActivitySection({
       }
     }
     return [...active, ...failed, ...recent].slice(0, TIMELINE_VISIBLE_LIMIT);
-  }, [mergedJobs]);
+  }, [jobs]);
 
   const artifactByJobId = useMemo(() => {
     const map = new Map<string, Doc<"artifacts">>();

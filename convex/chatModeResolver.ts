@@ -88,9 +88,7 @@ export interface ServiceModeResolution {
   askReadiness: { canBind: boolean; reason: string | null };
 }
 
-const DISABLED_REASON_LIBRARY_NO_REPO = "Attach a repository and run the first deep analysis to use Library mode.";
-const DISABLED_REASON_LIBRARY_NO_ARTIFACT =
-  "Library opens once your repository has at least one artifact (deep analysis runs automatically after import).";
+const DISABLED_REASON_LIBRARY_NO_REPO = "Attach a repository to use Library mode.";
 const DISABLED_REASON_LAB_NO_REPO = "Attach a repository to use Lab mode.";
 
 const ASK_REASON_NO_REPO = "Attach a repository and produce at least one artifact before asking a question.";
@@ -308,17 +306,14 @@ function resolveChatModesIgnoringFeatureGate(
  * Three-mode restructure — pick the URL-landing service mode for a viewer.
  *
  * Resolution order:
- *   1. Has a repo + at least one artifact → `library`. Library Read needs
- *      no sandbox and no LLM call to render, so it's the cheapest place to
- *      land a returning viewer.
+ *   1. Has a repo → `library`. Library Read needs no sandbox and no LLM
+ *      call to render; the empty state carries the Generate System Design
+ *      CTA so a repo with zero artifacts still has an actionable landing.
  *   2. Otherwise → `discuss`. We never auto-default to `lab` because Lab
  *      provisions Daytona compute the moment the user sends a message.
  */
-export function getDefaultServiceMode(hasAttachedRepo: boolean, hasAtLeastOneArtifact: boolean): ServiceMode {
-  if (hasAttachedRepo && hasAtLeastOneArtifact) {
-    return "library";
-  }
-  return "discuss";
+export function getDefaultServiceMode(hasAttachedRepo: boolean): ServiceMode {
+  return hasAttachedRepo ? "library" : "discuss";
 }
 
 /**
@@ -343,13 +338,11 @@ export function resolveServiceModes(
   const available = new Set<ServiceMode>(["discuss"]);
   const disabledReasons: Partial<Record<ServiceMode, string>> = {};
 
-  // Library availability — needs both a repo and at least one artifact in
-  // it. Pre-restructure workspaces always pass at least the repo check on
-  // the fast path because deep_analysis is auto-triggered on import.
+  // Library availability — needs an attached repo. The empty Library page
+  // surfaces a "Generate System Design" CTA so a repo with zero artifacts is
+  // still a valid landing surface.
   if (!hasAttachedRepo) {
     disabledReasons.library = DISABLED_REASON_LIBRARY_NO_REPO;
-  } else if (!hasAtLeastOneArtifact) {
-    disabledReasons.library = DISABLED_REASON_LIBRARY_NO_ARTIFACT;
   } else {
     available.add("library");
   }
@@ -388,8 +381,8 @@ export function resolveServiceModes(
 
   // Pick the URL-landing default. The function is intentionally
   // independent of `available` so it never lands the user on a disabled
-  // mode (Lab is opt-in and Library only when an artifact exists).
-  const defaultServiceMode = getDefaultServiceMode(hasAttachedRepo, hasAtLeastOneArtifact);
+  // mode (Lab is opt-in).
+  const defaultServiceMode = getDefaultServiceMode(hasAttachedRepo);
 
   return {
     availableServiceModes: Array.from(available) as ReadonlyArray<ServiceMode>,

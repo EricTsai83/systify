@@ -3,7 +3,7 @@
  *
  * Sandbox mode is the only chat mode that drives Daytona compute, calls live
  * tools (`read_file` / `list_dir` / `run_shell`), and bills against the
- * `deep_analysis` cost category. The gate is a *three-axis* composition:
+ * `system_design` cost category. The gate is a *three-axis* composition:
  *
  *   1. **Master switch** (`SANDBOX_MODE_ENABLED`). When falsy, everyone
  *      sees the "private beta" disabled tooltip and the resolver removes

@@ -114,6 +114,11 @@ export function GenerateSystemDesignDialog({
     () => new Set(CATALOG.filter((item) => item.defaultChecked).map((item) => item.kind)),
   );
   const [error, setError] = useState<string | null>(null);
+  const [previousOpen, setPreviousOpen] = useState(open);
+  if (previousOpen !== open) {
+    setPreviousOpen(open);
+    setError(null);
+  }
 
   const toggle = (kind: Kind) => {
     setSelected((prev) => {

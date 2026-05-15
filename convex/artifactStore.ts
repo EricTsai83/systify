@@ -198,7 +198,6 @@ const artifactKindValidator = v.union(
   v.literal("architecture_diagram"),
   v.literal("entrypoints"),
   v.literal("dependency_overview"),
-  v.literal("deep_analysis"),
   v.literal("risk_report"),
   v.literal("adr"),
   v.literal("failure_mode_analysis"),

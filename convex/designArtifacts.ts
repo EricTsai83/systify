@@ -7,8 +7,8 @@ import { requireViewerIdentity } from "./lib/auth";
 import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
 import {
   consumeDaytonaGlobalRateLimit,
-  consumeDeepAnalysisRateLimit,
-  DEEP_ANALYSIS_JOB_LEASE_MS,
+  consumeSystemDesignRateLimit,
+  SYSTEM_DESIGN_JOB_LEASE_MS,
   getLeaseRetryAfterMs,
   isLeaseActive,
   throwOperationAlreadyInProgress,
@@ -129,7 +129,7 @@ export const requestFailureModeAnalysis = mutation({
     const activeJob = await getActiveFailureModeJob(ctx, args.threadId, now);
     if (activeJob) {
       throwOperationAlreadyInProgress(
-        "repositoryDeepAnalysisInFlight",
+        "repositorySystemDesignInFlight",
         "A failure mode analysis is already in progress for this thread.",
         getLeaseRetryAfterMs(activeJob.leaseExpiresAt, now),
       );
@@ -140,7 +140,7 @@ export const requestFailureModeAnalysis = mutation({
       throw new Error("Please provide a subsystem to analyze.");
     }
 
-    await consumeDeepAnalysisRateLimit(ctx, identity.tokenIdentifier);
+    await consumeSystemDesignRateLimit(ctx, identity.tokenIdentifier);
     await consumeDaytonaGlobalRateLimit(ctx);
 
     const jobId = await ctx.db.insert("jobs", {
@@ -148,14 +148,14 @@ export const requestFailureModeAnalysis = mutation({
       ownerTokenIdentifier: identity.tokenIdentifier,
       sandboxId: sandbox._id,
       threadId: args.threadId,
-      kind: "deep_analysis",
+      kind: "system_design",
       status: "queued",
       stage: "queued",
       progress: 0,
-      costCategory: "deep_analysis",
+      costCategory: "system_design",
       triggerSource: "user",
       requestedCommand: `failure_mode_analysis:${trimmedSubsystem}`,
-      leaseExpiresAt: now + DEEP_ANALYSIS_JOB_LEASE_MS,
+      leaseExpiresAt: now + SYSTEM_DESIGN_JOB_LEASE_MS,
     });
 
     await ctx.scheduler.runAfter(0, internal.designArtifactsNode.runFailureModeAnalysis, {
@@ -207,11 +207,11 @@ export const markFailureModeRunning = internalMutation({
     const now = Date.now();
     const runningJob = await markQueuedJobRunning(ctx, {
       jobId: args.jobId,
-      expectedKind: "deep_analysis",
+      expectedKind: "system_design",
       stage: "failure_mode_analysis",
       progress: 0.25,
       startedAt: now,
-      leaseExpiresAt: now + DEEP_ANALYSIS_JOB_LEASE_MS,
+      leaseExpiresAt: now + SYSTEM_DESIGN_JOB_LEASE_MS,
     });
     return { started: runningJob !== null };
   },
@@ -237,7 +237,7 @@ export const completeFailureModeAnalysis = internalMutation({
   handler: async (ctx, args) => {
     const completedJob = await completeRunningJob(ctx, {
       jobId: args.jobId,
-      expectedKind: "deep_analysis",
+      expectedKind: "system_design",
       completedAt: Date.now(),
       outputSummary: args.summary,
     });
@@ -282,7 +282,7 @@ export const failFailureModeAnalysis = internalMutation({
   handler: async (ctx, args) => {
     const failedJob = await failRunningJob(ctx, {
       jobId: args.jobId,
-      expectedKind: "deep_analysis",
+      expectedKind: "system_design",
       completedAt: Date.now(),
       errorMessage: args.errorMessage,
     });
@@ -303,7 +303,7 @@ export const recoverStaleFailureModeJob = internalMutation({
     const now = Date.now();
     if (
       !job ||
-      job.kind !== "deep_analysis" ||
+      job.kind !== "system_design" ||
       (job.status !== "queued" && job.status !== "running") ||
       !job.requestedCommand?.startsWith("failure_mode_analysis:") ||
       typeof job.leaseExpiresAt !== "number" ||
@@ -316,7 +316,7 @@ export const recoverStaleFailureModeJob = internalMutation({
     const message = `${args.errorMessage ?? STALE_FAILURE_MODE_JOB_ERROR_MESSAGE}\n\nReference: ${errorId}`;
     const failedJob = await failStaleActiveJob(ctx, {
       jobId: args.jobId,
-      expectedKind: "deep_analysis",
+      expectedKind: "system_design",
       now,
       errorMessage: message,
     });
@@ -405,13 +405,13 @@ async function getActiveFailureModeJob(ctx: MutationCtx, threadId: Id<"threads">
     ctx.db
       .query("jobs")
       .withIndex("by_threadId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-        q.eq("threadId", threadId).eq("kind", "deep_analysis").eq("status", "queued").gte("leaseExpiresAt", now),
+        q.eq("threadId", threadId).eq("kind", "system_design").eq("status", "queued").gte("leaseExpiresAt", now),
       )
       .take(ACTIVE_FAILURE_MODE_JOB_SCAN_LIMIT),
     ctx.db
       .query("jobs")
       .withIndex("by_threadId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-        q.eq("threadId", threadId).eq("kind", "deep_analysis").eq("status", "running").gte("leaseExpiresAt", now),
+        q.eq("threadId", threadId).eq("kind", "system_design").eq("status", "running").gte("leaseExpiresAt", now),
       )
       .take(ACTIVE_FAILURE_MODE_JOB_SCAN_LIMIT),
   ]);

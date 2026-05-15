@@ -61,6 +61,7 @@ export const runSystemDesignGeneration = internalAction({
 
     const context = await ctx.runQuery(internal.systemDesign.getGenerationContext, {
       repositoryId: args.repositoryId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
     });
 
     if (context === null) {

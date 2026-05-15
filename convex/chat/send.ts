@@ -128,11 +128,12 @@ export const sendMessage = mutation({
       stage: "queued",
       progress: 0,
       // Sandbox / Lab modes are the only ones that consume Daytona
-      // compute, so they bill against the `deep_analysis` cost category.
+      // compute, so they bill against the `system_design` cost category
+      // (shared with System Design generation + Failure Mode Analysis).
       // `discuss`, `docs`, and `ask` all stay on the standard `chat`
       // category — Ask runs entirely on chunk retrieval + LLM, no
       // sandbox.
-      costCategory: mode === "lab" ? "deep_analysis" : "chat",
+      costCategory: mode === "lab" ? "system_design" : "chat",
       triggerSource: "user",
       leaseExpiresAt: now + CHAT_JOB_LEASE_MS,
     });

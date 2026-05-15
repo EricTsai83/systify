@@ -20,7 +20,7 @@ const importStatus = v.union(
 const jobKind = v.union(
   v.literal("import"),
   v.literal("index"),
-  v.literal("deep_analysis"),
+  v.literal("system_design"),
   v.literal("chat"),
   v.literal("cleanup"),
 );
@@ -74,7 +74,6 @@ const artifactKind = v.union(
   v.literal("architecture_diagram"),
   v.literal("entrypoints"),
   v.literal("dependency_overview"),
-  v.literal("deep_analysis"),
   v.literal("risk_report"),
   v.literal("adr"),
   v.literal("failure_mode_analysis"),
@@ -198,7 +197,6 @@ export default defineSchema({
     importStatus: repositoryStatus,
     latestImportId: v.optional(v.id("imports")),
     latestImportJobId: v.optional(v.id("jobs")),
-    latestAnalysisJobId: v.optional(v.id("jobs")),
     latestSandboxId: v.optional(v.id("sandboxes")),
     defaultThreadId: v.optional(v.id("threads")),
     summary: v.optional(v.string()),
@@ -288,7 +286,7 @@ export default defineSchema({
     status: jobStatus,
     stage: v.string(),
     progress: v.number(),
-    costCategory: v.union(v.literal("indexing"), v.literal("deep_analysis"), v.literal("chat"), v.literal("ops")),
+    costCategory: v.union(v.literal("indexing"), v.literal("system_design"), v.literal("chat"), v.literal("ops")),
     triggerSource: v.union(v.literal("user"), v.literal("system")),
     requestedCommand: v.optional(v.string()),
     outputSummary: v.optional(v.string()),

@@ -463,7 +463,7 @@ describe("interactive job recovery queries", () => {
     const t = convexTest(schema, modules);
     const now = Date.now();
 
-    const { staleChatJobId, staleDeepAnalysisJobId } = await t.run(async (ctx) => {
+    const { staleChatJobId, staleSystemDesignJobId } = await t.run(async (ctx) => {
       for (let index = 0; index < 30; index += 1) {
         await ctx.db.insert("jobs", {
           ownerTokenIdentifier: "user|ops-stale-cleanup",
@@ -487,13 +487,13 @@ describe("interactive job recovery queries", () => {
         triggerSource: "user",
         leaseExpiresAt: now - 10_000,
       });
-      const staleDeepAnalysisJobId = await ctx.db.insert("jobs", {
+      const staleSystemDesignJobId = await ctx.db.insert("jobs", {
         ownerTokenIdentifier: "user|ops-stale-analysis",
-        kind: "deep_analysis",
+        kind: "system_design",
         status: "running",
         stage: "analyzing",
         progress: 0.5,
-        costCategory: "deep_analysis",
+        costCategory: "system_design",
         triggerSource: "user",
         leaseExpiresAt: now - 5_000,
       });
@@ -508,14 +508,14 @@ describe("interactive job recovery queries", () => {
         leaseExpiresAt: now + 60_000,
       });
 
-      return { staleChatJobId, staleDeepAnalysisJobId };
+      return { staleChatJobId, staleSystemDesignJobId };
     });
 
     const staleJobs = await t.query(internal.ops.listStaleInteractiveJobs, {});
     const staleJobIds = staleJobs.map((job) => job.jobId);
 
     expect(staleJobIds).toContain(staleChatJobId);
-    expect(staleJobIds).toContain(staleDeepAnalysisJobId);
-    expect(staleJobs.every((job) => job.kind === "chat" || job.kind === "deep_analysis")).toBe(true);
+    expect(staleJobIds).toContain(staleSystemDesignJobId);
+    expect(staleJobs.every((job) => job.kind === "chat" || job.kind === "system_design")).toBe(true);
   });
 });
