@@ -12,11 +12,7 @@ import {
   stopSandbox,
 } from "./daytona";
 import { getInstallationAccessToken } from "./githubAppNode";
-import {
-  buildRepositoryManifest,
-  createChunkRecords,
-  createRepoFileRecords,
-} from "./lib/repoAnalysis";
+import { buildRepositoryManifest, createChunkRecords, createRepoFileRecords } from "./lib/repoAnalysis";
 import { logErrorWithId, logInfo, logWarn } from "./lib/observability";
 
 const PERSIST_BATCH_SIZE = 200;

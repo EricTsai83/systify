@@ -1,4 +1,4 @@
-import type { Id } from "../_generated/dataModel";
+import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 
 /**
@@ -70,3 +70,75 @@ export async function ensureSystemDesignFolders(
 
   return result;
 }
+
+/**
+ * The 8 artifact kinds that the Library System Design publication can produce.
+ * The 3 heuristic kinds (`manifest`, `readme_summary`, `architecture_overview`)
+ * derive from the imported repo snapshot without an LLM call; the 5 LLM-backed
+ * kinds (`*_overview`) read live source via sandbox tools so the doc tracks
+ * the current code state.
+ */
+export const SYSTEM_DESIGN_KINDS = [
+  "manifest",
+  "readme_summary",
+  "architecture_overview",
+  "data_model_overview",
+  "api_surface_overview",
+  "deployment_overview",
+  "security_overview",
+  "operations_overview",
+] as const satisfies ReadonlyArray<Doc<"artifacts">["kind"]>;
+
+export type SystemDesignKind = (typeof SYSTEM_DESIGN_KINDS)[number];
+
+export function isSystemDesignKind(kind: Doc<"artifacts">["kind"]): kind is SystemDesignKind {
+  return (SYSTEM_DESIGN_KINDS as ReadonlyArray<Doc<"artifacts">["kind"]>).includes(kind);
+}
+
+/**
+ * Static mapping from artifact kind → destination folder `systemKey`. Used by
+ * the generator to drop each new artifact into the right seeded folder, even
+ * after the user has renamed the folder.
+ */
+export const SYSTEM_DESIGN_KIND_TO_FOLDER: Record<SystemDesignKind, SystemDesignFolderKey> = {
+  manifest: "overview",
+  readme_summary: "overview",
+  architecture_overview: "architecture",
+  data_model_overview: "data_model",
+  api_surface_overview: "api",
+  deployment_overview: "infrastructure",
+  security_overview: "security",
+  operations_overview: "operations",
+};
+
+/**
+ * Whether a given kind is generated via a heuristic (no LLM call) or by an
+ * LLM-backed sandbox session. Drives the "Free" vs "~1 LLM call" badge in
+ * the Generate System Design dialog and the per-kind dispatch branch in the
+ * generator action.
+ */
+export const SYSTEM_DESIGN_KIND_GENERATOR: Record<SystemDesignKind, "heuristic" | "llm"> = {
+  manifest: "heuristic",
+  readme_summary: "heuristic",
+  architecture_overview: "heuristic",
+  data_model_overview: "llm",
+  api_surface_overview: "llm",
+  deployment_overview: "llm",
+  security_overview: "llm",
+  operations_overview: "llm",
+};
+
+/**
+ * Human-readable titles for each generated artifact. Used as the artifact
+ * row's `title` field at creation time.
+ */
+export const SYSTEM_DESIGN_KIND_TITLES: Record<SystemDesignKind, string> = {
+  manifest: "Repository Manifest",
+  readme_summary: "README Summary",
+  architecture_overview: "Architecture Overview",
+  data_model_overview: "Data Model Overview",
+  api_surface_overview: "API Surface Overview",
+  deployment_overview: "Deployment Overview",
+  security_overview: "Security Overview",
+  operations_overview: "Operations Overview",
+};
