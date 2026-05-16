@@ -40,14 +40,11 @@ export function SandboxActivityPill({ repositoryId }: { repositoryId: Repository
   // the live clock lives in state and an effect drives the interval.
   // The setter is only called on the timer callback, never as a sync
   // setState within the effect body.
-  const [nowMs, setNowMs] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
   useEffect(() => {
     const id = setInterval(() => setNowMs(Date.now()), 30_000);
-    // Kick off the first tick on the next macrotask so render stays pure.
-    const initial = setTimeout(() => setNowMs(Date.now()), 0);
     return () => {
       clearInterval(id);
-      clearTimeout(initial);
     };
   }, []);
 

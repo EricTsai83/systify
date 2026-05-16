@@ -133,16 +133,6 @@ export async function ensureSandboxReady(
   },
   onStage?: (stage: SandboxPreparationStage) => void | Promise<void>,
 ): Promise<EnsureSandboxReadyResult> {
-  try {
-    assertSandboxProvisioningConfigured();
-  } catch (error) {
-    throw new SandboxPreparationError({
-      reason: "missing_credentials",
-      userFacingMessage: LIVE_SOURCE_UNAVAILABLE_MESSAGE,
-      cause: error,
-    });
-  }
-
   const snapshot = await ctx.runQuery(internal.repositories.getRepositorySandboxForPreparation, {
     repositoryId: args.repositoryId,
     ownerTokenIdentifier: args.ownerTokenIdentifier,
@@ -161,7 +151,21 @@ export async function ensureSandboxReady(
 
   if (sandbox && sandbox.remoteId && (sandbox.status === "ready" || sandbox.status === "stopped")) {
     await safeStage(onStage, "probing");
-    const probe = await probeLiveSandbox(sandbox.remoteId);
+    let probe;
+    try {
+      probe = await probeLiveSandbox(sandbox.remoteId);
+    } catch (error) {
+      const errorId = logErrorWithId("sandbox_liveness", "probe_live_sandbox_failed", error, {
+        sandboxId: sandbox._id,
+        remoteId: sandbox.remoteId,
+        repositoryId: args.repositoryId,
+      });
+      throw new SandboxPreparationError({
+        reason: "infrastructure_error",
+        userFacingMessage: `${LIVE_SOURCE_UNAVAILABLE_MESSAGE} (ref: ${errorId})`,
+        cause: error,
+      });
+    }
     await ctx.runMutation(internal.ops.syncSandboxStatusFromRemote, {
       sandboxId: sandbox._id,
       remoteState: probe.remoteState,
@@ -261,6 +265,16 @@ async function provisionAndClone(
   onStage: ((stage: SandboxPreparationStage) => void | Promise<void>) | undefined,
 ): Promise<EnsureSandboxReadyResult> {
   const { repository, previousSandbox } = args;
+
+  try {
+    assertSandboxProvisioningConfigured();
+  } catch (error) {
+    throw new SandboxPreparationError({
+      reason: "missing_credentials",
+      userFacingMessage: LIVE_SOURCE_UNAVAILABLE_MESSAGE,
+      cause: error,
+    });
+  }
 
   const installationId = (await ctx.runQuery(internal.github.getInstallationIdForOwner, {
     ownerTokenIdentifier: repository.ownerTokenIdentifier,

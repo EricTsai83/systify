@@ -537,6 +537,13 @@ export const markOnDemandSandboxReady = internalMutation({
       lastUsedAt: now,
     });
     if (args.commitSha) {
+      const sandbox = await ctx.db.get(args.sandboxId);
+      if (sandbox && sandbox.repositoryId !== args.repositoryId) {
+        console.warn(
+          `Sandbox ${args.sandboxId} repositoryId mismatch: expected ${args.repositoryId}, got ${sandbox.repositoryId}`,
+        );
+        return;
+      }
       const repository = await ctx.db.get(args.repositoryId);
       if (repository) {
         await ctx.db.patch(args.repositoryId, {

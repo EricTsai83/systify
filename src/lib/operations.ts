@@ -83,7 +83,13 @@ export function presentOperation(job: Doc<"jobs">): PresentedOperation {
  * active-job badge — see the design doc Surface 3 ("badge only counts
  * user-relevant active jobs, not system maintenance").
  */
-const USER_RELEVANT_JOB_KINDS: ReadonlySet<Doc<"jobs">["kind"]> = new Set(["import", "index", "chat", "system_design"]);
+const USER_RELEVANT_JOB_KINDS: ReadonlySet<Doc<"jobs">["kind"]> = new Set([
+  "import",
+  "index",
+  "chat",
+  "system_design",
+  "sandbox_activation",
+]);
 
 /**
  * UX-rule-of-thumb gate: only background work the user explicitly cares about

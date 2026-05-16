@@ -155,7 +155,7 @@ function describeFailures(job: Doc<"jobs">): FailureDescriptor | null {
 
   let reasonText: string;
   if (kindFailures.length === 0) {
-    reasonText = REASON_TEXT_FALLBACK;
+    reasonText = job.errorMessage && job.errorMessage.trim() ? job.errorMessage : REASON_TEXT_FALLBACK;
   } else {
     const reasons = new Set(kindFailures.map((failure) => failure.reason ?? "other"));
     if (reasons.size === 1) {
