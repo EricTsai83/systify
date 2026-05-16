@@ -73,25 +73,6 @@ async function ensureNoCycle(
   }
 }
 
-async function nextSortOrder(
-  ctx: QueryCtx | MutationCtx,
-  args: { repositoryId: Id<"repositories">; parentFolderId: Id<"artifactFolders"> | undefined },
-): Promise<number> {
-  const siblings = await ctx.db
-    .query("artifactFolders")
-    .withIndex("by_repositoryId_and_parentFolderId", (q) =>
-      q.eq("repositoryId", args.repositoryId).eq("parentFolderId", args.parentFolderId),
-    )
-    .take(FOLDERS_PER_REPO_LIMIT);
-  let max = 0;
-  for (const sibling of siblings) {
-    if (typeof sibling.sortOrder === "number" && sibling.sortOrder > max) {
-      max = sibling.sortOrder;
-    }
-  }
-  return max + 1;
-}
-
 /**
  * Public, owner-scoped listing of every folder in a repository. Returned
  * flat — the frontend builds the tree from `parentFolderId` and computes
@@ -116,7 +97,7 @@ export const listByRepository = query({
       parentFolderId: folder.parentFolderId,
       name: folder.name,
       description: folder.description,
-      sortOrder: folder.sortOrder,
+      pinnedAt: folder.pinnedAt,
       systemKey: folder.systemKey,
     }));
   },
@@ -162,18 +143,12 @@ export const create = mutation({
       }
     }
 
-    const sortOrder = await nextSortOrder(ctx, {
-      repositoryId: args.repositoryId,
-      parentFolderId: args.parentFolderId,
-    });
-
     const folderId = await ctx.db.insert("artifactFolders", {
       ownerTokenIdentifier: identity.tokenIdentifier,
       repositoryId: args.repositoryId,
       parentFolderId: args.parentFolderId,
       name: normalizeFolderName(args.name),
       description: normalizeFolderDescription(args.description),
-      sortOrder,
     });
 
     return folderId;
@@ -231,14 +206,36 @@ export const move = mutation({
 
     if (folder.parentFolderId === args.parentFolderId) return null;
 
-    const sortOrder = await nextSortOrder(ctx, {
-      repositoryId: folder.repositoryId,
-      parentFolderId: args.parentFolderId,
-    });
-
     await ctx.db.patch(folder._id, {
       parentFolderId: args.parentFolderId,
-      sortOrder,
+    });
+    return null;
+  },
+});
+
+/**
+ * Toggle a folder's pinned state. Pinning stamps `pinnedAt` with the
+ * current wall-clock so the navigator can detect the pinned state and
+ * surface pinned folders above the alphabetical tail. Unpinning drops the
+ * field (patch with `pinnedAt: undefined`) so the folder falls back into
+ * the regular alpha ordering.
+ *
+ * Mirrors `chat/threads.setThreadPinned` so the two pin features behave
+ * identically from the user's perspective.
+ */
+export const setPinned = mutation({
+  args: {
+    folderId: v.id("artifactFolders"),
+    pinned: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireViewerIdentity(ctx);
+    const folder = await loadFolderForOwner(ctx, {
+      folderId: args.folderId,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+    });
+    await ctx.db.patch(folder._id, {
+      pinnedAt: args.pinned ? Date.now() : undefined,
     });
     return null;
   },

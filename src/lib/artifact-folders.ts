@@ -4,12 +4,15 @@
  * narrow so the consumer doesn't accidentally treat a folder as an
  * artifact (or vice versa) and end up clicking the wrong navigation path.
  * Seeded System Design folders carry `systemKey` for stable lookup after rename.
+ * `pinnedAt` is the wall-clock at which the user pinned this folder; the
+ * navigator floats pinned folders above the alphabetical tail.
  */
 export type FolderTreeNode = {
   id: string;
   name: string;
   description?: string;
   parentFolderId: string | null;
+  pinnedAt?: number;
   systemKey?: string;
   children: FolderTreeNode[];
 };
@@ -19,6 +22,7 @@ export type FolderTreeInput = {
   name: string;
   description?: string;
   parentFolderId?: string | null | undefined;
+  pinnedAt?: number;
   systemKey?: string;
 };
 
@@ -35,6 +39,7 @@ export function buildFolderTree(folders: ReadonlyArray<FolderTreeInput>): Folder
       name: folder.name,
       description: folder.description,
       parentFolderId: folder.parentFolderId ?? null,
+      pinnedAt: folder.pinnedAt,
       systemKey: folder.systemKey,
       children: [],
     });
@@ -49,14 +54,19 @@ export function buildFolderTree(folders: ReadonlyArray<FolderTreeInput>): Folder
     }
   }
 
-  // Sort siblings by name for predictable rendering — the server stores
-  // `sortOrder` for future drag-reorder, but until that ships, alpha order
-  // is the most readable default.
+  // Pinned folders float to the top of each sibling group; within the
+  // pinned and unpinned partitions, siblings sort alphabetically by name.
+  const compare = (a: FolderTreeNode, b: FolderTreeNode) => {
+    const aPinned = a.pinnedAt !== undefined;
+    const bPinned = b.pinnedAt !== undefined;
+    if (aPinned !== bPinned) return aPinned ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  };
   const sortChildren = (node: FolderTreeNode) => {
-    node.children.sort((a, b) => a.name.localeCompare(b.name));
+    node.children.sort(compare);
     node.children.forEach(sortChildren);
   };
-  roots.sort((a, b) => a.name.localeCompare(b.name));
+  roots.sort(compare);
   roots.forEach(sortChildren);
 
   return roots;

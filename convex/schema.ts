@@ -539,9 +539,14 @@ export default defineSchema({
    *   - `parentFolderId` is optional; root folders have it unset. The
    *     `by_repositoryId_and_parentFolderId` index lets the navigator pull a
    *     single level on demand and build the tree client-side.
-   *   - `sortOrder` lets the user reorder siblings without touching
-   *     `_creationTime`. New folders take the current max+1 within their
-   *     parent so they land at the bottom of the list.
+   *   - `pinnedAt` lets the user pin folders to the top of the navigator,
+   *     independent of alphabetical ordering. Seeded System Design folders
+   *     are pinned by default at insert time; user-created folders start
+   *     unpinned and can be toggled via the kebab menu. The navigator
+   *     currently treats the field as a boolean (presence vs absence) and
+   *     sorts pinned siblings alphabetically — the timestamp value is
+   *     stored to mirror `threads.pinnedAt` so a future move to
+   *     pinned-recent-first ordering can land without a schema change.
    */
   artifactFolders: defineTable({
     ownerTokenIdentifier: v.string(),
@@ -549,7 +554,7 @@ export default defineSchema({
     parentFolderId: v.optional(v.id("artifactFolders")),
     name: v.string(),
     description: v.optional(v.string()),
-    sortOrder: v.optional(v.number()),
+    pinnedAt: v.optional(v.number()),
     /**
      * Stable identifier for folders seeded by the System Design generator
      * (`overview`, `architecture`, `data_model`, `api`, `infrastructure`,

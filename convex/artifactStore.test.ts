@@ -54,7 +54,6 @@ async function seedArtifactFolder(
       ownerTokenIdentifier: args.ownerTokenIdentifier ?? OWNER,
       repositoryId: args.repositoryId,
       name: "Feature folder",
-      sortOrder: 1,
     }),
   );
 }
