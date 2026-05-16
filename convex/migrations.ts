@@ -24,7 +24,6 @@ import { internalMutation } from "./_generated/server";
 const ARTIFACT_BACKFILL_BATCH_SIZE = 200;
 const THREAD_MIGRATION_BATCH_SIZE = 100;
 const MESSAGE_MIGRATION_BATCH_SIZE = 200;
-const FOLDER_BACKFILL_BATCH_SIZE = 200;
 
 /**
  * Backfill `producedIn` and `chunkingStatus` on every existing artifact.
@@ -194,67 +193,6 @@ export const startLegacyModeMigration = internalMutation({
   handler: async (ctx) => {
     await ctx.scheduler.runAfter(0, internal.migrations.lockLegacyDocsThreads, {});
     await ctx.scheduler.runAfter(0, internal.migrations.convertSandboxToLab, {});
-    return { scheduled: true };
-  },
-});
-
-/**
- * Backfill `pinnedAt` on seeded System Design folders (`systemKey` set) that
- * were created before the folder-pin feature shipped. Post-feature inserts in
- * `ensureSystemDesignFolders` stamp `pinnedAt` at seed time; this migration
- * brings legacy rows up to the same state so existing users see the System
- * Design tree pinned to the top by default — matching the experience a fresh
- * repository gets.
- *
- * Sentinel value: each row gets `pinnedAt = folder._creationTime`, i.e. the
- * moment the folder was actually seeded. This is honest semantically (the
- * folder was conceptually "pinned at seed time") and avoids the lie of
- * stamping `Date.now()` onto rows that have existed for weeks. The navigator
- * currently ignores the timestamp value for ordering (pinned folders sort
- * alphabetically) but the field is still load-bearing for the pinned/unpinned
- * partition; future ordering changes would inherit a sensible value.
- *
- * Bounded via `paginate` so the scan does not need an index dedicated to
- * one-shot migration work. Self-reschedules until `isDone`. Already-patched
- * rows are skipped via the in-handler `pinnedAt === undefined` check, so
- * re-running the migration after deploy is safe.
- */
-export const backfillSystemDesignFolderPinnedAt = internalMutation({
-  args: { cursor: v.union(v.string(), v.null()) },
-  handler: async (ctx, args) => {
-    const result = await ctx.db
-      .query("artifactFolders")
-      .paginate({ numItems: FOLDER_BACKFILL_BATCH_SIZE, cursor: args.cursor });
-
-    let patched = 0;
-    for (const folder of result.page) {
-      if (folder.systemKey !== undefined && folder.pinnedAt === undefined) {
-        await ctx.db.patch(folder._id, { pinnedAt: folder._creationTime });
-        patched += 1;
-      }
-    }
-
-    if (!result.isDone) {
-      await ctx.scheduler.runAfter(0, internal.migrations.backfillSystemDesignFolderPinnedAt, {
-        cursor: result.continueCursor,
-      });
-    }
-
-    return { processed: result.page.length, patched, done: result.isDone };
-  },
-});
-
-/**
- * Idempotent entry point for ad-hoc dashboard runs. Kicks off the bounded
- * backfill loop above and returns once the first batch lands; the scheduler
- * carries the cursor forward.
- */
-export const startSystemDesignFolderPinnedAtBackfill = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    await ctx.scheduler.runAfter(0, internal.migrations.backfillSystemDesignFolderPinnedAt, {
-      cursor: null,
-    });
     return { scheduled: true };
   },
 });
