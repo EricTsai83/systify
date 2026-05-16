@@ -356,7 +356,7 @@ async function listStaleJobsByStatusAndKind(
   ctx: Pick<QueryCtx, "db">,
   args: {
     status: "queued" | "running";
-    kind: "chat" | "system_design";
+    kind: "chat" | "system_design" | "sandbox_activation";
     now: number;
   },
 ) {
@@ -376,8 +376,10 @@ export const listStaleInteractiveJobs = internalQuery({
       await Promise.all([
         listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "chat", now }),
         listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "system_design", now }),
+        listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "sandbox_activation", now }),
         listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "chat", now }),
         listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "system_design", now }),
+        listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "sandbox_activation", now }),
       ])
     )
       .flat()

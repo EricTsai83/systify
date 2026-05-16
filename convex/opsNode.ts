@@ -66,7 +66,7 @@ type ExpiredSandbox = {
 
 type StaleInteractiveJob = {
   jobId: Id<"jobs">;
-  kind: "chat" | "system_design";
+  kind: "chat" | "system_design" | "sandbox_activation";
   requestedCommand?: string;
 };
 
@@ -164,6 +164,13 @@ export const reconcileStaleInteractiveJobs = internalAction({
         await ctx.runMutation(internal.chat.streaming.recoverStaleChatJob, {
           jobId: job.jobId,
           errorMessage: STALE_CHAT_JOB_ERROR_MESSAGE,
+        });
+        continue;
+      }
+
+      if (job.kind === "sandbox_activation") {
+        await ctx.runMutation(internal.repositories.recoverStaleSandboxActivationJob, {
+          jobId: job.jobId,
         });
         continue;
       }

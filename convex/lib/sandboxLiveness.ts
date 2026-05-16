@@ -93,7 +93,13 @@ export type EnsureSandboxReadyResult = {
 const PROVISIONING_POLL_INTERVAL_MS = 2_000;
 const PROVISIONING_POLL_TIMEOUT_MS = 120_000;
 
-const LIVE_SOURCE_UNAVAILABLE_MESSAGE =
+/**
+ * Shared user-facing copy for transient liveness failures. Exported so
+ * the `probeLiveSandbox` verdict in `daytona.ts` can stay aligned —
+ * archive / destroyed / not-found paths all surface the same phrasing,
+ * so future copy edits only need one touch point.
+ */
+export const LIVE_SOURCE_UNAVAILABLE_MESSAGE =
   "Live access to the repository wasn't available. The next attempt will prepare it first.";
 
 /**
@@ -102,7 +108,7 @@ const LIVE_SOURCE_UNAVAILABLE_MESSAGE =
  * are expected to use this in front of any LLM call or tool invocation
  * that depends on a live repository tree.
  *
- * Branching matrix (see plan-action-named-recovery-on-demand-sandbox-lifecycle.md):
+ * Branching matrix:
  *
  *   | Local cache | Daytona probe | Action                                   |
  *   |-------------|---------------|-------------------------------------------|
@@ -288,11 +294,27 @@ async function provisionAndClone(
   const detectedVisibility = accessCheck.isPrivate ? ("private" as const) : ("public" as const);
 
   await safeStage(onStage, "provisioning");
-  const sandboxId = await ctx.runMutation(internal.imports.reserveOnDemandSandboxRow, {
+  const { sandboxId, alreadyExisted } = await ctx.runMutation(internal.imports.reserveOnDemandSandboxRow, {
     repositoryId: repository._id,
     ownerTokenIdentifier: repository.ownerTokenIdentifier,
     sourceAdapter: "git_clone",
   });
+
+  if (alreadyExisted) {
+    const sandbox = await ctx.runQuery(internal.ops.getSandboxRow, { sandboxId });
+    if (!sandbox) {
+      throw new SandboxPreparationError({
+        reason: "infrastructure_error",
+        userFacingMessage: LIVE_SOURCE_UNAVAILABLE_MESSAGE,
+      });
+    }
+    if (sandbox.status === "ready" && sandbox.remoteId && sandbox.repoPath) {
+      return { sandboxId: sandbox._id, remoteId: sandbox.remoteId, repoPath: sandbox.repoPath };
+    }
+    if (sandbox.status === "provisioning") {
+      return await pollUntilReady(ctx, sandboxId, onStage);
+    }
+  }
 
   let remoteIdForCleanup: string | null = null;
 

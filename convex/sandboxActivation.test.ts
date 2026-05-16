@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import { register as registerRateLimiter } from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -192,5 +192,144 @@ describe("requestSandboxActivation", () => {
     const status = await viewer.query(api.repositories.getSandboxActivityStatus, { repositoryId });
     expect(status.kind).toBe("activating");
     expect(status.activeJob?.kind).toBe("sandbox_activation");
+  });
+});
+
+describe("recoverStaleSandboxActivationJob", () => {
+  test("fails a queued sandbox_activation job whose lease has expired", async () => {
+    const ownerTokenIdentifier = "user|stale-queued";
+    const t = createTestConvex();
+    const repositoryId = await seedRepoWithSandbox(t, ownerTokenIdentifier, "archived");
+
+    const jobId = await t.run(async (ctx) =>
+      ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "sandbox_activation",
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+        costCategory: "ops",
+        triggerSource: "user",
+        leaseExpiresAt: Date.now() - 60_000,
+      }),
+    );
+
+    await t.mutation(internal.repositories.recoverStaleSandboxActivationJob, { jobId });
+
+    const job = await t.run(async (ctx) => await ctx.db.get(jobId));
+    expect(job?.status).toBe("failed");
+    expect(job?.errorMessage).toMatch(/Sandbox activation stalled/);
+    expect(job?.leaseExpiresAt).toBeUndefined();
+  });
+
+  test("fails a running sandbox_activation job whose lease has expired", async () => {
+    const ownerTokenIdentifier = "user|stale-running";
+    const t = createTestConvex();
+    const repositoryId = await seedRepoWithSandbox(t, ownerTokenIdentifier, "archived");
+
+    const jobId = await t.run(async (ctx) =>
+      ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "sandbox_activation",
+        status: "running",
+        stage: "Preparing environment…",
+        progress: 0.1,
+        costCategory: "ops",
+        triggerSource: "user",
+        startedAt: Date.now() - 10 * 60_000,
+        leaseExpiresAt: Date.now() - 5 * 60_000,
+      }),
+    );
+
+    await t.mutation(internal.repositories.recoverStaleSandboxActivationJob, { jobId });
+
+    const job = await t.run(async (ctx) => await ctx.db.get(jobId));
+    expect(job?.status).toBe("failed");
+    expect(job?.errorMessage).toMatch(/Sandbox activation stalled/);
+  });
+
+  test("leaves jobs alone when the lease has not expired yet", async () => {
+    const ownerTokenIdentifier = "user|stale-not-yet";
+    const t = createTestConvex();
+    const repositoryId = await seedRepoWithSandbox(t, ownerTokenIdentifier, "archived");
+
+    const jobId = await t.run(async (ctx) =>
+      ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "sandbox_activation",
+        status: "running",
+        stage: "Preparing environment…",
+        progress: 0.1,
+        costCategory: "ops",
+        triggerSource: "user",
+        leaseExpiresAt: Date.now() + 60_000,
+      }),
+    );
+
+    await t.mutation(internal.repositories.recoverStaleSandboxActivationJob, { jobId });
+
+    const job = await t.run(async (ctx) => await ctx.db.get(jobId));
+    expect(job?.status).toBe("running");
+  });
+
+  test("does not touch jobs in a terminal state", async () => {
+    const ownerTokenIdentifier = "user|stale-terminal";
+    const t = createTestConvex();
+    const repositoryId = await seedRepoWithSandbox(t, ownerTokenIdentifier, "archived");
+
+    const jobId = await t.run(async (ctx) =>
+      ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "sandbox_activation",
+        status: "completed",
+        stage: "completed",
+        progress: 1,
+        costCategory: "ops",
+        triggerSource: "user",
+        completedAt: Date.now() - 60_000,
+      }),
+    );
+
+    await t.mutation(internal.repositories.recoverStaleSandboxActivationJob, { jobId });
+
+    const job = await t.run(async (ctx) => await ctx.db.get(jobId));
+    expect(job?.status).toBe("completed");
+  });
+});
+
+describe("completeSandboxActivation", () => {
+  test("skips the sandboxId patch when the job is already failed", async () => {
+    const ownerTokenIdentifier = "user|complete-after-fail";
+    const t = createTestConvex();
+    const repositoryId = await seedRepoWithSandbox(t, ownerTokenIdentifier, "archived");
+    const sandboxId = await t.run(async (ctx) => {
+      const repo = (await ctx.db.get(repositoryId))!;
+      return repo.latestSandboxId!;
+    });
+
+    const jobId = await t.run(async (ctx) =>
+      ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "sandbox_activation",
+        status: "failed",
+        stage: "failed",
+        progress: 1,
+        costCategory: "ops",
+        triggerSource: "user",
+        errorMessage: "Sandbox activation stalled and was automatically marked as failed.",
+        completedAt: Date.now() - 60_000,
+      }),
+    );
+
+    await t.mutation(internal.repositories.completeSandboxActivation, { jobId, sandboxId });
+
+    const job = await t.run(async (ctx) => await ctx.db.get(jobId));
+    expect(job?.status).toBe("failed");
+    expect(job?.sandboxId).toBeUndefined();
   });
 });

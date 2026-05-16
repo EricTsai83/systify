@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "convex-test";
 import { internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -88,7 +89,7 @@ async function seedRepoAndSandbox(
       entrypoints: [],
       fileCount: 0,
     });
-    let sandboxId: ReturnType<typeof crypto.randomUUID> | null = null;
+    let sandboxId: Id<"sandboxes"> | null = null;
     if (args.sandbox) {
       const sid = await ctx.db.insert("sandboxes", {
         repositoryId,
@@ -109,7 +110,7 @@ async function seedRepoAndSandbox(
         networkBlockAll: false,
       });
       await ctx.db.patch(repositoryId, { latestSandboxId: sid });
-      sandboxId = sid as never;
+      sandboxId = sid;
     }
     return { repositoryId, sandboxId };
   });
@@ -236,5 +237,83 @@ describe("ensureSandboxReady (via runSandboxActivation)", () => {
     const job = await t.run(async (ctx) => await ctx.db.get(jobId));
     expect(job?.status).toBe("failed");
     expect(job?.errorMessage).toMatch(/Connect your GitHub account/);
+  });
+});
+
+describe("reserveOnDemandSandboxRow CAS", () => {
+  test("inserts a fresh provisioning row when the repository has no live sandbox", async () => {
+    const t = convexTest(schema, modules);
+    const ownerTokenIdentifier = "user|reserve-fresh";
+    const { repositoryId } = await seedRepoAndSandbox(t, ownerTokenIdentifier, {
+      sandbox: { status: "archived", remoteId: "rid-archived" },
+    });
+
+    const result = await t.mutation(internal.imports.reserveOnDemandSandboxRow, {
+      repositoryId,
+      ownerTokenIdentifier,
+      sourceAdapter: "git_clone",
+    });
+
+    expect(result.alreadyExisted).toBe(false);
+    const repo = await t.run(async (ctx) => await ctx.db.get(repositoryId));
+    expect(repo?.latestSandboxId).toBe(result.sandboxId);
+    const sandbox = await t.run(async (ctx) => await ctx.db.get(result.sandboxId));
+    expect(sandbox?.status).toBe("provisioning");
+  });
+
+  test("returns the same sandbox when a provisioning row already exists", async () => {
+    // Race scenario: System Design and Sandbox Activation both call
+    // ensureSandboxReady at the same time. The CAS guarantees the second
+    // mutation observes the first one's provisioning row instead of
+    // inserting a duplicate row and leaking a Daytona sandbox.
+    const t = convexTest(schema, modules);
+    const ownerTokenIdentifier = "user|reserve-cas";
+    const { repositoryId } = await seedRepoAndSandbox(t, ownerTokenIdentifier, {
+      sandbox: { status: "archived", remoteId: "rid-archived" },
+    });
+
+    const first = await t.mutation(internal.imports.reserveOnDemandSandboxRow, {
+      repositoryId,
+      ownerTokenIdentifier,
+      sourceAdapter: "git_clone",
+    });
+    const second = await t.mutation(internal.imports.reserveOnDemandSandboxRow, {
+      repositoryId,
+      ownerTokenIdentifier,
+      sourceAdapter: "git_clone",
+    });
+
+    expect(first.alreadyExisted).toBe(false);
+    expect(second.alreadyExisted).toBe(true);
+    expect(second.sandboxId).toBe(first.sandboxId);
+
+    const allSandboxes = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("sandboxes")
+          .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
+          .collect(),
+    );
+    // One pre-existing archived sandbox from the seed, plus one new
+    // provisioning row. The second caller MUST NOT insert a third.
+    expect(allSandboxes).toHaveLength(2);
+    expect(allSandboxes.filter((s) => s.status === "provisioning")).toHaveLength(1);
+  });
+
+  test("returns the same sandbox when an existing ready row is still live", async () => {
+    const t = convexTest(schema, modules);
+    const ownerTokenIdentifier = "user|reserve-cas-ready";
+    const { repositoryId, sandboxId } = await seedRepoAndSandbox(t, ownerTokenIdentifier, {
+      sandbox: { status: "ready", remoteId: "rid-ready" },
+    });
+
+    const result = await t.mutation(internal.imports.reserveOnDemandSandboxRow, {
+      repositoryId,
+      ownerTokenIdentifier,
+      sourceAdapter: "git_clone",
+    });
+
+    expect(result.alreadyExisted).toBe(true);
+    expect(result.sandboxId).toBe(sandboxId);
   });
 });

@@ -12,6 +12,7 @@ import type { SandboxFsClient, SandboxShellOutcome } from "./chat/sandboxTools";
 import { shouldReadFile, type RepositorySnapshot } from "./lib/repoAnalysis";
 import { buildSandboxName } from "./lib/sandboxNames";
 import { logWarn } from "./lib/observability";
+import { LIVE_SOURCE_UNAVAILABLE_MESSAGE } from "./lib/sandboxLiveness";
 import {
   DEFAULT_AUTO_STOP_MINUTES,
   DEFAULT_AUTO_ARCHIVE_MINUTES,
@@ -245,7 +246,7 @@ export async function probeLiveSandbox(remoteId: string): Promise<LiveSandboxPro
       ok: false,
       remoteState: "destroyed",
       reason: "deleted",
-      message: "Live access to the repository wasn't available. The next attempt will prepare it first.",
+      message: LIVE_SOURCE_UNAVAILABLE_MESSAGE,
     };
   }
   switch (details.state) {
@@ -256,7 +257,7 @@ export async function probeLiveSandbox(remoteId: string): Promise<LiveSandboxPro
         ok: false,
         remoteState: "archived",
         reason: "archived",
-        message: "Live access to the repository wasn't available. The next attempt will prepare it first.",
+        message: LIVE_SOURCE_UNAVAILABLE_MESSAGE,
       };
     case "stopped":
       return {
@@ -270,7 +271,7 @@ export async function probeLiveSandbox(remoteId: string): Promise<LiveSandboxPro
         ok: false,
         remoteState: "destroyed",
         reason: "deleted",
-        message: "Live access to the repository wasn't available. The next attempt will prepare it first.",
+        message: LIVE_SOURCE_UNAVAILABLE_MESSAGE,
       };
     case "error":
       return {

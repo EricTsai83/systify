@@ -23,7 +23,7 @@ import {
   SANDBOX_ACTIVATION_JOB_LEASE_MS,
   throwOperationAlreadyInProgress,
 } from "./lib/rateLimit";
-import { failRunningJob, completeRunningJob, markQueuedJobRunning } from "./jobLifecycle";
+import { failRunningJob, completeRunningJob, markQueuedJobRunning, failStaleActiveJob } from "./jobLifecycle";
 
 const FILE_COUNT_DISPLAY_LIMIT = 400;
 const REPOSITORY_DETAIL_IMPORT_ARTIFACT_LIMIT = 10;
@@ -937,12 +937,18 @@ export const updateSandboxActivationStage = internalMutation({
 export const completeSandboxActivation = internalMutation({
   args: { jobId: v.id("jobs"), sandboxId: v.id("sandboxes") },
   handler: async (ctx, args) => {
-    await completeRunningJob(ctx, {
+    const completedJob = await completeRunningJob(ctx, {
       jobId: args.jobId,
       expectedKind: "sandbox_activation",
       completedAt: Date.now(),
       outputSummary: "Live source ready.",
     });
+    // `recoverStaleSandboxActivationJob` can race ahead and mark this
+    // job `failed` between the action starting and finishing.
+    // `completeRunningJob` only patches when the job is still `running`
+    // and returns `null` otherwise — patching `sandboxId` onto a failed
+    // job would leave the terminal state inconsistent.
+    if (!completedJob) return;
     await ctx.db.patch(args.jobId, { sandboxId: args.sandboxId });
   },
 });
@@ -955,6 +961,36 @@ export const failSandboxActivation = internalMutation({
       expectedKind: "sandbox_activation",
       completedAt: Date.now(),
       errorMessage: args.errorMessage,
+    });
+  },
+});
+
+const STALE_SANDBOX_ACTIVATION_JOB_ERROR_MESSAGE = "Sandbox activation stalled and was automatically marked as failed.";
+
+/**
+ * Background stale-job recovery for sandbox activation. Called by
+ * `opsNode.reconcileStaleInteractiveJobs` when a `sandbox_activation`-kind
+ * job has overrun its lease.
+ */
+export const recoverStaleSandboxActivationJob = internalMutation({
+  args: { jobId: v.id("jobs") },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    const now = Date.now();
+    if (
+      !job ||
+      job.kind !== "sandbox_activation" ||
+      (job.status !== "queued" && job.status !== "running") ||
+      typeof job.leaseExpiresAt !== "number" ||
+      job.leaseExpiresAt > now
+    ) {
+      return;
+    }
+    await failStaleActiveJob(ctx, {
+      jobId: args.jobId,
+      expectedKind: "sandbox_activation",
+      now,
+      errorMessage: STALE_SANDBOX_ACTIVATION_JOB_ERROR_MESSAGE,
     });
   },
 });
