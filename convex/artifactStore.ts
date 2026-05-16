@@ -75,6 +75,7 @@ export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArt
     producedIn: args.source === "sandbox" ? "lab" : args.repositoryId ? "legacy" : "discuss",
     lastVerifiedAt: args.source === "sandbox" ? now : undefined,
     chunkingStatus: args.repositoryId ? "pending" : undefined,
+    updatedAt: now,
   });
   if (args.repositoryId) {
     await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, { artifactId });
@@ -103,28 +104,41 @@ async function updateArtifactInternal(
     title?: string;
     summary?: string;
     contentMarkdown?: string;
-    version: number;
+    version?: number;
     chunkingStatus?: "pending";
-  } = { version: artifact.version + 1 };
-  if (updates.title !== undefined) patch.title = updates.title;
-  if (updates.summary !== undefined) patch.summary = updates.summary;
+    updatedAt?: number;
+  } = {};
+  let changed = false;
+  if (updates.title !== undefined) {
+    patch.title = updates.title;
+    changed = true;
+  }
+  if (updates.summary !== undefined) {
+    patch.summary = updates.summary;
+    changed = true;
+  }
   if (updates.contentMarkdown !== undefined) {
     patch.contentMarkdown = updates.contentMarkdown;
     if (artifact.repositoryId) {
       patch.chunkingStatus = "pending";
     }
+    changed = true;
   }
 
-  await ctx.db.patch(artifactId, patch);
-  if (artifact.repositoryId && updates.contentMarkdown !== undefined) {
-    await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, { artifactId });
+  if (changed) {
+    patch.version = artifact.version + 1;
+    patch.updatedAt = Date.now();
+    await ctx.db.patch(artifactId, patch);
+    if (artifact.repositoryId && updates.contentMarkdown !== undefined) {
+      await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, { artifactId });
+    }
   }
 }
 
 export async function deleteArtifactInternal(ctx: MutationCtx, artifactId: Id<"artifacts">): Promise<void> {
   const PAGE_SIZE = 100;
-  let hasMore = true;
-  while (hasMore) {
+  let hasMoreChunks = true;
+  while (hasMoreChunks) {
     const chunks = await ctx.db
       .query("artifactChunks")
       .withIndex("by_artifactId_and_chunkIndex", (q) => q.eq("artifactId", artifactId))
@@ -132,7 +146,18 @@ export async function deleteArtifactInternal(ctx: MutationCtx, artifactId: Id<"a
     for (const chunk of chunks) {
       await ctx.db.delete(chunk._id);
     }
-    hasMore = chunks.length === PAGE_SIZE;
+    hasMoreChunks = chunks.length === PAGE_SIZE;
+  }
+  let hasMoreViews = true;
+  while (hasMoreViews) {
+    const views = await ctx.db
+      .query("artifactViews")
+      .withIndex("by_artifactId", (q) => q.eq("artifactId", artifactId))
+      .take(PAGE_SIZE);
+    for (const view of views) {
+      await ctx.db.delete(view._id);
+    }
+    hasMoreViews = views.length === PAGE_SIZE;
   }
   await ctx.db.delete(artifactId);
 }

@@ -96,6 +96,7 @@ function toArtifactMetadata(
     chunkingStatus: artifact.chunkingStatus,
     lastChunkedAt: artifact.lastChunkedAt,
     lastChunkedVersion: artifact.lastChunkedVersion,
+    updatedAt: artifact.updatedAt,
     ...(opts?.freshness ? { freshness: opts.freshness } : {}),
     ...(opts?.importDriftFromLatestSync ? { importDriftFromLatestSync: true as const } : {}),
   };

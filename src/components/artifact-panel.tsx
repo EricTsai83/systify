@@ -1,4 +1,4 @@
-import { memo, useState, type ReactNode } from "react";
+import { memo, useCallback, useState, type ReactNode } from "react";
 import { useMutation } from "convex/react";
 import {
   CaretDownIcon,
@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FolderNavigator } from "@/components/folder-navigator";
 import { FolderPicker } from "@/components/folder-picker";
+import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
 import type { ArtifactId, FolderId, RepositoryId, SandboxModeStatus, ThreadId } from "@/lib/types";
@@ -86,6 +87,18 @@ export function ArtifactPanel({
 }) {
   const [actionsOpen, setActionsOpen] = useState<boolean | null>(null);
   const effectiveActionsOpen = actionsOpen ?? artifacts.length === 0;
+  const { isUnseen, markViewed } = useArtifactViewState(repositoryId);
+  // Clicking a row in the panel always routes through `onOpenInReader`,
+  // so it is the single chokepoint where we record the activation. The
+  // Library shell has multiple activation entry points (URL, tab strip,
+  // keyboard) so it observes `tabs.activeArtifactId` instead.
+  const handleSelectArtifact = useCallback(
+    (artifactId: ArtifactId) => {
+      markViewed(artifactId);
+      onOpenInReader?.(artifactId);
+    },
+    [markViewed, onOpenInReader],
+  );
 
   if (!isVisible) {
     return (
@@ -123,8 +136,9 @@ export function ArtifactPanel({
           repositoryId={repositoryId}
           artifacts={artifacts}
           selectedFolderId={selectedFolderId ?? null}
-          onSelectArtifact={(artifactId) => onOpenInReader?.(artifactId)}
+          onSelectArtifact={handleSelectArtifact}
           onSelectFolder={onSelectFolder}
+          isUnseen={isUnseen}
           className="border-l-0"
         />
       ) : (

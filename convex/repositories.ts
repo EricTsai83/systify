@@ -582,6 +582,41 @@ async function drainJobsByRepositoryId(ctx: MutationCtx, repositoryId: Id<"repos
   return docs.length === CASCADE_BATCH_SIZE;
 }
 
+async function drainArtifactViewsByRepository(
+  ctx: MutationCtx,
+  args: { ownerTokenIdentifier: string; repositoryId: Id<"repositories"> },
+): Promise<boolean> {
+  const docs = await ctx.db
+    .query("artifactViews")
+    .withIndex("by_ownerTokenIdentifier_and_repositoryId", (q) =>
+      q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier).eq("repositoryId", args.repositoryId),
+    )
+    .take(CASCADE_BATCH_SIZE);
+  for (const doc of docs) {
+    await ctx.db.delete(doc._id);
+  }
+  return docs.length === CASCADE_BATCH_SIZE;
+}
+
+async function drainRepositoryViewerBootstrapsByRepository(
+  ctx: MutationCtx,
+  args: { ownerTokenIdentifier: string; repositoryId: Id<"repositories"> },
+): Promise<boolean> {
+  // At most one row per (owner, repo), so this never paginates in
+  // practice. The take/loop form is kept for parity with the other
+  // drains so the cascade pattern stays uniform.
+  const docs = await ctx.db
+    .query("repositoryViewerBootstraps")
+    .withIndex("by_ownerTokenIdentifier_and_repositoryId", (q) =>
+      q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier).eq("repositoryId", args.repositoryId),
+    )
+    .take(CASCADE_BATCH_SIZE);
+  for (const doc of docs) {
+    await ctx.db.delete(doc._id);
+  }
+  return docs.length === CASCADE_BATCH_SIZE;
+}
+
 export const cascadeDeleteRepository = internalMutation({
   args: {
     repositoryId: v.id("repositories"),
@@ -686,6 +721,25 @@ export const cascadeDeleteRepository = internalMutation({
     if (threads.length === CASCADE_BATCH_SIZE) more = true;
 
     // Drain remaining tables, but keep cleanup jobs until sandbox deletion has finished.
+    // Per-viewer rows (artifactViews, repositoryViewerBootstraps) need
+    // the owner token because their indexes are owner-scoped. The repo
+    // row is always present at this point — the cascade only deletes
+    // it after every drain has reported empty, at the bottom of this
+    // handler — so a single read here is safe for the lifetime of all
+    // drain passes that can find rows to delete.
+    const cascadeRepository = await ctx.db.get(args.repositoryId);
+    if (cascadeRepository) {
+      more =
+        (await drainArtifactViewsByRepository(ctx, {
+          ownerTokenIdentifier: cascadeRepository.ownerTokenIdentifier,
+          repositoryId: args.repositoryId,
+        })) || more;
+      more =
+        (await drainRepositoryViewerBootstrapsByRepository(ctx, {
+          ownerTokenIdentifier: cascadeRepository.ownerTokenIdentifier,
+          repositoryId: args.repositoryId,
+        })) || more;
+    }
     more = (await drainArtifactsByRepositoryId(ctx, args.repositoryId)) || more;
     more = (await drainRepoChunksByRepositoryId(ctx, args.repositoryId)) || more;
     more = (await drainRepoFilesByRepositoryId(ctx, args.repositoryId)) || more;

@@ -25,7 +25,7 @@ import {
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
 import { toUserErrorMessage } from "@/lib/errors";
-import { buildFolderTree, isRecentlyChanged, type FolderTreeNode } from "@/lib/artifact-folders";
+import { buildFolderTree, type FolderTreeNode } from "@/lib/artifact-folders";
 import { formatArtifactKind } from "@/lib/operations";
 import type { ArtifactId, ArtifactListItem, FolderId, RepositoryId } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -53,6 +53,12 @@ type FolderNavigatorProps = {
    */
   onSelectFolder?: (folderId: FolderId | null) => void;
   selectedFolderId?: FolderId | null;
+  /**
+   * Predicate that decides whether an artifact still has an unread "changed
+   * since you last looked" dot. Owned by the parent so the per-viewer view
+   * state survives the navigator unmounting; omit to disable the dot.
+   */
+  isUnseen?: (artifact: NavigatorArtifact) => boolean;
   className?: string;
 };
 
@@ -89,6 +95,7 @@ export function FolderNavigator({
   onSelectArtifact,
   onSelectFolder,
   selectedFolderId = null,
+  isUnseen,
   className,
 }: FolderNavigatorProps) {
   const folders = useQuery(api.artifactFolders.listByRepository, { repositoryId });
@@ -209,6 +216,7 @@ export function FolderNavigator({
                     onSelectFolder={onSelectFolder}
                     filterArtifact={filterPredicate}
                     folderMatchesSearch={folderMatchesSearch}
+                    isUnseen={isUnseen}
                   />
                 ))
             )}
@@ -228,6 +236,7 @@ export function FolderNavigator({
                     isSelected={selectedArtifactId === artifact._id}
                     onSelect={onSelectArtifact}
                     indent={0}
+                    isUnseen={isUnseen ? isUnseen(artifact) : false}
                   />
                 );
               })}
@@ -272,6 +281,7 @@ function FolderTreeBranch({
   onSelectFolder,
   filterArtifact,
   folderMatchesSearch,
+  isUnseen,
 }: {
   repositoryId: RepositoryId;
   node: FolderTreeNode;
@@ -283,6 +293,7 @@ function FolderTreeBranch({
   onSelectFolder?: (folderId: FolderId | null) => void;
   filterArtifact: FilterFn;
   folderMatchesSearch: (node: FolderTreeNode) => boolean;
+  isUnseen?: (artifact: NavigatorArtifact) => boolean;
 }) {
   const [isOpen, setIsOpen] = useLocalStorageBoolean(
     `systify.folderNav.open.${repositoryId}.${node.id}`,
@@ -418,6 +429,7 @@ function FolderTreeBranch({
                 onSelectFolder={onSelectFolder}
                 filterArtifact={filterArtifact}
                 folderMatchesSearch={folderMatchesSearch}
+                isUnseen={isUnseen}
               />
             ))}
           {folderArtifacts.map((artifact) => {
@@ -429,6 +441,7 @@ function FolderTreeBranch({
                 isSelected={selectedArtifactId === artifact._id}
                 onSelect={onSelectArtifact}
                 indent={indent + 1}
+                isUnseen={isUnseen ? isUnseen(artifact) : false}
               />
             );
           })}
@@ -451,13 +464,14 @@ const ArtifactRow = memo(function ArtifactRow({
   isSelected,
   onSelect,
   indent,
+  isUnseen,
 }: {
   artifact: NavigatorArtifact;
   isSelected: boolean;
   onSelect: (artifactId: ArtifactId) => void;
   indent: number;
+  isUnseen: boolean;
 }) {
-  const recentlyChanged = isRecentlyChanged(artifact._creationTime);
   const handleSelect = () => onSelect(artifact._id as ArtifactId);
   return (
     // The entire row is the click target so the hoverable area matches
@@ -491,7 +505,7 @@ const ArtifactRow = memo(function ArtifactRow({
             <ArrowsClockwiseIcon size={12} weight="bold" />
           </span>
         ) : null}
-        {recentlyChanged ? <span aria-hidden className="ml-1 inline-flex h-1.5 w-1.5 rounded-full bg-primary" /> : null}
+        {isUnseen ? <span aria-hidden className="ml-1 inline-flex h-1.5 w-1.5 rounded-full bg-primary" /> : null}
       </div>
     </div>
   );
