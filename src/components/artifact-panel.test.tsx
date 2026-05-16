@@ -59,7 +59,7 @@ beforeEach(() => {
   useMutationMock.mockReset();
   useQueryMock.mockReset();
   useMutationMock.mockImplementation(() => makeMutationMock());
-  useQueryMock.mockReturnValue([]);
+  useQueryMock.mockReturnValue({ views: {}, bootstrap: Date.now() });
 });
 
 afterEach(() => {

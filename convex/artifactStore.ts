@@ -104,22 +104,34 @@ async function updateArtifactInternal(
     title?: string;
     summary?: string;
     contentMarkdown?: string;
-    version: number;
+    version?: number;
     chunkingStatus?: "pending";
-    updatedAt: number;
-  } = { version: artifact.version + 1, updatedAt: Date.now() };
-  if (updates.title !== undefined) patch.title = updates.title;
-  if (updates.summary !== undefined) patch.summary = updates.summary;
+    updatedAt?: number;
+  } = {};
+  let changed = false;
+  if (updates.title !== undefined) {
+    patch.title = updates.title;
+    changed = true;
+  }
+  if (updates.summary !== undefined) {
+    patch.summary = updates.summary;
+    changed = true;
+  }
   if (updates.contentMarkdown !== undefined) {
     patch.contentMarkdown = updates.contentMarkdown;
     if (artifact.repositoryId) {
       patch.chunkingStatus = "pending";
     }
+    changed = true;
   }
 
-  await ctx.db.patch(artifactId, patch);
-  if (artifact.repositoryId && updates.contentMarkdown !== undefined) {
-    await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, { artifactId });
+  if (changed) {
+    patch.version = artifact.version + 1;
+    patch.updatedAt = Date.now();
+    await ctx.db.patch(artifactId, patch);
+    if (artifact.repositoryId && updates.contentMarkdown !== undefined) {
+      await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, { artifactId });
+    }
   }
 }
 

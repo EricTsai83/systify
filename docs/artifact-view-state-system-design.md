@@ -312,7 +312,7 @@ function applyMarkViewedOptimistic(store, args) {
   if (!existing) return;
   if ((existing.views[args.artifactId] ?? 0) >= Date.now()) return;
   store.setQuery(api.artifactViews.listViewStateByRepository, queryArgs, {
-    bootstrap: existing.bootstrap,
+    ...existing,
     views: { ...existing.views, [args.artifactId]: Date.now() },
   });
 }
