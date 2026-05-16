@@ -54,15 +54,58 @@ const IMPORTANT_FILE_PATTERNS = [
   "src/app",
   "src/App",
   "app/page",
+  "app/layout",
+  "pages/_app",
+  "pages/index",
+  "src/index",
   "main.py",
+  "manage.py",
+  "app.py",
+  "main.go",
+  "server.js",
+  "app.js",
+  "index.html",
+  "pom.xml",
+  "build.gradle",
+  "go.mod",
+  "Gemfile",
+  "composer.json",
+  "composer.lock",
+  "Pipfile",
+  "Podfile",
+  "requirements.txt",
+  "mix.exs",
+  "mix.lock",
   "pyproject.toml",
   "Cargo.toml",
-  "go.mod",
 ];
 
-const ENTRYPOINT_PATTERNS = ["src/main.", "src/App.", "app/page.", "main.py", "index.ts", "index.tsx", "server.ts"];
-const CONFIG_PATTERNS = ["package.json", "tsconfig", "vite.config", "eslint", "prettier", "tailwind", "convex/"];
-const TEXT_EXTENSIONS = new Set([
+const ENTRYPOINT_STEMS = ["src/main", "src/App", "app/page", "app/layout", "pages/_app", "pages/index", "src/index"];
+const ENTRYPOINT_FILENAMES = new Set([
+  "main.py",
+  "manage.py",
+  "app.py",
+  "main.go",
+  "server.js",
+  "app.js",
+  "index.js",
+  "index.ts",
+  "index.tsx",
+  "server.ts",
+  "index.html",
+]);
+const CONFIG_PATTERNS = [
+  "package.json",
+  "tsconfig",
+  "vite.config",
+  "eslint",
+  "prettier",
+  "tailwind",
+  "convex/auth.config",
+  "convex/convex.config",
+  "convex/_generated/",
+];
+export const TEXT_EXTENSIONS = new Set([
   "ts",
   "tsx",
   "js",
@@ -86,7 +129,30 @@ const TEXT_EXTENSIONS = new Set([
   "sql",
   "sh",
   "txt",
+  "php",
+  "swift",
+  "c",
+  "h",
+  "cpp",
+  "cc",
+  "cxx",
+  "hpp",
+  "cs",
+  "vue",
+  "svelte",
+  "astro",
+  "ex",
+  "exs",
+  "lua",
+  "r",
+  "dart",
 ]);
+
+function stripExt(path: string): string {
+  const dot = path.lastIndexOf(".");
+  const slash = path.lastIndexOf("/");
+  return dot > slash ? path.slice(0, dot) : path;
+}
 
 export function buildRepositoryManifest(snapshot: RepositorySnapshot): RepositoryManifest {
   const detectedLanguages = unique(
@@ -122,7 +188,7 @@ export function createRepoFileRecords(paths: Array<{ path: string; fileType: "fi
     const extension = item.fileType === "file" ? getExtension(item.path) : undefined;
     const parentPath = item.path.includes("/") ? item.path.slice(0, item.path.lastIndexOf("/")) : "";
     const fileName = item.path.split("/").pop() ?? item.path;
-    const isEntryPoint = ENTRYPOINT_PATTERNS.some((pattern) => item.path.endsWith(pattern));
+    const isEntryPoint = ENTRYPOINT_STEMS.includes(stripExt(item.path)) || ENTRYPOINT_FILENAMES.has(fileName);
     const isConfig = CONFIG_PATTERNS.some((pattern) => item.path.includes(pattern) || fileName === pattern);
     const isImportant =
       isEntryPoint || isConfig || IMPORTANT_FILE_PATTERNS.some((pattern) => item.path.includes(pattern));
@@ -206,7 +272,7 @@ export function createArchitectureArtifactMarkdown(manifest: RepositoryManifest,
   return lines.join("\n");
 }
 
-function detectPackageManagers(snapshot: RepositorySnapshot) {
+export function detectPackageManagers(snapshot: RepositorySnapshot) {
   const paths = new Set(snapshot.files.map((file) => file.path));
   const managers: string[] = [];
   if (paths.has("package-lock.json")) managers.push("npm");
@@ -215,6 +281,15 @@ function detectPackageManagers(snapshot: RepositorySnapshot) {
   if (paths.has("bun.lockb") || paths.has("bun.lock")) managers.push("bun");
   if (paths.has("pyproject.toml")) managers.push("pip/uv");
   if (paths.has("Cargo.toml")) managers.push("cargo");
+  if (paths.has("go.mod")) managers.push("go modules");
+  if (paths.has("Gemfile.lock") || paths.has("Gemfile")) managers.push("bundler");
+  if (paths.has("composer.lock") || paths.has("composer.json")) managers.push("composer");
+  if (paths.has("Pipfile.lock")) managers.push("pipenv");
+  if (paths.has("requirements.txt") && !paths.has("pyproject.toml")) managers.push("pip");
+  if (paths.has("pom.xml")) managers.push("maven");
+  if (paths.has("build.gradle") || paths.has("build.gradle.kts")) managers.push("gradle");
+  if (paths.has("Podfile.lock")) managers.push("cocoapods");
+  if (paths.has("mix.lock")) managers.push("hex (mix)");
   return managers;
 }
 
@@ -279,13 +354,15 @@ function getExtension(path: string) {
   return dotIndex > -1 ? fileName.slice(dotIndex + 1).toLowerCase() : undefined;
 }
 
-function detectLanguageFromExtension(extension: string) {
+export function detectLanguageFromExtension(extension: string) {
   switch (extension) {
     case "ts":
     case "tsx":
       return "TypeScript";
     case "js":
     case "jsx":
+    case "mjs":
+    case "cjs":
       return "JavaScript";
     case "py":
       return "Python";
@@ -293,6 +370,45 @@ function detectLanguageFromExtension(extension: string) {
       return "Rust";
     case "go":
       return "Go";
+    case "java":
+      return "Java";
+    case "kt":
+      return "Kotlin";
+    case "rb":
+      return "Ruby";
+    case "sh":
+      return "Shell";
+    case "sql":
+      return "SQL";
+    case "php":
+      return "PHP";
+    case "swift":
+      return "Swift";
+    case "c":
+    case "h":
+      return "C";
+    case "cpp":
+    case "cc":
+    case "cxx":
+    case "hpp":
+      return "C++";
+    case "cs":
+      return "C#";
+    case "vue":
+      return "Vue";
+    case "svelte":
+      return "Svelte";
+    case "astro":
+      return "Astro";
+    case "ex":
+    case "exs":
+      return "Elixir";
+    case "lua":
+      return "Lua";
+    case "r":
+      return "R";
+    case "dart":
+      return "Dart";
     case "md":
       return "Markdown";
     case "json":
@@ -307,6 +423,8 @@ function detectLanguageFromExtension(extension: string) {
       return "CSS";
     case "html":
       return "HTML";
+    case "txt":
+      return "Text";
     default:
       return undefined;
   }

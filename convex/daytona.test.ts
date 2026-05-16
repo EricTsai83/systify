@@ -66,6 +66,7 @@ import {
   cloneRepositoryInSandbox,
   getRemoteSandboxDetails,
   getSandboxState,
+  probeLiveSandbox,
 } from "./daytona";
 
 describe("daytona state normalization", () => {
@@ -91,6 +92,64 @@ describe("daytona state normalization", () => {
     });
 
     await expect(getSandboxState("remote-1")).resolves.toBe(expectedState);
+  });
+
+  describe("probeLiveSandbox", () => {
+    function fakeSandbox(state: string) {
+      return {
+        id: "remote-probe",
+        state,
+        labels: { app: "systify" },
+        refreshData: vi.fn().mockResolvedValue(undefined),
+      };
+    }
+
+    test("returns ok when Daytona reports the sandbox as started", async () => {
+      getMock.mockResolvedValue(fakeSandbox("started"));
+      await expect(probeLiveSandbox("remote-probe")).resolves.toEqual({
+        ok: true,
+        remoteState: "started",
+      });
+    });
+
+    test.each([
+      ["archived", "archived", /archived/i],
+      ["stopped", "stopped", /stopped/i],
+      ["failed", "error", /error state/i],
+    ] as const)(
+      "maps non-started state %s to a not-ok probe with reason=%s",
+      async (remoteState, expectedReason, messageMatcher) => {
+        getMock.mockResolvedValue(fakeSandbox(remoteState));
+        const probe = await probeLiveSandbox("remote-probe");
+        expect(probe.ok).toBe(false);
+        if (probe.ok) throw new Error("probe should not be ok");
+        expect(probe.reason).toBe(expectedReason);
+        expect(probe.message).toMatch(messageMatcher);
+      },
+    );
+
+    test("returns reason=deleted when Daytona returns 404", async () => {
+      getMock.mockRejectedValue(new MockDaytonaNotFoundError());
+      const probe = await probeLiveSandbox("remote-probe");
+      expect(probe.ok).toBe(false);
+      if (probe.ok) throw new Error("probe should not be ok");
+      expect(probe.reason).toBe("deleted");
+      expect(probe.remoteState).toBe("destroyed");
+      expect(probe.message).toMatch(/no longer exists/i);
+    });
+
+    test("returns reason=unknown when Daytona reports an unrecognized state", async () => {
+      getMock.mockResolvedValue(fakeSandbox("rebooting"));
+      const probe = await probeLiveSandbox("remote-probe");
+      expect(probe.ok).toBe(false);
+      if (probe.ok) throw new Error("probe should not be ok");
+      expect(probe.reason).toBe("unknown");
+    });
+
+    test("rethrows non-not-found Daytona errors", async () => {
+      getMock.mockRejectedValue(new MockDaytonaError("upstream blew up", 500));
+      await expect(probeLiveSandbox("remote-probe")).rejects.toThrow(/upstream blew up/);
+    });
   });
 
   test("returns normalized labels and state from remote sandbox details", async () => {

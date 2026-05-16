@@ -61,6 +61,7 @@ import type * as lib_repositoryAccess from "../lib/repositoryAccess.js";
 import type * as lib_returnTo from "../lib/returnTo.js";
 import type * as lib_sandboxAvailability from "../lib/sandboxAvailability.js";
 import type * as lib_sandboxFeatureFlag from "../lib/sandboxFeatureFlag.js";
+import type * as lib_sandboxLiveness from "../lib/sandboxLiveness.js";
 import type * as lib_sandboxNames from "../lib/sandboxNames.js";
 import type * as lib_sandboxRollout from "../lib/sandboxRollout.js";
 import type * as lib_systemDesign from "../lib/systemDesign.js";
@@ -137,6 +138,7 @@ declare const fullApi: ApiFromModules<{
   "lib/returnTo": typeof lib_returnTo;
   "lib/sandboxAvailability": typeof lib_sandboxAvailability;
   "lib/sandboxFeatureFlag": typeof lib_sandboxFeatureFlag;
+  "lib/sandboxLiveness": typeof lib_sandboxLiveness;
   "lib/sandboxNames": typeof lib_sandboxNames;
   "lib/sandboxRollout": typeof lib_sandboxRollout;
   "lib/systemDesign": typeof lib_systemDesign;

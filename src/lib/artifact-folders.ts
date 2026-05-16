@@ -1,40 +1,3 @@
-import type { Doc } from "../../convex/_generated/dataModel";
-
-/**
- * Artifact-kind taxonomy used by the folder navigator.
- *
- * `repo-level` kinds describe the repository as a whole (the manifest,
- * architecture overview, etc.). They are pinned to a dedicated
- * "Repository" section at the navigator's root and are *not* eligible to
- * be moved into user-created folders — there is exactly one canonical
- * place per kind, and that's their home.
- *
- * `feature-level` kinds describe a feature, decision, or subsystem
- * (architecture diagrams the user generates per-thread, ADRs, failure-mode
- * analyses, trade-off matrices, …). These travel with their thread and are
- * the kinds the user is going to want to organise into "OAuth feature",
- * "Payment migration", etc.
- *
- * The taxonomy is centralised here so any future kind addition is one
- * one-line decision: which bucket does it belong in?
- */
-const REPO_LEVEL_KINDS = new Set<Doc<"artifacts">["kind"]>([
-  "manifest",
-  "readme_summary",
-  "architecture_overview",
-  "entrypoints",
-  "dependency_overview",
-  "risk_report",
-]);
-
-export function isRepoLevelArtifactKind(kind: Doc<"artifacts">["kind"]): boolean {
-  return REPO_LEVEL_KINDS.has(kind);
-}
-
-export function isFeatureLevelArtifactKind(kind: Doc<"artifacts">["kind"]): boolean {
-  return !REPO_LEVEL_KINDS.has(kind);
-}
-
 /**
  * "Recently changed" pulse threshold. The navigator marks any artifact
  * whose `_creationTime` is within this window as freshly produced so the
@@ -53,12 +16,14 @@ export function isRecentlyChanged(timestamp: number, now: number = Date.now()): 
  * navigator walks this tree to render the collapsible UI; we keep the type
  * narrow so the consumer doesn't accidentally treat a folder as an
  * artifact (or vice versa) and end up clicking the wrong navigation path.
+ * Seeded System Design folders carry `systemKey` for stable lookup after rename.
  */
 export type FolderTreeNode = {
   id: string;
   name: string;
   description?: string;
   parentFolderId: string | null;
+  systemKey?: string;
   children: FolderTreeNode[];
 };
 
@@ -67,6 +32,7 @@ export type FolderTreeInput = {
   name: string;
   description?: string;
   parentFolderId?: string | null | undefined;
+  systemKey?: string;
 };
 
 /**
@@ -82,6 +48,7 @@ export function buildFolderTree(folders: ReadonlyArray<FolderTreeInput>): Folder
       name: folder.name,
       description: folder.description,
       parentFolderId: folder.parentFolderId ?? null,
+      systemKey: folder.systemKey,
       children: [],
     });
   }

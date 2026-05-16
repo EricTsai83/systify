@@ -33,16 +33,16 @@ describe("GenerateSystemDesignDialog", () => {
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // Check default selected items are checked
+    // Check default selected items are checked (heuristic kinds)
     const manifestCheckbox = screen.getByRole("checkbox", { name: /Repository Manifest/i });
-    const readmeCheckbox = screen.getByRole("checkbox", { name: /README Summary/i });
     const architectureCheckbox = screen.getByRole("checkbox", { name: /Architecture Overview/i });
     expect(manifestCheckbox).toBeChecked();
-    expect(readmeCheckbox).toBeChecked();
     expect(architectureCheckbox).toBeChecked();
 
-    // Check that unselected items are unchecked
+    // Check that LLM-backed items are unchecked by default
+    const readmeCheckbox = screen.getByRole("checkbox", { name: /README Summary/i });
     const dataModelCheckbox = screen.getByRole("checkbox", { name: /Data Model Overview/i });
+    expect(readmeCheckbox).not.toBeChecked();
     expect(dataModelCheckbox).not.toBeChecked();
   });
 
@@ -68,19 +68,21 @@ describe("GenerateSystemDesignDialog", () => {
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // Default: 3 free items are selected (manifest, readme_summary, architecture_overview)
-    expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 3 total (3 free, 0 LLM).");
+    // Default: 2 free items are selected (manifest, architecture_overview)
+    expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 2 total (2 free, 0 LLM).");
 
-    // Toggle a free item off, toggle an LLM item on
+    // Toggle a free item off, toggle two LLM items on
+    const manifestCheckbox = screen.getByRole("checkbox", { name: /Repository Manifest/i });
     const readmeCheckbox = screen.getByRole("checkbox", { name: /README Summary/i });
     const dataModelCheckbox = screen.getByRole("checkbox", { name: /Data Model Overview/i });
 
+    fireEvent.click(manifestCheckbox);
     fireEvent.click(readmeCheckbox);
     fireEvent.click(dataModelCheckbox);
 
-    // Now: 2 free + 1 llm
+    // Now: 1 free + 2 llm
     await waitFor(() => {
-      expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 3 total (2 free, 1 LLM).");
+      expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 3 total (1 free, 2 LLM).");
     });
   });
 
@@ -120,7 +122,7 @@ describe("GenerateSystemDesignDialog", () => {
       expect(requestGeneration).toHaveBeenCalledWith(
         expect.objectContaining({
           repositoryId,
-          selections: expect.arrayContaining(["manifest", "readme_summary", "architecture_overview"]),
+          selections: expect.arrayContaining(["manifest", "architecture_overview"]),
         }),
       );
       expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -177,13 +179,11 @@ describe("GenerateSystemDesignDialog", () => {
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // Uncheck all default items
+    // Uncheck all default items (only heuristic kinds are default-checked)
     const manifestCheckbox = screen.getByRole("checkbox", { name: /Repository Manifest/i });
-    const readmeCheckbox = screen.getByRole("checkbox", { name: /README Summary/i });
     const architectureCheckbox = screen.getByRole("checkbox", { name: /Architecture Overview/i });
 
     fireEvent.click(manifestCheckbox);
-    fireEvent.click(readmeCheckbox);
     fireEvent.click(architectureCheckbox);
 
     // Generate button should be disabled

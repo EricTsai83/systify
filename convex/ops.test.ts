@@ -519,3 +519,118 @@ describe("interactive job recovery queries", () => {
     expect(staleJobs.every((job) => job.kind === "chat" || job.kind === "system_design")).toBe(true);
   });
 });
+
+describe("syncSandboxStatusFromRemote", () => {
+  async function seedSandbox(
+    t: ReturnType<typeof convexTest>,
+    overrides: { status: "provisioning" | "ready" | "stopped" | "archived" | "failed" },
+  ) {
+    return await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier: "user|sandbox-sync",
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/sync",
+        sourceRepoFullName: "acme/sync",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "sync",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "idle",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 0,
+      });
+      const sandboxId = await ctx.db.insert("sandboxes", {
+        repositoryId,
+        ownerTokenIdentifier: "user|sandbox-sync",
+        provider: "daytona",
+        sourceAdapter: "git_clone",
+        remoteId: "remote-sync",
+        status: overrides.status,
+        workDir: "workspace",
+        repoPath: "workspace/repo",
+        cpuLimit: 2,
+        memoryLimitGiB: 4,
+        diskLimitGiB: 10,
+        ttlExpiresAt: Date.now() + 60_000,
+        autoStopIntervalMinutes: 30,
+        autoArchiveIntervalMinutes: 60,
+        autoDeleteIntervalMinutes: 120,
+        networkBlockAll: false,
+      });
+      return sandboxId;
+    });
+  }
+
+  test.each([
+    ["started", "ready"],
+    ["stopped", "stopped"],
+    ["archived", "archived"],
+    ["destroyed", "archived"],
+  ] as const)("maps remoteState=%s onto local status=%s", async (remoteState, expectedStatus) => {
+    const t = convexTest(schema, modules);
+    const sandboxId = await seedSandbox(t, { status: "ready" });
+
+    const result = await t.mutation(internal.ops.syncSandboxStatusFromRemote, {
+      sandboxId,
+      remoteState,
+    });
+    expect(result).toEqual({ patched: true });
+
+    const sandbox = await t.run(async (ctx) => await ctx.db.get(sandboxId));
+    expect(sandbox?.status).toBe(expectedStatus);
+  });
+
+  test("maps remoteState=error onto status=failed with a clear lastErrorMessage", async () => {
+    const t = convexTest(schema, modules);
+    const sandboxId = await seedSandbox(t, { status: "ready" });
+
+    await t.mutation(internal.ops.syncSandboxStatusFromRemote, {
+      sandboxId,
+      remoteState: "error",
+    });
+    const sandbox = await t.run(async (ctx) => await ctx.db.get(sandboxId));
+    expect(sandbox?.status).toBe("failed");
+    expect(sandbox?.lastErrorMessage).toMatch(/Daytona reported the sandbox as errored/i);
+  });
+
+  test("treats remoteState=unknown as a no-op rather than overwriting known cache state", async () => {
+    const t = convexTest(schema, modules);
+    const sandboxId = await seedSandbox(t, { status: "ready" });
+
+    const result = await t.mutation(internal.ops.syncSandboxStatusFromRemote, {
+      sandboxId,
+      remoteState: "unknown",
+    });
+    expect(result).toEqual({ patched: false });
+    const sandbox = await t.run(async (ctx) => await ctx.db.get(sandboxId));
+    expect(sandbox?.status).toBe("ready");
+  });
+
+  test("refuses to drag a locally-archived sandbox back to ready", async () => {
+    const t = convexTest(schema, modules);
+    const sandboxId = await seedSandbox(t, { status: "archived" });
+
+    const result = await t.mutation(internal.ops.syncSandboxStatusFromRemote, {
+      sandboxId,
+      remoteState: "started",
+    });
+    expect(result).toEqual({ patched: false });
+    const sandbox = await t.run(async (ctx) => await ctx.db.get(sandboxId));
+    expect(sandbox?.status).toBe("archived");
+  });
+
+  test("returns patched=false when the sandbox row no longer exists", async () => {
+    const t = convexTest(schema, modules);
+    const sandboxId = await seedSandbox(t, { status: "ready" });
+    await t.run(async (ctx) => await ctx.db.delete(sandboxId));
+
+    const result = await t.mutation(internal.ops.syncSandboxStatusFromRemote, {
+      sandboxId,
+      remoteState: "destroyed",
+    });
+    expect(result).toEqual({ patched: false });
+  });
+});

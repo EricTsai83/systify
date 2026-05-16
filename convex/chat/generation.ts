@@ -34,6 +34,7 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction } from "../_generated/server";
 import { getSandboxFsClient } from "../daytona";
+import { verifyAndSyncSandbox } from "../lib/sandboxLiveness";
 import { STREAM_FLUSH_THRESHOLD } from "../lib/constants";
 import { retrieveArtifactChunks } from "../lib/artifactRag";
 import { emitMetric, logInfo, logWarn } from "../lib/observability";
@@ -511,11 +512,49 @@ export const generateAssistantReply = internalAction({
       //   2. `getReplyContext` saw a `ready` sandbox attached to the repo
       //      (it returns `sandboxTooling: undefined` otherwise — see
       //      context.ts for the full eligibility rules).
+      //   3. A verify-on-use probe confirms Daytona still has the sandbox.
+      //      `getReplyContext` only reads the local cache; a sandbox that
+      //      was manually deleted in the Daytona dashboard between import
+      //      and now still looks `ready` there. Probing now both prevents
+      //      a mid-stream 404 from `getSandboxFsClient` and syncs the
+      //      cache so the next reply skips the sandbox tooling cleanly.
       // Anything else falls through to the no-tool path, which produces a
       // plain text-only reply built on the same prompt — better than failing
       // a sandbox reply just because the sandbox isn't ready.
-      const sandboxTools: ToolSet | undefined = replyContext.sandboxTooling
-        ? await buildSandboxTools(replyContext.sandboxTooling)
+      let resolvedSandboxTooling = replyContext.sandboxTooling;
+      if (resolvedSandboxTooling) {
+        const sandboxId = resolvedSandboxTooling.sandboxId;
+        try {
+          const probe = await verifyAndSyncSandbox(ctx, {
+            sandboxId: resolvedSandboxTooling.sandboxId,
+            remoteId: resolvedSandboxTooling.remoteId,
+          });
+          if (!probe.ok) {
+            logWarn("chat", "sandbox_unavailable_at_verify", {
+              assistantMessageId: args.assistantMessageId,
+              jobId: args.jobId,
+              sandboxId,
+              remoteState: probe.remoteState,
+              reason: probe.reason,
+            });
+            // Drop the tooling reference so the no-tool fallback path runs
+            // — the user gets a tools-less reply rather than a hard error,
+            // and the cache patch the helper performed means future replies
+            // see the corrected state and skip this verification entirely.
+            resolvedSandboxTooling = undefined;
+          }
+        } catch (err) {
+          logWarn("chat", "sandbox_unavailable_at_verify", {
+            assistantMessageId: args.assistantMessageId,
+            jobId: args.jobId,
+            sandboxId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+          resolvedSandboxTooling = undefined;
+        }
+      }
+      const sandboxTools: ToolSet | undefined = resolvedSandboxTooling
+        ? await buildSandboxTools(resolvedSandboxTooling)
         : undefined;
       telemetry.hadTools = sandboxTools !== undefined;
 

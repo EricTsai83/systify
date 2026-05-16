@@ -9,9 +9,10 @@ import {
   SYSTEM_DESIGN_KIND_GENERATOR,
   SYSTEM_DESIGN_KIND_TITLES,
   SYSTEM_DESIGN_KIND_TO_FOLDER,
+  systemDesignKindValidator,
   type SystemDesignKind,
 } from "./lib/systemDesign";
-import { createArtifactInMutation } from "./artifactStore";
+import { createArtifactInMutation, deleteArtifactInternal } from "./artifactStore";
 import { getSandboxAvailability } from "./lib/sandboxAvailability";
 import {
   completeRunningJob,
@@ -52,17 +53,6 @@ function hasLlmSelection(selections: ReadonlyArray<SystemDesignKind>): boolean {
  * Progress and final status flow back to the UI through the standard job
  * subscription.
  */
-const systemDesignKindValidator = v.union(
-  v.literal("manifest"),
-  v.literal("readme_summary"),
-  v.literal("architecture_overview"),
-  v.literal("data_model_overview"),
-  v.literal("api_surface_overview"),
-  v.literal("deployment_overview"),
-  v.literal("security_overview"),
-  v.literal("operations_overview"),
-);
-
 export const requestSystemDesignGeneration = mutation({
   args: {
     repositoryId: v.id("repositories"),
@@ -208,6 +198,77 @@ export const getActiveSystemDesignJob = query({
   },
 });
 
+/**
+ * Visibility window after a job reaches a terminal state during which the
+ * Library banner still surfaces its outcome. Keeps the failure summary
+ * visible long enough for the user to read it, then auto-clears so the
+ * navigator isn't haunted by stale errors across sessions.
+ */
+const SYSTEM_DESIGN_BANNER_TERMINAL_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * Banner-only listing helper: returns the most recent Library System Design
+ * job for the repo regardless of status, but only while it is either
+ * (a) active (queued / running) or (b) terminal and within
+ * `SYSTEM_DESIGN_BANNER_TERMINAL_WINDOW_MS`. The dialog continues to use
+ * `getActiveSystemDesignJob` for dedup — this query exists so the banner
+ * can show post-completion failure summaries without changing that
+ * "is there an in-flight job?" semantic.
+ */
+const LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT = 16;
+
+export const getLatestSystemDesignJob = query({
+  args: { repositoryId: v.id("repositories") },
+  handler: async (ctx, args): Promise<Doc<"jobs"> | null> => {
+    const identity = await requireViewerIdentity(ctx);
+    const repository = await ctx.db.get(args.repositoryId);
+    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      return null;
+    }
+
+    // Paginated scan: iteratively fetch batches until we find the first
+    // non-FMA `system_design` job, bounded by a hard cap to keep cost predictable.
+    const now = Date.now();
+    const hardCap = LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT * 4;
+    let batchSize = LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT;
+    let scanned = 0;
+
+    while (scanned < hardCap) {
+      const batch = await ctx.db
+        .query("jobs")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
+        .order("desc")
+        .take(batchSize);
+
+      // Only scan the new items in this batch (beyond what we already checked).
+      const startIdx = Math.max(0, scanned);
+      for (let i = startIdx; i < batch.length; i++) {
+        const job = batch[i];
+        if (job.kind !== "system_design") continue;
+        if (isFailureModeJob(job)) continue;
+        if (job.status === "queued" || job.status === "running") {
+          return job;
+        }
+        if (typeof job.completedAt === "number" && now - job.completedAt < SYSTEM_DESIGN_BANNER_TERMINAL_WINDOW_MS) {
+          return job;
+        }
+        // Found the latest Library System Design job but it's terminal and
+        // outside the visibility window — stop here rather than walking back
+        // through older history.
+        return null;
+      }
+
+      scanned = batch.length;
+      if (batch.length < batchSize) {
+        // No more jobs available.
+        break;
+      }
+      batchSize = Math.min(batchSize * 2, hardCap);
+    }
+    return null;
+  },
+});
+
 export const markGenerationStarted = internalMutation({
   args: { jobId: v.id("jobs"), selections: v.array(systemDesignKindValidator) },
   handler: async (ctx, args): Promise<{ started: boolean }> => {
@@ -265,6 +326,18 @@ export const updateGenerationProgress = internalMutation({
       expectedKind: "system_design",
       stage: args.stage,
       progress,
+    });
+  },
+});
+
+export const recordKindFailure = internalMutation({
+  args: { jobId: v.id("jobs"), kind: systemDesignKindValidator, errorId: v.string(), message: v.string() },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job) return;
+    const previous = job.kindFailures ?? [];
+    await ctx.db.patch(args.jobId, {
+      kindFailures: [...previous, { kind: args.kind, errorId: args.errorId, message: args.message.slice(0, 200) }],
     });
   },
 });
@@ -402,28 +475,6 @@ export const listRepoFilesForHeuristics = internalQuery({
   },
 });
 
-/**
- * Find a single README chunk for the repo so the heuristic README-summary
- * generator can drop a representative excerpt into the artifact. The first
- * `readme`-kinded chunk is sufficient: the import pipeline only writes one
- * chunk per README file at byte zero. Bounded via the
- * `by_repositoryId_and_chunkKind` index so we don't pull every chunk row
- * just to find one.
- */
-export const findReadmeChunkForHeuristics = internalQuery({
-  args: { repositoryId: v.id("repositories") },
-  handler: async (ctx, args): Promise<{ path: string; content: string } | null> => {
-    const readme = await ctx.db
-      .query("repoChunks")
-      .withIndex("by_repositoryId_and_chunkKind", (q) =>
-        q.eq("repositoryId", args.repositoryId).eq("chunkKind", "readme"),
-      )
-      .first();
-    if (!readme) return null;
-    return { path: readme.path, content: readme.content };
-  },
-});
-
 export const persistGeneratedArtifact = internalMutation({
   args: {
     repositoryId: v.id("repositories"),
@@ -471,7 +522,10 @@ export const persistGeneratedArtifact = internalMutation({
       .collect();
     const stale = existing.find((row) => row.kind === args.kind);
     if (stale) {
-      await ctx.db.delete(stale._id);
+      // Cascade through `deleteArtifactInternal` so `artifactChunks` are
+      // dropped with the row. A raw `db.delete` here would leak orphan
+      // chunks every time a kind is re-generated.
+      await deleteArtifactInternal(ctx, stale._id);
     }
 
     const artifactId = await createArtifactInMutation(ctx, {

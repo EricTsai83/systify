@@ -25,13 +25,7 @@ import {
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
 import { toUserErrorMessage } from "@/lib/errors";
-import {
-  buildFolderTree,
-  isFeatureLevelArtifactKind,
-  isRecentlyChanged,
-  isRepoLevelArtifactKind,
-  type FolderTreeNode,
-} from "@/lib/artifact-folders";
+import { buildFolderTree, isRecentlyChanged, type FolderTreeNode } from "@/lib/artifact-folders";
 import { formatArtifactKind } from "@/lib/operations";
 import type { ArtifactId, ArtifactListItem, FolderId, RepositoryId } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -43,10 +37,10 @@ const EMPTY_ARTIFACTS: NavigatorArtifact[] = [];
 type FolderNavigatorProps = {
   repositoryId: RepositoryId;
   /**
-   * Repository-scoped artifacts (manifest, architecture_overview, …) plus
-   * any feature-level artifacts that already carry a `folderId` for this repo.
-   * Sourced from `repoDetail.artifacts` so the panel doesn't have to
-   * subscribe a second query — the shell already pulls this list.
+   * Every artifact for this repo, regardless of kind. Routing is by
+   * `folderId` only — see the component docstring for the section split.
+   * Sourced from the shell's existing artifact subscription so the panel
+   * doesn't have to spin up a second query.
    */
   artifacts?: ReadonlyArray<NavigatorArtifact>;
   selectedArtifactId?: ArtifactId | null;
@@ -63,24 +57,24 @@ type FolderNavigatorProps = {
 };
 
 /**
- * Tree-shaped artifact navigator. Replaces the flat "Repository
- * intelligence + Thread outputs" sectioning of the original
- * `ArtifactPanel`. Three logical sections at the root:
+ * Tree-shaped artifact navigator. Two logical sections at the root:
  *
- *   1. **Repository** — repo-level kinds (manifest, architecture_overview,
- *      …) pinned at the top. There is exactly one canonical row per kind
- *      here (latest version), so this section reads as "the one-page summary
- *      of this repo".
+ *   1. **Folders** — every folder for the repo, including the seeded
+ *      System Design folders (Overview, Architecture, …) that carry a
+ *      `systemKey`. Seeded folders default-expanded; user-created folders
+ *      start collapsed. Each folder header shows name + child count and a
+ *      kebab menu with rename / delete-and-move-contents-up. Children are
+ *      nested folders and any artifact placed via `folderId`.
  *
- *   2. **Folders** — user-created folders. Each folder collapses; its
- *      header shows the folder icon, name, child count, and a kebab menu
- *      with rename / delete / move-to-parent. Children are nested folders
- *      and feature-level artifacts (ADR, failure mode, diagram, …).
+ *   2. **Uncategorized** — artifacts with no `folderId` (legacy data, or
+ *      artifacts whose folder was deleted with the "move contents to
+ *      parent" strategy while at root). Acts as the pickup pile until the
+ *      user moves them into a folder.
  *
- *   3. **Uncategorized** — feature-level artifacts with no `folderId`
- *      (legacy data, or artifacts whose folder was deleted with the
- *      "move contents to parent" strategy while at root). Acts as the
- *      pickup pile until the user moves them into a folder.
+ * Routing is single-source: `folderId` decides placement, full stop. There
+ * is no separate kind-based "Repository" pin — repo-level System Design
+ * kinds (manifest, README summary, …) land in their seeded folders via
+ * `SYSTEM_DESIGN_KIND_TO_FOLDER` at write time.
  *
  * Folder collapse state persists per repo via `localStorage` so refreshes
  * don't reset the user's mental model of what they've explored. Selection
@@ -105,23 +99,9 @@ export function FolderNavigator({
 
   const tree = useMemo(() => buildFolderTree(folders ?? []), [folders]);
 
-  /*
-   * Bucket the artifacts so each row renders in exactly one section and we
-   * never accidentally show a manifest in the user's "OAuth feature"
-   * folder. Repo-level kinds go to the top section; feature-level kinds
-   * route by `folderId` (specific folder) or fall through to
-   * "Uncategorized" when unset.
-   */
-  const repositoryArtifacts = useMemo(
-    () =>
-      artifacts.filter((artifact) => artifact.repositoryId === repositoryId && isRepoLevelArtifactKind(artifact.kind)),
-    [artifacts, repositoryId],
-  );
-
   const artifactsByFolder = useMemo(() => {
     const map = new Map<string, NavigatorArtifact[]>();
     for (const artifact of artifacts) {
-      if (!isFeatureLevelArtifactKind(artifact.kind)) continue;
       const folderId = artifact.folderId;
       if (!folderId) continue;
       const list = map.get(folderId) ?? [];
@@ -132,11 +112,7 @@ export function FolderNavigator({
   }, [artifacts]);
 
   const uncategorizedArtifacts = useMemo(
-    () =>
-      artifacts.filter(
-        (artifact) =>
-          artifact.repositoryId === repositoryId && isFeatureLevelArtifactKind(artifact.kind) && !artifact.folderId,
-      ),
+    () => artifacts.filter((artifact) => artifact.repositoryId === repositoryId && !artifact.folderId),
     [artifacts, repositoryId],
   );
 
@@ -212,23 +188,6 @@ export function FolderNavigator({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-3">
-          {repositoryArtifacts.length > 0 ? (
-            <NavigatorSection title="Repository" description="Reusable context for this repo.">
-              {repositoryArtifacts.map((artifact) => {
-                if (filterPredicate && !filterPredicate(artifact)) return null;
-                return (
-                  <ArtifactRow
-                    key={artifact._id}
-                    artifact={artifact}
-                    isSelected={selectedArtifactId === artifact._id}
-                    onSelect={onSelectArtifact}
-                    indent={0}
-                  />
-                );
-              })}
-            </NavigatorSection>
-          ) : null}
-
           <NavigatorSection title="Folders" description="Group artifacts by feature, decision, or subsystem.">
             {tree.length === 0 ? (
               <p className="px-1 text-[11px] text-muted-foreground/80">
@@ -325,7 +284,10 @@ function FolderTreeBranch({
   filterArtifact: FilterFn;
   folderMatchesSearch: (node: FolderTreeNode) => boolean;
 }) {
-  const [isOpen, setIsOpen] = useLocalStorageBoolean(`systify.folderNav.open.${repositoryId}.${node.id}`, indent < 1);
+  const [isOpen, setIsOpen] = useLocalStorageBoolean(
+    `systify.folderNav.open.${repositoryId}.${node.id}`,
+    indent < 1 || node.systemKey !== undefined,
+  );
   const renameFolder = useMutation(api.artifactFolders.rename);
   const removeFolder = useMutation(api.artifactFolders.remove);
   const [isRenaming, setIsRenaming] = useState(false);

@@ -195,6 +195,85 @@ export async function getSandboxState(remoteId: string): Promise<RemoteSandboxSt
   }
 }
 
+/**
+ * Reason codes returned by `probeLiveSandbox` when Daytona reports a state
+ * that means "this sandbox is not usable right now". `deleted` covers the
+ * 404 case (Daytona returned `not_found` from `get` — typically a manual
+ * deletion in the dashboard, or Daytona-side GC after the archive TTL).
+ */
+export type LiveSandboxUnavailableReason = "deleted" | "archived" | "stopped" | "error" | "unknown";
+
+export type LiveSandboxProbe =
+  | { ok: true; remoteState: RemoteSandboxState }
+  | {
+      ok: false;
+      remoteState: RemoteSandboxState;
+      reason: LiveSandboxUnavailableReason;
+      message: string;
+    };
+
+/**
+ * Authoritative liveness check for a Daytona sandbox. Pure: no Convex
+ * writes, just translates `getRemoteSandboxDetails` into a verdict the
+ * caller can act on.
+ *
+ * Used as the first step of any action that is about to spend tokens or
+ * compute on a sandbox so the local `sandboxes` cache is never load-bearing
+ * for the "can we actually use this?" decision — Daytona is. See
+ * `convex/lib/sandboxLiveness.ts` for the action-side wrapper that also
+ * mirrors the result back into Convex.
+ */
+export async function probeLiveSandbox(remoteId: string): Promise<LiveSandboxProbe> {
+  const details = await getRemoteSandboxDetails(remoteId);
+  if (!details.exists) {
+    return {
+      ok: false,
+      remoteState: "destroyed",
+      reason: "deleted",
+      message: "Sandbox no longer exists on Daytona. Sync the repository to provision a fresh sandbox.",
+    };
+  }
+  switch (details.state) {
+    case "started":
+      return { ok: true, remoteState: "started" };
+    case "archived":
+      return {
+        ok: false,
+        remoteState: "archived",
+        reason: "archived",
+        message: "Sandbox has been archived. Sync the repository to provision a fresh sandbox.",
+      };
+    case "stopped":
+      return {
+        ok: false,
+        remoteState: "stopped",
+        reason: "stopped",
+        message: "Sandbox is stopped. Sync the repository to wake it up or provision a fresh sandbox.",
+      };
+    case "destroyed":
+      return {
+        ok: false,
+        remoteState: "destroyed",
+        reason: "deleted",
+        message: "Sandbox no longer exists on Daytona. Sync the repository to provision a fresh sandbox.",
+      };
+    case "error":
+      return {
+        ok: false,
+        remoteState: "error",
+        reason: "error",
+        message: "Sandbox is in an error state. Sync the repository to provision a fresh sandbox.",
+      };
+    case "unknown":
+      return {
+        ok: false,
+        remoteState: "unknown",
+        reason: "unknown",
+        message: "Sandbox state is unknown. Sync the repository if the problem persists.",
+      };
+  }
+}
+
 export async function getRemoteSandboxDetails(remoteId: string): Promise<RemoteSandboxDetails> {
   try {
     const sandbox = await getSandbox(remoteId);
