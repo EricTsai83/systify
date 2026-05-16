@@ -140,6 +140,7 @@ export function workspaceCostKey(workspaceId: Id<"workspaces">) {
 
 export const CHAT_JOB_LEASE_MS = readPositiveIntEnv("CHAT_JOB_LEASE_MS", 10 * 60_000);
 export const SYSTEM_DESIGN_JOB_LEASE_MS = readPositiveIntEnv("SYSTEM_DESIGN_JOB_LEASE_MS", 60 * 60_000);
+export const SANDBOX_ACTIVATION_JOB_LEASE_MS = readPositiveIntEnv("SANDBOX_ACTIVATION_JOB_LEASE_MS", 5 * 60_000);
 
 export function isLeaseActive(leaseExpiresAt: number | undefined, now = Date.now()) {
   return typeof leaseExpiresAt === "number" && leaseExpiresAt > now;

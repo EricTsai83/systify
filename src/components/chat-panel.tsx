@@ -9,6 +9,7 @@ import { MessageBubble } from "@/components/chat-message";
 import { MODE_CATALOG, MODE_EXAMPLES, MODE_INFO_ENTRIES, MODE_LABELS } from "@/components/chat-modes";
 import { ModeExamples } from "@/components/mode-examples";
 import { ModeInfoPopover } from "@/components/mode-info-popover";
+import { SandboxActivityPill } from "@/components/sandbox-activity-pill";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -84,6 +85,13 @@ type ChatPanelProps = {
   isReadOnly?: boolean;
   /** Optional copy shown below the disabled composer when `isReadOnly` is true. */
   readOnlyHint?: string;
+  /**
+   * Repository attached to the current thread, if any. Used to mount
+   * the `SandboxActivityPill` in sandbox-tooled modes so the user can
+   * explicitly activate the live source before sending. Optional so
+   * pre-repo and unit-test render paths can omit it.
+   */
+  repositoryId?: RepositoryId;
 };
 
 type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream" | "isChatLoading"> & {
@@ -138,6 +146,7 @@ export function ChatPanel({
   onSelectArtifact,
   isReadOnly = false,
   readOnlyHint,
+  repositoryId,
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
 
@@ -230,6 +239,7 @@ export function ChatPanel({
   const shouldShowSandboxWarning =
     !isChatLoading && chatMode === "sandbox" && sandboxModeStatus && !sandboxModeAvailable;
   const shouldShowEmptyState = !isChatLoading && !hasMessages;
+  const shouldShowSandboxPill = chatMode === "sandbox" && repositoryId !== undefined;
 
   // Hoisted so the empty-state branch (no ScrollArea) and the messages
   // branch (inside ScrollArea) can both render the warning above their
@@ -247,6 +257,8 @@ export function ChatPanel({
       onAction={onSync}
     />
   ) : null;
+  const sandboxPill =
+    shouldShowSandboxPill && repositoryId ? <SandboxActivityPill repositoryId={repositoryId} /> : null;
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -261,6 +273,7 @@ export function ChatPanel({
         // this branch is the cleanest fix and lets `flex-1` actually
         // reach the centered Card.
         <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 flex-col gap-3 px-6 py-6">
+          {sandboxPill}
           {sandboxWarning}
           {hasAttachedRepository ? (
             <EmptyChatHint />
@@ -290,6 +303,7 @@ export function ChatPanel({
       ) : (
         <ScrollArea className="flex-1 min-h-0">
           <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6">
+            {sandboxPill}
             {sandboxWarning}
             {messages && (
               <div

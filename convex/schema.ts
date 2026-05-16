@@ -24,6 +24,19 @@ const jobKind = v.union(
   v.literal("system_design"),
   v.literal("chat"),
   v.literal("cleanup"),
+  v.literal("sandbox_activation"),
+);
+
+/**
+ * Structured failure categorisation for per-kind System Design failures.
+ * Drives banner copy in `system-design-status-banner.tsx` without
+ * regex-matching the raw `message`. Optional so legacy rows without a
+ * reason category fall through to the `other` branch in the UI.
+ */
+const kindFailureReason = v.union(
+  v.literal("live_source_unavailable"),
+  v.literal("model_empty_output"),
+  v.literal("other"),
 );
 
 const jobStatus = v.union(
@@ -304,9 +317,17 @@ export default defineSchema({
           kind: systemDesignKindValidator,
           errorId: v.string(),
           message: v.string(),
+          reason: v.optional(kindFailureReason),
         }),
       ),
     ),
+    /**
+     * Snapshot of the user-selected `systemDesignKinds` that the action
+     * was scheduled to generate. Persisted on the job row so a retry
+     * surface (Library banner button, future audit view) can re-run the
+     * same selection set without re-derivation from the failure list.
+     */
+    selections: v.optional(v.array(systemDesignKindValidator)),
   })
     .index("by_repositoryId", ["repositoryId"])
     .index("by_threadId", ["threadId"])

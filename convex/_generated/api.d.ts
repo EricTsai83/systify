@@ -71,6 +71,7 @@ import type * as migrations from "../migrations.js";
 import type * as ops from "../ops.js";
 import type * as opsNode from "../opsNode.js";
 import type * as repositories from "../repositories.js";
+import type * as sandboxActivationNode from "../sandboxActivationNode.js";
 import type * as serviceModeEligibility from "../serviceModeEligibility.js";
 import type * as systemDesign from "../systemDesign.js";
 import type * as systemDesignNode from "../systemDesignNode.js";
@@ -148,6 +149,7 @@ declare const fullApi: ApiFromModules<{
   ops: typeof ops;
   opsNode: typeof opsNode;
   repositories: typeof repositories;
+  sandboxActivationNode: typeof sandboxActivationNode;
   serviceModeEligibility: typeof serviceModeEligibility;
   systemDesign: typeof systemDesign;
   systemDesignNode: typeof systemDesignNode;

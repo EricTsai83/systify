@@ -34,7 +34,7 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalAction } from "../_generated/server";
 import { getSandboxFsClient } from "../daytona";
-import { verifyAndSyncSandbox } from "../lib/sandboxLiveness";
+import { verifyAndSyncSandbox, SandboxPreparationError } from "../lib/sandboxLiveness";
 import { STREAM_FLUSH_THRESHOLD } from "../lib/constants";
 import { retrieveArtifactChunks } from "../lib/artifactRag";
 import { emitMetric, logInfo, logWarn } from "../lib/observability";
@@ -518,10 +518,16 @@ export const generateAssistantReply = internalAction({
       //      and now still looks `ready` there. Probing now both prevents
       //      a mid-stream 404 from `getSandboxFsClient` and syncs the
       //      cache so the next reply skips the sandbox tooling cleanly.
-      // Anything else falls through to the no-tool path, which produces a
-      // plain text-only reply built on the same prompt — better than failing
-      // a sandbox reply just because the sandbox isn't ready.
-      let resolvedSandboxTooling = replyContext.sandboxTooling;
+      //
+      // `assertServiceModeEligible` (chat/send.ts) already blocks the
+      // common case where the sandbox is not ready at mutation time, so
+      // this verification only covers the edge case where the sandbox
+      // disappears between mutation and action (e.g. manual deletion in
+      // the Daytona dashboard). Throwing `SandboxPreparationError` here
+      // routes through the outer catch to `failAssistantReply`, which
+      // surfaces the `userFacingMessage` in the assistant bubble — the
+      // user can see what happened and click Activate to recover.
+      const resolvedSandboxTooling = replyContext.sandboxTooling;
       if (resolvedSandboxTooling) {
         const sandboxId = resolvedSandboxTooling.sandboxId;
         try {
@@ -537,20 +543,24 @@ export const generateAssistantReply = internalAction({
               remoteState: probe.remoteState,
               reason: probe.reason,
             });
-            // Drop the tooling reference so the no-tool fallback path runs
-            // — the user gets a tools-less reply rather than a hard error,
-            // and the cache patch the helper performed means future replies
-            // see the corrected state and skip this verification entirely.
-            resolvedSandboxTooling = undefined;
+            throw new SandboxPreparationError({
+              reason: "live_source_unavailable",
+              userFacingMessage: "Live source went away while preparing this reply. Activate it above and resend.",
+            });
           }
         } catch (err) {
+          if (err instanceof SandboxPreparationError) throw err;
           logWarn("chat", "sandbox_unavailable_at_verify", {
             assistantMessageId: args.assistantMessageId,
             jobId: args.jobId,
             sandboxId,
             error: err instanceof Error ? err.message : String(err),
           });
-          resolvedSandboxTooling = undefined;
+          throw new SandboxPreparationError({
+            reason: "live_source_unavailable",
+            userFacingMessage: "Live source went away while preparing this reply. Activate it above and resend.",
+            cause: err,
+          });
         }
       }
       const sandboxTools: ToolSet | undefined = resolvedSandboxTooling

@@ -10,7 +10,7 @@ import { internalAction } from "./_generated/server";
 import { createSandboxTools } from "./chat/sandboxTools";
 import { resolveModelForMode } from "./chat/modelSelection";
 import { getSandboxFsClient } from "./daytona";
-import { verifyAndSyncSandbox } from "./lib/sandboxLiveness";
+import { ensureSandboxReady, SandboxPreparationError, type SandboxPreparationStage } from "./lib/sandboxLiveness";
 import {
   buildRepositoryManifest,
   createArchitectureArtifactMarkdown,
@@ -84,28 +84,54 @@ export const runSystemDesignGeneration = internalAction({
       (kind): kind is Exclude<SystemDesignKind, HeuristicKind> => !isHeuristicKind(kind),
     );
 
-    // Verify-on-use: before we touch the LLM path, ask Daytona directly
-    // whether the sandbox still exists. The mutation's preflight only
-    // checks the local cache, which can be stale (manual delete in the
-    // Daytona dashboard never fires a webhook). If the sandbox is gone,
-    // every LLM kind would otherwise burn LLM tokens just to hit a 404.
-    // We probe once here and let `runKind` fast-fail each LLM kind with
-    // the precomputed message — heuristic kinds are unaffected and still
-    // produce their artifacts.
-    let llmSandboxFailureMessage: string | null = null;
+    // Reach the LLM path only after `ensureSandboxReady` has confirmed live
+    // access to the repository. On failure the action records a job-level
+    // failure (no heuristic kinds run either, because the user requested
+    // them together and the banner copy reads as "this run failed") and
+    // surfaces the structured `userFacingMessage` to the banner.
+    let liveSandbox: Doc<"sandboxes"> | null = context.activeSandbox;
     if (llmKinds.length > 0) {
-      const activeSandbox = context.activeSandbox;
-      if (!activeSandbox || !activeSandbox.remoteId) {
-        llmSandboxFailureMessage =
-          "Sandbox is not provisioned. Sync the repository to provision a sandbox before generating LLM-backed documents.";
-      } else {
-        const probe = await verifyAndSyncSandbox(ctx, {
-          sandboxId: activeSandbox._id,
-          remoteId: activeSandbox.remoteId,
-        });
-        if (!probe.ok) {
-          llmSandboxFailureMessage = probe.message;
+      const stageLabel: Record<SandboxPreparationStage, string> = {
+        probing: "Preparing environment for your request…",
+        waking: "Waking up your repository workspace…",
+        provisioning: "Setting up the repository workspace…",
+        cloning: "Cloning repository…",
+        polling: "Preparing environment for your request…",
+      };
+      try {
+        const prepared = await ensureSandboxReady(
+          ctx,
+          {
+            repositoryId: args.repositoryId,
+            ownerTokenIdentifier: args.ownerTokenIdentifier,
+          },
+          async (stage) => {
+            await ctx.runMutation(internal.systemDesign.updateGenerationProgress, {
+              jobId: args.jobId,
+              completedCount: 0,
+              totalCount: selections.length,
+              stage: stageLabel[stage] ?? "Preparing environment for your request…",
+            });
+          },
+        );
+        // Re-fetch the sandbox row so the LLM pass sees the post-clone
+        // state (`remoteId`, `repoPath`, status=ready) without re-reading
+        // through `runQuery` for every kind.
+        liveSandbox = await ctx.runQuery(internal.ops.getSandboxRow, { sandboxId: prepared.sandboxId });
+      } catch (error) {
+        if (error instanceof SandboxPreparationError) {
+          await ctx.runMutation(internal.systemDesign.failGeneration, {
+            jobId: args.jobId,
+            errorMessage: error.userFacingMessage,
+          });
+          logInfo("systemDesign", "generation_failed_sandbox_prep", {
+            jobId: args.jobId,
+            repositoryId: args.repositoryId,
+            reason: error.reason,
+          });
+          return;
         }
+        throw error;
       }
     }
 
@@ -155,11 +181,19 @@ export const runSystemDesignGeneration = internalAction({
           kind,
           errorId,
         });
+        const rawMessage = error instanceof Error ? error.message : String(error);
+        const reason: "live_source_unavailable" | "model_empty_output" | "other" =
+          error instanceof SandboxPreparationError
+            ? "live_source_unavailable"
+            : /empty document/i.test(rawMessage)
+              ? "model_empty_output"
+              : "other";
         await ctx.runMutation(internal.systemDesign.recordKindFailure, {
           jobId: args.jobId,
           kind,
           errorId,
-          message: error instanceof Error ? error.message : String(error),
+          message: rawMessage,
+          reason,
         });
       }
       completedCount += 1;
@@ -179,23 +213,12 @@ export const runSystemDesignGeneration = internalAction({
 
     const llmPass = (async () => {
       for (const kind of llmKinds) {
-        if (llmSandboxFailureMessage !== null) {
-          // Fast-fail without calling Daytona/OpenAI — the upfront probe
-          // already told us the sandbox is unusable. `runKind`'s catch
-          // records a `kindFailure` with this user-facing message, which
-          // surfaces in the Library banner.
-          const message = llmSandboxFailureMessage;
-          await runKind(kind, async () => {
-            throw new Error(message);
-          });
-          continue;
-        }
         // Refresh the running job's lease before each LLM kind so a long
         // multi-kind publication does not overrun the initial lease window
         // and trigger spurious stale-recovery while progress is still
         // happening.
         await ctx.runMutation(internal.systemDesign.refreshGenerationLease, { jobId: args.jobId });
-        await runKind(kind, () => generateLlm(kind, context.activeSandbox, context.repository));
+        await runKind(kind, () => generateLlm(kind, liveSandbox, context.repository));
       }
     })();
 

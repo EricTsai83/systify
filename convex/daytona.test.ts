@@ -113,9 +113,9 @@ describe("daytona state normalization", () => {
     });
 
     test.each([
-      ["archived", "archived", /archived/i],
-      ["stopped", "stopped", /stopped/i],
-      ["failed", "error", /error state/i],
+      ["archived", "archived", /live access to the repository wasn't available/i],
+      ["stopped", "stopped", /wake it up/i],
+      ["failed", "error", /hit an error/i],
     ] as const)(
       "maps non-started state %s to a not-ok probe with reason=%s",
       async (remoteState, expectedReason, messageMatcher) => {
@@ -135,7 +135,7 @@ describe("daytona state normalization", () => {
       if (probe.ok) throw new Error("probe should not be ok");
       expect(probe.reason).toBe("deleted");
       expect(probe.remoteState).toBe("destroyed");
-      expect(probe.message).toMatch(/no longer exists/i);
+      expect(probe.message).toMatch(/live access to the repository wasn't available/i);
     });
 
     test("returns reason=unknown when Daytona reports an unrecognized state", async () => {
