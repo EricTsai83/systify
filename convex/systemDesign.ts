@@ -13,7 +13,6 @@ import {
   type SystemDesignKind,
 } from "./lib/systemDesign";
 import { createArtifactInMutation, deleteArtifactInternal } from "./artifactStore";
-import { getSandboxAvailability } from "./lib/sandboxAvailability";
 import {
   completeRunningJob,
   failRunningJob,
@@ -73,21 +72,15 @@ export const requestSystemDesignGeneration = mutation({
     const requiresSandbox = hasLlmSelection(uniqueSelections);
     const now = Date.now();
 
-    // Sandbox preflight: LLM-backed kinds need a ready sandbox. We reject the
-    // whole request here so the user gets one clear error instead of N
-    // per-kind failures in the job summary later.
-    let sandboxId: Id<"sandboxes"> | undefined;
-    if (requiresSandbox) {
-      const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
-      const availability = getSandboxAvailability(sandbox, now);
-      if (!availability.available || !sandbox) {
-        throw new Error(
-          availability.message ??
-            "A live sandbox is required for the selected documents. Sync the repository to provision one.",
-        );
-      }
-      sandboxId = sandbox._id;
-    }
+    // The action now owns sandbox readiness via `ensureSandboxReady`, so the
+    // mutation no longer rejects when no sandbox is ready. The repository's
+    // current `latestSandboxId` is still attached to the job row so audit
+    // surfaces can correlate the request with whatever sandbox existed at
+    // queue time; if `ensureSandboxReady` provisions a new one mid-flight,
+    // the action patches the new row's id onto downstream artifact records.
+    const sandboxId: Id<"sandboxes"> | undefined = requiresSandbox
+      ? (repository.latestSandboxId ?? undefined)
+      : undefined;
 
     // Library System Design generation and Failure Mode Analysis both ride the
     // `system_design` job kind. FMA jobs are distinguished by a
@@ -120,6 +113,7 @@ export const requestSystemDesignGeneration = mutation({
       costCategory: "system_design",
       triggerSource: "user",
       outputSummary: buildJobSummary(uniqueSelections, "queued"),
+      selections: uniqueSelections,
       // Set the lease at insert time so the stale-job sweep
       // (`by_status_and_kind_and_leaseExpiresAt` + `lt(leaseExpiresAt, now)`)
       // can pick this row up if the Node action never runs or dies before
@@ -331,13 +325,29 @@ export const updateGenerationProgress = internalMutation({
 });
 
 export const recordKindFailure = internalMutation({
-  args: { jobId: v.id("jobs"), kind: systemDesignKindValidator, errorId: v.string(), message: v.string() },
+  args: {
+    jobId: v.id("jobs"),
+    kind: systemDesignKindValidator,
+    errorId: v.string(),
+    message: v.string(),
+    reason: v.optional(
+      v.union(v.literal("live_source_unavailable"), v.literal("model_empty_output"), v.literal("other")),
+    ),
+  },
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
     if (!job) return;
     const previous = job.kindFailures ?? [];
     await ctx.db.patch(args.jobId, {
-      kindFailures: [...previous, { kind: args.kind, errorId: args.errorId, message: args.message.slice(0, 200) }],
+      kindFailures: [
+        ...previous,
+        {
+          kind: args.kind,
+          errorId: args.errorId,
+          message: args.message.slice(0, 200),
+          reason: args.reason,
+        },
+      ],
     });
   },
 });

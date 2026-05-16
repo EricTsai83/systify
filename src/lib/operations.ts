@@ -29,6 +29,7 @@ const JOB_TITLES: Record<Doc<"jobs">["kind"], string> = {
   chat: "Assistant reply",
   system_design: "System design",
   cleanup: "Repository cleanup",
+  sandbox_activation: "Live source activation",
 };
 
 /**

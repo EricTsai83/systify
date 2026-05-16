@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { mutation, query, internalQuery, internalMutation, type MutationCtx } from "./_generated/server";
 import { drainMessageToolCallEvents } from "./chat/toolCallEventStore";
@@ -20,8 +20,10 @@ import {
 import {
   consumeDaytonaGlobalRateLimit,
   consumeImportRateLimit,
+  SANDBOX_ACTIVATION_JOB_LEASE_MS,
   throwOperationAlreadyInProgress,
 } from "./lib/rateLimit";
+import { failRunningJob, completeRunningJob, markQueuedJobRunning } from "./jobLifecycle";
 
 const FILE_COUNT_DISPLAY_LIMIT = 400;
 const REPOSITORY_DETAIL_IMPORT_ARTIFACT_LIMIT = 10;
@@ -760,6 +762,31 @@ export const updateRepoVisibility = internalMutation({
   },
 });
 
+/**
+ * Snapshot used by `ensureSandboxReady` to decide whether to return the
+ * existing sandbox, wake a stopped one, or provision a fresh one. Returns
+ * `null` when the repository is missing or no longer owned by the
+ * requesting identity — the caller treats that as a fatal "repository
+ * went away" error rather than provisioning blindly.
+ */
+export const getRepositorySandboxForPreparation = internalQuery({
+  args: {
+    repositoryId: v.id("repositories"),
+    ownerTokenIdentifier: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const repository = await ctx.db.get(args.repositoryId);
+    if (!repository || repository.ownerTokenIdentifier !== args.ownerTokenIdentifier) {
+      return null;
+    }
+    if (repository.deletionRequestedAt || repository.archivedAt) {
+      return null;
+    }
+    const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
+    return { repository, sandbox };
+  },
+});
+
 export const getRepositoryForProcessing = internalQuery({
   args: {
     repositoryId: v.id("repositories"),
@@ -788,5 +815,214 @@ export const getRepositoryForProcessing = internalQuery({
       artifacts,
       chunks,
     };
+  },
+});
+
+const SANDBOX_EXPIRING_SOON_MS = 5 * 60_000;
+const SANDBOX_ACTIVATION_ACTIVE_SCAN_LIMIT = 4;
+
+async function findActiveSandboxActivationJob(
+  ctx: MutationCtx,
+  args: { repositoryId: Id<"repositories">; now: number },
+) {
+  const [queued, running] = await Promise.all([
+    ctx.db
+      .query("jobs")
+      .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+        q
+          .eq("repositoryId", args.repositoryId)
+          .eq("kind", "sandbox_activation")
+          .eq("status", "queued")
+          .gte("leaseExpiresAt", args.now),
+      )
+      .take(SANDBOX_ACTIVATION_ACTIVE_SCAN_LIMIT),
+    ctx.db
+      .query("jobs")
+      .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+        q
+          .eq("repositoryId", args.repositoryId)
+          .eq("kind", "sandbox_activation")
+          .eq("status", "running")
+          .gte("leaseExpiresAt", args.now),
+      )
+      .take(SANDBOX_ACTIVATION_ACTIVE_SCAN_LIMIT),
+  ]);
+  return running[0] ?? queued[0] ?? null;
+}
+
+/**
+ * Explicit chat-side request to wake or provision the repository's
+ * sandbox. The mutation is deliberately separate from the chat send
+ * flow so the user keeps control over when sandbox compute is charged
+ * — `chat.sendMessage` no longer auto-provisions silently in sandbox
+ * mode (Phase D goal).
+ *
+ * Dedup is per-repository: an in-flight `sandbox_activation` job
+ * short-circuits to its existing id so a double-click never queues two
+ * concurrent provisions.
+ */
+export const requestSandboxActivation = mutation({
+  args: { repositoryId: v.id("repositories") },
+  handler: async (ctx, args): Promise<{ jobId: Id<"jobs"> }> => {
+    const { identity, repository } = await requireActiveRepositoryForViewer(ctx, {
+      repositoryId: args.repositoryId,
+    });
+
+    const now = Date.now();
+    const existing = await findActiveSandboxActivationJob(ctx, { repositoryId: repository._id, now });
+    if (existing) {
+      return { jobId: existing._id };
+    }
+
+    await consumeDaytonaGlobalRateLimit(ctx);
+
+    const jobId = await ctx.db.insert("jobs", {
+      repositoryId: repository._id,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      sandboxId: repository.latestSandboxId,
+      kind: "sandbox_activation",
+      status: "queued",
+      stage: "queued",
+      progress: 0,
+      costCategory: "ops",
+      triggerSource: "user",
+      leaseExpiresAt: now + SANDBOX_ACTIVATION_JOB_LEASE_MS,
+    });
+
+    await ctx.scheduler.runAfter(0, internal.sandboxActivationNode.runSandboxActivation, {
+      jobId,
+      repositoryId: repository._id,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+    });
+
+    return { jobId };
+  },
+});
+
+export const markSandboxActivationStarted = internalMutation({
+  args: { jobId: v.id("jobs") },
+  handler: async (ctx, args): Promise<{ started: boolean }> => {
+    const now = Date.now();
+    const result = await markQueuedJobRunning(ctx, {
+      jobId: args.jobId,
+      expectedKind: "sandbox_activation",
+      stage: "Preparing environment…",
+      progress: 0.1,
+      startedAt: now,
+      leaseExpiresAt: now + SANDBOX_ACTIVATION_JOB_LEASE_MS,
+    });
+    return { started: result !== null };
+  },
+});
+
+export const updateSandboxActivationStage = internalMutation({
+  args: {
+    jobId: v.id("jobs"),
+    stage: v.string(),
+    progress: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job || job.kind !== "sandbox_activation" || job.status !== "running") {
+      return;
+    }
+    await ctx.db.patch(args.jobId, {
+      stage: args.stage,
+      progress: args.progress,
+      leaseExpiresAt: Date.now() + SANDBOX_ACTIVATION_JOB_LEASE_MS,
+    });
+  },
+});
+
+export const completeSandboxActivation = internalMutation({
+  args: { jobId: v.id("jobs"), sandboxId: v.id("sandboxes") },
+  handler: async (ctx, args) => {
+    await completeRunningJob(ctx, {
+      jobId: args.jobId,
+      expectedKind: "sandbox_activation",
+      completedAt: Date.now(),
+      outputSummary: "Live source ready.",
+    });
+    await ctx.db.patch(args.jobId, { sandboxId: args.sandboxId });
+  },
+});
+
+export const failSandboxActivation = internalMutation({
+  args: { jobId: v.id("jobs"), errorMessage: v.string() },
+  handler: async (ctx, args) => {
+    await failRunningJob(ctx, {
+      jobId: args.jobId,
+      expectedKind: "sandbox_activation",
+      completedAt: Date.now(),
+      errorMessage: args.errorMessage,
+    });
+  },
+});
+
+/**
+ * Lightweight status read for the chat sandbox-mode status pill. Returns
+ * one of:
+ *
+ *   - `idle`           — no sandbox, or sandbox in stopped/archived/failed.
+ *                        UI shows "Live source inactive" + Activate button.
+ *   - `activating`     — an in-flight `sandbox_activation` job exists.
+ *                        UI shows progress.
+ *   - `ready`          — sandbox is ready and not expiring soon.
+ *   - `expiring_soon`  — sandbox is ready but TTL is < 5 min away.
+ */
+export const getSandboxActivityStatus = query({
+  args: { repositoryId: v.id("repositories") },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    kind: "idle" | "activating" | "ready" | "expiring_soon";
+    activeJob: Doc<"jobs"> | null;
+    sandbox: Doc<"sandboxes"> | null;
+  }> => {
+    const identity = await requireViewerIdentity(ctx);
+    const repository = await ctx.db.get(args.repositoryId);
+    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      return { kind: "idle", activeJob: null, sandbox: null };
+    }
+
+    const now = Date.now();
+    const [queuedJobs, runningJobs] = await Promise.all([
+      ctx.db
+        .query("jobs")
+        .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+          q
+            .eq("repositoryId", args.repositoryId)
+            .eq("kind", "sandbox_activation")
+            .eq("status", "queued")
+            .gte("leaseExpiresAt", now),
+        )
+        .take(SANDBOX_ACTIVATION_ACTIVE_SCAN_LIMIT),
+      ctx.db
+        .query("jobs")
+        .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
+          q
+            .eq("repositoryId", args.repositoryId)
+            .eq("kind", "sandbox_activation")
+            .eq("status", "running")
+            .gte("leaseExpiresAt", now),
+        )
+        .take(SANDBOX_ACTIVATION_ACTIVE_SCAN_LIMIT),
+    ]);
+    const activeJob = runningJobs[0] ?? queuedJobs[0] ?? null;
+    const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
+
+    if (activeJob) {
+      return { kind: "activating", activeJob, sandbox };
+    }
+    if (sandbox && sandbox.status === "ready" && sandbox.remoteId && sandbox.repoPath && sandbox.ttlExpiresAt > now) {
+      const remainingMs = sandbox.ttlExpiresAt - now;
+      return {
+        kind: remainingMs < SANDBOX_EXPIRING_SOON_MS ? "expiring_soon" : "ready",
+        activeJob: null,
+        sandbox,
+      };
+    }
+    return { kind: "idle", activeJob: null, sandbox };
   },
 });

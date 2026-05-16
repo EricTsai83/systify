@@ -318,6 +318,19 @@ export const getExpiredSandboxes = internalQuery({
   },
 });
 
+/**
+ * Read a single sandbox row by id. Exported for `ensureSandboxReady`'s
+ * polling loop — actions can't call `ctx.db.get` directly so this
+ * internal query is the cheapest way to re-read the row state between
+ * polls without joining any other table.
+ */
+export const getSandboxRow = internalQuery({
+  args: { sandboxId: v.id("sandboxes") },
+  handler: async (ctx, args): Promise<Doc<"sandboxes"> | null> => {
+    return await ctx.db.get(args.sandboxId);
+  },
+});
+
 export const getSandboxByRemoteId = internalQuery({
   args: {
     remoteId: v.string(),

@@ -178,6 +178,21 @@ export async function stopSandbox(remoteId: string) {
 }
 
 /**
+ * Wakes a stopped sandbox back up. `sandbox.start` is the explicit
+ * counterpart to `stopSandbox` — it brings the Daytona-side runtime back
+ * online without reprovisioning, which is the fast path
+ * (~10–30s vs. 60–120s for a fresh provision) when the sandbox row is
+ * still intact but Daytona auto-stopped it on idle.
+ *
+ * Callers must have already verified that the sandbox exists on Daytona
+ * (see `probeLiveSandbox`); calling `start` on a destroyed sandbox throws.
+ */
+export async function startSandbox(remoteId: string) {
+  const sandbox = await getSandbox(remoteId);
+  await sandbox.start(60);
+}
+
+/**
  * Returns the current Daytona-side state of a sandbox.
  * Useful for syncing Convex DB status with reality.
  */
@@ -230,7 +245,7 @@ export async function probeLiveSandbox(remoteId: string): Promise<LiveSandboxPro
       ok: false,
       remoteState: "destroyed",
       reason: "deleted",
-      message: "Sandbox no longer exists on Daytona. Sync the repository to provision a fresh sandbox.",
+      message: "Live access to the repository wasn't available. The next attempt will prepare it first.",
     };
   }
   switch (details.state) {
@@ -241,35 +256,35 @@ export async function probeLiveSandbox(remoteId: string): Promise<LiveSandboxPro
         ok: false,
         remoteState: "archived",
         reason: "archived",
-        message: "Sandbox has been archived. Sync the repository to provision a fresh sandbox.",
+        message: "Live access to the repository wasn't available. The next attempt will prepare it first.",
       };
     case "stopped":
       return {
         ok: false,
         remoteState: "stopped",
         reason: "stopped",
-        message: "Sandbox is stopped. Sync the repository to wake it up or provision a fresh sandbox.",
+        message: "Live access to the repository wasn't available. The next attempt will wake it up.",
       };
     case "destroyed":
       return {
         ok: false,
         remoteState: "destroyed",
         reason: "deleted",
-        message: "Sandbox no longer exists on Daytona. Sync the repository to provision a fresh sandbox.",
+        message: "Live access to the repository wasn't available. The next attempt will prepare it first.",
       };
     case "error":
       return {
         ok: false,
         remoteState: "error",
         reason: "error",
-        message: "Sandbox is in an error state. Sync the repository to provision a fresh sandbox.",
+        message: "Live access to the repository hit an error. Try again in a minute.",
       };
     case "unknown":
       return {
         ok: false,
         remoteState: "unknown",
         reason: "unknown",
-        message: "Sandbox state is unknown. Sync the repository if the problem persists.",
+        message: "Live access state is unknown. Try again if the problem persists.",
       };
   }
 }

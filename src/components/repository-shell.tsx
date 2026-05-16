@@ -859,6 +859,7 @@ export function RepositoryShell({
       onSelectArtifact={handleSelectArtifact}
       isReadOnly={isRepoArchived || isLegacyThreadLocked}
       readOnlyHint={chatReadOnlyHint}
+      repositoryId={capabilities.attachedRepository?.id}
     />
   );
 
