@@ -18,22 +18,11 @@ import {
   type RepositorySnapshot,
 } from "./lib/repoAnalysis";
 import { logErrorWithId, logInfo, logWarn } from "./lib/observability";
-import type { SystemDesignKind } from "./lib/systemDesign";
+import { systemDesignKindValidator, type SystemDesignKind } from "./lib/systemDesign";
 
 const SYSTEM_DESIGN_STEP_BUDGET = 20;
 
 const HEURISTIC_FILES_TAKE_LIMIT = 2000;
-
-const systemDesignKindValidator = v.union(
-  v.literal("manifest"),
-  v.literal("readme_summary"),
-  v.literal("architecture_overview"),
-  v.literal("data_model_overview"),
-  v.literal("api_surface_overview"),
-  v.literal("deployment_overview"),
-  v.literal("security_overview"),
-  v.literal("operations_overview"),
-);
 
 type HeuristicKind = Extract<SystemDesignKind, "manifest" | "architecture_overview">;
 

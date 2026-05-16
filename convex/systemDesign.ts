@@ -9,6 +9,7 @@ import {
   SYSTEM_DESIGN_KIND_GENERATOR,
   SYSTEM_DESIGN_KIND_TITLES,
   SYSTEM_DESIGN_KIND_TO_FOLDER,
+  systemDesignKindValidator,
   type SystemDesignKind,
 } from "./lib/systemDesign";
 import { createArtifactInMutation, deleteArtifactInternal } from "./artifactStore";
@@ -52,17 +53,6 @@ function hasLlmSelection(selections: ReadonlyArray<SystemDesignKind>): boolean {
  * Progress and final status flow back to the UI through the standard job
  * subscription.
  */
-export const systemDesignKindValidator = v.union(
-  v.literal("manifest"),
-  v.literal("readme_summary"),
-  v.literal("architecture_overview"),
-  v.literal("data_model_overview"),
-  v.literal("api_surface_overview"),
-  v.literal("deployment_overview"),
-  v.literal("security_overview"),
-  v.literal("operations_overview"),
-);
-
 export const requestSystemDesignGeneration = mutation({
   args: {
     repositoryId: v.id("repositories"),

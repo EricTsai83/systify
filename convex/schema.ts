@@ -1,6 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { systemDesignKindValidator } from "./systemDesign";
+import { systemDesignKindValidator } from "./lib/systemDesign";
 
 const repositoryStatus = v.union(
   v.literal("idle"),

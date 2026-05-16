@@ -1,3 +1,4 @@
+import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 
@@ -95,6 +96,23 @@ export type SystemDesignKind = (typeof SYSTEM_DESIGN_KINDS)[number];
 export function isSystemDesignKind(kind: Doc<"artifacts">["kind"]): kind is SystemDesignKind {
   return (SYSTEM_DESIGN_KINDS as ReadonlyArray<Doc<"artifacts">["kind"]>).includes(kind);
 }
+
+/**
+ * Convex validator mirroring `SYSTEM_DESIGN_KINDS`. Lives in `lib/` (not
+ * `convex/systemDesign.ts`) so `schema.ts` can import it without dragging the
+ * mutation module's `lib/rateLimit` dependency into schema evaluation —
+ * `process.env` reads in that module are forbidden at schema-eval time.
+ */
+export const systemDesignKindValidator = v.union(
+  v.literal("manifest"),
+  v.literal("readme_summary"),
+  v.literal("architecture_overview"),
+  v.literal("data_model_overview"),
+  v.literal("api_surface_overview"),
+  v.literal("deployment_overview"),
+  v.literal("security_overview"),
+  v.literal("operations_overview"),
+);
 
 /**
  * Static mapping from artifact kind → destination folder `systemKey`. Used by
