@@ -198,6 +198,68 @@ export const completeSandboxCleanup = internalMutation({
   },
 });
 
+/**
+ * Mirror an authoritative Daytona state back into the local `sandboxes`
+ * row. Called by `convex/lib/sandboxLiveness.ts` after a verify-on-use
+ * probe so the cache stays consistent with reality even when the webhook
+ * never fired (manual deletion in the Daytona dashboard, dead-letter
+ * after retries, Daytona-side GC).
+ *
+ * The state mapping mirrors `convex/daytonaWebhooks.ts:217-232` so the
+ * write-through and reactive paths produce the same outcome. The
+ * `archived` terminal guard is also mirrored — once a sandbox is locally
+ * archived, we don't let a subsequent probe drag it back to `ready` or
+ * `stopped`, which would only re-open the same staleness window we just
+ * closed.
+ */
+export const syncSandboxStatusFromRemote = internalMutation({
+  args: {
+    sandboxId: v.id("sandboxes"),
+    remoteState: v.union(
+      v.literal("started"),
+      v.literal("stopped"),
+      v.literal("archived"),
+      v.literal("destroyed"),
+      v.literal("error"),
+      v.literal("unknown"),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const sandbox = await ctx.db.get(args.sandboxId);
+    if (!sandbox) {
+      return { patched: false as const };
+    }
+    if (sandbox.status === "archived") {
+      // Terminal locally — don't fight it. Same invariant the webhook
+      // handler protects.
+      return { patched: false as const };
+    }
+
+    const now = Date.now();
+    const patch: Partial<Doc<"sandboxes">> = {};
+    if (args.remoteState === "started") {
+      patch.status = "ready";
+      patch.lastUsedAt = now;
+    } else if (args.remoteState === "stopped") {
+      patch.status = "stopped";
+      patch.lastUsedAt = now;
+    } else if (args.remoteState === "archived" || args.remoteState === "destroyed") {
+      patch.status = "archived";
+      patch.lastUsedAt = now;
+    } else if (args.remoteState === "error") {
+      patch.status = "failed";
+      patch.lastErrorMessage = "Daytona reported the sandbox as errored during a live verification.";
+    }
+    // `unknown` → no-op: don't overwrite a known cache state with a guess.
+
+    if (Object.keys(patch).length === 0) {
+      return { patched: false as const };
+    }
+    await ctx.db.patch(args.sandboxId, patch);
+    return { patched: true as const };
+  },
+});
+
 export const failSandboxCleanup = internalMutation({
   args: {
     sandboxId: v.id("sandboxes"),

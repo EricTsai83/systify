@@ -11,7 +11,7 @@ import {
   SYSTEM_DESIGN_KIND_TO_FOLDER,
   type SystemDesignKind,
 } from "./lib/systemDesign";
-import { createArtifactInMutation } from "./artifactStore";
+import { createArtifactInMutation, deleteArtifactInternal } from "./artifactStore";
 import { getSandboxAvailability } from "./lib/sandboxAvailability";
 import {
   completeRunningJob,
@@ -208,6 +208,64 @@ export const getActiveSystemDesignJob = query({
   },
 });
 
+/**
+ * Visibility window after a job reaches a terminal state during which the
+ * Library banner still surfaces its outcome. Keeps the failure summary
+ * visible long enough for the user to read it, then auto-clears so the
+ * navigator isn't haunted by stale errors across sessions.
+ */
+const SYSTEM_DESIGN_BANNER_TERMINAL_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * Banner-only listing helper: returns the most recent Library System Design
+ * job for the repo regardless of status, but only while it is either
+ * (a) active (queued / running) or (b) terminal and within
+ * `SYSTEM_DESIGN_BANNER_TERMINAL_WINDOW_MS`. The dialog continues to use
+ * `getActiveSystemDesignJob` for dedup — this query exists so the banner
+ * can show post-completion failure summaries without changing that
+ * "is there an in-flight job?" semantic.
+ */
+const LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT = 16;
+
+export const getLatestSystemDesignJob = query({
+  args: { repositoryId: v.id("repositories") },
+  handler: async (ctx, args): Promise<Doc<"jobs"> | null> => {
+    const identity = await requireViewerIdentity(ctx);
+    const repository = await ctx.db.get(args.repositoryId);
+    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      return null;
+    }
+
+    // Scan the most recent jobs for this repo and take the first non-FMA
+    // `system_design` row. The default index ordering on `by_repositoryId`
+    // is by `_creationTime` descending under `.order("desc")`, so the first
+    // match is the latest job. Bounded so transactional cost is predictable
+    // even on a repo with a lot of FMA noise sitting in front.
+    const recent = await ctx.db
+      .query("jobs")
+      .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
+      .order("desc")
+      .take(LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT);
+
+    const now = Date.now();
+    for (const job of recent) {
+      if (job.kind !== "system_design") continue;
+      if (isFailureModeJob(job)) continue;
+      if (job.status === "queued" || job.status === "running") {
+        return job;
+      }
+      if (typeof job.completedAt === "number" && now - job.completedAt < SYSTEM_DESIGN_BANNER_TERMINAL_WINDOW_MS) {
+        return job;
+      }
+      // Found the latest Library System Design job but it's terminal and
+      // outside the visibility window — stop here rather than walking back
+      // through older history.
+      return null;
+    }
+    return null;
+  },
+});
+
 export const markGenerationStarted = internalMutation({
   args: { jobId: v.id("jobs"), selections: v.array(systemDesignKindValidator) },
   handler: async (ctx, args): Promise<{ started: boolean }> => {
@@ -265,6 +323,18 @@ export const updateGenerationProgress = internalMutation({
       expectedKind: "system_design",
       stage: args.stage,
       progress,
+    });
+  },
+});
+
+export const recordKindFailure = internalMutation({
+  args: { jobId: v.id("jobs"), kind: systemDesignKindValidator, errorId: v.string(), message: v.string() },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job) return;
+    const previous = job.kindFailures ?? [];
+    await ctx.db.patch(args.jobId, {
+      kindFailures: [...previous, { kind: args.kind, errorId: args.errorId, message: args.message.slice(0, 200) }],
     });
   },
 });
@@ -449,7 +519,10 @@ export const persistGeneratedArtifact = internalMutation({
       .collect();
     const stale = existing.find((row) => row.kind === args.kind);
     if (stale) {
-      await ctx.db.delete(stale._id);
+      // Cascade through `deleteArtifactInternal` so `artifactChunks` are
+      // dropped with the row. A raw `db.delete` here would leak orphan
+      // chunks every time a kind is re-generated.
+      await deleteArtifactInternal(ctx, stale._id);
     }
 
     const artifactId = await createArtifactInMutation(ctx, {

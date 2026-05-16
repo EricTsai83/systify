@@ -7,6 +7,7 @@ import { LibraryEditor } from "@/components/library-editor";
 import { LibraryTabs } from "@/components/library-tabs";
 import { LibraryTree } from "@/components/library-tree";
 import { QuickOpenDialog } from "@/components/quick-open-dialog";
+import { SystemDesignStatusBanner } from "@/components/system-design-status-banner";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { useLibraryShortcuts } from "@/hooks/use-library-shortcuts";
@@ -122,6 +123,8 @@ export function LibraryShell({ repositoryId, tabs }: { repositoryId: RepositoryI
             <FolderIcon size={13} weight="duotone" /> Folders
           </Button>
         </div>
+
+        <SystemDesignStatusBanner repositoryId={repositoryId} />
 
         <LibraryTabs
           openArtifactIds={tabs.openArtifactIds}

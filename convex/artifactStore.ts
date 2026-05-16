@@ -121,7 +121,7 @@ async function updateArtifactInternal(
   }
 }
 
-async function deleteArtifactInternal(ctx: MutationCtx, artifactId: Id<"artifacts">): Promise<void> {
+export async function deleteArtifactInternal(ctx: MutationCtx, artifactId: Id<"artifacts">): Promise<void> {
   const PAGE_SIZE = 100;
   let hasMore = true;
   while (hasMore) {

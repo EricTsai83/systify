@@ -297,6 +297,15 @@ export default defineSchema({
     startedAt: v.optional(v.number()),
     completedAt: v.optional(v.number()),
     leaseExpiresAt: v.optional(v.number()),
+    kindFailures: v.optional(
+      v.array(
+        v.object({
+          kind: v.string(),
+          errorId: v.string(),
+          message: v.string(),
+        }),
+      ),
+    ),
   })
     .index("by_repositoryId", ["repositoryId"])
     .index("by_threadId", ["threadId"])

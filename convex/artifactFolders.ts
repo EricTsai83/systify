@@ -117,6 +117,7 @@ export const listByRepository = query({
       name: folder.name,
       description: folder.description,
       sortOrder: folder.sortOrder,
+      systemKey: folder.systemKey,
     }));
   },
 });
