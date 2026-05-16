@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { systemDesignKindValidator } from "./systemDesign";
 
 const repositoryStatus = v.union(
   v.literal("idle"),
@@ -300,7 +301,7 @@ export default defineSchema({
     kindFailures: v.optional(
       v.array(
         v.object({
-          kind: v.string(),
+          kind: systemDesignKindValidator,
           errorId: v.string(),
           message: v.string(),
         }),

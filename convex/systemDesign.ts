@@ -52,7 +52,7 @@ function hasLlmSelection(selections: ReadonlyArray<SystemDesignKind>): boolean {
  * Progress and final status flow back to the UI through the standard job
  * subscription.
  */
-const systemDesignKindValidator = v.union(
+export const systemDesignKindValidator = v.union(
   v.literal("manifest"),
   v.literal("readme_summary"),
   v.literal("architecture_overview"),
@@ -236,31 +236,44 @@ export const getLatestSystemDesignJob = query({
       return null;
     }
 
-    // Scan the most recent jobs for this repo and take the first non-FMA
-    // `system_design` row. The default index ordering on `by_repositoryId`
-    // is by `_creationTime` descending under `.order("desc")`, so the first
-    // match is the latest job. Bounded so transactional cost is predictable
-    // even on a repo with a lot of FMA noise sitting in front.
-    const recent = await ctx.db
-      .query("jobs")
-      .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
-      .order("desc")
-      .take(LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT);
-
+    // Paginated scan: iteratively fetch batches until we find the first
+    // non-FMA `system_design` job, bounded by a hard cap to keep cost predictable.
     const now = Date.now();
-    for (const job of recent) {
-      if (job.kind !== "system_design") continue;
-      if (isFailureModeJob(job)) continue;
-      if (job.status === "queued" || job.status === "running") {
-        return job;
+    const hardCap = LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT * 4;
+    let batchSize = LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT;
+    let scanned = 0;
+
+    while (scanned < hardCap) {
+      const batch = await ctx.db
+        .query("jobs")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
+        .order("desc")
+        .take(batchSize);
+
+      // Only scan the new items in this batch (beyond what we already checked).
+      const startIdx = Math.max(0, scanned);
+      for (let i = startIdx; i < batch.length; i++) {
+        const job = batch[i];
+        if (job.kind !== "system_design") continue;
+        if (isFailureModeJob(job)) continue;
+        if (job.status === "queued" || job.status === "running") {
+          return job;
+        }
+        if (typeof job.completedAt === "number" && now - job.completedAt < SYSTEM_DESIGN_BANNER_TERMINAL_WINDOW_MS) {
+          return job;
+        }
+        // Found the latest Library System Design job but it's terminal and
+        // outside the visibility window — stop here rather than walking back
+        // through older history.
+        return null;
       }
-      if (typeof job.completedAt === "number" && now - job.completedAt < SYSTEM_DESIGN_BANNER_TERMINAL_WINDOW_MS) {
-        return job;
+
+      scanned = batch.length;
+      if (batch.length < batchSize) {
+        // No more jobs available.
+        break;
       }
-      // Found the latest Library System Design job but it's terminal and
-      // outside the visibility window — stop here rather than walking back
-      // through older history.
-      return null;
+      batchSize = Math.min(batchSize * 2, hardCap);
     }
     return null;
   },

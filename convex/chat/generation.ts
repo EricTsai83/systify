@@ -523,22 +523,33 @@ export const generateAssistantReply = internalAction({
       // a sandbox reply just because the sandbox isn't ready.
       let resolvedSandboxTooling = replyContext.sandboxTooling;
       if (resolvedSandboxTooling) {
-        const probe = await verifyAndSyncSandbox(ctx, {
-          sandboxId: resolvedSandboxTooling.sandboxId,
-          remoteId: resolvedSandboxTooling.remoteId,
-        });
-        if (!probe.ok) {
+        const sandboxId = resolvedSandboxTooling.sandboxId;
+        try {
+          const probe = await verifyAndSyncSandbox(ctx, {
+            sandboxId: resolvedSandboxTooling.sandboxId,
+            remoteId: resolvedSandboxTooling.remoteId,
+          });
+          if (!probe.ok) {
+            logWarn("chat", "sandbox_unavailable_at_verify", {
+              assistantMessageId: args.assistantMessageId,
+              jobId: args.jobId,
+              sandboxId,
+              remoteState: probe.remoteState,
+              reason: probe.reason,
+            });
+            // Drop the tooling reference so the no-tool fallback path runs
+            // — the user gets a tools-less reply rather than a hard error,
+            // and the cache patch the helper performed means future replies
+            // see the corrected state and skip this verification entirely.
+            resolvedSandboxTooling = undefined;
+          }
+        } catch (err) {
           logWarn("chat", "sandbox_unavailable_at_verify", {
             assistantMessageId: args.assistantMessageId,
             jobId: args.jobId,
-            sandboxId: resolvedSandboxTooling.sandboxId,
-            remoteState: probe.remoteState,
-            reason: probe.reason,
+            sandboxId,
+            error: err instanceof Error ? err.message : String(err),
           });
-          // Drop the tooling reference so the no-tool fallback path runs
-          // — the user gets a tools-less reply rather than a hard error,
-          // and the cache patch the helper performed means future replies
-          // see the corrected state and skip this verification entirely.
           resolvedSandboxTooling = undefined;
         }
       }
