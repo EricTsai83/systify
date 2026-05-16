@@ -458,6 +458,15 @@ export default defineSchema({
      * `repositories.latestImportId` commit for the coarse import-drift signal.
      */
     alignedImportCommitSha: v.optional(v.string()),
+    /**
+     * Wall-clock ms epoch of the most recent user-facing content change
+     * (title / summary / contentMarkdown). Distinct from `_creationTime`
+     * so the navigator's "recently changed" pulse can light up for edits
+     * to existing artifacts, not just new rows. Optional because rows
+     * predating this column have no recorded edit timestamp; consumers
+     * fall back to `_creationTime` in that case.
+     */
+    updatedAt: v.optional(v.number()),
   })
     .index("by_repositoryId", ["repositoryId"])
     .index("by_repositoryId_and_kind", ["repositoryId", "kind"])
@@ -469,6 +478,52 @@ export default defineSchema({
     .index("by_jobId", ["jobId"])
     .index("by_jobId_and_kind", ["jobId", "kind"])
     .index("by_chunkingStatus", ["chunkingStatus"]),
+
+  /**
+   * Per-viewer "I have seen this artifact" timestamps. Drives the Library
+   * navigator's "changed since you last looked" dot — see
+   * `useArtifactViewState` on the client. A row exists only after the
+   * viewer first opens an artifact; absence means "never viewed" and the
+   * client falls back to the repository's `_creationTime` so seed
+   * artifacts (imported alongside the repo) don't flood the navigator.
+   *
+   *   - `ownerTokenIdentifier` scopes view state to the signed-in viewer
+   *     so multi-device sync works without leaking state across users.
+   *   - `repositoryId` is denormalized from the parent artifact so the
+   *     per-repo list query can serve the navigator without a join.
+   *   - At most one row exists per `(owner, artifact)`; `markViewed`
+   *     upserts via `by_ownerTokenIdentifier_and_artifactId`.
+   *   - `by_artifactId` powers cascade cleanup when an artifact is
+   *     deleted (see `deleteArtifactInternal`).
+   */
+  artifactViews: defineTable({
+    ownerTokenIdentifier: v.string(),
+    repositoryId: v.id("repositories"),
+    artifactId: v.id("artifacts"),
+    viewedAt: v.number(),
+  })
+    .index("by_ownerTokenIdentifier_and_repositoryId", ["ownerTokenIdentifier", "repositoryId"])
+    .index("by_ownerTokenIdentifier_and_artifactId", ["ownerTokenIdentifier", "artifactId"])
+    .index("by_artifactId", ["artifactId"]),
+
+  /**
+   * Per-viewer "first time I opened this repository's Library" anchor.
+   *
+   * This is the floor below which artifacts are treated as "already
+   * seen". Without it, rolling the view-state feature out on a
+   * long-lived repository would flood the navigator with dots for every
+   * artifact the viewer had already worked with through other surfaces.
+   * The row is written the first time `useArtifactViewState` mounts for
+   * a (viewer, repository) pair and never updated afterwards — its
+   * timestamp is the canonical "you arrived here at this moment". One
+   * row per `(ownerTokenIdentifier, repositoryId)`, enforced by the
+   * `ensureRepositoryBootstrap` mutation.
+   */
+  repositoryViewerBootstraps: defineTable({
+    ownerTokenIdentifier: v.string(),
+    repositoryId: v.id("repositories"),
+    bootstrapAt: v.number(),
+  }).index("by_ownerTokenIdentifier_and_repositoryId", ["ownerTokenIdentifier", "repositoryId"]),
 
   /**
    * Phase A folder model. Folders are workspace-scoped (one tree per

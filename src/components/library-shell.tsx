@@ -10,6 +10,7 @@ import { QuickOpenDialog } from "@/components/quick-open-dialog";
 import { SystemDesignStatusBanner } from "@/components/system-design-status-banner";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
+import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
 import { useLibraryShortcuts } from "@/hooks/use-library-shortcuts";
 import type { LibraryTabsApi } from "@/hooks/use-library-tabs";
 import { useWarmArtifactSubscriptions } from "@/hooks/use-warm-artifact-subscriptions";
@@ -31,6 +32,16 @@ import { cn } from "@/lib/utils";
  */
 export function LibraryShell({ repositoryId, tabs }: { repositoryId: RepositoryId; tabs: LibraryTabsApi }) {
   const allArtifacts = useQuery(api.artifacts.listMetadataByRepositoryWithFreshness, { repositoryId });
+  const { isUnseen, markViewed } = useArtifactViewState(repositoryId);
+
+  // Clear the "changed since you last looked" dot the moment the user
+  // activates an artifact tab — clicking from the tree, switching tabs,
+  // and URL-driven activation all land here.
+  useEffect(() => {
+    if (tabs.activeArtifactId) {
+      markViewed(tabs.activeArtifactId);
+    }
+  }, [tabs.activeArtifactId, markViewed]);
 
   const artifactsById = useMemo(() => {
     const map = new Map<ArtifactId, ArtifactListItem>();
@@ -104,6 +115,7 @@ export function LibraryShell({ repositoryId, tabs }: { repositoryId: RepositoryI
       selectedArtifactId={tabs.activeArtifactId}
       onSelectArtifact={handleSelectArtifact}
       onGenerate={openGenerateDialog}
+      isUnseen={isUnseen}
       className="min-h-[160px]"
     />
   );

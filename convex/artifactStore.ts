@@ -75,6 +75,7 @@ export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArt
     producedIn: args.source === "sandbox" ? "lab" : args.repositoryId ? "legacy" : "discuss",
     lastVerifiedAt: args.source === "sandbox" ? now : undefined,
     chunkingStatus: args.repositoryId ? "pending" : undefined,
+    updatedAt: now,
   });
   if (args.repositoryId) {
     await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, { artifactId });
@@ -105,7 +106,8 @@ async function updateArtifactInternal(
     contentMarkdown?: string;
     version: number;
     chunkingStatus?: "pending";
-  } = { version: artifact.version + 1 };
+    updatedAt: number;
+  } = { version: artifact.version + 1, updatedAt: Date.now() };
   if (updates.title !== undefined) patch.title = updates.title;
   if (updates.summary !== undefined) patch.summary = updates.summary;
   if (updates.contentMarkdown !== undefined) {
@@ -123,8 +125,8 @@ async function updateArtifactInternal(
 
 export async function deleteArtifactInternal(ctx: MutationCtx, artifactId: Id<"artifacts">): Promise<void> {
   const PAGE_SIZE = 100;
-  let hasMore = true;
-  while (hasMore) {
+  let hasMoreChunks = true;
+  while (hasMoreChunks) {
     const chunks = await ctx.db
       .query("artifactChunks")
       .withIndex("by_artifactId_and_chunkIndex", (q) => q.eq("artifactId", artifactId))
@@ -132,7 +134,18 @@ export async function deleteArtifactInternal(ctx: MutationCtx, artifactId: Id<"a
     for (const chunk of chunks) {
       await ctx.db.delete(chunk._id);
     }
-    hasMore = chunks.length === PAGE_SIZE;
+    hasMoreChunks = chunks.length === PAGE_SIZE;
+  }
+  let hasMoreViews = true;
+  while (hasMoreViews) {
+    const views = await ctx.db
+      .query("artifactViews")
+      .withIndex("by_artifactId", (q) => q.eq("artifactId", artifactId))
+      .take(PAGE_SIZE);
+    for (const view of views) {
+      await ctx.db.delete(view._id);
+    }
+    hasMoreViews = views.length === PAGE_SIZE;
   }
   await ctx.db.delete(artifactId);
 }

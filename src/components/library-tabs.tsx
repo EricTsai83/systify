@@ -1,5 +1,5 @@
 import { memo, useRef, useState } from "react";
-import { BracketsAngleIcon, CaretDownIcon, XIcon } from "@phosphor-icons/react";
+import { XIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import type { ArtifactId, ArtifactListItem } from "@/lib/types";
@@ -155,7 +155,6 @@ export const LibraryTabs = memo(function LibraryTabs({
                     isDropTarget && "ring-1 ring-primary/40",
                   )}
                 >
-                  {artifact ? <ArtifactFormatIcon kind={artifact.kind} /> : null}
                   <span className="min-w-0 truncate">{artifact?.title ?? "Untitled"}</span>
                   <Button
                     type="button"
@@ -194,19 +193,3 @@ export const LibraryTabs = memo(function LibraryTabs({
     </div>
   );
 });
-
-// Architecture diagrams render as Mermaid (HTML/SVG); every other kind is
-// long-form markdown. The tab icon reflects how the artifact is *displayed*
-// in the editor, matching how VS Code keys file icons off the file's format.
-function ArtifactFormatIcon({ kind }: { kind: ArtifactListItem["kind"] }) {
-  const isHtml = kind === "architecture_diagram";
-  const Icon = isHtml ? BracketsAngleIcon : CaretDownIcon;
-  return (
-    <span
-      className={cn("inline-flex shrink-0 items-center justify-center", isHtml ? "text-orange-500" : "text-blue-500")}
-      aria-hidden
-    >
-      <Icon size={14} weight="fill" />
-    </span>
-  );
-}

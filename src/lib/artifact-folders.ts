@@ -1,17 +1,4 @@
 /**
- * "Recently changed" pulse threshold. The navigator marks any artifact
- * whose `_creationTime` is within this window as freshly produced so the
- * user can see *which* artifact a chat reply just generated without
- * scanning the full list. Five minutes balances "I just created this" with
- * "I came back from lunch and forgot which one was new".
- */
-export const RECENT_CHANGE_WINDOW_MS = 5 * 60 * 1000;
-
-export function isRecentlyChanged(timestamp: number, now: number = Date.now()): boolean {
-  return now - timestamp < RECENT_CHANGE_WINDOW_MS;
-}
-
-/**
  * Folder-tree node assembled from the flat `listByRepository` result. The
  * navigator walks this tree to render the collapsible UI; we keep the type
  * narrow so the consumer doesn't accidentally treat a folder as an

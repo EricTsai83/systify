@@ -42,10 +42,23 @@ const artifact = {
   version: 1,
 } as unknown as Doc<"artifacts">;
 
+function makeMutationMock() {
+  // `useArtifactViewState` wraps its mutation with
+  // `.withOptimisticUpdate(...)`. Real Convex mutations carry that
+  // method on the returned callable; the bare `vi.fn()` does not, so
+  // attach a stub that returns the same callable to keep the chain
+  // type-compatible without pulling in Convex's runtime.
+  const mutation = vi.fn() as ReturnType<typeof vi.fn> & {
+    withOptimisticUpdate: (...args: unknown[]) => typeof mutation;
+  };
+  mutation.withOptimisticUpdate = vi.fn().mockReturnValue(mutation);
+  return mutation;
+}
+
 beforeEach(() => {
   useMutationMock.mockReset();
   useQueryMock.mockReset();
-  useMutationMock.mockReturnValue(vi.fn());
+  useMutationMock.mockImplementation(() => makeMutationMock());
   useQueryMock.mockReturnValue([]);
 });
 

@@ -30,6 +30,7 @@ export type ArtifactListItem = Pick<
   | "chunkingStatus"
   | "lastChunkedAt"
   | "lastChunkedVersion"
+  | "updatedAt"
 > & {
   freshness?: ArtifactFreshness;
   importDriftFromLatestSync?: true;
