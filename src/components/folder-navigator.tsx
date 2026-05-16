@@ -8,6 +8,8 @@ import {
   FolderIcon,
   FolderPlusIcon,
   PencilSimpleIcon,
+  PushPinIcon,
+  PushPinSlashIcon,
   TrashIcon,
   XIcon,
 } from "@phosphor-icons/react";
@@ -301,11 +303,13 @@ function FolderTreeBranch({
   );
   const renameFolder = useMutation(api.artifactFolders.rename);
   const removeFolder = useMutation(api.artifactFolders.remove);
+  const setFolderPinned = useMutation(api.artifactFolders.setPinned);
   const [isRenaming, setIsRenaming] = useState(false);
   const [draftName, setDraftName] = useState(node.name);
   const folderArtifacts = artifactsByFolder.get(node.id) ?? EMPTY_ARTIFACTS;
   const childCount = folderArtifacts.length + node.children.length;
   const isSelected = selectedFolderId === (node.id as FolderId);
+  const isPinned = node.pinnedAt !== undefined;
 
   const [isRenamePending, runRename] = useAsyncCallback(async () => {
     const next = draftName.trim();
@@ -330,6 +334,15 @@ function FolderTreeBranch({
     } catch {
       // The mutation surfaces a server error; we leave the folder visible
       // so the user can retry instead of silently failing.
+    }
+  });
+
+  const [isPinPending, runTogglePin] = useAsyncCallback(async () => {
+    try {
+      await setFolderPinned({ folderId: node.id as FolderId, pinned: !isPinned });
+    } catch {
+      // Toggling the pin is non-destructive; if it fails the navigator stays
+      // in the prior state and the user can retry from the menu.
     }
   });
 
@@ -379,7 +392,12 @@ function FolderTreeBranch({
             }}
           >
             <span className="truncate font-medium">{node.name}</span>
-            <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">{childCount}</span>
+            <span className="flex shrink-0 items-center gap-1.5 text-[10px] tabular-nums text-muted-foreground">
+              {isPinned ? (
+                <PushPinIcon size={10} weight="fill" aria-label="Pinned" className="text-muted-foreground" />
+              ) : null}
+              {childCount}
+            </span>
           </button>
         )}
         <DropdownMenu>
@@ -396,6 +414,17 @@ function FolderTreeBranch({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => void runTogglePin()} disabled={isPinPending}>
+              {isPinned ? (
+                <>
+                  <PushPinSlashIcon size={12} weight="bold" /> Unpin
+                </>
+              ) : (
+                <>
+                  <PushPinIcon size={12} weight="bold" /> Pin to top
+                </>
+              )}
+            </DropdownMenuItem>
             <DropdownMenuItem
               onClick={() => {
                 setIsRenaming(true);

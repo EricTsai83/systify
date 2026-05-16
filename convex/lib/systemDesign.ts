@@ -13,13 +13,13 @@ import type { MutationCtx } from "../_generated/server";
  * data but become un-targetable by the generator until reseeded or moved.
  */
 export const SYSTEM_DESIGN_FOLDERS = [
-  { systemKey: "overview", name: "Overview", sortOrder: 1 },
-  { systemKey: "architecture", name: "Architecture", sortOrder: 2 },
-  { systemKey: "data_model", name: "Data Model", sortOrder: 3 },
-  { systemKey: "api", name: "API & Interfaces", sortOrder: 4 },
-  { systemKey: "infrastructure", name: "Infrastructure & Deployment", sortOrder: 5 },
-  { systemKey: "security", name: "Security & Auth", sortOrder: 6 },
-  { systemKey: "operations", name: "Operations & Observability", sortOrder: 7 },
+  { systemKey: "overview", name: "Overview" },
+  { systemKey: "architecture", name: "Architecture" },
+  { systemKey: "data_model", name: "Data Model" },
+  { systemKey: "api", name: "API & Interfaces" },
+  { systemKey: "infrastructure", name: "Infrastructure & Deployment" },
+  { systemKey: "security", name: "Security & Auth" },
+  { systemKey: "operations", name: "Operations & Observability" },
 ] as const;
 
 export type SystemDesignFolderKey = (typeof SYSTEM_DESIGN_FOLDERS)[number]["systemKey"];
@@ -63,7 +63,7 @@ export async function ensureSystemDesignFolders(
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId: args.repositoryId,
       name: seed.name,
-      sortOrder: seed.sortOrder,
+      pinnedAt: Date.now(),
       systemKey: seed.systemKey,
     });
     result.set(seed.systemKey, created);
