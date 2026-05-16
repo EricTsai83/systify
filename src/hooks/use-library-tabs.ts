@@ -139,18 +139,29 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
   // updater early-returns the same object when nothing changed, so
   // React skips the re-render in the no-op case.
   //
-  // The first run is skipped so the cache-seeded `activeArtifactId` can
-  // promote to the URL via the writer below — this is what restores the
-  // last open tab when the user lands on `/library` directly. Subsequent
-  // URL transitions (back/forward, page-level redirect after a bad
-  // artifact id, explicit `closeTab`) clear `activeArtifactId` when the
-  // URL drops it, so state cannot drag the URL back to a stale tab and
-  // start a ping-pong with the page's artifact-validity guard.
+  // First-run policy depends on whether the URL already names an active
+  // artifact. When `activeFromRoute === null`, skip reconciliation so
+  // the cache-seeded `activeArtifactId` can promote to the URL via the
+  // writer below — this is what restores the last open tab when the
+  // user lands on `/library` directly (running reconciliation here
+  // would clear that cache-seeded id because the `activeFromRoute ===
+  // null` branch below treats the URL as authoritative). When
+  // `activeFromRoute !== null`, fall through so the active tab gets
+  // added to `openArtifactIds` — handles direct navigation to
+  // `/library/a/:aid` with no cache, where the seed leaves
+  // `openArtifactIds` empty while `activeArtifactId` is set and the
+  // tab strip would otherwise render nothing.
+  //
+  // Subsequent URL transitions (back/forward, page-level redirect
+  // after a bad artifact id, explicit `closeTab`) clear
+  // `activeArtifactId` when the URL drops it, so state cannot drag
+  // the URL back to a stale tab and start a ping-pong with the page's
+  // artifact-validity guard.
   const hasReconciledFromUrlRef = useRef(false);
   useEffect(() => {
     if (!hasReconciledFromUrlRef.current) {
       hasReconciledFromUrlRef.current = true;
-      return;
+      if (activeFromRoute === null) return;
     }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setState((current) => {

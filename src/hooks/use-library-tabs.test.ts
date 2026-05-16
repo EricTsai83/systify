@@ -126,11 +126,13 @@ describe("useLibraryTabs — URL writer", () => {
     });
 
     expect(result.current.activeArtifactId).toBe(artifactA);
+    expect(result.current.openArtifactIds).toContain(artifactA);
 
     window.history.replaceState({}, "", `/w/${workspaceId}/library`);
     rerender({ active: null });
 
     expect(result.current.activeArtifactId).toBe(null);
+    expect(result.current.openArtifactIds).toContain(artifactA);
 
     act(() => {
       vi.advanceTimersByTime(300);
