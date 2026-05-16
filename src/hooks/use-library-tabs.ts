@@ -138,10 +138,26 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
   // without re-introducing the URL → state oscillation. The `setState`
   // updater early-returns the same object when nothing changed, so
   // React skips the re-render in the no-op case.
+  //
+  // The first run is skipped so the cache-seeded `activeArtifactId` can
+  // promote to the URL via the writer below — this is what restores the
+  // last open tab when the user lands on `/library` directly. Subsequent
+  // URL transitions (back/forward, page-level redirect after a bad
+  // artifact id, explicit `closeTab`) clear `activeArtifactId` when the
+  // URL drops it, so state cannot drag the URL back to a stale tab and
+  // start a ping-pong with the page's artifact-validity guard.
+  const hasReconciledFromUrlRef = useRef(false);
   useEffect(() => {
-    if (activeFromRoute === null) return;
+    if (!hasReconciledFromUrlRef.current) {
+      hasReconciledFromUrlRef.current = true;
+      return;
+    }
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setState((current) => {
+      if (activeFromRoute === null) {
+        if (current.activeArtifactId === null) return current;
+        return { ...current, activeArtifactId: null };
+      }
       if (current.activeArtifactId === activeFromRoute && current.openArtifactIds.includes(activeFromRoute)) {
         return current;
       }

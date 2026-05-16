@@ -111,4 +111,32 @@ describe("useLibraryTabs — URL writer", () => {
     expect(target).toContain("ask=thread_x");
     expect(target).not.toContain("open=");
   });
+
+  test("drops state.activeArtifactId when the URL transitions to the library landing", () => {
+    // Regression for a URL ping-pong: the page-level artifact-validity guard
+    // redirects from `/library/a/<missing>` to `/library` when the artifact
+    // does not exist. If this hook leaves the stale id in state, its writer
+    // re-asserts the bad URL ~200 ms later and the guard redirects again,
+    // flickering forever. The hook must clear `activeArtifactId` so its
+    // next write is `/library`, not `/library/a/<missing>`.
+    window.history.replaceState({}, "", `/w/${workspaceId}/library/a/${artifactA}`);
+
+    const { result, rerender } = renderHook(({ active }) => useLibraryTabs(workspaceId, active), {
+      initialProps: { active: artifactA as ArtifactId | null },
+    });
+
+    expect(result.current.activeArtifactId).toBe(artifactA);
+
+    window.history.replaceState({}, "", `/w/${workspaceId}/library`);
+    rerender({ active: null });
+
+    expect(result.current.activeArtifactId).toBe(null);
+
+    act(() => {
+      vi.advanceTimersByTime(300);
+    });
+
+    const target = navigateMock.mock.calls[navigateMock.mock.calls.length - 1]?.[0] as string;
+    expect(target).toBe(`/w/${workspaceId}/library`);
+  });
 });
