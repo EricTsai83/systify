@@ -64,6 +64,7 @@ vi.mock("@daytona/sdk", () => ({
 import {
   assertSandboxProvisioningConfigured,
   cloneRepositoryInSandbox,
+  deleteSandbox,
   getRemoteSandboxDetails,
   getSandboxState,
   probeLiveSandbox,
@@ -172,6 +173,33 @@ describe("daytona state normalization", () => {
       labels: { app: "systify" },
       state: "error",
     });
+  });
+});
+
+describe("deleteSandbox", () => {
+  beforeEach(() => {
+    process.env.DAYTONA_API_KEY = "test-api-key";
+    getMock.mockReset();
+  });
+
+  afterEach(() => {
+    delete process.env.DAYTONA_API_KEY;
+  });
+
+  // Convex schedules cleanup against `remoteId`s that Daytona may have
+  // already reclaimed (auto-archive/auto-delete TTL, webhook race, retry
+  // after a prior partial success). Treating 404 as success keeps the
+  // contract aligned with idempotent-delete conventions (K8s
+  // `--ignore-not-found`, S3 `DeleteObject`) and prevents the cleanup job
+  // from being marked failed for a benign race.
+  test("treats 404 as success so the Convex/Daytona race does not surface as a failed cleanup", async () => {
+    getMock.mockRejectedValue(new MockDaytonaNotFoundError());
+    await expect(deleteSandbox("remote-already-gone")).resolves.toBeUndefined();
+  });
+
+  test("rethrows non-not-found Daytona errors", async () => {
+    getMock.mockRejectedValue(new MockDaytonaError("upstream blew up", 500));
+    await expect(deleteSandbox("remote-broken")).rejects.toThrow(/upstream blew up/);
   });
 });
 

@@ -11,7 +11,7 @@ import {
 import type { SandboxFsClient, SandboxShellOutcome } from "./chat/sandboxTools";
 import { shouldReadFile, type RepositorySnapshot } from "./lib/repoAnalysis";
 import { buildSandboxName } from "./lib/sandboxNames";
-import { logWarn } from "./lib/observability";
+import { logInfo, logWarn } from "./lib/observability";
 import { LIVE_SOURCE_UNAVAILABLE_MESSAGE } from "./lib/sandboxLiveness";
 import {
   DEFAULT_AUTO_STOP_MINUTES,
@@ -142,8 +142,16 @@ export async function provisionSandbox(options: CreateSandboxOptions): Promise<S
 }
 
 export async function deleteSandbox(remoteId: string) {
-  const sandbox = await getSandbox(remoteId);
-  await sandbox.delete();
+  try {
+    const sandbox = await getSandbox(remoteId);
+    await sandbox.delete();
+  } catch (error) {
+    if (isDaytonaNotFoundError(error)) {
+      logInfo("daytona", "delete_sandbox_already_gone", { remoteId });
+      return;
+    }
+    throw error;
+  }
 }
 
 export async function listSandboxesByLabel(labels: Record<string, string>): Promise<ListedSandbox[]> {
