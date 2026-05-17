@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ARCHIVE_PATH } from "@/route-paths";
+import { ARCHIVE_PATH, RESOURCES_PATH } from "@/route-paths";
 
 /**
  * Compact profile avatar with dropdown menu. Shows only the avatar circle —
@@ -74,9 +74,11 @@ export function ProfileCard() {
             <span>Archive</span>
           </Link>
         </DropdownMenuItem>
-        <DropdownMenuItem disabled title="Coming soon">
-          <Stack weight="bold" />
-          <span>Resources</span>
+        <DropdownMenuItem asChild>
+          <Link to={RESOURCES_PATH}>
+            <Stack weight="bold" />
+            <span>Resources</span>
+          </Link>
         </DropdownMenuItem>
         <DropdownMenuItem disabled title="Coming soon">
           <ChartLineUp weight="bold" />

@@ -110,20 +110,18 @@ export const sweepExpiredSandboxes = internalAction({
             daytonaState,
           });
         } else if (daytonaState === "stopped") {
-          // Still on disk but stopped — proactively delete to free disk cost
-          try {
-            await deleteSandbox(entry.remoteId);
-            logInfo("sweep", "stopped_sandbox_deleted", {
-              sandboxId: entry.sandboxId,
-              remoteId: entry.remoteId,
-            });
-            await ctx.runMutation(internal.ops.markSandboxSwept, {
-              sandboxId: entry.sandboxId as never,
-              newStatus: "archived",
-            });
-          } catch {
-            // Deletion failed, will retry on next sweep
-          }
+          // Still on disk but stopped — proactively delete to free disk cost.
+          // Real failures fall through to the outer catch and surface as
+          // sandbox_reconciliation_failed; the next sweep retries.
+          await deleteSandbox(entry.remoteId);
+          logInfo("sweep", "stopped_sandbox_deleted", {
+            sandboxId: entry.sandboxId,
+            remoteId: entry.remoteId,
+          });
+          await ctx.runMutation(internal.ops.markSandboxSwept, {
+            sandboxId: entry.sandboxId as never,
+            newStatus: "archived",
+          });
         } else if (daytonaState === "started") {
           // Sandbox is somehow still running past TTL — stop it first, delete next sweep
           await stopSandbox(entry.remoteId);

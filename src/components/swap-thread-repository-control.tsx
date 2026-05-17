@@ -13,7 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { RepositoryId, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
 import { toast } from "sonner";
 
 /**
@@ -31,7 +31,7 @@ export function SwapThreadRepositoryControl({
   threadId: ThreadId;
   attachedRepositoryFullName: string;
   candidates: readonly Doc<"repositories">[];
-  onMovedToWorkspace: (workspaceId: WorkspaceId | null) => void;
+  onMovedToWorkspace: (workspaceId: WorkspaceId | null, mode: ThreadMode | null) => void;
 }) {
   const setThreadRepository = useMutation(api.chat.threads.setThreadRepository);
   const [open, setOpen] = useState(false);
@@ -56,7 +56,7 @@ export function SwapThreadRepositoryControl({
       }
       const nextWorkspaceId = result.workspaceId;
       if (nextWorkspaceId) {
-        onMovedToWorkspace(nextWorkspaceId);
+        onMovedToWorkspace(nextWorkspaceId, result.mode);
       }
       setOpen(false);
       setPicked(null);

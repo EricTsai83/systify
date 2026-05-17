@@ -6,7 +6,7 @@ import { getFunctionName } from "convex/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { RepositoryShell } from "./repository-shell";
-import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { OnImportedCallback, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
 
 // Convex's `api`/`anyApi` proxy returns a fresh FunctionReference object on
@@ -56,7 +56,7 @@ vi.mock("@/components/app-sidebar", () => ({
     onImported,
   }: {
     activeWorkspaceId: WorkspaceId | null;
-    onImported: (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => void;
+    onImported: OnImportedCallback;
   }) => (
     <div data-testid="sidebar" data-active-workspace-id={activeWorkspaceId ?? ""}>
       <button
@@ -67,6 +67,7 @@ vi.mock("@/components/app-sidebar", () => ({
             "repo_imported" as RepositoryId,
             "thread_imported" as ThreadId,
             "workspace_imported" as WorkspaceId,
+            "discuss",
           )
         }
       >
@@ -109,16 +110,17 @@ vi.mock("@/components/artifact-panel", () => ({
 }));
 
 vi.mock("@/components/empty-state", () => ({
-  EmptyState: ({
-    onImported,
-  }: {
-    onImported: (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => void;
-  }) => (
+  EmptyState: ({ onImported }: { onImported: OnImportedCallback }) => (
     <button
       type="button"
       data-testid="empty-state"
       onClick={() =>
-        onImported("repo_empty" as RepositoryId, "thread_empty" as ThreadId, "workspace_empty" as WorkspaceId)
+        onImported(
+          "repo_empty" as RepositoryId,
+          "thread_empty" as ThreadId,
+          "workspace_empty" as WorkspaceId,
+          "discuss",
+        )
       }
     >
       Empty import
@@ -511,27 +513,30 @@ describe("RepositoryShell artifact toggle behavior", () => {
 });
 
 describe("RepositoryShell import workspace routing", () => {
-  // Imports navigate the user into the new workspace via the canonical URL
-  // shape; the URL→state sync effect (in the shell) then mirrors the new id
-  // into `activeWorkspaceId` and `userPreferences.lastActiveWorkspaceId`.
-  // These tests assert the navigation contract — the localStorage/preference
-  // side effects are exercised by the workspace reconciliation suite below
-  // (which simulates the URL change those navigations would produce in a
-  // real router).
-  test("sidebar import navigates to the canonical workspace-scoped thread URL", () => {
+  // Imports navigate the user into the new workspace via the canonical
+  // mode-aware URL (`/w/:wid/discuss/:tid` for the default thread the
+  // backend creates on import) so the user lands in the right service mode
+  // on first paint, without bouncing through `LegacyThreadRedirect`. The
+  // URL→state sync effect (in the shell) then mirrors the new id into
+  // `activeWorkspaceId` and `userPreferences.lastActiveWorkspaceId`.
+  // These tests assert the navigation contract — the localStorage/
+  // preference side effects are exercised by the workspace reconciliation
+  // suite below (which simulates the URL change those navigations would
+  // produce in a real router).
+  test("sidebar import navigates to the canonical mode-aware thread URL", () => {
     render(<RepositoryShell urlWorkspaceId={null} urlThreadId={null} />);
 
     fireEvent.click(screen.getByTestId("sidebar-import"));
 
-    expect(navigateMock).toHaveBeenCalledWith("/w/workspace_imported/t/thread_imported");
+    expect(navigateMock).toHaveBeenCalledWith("/w/workspace_imported/discuss/thread_imported");
   });
 
-  test("empty-state import navigates to the canonical workspace-scoped thread URL", () => {
+  test("empty-state import navigates to the canonical mode-aware thread URL", () => {
     render(<RepositoryShell urlWorkspaceId={null} urlThreadId={null} />);
 
     fireEvent.click(screen.getByTestId("empty-state"));
 
-    expect(navigateMock).toHaveBeenCalledWith("/w/workspace_empty/t/thread_empty");
+    expect(navigateMock).toHaveBeenCalledWith("/w/workspace_empty/discuss/thread_empty");
   });
 });
 
@@ -545,8 +550,28 @@ describe("RepositoryShell workspace reconciliation", () => {
   test("DB-wins reconciliation overrides cached workspace once both queries resolve", async () => {
     // Cross-device case: this browser cached `ws_cached`, but the user's
     // canonical selection on another device is `ws_db`. The shell must adopt
-    // `ws_db` and not issue a redundant touchWorkspace (the DB already holds
-    // the right value).
+    // `ws_db` and not issue a redundant workspace-switch touchWorkspace (the
+    // DB already holds the right value).
+    //
+    // `serviceMode: null` mirrors what `useServiceMode` would return on a
+    // transient URL like `/chat` (URL has no `/w/:wid/{discuss,library,lab}`
+    // prefix). Without this override, the suite-wide mock's hard-coded
+    // "lab" would fire the mode-record effect against `ws_cached` during
+    // the brief window before DB-wins reconciliation lands — irrelevant
+    // noise for what this test is actually asserting.
+    useServiceModeMock.mockReturnValue({
+      serviceMode: null,
+      availability: undefined,
+      placeholderAvailability: {
+        availableServiceModes: ["discuss"],
+        defaultServiceMode: "discuss",
+        disabledReasons: {},
+        hasAttachedRepo: false,
+        hasAtLeastOneArtifact: false,
+        askReadiness: { canBind: false, reason: null },
+        labReadiness: { canStart: false, reason: null },
+      },
+    });
     storedActiveWorkspaceId = "ws_cached";
     workspacesResult = [makeWorkspace({ _id: "ws_db" }), makeWorkspace({ _id: "ws_cached" })];
     viewerPreferencesResult = {
@@ -679,5 +704,85 @@ describe("RepositoryShell workspace reconciliation", () => {
     await waitFor(() => {
       expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_b");
     });
+  });
+
+  test("records the URL's settled service mode when it differs from the workspace's stored pick", async () => {
+    // The user lands on a canonical mode URL whose mode differs from what
+    // the workspace last recorded. The shell must fire a touchWorkspace
+    // with `serviceMode` so the next `/chat` → `/w/:wid` redirect lands
+    // the user back here instead of bouncing them to the structural
+    // default — the "Archive → back" round-trip this whole code path
+    // exists to make sticky.
+    useServiceModeMock.mockReturnValue({
+      serviceMode: "lab",
+      availability: {
+        availableServiceModes: ["discuss", "library", "lab"] as const,
+        defaultServiceMode: "library" as const,
+        disabledReasons: {},
+        hasAttachedRepo: true,
+        hasAtLeastOneArtifact: true,
+        askReadiness: { canBind: true, reason: null },
+        labReadiness: { canStart: true, reason: null },
+      },
+      placeholderAvailability: {
+        availableServiceModes: ["discuss"],
+        defaultServiceMode: "discuss",
+        disabledReasons: {},
+        hasAttachedRepo: false,
+        hasAtLeastOneArtifact: false,
+        askReadiness: { canBind: false, reason: null },
+        labReadiness: { canStart: false, reason: null },
+      },
+    });
+    const urlWorkspaceId = "ws_canonical" as WorkspaceId;
+    workspacesResult = [makeWorkspace({ _id: "ws_canonical", lastServiceMode: "library" })];
+    storedActiveWorkspaceId = "ws_canonical";
+
+    render(<RepositoryShell urlWorkspaceId={urlWorkspaceId} urlThreadId={"thread_canonical" as ThreadId} />);
+
+    await waitFor(() => {
+      expect(touchWorkspaceMock).toHaveBeenCalledWith({ workspaceId: "ws_canonical", serviceMode: "lab" });
+    });
+  });
+
+  test("does not re-record when the URL's settled service mode already matches the workspace's stored pick", async () => {
+    // Steady-state: user is already in their preferred mode for this
+    // workspace. The mode-record effect must not fire a redundant write
+    // every render — that would burn DB writes on every URL pathname
+    // tick and undermine the optimistic-update fast path.
+    useServiceModeMock.mockReturnValue({
+      serviceMode: "discuss",
+      availability: {
+        availableServiceModes: ["discuss"] as const,
+        defaultServiceMode: "discuss" as const,
+        disabledReasons: {},
+        hasAttachedRepo: false,
+        hasAtLeastOneArtifact: false,
+        askReadiness: { canBind: false, reason: null },
+        labReadiness: { canStart: false, reason: null },
+      },
+      placeholderAvailability: {
+        availableServiceModes: ["discuss"],
+        defaultServiceMode: "discuss",
+        disabledReasons: {},
+        hasAttachedRepo: false,
+        hasAtLeastOneArtifact: false,
+        askReadiness: { canBind: false, reason: null },
+        labReadiness: { canStart: false, reason: null },
+      },
+    });
+    const urlWorkspaceId = "ws_steady" as WorkspaceId;
+    workspacesResult = [makeWorkspace({ _id: "ws_steady", lastServiceMode: "discuss" })];
+    storedActiveWorkspaceId = "ws_steady";
+
+    render(<RepositoryShell urlWorkspaceId={urlWorkspaceId} urlThreadId={"thread_steady" as ThreadId} />);
+
+    // Give the effect a chance to run (and skip) before asserting.
+    await waitFor(() => {
+      expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_steady");
+    });
+    expect(touchWorkspaceMock).not.toHaveBeenCalledWith(
+      expect.objectContaining({ workspaceId: "ws_steady", serviceMode: "discuss" }),
+    );
   });
 });

@@ -218,7 +218,7 @@ export const createThread = mutation({
       title ??= "New design conversation";
     }
 
-    return await ctx.db.insert("threads", {
+    const threadId = await ctx.db.insert("threads", {
       workspaceId,
       repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
@@ -226,6 +226,11 @@ export const createThread = mutation({
       mode,
       lastMessageAt: Date.now(),
     });
+    // Return the resolved mode alongside the id so the client can route
+    // straight to the canonical mode-aware URL without an extra `db.get`
+    // or duplicating the `requestedMode → mode` normalisation rules
+    // above. Callers that only need the id can ignore the field.
+    return { _id: threadId, mode };
   },
 });
 
@@ -283,7 +288,7 @@ export const createAskThread = mutation({
       }
     }
 
-    return await ctx.db.insert("threads", {
+    const threadId = await ctx.db.insert("threads", {
       workspaceId: args.workspaceId,
       repositoryId: workspace.repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
@@ -294,6 +299,10 @@ export const createAskThread = mutation({
       // and a deliberately-empty user filter both share one shape.
       artifactContext: artifactContext.length > 0 ? artifactContext : undefined,
     });
+    // Mirror `createThread`'s return shape (`{ _id, mode }`) so callers can
+    // route to the canonical mode-aware URL uniformly regardless of which
+    // mutation created the thread.
+    return { _id: threadId, mode: "ask" as const };
   },
 });
 
@@ -374,6 +383,7 @@ export const setThreadRepository = mutation({
       return {
         repositoryId: args.repositoryId,
         workspaceId,
+        mode: nextMode,
         ...(swappedFromRepositoryId ? { swappedFromRepositoryId } : {}),
       };
     }
@@ -382,13 +392,14 @@ export const setThreadRepository = mutation({
     // mode keeps the thread in the same repo-less default state as
     // `createThread`, so a racing `sendMessage` call never sees a stale
     // repo-dependent mode like `docs` / `sandbox`.
+    const detachedMode = getDefaultThreadMode(false);
     const workspaceId = await findHomeWorkspaceId(ctx, identity.tokenIdentifier);
     await ctx.db.patch(args.threadId, {
       workspaceId: workspaceId ?? undefined,
       repositoryId: undefined,
-      mode: getDefaultThreadMode(false),
+      mode: detachedMode,
     });
-    return { repositoryId: null as null, workspaceId };
+    return { repositoryId: null as null, workspaceId, mode: detachedMode };
   },
 });
 

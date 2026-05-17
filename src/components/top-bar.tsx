@@ -16,7 +16,7 @@ import { SwapThreadRepositoryControl } from "@/components/swap-thread-repository
 import { StatusPill } from "@/components/status-pill";
 import { StatusPanel } from "@/components/status-panel";
 import type { AttachedRepositorySummary } from "@/hooks/use-thread-capabilities";
-import type { ArtifactId, SandboxModeStatus, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, SandboxModeStatus, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
 
 export type TopBarRepoDetail = {
   repository: Doc<"repositories"> & {
@@ -79,6 +79,7 @@ export function TopBar({
   isDesktopLayout,
   onSync,
   onViewArtifact,
+  showSystemStatus,
 }: {
   repoDetail?: TopBarRepoDetail;
   threadId: ThreadId | null;
@@ -102,10 +103,29 @@ export function TopBar({
   onRestoreRepo: () => void;
   /** Permanently delete an archived repository. Triggered only from the archived kebab. */
   onPermanentDeleteRepo: () => void;
-  onThreadMovedToWorkspace: (workspaceId: WorkspaceId | null) => void;
+  onThreadMovedToWorkspace: (workspaceId: WorkspaceId | null, mode: ThreadMode | null) => void;
   isDesktopLayout: boolean;
   onSync: () => void;
   onViewArtifact: (artifactId: ArtifactId) => void;
+  /**
+   * Whether the system-status chrome (StatusPill + sandbox badge next to the
+   * title) is allowed to render. Driven from the workspace shell's
+   * `serviceMode !== "discuss"` derivation — the same gate
+   * `isArtifactPanelEnabled` uses, so all repo-aware chrome (artifact panel,
+   * sandbox pill, sandbox badge) appears and disappears together when the
+   * user toggles between Discuss and Library / Lab. Discuss is captioned "no
+   * repo context"; surfacing sync or sandbox state there would be a constant
+   * nag for signals the mode does not touch. Errors are not lost — the moment
+   * the user enters a repo-bound mode the pill repaints with whatever was
+   * suppressed.
+   *
+   * Driven by URL (`useServiceMode`), not by the per-thread `chatMode`, so
+   * the gate survives the Tier 2 redirect from `/w/:wid/discuss` to
+   * `/w/:wid/t/:tid` — once redirected, `chatMode` falls back to the
+   * workspace default ("docs" when a repo is attached) and would no longer
+   * read as "discuss", but the user's intent is still Discuss.
+   */
+  showSystemStatus: boolean;
 }) {
   return (
     <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
@@ -141,7 +161,7 @@ export function TopBar({
       {repoDetail ? (
         <div key={repoDetail.repository._id} className="flex min-w-0 flex-1 items-center gap-2 animate-fade-in">
           <RepoInfoPopover repoDetail={repoDetail} title={repoDetail.repository.sourceRepoFullName} />
-          <RepoStatusIndicator sandbox={repoDetail.sandbox} />
+          {showSystemStatus ? <RepoStatusIndicator sandbox={repoDetail.sandbox} /> : null}
         </div>
       ) : null}
 
@@ -179,7 +199,7 @@ export function TopBar({
       ) : null}
 
       <div className="ml-auto flex items-center gap-1.5">
-        {repoDetail ? (
+        {repoDetail && showSystemStatus ? (
           isDesktopLayout ? (
             // Desktop: anchor a Popover to the pill so the StatusPanel
             // overlays the chat surface only on demand. PopoverTrigger asChild

@@ -11,7 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ImportRepoDialog } from "@/components/import-repo-dialog";
-import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { OnImportedCallback, WorkspaceId } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Workspace selector — a dropdown that shows the current workspace name and
@@ -28,7 +28,7 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
   workspaces: Doc<"workspaces">[] | undefined;
   activeWorkspaceId: WorkspaceId | null;
   onSwitchWorkspace: (id: WorkspaceId) => void;
-  onImported: (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => void;
+  onImported: OnImportedCallback;
 }) {
   const activeWorkspace = workspaces?.find((ws) => ws._id === activeWorkspaceId);
 

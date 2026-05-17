@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useState } from "react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import {
   Navigate,
   Outlet,
@@ -10,13 +10,23 @@ import {
   useRouteError,
   useSearchParams,
 } from "react-router-dom";
+import { api } from "../convex/_generated/api";
 import { AppNotice } from "@/components/app-notice";
 import { ScreenState } from "@/components/screen-state";
 import { Button } from "@/components/ui/button";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { hasWorkOSSessionHint } from "@/lib/auth-session-hint";
 import { readString, removeKey, writeString } from "@/lib/storage";
+import type { ThreadId, WorkspaceId } from "@/lib/types";
 import { useConvexAuthStatus } from "@/providers/convex-provider-with-auth-kit";
-import { AUTH_CALLBACK_PATH, DEFAULT_AUTHENTICATED_PATH, LANDING_PATH, isProtectedReturnTo } from "@/route-paths";
+import {
+  AUTH_CALLBACK_PATH,
+  DEFAULT_AUTHENTICATED_PATH,
+  LANDING_PATH,
+  isProtectedReturnTo,
+  modeAwareThreadPath,
+  workspacePath,
+} from "@/route-paths";
 import { HomePage } from "@/pages/home";
 
 const MAX_CALLBACK_ERROR_DESCRIPTION_LENGTH = 240;
@@ -103,9 +113,18 @@ export function ProtectedLayout() {
     return <Navigate to={LANDING_PATH} replace />;
   }
 
+  // SidebarProvider lives here, above the route Outlet, so it stays mounted
+  // across protected-route navigation. With it inside each page, navigating
+  // from a page that renders Sidebar (/chat, /discuss, /library, /lab) into
+  // one that doesn't (/archive, /resources) unmounted the provider mid-open
+  // and stranded Radix's mobile-Sheet overlay + scroll lock on the
+  // destination page. Hoisting it lets the pathname effect inside the
+  // provider observe the route change and close the Sheet cleanly.
   return (
     <Suspense fallback={<RouteLoadingScreen description="Loading your chat workspace." />}>
-      <Outlet />
+      <SidebarProvider>
+        <Outlet />
+      </SidebarProvider>
     </Suspense>
   );
 }
@@ -255,6 +274,58 @@ export function LibraryAskLegacyRedirect() {
   }
   const base = `/w/${workspaceId}/library`;
   const target = threadId ? `${base}?ask=${threadId}` : base;
+  return <Navigate to={target} replace />;
+}
+
+/**
+ * Legacy mode-agnostic thread URL `/w/:wid/t/:tid`. In-app navigation now
+ * goes straight to canonical mode-aware URLs (every callsite knows the
+ * thread's mode at the moment it routes — `WorkspaceThreadsRail` forwards
+ * `thread.mode`, freshly-created threads carry the mode through the
+ * mutation return value, repo imports carry it through `defaultThreadMode`).
+ * This redirect therefore only services genuinely stale bookmarks and
+ * external links saved before the canonical-URL switchover.
+ *
+ * It still earns its place: without it, a stale bookmark would land
+ * `useServiceMode` in `null` and the shell would paint nothing useful.
+ * The component reads the thread's stored mode, computes the matching
+ * canonical URL via `modeAwareThreadPath`, and `<Navigate replace>`s the
+ * browser there. Renders no shell chrome while the `getThreadContext`
+ * query is in flight so the user does not see mode-dependent surfaces
+ * paint and then unpaint as the redirect resolves.
+ *
+ * Falls back to the workspace landing when the thread cannot be loaded
+ * (deleted, no access) — same recovery the shell-side missing-thread
+ * effect applies, so behaviour stays consistent regardless of which
+ * surface detected the dead URL first.
+ */
+export function LegacyThreadRedirect() {
+  const { workspaceId, threadId } = useParams<{ workspaceId: string; threadId: string }>();
+  const wid = (workspaceId ?? null) as WorkspaceId | null;
+  const tid = (threadId ?? null) as ThreadId | null;
+
+  const threadContext = useQuery(api.threadContext.getThreadContext, tid ? { threadId: tid } : "skip");
+
+  if (!wid || !tid) {
+    return <Navigate to={DEFAULT_AUTHENTICATED_PATH} replace />;
+  }
+
+  if (threadContext === undefined) {
+    return <RouteLoadingScreen description="Loading thread…" />;
+  }
+
+  if (threadContext === null) {
+    // Thread is gone or inaccessible — bounce to the workspace landing,
+    // which will forward to a surviving thread or render the empty state.
+    return <Navigate to={workspacePath(wid)} replace />;
+  }
+
+  // Delegate the (thread.mode → canonical URL) mapping to the shared
+  // `modeAwareThreadPath` helper so this redirect and every in-app
+  // navigation stay in lockstep — adding a new thread mode is a single
+  // edit in `route-paths.ts` instead of two.
+  const target = modeAwareThreadPath(wid, tid, threadContext.thread.mode);
+
   return <Navigate to={target} replace />;
 }
 

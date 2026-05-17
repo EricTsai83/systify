@@ -91,6 +91,74 @@ export const listRepositories = query({
 });
 
 /**
+ * Resources page — cross-workspace inventory of the viewer's active
+ * repositories joined with their latest sandbox + sync status.
+ *
+ * One query feeds the page so the client renders without an N+1 over
+ * `getRepositoryDetail`. We re-use the same helpers the per-repo TopBar
+ * status pill consumes (`getSandboxModeStatus`, the remote-sha diff for
+ * `hasRemoteUpdates`) so the Resources cards and the per-thread chrome
+ * never disagree about what a given sandbox is doing.
+ *
+ * Workspace ids ride along so each row can link straight into the right
+ * `/w/:wid` URL — Resources is a navigation surface, not a control plane.
+ * Stop / restart sandbox affordances stay on the per-workspace TopBar
+ * where the user already has the full context.
+ */
+export const listResourceInventory = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await requireViewerIdentity(ctx);
+
+    const repositories = await ctx.db
+      .query("repositories")
+      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
+      )
+      .order("desc")
+      .take(REPOSITORY_LIST_TAKE);
+
+    const activeRepositories = repositories.filter((repo) => repo.archivedAt === undefined);
+
+    // Per-repo point lookup against `by_ownerTokenIdentifier_and_repositoryId`.
+    // The data-model invariant is one workspace per (owner, repo); a compound-
+    // key index hit is cheaper than the full-workspace scan + map-build the
+    // previous implementation did, and the page no longer silently truncates
+    // when the viewer has more workspaces than the `repositories.take()`
+    // limit. Issued in parallel alongside the sandbox `get` so both round
+    // trips share one network batch.
+    const inventory = await Promise.all(
+      activeRepositories.map(async (repo) => {
+        const [sandbox, workspace] = await Promise.all([
+          repo.latestSandboxId ? ctx.db.get(repo.latestSandboxId) : Promise.resolve(null),
+          ctx.db
+            .query("workspaces")
+            .withIndex("by_ownerTokenIdentifier_and_repositoryId", (q) =>
+              q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("repositoryId", repo._id),
+            )
+            .unique(),
+        ]);
+        const sandboxModeStatus = getSandboxModeStatus(sandbox);
+        const hasRemoteUpdates =
+          !!repo.latestRemoteSha && !!repo.lastSyncedCommitSha && repo.latestRemoteSha !== repo.lastSyncedCommitSha;
+        return {
+          repositoryId: repo._id,
+          workspaceId: workspace?._id ?? null,
+          fullName: repo.sourceRepoFullName,
+          importStatus: repo.importStatus,
+          lastImportedAt: repo.lastImportedAt,
+          hasRemoteUpdates,
+          sandboxModeStatus,
+          sandbox: sandbox ? { status: sandbox.status, ttlExpiresAt: sandbox.ttlExpiresAt } : null,
+        };
+      }),
+    );
+
+    return inventory;
+  },
+});
+
+/**
  * Paginated archive listing with optional full-text search over
  * `sourceRepoFullName`. Two execution paths:
  *
@@ -355,24 +423,29 @@ export const createRepositoryImport = mutation({
     });
 
     const defaultThread = defaultThreadId ? await ctx.db.get(defaultThreadId) : null;
+    let defaultThreadMode: Doc<"threads">["mode"];
     if (
       !defaultThread ||
       defaultThread.ownerTokenIdentifier !== identity.tokenIdentifier ||
       defaultThread.repositoryId !== repositoryId
     ) {
+      // Matches `resolveChatModes(true, 'none' | 'provisioning' | …).defaultMode`
+      // for any repo-attached thread, so the auto-created default thread
+      // and a manually-created one start on the same mode.
+      defaultThreadMode = getDefaultThreadMode(true);
       defaultThreadId = await ctx.db.insert("threads", {
         workspaceId,
         repositoryId,
         ownerTokenIdentifier: identity.tokenIdentifier,
         title: `${makeRepositoryTitle(repository.sourceRepoFullName)} chat`,
-        // Matches `resolveChatModes(true, 'none' | 'provisioning' | …).defaultMode`
-        // for any repo-attached thread, so the auto-created default thread
-        // and a manually-created one start on the same mode.
-        mode: getDefaultThreadMode(true),
+        mode: defaultThreadMode,
         lastMessageAt: Date.now(),
       });
-    } else if (defaultThread.workspaceId !== workspaceId) {
-      await ctx.db.patch(defaultThread._id, { workspaceId });
+    } else {
+      defaultThreadMode = defaultThread.mode;
+      if (defaultThread.workspaceId !== workspaceId) {
+        await ctx.db.patch(defaultThread._id, { workspaceId });
+      }
     }
 
     await ctx.db.patch(repositoryId, { accessMode, defaultThreadId });
@@ -384,11 +457,16 @@ export const createRepositoryImport = mutation({
       branch: args.branch ?? parsed.branch ?? repository.defaultBranch,
     });
 
+    // `defaultThreadMode` rides alongside `defaultThreadId` so the import
+    // callback can route the user straight to the canonical mode-aware URL
+    // (`/w/:wid/discuss/:tid`) instead of bouncing through the legacy
+    // `/w/:wid/t/:tid` redirect for a flash of unmounted chrome.
     return {
       repositoryId,
       importId,
       jobId,
       defaultThreadId,
+      defaultThreadMode,
       workspaceId,
     };
   },

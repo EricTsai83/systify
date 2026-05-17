@@ -18,10 +18,12 @@ import { suggestMode } from "@/lib/suggest-mode";
 import type {
   ActiveMessageStream,
   ArtifactId,
-  RepositoryId,
-  ThreadId,
   ChatMode,
+  OnImportedCallback,
+  RepositoryId,
   SandboxModeStatus,
+  ThreadId,
+  ThreadMode,
   WorkspaceId,
 } from "@/lib/types";
 
@@ -67,8 +69,8 @@ type ChatPanelProps = {
   /** All repositories the viewer owns — used to populate the attach dropdown. */
   availableRepositories?: ReadonlyArray<Doc<"repositories">>;
   /** Callback after a new repository is imported via the inline dialog. */
-  onImported?: (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => void;
-  onThreadMovedToWorkspace?: (workspaceId: WorkspaceId | null) => void;
+  onImported?: OnImportedCallback;
+  onThreadMovedToWorkspace?: (workspaceId: WorkspaceId | null, mode: ThreadMode | null) => void;
   /**
    * Plan 02: clicking an inline `[A#]` citation in an assistant reply forwards
    * the resolved artifact id to this callback. The shell uses it to open

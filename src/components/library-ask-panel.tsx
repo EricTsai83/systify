@@ -209,7 +209,7 @@ export function LibraryAskPanel({
           artifactContext: activeArtifactId ? [activeArtifactId] : undefined,
           title: "Library Ask",
         });
-        targetThreadId = created as ThreadId;
+        targetThreadId = created._id;
         createdNew = true;
       }
       await sendMessage({

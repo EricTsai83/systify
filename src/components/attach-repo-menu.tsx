@@ -13,7 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { RepositoryId, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
 
 /**
  * One-shot CTA for binding a no-repo thread to a repository workspace,
@@ -39,7 +39,7 @@ export function AttachRepoMenu({
 }: {
   threadId: ThreadId;
   availableRepositories: ReadonlyArray<Doc<"repositories">>;
-  onMovedToWorkspace: (workspaceId: WorkspaceId | null) => void;
+  onMovedToWorkspace: (workspaceId: WorkspaceId | null, mode: ThreadMode | null) => void;
 }) {
   const setThreadRepository = useMutation(api.chat.threads.setThreadRepository);
   // Latest-request-wins: a fast user clicking two different repos in rapid
@@ -67,7 +67,7 @@ export function AttachRepoMenu({
     try {
       const result = await setThreadRepository({ threadId, repositoryId: repoId });
       if (latestRequestRef.current === requestId) {
-        onMovedToWorkspace(result.workspaceId);
+        onMovedToWorkspace(result.workspaceId, result.mode);
       }
     } catch (err) {
       if (latestRequestRef.current === requestId) {

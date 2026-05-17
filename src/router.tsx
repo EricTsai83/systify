@@ -3,6 +3,7 @@ import {
   AppLayout,
   AuthCallbackRoute,
   LandingRoute,
+  LegacyThreadRedirect,
   LibraryAskLegacyRedirect,
   NotFoundRoute,
   ProtectedLayout,
@@ -18,6 +19,11 @@ async function loadChatRoute() {
 async function loadArchiveRoute() {
   const module = await import("@/pages/archive");
   return { Component: module.ArchivePage };
+}
+
+async function loadResourcesRoute() {
+  const module = await import("@/pages/resources");
+  return { Component: module.ResourcesPage };
 }
 
 /**
@@ -61,12 +67,15 @@ const protectedRoutes: RouteObject[] = [
   // the URL — used by the workspace switcher and as the canonical destination
   // when a thread URL no longer resolves but its workspace still exists.
   { path: PROTECTED_ROUTE_SEGMENTS.workspace, lazy: loadChatRoute },
-  // `/w/:workspaceId/t/:threadId` is the canonical thread URL. Encoding the
-  // workspace id in the URL means the shell can derive `repository.repositoryId`
-  // synchronously from the cached `listWorkspaces` query — no `getThreadContext`
-  // round-trip required to know which repo's chrome to render. PRD #19 user
-  // story 25 ("stable, shareable URLs for design threads").
-  { path: PROTECTED_ROUTE_SEGMENTS.workspaceThread, lazy: loadChatRoute },
+  // `/w/:workspaceId/t/:threadId` is the legacy mode-agnostic thread URL —
+  // kept reachable only for stale bookmarks and external links saved
+  // before the canonical-URL switchover; no in-app code generates it now
+  // (every navigation surface routes via `modeAwareThreadPath`). The
+  // redirect canonicalises onto the service-mode-aware path
+  // (`/w/:wid/discuss/:tid`, `/w/:wid/lab/:tid`, or
+  // `/w/:wid/library?ask=:tid`) so the URL itself carries the user's mode
+  // and `useServiceMode` reads it directly without a placeholder fallback.
+  { path: PROTECTED_ROUTE_SEGMENTS.workspaceThread, Component: LegacyThreadRedirect },
   // Three-mode restructure — top-level service modes live under their own
   // path prefixes. The page components wrap the shared workspace chrome
   // (sidebar, top-bar) and pivot the inset content based on mode.
@@ -83,6 +92,7 @@ const protectedRoutes: RouteObject[] = [
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceLab, lazy: loadLabRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceLabThread, lazy: loadLabRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.archive, lazy: loadArchiveRoute },
+  { path: PROTECTED_ROUTE_SEGMENTS.resources, lazy: loadResourcesRoute },
 ];
 
 export const appRoutes: RouteObject[] = [

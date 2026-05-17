@@ -25,13 +25,23 @@ const NULL_RESOLUTION = {
  * service-mode resolver.
  *
  * Returns:
- *   - `serviceMode` — the mode the URL is currently rendering (`discuss`,
- *     `library`, or `lab`). The URL is the source of truth; this hook
- *     just normalizes it. Falls back to the resolver's default for the
- *     `/w/:wid` plain workspace landing.
- *   - `availability` — the resolver output keyed by service mode, used
- *     by the switcher to decide which buttons to grey out and the
- *     tooltip to render.
+ *   - `serviceMode` — the mode the URL is currently rendering, or `null` if
+ *     the URL is a transient / non-canonical one (`/chat`, `/w/:wid`,
+ *     `/w/:wid/t/:tid`). Callers that gate chrome on the user's "current
+ *     mode" should treat `null` as "no mode chrome yet" — never paint
+ *     mode-dependent surfaces (StatusPill, ArtifactPanel) before the URL
+ *     settles on a canonical `/w/:wid/{discuss,library,lab}/...` path.
+ *     This eliminates the flash that used to happen when transient URLs
+ *     briefly resolved to the workspace's default mode (e.g. "library"
+ *     for a repo-attached workspace) before the canonicalising redirect
+ *     landed on a legacy `/t/:tid` URL where the placeholder collapsed
+ *     back to "discuss".
+ *   - `availability` — the resolver output keyed by service mode, used by
+ *     the switcher to decide which buttons to grey out, by the workspace
+ *     shell to decide which mode to redirect transient URLs to, and the
+ *     tooltip to render. Independent of `serviceMode` — the URL tells us
+ *     what's currently displayed; availability tells us what the
+ *     workspace's *intended* default is.
  *
  * Callers should treat `availability === undefined` as "loading" and
  * defer rendering disabled-state tooltips until it lands. Returning
@@ -45,37 +55,33 @@ export function useServiceMode(workspaceId: WorkspaceId | null) {
   const params = useParams<{ workspaceId?: string; threadId?: string; artifactId?: string }>();
   const availability = useQuery(api.serviceModeEligibility.evaluate, workspaceId ? { workspaceId } : "skip");
 
-  const serviceMode = useMemo<ServiceMode>(() => {
+  const serviceMode = useMemo<ServiceMode | null>(() => {
     // The URL prefix tells us which mode is mounted. We match the path
     // segment after the workspace id; query params (`?ask=1`, `?open=…`)
-    // do not change the service-mode bucket. `/w/:wid` (no trailing
-    // segment) falls through to the resolver default; the workspace
-    // shell will redirect to the canonical URL once it knows the
-    // default.
+    // do not change the service-mode bucket.
+    //
+    // Non-canonical URLs (`/chat`, `/w/:wid` workspace landing, and the
+    // legacy `/w/:wid/t/:tid` thread URL) return `null`: they are
+    // transient stops on the canonicalisation chain and have no settled
+    // mode of their own. The workspace shell consults `availability` for
+    // its redirect target; chrome consumers gate on a non-null mode so
+    // the StatusPill / ArtifactPanel only paint once the URL settles.
     const path = location.pathname;
-    if (params.workspaceId) {
-      const prefix = `/w/${params.workspaceId}`;
-      if (path === prefix || path === `${prefix}/`) {
-        return availability?.defaultServiceMode ?? NULL_RESOLUTION.defaultServiceMode;
-      }
-      if (path.startsWith(`${prefix}/discuss`)) {
-        return "discuss";
-      }
-      if (path.startsWith(`${prefix}/library`)) {
-        return "library";
-      }
-      if (path.startsWith(`${prefix}/lab`)) {
-        return "lab";
-      }
-      // Legacy `/t/:tid` and `/a/:aid` URLs route to a thread-mode-
-      // dependent service mode — the workspace shell still owns that
-      // redirect (Phase 1.4 keeps them functional). Surfacing
-      // `discuss` as the placeholder keeps the switcher from blinking
-      // into a "no mode active" state during the redirect window.
+    if (!params.workspaceId) {
+      return null;
+    }
+    const prefix = `/w/${params.workspaceId}`;
+    if (path.startsWith(`${prefix}/discuss`)) {
       return "discuss";
     }
-    return availability?.defaultServiceMode ?? NULL_RESOLUTION.defaultServiceMode;
-  }, [location.pathname, params.workspaceId, availability?.defaultServiceMode]);
+    if (path.startsWith(`${prefix}/library`)) {
+      return "library";
+    }
+    if (path.startsWith(`${prefix}/lab`)) {
+      return "lab";
+    }
+    return null;
+  }, [location.pathname, params.workspaceId]);
 
   return {
     serviceMode,

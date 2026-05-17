@@ -1,24 +1,23 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import type { OptimisticLocalStore } from "convex/browser";
-import type { Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { AppSidebar } from "@/components/app-sidebar";
 import { LibraryShell } from "@/components/library-shell";
 import { ScreenState } from "@/components/screen-state";
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
 import {
   DEFAULT_AUTHENTICATED_PATH,
   discussPath,
   libraryPath,
+  modeAwareThreadPath,
   withLibraryAskParam,
   workspacePath,
-  workspaceThreadPath,
 } from "@/route-paths";
-import type { ArtifactId, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, RepositoryId, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
 import { writeString } from "@/lib/storage";
+import { applyTouchWorkspaceOptimistic } from "@/lib/workspace-mutations";
 import { toast } from "sonner";
 
 const ACTIVE_WORKSPACE_STORAGE_KEY = "systify.activeWorkspaceId";
@@ -69,17 +68,13 @@ export function LibraryPage() {
     );
   }
 
-  return (
-    <SidebarProvider>
-      <LibraryWorkspace workspaceId={urlWorkspaceId} artifactId={urlArtifactId} askThreadId={urlAskThreadId} />
-    </SidebarProvider>
-  );
+  return <LibraryWorkspace workspaceId={urlWorkspaceId} artifactId={urlArtifactId} askThreadId={urlAskThreadId} />;
 }
 
 /**
  * Inner shell that owns the workspace activation effect and renders the
- * Library shell. Split from the outer page so {@link SidebarProvider} can
- * mount before any sidebar-aware hook runs.
+ * Library shell. Split from the outer page so the expensive workspace +
+ * artifact queries skip the missing-workspace early return path.
  */
 function LibraryWorkspace({
   workspaceId,
@@ -102,12 +97,18 @@ function LibraryWorkspace({
   );
 
   // Persist workspace activity so re-entering /chat lands the user back
-  // on this workspace. Mirrors the RepositoryShell behaviour without
-  // pulling in its 1000+ line state graph.
+  // on this workspace, and record `serviceMode: "library"` so the next
+  // `/chat → /w/:wid → canonical mode URL` redirect returns the user to
+  // Library instead of bouncing them to the workspace's structural
+  // default (the "Archive → back" round-trip the `lastServiceMode` field
+  // exists to make sticky for *every* mode, not just Discuss/Lab whose
+  // shell happens to live in `repository-shell.tsx`). The mutation
+  // short-circuits when the stored value already matches, so this is a
+  // no-op write on subsequent renders within Library.
   useEffect(() => {
     if (!workspaceId) return;
     writeString(ACTIVE_WORKSPACE_STORAGE_KEY, workspaceId);
-    void touchWorkspace({ workspaceId }).catch(() => {});
+    void touchWorkspace({ workspaceId, serviceMode: "library" }).catch(() => {});
   }, [touchWorkspace, workspaceId]);
 
   const currentWorkspace = useMemo(
@@ -159,9 +160,18 @@ function LibraryWorkspace({
     toast.error(message);
   }, []);
   const handleImported = useCallback(
-    (_repoId: RepositoryId, threadId: ThreadId | null, importedWorkspaceId: WorkspaceId) => {
-      if (threadId) {
-        void navigate(workspaceThreadPath(importedWorkspaceId, threadId));
+    (
+      _repoId: RepositoryId,
+      threadId: ThreadId | null,
+      importedWorkspaceId: WorkspaceId,
+      threadMode: ThreadMode | null,
+    ) => {
+      // The freshly-imported workspace's default thread is always Discuss-
+      // sub-mode (matches the backend's `getDefaultThreadMode(true)` pick).
+      // Route straight to the canonical mode-aware URL so the user does not
+      // see the legacy redirect's loading screen flash.
+      if (threadId && threadMode) {
+        void navigate(modeAwareThreadPath(importedWorkspaceId, threadId, threadMode));
       } else {
         void navigate(libraryPath(importedWorkspaceId));
       }
@@ -248,26 +258,4 @@ function LibraryWorkspace({
       </SidebarInset>
     </>
   );
-}
-
-/**
- * Optimistic mirror for `touchWorkspace`. Same behaviour as the helper
- * in `repository-shell.tsx`; duplicated here so the Library page does
- * not have to import the heavy shell just to reuse one helper.
- */
-function applyTouchWorkspaceOptimistic(store: OptimisticLocalStore, args: { workspaceId: Id<"workspaces"> }) {
-  const now = Date.now();
-  for (const { args: queryArgs } of store.getAllQueries(api.userPreferences.getViewerPreferences)) {
-    store.setQuery(api.userPreferences.getViewerPreferences, queryArgs, {
-      lastActiveWorkspaceId: args.workspaceId,
-      lastActiveWorkspaceUpdatedAt: now,
-    });
-  }
-  for (const { args: queryArgs, value } of store.getAllQueries(api.workspaces.listWorkspaces)) {
-    if (value === undefined) continue;
-    const updated = value
-      .map((ws) => (ws._id === args.workspaceId ? { ...ws, lastAccessedAt: now } : ws))
-      .sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
-    store.setQuery(api.workspaces.listWorkspaces, queryArgs, updated);
-  }
 }

@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { ImportRepoDialog } from "@/components/import-repo-dialog";
-import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { OnImportedCallback } from "@/lib/types";
 
 const EMPTY_STATE_OWL = ["   ^...^   ", "  / o,o \\  ", "  |):::(|  ", "====w=w===="].join("\n");
 
@@ -23,7 +23,7 @@ export function EmptyState({
   isStartingConversation = false,
 }: {
   onStartConversation: () => void;
-  onImported: (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => void;
+  onImported: OnImportedCallback;
   isStartingConversation?: boolean;
 }) {
   return (

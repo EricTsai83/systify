@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { serviceModeValidator } from "./lib/serviceMode";
 import { systemDesignKindValidator } from "./lib/systemDesign";
 
 const repositoryStatus = v.union(
@@ -176,6 +177,16 @@ export default defineSchema({
     name: v.string(),
     color: workspaceColor,
     lastAccessedAt: v.number(),
+    /**
+     * Last service mode the user landed on inside this workspace
+     * (discuss / library / lab). The workspace-landing redirect
+     * (`/chat` → `/w/:wid` → canonical mode URL) consults this so the
+     * user comes back to the mode they were last in, instead of the
+     * workspace's structural default. Optional because pre-existing
+     * workspaces don't have it set yet; the redirect falls back to
+     * `availability.defaultServiceMode` when missing.
+     */
+    lastServiceMode: v.optional(serviceModeValidator),
   })
     .index("by_ownerTokenIdentifier_and_lastAccessedAt", ["ownerTokenIdentifier", "lastAccessedAt"])
     .index("by_ownerTokenIdentifier_and_repositoryId", ["ownerTokenIdentifier", "repositoryId"]),

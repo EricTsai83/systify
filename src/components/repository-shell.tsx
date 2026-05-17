@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import type { OptimisticLocalStore } from "convex/browser";
 import { ArchiveIcon, ArrowCounterClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
-import type { Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
@@ -27,28 +25,40 @@ import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
 import type {
   ArtifactId,
+  ChatMode,
   RepositoryId,
+  SandboxModeStatus,
   ServiceMode,
   ThreadId,
+  ThreadMode,
   WorkspaceId,
-  ChatMode,
-  SandboxModeStatus,
 } from "@/lib/types";
 import { toUserErrorMessage } from "@/lib/errors";
 import { readString, removeKey, writeString } from "@/lib/storage";
 import { cn } from "@/lib/utils";
-import { DEFAULT_AUTHENTICATED_PATH, libraryArtifactPath, workspacePath, workspaceThreadPath } from "@/route-paths";
+import { applyTouchWorkspaceOptimistic } from "@/lib/workspace-mutations";
+import {
+  DEFAULT_AUTHENTICATED_PATH,
+  discussPath,
+  labPath,
+  libraryArtifactPath,
+  libraryPath,
+  modeAwareThreadPath,
+  withLibraryAskParam,
+  workspacePath,
+} from "@/route-paths";
 
 type RepositoryWorkspaceStatus = "initializing" | "no-repo" | "ready";
 const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
 
 /**
- * Service-mode → thread-mode mapping for the most-recent-thread redirect.
- * Library has its own shell and never routes through RepositoryShell, so
- * the table only covers Discuss and Lab; falling through to "discuss"
- * gives `/chat` and `/w/:wid` (where the URL carries no service-mode
- * suffix and `useServiceMode` returns the workspace's default) a safe
- * landing mode.
+ * Service-mode → thread-mode mapping for the workspace-landing
+ * most-recent-thread query. Each service mode owns one thread mode
+ * (Discuss → discuss threads, Library → ask threads, Lab → lab threads);
+ * the workspace shell scopes the listThreads query by the *intended*
+ * service mode (URL-derived when on a canonical mode path, otherwise
+ * `availability.defaultServiceMode`) so the redirect lands on a thread
+ * the user expects to see in the destination mode.
  */
 const SERVICE_MODE_TO_REDIRECT_THREAD_MODE: Record<ServiceMode, "discuss" | "ask" | "lab"> = {
   discuss: "discuss",
@@ -70,40 +80,6 @@ const SERVICE_MODE_TO_REDIRECT_THREAD_MODE: Record<ServiceMode, "discuss" | "ask
 const MOBILE_DRAWER_HEIGHT_CLASS = "h-[95dvh] data-[vaul-drawer-direction=bottom]:max-h-[95dvh]";
 
 const ACTIVE_WORKSPACE_STORAGE_KEY = "systify.activeWorkspaceId";
-
-/**
- * Optimistic mirror of the server-side `touchWorkspace` mutation. Defined at
- * module scope (not inside the component) so React's purity rules treat the
- * `Date.now()` call as a runtime concern rather than memoization-time impurity,
- * and so the function reference is stable for `withOptimisticUpdate`.
- *
- * It updates the same two pieces of state the real mutation touches:
- *   1. `userPreferences.lastActiveWorkspaceId` — keeps the canonical
- *      "current workspace" pointer aligned with the user's intent so the
- *      reconciliation effect in `RepositoryShell` doesn't see a stale DB
- *      snapshot during the in-flight window.
- *   2. `workspaces.lastAccessedAt` (with a re-sort) — snaps the sidebar's
- *      most-recent ordering into place immediately. The DB index is
- *      descending on `lastAccessedAt`, so we sort the same way.
- */
-function applyTouchWorkspaceOptimistic(store: OptimisticLocalStore, args: { workspaceId: Id<"workspaces"> }) {
-  const now = Date.now();
-
-  for (const { args: queryArgs } of store.getAllQueries(api.userPreferences.getViewerPreferences)) {
-    store.setQuery(api.userPreferences.getViewerPreferences, queryArgs, {
-      lastActiveWorkspaceId: args.workspaceId,
-      lastActiveWorkspaceUpdatedAt: now,
-    });
-  }
-
-  for (const { args: queryArgs, value } of store.getAllQueries(api.workspaces.listWorkspaces)) {
-    if (value === undefined) continue;
-    const updated = value
-      .map((ws) => (ws._id === args.workspaceId ? { ...ws, lastAccessedAt: now } : ws))
-      .sort((a, b) => b.lastAccessedAt - a.lastAccessedAt);
-    store.setQuery(api.workspaces.listWorkspaces, queryArgs, updated);
-  }
-}
 
 /**
  * URL ↔ workspace-state bridge. The route layer (`/chat`, `/w/:workspaceId`,
@@ -350,6 +326,25 @@ export function RepositoryShell({
    */
   const currentWorkspaceId: WorkspaceId | null = urlWorkspaceId ?? activeWorkspaceId;
 
+  /*
+   * Resolved workspace row for `currentWorkspaceId`. Defined here (rather
+   * than alongside the repo-id derivation lower in the component) because
+   * the Tier 2 redirect just below needs `lastServiceMode` off this row to
+   * decide where to send the user. `workspaces` is `undefined` until the
+   * query hydrates; treat that as "no row yet" so consumers fall through
+   * to their fallbacks rather than failing closed.
+   *
+   * Memoised so the object identity is stable across renders where
+   * `workspaces` ticks but the relevant row didn't change — the mode-record
+   * effect's dependency list watches this value, and re-running it on every
+   * subscription push (only to short-circuit on the identity guard) burns
+   * CPU and obscures the dep graph.
+   */
+  const currentWorkspace = useMemo(
+    () => (currentWorkspaceId ? (workspaces?.find((ws) => ws._id === currentWorkspaceId) ?? null) : null),
+    [workspaces, currentWorkspaceId],
+  );
+
   // RepositoryShell is mounted by Chat, Discuss, and Lab — three of the
   // service modes. The redirect must scope to threads of the mode the
   // user is currently in, otherwise a Library Ask thread (mode="ask")
@@ -357,17 +352,61 @@ export function RepositoryShell({
   // landing and the user would silently end up rendering an Ask thread
   // inside the Discuss chat panel. Library has its own shell and never
   // routes through here.
-  const { serviceMode } = useServiceMode(currentWorkspaceId);
-  const redirectThreadMode = SERVICE_MODE_TO_REDIRECT_THREAD_MODE[serviceMode];
+  //
+  // `serviceMode` is URL-derived (or `null` on transient URLs like
+  // `/chat`, `/w/:wid`, `/w/:wid/t/:tid`); we use it to gate chrome that
+  // should only appear once the URL settles on a canonical mode path.
+  // `intendedServiceMode` is what the workspace *should* land in once the
+  // canonicalising redirect resolves. Resolution order:
+  //
+  //   1. URL-derived `serviceMode` — wins whenever the URL has settled on
+  //      a canonical mode path. The user is unambiguously *in* that mode.
+  //   2. Workspace's `lastServiceMode` — the mode the user was last in
+  //      inside this workspace, persisted by the record-on-settle effect
+  //      below. This is what makes "Archive → back to chat" return the
+  //      user to the mode they came from, instead of bouncing them to the
+  //      workspace's structural default.
+  //   3. `availability.defaultServiceMode` — the resolver's structural
+  //      pick for a workspace with no recorded user preference yet (e.g.
+  //      a freshly imported repo lands in library).
+  //   4. Hard fallback to "discuss" — only hits before `availability`
+  //      hydrates; the loading gate in the redirect effect blocks the
+  //      Tier 2 navigation until availability lands, so this is just a
+  //      defensive default for the chrome filter.
+  //
+  // The `lastServiceMode` step is also gated on availability: if the
+  // workspace was last in "library" but the repo has since been detached,
+  // library is no longer available and we should fall through to the
+  // structural default instead of redirecting to a mode the user cannot
+  // actually use.
+  const { serviceMode, availability } = useServiceMode(currentWorkspaceId);
+  const intendedServiceMode = useMemo<ServiceMode>(() => {
+    if (serviceMode) return serviceMode;
+    const lastServiceMode = currentWorkspace?.lastServiceMode ?? null;
+    const lastServiceModeAvailable = lastServiceMode
+      ? (availability?.availableServiceModes.includes(lastServiceMode) ?? false)
+      : false;
+    if (lastServiceModeAvailable && lastServiceMode) return lastServiceMode;
+    return availability?.defaultServiceMode ?? "discuss";
+  }, [serviceMode, currentWorkspace?.lastServiceMode, availability]);
+  const redirectThreadMode = SERVICE_MODE_TO_REDIRECT_THREAD_MODE[intendedServiceMode];
 
   // Discuss is "free-form discussion with no repository grounding" per
   // docs/service-modes-library-lab-system-design.md. The right-rail
-  // ArtifactPanel — repo-scoped folder tree plus sandbox-backed
-  // launchers — is therefore mounted only outside Discuss. The toggle
-  // button, the desktop column, the mobile drawer, and the keyboard
-  // shortcut all gate on this single flag so the surface and its
-  // affordances stay consistent.
-  const isArtifactPanelEnabled = serviceMode !== "discuss";
+  // ArtifactPanel — repo-scoped folder tree plus sandbox-backed launchers
+  // — is therefore mounted only outside Discuss. The toggle button, the
+  // desktop column, the mobile drawer, and the keyboard shortcut all gate
+  // on this single flag so the surface and its affordances stay
+  // consistent.
+  //
+  // We gate on URL-derived `serviceMode` being explicitly `library` or
+  // `lab` (not just `!== "discuss"`). `null` is the transient-URL case
+  // and intentionally falls through to `false`: on `/w/:wid` and the
+  // legacy `/w/:wid/t/:tid` the user is mid-canonicalisation and the
+  // chrome we'd paint here is mode-dependent. Waiting for the URL to
+  // settle on a canonical mode path keeps the StatusPill, artifact
+  // column, and toggle button stable through the redirect window.
+  const isArtifactPanelEnabled = serviceMode === "library" || serviceMode === "lab";
 
   // Loaded for the redirect-to-most-recent-thread logic: scope by the
   // workspace the user is currently "in" so the sidebar/empty-state CTAs
@@ -463,13 +502,10 @@ export function RepositoryShell({
    * forward `attachedRepository.id` — is what lets the TopBar paint the
    * right title from the very first render after a workspace transition.
    *
-   * `workspaces` is `undefined` until the query hydrates; treat that as "no
-   * id yet" rather than failing closed, so the chrome stays in its loading
-   * state instead of briefly flashing the AttachRepoMenu.
+   * `currentWorkspace` itself is resolved up near `currentWorkspaceId` so
+   * the redirect logic above can read its `lastServiceMode`; we only
+   * derive the repo id from it here, where the chrome consumers expect.
    */
-  const currentWorkspace = currentWorkspaceId
-    ? (workspaces?.find((ws) => ws._id === currentWorkspaceId) ?? null)
-    : null;
   const effectiveSelectedRepositoryId: RepositoryId | null = currentWorkspace?.repositoryId ?? null;
 
   const effectiveSelectedThreadId: ThreadId | null = urlThreadId;
@@ -502,11 +538,22 @@ export function RepositoryShell({
    *      preference + localStorage cache), promote them onto a workspace
    *      URL so subsequent navigation stays inside the canonical scheme.
    *
-   *   2. `/w/:workspaceId` (no thread) → `/w/:workspaceId/t/:mostRecent`.
-   *      PRD #19 user story 27. Matches the legacy "/chat → /t/:tId" jump
-   *      but stays workspace-scoped, which is what makes workspace
-   *      switching land on a thread inside the new workspace instead of
-   *      cross-workspace one.
+   *   2. `/w/:workspaceId` (no thread) → canonical mode URL for the
+   *      workspace's intended service mode:
+   *        - discuss → `/w/:wid/discuss/:mostRecent` (if threads exist)
+   *        - library → `/w/:wid/library` (with optional `?ask=:tid` for
+   *          the most recent ask thread)
+   *        - lab     → `/w/:wid/lab/:mostRecent` (if threads exist)
+   *      Going straight to the mode-aware URL — instead of the legacy
+   *      mode-agnostic `/w/:wid/t/:tid` — keeps `useServiceMode`'s value
+   *      stable across the redirect: it stays `null` while the URL is on
+   *      `/w/:wid` and settles on the canonical mode-derived value the
+   *      moment we land. Without this, the chrome would briefly paint
+   *      mode-dependent surfaces (StatusPill, ArtifactPanel) when
+   *      availability resolved a non-discuss default, then unpaint when
+   *      the redirect dropped onto a legacy URL that surfaces the
+   *      "discuss" placeholder — the flash this comment exists to
+   *      prevent.
    *
    * The two are written as one effect — sequencing them across two
    * effects with overlapping dependencies invited render-loop bugs when
@@ -524,10 +571,66 @@ export function RepositoryShell({
       void navigate(workspacePath(activeWorkspaceId), { replace: true });
       return;
     }
-    // Tier 2 — workspace landing to its most recent thread.
+    // Tier 2 — workspace landing to canonical mode URL. Wait for both
+    // inputs the mode decision depends on:
+    //   - `availability` — `intendedServiceMode` falls back to "discuss"
+    //     while this is undefined, which would land repo-attached
+    //     workspaces in the wrong default and then re-redirect once
+    //     availability hydrated (visible double-jump).
+    //   - `currentWorkspace` — same risk for `lastServiceMode`: a stored
+    //     "library" pick would be ignored on first paint and the user
+    //     would briefly see the structural default before bouncing.
+    // Skip on `workspaces === undefined` (still loading) but not on
+    // `currentWorkspace === null` (loaded, no row) — the latter means the
+    // URL workspace id is stale and the URL-validation effect above will
+    // bounce us out.
+    if (availability === undefined) return;
+    if (workspaces === undefined) return;
+    // Library always redirects (the artifact overview is its landing
+    // surface); discuss and lab only redirect when a thread of the
+    // matching mode exists so empty workspaces stay on `/w/:wid` and
+    // render their EmptyState.
+    if (intendedServiceMode === "library") {
+      const askThreadId = ownerThreads?.[0]?._id;
+      const base = libraryPath(urlWorkspaceId);
+      const target = askThreadId ? withLibraryAskParam(base, askThreadId) : base;
+      void navigate(target, { replace: true });
+      return;
+    }
     if (!ownerThreads || ownerThreads.length === 0) return;
-    void navigate(workspaceThreadPath(urlWorkspaceId, ownerThreads[0]._id), { replace: true });
-  }, [navigate, ownerThreads, urlWorkspaceId, urlThreadId, activeWorkspaceId]);
+    const tid = ownerThreads[0]._id;
+    const target = intendedServiceMode === "lab" ? labPath(urlWorkspaceId, tid) : discussPath(urlWorkspaceId, tid);
+    void navigate(target, { replace: true });
+  }, [
+    navigate,
+    ownerThreads,
+    urlWorkspaceId,
+    urlThreadId,
+    activeWorkspaceId,
+    intendedServiceMode,
+    availability,
+    workspaces,
+  ]);
+
+  /*
+   * Record the URL's settled service mode on the workspace so the next
+   * `/chat` → `/w/:wid` redirect lands the user back in the mode they
+   * were last using. Fires only when:
+   *   - the URL has settled on a canonical mode (`serviceMode !== null`,
+   *     not a transient `/chat` / `/w/:wid` / `/w/:wid/t/:tid` stop), and
+   *   - the workspace row's stored mode is stale (different from URL).
+   * The second guard collapses the optimistic-update echo to a single
+   * write: after `touchWorkspace` runs, the local cache reflects the
+   * new mode immediately, the effect re-runs, the guard short-circuits,
+   * and we don't fire a redundant mutation.
+   */
+  useEffect(() => {
+    if (currentWorkspaceId === null) return;
+    if (serviceMode === null) return;
+    if (currentWorkspace === null) return;
+    if (currentWorkspace.lastServiceMode === serviceMode) return;
+    void touchWorkspace({ workspaceId: currentWorkspaceId, serviceMode }).catch(() => {});
+  }, [currentWorkspaceId, currentWorkspace, serviceMode, touchWorkspace]);
 
   // Fall back gracefully when a thread URL points at an entity the viewer no
   // longer owns or that has been deleted. We bounce back to the workspace
@@ -576,7 +679,7 @@ export function RepositoryShell({
     workspaceStatus === "initializing" || (effectiveSelectedThreadId !== null && capabilities.isLoading);
 
   const handleSelectThread = useCallback(
-    (threadId: ThreadId | null) => {
+    (threadId: ThreadId | null, threadMode: ThreadMode) => {
       setActionError(null);
       if (threadId === null) {
         // Drop selection but keep the user inside the current workspace
@@ -592,11 +695,15 @@ export function RepositoryShell({
       }
       // The sidebar only surfaces threads for the current workspace, so
       // pairing the selected thread with `currentWorkspaceId` is correct.
+      // Every callsite supplies the thread's stored mode (sidebar rows
+      // carry the full Doc, freshly-created threads carry the mode through
+      // the mutation return value), so we route straight to the canonical
+      // mode-aware URL without ever bouncing through `LegacyThreadRedirect`.
       // If we ever surface cross-workspace thread links (e.g. global
       // search), this is the place to plumb the originating workspace id
       // through the callback signature.
       if (currentWorkspaceId !== null) {
-        void navigate(workspaceThreadPath(currentWorkspaceId, threadId));
+        void navigate(modeAwareThreadPath(currentWorkspaceId, threadId, threadMode));
       } else {
         // Defensive: if a thread is selected before any workspace is known,
         // bounce to /chat so the canonicalising redirects can route us in.
@@ -639,10 +746,10 @@ export function RepositoryShell({
    */
   const handleSetStatusOpen = useCallback(
     (open: boolean) => {
-      if (workspaceStatus === "no-repo") {
-        // Force-closed in no-repo state — never opens, but allow `false` so a
-        // controlled popover/drawer can collapse cleanly during the transition
-        // back to the empty state.
+      if (workspaceStatus === "no-repo" || !isArtifactPanelEnabled) {
+        // Force-closed in no-repo state and discuss mode — never opens, but
+        // allow `false` so a controlled popover/drawer can collapse cleanly
+        // during the transition back to the empty state.
         if (open) return;
         setIsStatusOpen(false);
         return;
@@ -652,7 +759,7 @@ export function RepositoryShell({
       }
       setIsStatusOpen(open);
     },
-    [isDesktopLayout, workspaceStatus],
+    [isDesktopLayout, workspaceStatus, isArtifactPanelEnabled],
   );
 
   /**
@@ -700,15 +807,22 @@ export function RepositoryShell({
   }, [handleToggleArtifactPanel, isArtifactPanelEnabled, workspaceStatus]);
 
   const handleImported = useCallback(
-    (_repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => {
+    (_repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId, threadMode: ThreadMode | null) => {
       setActionError(null);
       // The URL→state sync effect will pull `activeWorkspaceId` and the DB
       // preference into agreement with the new workspace once we navigate;
       // we don't need to setState here. Going via the URL also means the
       // post-import landing matches what a regular workspace switch looks
       // like — fewer surfaces to keep coherent.
-      if (threadId) {
-        void navigate(workspaceThreadPath(workspaceId, threadId));
+      //
+      // `threadMode` is supplied by `createRepositoryImport`'s
+      // `defaultThreadMode` field whenever the backend materialised a
+      // default thread, so navigation goes straight to the canonical
+      // mode-aware URL. The `null` fallback only fires when the import
+      // didn't create one (rare); the workspace-landing redirect picks the
+      // canonical mode from there.
+      if (threadId && threadMode) {
+        void navigate(modeAwareThreadPath(workspaceId, threadId, threadMode));
       } else {
         void navigate(workspacePath(workspaceId));
       }
@@ -717,7 +831,7 @@ export function RepositoryShell({
   );
 
   const handleThreadMovedToWorkspace = useCallback(
-    (workspaceId: WorkspaceId | null) => {
+    (workspaceId: WorkspaceId | null, mode: ThreadMode | null) => {
       if (!workspaceId) {
         return;
       }
@@ -728,8 +842,14 @@ export function RepositoryShell({
       // highlight, repo-scoped panels) re-anchors to the right workspace
       // synchronously. The URL→state sync effect handles the
       // `activeWorkspaceId` and DB-preference updates from there.
-      if (urlThreadId !== null) {
-        void navigate(workspaceThreadPath(workspaceId, urlThreadId));
+      //
+      // `mode` rides on the `setThreadRepository` return value, so the
+      // redirect lands on the canonical mode-aware URL for the post-move
+      // thread mode (an attach often flips `discuss` → `ask` for repo-bound
+      // threads). The `null` branch covers the no-thread case — we still
+      // want to drop the user into the destination workspace's landing.
+      if (urlThreadId !== null && mode) {
+        void navigate(modeAwareThreadPath(workspaceId, urlThreadId, mode));
       } else {
         void navigate(workspacePath(workspaceId));
       }
@@ -753,11 +873,14 @@ export function RepositoryShell({
     useCallback(async () => {
       setActionError(null);
       try {
-        const newThreadId = await createThreadMutation({
+        const { _id: newThreadId, mode: newThreadMode } = await createThreadMutation({
           workspaceId: currentWorkspaceId ?? undefined,
         });
         if (currentWorkspaceId !== null) {
-          void navigate(workspaceThreadPath(currentWorkspaceId, newThreadId));
+          // Route via the mutation's returned mode so the user lands on the
+          // canonical mode-aware URL on first paint — no transient flash
+          // through `LegacyThreadRedirect`'s `getThreadContext` round-trip.
+          void navigate(modeAwareThreadPath(currentWorkspaceId, newThreadId, newThreadMode));
         } else {
           // Backend creates a thread without a workspace binding when none
           // is supplied; the workspace-landing redirects can't help here,
@@ -901,6 +1024,7 @@ export function RepositoryShell({
           isDesktopLayout={isDesktopLayout}
           onSync={() => void handleSync()}
           onViewArtifact={handleSelectArtifact}
+          showSystemStatus={isArtifactPanelEnabled}
         />
 
         {isRepoArchived ? (
@@ -1053,7 +1177,7 @@ export function RepositoryShell({
         </Drawer>
       ) : null}
 
-      {workspaceStatus !== "no-repo" && !isDesktopLayout && repoDetail ? (
+      {workspaceStatus !== "no-repo" && !isDesktopLayout && repoDetail && isArtifactPanelEnabled ? (
         <Drawer open={isStatusOpen} onOpenChange={handleSetStatusOpen} aria-label="status-drawer">
           <DrawerContent className={cn(MOBILE_DRAWER_HEIGHT_CLASS, "rounded-t-2xl")}>
             <DrawerTitle className="sr-only">Repository status</DrawerTitle>

@@ -1,0 +1,222 @@
+import { Link } from "react-router-dom";
+import {
+  ArrowsClockwiseIcon,
+  CaretLeftIcon,
+  CaretRightIcon,
+  CircleNotchIcon,
+  CubeIcon,
+  LightningIcon,
+  StackIcon,
+} from "@phosphor-icons/react";
+import { useQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { Logo } from "@/components/logo";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useTimeUntil, useRelativeTime } from "@/hooks/use-relative-time";
+import { presentSandboxSurface, type OperationTone } from "@/lib/operations";
+import { cn } from "@/lib/utils";
+import { DEFAULT_AUTHENTICATED_PATH, workspacePath } from "@/route-paths";
+
+/**
+ * Resources — cross-workspace inventory of the viewer's active repositories
+ * with their live sandbox state. Surfaces what the per-thread TopBar's
+ * StatusPill shows, but at workspace-aggregate granularity, so a viewer
+ * who is in Discuss mode (where the pill is intentionally hidden) still
+ * has a single place to answer "what is my system doing right now".
+ *
+ * Read-only by design. Activate / stop / sync affordances stay on the
+ * per-workspace TopBar where the user already has the workspace
+ * context — Resources is a navigation surface, not a control plane.
+ */
+export function ResourcesPage() {
+  const inventory = useQuery(api.repositories.listResourceInventory, {});
+
+  return (
+    <div className="flex h-dvh w-full flex-1 flex-col overflow-y-auto bg-background">
+      <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80">
+        <div className="mx-auto flex h-14 w-full max-w-4xl items-center gap-3 px-4 sm:px-6">
+          <Link
+            to={DEFAULT_AUTHENTICATED_PATH}
+            className="group flex min-w-0 shrink-0 items-center gap-2.5 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            aria-label="Systify · back to chat"
+            title="Back to chat"
+          >
+            <Logo size={26} />
+            <span className="truncate font-mono text-[15px] font-semibold tracking-tight text-foreground transition-colors group-hover:text-muted-foreground">
+              Systify
+            </span>
+          </Link>
+          <CaretRightIcon size={12} weight="bold" aria-hidden="true" className="shrink-0 text-muted-foreground/60" />
+          <h1 className="flex min-w-0 items-center gap-2">
+            <StackIcon size={14} weight="bold" className="shrink-0 text-muted-foreground" aria-hidden="true" />
+            <span className="truncate text-sm font-semibold tracking-tight text-foreground">Resources</span>
+          </h1>
+        </div>
+      </header>
+
+      <main className="flex-1 px-4 pb-10 pt-5 sm:px-6 sm:pb-12 sm:pt-8">
+        <div className="mx-auto w-full max-w-4xl">
+          {/*
+           * Back-to-chat affordance lives in the content area (not the
+           * header) so it stays visible across loading, empty, and
+           * populated states without competing with the breadcrumb-like
+           * "Systify · Resources" title block. -ml-2 nudges the ghost
+           * button's hit target back to the left content edge.
+           */}
+          <Button asChild variant="ghost" size="sm" className="-ml-2 mb-3 text-muted-foreground hover:text-foreground">
+            <Link to={DEFAULT_AUTHENTICATED_PATH}>
+              <CaretLeftIcon weight="bold" />
+              Back to chat
+            </Link>
+          </Button>
+
+          <p className="mb-4 text-sm leading-relaxed text-muted-foreground sm:mb-5">
+            Live status for every repository you have imported. Sandboxes auto-archive after their TTL — open a
+            workspace to refresh or activate one.
+          </p>
+
+          {inventory === undefined ? (
+            <ResourceListSkeleton />
+          ) : inventory.length === 0 ? (
+            <ResourceEmptyState />
+          ) : (
+            <ul className="mt-4 flex flex-col gap-2.5">
+              {inventory.map((row) => (
+                <li key={row.repositoryId}>
+                  <ResourceRow row={row} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+type InventoryRow = NonNullable<ReturnType<typeof useQuery<typeof api.repositories.listResourceInventory>>>[number];
+
+function ResourceRow({ row }: { row: InventoryRow }) {
+  const sandbox = presentSandboxSurface({
+    sandboxModeStatus: row.sandboxModeStatus,
+    sandbox: row.sandbox,
+  });
+  const lastSyncedLabel = useRelativeTime(row.lastImportedAt);
+  // Tier-1 destination for the row's primary action. When the workspace
+  // hasn't materialised yet (only happens for repos imported before the
+  // workspaces table existed in the schema), fall back to the chat
+  // landing — RepositoryShell will resolve it into the right workspace
+  // on first render.
+  const targetPath = row.workspaceId ? workspacePath(row.workspaceId) : DEFAULT_AUTHENTICATED_PATH;
+
+  return (
+    <Card className="p-4 transition-colors hover:border-foreground/25">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <span
+            className={cn(
+              "mt-0.5 grid size-8 shrink-0 place-items-center rounded-md border border-border",
+              toneClassName(sandbox.tone),
+            )}
+          >
+            <CubeIcon size={14} weight="bold" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h3 className="truncate text-sm font-semibold tracking-tight sm:text-base">{row.fullName}</h3>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground sm:text-[13px]">
+              <span className="font-medium text-foreground">{sandbox.title}</span>
+              <span className="mx-1.5 text-muted-foreground/60">·</span>
+              {sandbox.description}
+            </p>
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground sm:text-xs">
+              {sandbox.ttlExpiresAt ? <SandboxExpiry ttlExpiresAt={sandbox.ttlExpiresAt} /> : null}
+              {lastSyncedLabel ? (
+                <span className="inline-flex items-center gap-1">
+                  <ArrowsClockwiseIcon size={11} weight="bold" />
+                  Synced {lastSyncedLabel}
+                </span>
+              ) : null}
+              {row.hasRemoteUpdates ? (
+                <span className="inline-flex items-center gap-1 text-warning">
+                  <LightningIcon size={11} weight="bold" />
+                  Updates available
+                </span>
+              ) : null}
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-row gap-2 sm:shrink-0">
+          <Button asChild type="button" variant="secondary" size="sm" className="flex-1 sm:flex-none">
+            <Link to={targetPath}>Open workspace</Link>
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function SandboxExpiry({ ttlExpiresAt }: { ttlExpiresAt: number }) {
+  const label = useTimeUntil(ttlExpiresAt);
+  if (!label) return null;
+  return <span>Auto-archives {label}</span>;
+}
+
+function ResourceListSkeleton() {
+  return (
+    <ul aria-hidden="true" className="mt-4 flex flex-col gap-2.5">
+      {Array.from({ length: 3 }).map((_, index) => (
+        <li key={index}>
+          <Card className="p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+              <div className="flex min-w-0 items-start gap-3">
+                <Skeleton className="size-8 shrink-0" />
+                <div className="flex min-w-0 flex-1 flex-col gap-2">
+                  <Skeleton className="h-4 w-40" />
+                  <Skeleton className="h-3 w-64" />
+                  <Skeleton className="h-3 w-32" />
+                </div>
+              </div>
+              <Skeleton className="h-8 w-full sm:w-32" />
+            </div>
+          </Card>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function ResourceEmptyState() {
+  return (
+    <div className="mt-4 flex flex-col items-center justify-center px-4 py-12 text-center sm:py-16">
+      <CircleNotchIcon size={22} className="text-muted-foreground" aria-hidden="true" />
+      <h2 className="mt-3 text-base font-semibold tracking-tight sm:text-lg">No active repositories</h2>
+      <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
+        Import a repository from the sidebar to see its sandbox and sync state here.
+      </p>
+      <Button asChild variant="secondary" size="sm" className="mt-6">
+        <Link to={DEFAULT_AUTHENTICATED_PATH}>
+          <CaretLeftIcon weight="bold" />
+          Back to chat
+        </Link>
+      </Button>
+    </div>
+  );
+}
+
+function toneClassName(tone: OperationTone) {
+  switch (tone) {
+    case "active":
+      return "bg-primary/10 text-primary border-primary/40";
+    case "success":
+      return "bg-success/10 text-success border-success/40";
+    case "warning":
+      return "bg-warning/10 text-warning border-warning/40";
+    case "error":
+      return "bg-destructive/10 text-destructive border-destructive/40";
+    case "neutral":
+    default:
+      return "bg-muted text-muted-foreground";
+  }
+}
