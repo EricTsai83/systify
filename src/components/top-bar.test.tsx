@@ -135,6 +135,7 @@ function createTopBarProps(overrides: Partial<TopBarTestProps> = {}): TopBarTest
     isDesktopLayout: true,
     onSync: vi.fn(),
     onViewArtifact: vi.fn(),
+    chatMode: "sandbox",
     ...overrides,
   };
 }
@@ -179,6 +180,30 @@ describe("TopBar attach repo chip behavior", () => {
     renderTopBar({ isAttachedRepositoryLoading: true });
 
     expect(screen.queryByTestId("attach-repo-menu")).not.toBeInTheDocument();
+  });
+});
+
+describe("TopBar system-status chrome respects chat mode", () => {
+  // Discuss is the only mode captioned "no repo context" — the StatusPill and
+  // sandbox badge there would advertise state the mode does not use. Docs and
+  // Sandbox are both repo-bound (artifacts and live source respectively) so
+  // the chrome stays mounted as a single shared affordance.
+  test("hides StatusPill in discuss mode even when a repo is attached", () => {
+    renderTopBar({ chatMode: "discuss" });
+
+    expect(screen.queryByTestId("status-pill")).not.toBeInTheDocument();
+  });
+
+  test("shows StatusPill in docs mode", () => {
+    renderTopBar({ chatMode: "docs" });
+
+    expect(screen.getByTestId("status-pill")).toBeInTheDocument();
+  });
+
+  test("shows StatusPill in sandbox mode", () => {
+    renderTopBar({ chatMode: "sandbox" });
+
+    expect(screen.getByTestId("status-pill")).toBeInTheDocument();
   });
 });
 

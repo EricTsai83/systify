@@ -16,7 +16,7 @@ import { SwapThreadRepositoryControl } from "@/components/swap-thread-repository
 import { StatusPill } from "@/components/status-pill";
 import { StatusPanel } from "@/components/status-panel";
 import type { AttachedRepositorySummary } from "@/hooks/use-thread-capabilities";
-import type { ArtifactId, SandboxModeStatus, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, ChatMode, SandboxModeStatus, ThreadId, WorkspaceId } from "@/lib/types";
 
 export type TopBarRepoDetail = {
   repository: Doc<"repositories"> & {
@@ -79,6 +79,7 @@ export function TopBar({
   isDesktopLayout,
   onSync,
   onViewArtifact,
+  chatMode,
 }: {
   repoDetail?: TopBarRepoDetail;
   threadId: ThreadId | null;
@@ -106,7 +107,20 @@ export function TopBar({
   isDesktopLayout: boolean;
   onSync: () => void;
   onViewArtifact: (artifactId: ArtifactId) => void;
+  /**
+   * Current thread mode. The system-status chrome (StatusPill + sandbox badge
+   * next to the title) only carries information that matters once the user is
+   * actually working against the repo's data plane — Docs reads from the
+   * artifact library and Sandbox reads from the live source tree, so both
+   * surfaces care about sync freshness and sandbox lifecycle. Discuss is
+   * training-only and explicitly captioned "no repo context", so the same
+   * chrome there would be a constant nag for a state the mode does not touch.
+   * Errors stay visible: the moment the user switches into a repo-bound mode,
+   * the pill repaints with whatever state was suppressed in Discuss.
+   */
+  chatMode: ChatMode;
 }) {
+  const showSystemStatus = chatMode !== "discuss";
   return (
     <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
       <SidebarTrigger />
@@ -141,7 +155,7 @@ export function TopBar({
       {repoDetail ? (
         <div key={repoDetail.repository._id} className="flex min-w-0 flex-1 items-center gap-2 animate-fade-in">
           <RepoInfoPopover repoDetail={repoDetail} title={repoDetail.repository.sourceRepoFullName} />
-          <RepoStatusIndicator sandbox={repoDetail.sandbox} />
+          {showSystemStatus ? <RepoStatusIndicator sandbox={repoDetail.sandbox} /> : null}
         </div>
       ) : null}
 
@@ -179,7 +193,7 @@ export function TopBar({
       ) : null}
 
       <div className="ml-auto flex items-center gap-1.5">
-        {repoDetail ? (
+        {repoDetail && showSystemStatus ? (
           isDesktopLayout ? (
             // Desktop: anchor a Popover to the pill so the StatusPanel
             // overlays the chat surface only on demand. PopoverTrigger asChild
