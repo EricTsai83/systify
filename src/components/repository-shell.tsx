@@ -901,7 +901,7 @@ export function RepositoryShell({
           isDesktopLayout={isDesktopLayout}
           onSync={() => void handleSync()}
           onViewArtifact={handleSelectArtifact}
-          chatMode={chatMode}
+          showSystemStatus={isArtifactPanelEnabled}
         />
 
         {isRepoArchived ? (

@@ -51,7 +51,7 @@ vi.mock("@/components/repo-info-popover", () => ({
 }));
 
 vi.mock("@/components/repo-status-indicator", () => ({
-  RepoStatusIndicator: () => null,
+  RepoStatusIndicator: () => <div data-testid="repo-status-indicator" />,
 }));
 
 // StatusPill is exercised by its own tests; in TopBar's scope it only matters
@@ -135,7 +135,7 @@ function createTopBarProps(overrides: Partial<TopBarTestProps> = {}): TopBarTest
     isDesktopLayout: true,
     onSync: vi.fn(),
     onViewArtifact: vi.fn(),
-    chatMode: "sandbox",
+    showSystemStatus: true,
     ...overrides,
   };
 }
@@ -183,27 +183,23 @@ describe("TopBar attach repo chip behavior", () => {
   });
 });
 
-describe("TopBar system-status chrome respects chat mode", () => {
-  // Discuss is the only mode captioned "no repo context" — the StatusPill and
-  // sandbox badge there would advertise state the mode does not use. Docs and
-  // Sandbox are both repo-bound (artifacts and live source respectively) so
-  // the chrome stays mounted as a single shared affordance.
-  test("hides StatusPill in discuss mode even when a repo is attached", () => {
-    renderTopBar({ chatMode: "discuss" });
+describe("TopBar system-status chrome respects showSystemStatus", () => {
+  // The shell hides StatusPill + RepoStatusIndicator together in the Discuss
+  // service mode (URL-derived, mirroring the ArtifactPanel gate). Driving both
+  // off a single boolean keeps the two surfaces from drifting apart on future
+  // refactors — they appear and disappear together, never independently.
+  test("hides StatusPill and RepoStatusIndicator when showSystemStatus is false", () => {
+    renderTopBar({ showSystemStatus: false });
 
     expect(screen.queryByTestId("status-pill")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("repo-status-indicator")).not.toBeInTheDocument();
   });
 
-  test("shows StatusPill in docs mode", () => {
-    renderTopBar({ chatMode: "docs" });
+  test("shows StatusPill and RepoStatusIndicator when showSystemStatus is true", () => {
+    renderTopBar({ showSystemStatus: true });
 
     expect(screen.getByTestId("status-pill")).toBeInTheDocument();
-  });
-
-  test("shows StatusPill in sandbox mode", () => {
-    renderTopBar({ chatMode: "sandbox" });
-
-    expect(screen.getByTestId("status-pill")).toBeInTheDocument();
+    expect(screen.getByTestId("repo-status-indicator")).toBeInTheDocument();
   });
 });
 

@@ -16,7 +16,7 @@ import { SwapThreadRepositoryControl } from "@/components/swap-thread-repository
 import { StatusPill } from "@/components/status-pill";
 import { StatusPanel } from "@/components/status-panel";
 import type { AttachedRepositorySummary } from "@/hooks/use-thread-capabilities";
-import type { ArtifactId, ChatMode, SandboxModeStatus, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, SandboxModeStatus, ThreadId, WorkspaceId } from "@/lib/types";
 
 export type TopBarRepoDetail = {
   repository: Doc<"repositories"> & {
@@ -79,7 +79,7 @@ export function TopBar({
   isDesktopLayout,
   onSync,
   onViewArtifact,
-  chatMode,
+  showSystemStatus,
 }: {
   repoDetail?: TopBarRepoDetail;
   threadId: ThreadId | null;
@@ -108,19 +108,25 @@ export function TopBar({
   onSync: () => void;
   onViewArtifact: (artifactId: ArtifactId) => void;
   /**
-   * Current thread mode. The system-status chrome (StatusPill + sandbox badge
-   * next to the title) only carries information that matters once the user is
-   * actually working against the repo's data plane — Docs reads from the
-   * artifact library and Sandbox reads from the live source tree, so both
-   * surfaces care about sync freshness and sandbox lifecycle. Discuss is
-   * training-only and explicitly captioned "no repo context", so the same
-   * chrome there would be a constant nag for a state the mode does not touch.
-   * Errors stay visible: the moment the user switches into a repo-bound mode,
-   * the pill repaints with whatever state was suppressed in Discuss.
+   * Whether the system-status chrome (StatusPill + sandbox badge next to the
+   * title) is allowed to render. Driven from the workspace shell's
+   * `serviceMode !== "discuss"` derivation — the same gate
+   * `isArtifactPanelEnabled` uses, so all repo-aware chrome (artifact panel,
+   * sandbox pill, sandbox badge) appears and disappears together when the
+   * user toggles between Discuss and Library / Lab. Discuss is captioned "no
+   * repo context"; surfacing sync or sandbox state there would be a constant
+   * nag for signals the mode does not touch. Errors are not lost — the moment
+   * the user enters a repo-bound mode the pill repaints with whatever was
+   * suppressed.
+   *
+   * Driven by URL (`useServiceMode`), not by the per-thread `chatMode`, so
+   * the gate survives the Tier 2 redirect from `/w/:wid/discuss` to
+   * `/w/:wid/t/:tid` — once redirected, `chatMode` falls back to the
+   * workspace default ("docs" when a repo is attached) and would no longer
+   * read as "discuss", but the user's intent is still Discuss.
    */
-  chatMode: ChatMode;
+  showSystemStatus: boolean;
 }) {
-  const showSystemStatus = chatMode !== "discuss";
   return (
     <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
       <SidebarTrigger />
