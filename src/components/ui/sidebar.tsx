@@ -192,8 +192,9 @@ export function Sidebar({
       } else if (event.key === "End") {
         event.preventDefault();
         setWidth(() => {
-          persistSidebarWidth(widthStorageKey, maxWidth);
-          return maxWidth;
+          const clamped = clampSidebarWidth(maxWidth, maxWidth);
+          persistSidebarWidth(widthStorageKey, clamped);
+          return clamped;
         });
         return;
       }

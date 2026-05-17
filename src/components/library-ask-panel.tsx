@@ -70,11 +70,13 @@ export function LibraryAskPanel({
 
   const handlePickSuggestion = useCallback((suggestion: string) => {
     setInput(suggestion);
-    const node = textareaRef.current;
-    if (node) {
-      node.focus();
-      node.setSelectionRange(suggestion.length, suggestion.length);
-    }
+    requestAnimationFrame(() => {
+      const node = textareaRef.current;
+      if (node) {
+        node.focus();
+        node.setSelectionRange(suggestion.length, suggestion.length);
+      }
+    });
   }, []);
 
   const threadsById = useMemo(() => {
