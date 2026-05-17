@@ -3,13 +3,13 @@ import { BookOpenIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
 import { useMutation, useQuery } from "convex/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
+import { EmptyStateHero, PromptSuggestionList } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { LibraryAskThreadTabs } from "@/components/library-ask-thread-tabs";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
-import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useLibraryAskTabs } from "@/hooks/use-library-ask-tabs";
 import { toUserErrorMessage } from "@/lib/errors";
 import type { ArtifactId, ThreadId, WorkspaceId } from "@/lib/types";
@@ -66,6 +66,16 @@ export function LibraryAskPanel({
   const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<ThreadId | null>(null);
   const [isDeletingThread, setIsDeletingThread] = useState(false);
   const submissionLockRef = useRef(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const handlePickSuggestion = useCallback((suggestion: string) => {
+    setInput(suggestion);
+    const node = textareaRef.current;
+    if (node) {
+      node.focus();
+      node.setSelectionRange(suggestion.length, suggestion.length);
+    }
+  }, []);
 
   const threadsById = useMemo(() => {
     const map = new Map<ThreadId, Doc<"threads">>();
@@ -105,21 +115,16 @@ export function LibraryAskPanel({
     setError(null);
   }, [threadId]);
 
-  const [isCreatingThread, handleCreateThread] = useAsyncCallback(
-    useCallback(async () => {
-      setError(null);
-      try {
-        // The "+" creates a bare thread not tied to the open artifact —
-        // mirrors the WorkspaceThreadsRail "New thread" affordance. The
-        // server defaults the title to "Library Ask".
-        const created = (await createAskThread({ workspaceId })) as ThreadId;
-        ensureOpen({ id: created, title: "Library Ask" });
-        onSelectThread(created);
-      } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "Failed to start an Ask thread.");
-      }
-    }, [createAskThread, ensureOpen, onSelectThread, workspaceId]),
-  );
+  // "+" no longer eagerly creates a thread — it transitions the panel to a
+  // draft state (clears `?ask=`, focuses the composer). The thread is created
+  // by `handleSubmit` only when the user sends their first message, so a
+  // click that ends without typing leaves nothing in the database.
+  const handleCreateThread = useCallback(() => {
+    setError(null);
+    setInput("");
+    onSelectThread(null);
+    textareaRef.current?.focus();
+  }, [onSelectThread]);
 
   const handleCloseTab = useCallback(
     (id: ThreadId) => {
@@ -233,23 +238,13 @@ export function LibraryAskPanel({
         activeThreadId={threadId}
         onSelectTab={onSelectThread}
         onCloseTab={handleCloseTab}
-        onNewThread={() => void handleCreateThread()}
-        isCreating={isCreatingThread}
+        onNewThread={handleCreateThread}
+        isCreating={false}
         threads={threads}
         onSelectFromHistory={handleSelectFromHistory}
         onTogglePin={handleTogglePin}
         onDeleteThread={setPendingDeleteThreadId}
       />
-
-      <div className="border-b border-border bg-amber-500/5 px-4 py-3">
-        <div className="flex items-center gap-2">
-          <BookOpenIcon size={16} weight="duotone" className="text-amber-600" />
-          <h2 className="text-sm font-semibold text-foreground">Library Ask</h2>
-        </div>
-        <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          Answers use retrieved artifact chunks only. For current code state, open the question in Lab.
-        </p>
-      </div>
 
       {threadId ? (
         <ScrollArea className="min-h-0 flex-1 px-4 py-3">
@@ -265,8 +260,27 @@ export function LibraryAskPanel({
           </div>
         </ScrollArea>
       ) : (
-        <div className="flex min-h-0 flex-1 items-center px-4 text-sm text-muted-foreground">
-          Pick an Ask thread above, or ask a question below to start a new one.
+        <div className="flex min-h-0 flex-1 animate-in flex-col gap-5 px-4 py-6 fade-in duration-300">
+          <div className="flex flex-1 items-center justify-center">
+            <EmptyStateHero
+              visual={
+                <div className="flex size-11 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                  <BookOpenIcon size={20} weight="duotone" />
+                </div>
+              }
+              title="Ask the Library"
+              description={
+                activeArtifactId
+                  ? "Answers cite this artifact and other indexed chunks."
+                  : "Answers cite retrieved artifact chunks. For live code state, use Lab."
+              }
+            />
+          </div>
+          <PromptSuggestionList
+            prompts={activeArtifactId ? ARTIFACT_SUGGESTIONS : LIBRARY_SUGGESTIONS}
+            onPick={handlePickSuggestion}
+            layout="stack"
+          />
         </div>
       )}
 
@@ -278,6 +292,7 @@ export function LibraryAskPanel({
       >
         {error ? <p className="mb-2 text-xs text-destructive">{error}</p> : null}
         <Textarea
+          ref={textareaRef}
           value={input}
           onChange={(event) => setInput(event.target.value)}
           placeholder={activeArtifactId ? "Question about the open artifact..." : "Question about this library..."}
@@ -305,3 +320,15 @@ export function LibraryAskPanel({
     </div>
   );
 }
+
+const ARTIFACT_SUGGESTIONS = [
+  "Summarize the key points of this artifact.",
+  "What decisions does this document capture?",
+  "Which related artifacts should I read next?",
+];
+
+const LIBRARY_SUGGESTIONS = [
+  "What does this repository do?",
+  "Walk me through the architecture.",
+  "How is data modeled across the system?",
+];

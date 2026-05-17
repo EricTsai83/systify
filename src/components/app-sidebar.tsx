@@ -29,6 +29,9 @@ const SERVICE_MODE_TO_THREAD_MODE: Record<ServiceMode, "discuss" | "ask" | "lab"
  */
 const LIBRARY_ASK_WIDTH_STORAGE_KEY = "systify.sidebar.width.libraryAsk";
 const LIBRARY_ASK_DEFAULT_WIDTH = 360;
+// Library Ask hosts the chat surface in the sidebar, so its resize ceiling is
+// raised above the shared cap to give the conversation/composer more room.
+const LIBRARY_ASK_MAX_WIDTH = 720;
 
 /**
  * Props are a discriminated union on `variant`:
@@ -129,6 +132,7 @@ export function AppSidebar(props: AppSidebarProps) {
     <Sidebar
       widthStorageKey={isLibraryAsk ? LIBRARY_ASK_WIDTH_STORAGE_KEY : undefined}
       defaultWidth={isLibraryAsk ? LIBRARY_ASK_DEFAULT_WIDTH : undefined}
+      maxWidth={isLibraryAsk ? LIBRARY_ASK_MAX_WIDTH : undefined}
     >
       <SidebarHeader>
         <Logo size={30} />
