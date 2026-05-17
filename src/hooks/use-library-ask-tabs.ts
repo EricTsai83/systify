@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ThreadId, WorkspaceId } from "@/lib/types";
+import { readJSON, writeJSON } from "@/lib/storage";
 
 /**
  * Three-mode restructure — Library Ask "open tab" set.
@@ -27,39 +28,35 @@ function storageKey(workspaceId: WorkspaceId): string {
   return `systify.library.askTabs.${workspaceId}`;
 }
 
-function readCache(workspaceId: WorkspaceId): OpenAskThread[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(storageKey(workspaceId));
-    if (!raw) return [];
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const out: OpenAskThread[] = [];
-    for (const entry of parsed) {
-      if (
-        entry !== null &&
-        typeof entry === "object" &&
-        "id" in entry &&
-        "title" in entry &&
-        typeof entry.id === "string" &&
-        typeof entry.title === "string"
-      ) {
-        out.push({ id: entry.id as ThreadId, title: entry.title });
-      }
+function isCachedAskThreadArray(v: unknown): v is Array<{ id: string; title: string }> {
+  if (!Array.isArray(v)) return false;
+  for (const entry of v) {
+    if (
+      entry === null ||
+      typeof entry !== "object" ||
+      !("id" in entry) ||
+      !("title" in entry) ||
+      typeof entry.id !== "string" ||
+      typeof entry.title !== "string"
+    ) {
+      return false;
     }
-    return out.slice(0, MAX_OPEN_ASK_TABS);
-  } catch {
-    return [];
   }
+  return true;
+}
+
+function readCache(workspaceId: WorkspaceId): OpenAskThread[] {
+  const cached = readJSON(storageKey(workspaceId), isCachedAskThreadArray);
+  if (!cached) return [];
+  const out: OpenAskThread[] = [];
+  for (const entry of cached) {
+    out.push({ id: entry.id as ThreadId, title: entry.title });
+  }
+  return out.slice(0, MAX_OPEN_ASK_TABS);
 }
 
 function writeCache(workspaceId: WorkspaceId, tabs: ReadonlyArray<OpenAskThread>): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(storageKey(workspaceId), JSON.stringify(tabs));
-  } catch {
-    // Storage denied (private mode / quota). Tabs degrade to in-memory only.
-  }
+  writeJSON(storageKey(workspaceId), tabs);
 }
 
 export function useLibraryAskTabs(workspaceId: WorkspaceId) {

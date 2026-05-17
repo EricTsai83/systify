@@ -14,6 +14,7 @@ import { AppNotice } from "@/components/app-notice";
 import { ScreenState } from "@/components/screen-state";
 import { Button } from "@/components/ui/button";
 import { hasWorkOSSessionHint } from "@/lib/auth-session-hint";
+import { readString, removeKey, writeString } from "@/lib/storage";
 import { useConvexAuthStatus } from "@/providers/convex-provider-with-auth-kit";
 import { AUTH_CALLBACK_PATH, DEFAULT_AUTHENTICATED_PATH, LANDING_PATH, isProtectedReturnTo } from "@/route-paths";
 import { HomePage } from "@/pages/home";
@@ -373,25 +374,13 @@ function normalizeCallbackErrorDescription(description: string | null) {
 }
 
 function readStoredReturnTo() {
-  try {
-    return window.sessionStorage.getItem(AUTH_RETURN_TO_KEY);
-  } catch {
-    return null;
-  }
+  return readString(AUTH_RETURN_TO_KEY, "session");
 }
 
 function writeStoredReturnTo(path: string) {
-  try {
-    window.sessionStorage.setItem(AUTH_RETURN_TO_KEY, path);
-  } catch {
-    // Browsers can deny storage in privacy modes; auth should still continue.
-  }
+  writeString(AUTH_RETURN_TO_KEY, path, "session");
 }
 
 function removeStoredReturnTo() {
-  try {
-    window.sessionStorage.removeItem(AUTH_RETURN_TO_KEY);
-  } catch {
-    // Ignore unavailable storage; the in-memory auth flow can still complete.
-  }
+  removeKey(AUTH_RETURN_TO_KEY, "session");
 }

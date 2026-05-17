@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import type { ArtifactId, WorkspaceId } from "@/lib/types";
 import { libraryArtifactPath, libraryPath } from "@/route-paths";
+import { readJSON, writeJSON } from "@/lib/storage";
 
 /**
  * Three-mode restructure — Library tab strip state.
@@ -53,45 +54,38 @@ function storageKey(workspaceId: WorkspaceId): string {
   return `systify.library.tabs.${workspaceId}`;
 }
 
+interface CachedLibraryTabs {
+  openArtifactIds: string[];
+  activeArtifactId: string | null;
+}
+
+function isCachedLibraryTabs(v: unknown): v is CachedLibraryTabs {
+  if (v === null || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  if (!Array.isArray(o.openArtifactIds)) return false;
+  if (!o.openArtifactIds.every((x) => typeof x === "string")) return false;
+  if (o.activeArtifactId !== null && typeof o.activeArtifactId !== "string") return false;
+  return true;
+}
+
 function readCachedTabs(workspaceId: WorkspaceId | null): LibraryTabsState | null {
-  if (!workspaceId || typeof window === "undefined") {
+  if (!workspaceId) {
     return null;
   }
-  try {
-    const raw = window.localStorage.getItem(storageKey(workspaceId));
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as { openArtifactIds?: string[]; activeArtifactId?: string | null };
-    if (!Array.isArray(parsed.openArtifactIds)) return null;
-    // The cache is opaque strings; brand them back to `ArtifactId` for
-    // the typed state. Going through `unknown` is the documented escape
-    // hatch when two unrelated strings overlap structurally — Convex's
-    // branded id type and a raw `string` from JSON have no shared
-    // narrowing axis.
-    return {
-      openArtifactIds: parsed.openArtifactIds.slice(0, MAX_OPEN_TABS) as unknown as ReadonlyArray<ArtifactId>,
-      activeArtifactId: (parsed.activeArtifactId ?? null) as unknown as ArtifactId | null,
-    };
-  } catch {
-    return null;
-  }
+  const cached = readJSON(storageKey(workspaceId), isCachedLibraryTabs);
+  if (!cached) return null;
+  return {
+    openArtifactIds: cached.openArtifactIds.slice(0, MAX_OPEN_TABS) as unknown as ReadonlyArray<ArtifactId>,
+    activeArtifactId: cached.activeArtifactId as unknown as ArtifactId | null,
+  };
 }
 
 function writeCachedTabs(workspaceId: WorkspaceId | null, state: LibraryTabsState): void {
-  if (!workspaceId || typeof window === "undefined") {
-    return;
-  }
-  try {
-    window.localStorage.setItem(
-      storageKey(workspaceId),
-      JSON.stringify({
-        openArtifactIds: state.openArtifactIds,
-        activeArtifactId: state.activeArtifactId,
-      }),
-    );
-  } catch {
-    // Storage denied (private mode, quota). The DB-less library tab
-    // strip falls back to URL-only state — acceptable degradation.
-  }
+  if (!workspaceId) return;
+  writeJSON(storageKey(workspaceId), {
+    openArtifactIds: state.openArtifactIds,
+    activeArtifactId: state.activeArtifactId,
+  });
 }
 
 function parseOpenParam(value: string | null): ArtifactId[] {
@@ -198,7 +192,7 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
       // debounced callback (not at arm time) means we pick up whatever the
       // page committed in the meantime; the History API updates
       // `window.location` synchronously, so by flush time it is settled.
-      const liveParams = new URLSearchParams(typeof window === "undefined" ? "" : window.location.search);
+      const liveParams = new URLSearchParams(window.location.search);
       if (state.openArtifactIds.length > 1) {
         // `?open=…` only matters when more than one tab is open; a single
         // tab is fully described by the path's `:artifactId`.

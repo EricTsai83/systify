@@ -173,6 +173,9 @@ export function useRepositoryActions({
       setActionError(null);
       try {
         await deleteRepositoryMutation({ repositoryId: selectedRepositoryId });
+        // Orphan localStorage entries for this repo's folder-nav state are
+        // reaped reactively by `useStorageGC` once the `listRepositories`
+        // subscription drops the deleted id — no manual cleanup here.
         setShowPermanentDeleteDialog(false);
         toast.success("Repository deleted permanently");
         onAfterPermanentDeleteRepo();
