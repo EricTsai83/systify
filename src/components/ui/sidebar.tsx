@@ -23,24 +23,26 @@ const SIDEBAR_DOCKED_QUERY = "(min-width: 1280px)";
 // Desktop sidebar is user-resizable from the right edge. The minimum is the
 // designed content width — chrome (logo, switcher, thread rows) is laid out to
 // stay legible at this size; below it the workspace switcher and thread titles
-// start clipping. The maximum keeps the sidebar from eating more than a
-// reasonable share of the viewport at 1280px (the smallest docked breakpoint).
+// start clipping. The shared maximum keeps the sidebar from eating more than a
+// reasonable share of the viewport at 1280px (the smallest docked breakpoint);
+// Library Ask carries a full chat surface and can override `maxWidth` to a
+// roomier ceiling.
 const SIDEBAR_MIN_WIDTH = 240;
 const SIDEBAR_MAX_WIDTH = 480;
 const SIDEBAR_WIDTH_STORAGE_KEY = "systify.sidebar.width";
 
-function clampSidebarWidth(value: number): number {
+function clampSidebarWidth(value: number, maxWidth: number): number {
   if (!Number.isFinite(value)) return SIDEBAR_MIN_WIDTH;
-  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(SIDEBAR_MAX_WIDTH, Math.round(value)));
+  return Math.max(SIDEBAR_MIN_WIDTH, Math.min(maxWidth, Math.round(value)));
 }
 
 // Width is keyed so each surface can keep its own memory: Discuss/Lab share
 // the slim default; Library Ask carries a full chat panel and passes a
-// roomier key + default. Both still clamp to the shared min/max bounds.
-function readStoredSidebarWidth(storageKey: string, fallback: number): number {
+// roomier key + default. Both still clamp to the configured min/max bounds.
+function readStoredSidebarWidth(storageKey: string, fallback: number, maxWidth: number): number {
   const stored = readString(storageKey);
-  if (!stored) return clampSidebarWidth(fallback);
-  return clampSidebarWidth(Number.parseInt(stored, 10));
+  if (!stored) return clampSidebarWidth(fallback, maxWidth);
+  return clampSidebarWidth(Number.parseInt(stored, 10), maxWidth);
 }
 
 function persistSidebarWidth(storageKey: string, value: number): void {
@@ -101,6 +103,7 @@ export function Sidebar({
   className,
   widthStorageKey = SIDEBAR_WIDTH_STORAGE_KEY,
   defaultWidth = SIDEBAR_MIN_WIDTH,
+  maxWidth = SIDEBAR_MAX_WIDTH,
 }: {
   children: React.ReactNode;
   className?: string;
@@ -108,14 +111,22 @@ export function Sidebar({
   widthStorageKey?: string;
   /** Width to use when nothing is stored yet. Clamped to the min/max bounds. */
   defaultWidth?: number;
+  /**
+   * Upper bound for resizing on this sidebar instance. Defaults to the
+   * shared cap; Library Ask raises it because its content slot is a full
+   * chat surface and benefits from extra horizontal room.
+   */
+  maxWidth?: number;
 }) {
   const { isSheetMode, open, openMobile, setOpenMobile } = useSidebar();
-  const [width, setWidth] = React.useState<number>(() => readStoredSidebarWidth(widthStorageKey, defaultWidth));
+  const [width, setWidth] = React.useState<number>(() =>
+    readStoredSidebarWidth(widthStorageKey, defaultWidth, maxWidth),
+  );
   const [isResizing, setIsResizing] = React.useState(false);
 
   React.useEffect(() => {
-    setWidth(readStoredSidebarWidth(widthStorageKey, defaultWidth));
-  }, [widthStorageKey, defaultWidth]);
+    setWidth(readStoredSidebarWidth(widthStorageKey, defaultWidth, maxWidth));
+  }, [widthStorageKey, defaultWidth, maxWidth]);
 
   // Restore body cursor/select if the component unmounts mid-drag so the page
   // doesn't end up stuck with a col-resize cursor or text selection disabled.
@@ -141,7 +152,7 @@ export function Sidebar({
       document.body.style.userSelect = "none";
 
       const handleMove = (moveEvent: PointerEvent) => {
-        const next = clampSidebarWidth(startWidth + (moveEvent.clientX - startX));
+        const next = clampSidebarWidth(startWidth + (moveEvent.clientX - startX), maxWidth);
         setWidth(next);
       };
 
@@ -162,7 +173,7 @@ export function Sidebar({
       window.addEventListener("pointerup", handleEnd);
       window.addEventListener("pointercancel", handleEnd);
     },
-    [width, widthStorageKey],
+    [width, widthStorageKey, maxWidth],
   );
 
   const handleResizeKeyDown = React.useCallback(
@@ -181,20 +192,21 @@ export function Sidebar({
       } else if (event.key === "End") {
         event.preventDefault();
         setWidth(() => {
-          persistSidebarWidth(widthStorageKey, SIDEBAR_MAX_WIDTH);
-          return SIDEBAR_MAX_WIDTH;
+          const clamped = clampSidebarWidth(maxWidth, maxWidth);
+          persistSidebarWidth(widthStorageKey, clamped);
+          return clamped;
         });
         return;
       }
       if (next === null) return;
       event.preventDefault();
       setWidth((current) => {
-        const updated = clampSidebarWidth(current + (next ?? 0));
+        const updated = clampSidebarWidth(current + (next ?? 0), maxWidth);
         persistSidebarWidth(widthStorageKey, updated);
         return updated;
       });
     },
-    [widthStorageKey],
+    [widthStorageKey, maxWidth],
   );
 
   if (isSheetMode) {
@@ -242,7 +254,7 @@ export function Sidebar({
           aria-orientation="vertical"
           aria-label="Resize sidebar"
           aria-valuemin={SIDEBAR_MIN_WIDTH}
-          aria-valuemax={SIDEBAR_MAX_WIDTH}
+          aria-valuemax={maxWidth}
           aria-valuenow={width}
           tabIndex={0}
           data-resizing={isResizing ? "true" : "false"}

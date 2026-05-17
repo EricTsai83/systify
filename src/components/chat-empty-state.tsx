@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useMutation } from "convex/react";
 import { GlobeIcon, LinkIcon, LockIcon, PlusIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
@@ -6,7 +6,6 @@ import { api } from "../../convex/_generated/api";
 import { AppNotice } from "@/components/app-notice";
 import { ImportRepoDialog } from "@/components/import-repo-dialog";
 import { Button } from "@/components/ui/button";
-import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 const EMPTY_CHAT_OWL = ["   ^...^   ", "  / o,o \\  ", "  |):::(|  ", "====w=w===="].join("\n");
 
@@ -117,20 +117,94 @@ function OwlAsciiArt() {
 }
 
 /**
+ * Shared hero block for chatroom empty states — visual, title, optional
+ * description. The same structural primitive backs Library Ask, Discuss,
+ * and the no-repo Lab/Docs hint so the framework stays consistent even
+ * when the visual (icon vs. ASCII owl) and copy differ per context.
+ */
+export function EmptyStateHero({
+  visual,
+  title,
+  description,
+}: {
+  visual: ReactNode;
+  title: ReactNode;
+  description?: ReactNode;
+}) {
+  return (
+    <div className="flex flex-col items-center gap-3 text-center">
+      {visual}
+      <div className="space-y-1">
+        <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+        {description ? (
+          <p className="mx-auto max-w-[280px] text-xs leading-5 text-muted-foreground">{description}</p>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Shared starter-prompt list. Each prompt is a clickable card that calls
+ * `onPick` with the prompt text — the caller seeds its composer (no
+ * auto-submit) so users can refine before sending. `layout="stack"`
+ * suits narrow surfaces (sidebar Ask panel); `layout="grid"` suits the
+ * wide chat column.
+ */
+export function PromptSuggestionList({
+  label = "Try asking",
+  prompts,
+  onPick,
+  layout = "stack",
+  disabled = false,
+  className,
+}: {
+  label?: string;
+  prompts: ReadonlyArray<string>;
+  onPick: (prompt: string) => void;
+  layout?: "stack" | "grid";
+  disabled?: boolean;
+  className?: string;
+}) {
+  if (prompts.length === 0) return null;
+  return (
+    <div data-testid="prompt-suggestions" className={cn("flex w-full flex-col gap-2", className)}>
+      <p className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground/70">{label}</p>
+      <div
+        className={cn(
+          layout === "grid" ? "grid w-full gap-2 sm:grid-cols-2 lg:grid-cols-3" : "flex w-full flex-col gap-1.5",
+        )}
+      >
+        {prompts.map((prompt, index) => (
+          <button
+            key={prompt}
+            type="button"
+            onClick={() => onPick(prompt)}
+            disabled={disabled}
+            data-testid={`prompt-suggestion-${index}`}
+            className="group flex h-full items-start gap-2 rounded-md border border-border bg-card/50 px-3 py-2 text-left text-xs leading-5 text-foreground transition-colors hover:border-foreground/30 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <span className="min-w-0 whitespace-normal">{prompt}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Empty-state hint for repo-attached threads with no messages yet. Users
  * generate System Design artifacts from the Library page; the chat shell
  * stays focused on conversation-starter affordances.
  */
 export function EmptyChatHint() {
   return (
-    <div className="flex flex-1 animate-in flex-col items-center justify-center gap-4 fade-in duration-300 ease-out">
-      <Card className="border-transparent bg-transparent p-6 text-center">
-        <OwlAsciiArt />
-        <CardHeader className="items-center p-0 pt-5">
-          <CardTitle className="text-base">Start a design conversation</CardTitle>
-          <CardDescription className="text-xs">Architecture · Module dependencies · Risk hotspots</CardDescription>
-        </CardHeader>
-      </Card>
+    <div className="flex flex-1 animate-in items-center justify-center fade-in duration-300 ease-out">
+      <EmptyStateHero
+        visual={<OwlAsciiArt />}
+        title="Start a design conversation"
+        description="Architecture · Module dependencies · Risk hotspots"
+      />
     </div>
   );
 }
@@ -176,78 +250,70 @@ export function EmptyNoRepoHint({
   };
 
   return (
-    <div className="flex flex-1 animate-in items-center justify-center fade-in duration-300 ease-out">
-      <Card className="w-full max-w-md border-transparent bg-transparent p-6 text-center">
-        {attachError ? (
-          <div className="mb-4 w-full">
-            <AppNotice
-              title="Failed to attach repository"
-              message={attachError}
-              tone="error"
-              onDismiss={() => setAttachError(null)}
-              dismissLabel="Dismiss attach error"
-            />
-          </div>
-        ) : null}
-        <OwlAsciiArt />
-
-        <CardHeader className="items-center p-0 pt-5">
-          <CardTitle className="text-base">Start a design conversation</CardTitle>
-        </CardHeader>
-
-        <div className="mt-4 flex flex-col items-center gap-3">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={isAttachDisabled}>
-                <LinkIcon size={13} weight="bold" />
-                {isAttaching ? "Attaching…" : "Attach repository"}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="center" className="w-64">
-              {availableRepositories.length === 0 ? (
-                <div className="px-2 py-3 text-xs text-muted-foreground">No repositories imported yet.</div>
-              ) : (
-                availableRepositories.map((repo) => (
-                  <DropdownMenuItem
-                    key={repo._id}
-                    onSelect={() => void handleAttachRepo(repo._id)}
-                    className="flex items-center gap-2 text-xs"
-                  >
-                    {repo.visibility === "private" ? (
-                      <LockIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
-                    ) : (
-                      <GlobeIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
-                    )}
-                    <span className="min-w-0 flex-1 truncate">{repo.sourceRepoFullName}</span>
-                  </DropdownMenuItem>
-                ))
-              )}
-              {onImported ? (
-                <>
-                  <DropdownMenuSeparator />
-                  <ImportRepoDialog
-                    onImported={onImported}
-                    trigger={
-                      <DropdownMenuItem
-                        onSelect={(e) => e.preventDefault()}
-                        className="flex items-center gap-2 text-xs"
-                      >
-                        <PlusIcon size={12} weight="bold" />
-                        Import new repository
-                      </DropdownMenuItem>
-                    }
-                  />
-                </>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
-          <p className="max-w-xs text-xs text-muted-foreground">
-            Move this thread into a repository workspace to unlock Docs and Sandbox modes, or keep typing here for a
-            free-form discussion.
-          </p>
+    <div className="flex flex-1 animate-in flex-col items-center justify-center gap-5 fade-in duration-300 ease-out">
+      {attachError ? (
+        <div className="w-full max-w-md">
+          <AppNotice
+            title="Failed to attach repository"
+            message={attachError}
+            tone="error"
+            onDismiss={() => setAttachError(null)}
+            dismissLabel="Dismiss attach error"
+          />
         </div>
-      </Card>
+      ) : null}
+
+      <EmptyStateHero visual={<OwlAsciiArt />} title="Start a design conversation" />
+
+      <div className="flex flex-col items-center gap-3">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={isAttachDisabled}>
+              <LinkIcon size={13} weight="bold" />
+              {isAttaching ? "Attaching…" : "Attach repository"}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="center" className="w-64">
+            {availableRepositories.length === 0 ? (
+              <div className="px-2 py-3 text-xs text-muted-foreground">No repositories imported yet.</div>
+            ) : (
+              availableRepositories.map((repo) => (
+                <DropdownMenuItem
+                  key={repo._id}
+                  onSelect={() => void handleAttachRepo(repo._id)}
+                  className="flex items-center gap-2 text-xs"
+                >
+                  {repo.visibility === "private" ? (
+                    <LockIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
+                  ) : (
+                    <GlobeIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate">{repo.sourceRepoFullName}</span>
+                </DropdownMenuItem>
+              ))
+            )}
+            {onImported ? (
+              <>
+                <DropdownMenuSeparator />
+                <ImportRepoDialog
+                  onImported={onImported}
+                  trigger={
+                    <DropdownMenuItem onSelect={(e) => e.preventDefault()} className="flex items-center gap-2 text-xs">
+                      <PlusIcon size={12} weight="bold" />
+                      Import new repository
+                    </DropdownMenuItem>
+                  }
+                />
+              </>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <p className="max-w-xs text-xs text-muted-foreground">
+          Move this thread into a repository workspace to unlock Docs and Sandbox modes, or keep typing here for a
+          free-form discussion.
+        </p>
+      </div>
     </div>
   );
 }
