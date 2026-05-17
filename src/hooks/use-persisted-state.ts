@@ -40,6 +40,15 @@ export function useLocalStorageBoolean(
   // must observe this synchronously, before React applies the next
   // `setValue` from a defaultValue change.
   const hasUserSetRef = useRef<boolean>(parse(readString(key)) !== null);
+  // The key the most recent user-committed action (setter or cross-tab event)
+  // applied to. Used by the write effect to suppress stale writes during a
+  // mid-mount key swap: the key-change effect queues a `setValue` for the
+  // new key's stored value, but the write effect in the same commit still
+  // sees the previous render's `value` — without this guard it would
+  // overwrite the new key's stored value with the old key's value.
+  // Deliberately NOT updated by the key-change effect, since that effect
+  // is auto-sync, not a user-committed action.
+  const prevUserSetKeyRef = useRef<string>(key);
 
   // Re-read on key / defaultValue change. setState-in-effect is the only
   // tool here — both inputs can change between renders, and React's
@@ -53,7 +62,7 @@ export function useLocalStorageBoolean(
   }, [key, defaultValue]);
 
   useEffect(() => {
-    if (!hasUserSetRef.current) return;
+    if (!hasUserSetRef.current || prevUserSetKeyRef.current !== key) return;
     if (parse(readString(key)) === value) return;
     writeString(key, String(value));
   }, [key, value]);
@@ -62,14 +71,21 @@ export function useLocalStorageBoolean(
     return onLocalStorageChange(key, (newValue) => {
       const parsed = parse(newValue);
       hasUserSetRef.current = parsed !== null;
+      if (parsed !== null) {
+        prevUserSetKeyRef.current = key;
+      }
       setValue(parsed ?? defaultValue);
     });
   }, [key, defaultValue]);
 
-  const setPersisted = useCallback((next: boolean | ((prev: boolean) => boolean)) => {
-    hasUserSetRef.current = true;
-    setValue((prev) => (typeof next === "function" ? next(prev) : next));
-  }, []);
+  const setPersisted = useCallback(
+    (next: boolean | ((prev: boolean) => boolean)) => {
+      hasUserSetRef.current = true;
+      prevUserSetKeyRef.current = key;
+      setValue((prev) => (typeof next === "function" ? next(prev) : next));
+    },
+    [key],
+  );
 
   return [value, setPersisted] as const;
 }

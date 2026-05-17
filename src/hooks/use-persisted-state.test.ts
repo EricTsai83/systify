@@ -38,6 +38,40 @@ describe("useLocalStorageBoolean", () => {
       rerender({ key: "systify.test.second" });
 
       expect(result.current[0]).toBe(false);
+      // Documents the expected final value. Note that on its own this is a
+      // weak guard for the stale-write bug: the bad write self-heals one
+      // render later when the write effect re-runs with the synced value,
+      // so the file always lands on "false" by the end of `rerender`. The
+      // dedicated spy-based test below is the real regression guard.
+      expect(window.localStorage.getItem("systify.test.second")).toBe("false");
+    });
+
+    test("does not write the previous value to a newly switched key", async () => {
+      // Regression guard for a stale write during a mid-mount `key` swap:
+      // the key-change effect queues a `setValue` for the new key's stored
+      // value, but the write effect in the same commit still closes over
+      // the previous render's `value` and would persist it to the new key.
+      // The corruption self-heals locally one render later, but a `storage`
+      // event for the bad write still propagates to other tabs — so we
+      // assert directly on `writeString` rather than the post-rerender
+      // file value.
+      const storage = await import("@/lib/storage");
+      window.localStorage.setItem("systify.test.first", "true");
+      window.localStorage.setItem("systify.test.second", "false");
+
+      const writeSpy = vi.spyOn(storage, "writeString");
+
+      const { rerender } = renderHook(({ key }) => useLocalStorageBoolean(key, true), {
+        initialProps: { key: "systify.test.first" },
+      });
+      writeSpy.mockClear();
+
+      rerender({ key: "systify.test.second" });
+
+      const writesToSecond = writeSpy.mock.calls.filter((call) => call[0] === "systify.test.second");
+      writeSpy.mockRestore();
+
+      expect(writesToSecond).toEqual([]);
     });
 
     test("does not write to storage when lazy-init falls back to defaultValue", () => {
