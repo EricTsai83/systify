@@ -1,5 +1,15 @@
 import { matchRoutes, type RouteObject } from "react-router-dom";
+import type { Doc } from "../convex/_generated/dataModel";
 import type { ArtifactId, ThreadId, WorkspaceId } from "@/lib/types";
+
+/**
+ * The full union of thread.mode values stored in Convex. Matches the
+ * `threadMode` validator in `convex/schema.ts`. Distinct from `ChatMode`
+ * (which only covers the three Discuss sub-modes) — `ThreadMode` is the
+ * broader value any thread document carries, so the URL builder below can
+ * dispatch on every valid stored mode.
+ */
+export type ThreadMode = Doc<"threads">["mode"];
 
 export const LANDING_PATH = "/";
 export const AUTH_CALLBACK_ROUTE_SEGMENT = "callback";
@@ -35,6 +45,7 @@ export const PROTECTED_ROUTE_SEGMENTS = {
   workspace: "w/:workspaceId",
   workspaceThread: "w/:workspaceId/t/:threadId",
   archive: "archive",
+  resources: "resources",
   /**
    * Three-mode restructure — top-level service modes:
    *
@@ -57,6 +68,8 @@ export const PROTECTED_ROUTE_SEGMENTS = {
 
 export const ARCHIVE_PATH = `/${PROTECTED_ROUTE_SEGMENTS.archive}` as const;
 
+export const RESOURCES_PATH = `/${PROTECTED_ROUTE_SEGMENTS.resources}` as const;
+
 export const DEFAULT_AUTHENTICATED_PATH = `/${PROTECTED_ROUTE_SEGMENTS.chat}` as const;
 
 /**
@@ -71,9 +84,48 @@ export function workspacePath(workspaceId: WorkspaceId): string {
 /**
  * Build a `/w/:workspaceId/t/:threadId` URL. See {@link workspacePath} for the
  * single-source-of-truth rationale.
+ *
+ * Note: this is the *legacy* mode-agnostic thread URL. Prefer
+ * {@link modeAwareThreadPath} when the caller knows the thread's stored mode
+ * — that lets navigation land directly on the canonical mode URL (no
+ * round-trip through `LegacyThreadRedirect`, no shell remount). Kept for
+ * callsites that have a threadId but no mode (post-import, thread move,
+ * fresh thread creation where the backend assigns mode).
  */
 export function workspaceThreadPath(workspaceId: WorkspaceId, threadId: ThreadId): string {
   return `/w/${workspaceId}/t/${threadId}`;
+}
+
+/**
+ * Build the canonical mode-aware URL for a thread given its stored mode.
+ *
+ * Centralises the (thread.mode → service-mode URL) mapping so every callsite
+ * that knows a thread's mode (sidebar, mode switcher, in-mode navigation)
+ * lands on the same canonical URL. Going through this helper rather than
+ * `workspaceThreadPath` keeps the user on the same route component when
+ * navigating within a mode — e.g. clicking a Discuss thread while already
+ * on `/w/:wid/discuss/:tid_prev` reaches `/w/:wid/discuss/:tid_next` with
+ * only a params change, so `RepositoryShell` and its Convex subscriptions
+ * stay mounted instead of unmounting through the legacy URL.
+ *
+ * Maps:
+ *   - discuss / docs / sandbox → `/w/:wid/discuss/:tid` (Discuss service mode
+ *     hosts all three thread sub-modes)
+ *   - ask → `/w/:wid/library?ask=:tid` (Library Ask threads live in the
+ *     Library reader as a query param, not their own route)
+ *   - lab → `/w/:wid/lab/:tid`
+ */
+export function modeAwareThreadPath(workspaceId: WorkspaceId, threadId: ThreadId, mode: ThreadMode): string {
+  switch (mode) {
+    case "discuss":
+    case "docs":
+    case "sandbox":
+      return discussPath(workspaceId, threadId);
+    case "ask":
+      return withLibraryAskParam(libraryPath(workspaceId), threadId);
+    case "lab":
+      return labPath(workspaceId, threadId);
+  }
 }
 
 /**

@@ -7,7 +7,7 @@ import { api } from "../../convex/_generated/api";
 import { AppSidebar } from "@/components/app-sidebar";
 import { LibraryShell } from "@/components/library-shell";
 import { ScreenState } from "@/components/screen-state";
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
 import {
   DEFAULT_AUTHENTICATED_PATH,
@@ -69,17 +69,13 @@ export function LibraryPage() {
     );
   }
 
-  return (
-    <SidebarProvider>
-      <LibraryWorkspace workspaceId={urlWorkspaceId} artifactId={urlArtifactId} askThreadId={urlAskThreadId} />
-    </SidebarProvider>
-  );
+  return <LibraryWorkspace workspaceId={urlWorkspaceId} artifactId={urlArtifactId} askThreadId={urlAskThreadId} />;
 }
 
 /**
  * Inner shell that owns the workspace activation effect and renders the
- * Library shell. Split from the outer page so {@link SidebarProvider} can
- * mount before any sidebar-aware hook runs.
+ * Library shell. Split from the outer page so the expensive workspace +
+ * artifact queries skip the missing-workspace early return path.
  */
 function LibraryWorkspace({
   workspaceId,

@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useState } from "react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import {
   Navigate,
   Outlet,
@@ -10,13 +10,26 @@ import {
   useRouteError,
   useSearchParams,
 } from "react-router-dom";
+import { api } from "../convex/_generated/api";
 import { AppNotice } from "@/components/app-notice";
 import { ScreenState } from "@/components/screen-state";
 import { Button } from "@/components/ui/button";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { hasWorkOSSessionHint } from "@/lib/auth-session-hint";
 import { readString, removeKey, writeString } from "@/lib/storage";
+import type { ThreadId, WorkspaceId } from "@/lib/types";
 import { useConvexAuthStatus } from "@/providers/convex-provider-with-auth-kit";
-import { AUTH_CALLBACK_PATH, DEFAULT_AUTHENTICATED_PATH, LANDING_PATH, isProtectedReturnTo } from "@/route-paths";
+import {
+  AUTH_CALLBACK_PATH,
+  DEFAULT_AUTHENTICATED_PATH,
+  LANDING_PATH,
+  discussPath,
+  isProtectedReturnTo,
+  labPath,
+  libraryPath,
+  withLibraryAskParam,
+  workspacePath,
+} from "@/route-paths";
 import { HomePage } from "@/pages/home";
 
 const MAX_CALLBACK_ERROR_DESCRIPTION_LENGTH = 240;
@@ -103,9 +116,18 @@ export function ProtectedLayout() {
     return <Navigate to={LANDING_PATH} replace />;
   }
 
+  // SidebarProvider lives here, above the route Outlet, so it stays mounted
+  // across protected-route navigation. With it inside each page, navigating
+  // from a page that renders Sidebar (/chat, /discuss, /library, /lab) into
+  // one that doesn't (/archive, /resources) unmounted the provider mid-open
+  // and stranded Radix's mobile-Sheet overlay + scroll lock on the
+  // destination page. Hoisting it lets the pathname effect inside the
+  // provider observe the route change and close the Sheet cleanly.
   return (
     <Suspense fallback={<RouteLoadingScreen description="Loading your chat workspace." />}>
-      <Outlet />
+      <SidebarProvider>
+        <Outlet />
+      </SidebarProvider>
     </Suspense>
   );
 }
@@ -255,6 +277,74 @@ export function LibraryAskLegacyRedirect() {
   }
   const base = `/w/${workspaceId}/library`;
   const target = threadId ? `${base}?ask=${threadId}` : base;
+  return <Navigate to={target} replace />;
+}
+
+/**
+ * Legacy mode-agnostic thread URL `/w/:wid/t/:tid`. Phase 1 of the three-mode
+ * restructure left this in place so existing bookmarks and in-app navigations
+ * (`workspaceThreadPath(...)` callsites) continued to work, but the URL itself
+ * carries no service-mode information — the mode is only knowable from the
+ * thread's `mode` field. That meant `useServiceMode` had to surface a "discuss"
+ * placeholder while the rest of the shell pretended the mode was settled,
+ * which was the root cause of the StatusPill / ArtifactPanel flash on every
+ * workspace-landing redirect (`/chat` → `/w/:wid` → `/w/:wid/t/:tid`): the
+ * brief window where availability resolved a non-"discuss" default for the
+ * workspace and the chrome painted accordingly, only to collapse back to the
+ * placeholder when the redirect landed here.
+ *
+ * Rather than carry a placeholder forever, this component canonicalises the
+ * URL in one shot: it reads the thread's stored mode, computes the matching
+ * canonical URL, and `<Navigate replace>`s the browser there. Once redirected,
+ * `useServiceMode` reads the URL prefix directly — no placeholder, no
+ * mode-mismatch, no flash. The component intentionally renders no shell
+ * chrome while the thread query is in flight so the user does not see a
+ * mode-dependent surface paint and then unpaint.
+ *
+ * Falls back to the workspace landing when the thread cannot be loaded
+ * (deleted, no access) — same recovery the shell-side missing-thread effect
+ * applies, so behaviour stays consistent regardless of which surface
+ * detected the dead URL first.
+ */
+export function LegacyThreadRedirect() {
+  const { workspaceId, threadId } = useParams<{ workspaceId: string; threadId: string }>();
+  const wid = (workspaceId ?? null) as WorkspaceId | null;
+  const tid = (threadId ?? null) as ThreadId | null;
+
+  const threadContext = useQuery(api.threadContext.getThreadContext, tid ? { threadId: tid } : "skip");
+
+  if (!wid || !tid) {
+    return <Navigate to={DEFAULT_AUTHENTICATED_PATH} replace />;
+  }
+
+  if (threadContext === undefined) {
+    return <RouteLoadingScreen description="Loading thread…" />;
+  }
+
+  if (threadContext === null) {
+    // Thread is gone or inaccessible — bounce to the workspace landing,
+    // which will forward to a surviving thread or render the empty state.
+    return <Navigate to={workspacePath(wid)} replace />;
+  }
+
+  // Map the thread's stored mode onto its canonical service-mode URL.
+  // `discuss` / `docs` / `sandbox` are sub-modes within the Discuss service
+  // mode and share the same URL prefix. `ask` threads live inside Library
+  // as the `?ask=` query param — the artifact owns the path. `lab` threads
+  // have their own URL prefix.
+  const target = (() => {
+    switch (threadContext.thread.mode) {
+      case "discuss":
+      case "docs":
+      case "sandbox":
+        return discussPath(wid, tid);
+      case "ask":
+        return withLibraryAskParam(libraryPath(wid), tid);
+      case "lab":
+        return labPath(wid, tid);
+    }
+  })();
+
   return <Navigate to={target} replace />;
 }
 

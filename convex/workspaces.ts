@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
+import { serviceModeValidator } from "./lib/serviceMode";
 import { clearLastActiveWorkspaceIfMatches, upsertLastActiveWorkspace } from "./lib/userPreferences";
 import { ensureHomeWorkspace, ensureRepositoryWorkspace } from "./lib/workspaces";
 
@@ -71,16 +72,30 @@ export const deleteWorkspace = mutation({
 });
 
 /**
- * Mark `workspaceId` as the viewer's currently active workspace.
+ * Mark `workspaceId` as the viewer's currently active workspace, optionally
+ * recording which service mode (discuss / library / lab) the user just
+ * landed in inside that workspace.
  *
- * This single mutation owns two writes that must move together:
+ * This single mutation owns three writes that must move together:
  *
  * - bump `workspaces.lastAccessedAt` so the sidebar's recency ordering and
  *   the "most recent workspace" fallback both reflect the latest touch
+ * - when `serviceMode` is supplied, persist it as `workspaces.lastServiceMode`
+ *   so the next `/chat` → `/w/:wid` → mode-canonical-URL redirect lands the
+ *   user back in the mode they were last using inside this workspace
+ *   (instead of the workspace's structural default — the cross-session
+ *   "I was in discuss, why am I in library?" surprise this argument fixes)
  * - upsert `userPreferences.lastActiveWorkspaceId` so a fresh browser /
  *   device converges to the same selection on next load
  *
- * Atomicity matters: keeping both writes inside one Convex transaction is
+ * `serviceMode` is intentionally optional. Callers that only know the
+ * workspace changed (URL → state sync on first paint) omit it so the
+ * stored mode is not clobbered with whatever the *previous* workspace was
+ * showing; callers that observe a settled mode URL (`/w/:wid/discuss`,
+ * `/w/:wid/library`, `/w/:wid/lab`) pass it so the workspace remembers
+ * the user's pick.
+ *
+ * Atomicity matters: keeping all writes inside one Convex transaction is
  * what makes the DB the canonical source of truth instead of a best-effort
  * shadow of localStorage. See
  * `docs/workspace-persistence-system-design.md` for the full reasoning.
@@ -88,6 +103,7 @@ export const deleteWorkspace = mutation({
 export const touchWorkspace = mutation({
   args: {
     workspaceId: v.id("workspaces"),
+    serviceMode: v.optional(serviceModeValidator),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -95,7 +111,18 @@ export const touchWorkspace = mutation({
     if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
       throw new Error("Workspace not found.");
     }
-    await ctx.db.patch(args.workspaceId, { lastAccessedAt: Date.now() });
+    // Skip the `lastServiceMode` field entirely when the caller didn't pass
+    // one. `ctx.db.patch` interprets `undefined` as "leave this field alone"
+    // for optional fields, so writing it would be a no-op, but threading the
+    // conditional keeps the patch object describing only what actually
+    // changed — easier to grep when auditing why a workspace row mutated.
+    const patch: { lastAccessedAt: number; lastServiceMode?: "discuss" | "library" | "lab" } = {
+      lastAccessedAt: Date.now(),
+    };
+    if (args.serviceMode !== undefined && args.serviceMode !== workspace.lastServiceMode) {
+      patch.lastServiceMode = args.serviceMode;
+    }
+    await ctx.db.patch(args.workspaceId, patch);
     await upsertLastActiveWorkspace(ctx, {
       ownerTokenIdentifier: identity.tokenIdentifier,
       workspaceId: args.workspaceId,

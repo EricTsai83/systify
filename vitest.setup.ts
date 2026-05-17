@@ -42,6 +42,34 @@ if (typeof globalScope.ResizeObserver === "undefined") {
 }
 
 /**
+ * `matchMedia` no-op polyfill for the JSDOM-backed component tests. JSDOM
+ * doesn't implement it, but `SidebarProvider` (mounted in `ProtectedLayout`
+ * so it survives route transitions) and `useIsMobile` both call it on mount
+ * to read the current breakpoint. Without this stub, every test that
+ * renders a protected route — including the page-mocked App routing tests —
+ * crashes before assertions can run.
+ *
+ * The stub always reports "does not match" so tests default to the desktop
+ * layout; tests that need a specific breakpoint should override
+ * `window.matchMedia` at the test level.
+ */
+const windowScope = globalScope as unknown as {
+  window?: { matchMedia?: (query: string) => unknown };
+};
+if (typeof windowScope.window !== "undefined" && typeof windowScope.window.matchMedia !== "function") {
+  windowScope.window.matchMedia = (query: string) => ({
+    matches: false,
+    media: query,
+    onchange: null,
+    addListener: () => {},
+    removeListener: () => {},
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    dispatchEvent: () => false,
+  });
+}
+
+/**
  * In-memory `Storage` polyfill for JSDOM. The shipped implementation in this
  * runner is partial (notably missing `clear()`), so any test that touches a
  * storage-backed code path needs a working `Storage` swapped in. Tests that

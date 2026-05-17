@@ -216,4 +216,51 @@ describe("userPreferences", () => {
     const bobPrefs = await bob.query(api.userPreferences.getViewerPreferences, {});
     expect(bobPrefs).toBeNull();
   });
+
+  test("touchWorkspace persists serviceMode when supplied so cross-route returns restore the user's last mode", async () => {
+    // End-to-end contract for the "Archive → back to chat" round-trip:
+    // visiting `/w/:wid/discuss/:tid` records "discuss" on the workspace,
+    // and the next workspace-landing redirect can read that back instead
+    // of bouncing the user to the structural default mode.
+    const ownerTokenIdentifier = "user|prefs-service-mode";
+    const t = convexTest(schema, modules);
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    await viewer.mutation(api.workspaces.initializeWorkspaces, {});
+    const workspaces = await viewer.query(api.workspaces.listWorkspaces, {});
+    const homeId = workspaces[0]._id;
+
+    expect(workspaces[0].lastServiceMode).toBeUndefined();
+
+    await viewer.mutation(api.workspaces.touchWorkspace, { workspaceId: homeId, serviceMode: "discuss" });
+    const afterDiscuss = await viewer.query(api.workspaces.listWorkspaces, {});
+    expect(afterDiscuss[0].lastServiceMode).toBe("discuss");
+
+    // A subsequent touch in a different mode overwrites the pick so the
+    // workspace tracks the user's most recent choice, not the first one
+    // they ever made.
+    await viewer.mutation(api.workspaces.touchWorkspace, { workspaceId: homeId, serviceMode: "lab" });
+    const afterLab = await viewer.query(api.workspaces.listWorkspaces, {});
+    expect(afterLab[0].lastServiceMode).toBe("lab");
+  });
+
+  test("touchWorkspace without serviceMode preserves the existing lastServiceMode", async () => {
+    // Workspace-switch callsites (URL → state sync, fallback effect) must
+    // not clobber the destination workspace's recorded mode with `undefined`
+    // — that would erase the very preference the redirect needs to read on
+    // the next visit. The serviceMode-less call path is for "the user moved
+    // workspaces, we don't have a mode opinion to record".
+    const ownerTokenIdentifier = "user|prefs-service-mode-preserve";
+    const t = convexTest(schema, modules);
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    await viewer.mutation(api.workspaces.initializeWorkspaces, {});
+    const homeId = (await viewer.query(api.workspaces.listWorkspaces, {}))[0]._id;
+
+    await viewer.mutation(api.workspaces.touchWorkspace, { workspaceId: homeId, serviceMode: "library" });
+    await viewer.mutation(api.workspaces.touchWorkspace, { workspaceId: homeId });
+
+    const preserved = await viewer.query(api.workspaces.listWorkspaces, {});
+    expect(preserved[0].lastServiceMode).toBe("library");
+  });
 });

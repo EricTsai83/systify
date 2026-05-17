@@ -1,5 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from "react";
+import { useLocation } from "react-router-dom";
 import { List } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { readString, writeString } from "@/lib/storage";
@@ -84,6 +85,33 @@ export function SidebarProvider({
     mediaQuery.addEventListener("change", handleChange);
     return () => mediaQuery.removeEventListener("change", handleChange);
   }, []);
+
+  // Mobile-Sheet cleanup on every URL change. The provider is mounted in
+  // ProtectedLayout so it survives route transitions and this effect can
+  // actually fire on the destination page. Two things happen here:
+  //
+  //   1. `setOpenMobile(false)` — collapse the Sheet state so that when the
+  //      user navigates back to a sidebar-mounting route, the Sheet is closed.
+  //
+  //   2. Reset `body.style.pointerEvents`. Radix's DismissableLayer (used by
+  //      both the Sheet and the ProfileCard DropdownMenu inside it) tracks a
+  //      module-level `originalBodyPointerEvents` snapshot. When the Sheet
+  //      opens it captures `""` → sets body to `"none"`; the nested Dropdown
+  //      then captures `"none"` → sets body to `"none"` again. If the user
+  //      taps a Dropdown link that points at a route which doesn't render the
+  //      Sheet (e.g. /archive, /resources), both layers unmount in the same
+  //      tick and the "last layer to clean up" restores body to the stale
+  //      `"none"` snapshot — leaving the destination page covered by an
+  //      invisible click shield. Resetting it here on every navigation
+  //      unsticks the page; nothing else in this app touches
+  //      `body.style.pointerEvents`, so the reset is safe.
+  const { pathname } = useLocation();
+  React.useEffect(() => {
+    setOpenMobile(false);
+    if (typeof document !== "undefined") {
+      document.body.style.pointerEvents = "";
+    }
+  }, [pathname]);
 
   const toggle = React.useCallback(() => {
     if (isSheetMode) setOpenMobile((v) => !v);

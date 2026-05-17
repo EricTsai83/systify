@@ -8,6 +8,7 @@ import { WorkspaceSelector } from "@/components/workspace-switcher";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
 import { useServiceMode } from "@/hooks/use-service-mode";
+import type { ThreadMode } from "@/route-paths";
 import type { ArtifactId, RepositoryId, ServiceMode, ThreadId, WorkspaceId } from "@/lib/types";
 
 /**
@@ -57,7 +58,7 @@ type AppSidebarProps = {
   | {
       variant?: "threads";
       selectedThreadId: ThreadId | null;
-      onSelectThread: (id: ThreadId | null) => void;
+      onSelectThread: (id: ThreadId | null, mode?: ThreadMode) => void;
       onDeleteThread: (id: ThreadId) => void;
     }
   | {
@@ -84,7 +85,13 @@ type AppSidebarProps = {
 export function AppSidebar(props: AppSidebarProps) {
   const { repositories, workspaces, activeWorkspaceId, onSwitchWorkspace, onImported, onError } = props;
   const { serviceMode, availability } = useServiceMode(activeWorkspaceId);
-  const threadModeFilter = SERVICE_MODE_TO_THREAD_MODE[serviceMode];
+  // `serviceMode` is `null` on transient URLs (`/chat`, `/w/:wid` workspace
+  // landing, legacy `/w/:wid/t/:tid`) — fall back to the workspace's intended
+  // default so the sidebar can paint a stable thread list and ServiceModeSwitcher
+  // highlight while the canonicalising redirect resolves. Once the URL settles
+  // on a canonical mode prefix the URL value takes over again.
+  const effectiveServiceMode: ServiceMode = serviceMode ?? availability?.defaultServiceMode ?? "discuss";
+  const threadModeFilter = SERVICE_MODE_TO_THREAD_MODE[effectiveServiceMode];
 
   const activeWorkspace = useMemo(
     () => workspaces?.find((ws) => ws._id === activeWorkspaceId) ?? null,
@@ -141,7 +148,11 @@ export function AppSidebar(props: AppSidebarProps) {
         </div>
       </SidebarHeader>
 
-      <ServiceModeSwitcher workspaceId={activeWorkspaceId} serviceMode={serviceMode} availability={availability} />
+      <ServiceModeSwitcher
+        workspaceId={activeWorkspaceId}
+        serviceMode={effectiveServiceMode}
+        availability={availability}
+      />
 
       {content}
 

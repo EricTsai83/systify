@@ -91,6 +91,76 @@ export const listRepositories = query({
 });
 
 /**
+ * Resources page — cross-workspace inventory of the viewer's active
+ * repositories joined with their latest sandbox + sync status.
+ *
+ * One query feeds the page so the client renders without an N+1 over
+ * `getRepositoryDetail`. We re-use the same helpers the per-repo TopBar
+ * status pill consumes (`getSandboxModeStatus`, the remote-sha diff for
+ * `hasRemoteUpdates`) so the Resources cards and the per-thread chrome
+ * never disagree about what a given sandbox is doing.
+ *
+ * Workspace ids ride along so each row can link straight into the right
+ * `/w/:wid` URL — Resources is a navigation surface, not a control plane.
+ * Stop / restart sandbox affordances stay on the per-workspace TopBar
+ * where the user already has the full context.
+ */
+export const listResourceInventory = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await requireViewerIdentity(ctx);
+
+    const repositories = await ctx.db
+      .query("repositories")
+      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
+      )
+      .order("desc")
+      .take(REPOSITORY_LIST_TAKE);
+
+    const activeRepositories = repositories.filter((repo) => repo.archivedAt === undefined);
+
+    // Workspace lookup: each active repo has exactly one workspace, but the
+    // Resources page only needs the id to build navigation links. Build a
+    // single map up-front rather than N reads through `ensureRepositoryWorkspace`
+    // (which is mutation-safe but read-heavier than a plain index scan).
+    const workspaces = await ctx.db
+      .query("workspaces")
+      .withIndex("by_ownerTokenIdentifier_and_lastAccessedAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier),
+      )
+      .take(REPOSITORY_LIST_TAKE);
+    const workspaceByRepoId = new Map<Id<"repositories">, Id<"workspaces">>();
+    for (const workspace of workspaces) {
+      if (workspace.repositoryId) {
+        workspaceByRepoId.set(workspace.repositoryId, workspace._id);
+      }
+    }
+
+    const inventory = await Promise.all(
+      activeRepositories.map(async (repo) => {
+        const sandbox = repo.latestSandboxId ? await ctx.db.get(repo.latestSandboxId) : null;
+        const sandboxModeStatus = getSandboxModeStatus(sandbox);
+        const hasRemoteUpdates =
+          !!repo.latestRemoteSha && !!repo.lastSyncedCommitSha && repo.latestRemoteSha !== repo.lastSyncedCommitSha;
+        return {
+          repositoryId: repo._id,
+          workspaceId: workspaceByRepoId.get(repo._id) ?? null,
+          fullName: repo.sourceRepoFullName,
+          importStatus: repo.importStatus,
+          lastImportedAt: repo.lastImportedAt,
+          hasRemoteUpdates,
+          sandboxModeStatus,
+          sandbox: sandbox ? { status: sandbox.status, ttlExpiresAt: sandbox.ttlExpiresAt } : null,
+        };
+      }),
+    );
+
+    return inventory;
+  },
+});
+
+/**
  * Paginated archive listing with optional full-text search over
  * `sourceRepoFullName`. Two execution paths:
  *

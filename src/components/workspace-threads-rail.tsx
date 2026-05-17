@@ -8,6 +8,7 @@ import { SidebarMenuButton } from "@/components/ui/sidebar";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { usePrewarmThread } from "@/hooks/use-prewarm-thread";
 import { toUserErrorMessage } from "@/lib/errors";
+import type { ThreadMode } from "@/route-paths";
 import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -31,7 +32,14 @@ export function WorkspaceThreadsRail({
   repositories: Doc<"repositories">[] | undefined;
   threadMode: ThreadModeFilter;
   selectedThreadId: ThreadId | null;
-  onSelectThread: (id: ThreadId | null) => void;
+  /**
+   * Selects a thread or clears the selection. When `mode` is provided the
+   * caller has read the thread's stored mode (from the Doc rendered in the
+   * row, or from the rail's active mode filter for fresh thread creation)
+   * and the consumer can route directly to the canonical mode URL via
+   * {@link modeAwareThreadPath}, avoiding a legacy-URL round trip.
+   */
+  onSelectThread: (id: ThreadId | null, mode?: ThreadMode) => void;
   onDeleteThread: (id: ThreadId) => void;
   onError: (message: string | null) => void;
   compact?: boolean;
@@ -77,7 +85,13 @@ export function WorkspaceThreadsRail({
             mode: threadMode,
           });
         }
-        onSelectThread(threadId);
+        // The new thread's stored mode matches the rail's active filter
+        // (createThreadMutation receives `mode: threadMode`; createAskThread
+        // unconditionally creates an "ask" thread). Forwarding the mode lets
+        // the shell route straight to the canonical URL rather than bouncing
+        // through the mode-agnostic legacy thread URL.
+        const createdMode: ThreadMode = newThreadVariant === "libraryAsk" ? "ask" : threadMode;
+        onSelectThread(threadId, createdMode);
       } catch (error) {
         onError(toUserErrorMessage(error, "Failed to start a conversation."));
       }
@@ -152,7 +166,14 @@ function ThreadsSection({
   threads: Doc<"threads">[] | undefined;
   repositoriesById: Map<RepositoryId, Doc<"repositories">>;
   selectedThreadId: ThreadId | null;
-  onSelectThread: (id: ThreadId | null) => void;
+  /**
+   * Selects a thread or clears the selection. When `mode` is provided the
+   * caller has read the thread's stored mode (from the Doc rendered in the
+   * row, or from the rail's active mode filter for fresh thread creation)
+   * and the consumer can route directly to the canonical mode URL via
+   * {@link modeAwareThreadPath}, avoiding a legacy-URL round trip.
+   */
+  onSelectThread: (id: ThreadId | null, mode?: ThreadMode) => void;
   onDeleteThread: (id: ThreadId) => void;
   onTogglePin: (id: ThreadId, pinned: boolean) => void;
   showRepoBadge: boolean;
@@ -259,7 +280,14 @@ const ThreadsList = memo(function ThreadsList({
   threads: Doc<"threads">[];
   repositoriesById: Map<RepositoryId, Doc<"repositories">>;
   selectedThreadId: ThreadId | null;
-  onSelectThread: (id: ThreadId | null) => void;
+  /**
+   * Selects a thread or clears the selection. When `mode` is provided the
+   * caller has read the thread's stored mode (from the Doc rendered in the
+   * row, or from the rail's active mode filter for fresh thread creation)
+   * and the consumer can route directly to the canonical mode URL via
+   * {@link modeAwareThreadPath}, avoiding a legacy-URL round trip.
+   */
+  onSelectThread: (id: ThreadId | null, mode?: ThreadMode) => void;
   onPrewarmThread: (id: ThreadId) => void;
   onDeleteThread: (id: ThreadId) => void;
   onTogglePin: (id: ThreadId, pinned: boolean) => void;
@@ -276,7 +304,7 @@ const ThreadsList = memo(function ThreadsList({
           <div key={thread._id} className="group relative">
             <SidebarMenuButton
               selected={isSelected}
-              onClick={() => onSelectThread(thread._id)}
+              onClick={() => onSelectThread(thread._id, thread.mode)}
               onMouseEnter={() => onPrewarmThread(thread._id)}
               onFocus={() => onPrewarmThread(thread._id)}
               className={cn("py-1.5 pr-16", compact && "py-1")}

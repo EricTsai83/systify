@@ -65,6 +65,7 @@ import type * as lib_sandboxFeatureFlag from "../lib/sandboxFeatureFlag.js";
 import type * as lib_sandboxLiveness from "../lib/sandboxLiveness.js";
 import type * as lib_sandboxNames from "../lib/sandboxNames.js";
 import type * as lib_sandboxRollout from "../lib/sandboxRollout.js";
+import type * as lib_serviceMode from "../lib/serviceMode.js";
 import type * as lib_systemDesign from "../lib/systemDesign.js";
 import type * as lib_userPreferences from "../lib/userPreferences.js";
 import type * as lib_workspaces from "../lib/workspaces.js";
@@ -144,6 +145,7 @@ declare const fullApi: ApiFromModules<{
   "lib/sandboxLiveness": typeof lib_sandboxLiveness;
   "lib/sandboxNames": typeof lib_sandboxNames;
   "lib/sandboxRollout": typeof lib_sandboxRollout;
+  "lib/serviceMode": typeof lib_serviceMode;
   "lib/systemDesign": typeof lib_systemDesign;
   "lib/userPreferences": typeof lib_userPreferences;
   "lib/workspaces": typeof lib_workspaces;
