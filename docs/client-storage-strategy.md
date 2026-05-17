@@ -92,6 +92,7 @@ Storage reads in `useState` initializers (not `useEffect`) ensure the correct va
 
 This document is the **codebase-level** strategy for client-side storage placement. It complements:
 
+- [`client-storage-architecture.md`](./client-storage-architecture.md) — the implementation-level reference: helper API contracts, `useLocalStorageBoolean` and `useStorageGC` invariants, sessionStorage vs localStorage trade-offs, and test infrastructure. Read this when you are wiring up a new callsite or changing the helpers themselves.
 - [`workspace-persistence-system-design.md`](./workspace-persistence-system-design.md) — the specific two-layer (localStorage cache + DB source of truth) design for the active workspace pointer, plus the orphan-cleanup contract for workspace/repository deletion.
 
-When in doubt about a new preference, start here to classify it (device vs identity vs one-time), then consult the workspace-persistence doc if it falls in the "identity, needs first-paint cache" bucket.
+When in doubt about a new preference, start here to classify it (device vs identity vs one-time), then consult the architecture doc for the helper API, and the workspace-persistence doc if it falls in the "identity, needs first-paint cache" bucket.
