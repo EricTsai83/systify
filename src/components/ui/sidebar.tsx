@@ -2,6 +2,7 @@
 import * as React from "react";
 import { List } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
+import { readString, writeString } from "@/lib/storage";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -37,23 +38,13 @@ function clampSidebarWidth(value: number): number {
 // the slim default; Library Ask carries a full chat panel and passes a
 // roomier key + default. Both still clamp to the shared min/max bounds.
 function readStoredSidebarWidth(storageKey: string, fallback: number): number {
-  if (typeof window === "undefined") return clampSidebarWidth(fallback);
-  try {
-    const stored = window.localStorage.getItem(storageKey);
-    if (!stored) return clampSidebarWidth(fallback);
-    return clampSidebarWidth(Number.parseInt(stored, 10));
-  } catch {
-    return clampSidebarWidth(fallback);
-  }
+  const stored = readString(storageKey);
+  if (!stored) return clampSidebarWidth(fallback);
+  return clampSidebarWidth(Number.parseInt(stored, 10));
 }
 
 function persistSidebarWidth(storageKey: string, value: number): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(storageKey, String(value));
-  } catch {
-    // localStorage can throw in restricted environments — keep in-memory width.
-  }
+  writeString(storageKey, String(value));
 }
 
 export function useSidebar() {

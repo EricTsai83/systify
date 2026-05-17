@@ -1,4 +1,5 @@
 import "@testing-library/jest-dom/vitest";
+import { beforeEach } from "vitest";
 
 /**
  * `ResizeObserver` no-op polyfill for the JSDOM-backed component tests
@@ -25,7 +26,101 @@ class ResizeObserverStub {
 // (vitest.setup.ts is type-checked under tsconfig.node.json, which only
 // pulls in ES2023). `globalThis.ResizeObserver` exists at runtime in
 // JSDOM-or-better environments — we only assign it when missing.
-const globalScope = globalThis as unknown as { ResizeObserver?: unknown };
+const globalScope = globalThis as unknown as {
+  ResizeObserver?: unknown;
+  window?: {
+    localStorage?: {
+      clear?: () => void;
+    };
+    sessionStorage?: {
+      clear?: () => void;
+    };
+  };
+};
 if (typeof globalScope.ResizeObserver === "undefined") {
   globalScope.ResizeObserver = ResizeObserverStub;
+}
+
+/**
+ * In-memory `Storage` polyfill for JSDOM. The shipped implementation in this
+ * runner is partial (notably missing `clear()`), so any test that touches a
+ * storage-backed code path needs a working `Storage` swapped in. Tests that
+ * want a richer mock (e.g. to spy on `setItem`) can still override the
+ * property at the test level.
+ *
+ * Mirrors `src/test-utils/storage.ts`'s `createMemoryStorage()`, but
+ * duplicated here because `vitest.setup.ts` is type-checked under the
+ * DOM-less node project — importing the DOM-typed helper would force the
+ * node tsconfig to include DOM lib.
+ */
+type AnyStorage = {
+  length: number;
+  clear: () => void;
+  getItem: (key: string) => string | null;
+  key: (index: number) => string | null;
+  removeItem: (key: string) => void;
+  setItem: (key: string, value: string) => void;
+};
+
+function createMemoryStorage(): AnyStorage {
+  const backing = new Map<string, string>();
+  return {
+    get length() {
+      return backing.size;
+    },
+    clear: () => {
+      backing.clear();
+    },
+    getItem: (key: string) => backing.get(key) ?? null,
+    key: (index: number) => Array.from(backing.keys())[index] ?? null,
+    removeItem: (key: string) => {
+      backing.delete(key);
+    },
+    setItem: (key: string, value: string) => {
+      backing.set(key, String(value));
+    },
+  };
+}
+
+function isUsableStorage(storage: { clear?: () => void } | undefined): boolean {
+  if (!storage || typeof storage.clear !== "function") return false;
+  try {
+    storage.clear();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Only patch when running in a JSDOM-like environment (Convex edge-runtime
+// tests have no `window`, and they don't need storage either).
+if (typeof globalScope.window !== "undefined") {
+  const win = globalScope.window as unknown as {
+    localStorage: AnyStorage;
+    sessionStorage: AnyStorage;
+  };
+  if (!isUsableStorage(win.localStorage)) {
+    Object.defineProperty(win, "localStorage", {
+      configurable: true,
+      value: createMemoryStorage(),
+    });
+  }
+  if (!isUsableStorage(win.sessionStorage)) {
+    Object.defineProperty(win, "sessionStorage", {
+      configurable: true,
+      value: createMemoryStorage(),
+    });
+  }
+  beforeEach(() => {
+    try {
+      win.localStorage.clear();
+    } catch {
+      // Test may have spied on `clear()`; let the test own its own teardown.
+    }
+    try {
+      win.sessionStorage.clear();
+    } catch {
+      // Same.
+    }
+  });
 }

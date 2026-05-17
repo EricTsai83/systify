@@ -26,38 +26,9 @@ const workspaceId = "ws_libtabs" as WorkspaceId;
 const artifactA = "artifact_a" as ArtifactId;
 const artifactB = "artifact_b" as ArtifactId;
 
-// This test runner ships only a partial `localStorage` (no `clear()`); swap in
-// a memory-backed store so the hook's first-paint cache is deterministic.
-// Mirrors `use-persisted-state.test.ts`.
-const localStorageBackingStore = new Map<string, string>();
-
-function ensureTestLocalStorage() {
-  if (typeof window.localStorage.clear !== "function") {
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: {
-        get length() {
-          return localStorageBackingStore.size;
-        },
-        clear: () => localStorageBackingStore.clear(),
-        getItem: (key: string) => localStorageBackingStore.get(key) ?? null,
-        key: (index: number) => Array.from(localStorageBackingStore.keys())[index] ?? null,
-        removeItem: (key: string) => {
-          localStorageBackingStore.delete(key);
-        },
-        setItem: (key: string, value: string) => {
-          localStorageBackingStore.set(key, String(value));
-        },
-      } satisfies Storage,
-    });
-  }
-}
-
 beforeEach(() => {
   vi.useFakeTimers();
   navigateMock.mockReset();
-  ensureTestLocalStorage();
-  window.localStorage.clear();
 });
 
 afterEach(() => {

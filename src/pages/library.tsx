@@ -18,6 +18,7 @@ import {
   workspaceThreadPath,
 } from "@/route-paths";
 import type { ArtifactId, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import { writeString } from "@/lib/storage";
 import { toast } from "sonner";
 
 const ACTIVE_WORKSPACE_STORAGE_KEY = "systify.activeWorkspaceId";
@@ -105,11 +106,7 @@ function LibraryWorkspace({
   // pulling in its 1000+ line state graph.
   useEffect(() => {
     if (!workspaceId) return;
-    try {
-      window.localStorage.setItem(ACTIVE_WORKSPACE_STORAGE_KEY, workspaceId);
-    } catch {
-      // Storage denied — DB still owns the canonical pointer.
-    }
+    writeString(ACTIVE_WORKSPACE_STORAGE_KEY, workspaceId);
     void touchWorkspace({ workspaceId }).catch(() => {});
   }, [touchWorkspace, workspaceId]);
 

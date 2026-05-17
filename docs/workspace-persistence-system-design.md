@@ -166,6 +166,39 @@ The read-time defense in `loadViewerPreferences` is still kept as
 defense-in-depth for legacy rows or any code path that bypasses the public
 `deleteWorkspace` mutation.
 
+### Orphan cleanup
+
+The active-workspace pointer is only one of several localStorage entries
+scoped to a workspace or repository — the Library tab strip
+(`systify.library.tabs.{wsId}`), the Ask tab strip
+(`systify.library.askTabs.{wsId}`), and the folder navigator's
+per-node open state (`systify.folderNav.open.{repoId}.{nodeId}`) are also
+keyed by id. When the owning workspace or repository is deleted, those
+keys would otherwise accumulate in the user's browser indefinitely.
+
+`useStorageGC` (in `src/hooks/use-storage-gc.ts`) is mounted by
+`RepositoryShell` and sweeps the prefixes against the live id sets coming
+from the same `listWorkspaces` / `listRepositories` queries the shell
+already subscribes to. The hook handles three trigger paths uniformly:
+
+- **Initial load.** The first non-null snapshot of the live id sets
+  garbage-collects any keys left over from a previous session (e.g. the
+  user deleted a workspace on another device while this browser was
+  closed).
+- **Local deletion.** When the user deletes a workspace or repository in
+  this tab, the mutation's reactivity drops the id from the local query
+  cache, the live id set shrinks, and the sweep runs.
+- **Cross-tab deletion.** Convex pushes the updated `listWorkspaces` /
+  `listRepositories` snapshot to every open tab. The same hook runs in
+  every tab and reaps the orphan keys without an additional handshake.
+
+The hook is intentionally a no-op while the upstream query is still loading
+(`liveWorkspaceIds === null`), so a fresh mount does not mistakenly treat
+every cached key as an orphan during the initial query window. The
+active-workspace pointer (`systify.activeWorkspaceId`) is *not* swept by
+this hook — the fallback effect in `RepositoryShell` already resets it to
+a surviving workspace, which is sufficient.
+
 ## Why DB Wins On Conflict
 
 The reconciliation rule "DB beats cache" is the heart of this design.

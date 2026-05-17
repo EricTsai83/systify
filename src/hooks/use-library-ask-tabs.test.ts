@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { act, renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { useLibraryAskTabs } from "./use-library-ask-tabs";
 import type { ThreadId, WorkspaceId } from "@/lib/types";
 
@@ -9,42 +9,6 @@ const workspaceId = "ws_asktabs" as WorkspaceId;
 const t1 = "thread_1" as ThreadId;
 const t2 = "thread_2" as ThreadId;
 const t3 = "thread_3" as ThreadId;
-
-// This test runner ships only a partial `localStorage` (no `clear()`); swap in
-// a memory-backed store so the hook's first-paint cache is deterministic.
-// Mirrors `use-library-tabs.test.ts`.
-const localStorageBackingStore = new Map<string, string>();
-
-function ensureTestLocalStorage() {
-  if (typeof window.localStorage.clear !== "function") {
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: {
-        get length() {
-          return localStorageBackingStore.size;
-        },
-        clear: () => localStorageBackingStore.clear(),
-        getItem: (key: string) => localStorageBackingStore.get(key) ?? null,
-        key: (index: number) => Array.from(localStorageBackingStore.keys())[index] ?? null,
-        removeItem: (key: string) => {
-          localStorageBackingStore.delete(key);
-        },
-        setItem: (key: string, value: string) => {
-          localStorageBackingStore.set(key, String(value));
-        },
-      } satisfies Storage,
-    });
-  }
-}
-
-beforeEach(() => {
-  ensureTestLocalStorage();
-  window.localStorage.clear();
-});
-
-afterEach(() => {
-  window.localStorage.clear();
-});
 
 describe("useLibraryAskTabs", () => {
   test("ensureOpen appends a tab and is idempotent on an unchanged entry", () => {

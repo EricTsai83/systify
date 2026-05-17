@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/dialog";
 import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { readString, removeKey, writeString } from "@/lib/storage";
 import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -38,28 +39,19 @@ import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 // blocked. Persisted before a full-page redirect so the dialog can auto-open
 // when the user returns. This survives the multi-redirect chain
 // (GitHub → callback → / → /chat) that otherwise drops URL search params.
+// All storage access goes through `@/lib/storage` per docs/client-storage-strategy.md.
 // ---------------------------------------------------------------------------
 const PENDING_IMPORT_KEY = "systify.github.pendingImport";
 
 function markPendingImport() {
-  try {
-    sessionStorage.setItem(PENDING_IMPORT_KEY, "true");
-  } catch {
-    // Private-browsing modes may deny storage; best-effort.
-  }
+  writeString(PENDING_IMPORT_KEY, "true", "session");
 }
 
 /** Consume the flag. Returns `true` exactly once per redirect. */
 function consumePendingImport(): boolean {
-  try {
-    if (sessionStorage.getItem(PENDING_IMPORT_KEY) === "true") {
-      sessionStorage.removeItem(PENDING_IMPORT_KEY);
-      return true;
-    }
-  } catch {
-    // Ignore storage errors.
-  }
-  return false;
+  if (readString(PENDING_IMPORT_KEY, "session") !== "true") return false;
+  removeKey(PENDING_IMPORT_KEY, "session");
+  return true;
 }
 
 const STATIC_PLACEHOLDER = "Search any GitHub repo or paste a URL...";

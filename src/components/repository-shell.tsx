@@ -22,6 +22,7 @@ import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
 import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useRepositoryActions } from "@/hooks/use-repository-actions";
 import { useServiceMode } from "@/hooks/use-service-mode";
+import { useStorageGC } from "@/hooks/use-storage-gc";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
 import type {
@@ -34,6 +35,7 @@ import type {
   SandboxModeStatus,
 } from "@/lib/types";
 import { toUserErrorMessage } from "@/lib/errors";
+import { readString, removeKey, writeString } from "@/lib/storage";
 import { cn } from "@/lib/utils";
 import { DEFAULT_AUTHENTICATED_PATH, libraryArtifactPath, workspacePath, workspaceThreadPath } from "@/route-paths";
 
@@ -182,12 +184,8 @@ export function RepositoryShell({
   // `viewerPreferences` arrives. The cache is *only* trusted until the DB
   // value lands; after that, the DB wins on conflict.
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<WorkspaceId | null>(() => {
-    try {
-      const stored = localStorage.getItem(ACTIVE_WORKSPACE_STORAGE_KEY);
-      return stored ? (stored as WorkspaceId) : null;
-    } catch {
-      return null;
-    }
+    const stored = readString(ACTIVE_WORKSPACE_STORAGE_KEY);
+    return stored ? (stored as WorkspaceId) : null;
   });
 
   // Mirror every active-workspace change back into localStorage so the
@@ -195,16 +193,28 @@ export function RepositoryShell({
   // the write fails (private mode quota, storage disabled, …), the DB still
   // carries the canonical value.
   useEffect(() => {
-    try {
-      if (activeWorkspaceId) {
-        localStorage.setItem(ACTIVE_WORKSPACE_STORAGE_KEY, activeWorkspaceId);
-      } else {
-        localStorage.removeItem(ACTIVE_WORKSPACE_STORAGE_KEY);
-      }
-    } catch {
-      // Ignore storage errors.
+    if (activeWorkspaceId) {
+      writeString(ACTIVE_WORKSPACE_STORAGE_KEY, activeWorkspaceId);
+    } else {
+      removeKey(ACTIVE_WORKSPACE_STORAGE_KEY);
     }
   }, [activeWorkspaceId]);
+
+  // Sweep orphan per-workspace / per-repository localStorage keys whenever
+  // the live id sets change. Pass `null` while the upstream query is still
+  // loading so we don't treat the initial undefined as "everything is an
+  // orphan." Cross-tab/device deletions propagate here via the same Convex
+  // subscriptions, so a workspace deleted in another tab gets its tab-strip
+  // cache reaped here without an extra handshake.
+  const liveWorkspaceIds = useMemo(
+    () => (workspaces ? new Set(workspaces.map((w) => w._id as string)) : null),
+    [workspaces],
+  );
+  const liveRepositoryIds = useMemo(
+    () => (repositories ? new Set(repositories.map((r) => r._id as string)) : null),
+    [repositories],
+  );
+  useStorageGC({ liveWorkspaceIds, liveRepositoryIds });
 
   // Auto-initialize or repair the default Home workspace once per load. The
   // mutation is idempotent, so existing users with legacy General workspaces
@@ -410,10 +420,7 @@ export function RepositoryShell({
     const timer = window.setTimeout(() => setActionNotice(null), 5000);
     return () => window.clearTimeout(timer);
   }, [actionNotice]);
-  const [isArtifactPanelOpen, setIsArtifactPanelOpen, isArtifactPanelHydrated] = useLocalStorageBoolean(
-    "systify.artifactPanel.open",
-    false,
-  );
+  const [isArtifactPanelOpen, setIsArtifactPanelOpen] = useLocalStorageBoolean("systify.artifactPanel.open", false);
   const [isArtifactSheetOpen, setIsArtifactSheetOpen] = useState(false);
   // StatusPanel surfaces on demand from the top-bar pill: a Popover overlay on
   // desktop, a bottom Drawer (Vaul) on mobile. Both surfaces share a single
@@ -991,8 +998,8 @@ export function RepositoryShell({
                 // Discuss mode opts out of the artifact panel entirely — see
                 // `isArtifactPanelEnabled` above for the rationale.
                 <div
-                  aria-hidden={!(isArtifactPanelHydrated && isArtifactPanelOpen)}
-                  data-state={isArtifactPanelHydrated && isArtifactPanelOpen ? "open" : "closed"}
+                  aria-hidden={!isArtifactPanelOpen}
+                  data-state={isArtifactPanelOpen ? "open" : "closed"}
                   className="shrink-0 overflow-hidden border-l border-border motion-safe:transition-[width] motion-safe:duration-200 motion-safe:ease-out motion-reduce:transition-none will-change-[width] data-[state=closed]:w-0 data-[state=closed]:border-l-0 xl:data-[state=open]:w-96 2xl:data-[state=open]:w-md"
                 >
                   <div className="h-full xl:w-96 2xl:w-md">
@@ -1002,7 +1009,7 @@ export function RepositoryShell({
                       artifacts={repoDetail?.artifacts}
                       hasAttachedRepository={capabilities.attachedRepository !== null}
                       sandboxModeStatus={capabilities.sandboxModeStatus}
-                      isVisible={isArtifactPanelHydrated && isArtifactPanelOpen}
+                      isVisible={isArtifactPanelOpen}
                       className="flex h-full w-full border-l-0"
                       onOpenInReader={handleSelectArtifact}
                     />
