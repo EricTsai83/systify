@@ -8,8 +8,7 @@ import { WorkspaceSelector } from "@/components/workspace-switcher";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
 import { useServiceMode } from "@/hooks/use-service-mode";
-import type { ThreadMode } from "@/route-paths";
-import type { ArtifactId, RepositoryId, ServiceMode, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, OnImportedCallback, ServiceMode, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
 
 /**
  * Service-mode → thread-mode mapping for the sidebar's thread query. Each
@@ -52,13 +51,13 @@ type AppSidebarProps = {
   workspaces: Doc<"workspaces">[] | undefined;
   activeWorkspaceId: WorkspaceId | null;
   onSwitchWorkspace: (id: WorkspaceId) => void;
-  onImported: (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => void;
+  onImported: OnImportedCallback;
   onError: (message: string | null) => void;
 } & (
   | {
       variant?: "threads";
       selectedThreadId: ThreadId | null;
-      onSelectThread: (id: ThreadId | null, mode?: ThreadMode) => void;
+      onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
       onDeleteThread: (id: ThreadId) => void;
     }
   | {

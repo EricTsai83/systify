@@ -16,7 +16,7 @@ import { SwapThreadRepositoryControl } from "@/components/swap-thread-repository
 import { StatusPill } from "@/components/status-pill";
 import { StatusPanel } from "@/components/status-panel";
 import type { AttachedRepositorySummary } from "@/hooks/use-thread-capabilities";
-import type { ArtifactId, SandboxModeStatus, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, SandboxModeStatus, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
 
 export type TopBarRepoDetail = {
   repository: Doc<"repositories"> & {
@@ -103,7 +103,7 @@ export function TopBar({
   onRestoreRepo: () => void;
   /** Permanently delete an archived repository. Triggered only from the archived kebab. */
   onPermanentDeleteRepo: () => void;
-  onThreadMovedToWorkspace: (workspaceId: WorkspaceId | null) => void;
+  onThreadMovedToWorkspace: (workspaceId: WorkspaceId | null, mode: ThreadMode | null) => void;
   isDesktopLayout: boolean;
   onSync: () => void;
   onViewArtifact: (artifactId: ArtifactId) => void;

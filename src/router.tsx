@@ -68,13 +68,13 @@ const protectedRoutes: RouteObject[] = [
   // when a thread URL no longer resolves but its workspace still exists.
   { path: PROTECTED_ROUTE_SEGMENTS.workspace, lazy: loadChatRoute },
   // `/w/:workspaceId/t/:threadId` is the legacy mode-agnostic thread URL —
-  // kept reachable for old bookmarks and in-app navigations that still pass
-  // through `workspaceThreadPath`. The redirect canonicalises onto the
-  // service-mode-aware path (`/w/:wid/discuss/:tid`, `/w/:wid/lab/:tid`, or
+  // kept reachable only for stale bookmarks and external links saved
+  // before the canonical-URL switchover; no in-app code generates it now
+  // (every navigation surface routes via `modeAwareThreadPath`). The
+  // redirect canonicalises onto the service-mode-aware path
+  // (`/w/:wid/discuss/:tid`, `/w/:wid/lab/:tid`, or
   // `/w/:wid/library?ask=:tid`) so the URL itself carries the user's mode
   // and `useServiceMode` reads it directly without a placeholder fallback.
-  // See `LegacyThreadRedirect` for the rationale around eliminating the
-  // mode-agnostic URL.
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceThread, Component: LegacyThreadRedirect },
   // Three-mode restructure — top-level service modes live under their own
   // path prefixes. The page components wrap the shared workspace chrome

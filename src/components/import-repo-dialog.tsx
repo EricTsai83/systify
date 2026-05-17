@@ -32,6 +32,7 @@ import {
 import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { readString, removeKey, writeString } from "@/lib/storage";
+import type { ThreadMode } from "@/route-paths";
 import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -190,7 +191,19 @@ export function ImportRepoDialog({
   onImported,
   trigger,
 }: {
-  onImported: (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => void;
+  /**
+   * Fires once the backend has accepted the import and queued the workflow.
+   * `threadMode` is the stored mode of the freshly-created default thread
+   * (or `null` when the backend chose not to materialise one yet); the shell
+   * uses it to navigate straight to the canonical mode-aware URL instead of
+   * bouncing through `LegacyThreadRedirect`.
+   */
+  onImported: (
+    repoId: RepositoryId,
+    threadId: ThreadId | null,
+    workspaceId: WorkspaceId,
+    threadMode: ThreadMode | null,
+  ) => void;
   /**
    * Optional custom trigger element. Used by the EmptyState's dual-CTA layout
    * (PRD US 9) where the "Import repository" button needs to read as a primary
@@ -486,7 +499,12 @@ export function ImportRepoDialog({
       setPublicInput("");
       setBranch("");
       setOpen(false);
-      onImported(result.repositoryId, result.defaultThreadId ?? null, result.workspaceId);
+      onImported(
+        result.repositoryId,
+        result.defaultThreadId ?? null,
+        result.workspaceId,
+        result.defaultThreadId ? result.defaultThreadMode : null,
+      );
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Import failed.");
     } finally {
@@ -503,7 +521,12 @@ export function ImportRepoDialog({
         url: `https://github.com/${repo.fullName}`,
       });
       setOpen(false);
-      onImported(result.repositoryId, result.defaultThreadId ?? null, result.workspaceId);
+      onImported(
+        result.repositoryId,
+        result.defaultThreadId ?? null,
+        result.workspaceId,
+        result.defaultThreadId ? result.defaultThreadMode : null,
+      );
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Import failed.");
     } finally {

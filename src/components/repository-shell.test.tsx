@@ -6,7 +6,7 @@ import { getFunctionName } from "convex/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { RepositoryShell } from "./repository-shell";
-import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { OnImportedCallback, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
 
 // Convex's `api`/`anyApi` proxy returns a fresh FunctionReference object on
@@ -56,7 +56,7 @@ vi.mock("@/components/app-sidebar", () => ({
     onImported,
   }: {
     activeWorkspaceId: WorkspaceId | null;
-    onImported: (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => void;
+    onImported: OnImportedCallback;
   }) => (
     <div data-testid="sidebar" data-active-workspace-id={activeWorkspaceId ?? ""}>
       <button
@@ -67,6 +67,7 @@ vi.mock("@/components/app-sidebar", () => ({
             "repo_imported" as RepositoryId,
             "thread_imported" as ThreadId,
             "workspace_imported" as WorkspaceId,
+            "discuss",
           )
         }
       >
@@ -109,16 +110,17 @@ vi.mock("@/components/artifact-panel", () => ({
 }));
 
 vi.mock("@/components/empty-state", () => ({
-  EmptyState: ({
-    onImported,
-  }: {
-    onImported: (repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId) => void;
-  }) => (
+  EmptyState: ({ onImported }: { onImported: OnImportedCallback }) => (
     <button
       type="button"
       data-testid="empty-state"
       onClick={() =>
-        onImported("repo_empty" as RepositoryId, "thread_empty" as ThreadId, "workspace_empty" as WorkspaceId)
+        onImported(
+          "repo_empty" as RepositoryId,
+          "thread_empty" as ThreadId,
+          "workspace_empty" as WorkspaceId,
+          "discuss",
+        )
       }
     >
       Empty import
@@ -511,27 +513,30 @@ describe("RepositoryShell artifact toggle behavior", () => {
 });
 
 describe("RepositoryShell import workspace routing", () => {
-  // Imports navigate the user into the new workspace via the canonical URL
-  // shape; the URL→state sync effect (in the shell) then mirrors the new id
-  // into `activeWorkspaceId` and `userPreferences.lastActiveWorkspaceId`.
-  // These tests assert the navigation contract — the localStorage/preference
-  // side effects are exercised by the workspace reconciliation suite below
-  // (which simulates the URL change those navigations would produce in a
-  // real router).
-  test("sidebar import navigates to the canonical workspace-scoped thread URL", () => {
+  // Imports navigate the user into the new workspace via the canonical
+  // mode-aware URL (`/w/:wid/discuss/:tid` for the default thread the
+  // backend creates on import) so the user lands in the right service mode
+  // on first paint, without bouncing through `LegacyThreadRedirect`. The
+  // URL→state sync effect (in the shell) then mirrors the new id into
+  // `activeWorkspaceId` and `userPreferences.lastActiveWorkspaceId`.
+  // These tests assert the navigation contract — the localStorage/
+  // preference side effects are exercised by the workspace reconciliation
+  // suite below (which simulates the URL change those navigations would
+  // produce in a real router).
+  test("sidebar import navigates to the canonical mode-aware thread URL", () => {
     render(<RepositoryShell urlWorkspaceId={null} urlThreadId={null} />);
 
     fireEvent.click(screen.getByTestId("sidebar-import"));
 
-    expect(navigateMock).toHaveBeenCalledWith("/w/workspace_imported/t/thread_imported");
+    expect(navigateMock).toHaveBeenCalledWith("/w/workspace_imported/discuss/thread_imported");
   });
 
-  test("empty-state import navigates to the canonical workspace-scoped thread URL", () => {
+  test("empty-state import navigates to the canonical mode-aware thread URL", () => {
     render(<RepositoryShell urlWorkspaceId={null} urlThreadId={null} />);
 
     fireEvent.click(screen.getByTestId("empty-state"));
 
-    expect(navigateMock).toHaveBeenCalledWith("/w/workspace_empty/t/thread_empty");
+    expect(navigateMock).toHaveBeenCalledWith("/w/workspace_empty/discuss/thread_empty");
   });
 });
 

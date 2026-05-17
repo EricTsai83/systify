@@ -23,11 +23,8 @@ import {
   AUTH_CALLBACK_PATH,
   DEFAULT_AUTHENTICATED_PATH,
   LANDING_PATH,
-  discussPath,
   isProtectedReturnTo,
-  labPath,
-  libraryPath,
-  withLibraryAskParam,
+  modeAwareThreadPath,
   workspacePath,
 } from "@/route-paths";
 import { HomePage } from "@/pages/home";
@@ -281,30 +278,26 @@ export function LibraryAskLegacyRedirect() {
 }
 
 /**
- * Legacy mode-agnostic thread URL `/w/:wid/t/:tid`. Phase 1 of the three-mode
- * restructure left this in place so existing bookmarks and in-app navigations
- * (`workspaceThreadPath(...)` callsites) continued to work, but the URL itself
- * carries no service-mode information — the mode is only knowable from the
- * thread's `mode` field. That meant `useServiceMode` had to surface a "discuss"
- * placeholder while the rest of the shell pretended the mode was settled,
- * which was the root cause of the StatusPill / ArtifactPanel flash on every
- * workspace-landing redirect (`/chat` → `/w/:wid` → `/w/:wid/t/:tid`): the
- * brief window where availability resolved a non-"discuss" default for the
- * workspace and the chrome painted accordingly, only to collapse back to the
- * placeholder when the redirect landed here.
+ * Legacy mode-agnostic thread URL `/w/:wid/t/:tid`. In-app navigation now
+ * goes straight to canonical mode-aware URLs (every callsite knows the
+ * thread's mode at the moment it routes — `WorkspaceThreadsRail` forwards
+ * `thread.mode`, freshly-created threads carry the mode through the
+ * mutation return value, repo imports carry it through `defaultThreadMode`).
+ * This redirect therefore only services genuinely stale bookmarks and
+ * external links saved before the canonical-URL switchover.
  *
- * Rather than carry a placeholder forever, this component canonicalises the
- * URL in one shot: it reads the thread's stored mode, computes the matching
- * canonical URL, and `<Navigate replace>`s the browser there. Once redirected,
- * `useServiceMode` reads the URL prefix directly — no placeholder, no
- * mode-mismatch, no flash. The component intentionally renders no shell
- * chrome while the thread query is in flight so the user does not see a
- * mode-dependent surface paint and then unpaint.
+ * It still earns its place: without it, a stale bookmark would land
+ * `useServiceMode` in `null` and the shell would paint nothing useful.
+ * The component reads the thread's stored mode, computes the matching
+ * canonical URL via `modeAwareThreadPath`, and `<Navigate replace>`s the
+ * browser there. Renders no shell chrome while the `getThreadContext`
+ * query is in flight so the user does not see mode-dependent surfaces
+ * paint and then unpaint as the redirect resolves.
  *
  * Falls back to the workspace landing when the thread cannot be loaded
- * (deleted, no access) — same recovery the shell-side missing-thread effect
- * applies, so behaviour stays consistent regardless of which surface
- * detected the dead URL first.
+ * (deleted, no access) — same recovery the shell-side missing-thread
+ * effect applies, so behaviour stays consistent regardless of which
+ * surface detected the dead URL first.
  */
 export function LegacyThreadRedirect() {
   const { workspaceId, threadId } = useParams<{ workspaceId: string; threadId: string }>();
@@ -327,23 +320,11 @@ export function LegacyThreadRedirect() {
     return <Navigate to={workspacePath(wid)} replace />;
   }
 
-  // Map the thread's stored mode onto its canonical service-mode URL.
-  // `discuss` / `docs` / `sandbox` are sub-modes within the Discuss service
-  // mode and share the same URL prefix. `ask` threads live inside Library
-  // as the `?ask=` query param — the artifact owns the path. `lab` threads
-  // have their own URL prefix.
-  const target = (() => {
-    switch (threadContext.thread.mode) {
-      case "discuss":
-      case "docs":
-      case "sandbox":
-        return discussPath(wid, tid);
-      case "ask":
-        return withLibraryAskParam(libraryPath(wid), tid);
-      case "lab":
-        return labPath(wid, tid);
-    }
-  })();
+  // Delegate the (thread.mode → canonical URL) mapping to the shared
+  // `modeAwareThreadPath` helper so this redirect and every in-app
+  // navigation stay in lockstep — adding a new thread mode is a single
+  // edit in `route-paths.ts` instead of two.
+  const target = modeAwareThreadPath(wid, tid, threadContext.thread.mode);
 
   return <Navigate to={target} replace />;
 }

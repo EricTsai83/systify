@@ -53,15 +53,16 @@ describe("chat thread defaults", () => {
       threadId,
       repositoryId: null,
     });
-    const emptyThreadId = await viewer.mutation(api.chat.threads.createThread, {});
+    const empty = await viewer.mutation(api.chat.threads.createThread, {});
 
     const { detachedThread, emptyThread } = await t.run(async (ctx) => ({
       detachedThread: await ctx.db.get(threadId),
-      emptyThread: await ctx.db.get(emptyThreadId),
+      emptyThread: await ctx.db.get(empty._id),
     }));
 
     expect(detachedThread?.repositoryId).toBeUndefined();
     expect(detachedThread?.mode).toBe("discuss");
+    expect(empty.mode).toBe("discuss");
     expect(emptyThread?.mode).toBe("discuss");
     expect(detachedThread?.mode).toBe(emptyThread?.mode);
   });
@@ -72,9 +73,10 @@ describe("chat thread defaults", () => {
     const repositoryId = await insertRepository(t, ownerTokenIdentifier);
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
-    const threadId = await viewer.mutation(api.chat.threads.createThread, { repositoryId });
+    const created = await viewer.mutation(api.chat.threads.createThread, { repositoryId });
 
-    const thread = await t.run(async (ctx) => await ctx.db.get(threadId));
+    const thread = await t.run(async (ctx) => await ctx.db.get(created._id));
+    expect(created.mode).toBe("ask");
     expect(thread?.mode).toBe("ask");
     expect(thread?.repositoryId).toBe(repositoryId);
   });

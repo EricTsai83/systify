@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, type Infer } from "convex/values";
 
 /**
  * Three-mode restructure — shared Convex validator for the top-level
@@ -9,3 +9,10 @@ import { v } from "convex/values";
  * single-place edit instead of three.
  */
 export const serviceModeValidator = v.union(v.literal("discuss"), v.literal("library"), v.literal("lab"));
+
+/**
+ * TS twin of {@link serviceModeValidator}. Use this for fields/args typed
+ * against the validator so a new mode added to the validator surfaces
+ * downstream as a compile error rather than a silent stale literal.
+ */
+export type ServiceMode = Infer<typeof serviceModeValidator>;

@@ -33,13 +33,18 @@ export function WorkspaceThreadsRail({
   threadMode: ThreadModeFilter;
   selectedThreadId: ThreadId | null;
   /**
-   * Selects a thread or clears the selection. When `mode` is provided the
-   * caller has read the thread's stored mode (from the Doc rendered in the
-   * row, or from the rail's active mode filter for fresh thread creation)
-   * and the consumer can route directly to the canonical mode URL via
-   * {@link modeAwareThreadPath}, avoiding a legacy-URL round trip.
+   * Selects a thread or clears the selection. `mode` is always supplied:
+   * row clicks read it off `thread.mode` (the rendered Doc), and the new-
+   * thread CTA derives it from the rail's active filter (Library Ask is
+   * always `"ask"`; everything else matches `threadMode`). The consumer
+   * routes directly to the canonical mode URL via {@link modeAwareThreadPath}
+   * so a freshly-selected thread never bounces through `LegacyThreadRedirect`.
+   * The id is `ThreadId | null` because some consumers (e.g. delete-then-
+   * select-fallback) clear selection through this same callback — mode is
+   * still required so the consumer has a well-typed value to forward when
+   * it does pick a replacement.
    */
-  onSelectThread: (id: ThreadId | null, mode?: ThreadMode) => void;
+  onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onDeleteThread: (id: ThreadId) => void;
   onError: (message: string | null) => void;
   compact?: boolean;
@@ -68,30 +73,28 @@ export function WorkspaceThreadsRail({
       if (requireWorkspaceForCreate && !workspaceId) return;
       onError(null);
       try {
-        let threadId: ThreadId;
+        let created: { _id: ThreadId; mode: ThreadMode };
         if (newThreadVariant === "libraryAsk") {
           if (!workspaceId) {
             return;
           }
-          threadId = await createAskThreadMutation({ workspaceId });
+          created = await createAskThreadMutation({ workspaceId });
         } else {
           // Forward the rail's service mode so the new thread is persisted
           // with the mode the sidebar filters on. Without this, the backend
           // falls back to `getDefaultThreadMode(hasAttachedRepo)` — which is
           // `docs`/`ask` for a repo-bound workspace — and the freshly created
           // thread never matches the `discuss` filter, so it never appears.
-          threadId = await createThreadMutation({
+          created = await createThreadMutation({
             workspaceId: workspaceId ?? undefined,
             mode: threadMode,
           });
         }
-        // The new thread's stored mode matches the rail's active filter
-        // (createThreadMutation receives `mode: threadMode`; createAskThread
-        // unconditionally creates an "ask" thread). Forwarding the mode lets
-        // the shell route straight to the canonical URL rather than bouncing
-        // through the mode-agnostic legacy thread URL.
-        const createdMode: ThreadMode = newThreadVariant === "libraryAsk" ? "ask" : threadMode;
-        onSelectThread(threadId, createdMode);
+        // Use the mutation's persisted `mode` rather than reconstructing it
+        // from the rail's filter — `createThread` normalises some requested
+        // modes (`docs → ask`, `sandbox → lab`), so the stored value is the
+        // only safe source of truth for routing.
+        onSelectThread(created._id, created.mode);
       } catch (error) {
         onError(toUserErrorMessage(error, "Failed to start a conversation."));
       }
@@ -167,13 +170,10 @@ function ThreadsSection({
   repositoriesById: Map<RepositoryId, Doc<"repositories">>;
   selectedThreadId: ThreadId | null;
   /**
-   * Selects a thread or clears the selection. When `mode` is provided the
-   * caller has read the thread's stored mode (from the Doc rendered in the
-   * row, or from the rail's active mode filter for fresh thread creation)
-   * and the consumer can route directly to the canonical mode URL via
-   * {@link modeAwareThreadPath}, avoiding a legacy-URL round trip.
+   * See the top-level {@link WorkspaceThreadsRail} prop comment; the mode is
+   * always supplied so consumers can route to canonical mode-aware URLs.
    */
-  onSelectThread: (id: ThreadId | null, mode?: ThreadMode) => void;
+  onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onDeleteThread: (id: ThreadId) => void;
   onTogglePin: (id: ThreadId, pinned: boolean) => void;
   showRepoBadge: boolean;
@@ -281,13 +281,9 @@ const ThreadsList = memo(function ThreadsList({
   repositoriesById: Map<RepositoryId, Doc<"repositories">>;
   selectedThreadId: ThreadId | null;
   /**
-   * Selects a thread or clears the selection. When `mode` is provided the
-   * caller has read the thread's stored mode (from the Doc rendered in the
-   * row, or from the rail's active mode filter for fresh thread creation)
-   * and the consumer can route directly to the canonical mode URL via
-   * {@link modeAwareThreadPath}, avoiding a legacy-URL round trip.
+   * See the top-level {@link WorkspaceThreadsRail} prop comment.
    */
-  onSelectThread: (id: ThreadId | null, mode?: ThreadMode) => void;
+  onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onPrewarmThread: (id: ThreadId) => void;
   onDeleteThread: (id: ThreadId) => void;
   onTogglePin: (id: ThreadId, pinned: boolean) => void;

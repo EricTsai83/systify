@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
-import { serviceModeValidator } from "./lib/serviceMode";
+import { serviceModeValidator, type ServiceMode } from "./lib/serviceMode";
 import { clearLastActiveWorkspaceIfMatches, upsertLastActiveWorkspace } from "./lib/userPreferences";
 import { ensureHomeWorkspace, ensureRepositoryWorkspace } from "./lib/workspaces";
 
@@ -112,11 +112,14 @@ export const touchWorkspace = mutation({
       throw new Error("Workspace not found.");
     }
     // Skip the `lastServiceMode` field entirely when the caller didn't pass
-    // one. `ctx.db.patch` interprets `undefined` as "leave this field alone"
-    // for optional fields, so writing it would be a no-op, but threading the
-    // conditional keeps the patch object describing only what actually
-    // changed — easier to grep when auditing why a workspace row mutated.
-    const patch: { lastAccessedAt: number; lastServiceMode?: "discuss" | "library" | "lab" } = {
+    // one, or when the supplied mode already matches what's stored.
+    // `ctx.db.patch` interprets `undefined` as "leave this field alone" for
+    // optional fields, so the conditional both narrows the patch object to
+    // only what actually changed (easier to grep when auditing workspace
+    // mutations) and short-circuits redundant writes when the optimistic
+    // update has already converged the client cache on the same value the
+    // server holds.
+    const patch: { lastAccessedAt: number; lastServiceMode?: ServiceMode } = {
       lastAccessedAt: Date.now(),
     };
     if (args.serviceMode !== undefined && args.serviceMode !== workspace.lastServiceMode) {
