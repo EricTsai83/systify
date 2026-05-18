@@ -1,8 +1,5 @@
-/** Maximum number of files listed during repository tree walk. */
+/** Maximum number of files captured during an import's tree fetch. */
 export const MAX_LISTED_FILES = 400;
-
-/** Maximum directory nesting depth for repository tree walk. */
-export const MAX_TREE_DEPTH = 6;
 
 /** Maximum number of chunks extracted per file. */
 export const MAX_CHUNKS_PER_FILE = 4;

@@ -146,12 +146,12 @@ Before creating an import or sync, the system first checks whether the current s
 
 ### Check repository access again inside the import flow
 
-Even if the user has already connected GitHub, the import flow still calls the GitHub API again before provisioning a sandbox to confirm:
+Even if the user has already connected GitHub, the import flow still calls the GitHub API again before fetching the repository snapshot to confirm:
 
 - whether the installation can access the target repository
 - whether the repository is actually public or private
 
-This check avoids burning sandbox resources when the repository is not actually accessible.
+This check fails fast (one API round trip) when the repository is not actually accessible, so an unreachable repo never gets as far as the tree / blob fetches. The same probe is reused by the on-demand sandbox path (`ensureSandboxReady`) before any Lab or System Design generation provisions a Daytona sandbox, so a user who lost access to a repository between import and Lab activation gets the same actionable error without burning sandbox cost.
 
 ## Deep Mode And Permissions
 

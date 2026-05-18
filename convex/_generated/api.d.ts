@@ -40,6 +40,7 @@ import type * as designArtifactsNode from "../designArtifactsNode.js";
 import type * as github from "../github.js";
 import type * as githubAppNode from "../githubAppNode.js";
 import type * as githubCheck from "../githubCheck.js";
+import type * as githubRepoFetcher from "../githubRepoFetcher.js";
 import type * as http from "../http.js";
 import type * as imports from "../imports.js";
 import type * as importsNode from "../importsNode.js";
@@ -119,6 +120,7 @@ declare const fullApi: ApiFromModules<{
   github: typeof github;
   githubAppNode: typeof githubAppNode;
   githubCheck: typeof githubCheck;
+  githubRepoFetcher: typeof githubRepoFetcher;
   http: typeof http;
   imports: typeof imports;
   importsNode: typeof importsNode;

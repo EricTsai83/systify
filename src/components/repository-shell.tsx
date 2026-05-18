@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import { ArchiveIcon, ArrowCounterClockwiseIcon, CaretDownIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { ArchiveIcon, ArrowCounterClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ArtifactPanel } from "@/components/artifact-panel";
 import { TopBar } from "@/components/top-bar";
@@ -1074,18 +1074,18 @@ export function RepositoryShell({
          * until the user restores.
          *
          * The full error message (including the `Reference: <errorId>` tail
-         * that `markImportFailed` writes) lives on the latest import job
-         * row; we surface it behind a collapsible so a user who hits a
-         * non-obvious failure (sandbox provisioning, clone, persistence)
-         * can see the actual reason without leaving the workspace.
+         * that `markImportFailed` writes) lives on the latest failed import
+         * job row. We look it up directly from `repoDetail.jobs` rather
+         * than from `repository.latestImportJobId` because that pointer is
+         * only written on successful completion (`finalizeImportCompletion`)
+         * — for a repo that has never imported successfully, the pointer
+         * is undefined even after a failure. `jobs` is already ordered by
+         * `_creationTime` desc, so the first matching entry is the most
+         * recent failure.
          */}
         {!isRepoArchived && repoDetail?.repository.importStatus === "failed" ? (
           <ImportFailedBanner
-            errorMessage={
-              repoDetail.repository.latestImportJobId
-                ? repoDetail.jobs.find((j) => j._id === repoDetail.repository.latestImportJobId)?.errorMessage
-                : undefined
-            }
+            errorMessage={repoDetail.jobs.find((j) => j.kind === "import" && j.status === "failed")?.errorMessage}
             isSyncing={isSyncing || isRepositorySyncing}
             onRetry={() => void handleSync()}
           />
@@ -1255,11 +1255,9 @@ function ImportFailedBanner({
   isSyncing: boolean;
   onRetry: () => void;
 }) {
-  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
-
   return (
     <div
-      className="flex shrink-0 flex-col gap-2 border-b border-destructive/40 bg-destructive/5 px-6 py-3 text-destructive"
+      className="flex shrink-0 flex-col border-b border-destructive/40 bg-destructive/5 px-6 py-3 text-destructive"
       role="alert"
       aria-live="assertive"
       aria-atomic="true"
@@ -1284,29 +1282,22 @@ function ImportFailedBanner({
         </Button>
       </div>
       {errorMessage ? (
-        <Collapsible open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
-          <CollapsibleTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              className="ml-7 gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-wider text-destructive/80 hover:bg-destructive/10 hover:text-destructive"
-              aria-expanded={isDetailsOpen}
-            >
-              <CaretDownIcon
-                size={12}
-                weight="bold"
-                className={cn("transition-transform duration-200", isDetailsOpen && "rotate-180")}
-              />
-              <span>{isDetailsOpen ? "Hide details" : "Show details"}</span>
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="ml-7 mt-1.5">
-            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-sm border border-destructive/20 bg-destructive/10 p-2 font-mono text-[11px] leading-snug text-destructive">
-              {errorMessage}
-            </pre>
-          </CollapsibleContent>
-        </Collapsible>
+        // Accordion is the shadcn disclosure pattern: a chevron + label row
+        // that toggles the body inline, with no button-y background. We
+        // strip the default `border-b` on the item because the banner
+        // already has its own destructive border.
+        <Accordion type="single" collapsible className="mt-1 ml-7">
+          <AccordionItem value="details" className="border-b-0">
+            <AccordionTrigger className="py-1 text-[11px] font-semibold tracking-wider uppercase text-destructive/80 hover:text-destructive hover:no-underline">
+              Error details
+            </AccordionTrigger>
+            <AccordionContent className="pt-1.5 pb-0">
+              <pre className="max-h-48 overflow-auto rounded-sm border border-destructive/20 bg-destructive/10 p-2 font-mono text-[11px] leading-snug whitespace-pre-wrap break-words text-destructive">
+                {errorMessage}
+              </pre>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
       ) : null}
     </div>
   );

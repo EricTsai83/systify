@@ -11,12 +11,9 @@ flowchart TD
   Request[CreateImportOrSync]
   Queue[CreateImportAndJob]
   Validate[ValidateGitHubAccess]
-  Reserve[ReserveImportScopedSandboxRowInConvex]
-  Provision[ProvisionSandbox]
-  Clone[CloneRepository]
-  Snapshot[CollectSnapshot]
+  Fetch[FetchSnapshotViaGitHubAPI]
   Persist[PersistFilesChunksArtifacts]
-  Stop[StopSandbox]
+  Finalize[FinalizePublish]
   Ready[RepositoryReady]
   Cleanup[CleanupOldSnapshot]
   Delete[DeleteRepository]
@@ -24,19 +21,27 @@ flowchart TD
 
   Request --> Queue
   Queue --> Validate
-  Validate --> Reserve
-  Reserve --> Provision
-  Provision --> Clone
-  Clone --> Snapshot
-  Snapshot --> Persist
-  Persist --> Stop
-  Stop --> Ready
-  Persist --> Cleanup
+  Validate --> Fetch
+  Fetch --> Persist
+  Persist --> Finalize
+  Finalize --> Ready
+  Finalize --> Cleanup
   Ready --> Delete
   Delete --> Cascade
 ```
 
 
+
+## Where the sandbox lives in this picture
+
+Repository import is intentionally **sandbox-free**. The pipeline never provisions a Daytona sandbox, never clones the repository onto a Daytona disk, and never touches `repositories.latestSandboxId`. All knowledge produced by import (`repoFiles`, `repoChunks`, manifest / README / architecture artifacts) is built from GitHub API responses.
+
+A Daytona sandbox is only provisioned on demand by features that genuinely need a live filesystem:
+
+- **Lab chat mode** — provisioned the first time the user activates Lab on a repository (via `requestSandboxActivation` → `sandboxActivationNode.runSandboxActivation`).
+- **System Design generation** — the LLM-backed kinds (`readme_summary`, `*_overview`) run through `ensureSandboxReady` inside `systemDesignNode.runSystemDesignGeneration`. Heuristic-only generations (`manifest`, `architecture_overview`) read `repoFiles` straight from Convex and never spin a sandbox at all.
+
+`ensureSandboxReady` (in `convex/lib/sandboxLiveness.ts`) is the single source of truth for "make a sandbox usable for this repository right now". It probes Daytona, wakes a stopped sandbox, or provisions a fresh one as needed, and patches `repositories.latestSandboxId` to the result. Import never sets that pointer — whatever sandbox the previous Lab / System Design run left there stays there.
 
 ## Entry Points
 
@@ -68,101 +73,65 @@ This lets the UI show a queued workflow immediately instead of waiting for the f
 
 After the import is created, Convex schedules `internal.importsNode.runImportPipeline`. The heavy work happens there because it needs:
 
-- the GitHub API
-- the Daytona SDK
-- repository clone and scan operations
+- the GitHub API (REST endpoints under `https://api.github.com`)
+- the GitHub App installation token plumbing in `githubAppNode.ts`
 
-### 3. Validate first instead of spending resources first
+The pipeline does **not** import the Daytona SDK; that integration is reserved for the on-demand sandbox path.
 
-The first important decision in `runImportPipeline` is to perform a GitHub access check before provisioning a sandbox:
+### 3. Validate before fetching
+
+The first decision in `runImportPipeline` is to verify GitHub access:
 
 - find the active installation for the current owner
-- call the GitHub API to confirm that the installation can access the target repository
-- detect the repository's actual visibility at the same time
+- call `checkRepoAccess` to confirm that the installation can read the target repository
+- detect the repository's actual visibility at the same time and write it back to `repositories.visibility`
 
-This order matters because it avoids the wasteful case where sandbox resources are created for a repository that is not actually accessible.
+This permission probe runs before any snapshot fetching. A repository that is not included in the installation's repo selection fails fast with a "go fix your repo selection" message, costing only a single GitHub API round trip.
 
-### 4. Reserve an import-scoped sandbox row, then provision the sandbox
+### 4. Fetch the repository snapshot via the GitHub API
 
-Only after repository access is confirmed does the system:
+After access is confirmed, `runImportPipeline` calls `fetchRepositorySnapshot` (in `convex/githubRepoFetcher.ts`). That helper issues a small, bounded fan-out of GitHub API requests:
 
-- insert a placeholder `sandboxes` row with `status = provisioning`
-- point `imports.sandboxId` to that placeholder row
-- call Daytona to create a new sandbox
-- attach resource limits, TTL, `remoteId`, and `repoPath` back onto the same sandbox row
+- `GET /repos/{owner}/{repo}` — metadata, default branch, visibility
+- `GET /repos/{owner}/{repo}/commits/{branch}` — head commit SHA and its tree SHA
+- `GET /repos/{owner}/{repo}/git/trees/{treeSha}?recursive=1` — the full recursive file tree (paths, types, sizes, blob SHAs)
+- `GET /repos/{owner}/{repo}/git/blobs/{sha}` — parallel reads for the README, the package manifests (`package.json`, `pyproject.toml`, `Cargo.toml`), and up to a dozen heuristic "important" files
 
-`repositories.latestSandboxId` is intentionally not changed here. It continues to point at the last completed sandbox so sandbox-mode reads and analysis jobs do not lose the previous usable environment while a sync is still cloning, scanning, or persisting.
+The helper retries 429 / 5xx responses with exponential backoff and respects `Retry-After`. Per-blob fetches degrade gracefully: a missing or oversized blob drops that file's content from the snapshot without failing the import. The snapshot has the same shape the old sandbox-clone path produced, so downstream consumers (`buildRepositoryManifest`, `createChunkRecords`) work unchanged.
 
-This order is intentional. If the workflow crashes after Daytona create succeeds but before the rest of import completes, Convex still owns an import-scoped sandbox record that later cleanup logic can find without replacing the repository's last known good sandbox pointer.
+### 5. Generate reusable indexed data
 
-### 5. Clone and snapshot
+The fetched snapshot is converted into three durable outputs:
 
-After the sandbox is created, the system:
+- `repoFiles` — one row per tree entry, with `language`, `isEntryPoint`, `isConfig`, `isImportant` annotations
+- `repoChunks` — line-bounded chunks of the README and important files for retrieval / dependency detection
+- import-scoped artifacts (currently a repository manifest, README summary, and architecture overview)
 
-- obtains an installation access token
-- clones the repository inside the sandbox
-- captures the current branch and commit SHA
-- scans the file tree
-- selects important file contents
-- builds a repository snapshot
+This is the same set of outputs the old sandbox-backed import produced; the only thing that changed is where the bytes came from.
 
-At this point Daytona is the source of execution, while Convex remains the source of state.
+### 6. Persist the new snapshot in staged batches
 
-### 6. Generate reusable indexed data
-
-The data generated from the snapshot falls into three main categories:
-
-- `repoFiles`
-- `repoChunks`
-- `artifacts`
-
-Artifacts currently include at least:
-
-- a repository manifest
-- a README summary
-- an architecture overview
-
-So import is not just "pull the repository." It builds the knowledge base used by later chat and analysis flows.
-
-### 7. Persist the new snapshot in staged batches
-
-The generated data is not written in one giant transaction anymore. Instead, the system persists it in smaller steps:
+The generated data is written in bounded steps rather than one giant transaction:
 
 1. write import-scoped artifacts and header metadata
-2. write `repoFiles` in batches
-3. write `repoChunks` in batches
+2. write `repoFiles` in batches keyed by `importId + path`
+3. write `repoChunks` in batches keyed by `importId + path + chunkIndex`
 4. finalize the import in one publish step
 
-This order is intentional:
+Each batch stays below Convex mutation limits, retries deduplicate previously written rows, and the repository does not expose the new snapshot until finalize succeeds.
 
-- each batch stays below Convex mutation limits
-- retries can deduplicate previously written rows
-- the repository does not expose the new snapshot until finalize succeeds
-
-### 8. Finalize and publish the snapshot
+### 7. Finalize and publish the snapshot
 
 Only the finalize step is allowed to switch the repository to the new snapshot. At that point the system:
 
-- marks the import and job as completed
-- updates repository summary fields and latest pointers
+- marks the import and job as `completed`
+- updates the repository's summary, README summary, architecture summary, detected languages, package managers, entrypoints, and file count
 - writes `lastImportedAt`, `lastIndexedAt`, and `lastSyncedCommitSha`
-- changes the sandbox state to `ready`
-- points `repositories.latestSandboxId` at the new sandbox
-- queues cleanup for the previously published sandbox, if one existed
+- promotes `latestImportId` / `latestImportJobId` to the new import
 
-This is the moment the repository officially becomes ready for interaction on the new snapshot.
+Finalize does **not** touch `repositories.latestSandboxId`. Any sandbox previously provisioned by Lab or System Design keeps pointing where it was, and its cleanup is driven by those features' own lifecycles, not by the import.
 
-### 9. Stop the sandbox, but do not delete it immediately
-
-After a successful import, the system attempts to stop the sandbox immediately. The goal is not to remove it, but to:
-
-- release CPU and memory
-- preserve the repository contents on disk
-- keep the sandbox available for future deep mode wake-up
-
-So an import completing does not mean the sandbox disappears. It enters a low-cost standby state.
-
-### 10. Clean up superseded or partial snapshots
+### 8. Clean up superseded or partial snapshots
 
 If the repository already had an older completed import, the system cleans up that older snapshot in the background:
 
@@ -197,7 +166,7 @@ They share most of the same pipeline, but their meaning is different:
 - sync rebuilds the import snapshot for an existing repository
 - sync clears `latestRemoteSha` first so the UI's update indicator disappears immediately
 
-In other words, sync is not a patch to the repository. It is a controlled re-run of the import process.
+In other words, sync is not a patch to the repository. It is a controlled re-run of the import process. Because the pipeline is GitHub-API-only, a sync never disturbs a sandbox that Lab or System Design previously provisioned.
 
 ## Deletion Flow
 
@@ -216,6 +185,8 @@ When deleting a repository, the system schedules cleanup jobs for all sandboxes 
 
 - remote Daytona sandboxes must be explicitly deleted
 - cleanup jobs need enough database context to execute correctly
+
+These sandboxes originate from Lab / System Design / `ensureSandboxReady`, not from the import pipeline — but they are still scoped to the repository and must be released on deletion.
 
 ### 3. Cascade delete
 
@@ -240,16 +211,11 @@ If sandbox cleanup is still in progress, cascade delete reschedules itself until
 If any part of the pipeline fails:
 
 - `imports.status = failed`
-- the associated job is marked failed
-- the sandbox is marked failed if it already exists
-- `repository.importStatus = failed` only when there is no previous completed import
+- the associated job is marked `failed` with the wrapped error message and a Reference ID for log lookup
+- `repository.importStatus = failed` only when there is no previous completed import (a sync failure does not knock a previously-completed repository out of `completed`)
+- partial `repoFiles` / `repoChunks` / artifact rows from the failed attempt are cleaned via `cleanupSupersededImportSnapshot`
 
-If a sandbox row had already been reserved, the system also schedules sandbox cleanup so the failed import does not leave either:
-
-- a Daytona sandbox still running without DB tracking
-- or a Convex placeholder sandbox row stuck forever in a failed state
-
-Cleanup is scheduled for the failed import's sandbox, not for every sandbox on the repository. This preserves the last completed sandbox on sync failure. Cleanup can handle both normal sandboxes and placeholder rows. If the row never received a Daytona `remoteId`, cleanup archives it without attempting a remote delete.
+The failure path no longer needs to clean up any sandbox: the import pipeline never reserved one. The simpler error model is one of the main reliability wins of the GitHub-API-only path — Daytona quota exhaustion, provisioning timeouts, and clone errors are no longer import failure modes.
 
 ### Import cancellation
 
@@ -267,10 +233,11 @@ This distinction tells the UI and later workflows that:
 - Import and sync share the same pipeline, which keeps the behavior consistent.
 - Snapshot switching is explicit, which avoids half-updated states.
 - Repository deletion uses tombstoning before cascade delete, reducing collisions with background work.
+- Import is sandbox-free, so Daytona availability never blocks Discuss / Library access for a freshly imported repository.
 
 ### Known Limitations
 
 - The import pipeline is currently a centralized orchestration action and may need to be split into clearer domain services as it grows.
 - Although `index` exists as a job kind in the schema, indexing is still mostly embedded inside the import pipeline rather than operating as a separate workflow.
-- Deep mode availability depends on sandbox state and TTL, so the user experience is affected by the resource reclamation cycle.
-
+- `repositories.fileCount` and per-file annotations come from a single GitHub Trees API call; very large monorepos that exceed the API's truncation threshold land a partial tree (logged, not fatal).
+- Lab and System Design availability depend on sandbox state and TTL, so the user experience for those features is affected by the resource reclamation cycle — but Discuss and Library remain available regardless.

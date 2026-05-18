@@ -66,9 +66,9 @@ describe("ImportStatusBanner visibility", () => {
   test("renders when importStatus is running", () => {
     renderBanner({
       importStatus: "running",
-      jobs: [makeJob({ status: "running", stage: "provisioning_sandbox", progress: 0.1 })],
+      jobs: [makeJob({ status: "running", stage: "fetching_repository", progress: 0.1 })],
     });
-    expect(screen.getByText("Cloning from GitHub…")).toBeInTheDocument();
+    expect(screen.getByText("Reading repository from GitHub…")).toBeInTheDocument();
     expect(screen.getByRole("progressbar")).toBeInTheDocument();
   });
 
@@ -91,12 +91,12 @@ describe("ImportStatusBanner stage labels", () => {
     expect(screen.getByText("Preparing…")).toBeInTheDocument();
   });
 
-  test("shows 'Cloning from GitHub…' for provisioning_sandbox stage", () => {
+  test("shows 'Reading repository from GitHub…' for fetching_repository stage", () => {
     renderBanner({
       importStatus: "running",
-      jobs: [makeJob({ stage: "provisioning_sandbox", progress: 0.1 })],
+      jobs: [makeJob({ stage: "fetching_repository", progress: 0.1 })],
     });
-    expect(screen.getByText("Cloning from GitHub…")).toBeInTheDocument();
+    expect(screen.getByText("Reading repository from GitHub…")).toBeInTheDocument();
   });
 
   test("shows 'Indexing files…' for persisting_files stage", () => {
@@ -120,7 +120,7 @@ describe("ImportStatusBanner progress", () => {
   test("shows indeterminate animation when progress < 0.5", () => {
     renderBanner({
       importStatus: "running",
-      jobs: [makeJob({ stage: "provisioning_sandbox", progress: 0.1 })],
+      jobs: [makeJob({ stage: "fetching_repository", progress: 0.1 })],
     });
     const progressBar = screen.getByRole("progressbar");
     expect(progressBar).toBeInTheDocument();

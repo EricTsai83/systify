@@ -109,15 +109,14 @@ The webhook first verifies the payload with HMAC-SHA256 using `GITHUB_APP_WEBHOO
 
 ## Daytona
 
-Daytona provides the executable sandbox for repositories and is the core infrastructure behind import, Lab, and System Design generation.
+Daytona provides the executable sandbox for repositories and is the core infrastructure behind **Lab** and **System Design generation**. Repository import is intentionally sandbox-free — it runs against the GitHub API only.
 
 ### Daytona's role in the system
 
-- provision sandboxes
-- clone repositories
-- list file trees
-- download important file contents
-- run focused inspection
+- provision sandboxes on demand (Lab activation, LLM-backed System Design)
+- clone repositories at provisioning time
+- list file trees and download files for LLM tool calls (`read_file`, `list_dir`)
+- run shell commands for Lab and focused inspection
 - stop and delete sandboxes
 
 ### Sandbox resource model
@@ -137,23 +136,16 @@ The Convex `sandboxes` table stores the local projection of the Daytona runtime 
 
 When a user clicks **Generate System Design**, the request path now also extends the sandbox TTL before the background action is queued. This keeps the sandbox alive long enough for the System Design Node action to start and reduces request-versus-sweep races.
 
-The import pipeline now writes the Convex-side sandbox row before calling Daytona create:
+### On-demand sandbox provisioning
 
-- a placeholder sandbox row is inserted with `status = provisioning`
-- `imports.sandboxId` and `repositories.latestSandboxId` are pointed at that row immediately
-- Daytona `remoteId`, resource limits, and paths are attached afterward to the same row
+`ensureSandboxReady` (in `convex/lib/sandboxLiveness.ts`) is the single orchestrator for "make a sandbox usable for this repository right now". It is called from:
 
-This removes the old crash window where Daytona could successfully create a sandbox but Convex had no corresponding record yet.
+- `sandboxActivationNode.runSandboxActivation` — first Lab activation on a repository (or any subsequent reactivation after archive)
+- `systemDesignNode.runSystemDesignGeneration` — System Design generation whenever the user-selected kinds include at least one LLM-backed kind
 
-### Why import stops instead of immediately deleting the sandbox
+The helper probes Daytona for the current sandbox state, wakes a stopped sandbox where possible, or provisions a fresh one — and patches `repositories.latestSandboxId` to the result. The Convex-side sandbox row is written before Daytona's `create` call (via `reserveOnDemandSandboxRow`) so cleanup can still find the resource if provisioning fails mid-flight.
 
-After import finishes, the system stops the sandbox instead of deleting it immediately because:
-
-- indexed data has already been persisted into Convex, so continuous CPU use is unnecessary
-- Lab and System Design generation may still need a live repository environment
-- Daytona can automatically wake the sandbox on later access
-
-This is Systify's trade-off between cost and functionality.
+Repository import never reserves a sandbox row, never calls `provisionSandbox`, and never patches `latestSandboxId`. Users on Discuss or Library who never enter Lab and never run System Design generation incur zero Daytona cost.
 
 ### Why Daytona webhook exists
 
@@ -249,7 +241,7 @@ When a repository is deleted, or when the system proactively needs to clean up a
 - in both cases, mark the local sandbox record as `archived`
 - finally complete the cleanup job
 
-This matters because a failed import can now leave behind a Convex-owned placeholder sandbox row even if Daytona provisioning never fully completed.
+This matters because a failed on-demand provision (from Lab activation or System Design generation) can leave behind a Convex-owned placeholder sandbox row even if Daytona provisioning never fully completed.
 
 ### Hourly sweep of expired sandboxes
 
@@ -348,7 +340,7 @@ This sequence is intentional: the system rejects the cheapest failure paths firs
   - error: `RATE_LIMIT_EXCEEDED`
 - `daytonaRequestsGlobal`
   - default: `30 / hour`, sharded
-  - mutations: `createRepositoryImport`, `syncRepository`, `requestFailureModeAnalysis`, and `requestSystemDesignGeneration` *only when the request includes at least one LLM-backed kind*. Heuristic-only Library System Design requests skip this bucket because they do not touch Daytona.
+  - mutations: `requestSandboxActivation`, `requestFailureModeAnalysis`, and `requestSystemDesignGeneration` *only when the request includes at least one LLM-backed kind*. Heuristic-only Library System Design requests skip this bucket because they do not touch Daytona. `createRepositoryImport` / `syncRepository` no longer consume this bucket — import runs against the GitHub API only.
   - override: `RATE_LIMIT_DAYTONA_GLOBAL_PER_HOUR`
   - error: `RATE_LIMIT_EXCEEDED`
 
