@@ -316,7 +316,7 @@ Artifacts produced by System Design generation flow back into later Library Ask 
 
 ## Known Limitations
 
-- Lab tooling (`read_file`, `list_dir`, `run_shell`) is gated by the sandbox feature flag and per-viewer allowlist. `run_shell` is gated by a deny list of obviously destructive patterns, a 32 KiB output cap, a 60 s timeout ceiling, and a workdir pinned inside the repository.
+- Lab tooling (`read_file`, `list_dir`, `run_shell`) is gated only by daily cost cap (per-user and per-workspace) and the repo / sandbox lifecycle. `run_shell` is gated by a deny list of obviously destructive patterns, a 32 KiB output cap, a 60 s timeout ceiling, and a workdir pinned inside the repository.
 - Chat and System Design generation are both AI features, but their outputs and tracking models are still split between thread replies and artifacts.
 - The current System Design generation pass is a fixed starter set of overviews. Per-folder regeneration, additional artifact kinds, and partial re-runs are future work.
 

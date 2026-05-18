@@ -293,7 +293,6 @@ export default defineSchema({
     autoArchiveIntervalMinutes: v.number(),
     autoDeleteIntervalMinutes: v.number(),
     networkBlockAll: v.boolean(),
-    networkAllowList: v.optional(v.string()),
     lastHeartbeatAt: v.optional(v.number()),
     lastUsedAt: v.optional(v.number()),
     lastErrorMessage: v.optional(v.string()),

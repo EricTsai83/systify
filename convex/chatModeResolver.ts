@@ -1,6 +1,6 @@
 /**
  * ChatModeResolver — pure resolver mapping (hasAttachedRepo, sandboxStatus,
- * sandboxFeatureGate) to (availableModes, defaultMode, disabledReasons).
+ * sandboxCostCapGate) to (availableModes, defaultMode, disabledReasons).
  *
  * Single source of truth for chat-mode availability used by both the UI mode
  * selector and the `chat.sendMessage` / `chat.createThread` validators on the
@@ -27,18 +27,14 @@
  *     promised by US 14 ("disabled modes show a tooltip explaining how to
  *     unlock them"). A mode that is in `disabledReasons` is, by construction,
  *     not in `availableModes`.
- *   - The Plan-04 feature gate (`sandboxFeatureGate`) is layered *on top* of
- *     the (repo, sandbox-status) resolution: when the gate is closed the
- *     resolver removes `sandbox` from `availableModes` regardless of the
- *     underlying sandbox lifecycle. The gate's tooltip wins over the lifecycle
- *     tooltip because "this mode is in private beta" is the more actionable
- *     signal — provisioning a sandbox would not unlock the mode for a viewer
- *     who isn't on the allowlist. Env reads stay at the *call site*; the
- *     resolver only consumes the precomputed gate so it remains a pure
- *     function (trivially testable, no `process.env` coupling).
+ *   - The cost-cap gate (`sandboxCostCapGate`) is layered *on top* of the
+ *     (repo, sandbox-status) resolution: when the per-user or per-workspace
+ *     daily cap is exhausted the resolver removes `sandbox` from
+ *     `availableModes` and surfaces the cap-specific tooltip. Env / rate-limit
+ *     reads stay at the *call site*; the resolver only consumes the
+ *     precomputed gate so it remains a pure function (trivially testable, no
+ *     `process.env` or Convex ctx coupling).
  */
-
-import type { SandboxFeatureGate } from "./lib/sandboxFeatureFlag";
 
 export type ChatMode = "discuss" | "docs" | "sandbox";
 
@@ -69,7 +65,7 @@ export interface ServiceModeResolution {
   /**
    * Modes the user is currently allowed to enter. A mode is in this list
    * iff the underlying preconditions (repo attached, an artifact exists,
-   * sandbox feature gate open, …) are all satisfied.
+   * sandbox lifecycle ready, daily cost cap not exceeded) are all satisfied.
    */
   availableServiceModes: ReadonlyArray<ServiceMode>;
   /**
@@ -95,20 +91,12 @@ const ASK_REASON_NO_REPO = "Attach a repository and produce at least one artifac
 const ASK_REASON_NO_ARTIFACT = "Library Ask needs at least one artifact in this workspace.";
 const LAB_REASON_NO_REPO = "Lab requires an attached repository.";
 const LAB_REASON_NO_SANDBOX = "Provision a sandbox to use Lab mode.";
-const LAB_REASON_PROVISIONING = "Sandbox is provisioning — Lab mode unlocks once it is ready.";
-const LAB_REASON_EXPIRED = "Sandbox expired — provision a new one to use Lab mode.";
-const LAB_REASON_FAILED = "Sandbox provisioning failed — provision a new one to use Lab mode.";
 
 /**
  * Plan 10 — sandbox daily-cost-cap gate. Closed when the per-user OR
  * per-workspace daily spend cap is reached; the resolver removes
  * `sandbox` from `availableModes` and surfaces the cost-cap tooltip so
  * the user understands why the option is greyed out.
- *
- * Mirrors the {@link SandboxFeatureGate} discriminated-union shape on
- * purpose — the resolver layers the two gates with the same precedence
- * pattern, and presenting them as the same shape keeps the call sites
- * uniform.
  *
  * Two distinct closed `reason`s let the UI render scope-specific copy:
  * "your account" vs "this workspace" reaches different remediation
@@ -132,14 +120,6 @@ export type SandboxCostCapGate =
        */
       readonly resetAtMs: number;
     };
-
-/**
- * Statically-open gate for callers that have already established the feature
- * is on (e.g. resolver tests that focus on the underlying repo / sandbox
- * lifecycle logic, or one-off scripts in dev). Real per-viewer evaluation
- * lives in `lib/sandboxFeatureFlag.ts`.
- */
-export const OPEN_SANDBOX_FEATURE_GATE: SandboxFeatureGate = { enabled: true };
 
 /**
  * Plan 10 — statically-open cost-cap gate for tests that focus on
@@ -182,46 +162,17 @@ export function getDefaultThreadMode(hasAttachedRepo: boolean): ChatMode {
 }
 
 /**
- * Apply the Plan-04 sandbox feature gate to an already-resolved
- * `ChatModeResolution`. Idempotent and safe to call when the gate is open
- * (returns the input unchanged).
- *
- * When the gate is closed and `sandbox` *was* available, this function
- * removes it from `availableModes` and writes the gate's tooltip into
- * `disabledReasons.sandbox` — overriding any lifecycle-derived tooltip
- * because the gate is a stronger signal (the mode is unavailable to this
- * viewer regardless of sandbox status).
+ * Plan 10 — apply the daily-cost-cap gate to an already-resolved
+ * `ChatModeResolution`. Idempotent on open gate; on closed gate, removes
+ * `sandbox` from `availableModes` and writes the cap-specific tooltip
+ * (overriding any lifecycle-derived tooltip because the cap is the more
+ * actionable signal — provisioning a sandbox would not unlock the mode
+ * for a viewer who has hit their daily spend ceiling).
  *
  * The `defaultMode` invariant ("default is always one of `availableModes`")
  * is preserved by the upstream resolver: `defaultMode` is never `sandbox`
  * (sandbox is opt-in), so removing `sandbox` from `availableModes` cannot
  * orphan the default.
- */
-function applySandboxFeatureGate(resolution: ChatModeResolution, gate: SandboxFeatureGate): ChatModeResolution {
-  if (gate.enabled) {
-    return resolution;
-  }
-  // Filter out sandbox from availableModes (no-op if it wasn't there) and
-  // replace any lifecycle tooltip with the gate's tooltip.
-  return {
-    availableModes: resolution.availableModes.filter((mode) => mode !== "sandbox"),
-    defaultMode: resolution.defaultMode,
-    disabledReasons: {
-      ...resolution.disabledReasons,
-      sandbox: gate.tooltip,
-    },
-  };
-}
-
-/**
- * Plan 10 — apply the daily-cost-cap gate. Sequenced AFTER the feature
- * gate in {@link resolveChatModes} so the feature-gate tooltip ("private
- * beta") wins over the cap tooltip when both fire — telling a viewer
- * "you're over your daily cap" is wrong information when they don't
- * even have access to the feature.
- *
- * Idempotent on open gate; on closed gate, removes `sandbox` from
- * `availableModes` and writes the cap-specific tooltip.
  */
 function applySandboxCostCapGate(resolution: ChatModeResolution, gate: SandboxCostCapGate): ChatModeResolution {
   if (gate.enabled) {
@@ -240,20 +191,13 @@ function applySandboxCostCapGate(resolution: ChatModeResolution, gate: SandboxCo
 export function resolveChatModes(
   hasAttachedRepo: boolean,
   sandboxStatus: ChatModeSandboxStatus,
-  sandboxFeatureGate: SandboxFeatureGate,
   sandboxCostCapGate: SandboxCostCapGate = OPEN_SANDBOX_COST_CAP_GATE,
 ): ChatModeResolution {
-  const baseline = resolveChatModesIgnoringFeatureGate(hasAttachedRepo, sandboxStatus);
-  // Apply cost-cap gate first, then feature gate. Order matters: when
-  // both gates close, the feature-gate tooltip overwrites the cap
-  // tooltip (because feature gate is the more meaningful "you can't use
-  // this at all" signal). Reversing the order would surface the cap
-  // tooltip to viewers outside the private beta — wrong information.
-  const afterCostCap = applySandboxCostCapGate(baseline, sandboxCostCapGate);
-  return applySandboxFeatureGate(afterCostCap, sandboxFeatureGate);
+  const baseline = resolveChatModesIgnoringCostCap(hasAttachedRepo, sandboxStatus);
+  return applySandboxCostCapGate(baseline, sandboxCostCapGate);
 }
 
-function resolveChatModesIgnoringFeatureGate(
+function resolveChatModesIgnoringCostCap(
   hasAttachedRepo: boolean,
   sandboxStatus: ChatModeSandboxStatus,
 ): ChatModeResolution {
@@ -332,7 +276,6 @@ export function resolveServiceModes(
   hasAttachedRepo: boolean,
   hasAtLeastOneArtifact: boolean,
   sandboxStatus: ChatModeSandboxStatus,
-  sandboxFeatureGate: SandboxFeatureGate,
   sandboxCostCapGate: SandboxCostCapGate = OPEN_SANDBOX_COST_CAP_GATE,
 ): ServiceModeResolution {
   const available = new Set<ServiceMode>(["discuss"]);
@@ -349,10 +292,9 @@ export function resolveServiceModes(
 
   // Lab availability layers the existing chat-mode resolver: anything that
   // disables `sandbox` over there should disable `lab` here. We re-use the
-  // same gate precedence (feature gate beats cap-gate beats lifecycle
-  // tooltip) so the user gets one consistent reason regardless of which
-  // entry point they came from.
-  const legacyResolution = resolveChatModes(hasAttachedRepo, sandboxStatus, sandboxFeatureGate, sandboxCostCapGate);
+  // cost-cap precedence (cap-gate beats lifecycle tooltip) so the user gets
+  // one consistent reason regardless of which entry point they came from.
+  const legacyResolution = resolveChatModes(hasAttachedRepo, sandboxStatus, sandboxCostCapGate);
   if (legacyResolution.availableModes.includes("sandbox")) {
     available.add("lab");
   } else {
@@ -369,15 +311,7 @@ export function resolveServiceModes(
     ? { canStart: false, reason: LAB_REASON_NO_REPO }
     : sandboxStatus === "ready" && legacyResolution.availableModes.includes("sandbox")
       ? { canStart: true, reason: null }
-      : sandboxStatus === "provisioning"
-        ? { canStart: false, reason: LAB_REASON_PROVISIONING }
-        : sandboxStatus === "expired"
-          ? { canStart: false, reason: LAB_REASON_EXPIRED }
-          : sandboxStatus === "failed"
-            ? { canStart: false, reason: LAB_REASON_FAILED }
-            : sandboxStatus === "none"
-              ? { canStart: false, reason: LAB_REASON_NO_SANDBOX }
-              : { canStart: false, reason: legacyResolution.disabledReasons.sandbox ?? LAB_REASON_NO_SANDBOX };
+      : { canStart: false, reason: legacyResolution.disabledReasons.sandbox ?? LAB_REASON_NO_SANDBOX };
 
   // Pick the URL-landing default. The function is intentionally
   // independent of `available` so it never lands the user on a disabled

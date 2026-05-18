@@ -192,7 +192,7 @@ These values must exist only in the Convex runtime. This list intentionally matc
 - `DAYTONA_CPU_LIMIT`
 - `DAYTONA_MEMORY_GIB`
 - `DAYTONA_DISK_GIB`
-- `DAYTONA_NETWORK_ALLOW_LIST`
+- `DAYTONA_POST_CLONE_BLOCK_NETWORK`
 
 This separation matters because the GitHub App private key, webhook secret, and OpenAI key must never leak into the frontend.
 

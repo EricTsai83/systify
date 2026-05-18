@@ -118,12 +118,13 @@ describe("buildSystemPrompt", () => {
   test("sandbox prompt forbids network egress so the LLM does not even attempt curl (Plan 08)", () => {
     const prompt = buildSystemPrompt("sandbox");
 
-    // The Daytona allow list (`DAYTONA_NETWORK_ALLOW_LIST`) is the
-    // network-layer enforcement; the prompt is the cooperative guard.
-    // Without an explicit "no network egress" instruction, the LLM
-    // cheerfully tries `curl example.com` and burns a step on a
-    // guaranteed failure. Pinning the prompt-layer wording here keeps
-    // the contract auditable.
+    // The post-clone `networkBlockAll: true` iptables rule
+    // (`DAYTONA_POST_CLONE_BLOCK_NETWORK`) is the network-layer
+    // enforcement; the prompt is the cooperative guard. Without an
+    // explicit "no network egress" instruction, the LLM cheerfully
+    // tries `curl example.com` and burns a step on a guaranteed
+    // failure. Pinning the prompt-layer wording here keeps the
+    // contract auditable.
     expect(prompt.toLowerCase()).toMatch(/network|egress|do not.*curl|outbound/);
   });
 

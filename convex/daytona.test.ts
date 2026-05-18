@@ -1,43 +1,60 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const { getMock, MockDaytonaError, MockDaytonaValidationError, MockDaytonaNotFoundError } = vi.hoisted(() => {
-  // Constructor mirrors the real `@daytona/sdk` `DaytonaError` signature
-  // `(message, statusCode, headers, errorCode)` so tests can simulate the
-  // structured error fields the SDK populates on a 4xx response. Subclassing
-  // here ensures `instanceof DaytonaError` works in production code paths.
-  class HoistedMockDaytonaError extends Error {
-    constructor(
-      message: string,
-      readonly statusCode?: number,
-      readonly headers?: Record<string, string>,
-      readonly errorCode?: string,
-    ) {
-      super(message);
-      this.name = "DaytonaError";
+const { getMock, MockDaytonaError, MockDaytonaValidationError, MockDaytonaNotFoundError, MockDaytonaRateLimitError } =
+  vi.hoisted(() => {
+    // Constructor mirrors the real `@daytona/sdk` `DaytonaError` signature
+    // `(message, statusCode, headers, errorCode)` so tests can simulate the
+    // structured error fields the SDK populates on a 4xx response. Subclassing
+    // here ensures `instanceof DaytonaError` works in production code paths.
+    class HoistedMockDaytonaError extends Error {
+      constructor(
+        message: string,
+        readonly statusCode?: number,
+        readonly headers?: Record<string, string>,
+        readonly errorCode?: string,
+      ) {
+        super(message);
+        this.name = "DaytonaError";
+      }
     }
-  }
 
-  class HoistedMockDaytonaValidationError extends HoistedMockDaytonaError {
-    constructor(message: string, statusCode?: number, headers?: Record<string, string>, errorCode?: string) {
-      super(message, statusCode, headers, errorCode);
-      this.name = "DaytonaValidationError";
+    class HoistedMockDaytonaValidationError extends HoistedMockDaytonaError {
+      constructor(message: string, statusCode?: number, headers?: Record<string, string>, errorCode?: string) {
+        super(message, statusCode, headers, errorCode);
+        this.name = "DaytonaValidationError";
+      }
     }
-  }
 
-  class HoistedMockDaytonaNotFoundError extends Error {
-    constructor(message = "Not found") {
-      super(message);
-      this.name = "DaytonaNotFoundError";
+    class HoistedMockDaytonaNotFoundError extends Error {
+      constructor(message = "Not found") {
+        super(message);
+        this.name = "DaytonaNotFoundError";
+      }
     }
-  }
 
-  return {
-    getMock: vi.fn(),
-    MockDaytonaError: HoistedMockDaytonaError,
-    MockDaytonaValidationError: HoistedMockDaytonaValidationError,
-    MockDaytonaNotFoundError: HoistedMockDaytonaNotFoundError,
-  };
-});
+    // Sibling of `HoistedMockDaytonaError`, NOT a child. The retry helper
+    // does `instanceof DaytonaRateLimitError` to classify retriable errors;
+    // if we made this a subclass of the base mock, every plain
+    // `MockDaytonaError` the existing tests throw would also satisfy the
+    // check and trigger 5 retries × backoff each, blowing the 5s test
+    // timeout. Disjoint hierarchies keep the legacy tests immune to the
+    // wrapper while still letting any test that wants a rate-limit
+    // scenario instantiate this class directly.
+    class HoistedMockDaytonaRateLimitError extends Error {
+      constructor(message = "Rate limited") {
+        super(message);
+        this.name = "DaytonaRateLimitError";
+      }
+    }
+
+    return {
+      getMock: vi.fn(),
+      MockDaytonaError: HoistedMockDaytonaError,
+      MockDaytonaValidationError: HoistedMockDaytonaValidationError,
+      MockDaytonaNotFoundError: HoistedMockDaytonaNotFoundError,
+      MockDaytonaRateLimitError: HoistedMockDaytonaRateLimitError,
+    };
+  });
 
 vi.mock("@daytona/sdk", () => ({
   CodeLanguage: {
@@ -59,6 +76,16 @@ vi.mock("@daytona/sdk", () => ({
   // resolves to a real symbol (otherwise `instanceof undefined` would
   // throw if any future test exercised that path).
   DaytonaTimeoutError: MockDaytonaError,
+  // Transitively required by `lib/daytonaRetry`, which wraps every Daytona
+  // SDK call site in this file. The retry helper does `instanceof
+  // DaytonaRateLimitError` to classify retriable errors; without an export
+  // here the import resolves to `undefined` and `instanceof undefined`
+  // would throw the moment any mocked error trips the helper. Crucially
+  // this is a disjoint sibling of `MockDaytonaError` (not a subclass) —
+  // existing tests throw plain `MockDaytonaError` instances and would
+  // otherwise be misclassified as retriable, stalling each test for the
+  // full retry × backoff schedule.
+  DaytonaRateLimitError: MockDaytonaRateLimitError,
 }));
 
 import {
@@ -148,8 +175,39 @@ describe("daytona state normalization", () => {
     });
 
     test("rethrows non-not-found Daytona errors", async () => {
-      getMock.mockRejectedValue(new MockDaytonaError("upstream blew up", 500));
+      // 400 (validation) rather than 500 here: the retry wrapper in
+      // `lib/daytonaRetry` correctly retries 5xx transient failures, which
+      // would stall this test for the full backoff schedule. A 4xx code
+      // exercises the same "rethrow non-NotFound Daytona errors" path the
+      // test cares about, immediately. The companion fake-timers test below
+      // covers the 5xx-retry-then-rethrow path without paying real wall time.
+      getMock.mockRejectedValue(new MockDaytonaError("upstream blew up", 400));
       await expect(probeLiveSandbox("remote-probe")).rejects.toThrow(/upstream blew up/);
+    });
+
+    test("retries persistent 5xx through the backoff schedule, then rethrows", async () => {
+      // Pin Math.random so jitter = 0 and the retry schedule has
+      // deterministic timings the fake clock can advance through.
+      // The `expect(...).rejects.toThrow(...)` handler is attached
+      // BEFORE `runAllTimersAsync` so Node sees a rejection handler on
+      // the outer promise the moment any inner retry fires — see the
+      // equivalent pattern in `lib/daytonaRetry.test.ts`'s
+      // "re-throws the original error after MAX_RETRIES" test.
+      vi.useFakeTimers();
+      vi.spyOn(Math, "random").mockReturnValue(0.5);
+      try {
+        getMock.mockRejectedValue(new MockDaytonaError("upstream still broken", 500));
+        const probe = probeLiveSandbox("remote-probe");
+        const rejection = expect(probe).rejects.toThrow(/upstream still broken/);
+        await vi.runAllTimersAsync();
+        await rejection;
+        // MAX_RETRIES = 5 in `lib/daytonaRetry.ts` — one initial attempt
+        // plus 4 retries before the helper gives up and rethrows.
+        expect(getMock).toHaveBeenCalledTimes(5);
+      } finally {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+      }
     });
   });
 
@@ -198,8 +256,31 @@ describe("deleteSandbox", () => {
   });
 
   test("rethrows non-not-found Daytona errors", async () => {
-    getMock.mockRejectedValue(new MockDaytonaError("upstream blew up", 500));
+    // See the parallel comment in the `probeLiveSandbox` block: a 4xx code
+    // keeps the test on the fast-fail path instead of routing through the
+    // 5xx retry schedule, which is correct production behaviour but would
+    // blow this test's 5s timeout. The companion fake-timers test below
+    // covers the 5xx-retry-then-rethrow path without paying real wall time.
+    getMock.mockRejectedValue(new MockDaytonaError("upstream blew up", 400));
     await expect(deleteSandbox("remote-broken")).rejects.toThrow(/upstream blew up/);
+  });
+
+  test("retries persistent 5xx through the backoff schedule, then rethrows", async () => {
+    // See the parallel test in `probeLiveSandbox` for why the rejection
+    // handler is attached before `runAllTimersAsync`.
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    try {
+      getMock.mockRejectedValue(new MockDaytonaError("upstream still broken", 500));
+      const deletion = deleteSandbox("remote-broken-5xx");
+      const rejection = expect(deletion).rejects.toThrow(/upstream still broken/);
+      await vi.runAllTimersAsync();
+      await rejection;
+      expect(getMock).toHaveBeenCalledTimes(5);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
   });
 });
 
@@ -533,9 +614,7 @@ describe("cloneRepositoryInSandbox — post-clone network lockdown", () => {
  *      emitted, so operators have a structured signal that the network
  *      layer is no longer enforcing egress.
  *   4. Garbage / typo values → fall back to `true`. A typo in env config
- *      must not silently disable a security control. Mirrors the
- *      `parseRolloutPercent` "invalid → fail-closed to 0" pattern in
- *      `lib/sandboxRollout.ts`.
+ *      must not silently disable a security control.
  *   5. Skipping the block does NOT skip the token scrub. Layer 1 (token
  *      scrub) and Layer 4 (network block) are independent invariants;
  *      the gate only controls Layer 4.
@@ -641,73 +720,26 @@ describe("cloneRepositoryInSandbox — DAYTONA_POST_CLONE_BLOCK_NETWORK gating",
 
 /**
  * `assertSandboxProvisioningConfigured` is the fail-fast gate that the import
- * pipeline calls before any side effects. The previous "throw inside
- * provisionSandbox" check fired late (after the GitHub access probe and
- * sandbox row reservation) and conflated two operator intents: "I never
- * configured this var" (unsafe to ship) and "I want Daytona's default
- * policy" (the documented dev posture).
- *
- * These tests pin the resolved contract:
- *   1. Missing `DAYTONA_API_KEY` throws — never reached the network check.
- *   2. Missing `DAYTONA_NETWORK_ALLOW_LIST` throws — even with a valid key.
- *   3. Empty string allow list passes — that is the explicit "use default
- *      policy" signal, distinguished from "unset".
- *   4. Non-empty allow list passes (the production posture).
+ * pipeline calls before any side effects: a missing Daytona API key should
+ * surface as one actionable error message at the entry point rather than
+ * cascading into a confusing failure deeper in the provisioning flow.
  */
 describe("assertSandboxProvisioningConfigured", () => {
   beforeEach(() => {
     delete process.env.DAYTONA_API_KEY;
-    delete process.env.DAYTONA_NETWORK_ALLOW_LIST;
   });
 
   afterEach(() => {
     delete process.env.DAYTONA_API_KEY;
-    delete process.env.DAYTONA_NETWORK_ALLOW_LIST;
   });
 
   test("throws when DAYTONA_API_KEY is missing", () => {
-    process.env.DAYTONA_NETWORK_ALLOW_LIST = "";
     expect(() => assertSandboxProvisioningConfigured()).toThrow(/DAYTONA_API_KEY/);
   });
 
-  test("throws when DAYTONA_NETWORK_ALLOW_LIST is unset (operator never made a choice)", () => {
+  test("passes when DAYTONA_API_KEY is set", () => {
     process.env.DAYTONA_API_KEY = "test-api-key";
-    expect(() => assertSandboxProvisioningConfigured()).toThrow(/DAYTONA_NETWORK_ALLOW_LIST/);
-  });
-
-  test("passes when allow list is explicitly empty (Daytona default policy opt-in)", () => {
-    process.env.DAYTONA_API_KEY = "test-api-key";
-    process.env.DAYTONA_NETWORK_ALLOW_LIST = "";
     expect(() => assertSandboxProvisioningConfigured()).not.toThrow();
-  });
-
-  test("passes when allow list is whitespace-only (treated as explicit empty)", () => {
-    process.env.DAYTONA_API_KEY = "test-api-key";
-    process.env.DAYTONA_NETWORK_ALLOW_LIST = "   ";
-    expect(() => assertSandboxProvisioningConfigured()).not.toThrow();
-  });
-
-  test("passes when allow list is a non-empty production CIDR value", () => {
-    process.env.DAYTONA_API_KEY = "test-api-key";
-    process.env.DAYTONA_NETWORK_ALLOW_LIST = "140.82.112.0/20";
-    expect(() => assertSandboxProvisioningConfigured()).not.toThrow();
-  });
-
-  test("passes when allow list is a comma-separated list of IPv4 CIDR ranges", () => {
-    process.env.DAYTONA_API_KEY = "test-api-key";
-    process.env.DAYTONA_NETWORK_ALLOW_LIST = "140.82.112.0/20, 192.30.252.0/22";
-    expect(() => assertSandboxProvisioningConfigured()).not.toThrow();
-  });
-
-  test("throws with the offending tokens when allow list contains a non-CIDR entry", () => {
-    // Daytona's `networkAllowList` field is parsed as a comma-separated CIDR
-    // list — `github.com:443` and other domain:port values are silently
-    // rejected at sandbox creation. Validating up front turns a runtime
-    // failure (deep in `daytona.create`) into an actionable error at the
-    // import pipeline's entry point.
-    process.env.DAYTONA_API_KEY = "test-api-key";
-    process.env.DAYTONA_NETWORK_ALLOW_LIST = "140.82.112.0/20, github.com:443";
-    expect(() => assertSandboxProvisioningConfigured()).toThrow(/github\.com:443/);
   });
 });
 

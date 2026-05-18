@@ -12,7 +12,6 @@ import {
   type ChatModeSandboxStatus,
   type SandboxCostCapGate,
 } from "./chatModeResolver";
-import { getSandboxFeatureGate } from "./lib/sandboxFeatureFlag";
 import {
   getSandboxReplyEstimateCents,
   peekSandboxDailyCostForUser,
@@ -82,9 +81,8 @@ async function loadThread(ctx: QueryCtx, threadId: Id<"threads">): Promise<Doc<"
  *
  * `viewerTokenIdentifier` is the *authenticated* viewer's identifier from
  * `requireViewerIdentity` — never a function argument or stored doc field.
- * It feeds the Plan-04 sandbox feature gate (`getSandboxFeatureGate`) so the
- * resolver can return the correct `disabledReasons.sandbox` tooltip for *this*
- * viewer (private-beta flag off vs. allowlist miss vs. lifecycle-derived).
+ * It identifies whose daily cost-cap to peek (per-user buckets are scoped
+ * by this).
  *
  * The internal variant of the query trusts its callers (other Convex
  * functions) and uses the thread's owner as the viewer — there is no
@@ -185,12 +183,7 @@ async function enrichThreadContext(
     sandboxCostBudgets = budgets;
   }
 
-  const chatModes = resolveChatModes(
-    attachedRepository !== null,
-    toChatModeSandboxStatus(sandboxModeStatus),
-    getSandboxFeatureGate(viewerTokenIdentifier),
-    costGate,
-  );
+  const chatModes = resolveChatModes(attachedRepository !== null, toChatModeSandboxStatus(sandboxModeStatus), costGate);
 
   return {
     thread,
@@ -232,10 +225,7 @@ export const getThreadContextInternal = internalQuery({
   handler: async (ctx, args) => {
     // Internal callers don't carry an authenticated viewer; surface the
     // thread owner's view of mode availability so the result is a faithful
-    // representation of "what the owner would see right now". Until Plan
-    // 13's percentage rollout we evaluate the gate against the owner;
-    // afterwards this becomes the obvious place to swap in the rollout
-    // hash without disturbing public-query semantics.
+    // representation of "what the owner would see right now".
     const thread = await loadThread(ctx, args.threadId);
     if (!thread) {
       return null;

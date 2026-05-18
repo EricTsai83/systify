@@ -166,7 +166,6 @@ export const runImportPipeline = internalAction({
         autoArchiveIntervalMinutes: sandbox.autoArchiveIntervalMinutes,
         autoDeleteIntervalMinutes: sandbox.autoDeleteIntervalMinutes,
         networkBlockAll: sandbox.networkBlockAll,
-        networkAllowList: sandbox.networkAllowList,
       });
 
       // Retrieve GitHub access token — required for private repos
