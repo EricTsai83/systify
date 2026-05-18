@@ -135,7 +135,7 @@ Without protection, Daytona keeps a live sandbox while Convex cannot discover it
 
 ### Cleanup Was Scheduled, But Remote Delete Failed
 
-A repository can enter deletion or import failure cleanup correctly, but Daytona delete may still fail because of timeout, transient provider issues, or interrupted execution.
+A repository can enter deletion or on-demand provisioning failure cleanup correctly, but Daytona delete may still fail because of timeout, transient provider issues, or interrupted execution.
 
 In that case Convex still needs retryable cleanup and later reconciliation.
 

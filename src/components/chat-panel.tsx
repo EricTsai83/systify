@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState, type AnimationEvent, type FormEvent } from "react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
+import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { toUserErrorMessage } from "@/lib/errors";
 import { AppNotice } from "@/components/app-notice";
 import { EmptyChatHint, EmptyNoRepoHint } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
@@ -38,6 +40,13 @@ type ChatPanelProps = {
   setChatMode: (v: ChatMode) => void;
   availableModes: readonly ChatMode[];
   disabledModeReasons: Partial<Record<ChatMode, string>>;
+  /**
+   * True when sandbox isn't currently in `availableModes` but the
+   * disabled "Sandbox" option should still accept a click and trigger
+   * a lazy `requestSandboxActivation`. Sourced from the thread context
+   * (see `useThreadCapabilities`).
+   */
+  sandboxIsActivatable?: boolean;
   isSending: boolean;
   onSendMessage: (e: FormEvent<HTMLFormElement>) => Promise<void>;
   /**
@@ -131,6 +140,7 @@ export function ChatPanel({
   setChatMode,
   availableModes,
   disabledModeReasons,
+  sandboxIsActivatable = false,
   isSending,
   onSendMessage,
   onCancelInFlightReply,
@@ -173,6 +183,25 @@ export function ChatPanel({
 
   const availableModeSet = useMemo(() => new Set(availableModes), [availableModes]);
   const sandboxModeAvailable = sandboxModeStatus?.reasonCode === "available";
+
+  // Lazy-provision entry point. Wired here (not in `SandboxActivityPill`)
+  // so the ModeSelect can fire activation directly when the user clicks
+  // the otherwise-disabled "Sandbox" option — the pill is only mounted
+  // once `chatMode === "sandbox"`, so it can't be the sole trigger.
+  // `requestSandboxActivation` is idempotent (returns the in-flight job
+  // if one exists) so a duplicate click during activation is safe.
+  const requestSandboxActivation = useMutation(api.repositories.requestSandboxActivation);
+  const [activationError, setActivationError] = useState<string | null>(null);
+  const [, activateSandbox] = useAsyncCallback(async () => {
+    if (!repositoryId) return;
+    setActivationError(null);
+    try {
+      await requestSandboxActivation({ repositoryId });
+      setChatMode("sandbox");
+    } catch (err) {
+      setActivationError(toUserErrorMessage(err, "Couldn't start the sandbox. Try again."));
+    }
+  });
 
   /**
    * Plan 07 — derive "is the most recent assistant reply still in flight?"
@@ -427,6 +456,8 @@ export function ChatPanel({
                   setChatMode={setChatMode}
                   availableModeSet={availableModeSet}
                   disabledModeReasons={disabledModeReasons}
+                  sandboxIsActivatable={sandboxIsActivatable}
+                  onActivateSandbox={() => void activateSandbox()}
                   id="mode-compact-select"
                   ariaLabel="Answer mode selector mobile"
                   align="start"

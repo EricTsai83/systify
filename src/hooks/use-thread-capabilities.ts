@@ -51,6 +51,13 @@ export interface ThreadCapabilities {
   /** Non-null when a legacy thread has been archived for read-only browsing. */
   lockedAt: number | null;
   /**
+   * True when the disabled Sandbox option should still accept a click
+   * and trigger a lazy sandbox provision. The UI uses this to render
+   * the option as clickable (with an "activate" affordance) and to
+   * keep `chatMode === "sandbox"` selectable while activation runs.
+   */
+  sandboxIsActivatable: boolean;
+  /**
    * Plan 10 — visible sandbox cost budget for the ticker. `null` when
    * sandbox mode isn't currently relevant (no repo attached). When
    * non-null, this reflects the *more restrictive* of the per-user and
@@ -81,6 +88,7 @@ const NO_THREAD_CAPABILITIES: ThreadCapabilities = {
   disabledReasons: NO_THREAD_DISABLED_REASONS,
   sandboxCostBudget: null,
   lockedAt: null,
+  sandboxIsActivatable: false,
 };
 
 const NO_THREAD_LOADING_CAPABILITIES: ThreadCapabilities = {
@@ -144,6 +152,7 @@ export function useThreadCapabilities(threadId: ThreadId | null): ThreadCapabili
     disabledReasons: ctx.chatModes.disabledReasons,
     lockedAt: ctx.thread.lockedAt ?? null,
     sandboxCostBudget: deriveSandboxCostBudget(ctx.sandboxCostBudgets),
+    sandboxIsActivatable: ctx.sandboxIsActivatable,
   };
 }
 

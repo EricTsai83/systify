@@ -434,10 +434,18 @@ export function RepositoryShell({
     threadId: ThreadId | null;
     mode: ChatMode;
   } | null>(null);
+  // Sandbox is allowed as a picked mode while it's "activatable" so the
+  // user can sit in Sandbox mode (and see the SandboxActivityPill's
+  // progress) the instant they click the otherwise-disabled option — the
+  // resolver only re-adds sandbox to `availableModes` once activation
+  // completes, which would otherwise pop the user back to docs mid-
+  // provision.
+  const isSandboxPickedWhileActivating =
+    pickedChatMode?.mode === "sandbox" && capabilities.sandboxIsActivatable;
   const chatMode: ChatMode =
     pickedChatMode &&
     pickedChatMode.threadId === urlThreadId &&
-    capabilities.availableModes.includes(pickedChatMode.mode)
+    (capabilities.availableModes.includes(pickedChatMode.mode) || isSandboxPickedWhileActivating)
       ? pickedChatMode.mode
       : capabilities.defaultMode;
   const setChatMode = useCallback(
@@ -918,12 +926,25 @@ export function RepositoryShell({
     setChatInput,
     setActionError,
     onAfterDeleteThread: () => {
-      // Stay inside the current workspace so the user keeps their context
-      // (sidebar selection, repo chrome). The workspace-landing redirect
-      // forwards to whichever thread is now most recent, or shows the empty
-      // state if this was the last one.
+      // Stay inside the current workspace AND the current service mode so the
+      // user keeps their context. Routing through `/w/:wid` would land on a
+      // transient (mode-less) URL where `intendedServiceMode` falls back to
+      // `lastServiceMode` or `availability.defaultServiceMode` — the latter
+      // is "library" for repo-attached workspaces, so deleting the last
+      // Discuss thread would yank the user into Library. Going straight to
+      // the mode-specific landing keeps `serviceMode !== null` across the
+      // navigation; the empty state for the mode renders if no threads of
+      // that mode remain.
       if (currentWorkspaceId !== null) {
-        void navigate(workspacePath(currentWorkspaceId));
+        if (serviceMode === "discuss") {
+          void navigate(discussPath(currentWorkspaceId));
+        } else if (serviceMode === "lab") {
+          void navigate(labPath(currentWorkspaceId));
+        } else if (serviceMode === "library") {
+          void navigate(libraryPath(currentWorkspaceId));
+        } else {
+          void navigate(workspacePath(currentWorkspaceId));
+        }
       } else {
         void navigate(DEFAULT_AUTHENTICATED_PATH);
       }
@@ -973,6 +994,7 @@ export function RepositoryShell({
       setChatMode={setChatMode}
       availableModes={capabilities.availableModes}
       disabledModeReasons={capabilities.disabledReasons}
+      sandboxIsActivatable={capabilities.sandboxIsActivatable}
       isSending={isSending}
       onSendMessage={handleSendMessage}
       onCancelInFlightReply={handleCancelInFlightReply}
@@ -1073,19 +1095,14 @@ export function RepositoryShell({
          * archived because the import-failed state is no longer actionable
          * until the user restores.
          *
-         * The full error message (including the `Reference: <errorId>` tail
-         * that `markImportFailed` writes) lives on the latest failed import
-         * job row. We look it up directly from `repoDetail.jobs` rather
-         * than from `repository.latestImportJobId` because that pointer is
-         * only written on successful completion (`finalizeImportCompletion`)
-         * — for a repo that has never imported successfully, the pointer
-         * is undefined even after a failure. `jobs` is already ordered by
-         * `_creationTime` desc, so the first matching entry is the most
-         * recent failure.
+         * `latestFailedImportError` is computed in `getRepositoryDetail` —
+         * the UI deliberately doesn't know about the jobs table or which
+         * pointer to follow (the `latestImportJobId` pointer is only written
+         * on successful completion and is the wrong source for failures).
          */}
         {!isRepoArchived && repoDetail?.repository.importStatus === "failed" ? (
           <ImportFailedBanner
-            errorMessage={repoDetail.jobs.find((j) => j.kind === "import" && j.status === "failed")?.errorMessage}
+            errorMessage={repoDetail.latestFailedImportError}
             isSyncing={isSyncing || isRepositorySyncing}
             onRetry={() => void handleSync()}
           />
@@ -1251,18 +1268,19 @@ function ImportFailedBanner({
   isSyncing,
   onRetry,
 }: {
-  errorMessage: string | undefined;
+  errorMessage: string | null;
   isSyncing: boolean;
   onRetry: () => void;
 }) {
   return (
-    <div
-      className="flex shrink-0 flex-col border-b border-destructive/40 bg-destructive/5 px-6 py-3 text-destructive"
-      role="alert"
-      aria-live="assertive"
-      aria-atomic="true"
-    >
-      <div className="flex items-start gap-2">
+    <div className="flex shrink-0 flex-col border-b border-destructive/40 bg-destructive/5 px-6 py-3 text-destructive">
+      {/*
+       * The alert region is scoped to the headline + retry button only.
+       * Putting the Accordion inside an `aria-live="assertive"` region
+       * makes screen readers re-announce the whole banner every time the
+       * user toggles "Error details", which is noisy and not actionable.
+       */}
+      <div role="alert" aria-live="assertive" aria-atomic="true" className="flex items-start gap-2">
         <WarningCircleIcon size={18} weight="fill" className="mt-0.5 shrink-0" />
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium">Repository import failed</p>
@@ -1282,10 +1300,6 @@ function ImportFailedBanner({
         </Button>
       </div>
       {errorMessage ? (
-        // Accordion is the shadcn disclosure pattern: a chevron + label row
-        // that toggles the body inline, with no button-y background. We
-        // strip the default `border-b` on the item because the banner
-        // already has its own destructive border.
         <Accordion type="single" collapsible className="mt-1 ml-7">
           <AccordionItem value="details" className="border-b-0">
             <AccordionTrigger className="py-1 text-[11px] font-semibold tracking-wider uppercase text-destructive/80 hover:text-destructive hover:no-underline">

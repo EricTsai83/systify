@@ -407,9 +407,8 @@ export const reserveOnDemandSandboxRow = internalMutation({
 
 /**
  * Attach Daytona handle to an in-flight on-demand sandbox row, before the
- * clone step runs. Splitting attach from "mark ready" mirrors the import
- * pipeline (`attachSandboxRemoteInfo` + later status patch) so that a
- * clone failure leaves the row with a valid `remoteId`, letting
+ * clone step runs. Splitting attach from "mark ready" means that a clone
+ * failure leaves the row with a valid `remoteId`, letting
  * `scheduleSandboxCleanup` delete the Daytona sandbox.
  */
 export const attachOnDemandSandboxRemoteInfo = internalMutation({
