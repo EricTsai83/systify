@@ -95,10 +95,6 @@ function githubCallbackErrorResponse(status: number, title: string, message: str
   return githubCallbackPageResponse(status, title, message);
 }
 
-function githubCallbackSuccessResponse(title: string, message: string): Response {
-  return githubCallbackPageResponse(200, title, message);
-}
-
 /**
  * Returns a page that immediately attempts `window.close()`. If the browser
  * blocks it (e.g. the page was opened as a regular tab rather than a popup),
@@ -182,13 +178,106 @@ function redirectOrReturnError(
   return redirectOrReturnPage(redirectTarget, params, githubCallbackErrorResponse(status, title, message));
 }
 
-function redirectOrReturnSuccess(
+/**
+ * Success response for the new-installation flow. The install can be initiated
+ * either inside a popup window (preferred) or via a full-page redirect (when
+ * the popup is blocked), and the same callback URL serves both. We can't tell
+ * the two apart server-side, so the returned HTML decides at runtime:
+ *   - In a popup: call `window.close()` so the parent's reactive query takes
+ *     over without leaving the user with a stranded "Closing…" tab.
+ *   - In a full-page tab (or if `close()` was blocked): navigate the user back
+ *     to `redirectTarget` so they land where they started the flow.
+ *   - With no redirect target: show the static success message as a fallback.
+ *
+ * Without this, popups got a 302 back to the app URL and stayed open because
+ * `popupRef.current?.close()` in the opener is unreliable after a popup has
+ * navigated through cross-origin pages (github.com → Convex callback → app).
+ */
+function githubCallbackInstallSuccessResponse(
   redirectTarget: string | null,
   params: Record<string, string>,
   title: string,
   message: string,
 ): Response {
-  return redirectOrReturnPage(redirectTarget, params, githubCallbackSuccessResponse(title, message));
+  let finalRedirect: string | null = null;
+  if (redirectTarget) {
+    try {
+      finalRedirect = buildRedirectUrl(normalizeReturnToUrl(redirectTarget), params);
+    } catch (error) {
+      logWarn("http", "github_callback_redirect_target_rejected", {
+        redirectTarget,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const redirectLiteral = finalRedirect ? JSON.stringify(finalRedirect) : "null";
+
+  const body = `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(title)}</title>
+    <style>
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #0b1020;
+        color: #e5e7eb;
+      }
+      main {
+        max-width: 36rem;
+        padding: 2rem;
+        border: 1px solid rgba(229, 231, 235, 0.16);
+        border-radius: 1rem;
+        background: rgba(15, 23, 42, 0.92);
+        text-align: center;
+      }
+      h1 { margin: 0 0 0.75rem; font-size: 1.25rem; }
+      p { margin: 0; line-height: 1.6; }
+    </style>
+  </head>
+  <body>
+    <main id="fallback" style="display:none">
+      <h1>${escapeHtml(title)}</h1>
+      <p>${escapeHtml(message)}</p>
+    </main>
+    <script>
+      (function () {
+        var redirect = ${redirectLiteral};
+        var isPopup = !!window.opener && window.opener !== window;
+        if (isPopup) {
+          try { window.close(); } catch (_) {}
+          // If close() was blocked the script keeps running; give it a tick,
+          // then fall back to redirect/fallback message inside the popup.
+          setTimeout(function () {
+            if (redirect) {
+              window.location.replace(redirect);
+            } else {
+              document.getElementById("fallback").style.display = "block";
+            }
+          }, 100);
+        } else if (redirect) {
+          window.location.replace(redirect);
+        } else {
+          document.getElementById("fallback").style.display = "block";
+        }
+      })();
+    </script>
+  </body>
+</html>`;
+
+  return new Response(body, {
+    status: 200,
+    headers: {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store",
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -323,7 +412,7 @@ http.route({
       logInfo("http", "github_callback_completed", {
         installationId,
       });
-      return redirectOrReturnSuccess(
+      return githubCallbackInstallSuccessResponse(
         redirectTarget,
         { github_connected: "true" },
         "GitHub connection completed.",

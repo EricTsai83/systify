@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import { ArchiveIcon, ArrowCounterClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { ArchiveIcon, ArrowCounterClockwiseIcon, CaretDownIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ArtifactPanel } from "@/components/artifact-panel";
 import { TopBar } from "@/components/top-bar";
@@ -1071,32 +1072,23 @@ export function RepositoryShell({
          * Shown regardless of which right-rail panel is open. Hidden when
          * archived because the import-failed state is no longer actionable
          * until the user restores.
+         *
+         * The full error message (including the `Reference: <errorId>` tail
+         * that `markImportFailed` writes) lives on the latest import job
+         * row; we surface it behind a collapsible so a user who hits a
+         * non-obvious failure (sandbox provisioning, clone, persistence)
+         * can see the actual reason without leaving the workspace.
          */}
         {!isRepoArchived && repoDetail?.repository.importStatus === "failed" ? (
-          <div
-            className="flex shrink-0 items-start gap-2 border-b border-destructive/40 bg-destructive/5 px-6 py-3 text-destructive"
-            role="alert"
-            aria-live="assertive"
-            aria-atomic="true"
-          >
-            <WarningCircleIcon size={18} weight="fill" className="mt-0.5 shrink-0" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">Repository import failed</p>
-              <p className="mt-0.5 text-xs leading-5">
-                The latest sync did not finish. Retry to restore repo-aware features for this workspace.
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="gap-1.5 text-xs"
-              disabled={isSyncing || isRepositorySyncing}
-              onClick={() => void handleSync()}
-            >
-              {isSyncing || isRepositorySyncing ? "Retrying…" : "Retry sync"}
-            </Button>
-          </div>
+          <ImportFailedBanner
+            errorMessage={
+              repoDetail.repository.latestImportJobId
+                ? repoDetail.jobs.find((j) => j._id === repoDetail.repository.latestImportJobId)?.errorMessage
+                : undefined
+            }
+            isSyncing={isSyncing || isRepositorySyncing}
+            onRetry={() => void handleSync()}
+          />
         ) : null}
 
         <div className="flex min-h-0 min-w-0 flex-1">
@@ -1250,6 +1242,72 @@ function RepositoryMissingState({ onBack }: { onBack: () => void }) {
           Back to chat
         </Button>
       </div>
+    </div>
+  );
+}
+
+function ImportFailedBanner({
+  errorMessage,
+  isSyncing,
+  onRetry,
+}: {
+  errorMessage: string | undefined;
+  isSyncing: boolean;
+  onRetry: () => void;
+}) {
+  const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+
+  return (
+    <div
+      className="flex shrink-0 flex-col gap-2 border-b border-destructive/40 bg-destructive/5 px-6 py-3 text-destructive"
+      role="alert"
+      aria-live="assertive"
+      aria-atomic="true"
+    >
+      <div className="flex items-start gap-2">
+        <WarningCircleIcon size={18} weight="fill" className="mt-0.5 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium">Repository import failed</p>
+          <p className="mt-0.5 text-xs leading-5">
+            The latest sync did not finish. Retry to restore repo-aware features for this workspace.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="gap-1.5 text-xs"
+          disabled={isSyncing}
+          onClick={onRetry}
+        >
+          {isSyncing ? "Retrying…" : "Retry sync"}
+        </Button>
+      </div>
+      {errorMessage ? (
+        <Collapsible open={isDetailsOpen} onOpenChange={setIsDetailsOpen}>
+          <CollapsibleTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              className="ml-7 gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-wider text-destructive/80 hover:bg-destructive/10 hover:text-destructive"
+              aria-expanded={isDetailsOpen}
+            >
+              <CaretDownIcon
+                size={12}
+                weight="bold"
+                className={cn("transition-transform duration-200", isDetailsOpen && "rotate-180")}
+              />
+              <span>{isDetailsOpen ? "Hide details" : "Show details"}</span>
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="ml-7 mt-1.5">
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-sm border border-destructive/20 bg-destructive/10 p-2 font-mono text-[11px] leading-snug text-destructive">
+              {errorMessage}
+            </pre>
+          </CollapsibleContent>
+        </Collapsible>
+      ) : null}
     </div>
   );
 }

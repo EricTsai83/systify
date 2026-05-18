@@ -498,13 +498,13 @@ export function ImportRepoDialog({
       });
       setPublicInput("");
       setBranch("");
-      setOpen(false);
       onImported(
         result.repositoryId,
         result.defaultThreadId ?? null,
         result.workspaceId,
         result.defaultThreadId ? result.defaultThreadMode : null,
       );
+      setOpen(false);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Import failed.");
     } finally {
@@ -520,13 +520,13 @@ export function ImportRepoDialog({
       const result = await createRepositoryImport({
         url: `https://github.com/${repo.fullName}`,
       });
-      setOpen(false);
       onImported(
         result.repositoryId,
         result.defaultThreadId ?? null,
         result.workspaceId,
         result.defaultThreadId ? result.defaultThreadMode : null,
       );
+      setOpen(false);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Import failed.");
     } finally {
