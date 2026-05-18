@@ -203,7 +203,7 @@ operations. The key must be limited to the minimum capabilities required by the
 backend integration:
 
 - sandbox lifecycle operations (create/get/list/stop/delete)
-- sandbox filesystem reads used during indexing and snapshot collection
+- sandbox filesystem reads used by Lab tools and the System Design generation flow
 - sandbox command execution used by Lab tools and the System Design generation flow
 
 Webhook trust is separate from API-key trust:

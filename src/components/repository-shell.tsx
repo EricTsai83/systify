@@ -440,8 +440,7 @@ export function RepositoryShell({
   // resolver only re-adds sandbox to `availableModes` once activation
   // completes, which would otherwise pop the user back to docs mid-
   // provision.
-  const isSandboxPickedWhileActivating =
-    pickedChatMode?.mode === "sandbox" && capabilities.sandboxIsActivatable;
+  const isSandboxPickedWhileActivating = pickedChatMode?.mode === "sandbox" && capabilities.sandboxIsActivatable;
   const chatMode: ChatMode =
     pickedChatMode &&
     pickedChatMode.threadId === urlThreadId &&

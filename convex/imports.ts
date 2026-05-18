@@ -457,20 +457,23 @@ export const markOnDemandSandboxReady = internalMutation({
     branch: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const sandbox = await ctx.db.get(args.sandboxId);
+
+    if (args.commitSha && sandbox && sandbox.repositoryId !== args.repositoryId) {
+      console.warn(
+        `Sandbox ${args.sandboxId} repositoryId mismatch: expected ${args.repositoryId}, got ${sandbox.repositoryId}`,
+      );
+      return;
+    }
+
     const now = Date.now();
     await ctx.db.patch(args.sandboxId, {
       status: "ready",
       lastHeartbeatAt: now,
       lastUsedAt: now,
     });
+
     if (args.commitSha) {
-      const sandbox = await ctx.db.get(args.sandboxId);
-      if (sandbox && sandbox.repositoryId !== args.repositoryId) {
-        console.warn(
-          `Sandbox ${args.sandboxId} repositoryId mismatch: expected ${args.repositoryId}, got ${sandbox.repositoryId}`,
-        );
-        return;
-      }
       const repository = await ctx.db.get(args.repositoryId);
       if (repository) {
         await ctx.db.patch(args.repositoryId, {

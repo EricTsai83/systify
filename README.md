@@ -33,9 +33,9 @@ This repository is standardized on Bun for package management and script executi
 1. The user signs in with WorkOS AuthKit.
 2. The user connects a GitHub App installation.
 3. Systify verifies repository access and creates an import workflow.
-4. A Daytona sandbox is provisioned and the repository is cloned.
-5. The import pipeline scans the repository and writes files, chunks, summaries, and artifacts into Convex.
-6. The user explores the repository through chat (`discuss` / `docs` / `sandbox` modes) or by running `Generate System Design` from the Library.
+4. The import pipeline scans the repository via the GitHub API and writes files, chunks, summaries, and artifacts into Convex.
+5. The user explores the repository through chat (`discuss` / `docs` / `sandbox` modes) or by running `Generate System Design` from the Library.
+6. When entering `sandbox` mode or triggering `Generate System Design`, a Daytona sandbox is provisioned on-demand and the repository is cloned.
 7. Later syncs refresh the active snapshot without mixing old and new import data.
 
 ## Stack

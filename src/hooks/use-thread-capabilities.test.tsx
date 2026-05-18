@@ -80,6 +80,7 @@ describe("useThreadCapabilities — bridging behavior", () => {
           sandbox: "Attach a repository with a ready sandbox to use Sandbox mode.",
         },
       },
+      sandboxIsActivatable: false,
     });
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
@@ -89,9 +90,10 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.defaultMode).toBe("discuss");
     expect(result.current.disabledReasons.docs).toBeTruthy();
     expect(result.current.disabledReasons.sandbox).toBeTruthy();
+    expect(result.current.sandboxIsActivatable).toBe(false);
   });
 
-  test("thread with a repository but no sandbox: bridges discuss+docs with a sandbox tooltip", () => {
+  test("thread with a repository but no sandbox: bridges discuss+docs with a sandbox tooltip and flags activation", () => {
     useQueryMock.mockReturnValue({
       thread: { _id: threadId, repositoryId },
       attachedRepository: {
@@ -110,6 +112,7 @@ describe("useThreadCapabilities — bridging behavior", () => {
         defaultMode: "docs",
         disabledReasons: { sandbox: "Provision a sandbox to use Sandbox mode." },
       },
+      sandboxIsActivatable: true,
     });
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
@@ -124,6 +127,10 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.defaultMode).toBe("docs");
     expect(result.current.disabledReasons.sandbox).toMatch(/sandbox/i);
     expect(result.current.disabledReasons.docs).toBeUndefined();
+    // The missing-sandbox case is the headline activation surface — the
+    // disabled Sandbox option should still accept a click and enqueue a
+    // lazy provision.
+    expect(result.current.sandboxIsActivatable).toBe(true);
   });
 
   test("thread with a ready sandbox: bridges all three modes; default stays docs so sandbox is opt-in", () => {
@@ -144,6 +151,7 @@ describe("useThreadCapabilities — bridging behavior", () => {
         defaultMode: "docs",
         disabledReasons: {},
       },
+      sandboxIsActivatable: false,
     });
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
@@ -152,6 +160,8 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.defaultMode).toBe("docs");
     expect(result.current.sandboxStatus).toBe("ready");
     expect(result.current.disabledReasons).toEqual({});
+    // Already-ready sandboxes don't need to be activated again.
+    expect(result.current.sandboxIsActivatable).toBe(false);
   });
 
   test("thread with a provisioning sandbox: bridges the provisioning hint into the sandbox tooltip", () => {
@@ -175,12 +185,17 @@ describe("useThreadCapabilities — bridging behavior", () => {
           sandbox: "Sandbox is provisioning — Sandbox mode will be available once it is ready.",
         },
       },
+      sandboxIsActivatable: false,
     });
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
 
     expect(result.current.sandboxStatus).toBe("provisioning");
     expect(result.current.disabledReasons.sandbox).toMatch(/provisioning/i);
+    // A second activation click during provisioning would just dedupe;
+    // the UI surfaces that more cleanly by leaving the option in its
+    // disabled state until the in-flight job finishes.
+    expect(result.current.sandboxIsActivatable).toBe(false);
   });
 
   test('thread with a stopped sandbox: forwards the resolver-side "expired" hint without re-deriving it', () => {
@@ -208,12 +223,16 @@ describe("useThreadCapabilities — bridging behavior", () => {
           sandbox: "Sandbox expired — provision a new sandbox to use Sandbox mode.",
         },
       },
+      sandboxIsActivatable: true,
     });
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
 
     expect(result.current.sandboxStatus).toBe("stopped");
     expect(result.current.disabledReasons.sandbox).toMatch(/expired/i);
+    // Expired sandboxes are re-activatable — same activation path as
+    // the missing-sandbox case provisions a fresh one.
+    expect(result.current.sandboxIsActivatable).toBe(true);
   });
 });
 
@@ -241,6 +260,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
           sandbox: "Attach a repository with a ready sandbox to use Sandbox mode.",
         },
       },
+      sandboxIsActivatable: false,
       sandboxCostBudgets: null,
     });
 
@@ -264,6 +284,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
         defaultMode: "docs",
         disabledReasons: {},
       },
+      sandboxIsActivatable: false,
       sandboxCostBudgets: {
         userBudget: { remainingCents: 320, capacityCents: 500, resetAtMs: 1_700_000_000_000 },
         workspaceBudget: null,
@@ -297,6 +318,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
         defaultMode: "docs",
         disabledReasons: {},
       },
+      sandboxIsActivatable: false,
       sandboxCostBudgets: {
         userBudget: { remainingCents: 480, capacityCents: 500, resetAtMs: 1_700_000_010_000 },
         // Workspace cap has only $0.10 left — far less than the user's
@@ -334,6 +356,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
         defaultMode: "docs",
         disabledReasons: {},
       },
+      sandboxIsActivatable: false,
       sandboxCostBudgets: {
         userBudget: { remainingCents: 5, capacityCents: 500, resetAtMs: 1_700_000_010_000 },
         workspaceBudget: { remainingCents: 4500, capacityCents: 5000, resetAtMs: 1_700_000_020_000 },
