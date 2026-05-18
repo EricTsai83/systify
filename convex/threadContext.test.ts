@@ -394,3 +394,55 @@ describe("getThreadContext sandbox cost-cap gate (Plan 10)", () => {
     expect(result!.sandboxCostBudgets!.workspaceBudget!.remainingCents).toBe(0);
   });
 });
+
+/**
+ * Regression pin — the sandbox feature gate is gone, replaced by the
+ * cost cap as the single control axis. Set every env var that USED to
+ * gate sandbox mode and assert that none of them disable sandbox mode
+ * any more. If a future refactor accidentally re-introduces an
+ * env-driven gate on the chatModes resolver, this test will fail.
+ */
+describe("getThreadContext — no env-driven feature gate is consulted", () => {
+  const RETIRED_ENV_VARS = [
+    "SANDBOX_MODE_ENABLED",
+    "SANDBOX_BETA_ALLOWLIST",
+    "SANDBOX_ROLLOUT_PERCENT",
+    "DAYTONA_NETWORK_ALLOW_LIST",
+  ] as const;
+  const priorValues: Partial<Record<(typeof RETIRED_ENV_VARS)[number], string | undefined>> = {};
+
+  beforeEach(() => {
+    for (const name of RETIRED_ENV_VARS) {
+      priorValues[name] = process.env[name];
+    }
+    process.env.SANDBOX_MODE_ENABLED = "false";
+    process.env.SANDBOX_BETA_ALLOWLIST = "";
+    process.env.SANDBOX_ROLLOUT_PERCENT = "0";
+    process.env.DAYTONA_NETWORK_ALLOW_LIST = "";
+  });
+  afterEach(() => {
+    for (const name of RETIRED_ENV_VARS) {
+      const prior = priorValues[name];
+      if (prior === undefined) {
+        delete process.env[name];
+      } else {
+        process.env[name] = prior;
+      }
+    }
+  });
+
+  test("retired feature-gate env vars do not affect sandbox availability", async () => {
+    const t = createTestConvex();
+    const { threadId } = await seedThread(t, {
+      withRepository: true,
+      sandboxStatus: "ready",
+    });
+
+    const result = await t.query(internal.threadContext.getThreadContextInternal, {
+      threadId,
+    });
+
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs", "sandbox"]);
+    expect(result!.chatModes.disabledReasons).toEqual({});
+  });
+});

@@ -97,6 +97,12 @@ export async function provisionSandbox(options: CreateSandboxOptions): Promise<S
   // Sandbox names are import-scoped by the Convex sandbox row id. A same-name
   // lookup can only refer to a prior provisioning attempt for this sandbox row,
   // not the previous published sandbox for the repository.
+  //
+  // The catch narrows to `NotFound`: a fully-exhausted retry on the preflight
+  // (rate-limit storm, 5xx outage) must NOT silently fall through to
+  // `daytona.create` — the orphan would still be there, the create would 409,
+  // and the import would surface a misleading "conflict" message instead of
+  // the upstream rate-limit / outage that actually caused the failure.
   try {
     const existing = await withDaytonaRetry(() => daytona.get(sandboxName), {
       operation: "sandbox.get",
@@ -107,8 +113,11 @@ export async function provisionSandbox(options: CreateSandboxOptions): Promise<S
       resourceId: sandboxName,
     });
     console.log(`[daytona] Deleted pre-existing sandbox: ${sandboxName}`);
-  } catch {
-    // Sandbox doesn't exist on Daytona — no cleanup needed
+  } catch (error) {
+    if (!isDaytonaNotFoundError(error)) {
+      throw error;
+    }
+    // Sandbox doesn't exist on Daytona — no cleanup needed.
   }
 
   const cpuLimit = readNumberEnv("DAYTONA_CPU_LIMIT", DEFAULT_CPU_LIMIT);
@@ -702,10 +711,24 @@ PY`;
  * at the entry point of any action that will provision a sandbox so the
  * operator gets a single, actionable error before any Convex/Daytona side
  * effects (sandbox row reservation, GitHub permission probe, etc.) occur.
+ *
+ * Also emits a one-shot `degraded_egress_posture` warn when
+ * `DAYTONA_POST_CLONE_BLOCK_NETWORK` resolves to false. The same fact is
+ * already logged by `cloneRepositoryInSandbox` per-clone, but surfacing it
+ * at the import entry point catches deploys where the env was mis-set
+ * before a single sandbox is even attempted — the loudest place to flag a
+ * Tier 1/2 dev posture sneaking into prod.
  */
 export function assertSandboxProvisioningConfigured(): void {
   if (!process.env.DAYTONA_API_KEY) {
     throw new Error("DAYTONA_API_KEY env var is not set. Add Daytona credentials before importing repositories.");
+  }
+  if (!resolvePostCloneBlockNetwork()) {
+    logWarn("daytona", "degraded_egress_posture", {
+      reason:
+        "DAYTONA_POST_CLONE_BLOCK_NETWORK is disabled — sandbox egress will NOT be blocked at the network layer. " +
+        "Acceptable for Tier 1/2 dev deployments; not recommended for prod traffic from third parties.",
+    });
   }
 }
 

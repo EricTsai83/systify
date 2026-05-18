@@ -179,9 +179,35 @@ describe("daytona state normalization", () => {
       // `lib/daytonaRetry` correctly retries 5xx transient failures, which
       // would stall this test for the full backoff schedule. A 4xx code
       // exercises the same "rethrow non-NotFound Daytona errors" path the
-      // test cares about, immediately.
+      // test cares about, immediately. The companion fake-timers test below
+      // covers the 5xx-retry-then-rethrow path without paying real wall time.
       getMock.mockRejectedValue(new MockDaytonaError("upstream blew up", 400));
       await expect(probeLiveSandbox("remote-probe")).rejects.toThrow(/upstream blew up/);
+    });
+
+    test("retries persistent 5xx through the backoff schedule, then rethrows", async () => {
+      // Pin Math.random so jitter = 0 and the retry schedule has
+      // deterministic timings the fake clock can advance through.
+      // The `expect(...).rejects.toThrow(...)` handler is attached
+      // BEFORE `runAllTimersAsync` so Node sees a rejection handler on
+      // the outer promise the moment any inner retry fires — see the
+      // equivalent pattern in `lib/daytonaRetry.test.ts`'s
+      // "re-throws the original error after MAX_RETRIES" test.
+      vi.useFakeTimers();
+      vi.spyOn(Math, "random").mockReturnValue(0.5);
+      try {
+        getMock.mockRejectedValue(new MockDaytonaError("upstream still broken", 500));
+        const probe = probeLiveSandbox("remote-probe");
+        const rejection = expect(probe).rejects.toThrow(/upstream still broken/);
+        await vi.runAllTimersAsync();
+        await rejection;
+        // MAX_RETRIES = 5 in `lib/daytonaRetry.ts` — one initial attempt
+        // plus 4 retries before the helper gives up and rethrows.
+        expect(getMock).toHaveBeenCalledTimes(5);
+      } finally {
+        vi.useRealTimers();
+        vi.restoreAllMocks();
+      }
     });
   });
 
@@ -233,9 +259,28 @@ describe("deleteSandbox", () => {
     // See the parallel comment in the `probeLiveSandbox` block: a 4xx code
     // keeps the test on the fast-fail path instead of routing through the
     // 5xx retry schedule, which is correct production behaviour but would
-    // blow this test's 5s timeout.
+    // blow this test's 5s timeout. The companion fake-timers test below
+    // covers the 5xx-retry-then-rethrow path without paying real wall time.
     getMock.mockRejectedValue(new MockDaytonaError("upstream blew up", 400));
     await expect(deleteSandbox("remote-broken")).rejects.toThrow(/upstream blew up/);
+  });
+
+  test("retries persistent 5xx through the backoff schedule, then rethrows", async () => {
+    // See the parallel test in `probeLiveSandbox` for why the rejection
+    // handler is attached before `runAllTimersAsync`.
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    try {
+      getMock.mockRejectedValue(new MockDaytonaError("upstream still broken", 500));
+      const deletion = deleteSandbox("remote-broken-5xx");
+      const rejection = expect(deletion).rejects.toThrow(/upstream still broken/);
+      await vi.runAllTimersAsync();
+      await rejection;
+      expect(getMock).toHaveBeenCalledTimes(5);
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    }
   });
 });
 

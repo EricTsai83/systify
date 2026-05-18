@@ -39,9 +39,9 @@
  *   - Both the success path (`replyContext.mode` known) and the failure
  *     path (catch block, possibly before `replyContext` resolved) need
  *     the same model-name shape, so centralizing keeps them consistent.
- *   - Plan 13's rollout knobs (and future per-workspace model
- *     overrides) will hook into this resolver rather than pollute
- *     `generation.ts` with conditional model selection.
+ *   - Future per-mode / per-workspace model overrides hook into this
+ *     resolver rather than pollute `generation.ts` with conditional
+ *     model selection.
  */
 
 import type { ExtendedChatMode } from "./prompting";

@@ -65,7 +65,7 @@ export interface ServiceModeResolution {
   /**
    * Modes the user is currently allowed to enter. A mode is in this list
    * iff the underlying preconditions (repo attached, an artifact exists,
-   * sandbox feature gate open, …) are all satisfied.
+   * sandbox lifecycle ready, daily cost cap not exceeded) are all satisfied.
    */
   availableServiceModes: ReadonlyArray<ServiceMode>;
   /**
@@ -91,9 +91,6 @@ const ASK_REASON_NO_REPO = "Attach a repository and produce at least one artifac
 const ASK_REASON_NO_ARTIFACT = "Library Ask needs at least one artifact in this workspace.";
 const LAB_REASON_NO_REPO = "Lab requires an attached repository.";
 const LAB_REASON_NO_SANDBOX = "Provision a sandbox to use Lab mode.";
-const LAB_REASON_PROVISIONING = "Sandbox is provisioning — Lab mode unlocks once it is ready.";
-const LAB_REASON_EXPIRED = "Sandbox expired — provision a new one to use Lab mode.";
-const LAB_REASON_FAILED = "Sandbox provisioning failed — provision a new one to use Lab mode.";
 
 /**
  * Plan 10 — sandbox daily-cost-cap gate. Closed when the per-user OR
@@ -314,15 +311,7 @@ export function resolveServiceModes(
     ? { canStart: false, reason: LAB_REASON_NO_REPO }
     : sandboxStatus === "ready" && legacyResolution.availableModes.includes("sandbox")
       ? { canStart: true, reason: null }
-      : sandboxStatus === "provisioning"
-        ? { canStart: false, reason: LAB_REASON_PROVISIONING }
-        : sandboxStatus === "expired"
-          ? { canStart: false, reason: LAB_REASON_EXPIRED }
-          : sandboxStatus === "failed"
-            ? { canStart: false, reason: LAB_REASON_FAILED }
-            : sandboxStatus === "none"
-              ? { canStart: false, reason: LAB_REASON_NO_SANDBOX }
-              : { canStart: false, reason: legacyResolution.disabledReasons.sandbox ?? LAB_REASON_NO_SANDBOX };
+      : { canStart: false, reason: legacyResolution.disabledReasons.sandbox ?? LAB_REASON_NO_SANDBOX };
 
   // Pick the URL-landing default. The function is intentionally
   // independent of `available` so it never lands the user on a disabled

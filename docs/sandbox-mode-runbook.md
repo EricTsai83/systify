@@ -78,7 +78,7 @@ If `io_error` rate dominates `command_blocked` / `path_outside_repo`, the cause 
 ```text
 metric: sandbox_session_finished
 filter: tags.mode = "sandbox"
-group_by: details.assistantMessageId  # or aggregate by tags.bucket / model
+group_by: details.assistantMessageId  # or group by tags.mode, tags.model
 sort by: details.cost_usd desc
 window: 24h
 ```
@@ -94,8 +94,12 @@ These rate-limit peeks are exposed via `convex/threadContext.ts` and reflect the
 
 ### Mitigate
 
-1. **Tighten `SANDBOX_DAILY_CAP_PER_USER_USD`** to a temporary low value (e.g. `1`). Existing buckets reset at midnight UTC and pick up the new ceiling. Restart not needed.
-2. If a specific viewer is the source, drop `SANDBOX_DAILY_CAP_PER_USER_USD` further (it's per-user, so this gates the offender immediately) and consider a hot-fix that adds a stricter per-account cap for new accounts under N days old.
+1. **Tighten `SANDBOX_DAILY_CAP_PER_USER_USD`** to a temporary low value (e.g. `1`). Note: `SANDBOX_DAILY_CAP_PER_USER_USD` is a global per-user limit and will reduce allowance for all users, not a targeted fix for a single viewer. Existing buckets reset at midnight UTC and pick up the new ceiling. Restart not needed.
+2. If a specific viewer is the source, instead of (or in addition to) the global cap, apply one of these targeted fixes:
+   - **Per-account override**: Add a feature-flag mechanism or per-account configuration to apply a stricter spend cap to the offending account.
+   - **API key revocation**: If the offender is using a public API key, rotate or revoke it to prevent further usage.
+   - **Request throttling**: Apply stricter rate limits or request throttling to the specific account.
+   - **Per-account hotfix for new accounts**: Add a temporary per-account cap for accounts under N days old.
 3. Watch for runaway tool loops — Plan 11's step budget (`SANDBOX_STEP_BUDGET = 8`) caps tool calls per reply, so a single reply cannot exceed ~8 × per-tool-cost. If you see >8 invocations in one `sandbox_session_finished` event, that's a bug worth filing.
 
 ### Resolve

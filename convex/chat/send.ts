@@ -80,9 +80,9 @@ export const sendMessage = mutation({
     const mode = requestedMode === "sandbox" ? "lab" : requestedMode === "docs" ? "ask" : requestedMode;
 
     // Single source of truth for "can this viewer use mode X for this
-    // workspace right now?" — composes feature gate + sandbox availability +
-    // daily cost cap + (for Library) artifact existence and throws a
-    // structured ConvexError with a stable code on disabled. The reactive
+    // workspace right now?" — composes sandbox availability + daily cost
+    // cap + (for Library) artifact existence and throws a structured
+    // ConvexError with a stable code on disabled. The reactive
     // service-mode-switcher query subscribes to the same evaluator; the
     // write-path check here keeps a stale UI / direct mutation caller / UI
     // race (mode picked then sandbox expired) from slipping through.

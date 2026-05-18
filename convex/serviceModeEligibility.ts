@@ -4,11 +4,10 @@
  *
  * Owns the runtime composition for "can this viewer use mode X for this
  * workspace right now?" — load workspace + repository + sandbox doc + artifact
- * existence + sandbox feature gate (env-based) + sandbox cost cap (rate-limit
- * peek), then run them through the pure {@link resolveServiceModes} resolver
- * and augment the resolver's string `disabledReasons` with structured
- * `{ code, message, retryAfterMs? }` objects so write-path callers can throw
- * structured `ConvexError`s.
+ * existence + sandbox cost cap (rate-limit peek), then run them through the
+ * pure {@link resolveServiceModes} resolver and augment the resolver's string
+ * `disabledReasons` with structured `{ code, message, retryAfterMs? }` objects
+ * so write-path callers can throw structured `ConvexError`s.
  *
  * Three exposed seams:
  *
