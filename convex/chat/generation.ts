@@ -39,7 +39,6 @@ import { STREAM_FLUSH_THRESHOLD } from "../lib/constants";
 import { retrieveArtifactChunks } from "../lib/artifactRag";
 import { emitMetric, logInfo, logWarn } from "../lib/observability";
 import { estimateCostUsd } from "../lib/openaiPricing";
-import { bucketForTokenIdentifier } from "../lib/sandboxRollout";
 import type { ReplyContext } from "./context";
 import { resolveModelForMode } from "./modelSelection";
 import {
@@ -134,14 +133,6 @@ interface SessionTelemetry {
    * tag their session metric without coercion.
    */
   mode?: ExtendedChatMode;
-  /**
-   * Plan 13 — pre-computed rollout cohort bucket in `[0, 100)`. Set
-   * once `getReplyContext` returns so both the session-finished metric
-   * and the per-tool metrics can tag the same value without re-hashing
-   * `tokenIdentifier` per event. Undefined on pre-context throws (in
-   * which case `mode` is also undefined and the session emit is skipped).
-   */
-  bucket?: number;
   /** Set in the streaming path once `resolveModelForMode` resolves. Heuristic / pre-context paths leave it undefined. */
   modelName?: string;
   /** True only when the streaming path actually built and passed a non-empty `ToolSet` to streamText. */
@@ -162,22 +153,15 @@ interface EmitSessionMetricArgs {
 }
 
 /**
- * Plan 13 — emit the session-finished metric once per action exit.
+ * Emit the session-finished metric once per action exit.
  *
  * Sandbox-only by design: the metric tag space (mode, model,
- * had_tools, bucket) is shaped for sandbox sessions, and discuss /
- * docs replies have a distinct cost / latency profile that would
+ * had_tools) is shaped for sandbox sessions, and discuss / docs
+ * replies have a distinct cost / latency profile that would
  * otherwise muddy the time series. Pre-context failures (where
  * `mode` is unknown) skip the emit — we lack the data to attribute
  * the failure correctly, and the action's existing `failAssistantReply`
  * mutation already records the failure for ops via `messages.status`.
- *
- * `telemetry.bucket` was pre-computed in the action body the moment
- * `replyContext` arrived, so this helper just reads it. We deliberately
- * use `bucketForTokenIdentifier` (not the {@link getSandboxFeatureGateDecision}
- * sidecar) because the cohort assignment is independent of env-var
- * state — a post-mutation telemetry hook should not depend on the
- * current gate config.
  *
  * Wrapped in a try/catch so a logging-layer failure can never
  * destabilize the surrounding action — emit failures are logged
@@ -195,7 +179,6 @@ function emitSessionFinishedMetric(telemetry: SessionTelemetry, args: EmitSessio
       status: args.status,
       model: telemetry.modelName,
       had_tools: telemetry.hadTools,
-      bucket: telemetry.bucket,
     },
     details: {
       assistantMessageId: String(args.assistantMessageId),
@@ -409,15 +392,10 @@ export const generateAssistantReply = internalAction({
         userMessageId: args.userMessageId,
       })) as ReplyContext;
 
-      // Plan 13 — capture the cohort tags as soon as we know them. Mode
-      // + bucket are sourced from the same context query so they always
-      // agree on the user's identity / chosen mode at queue time.
-      // Setting them eagerly means even a mid-action throw still produces
-      // a session metric tagged with the right mode + bucket, and the
-      // per-tool emits below can reuse the same bucket without recomputing
-      // the FNV-1a hash on every tool result.
+      // Capture the mode tag as soon as we know it from the context query
+      // so even a mid-action throw still produces a session metric tagged
+      // with the right mode at queue time.
       telemetry.mode = replyContext.mode;
-      telemetry.bucket = bucketForTokenIdentifier(replyContext.ownerTokenIdentifier);
 
       // The queued message is also expected to be in the conversational
       // window so the model can see "what the user just asked" as the last
@@ -804,11 +782,6 @@ export const generateAssistantReply = internalAction({
                 tool: toolCall?.toolName ?? part.toolName,
                 ok: isOk,
                 error_code: auditMetadata.errorCode,
-                // Tagging the per-tool metric with the same bucket the
-                // session metric carries lets ramp-step diagnostics slice
-                // tool-error rate by cohort without joining back to
-                // `sandbox_session_finished` via `assistantMessageId`.
-                bucket: telemetry.bucket,
               },
               details: buildToolMetricDetails(args.assistantMessageId, args.jobId, part.toolCallId),
             });
@@ -891,7 +864,6 @@ export const generateAssistantReply = internalAction({
                 tool: toolCall?.toolName ?? part.toolName,
                 ok: false,
                 error_code: "tool_error",
-                bucket: telemetry.bucket,
               },
               details: buildToolMetricDetails(args.assistantMessageId, args.jobId, part.toolCallId),
             });

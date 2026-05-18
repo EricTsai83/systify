@@ -41,7 +41,6 @@ import {
 } from "./chatModeResolver";
 import { requireViewerIdentity } from "./lib/auth";
 import { getSandboxModeStatus, type SandboxModeStatus } from "./lib/sandboxAvailability";
-import { getSandboxFeatureGate, type SandboxFeatureGate } from "./lib/sandboxFeatureFlag";
 import {
   getSandboxReplyEstimateCents,
   peekSandboxDailyCostForUser,
@@ -67,9 +66,6 @@ export type ServiceModeDisabledReasonCode =
   | "sandbox_provisioning"
   | "sandbox_expired"
   | "sandbox_failed"
-  | "sandbox_flag_off"
-  | "sandbox_not_allowlisted"
-  | "sandbox_not_in_rollout"
   | "sandbox_user_cap_exceeded"
   | "sandbox_workspace_cap_exceeded";
 
@@ -170,26 +166,15 @@ async function computeSandboxCostCapGate(
  * this helper extracts the matching code so write-path callers can branch
  * on it without regex-matching the message.
  *
- * Precedence mirrors the resolver exactly (feature gate → cost cap →
- * lifecycle): `applySandboxFeatureGate` runs LAST in the resolver
- * (overwriting cost-cap tooltips), so the gate's reason wins here too.
+ * Precedence mirrors the resolver exactly (cost cap → lifecycle): the
+ * cost-cap gate wins over lifecycle tooltips because the cap is the more
+ * actionable signal for a viewer who already has a healthy sandbox.
  */
 function deriveLabDisabledCode(args: {
   hasAttachedRepo: boolean;
   sandboxStatus: ChatModeSandboxStatus;
-  sandboxFeatureGate: SandboxFeatureGate;
   sandboxCostCapGate: SandboxCostCapGate;
 }): ServiceModeDisabledReasonCode {
-  if (!args.sandboxFeatureGate.enabled) {
-    switch (args.sandboxFeatureGate.reason) {
-      case "flag_off":
-        return "sandbox_flag_off";
-      case "not_allowlisted":
-        return "sandbox_not_allowlisted";
-      case "not_in_rollout":
-        return "sandbox_not_in_rollout";
-    }
-  }
   if (!args.sandboxCostCapGate.enabled) {
     return args.sandboxCostCapGate.reason === "user_daily_cap_exceeded"
       ? "sandbox_user_cap_exceeded"
@@ -214,14 +199,7 @@ function deriveLabDisabledCode(args: {
   }
 }
 
-function deriveLabRetryAfterMs(
-  costCapGate: SandboxCostCapGate,
-  featureGate: SandboxFeatureGate,
-  now: number,
-): number | undefined {
-  if (!featureGate.enabled) {
-    return undefined;
-  }
+function deriveLabRetryAfterMs(costCapGate: SandboxCostCapGate, now: number): number | undefined {
   if (!costCapGate.enabled) {
     return Math.max(1, costCapGate.resetAtMs - now);
   }
@@ -251,7 +229,6 @@ function augmentResolution(
     hasAttachedRepo: boolean;
     hasAtLeastOneArtifact: boolean;
     sandboxStatus: ChatModeSandboxStatus;
-    sandboxFeatureGate: SandboxFeatureGate;
     sandboxCostCapGate: SandboxCostCapGate;
   },
   now: number,
@@ -278,7 +255,7 @@ function augmentResolution(
   // Lab
   if (resolution.disabledReasons.lab !== undefined) {
     const code = deriveLabDisabledCode(inputs);
-    const retryAfterMs = deriveLabRetryAfterMs(inputs.sandboxCostCapGate, inputs.sandboxFeatureGate, now);
+    const retryAfterMs = deriveLabRetryAfterMs(inputs.sandboxCostCapGate, now);
     disabledReasons.lab = {
       code,
       message: resolution.disabledReasons.lab,
@@ -291,7 +268,7 @@ function augmentResolution(
   if (resolution.labReadiness.canStart) {
     labReadiness = { canStart: true, reason: null };
   } else {
-    const retryAfterMs = deriveLabRetryAfterMs(inputs.sandboxCostCapGate, inputs.sandboxFeatureGate, now);
+    const retryAfterMs = deriveLabRetryAfterMs(inputs.sandboxCostCapGate, now);
     labReadiness = {
       canStart: false,
       reason: {
@@ -361,16 +338,9 @@ async function evaluateFromRepository(
   }
 
   const sandboxStatus = toChatModeSandboxStatus(sandboxModeStatus);
-  const sandboxFeatureGate = getSandboxFeatureGate(args.tokenIdentifier);
   const hasAttachedRepo = args.repository !== null;
 
-  const resolution = resolveServiceModes(
-    hasAttachedRepo,
-    hasAtLeastOneArtifact,
-    sandboxStatus,
-    sandboxFeatureGate,
-    costGate,
-  );
+  const resolution = resolveServiceModes(hasAttachedRepo, hasAtLeastOneArtifact, sandboxStatus, costGate);
 
   const augmented = augmentResolution(
     resolution,
@@ -378,7 +348,6 @@ async function evaluateFromRepository(
       hasAttachedRepo,
       hasAtLeastOneArtifact,
       sandboxStatus,
-      sandboxFeatureGate,
       sandboxCostCapGate: costGate,
     },
     args.now,

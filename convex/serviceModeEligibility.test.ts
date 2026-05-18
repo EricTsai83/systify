@@ -20,48 +20,6 @@ const OWNER = "user|service-mode-test";
 const OTHER_OWNER = "user|service-mode-other";
 
 /**
- * Save / restore sandbox env vars between cases so a misbehaving test
- * cannot leak state into the next one. Mirrors the helper in
- * threadContext.test.ts so the two suites share the same discipline.
- */
-function withSandboxEnvSnapshot(initial: { enabled?: string; allowlist?: string }) {
-  let priorEnabled: string | undefined;
-  let priorAllowlist: string | undefined;
-
-  beforeEach(() => {
-    priorEnabled = process.env.SANDBOX_MODE_ENABLED;
-    priorAllowlist = process.env.SANDBOX_BETA_ALLOWLIST;
-    if (initial.enabled === undefined) {
-      delete process.env.SANDBOX_MODE_ENABLED;
-    } else {
-      process.env.SANDBOX_MODE_ENABLED = initial.enabled;
-    }
-    if (initial.allowlist === undefined) {
-      delete process.env.SANDBOX_BETA_ALLOWLIST;
-    } else {
-      process.env.SANDBOX_BETA_ALLOWLIST = initial.allowlist;
-    }
-  });
-
-  afterEach(() => {
-    if (priorEnabled === undefined) {
-      delete process.env.SANDBOX_MODE_ENABLED;
-    } else {
-      process.env.SANDBOX_MODE_ENABLED = priorEnabled;
-    }
-    if (priorAllowlist === undefined) {
-      delete process.env.SANDBOX_BETA_ALLOWLIST;
-    } else {
-      process.env.SANDBOX_BETA_ALLOWLIST = priorAllowlist;
-    }
-  });
-}
-
-function withSandboxFeatureGateOpen() {
-  withSandboxEnvSnapshot({ enabled: "true", allowlist: "*" });
-}
-
-/**
  * convex-test marshals ConvexError `data` across the function boundary as a
  * JSON string (sometimes double-encoded). Unwrap any number of JSON layers
  * so structured-error assertions can match against the actual payload.
@@ -165,9 +123,7 @@ async function seedWorkspace(
 
 // ─── evaluate (read path) ────────────────────────────────────────────────
 
-describe("serviceModeEligibility.evaluate (open feature gate)", () => {
-  withSandboxFeatureGateOpen();
-
+describe("serviceModeEligibility.evaluate", () => {
   test("returns null when the workspace does not exist", async () => {
     const t = createTestConvex();
     const fakeId = await t.run(async (ctx) => {
@@ -303,44 +259,7 @@ describe("serviceModeEligibility.evaluate (open feature gate)", () => {
   });
 });
 
-describe("serviceModeEligibility.evaluate (closed feature gate)", () => {
-  withSandboxEnvSnapshot({});
-
-  test("flag off: lab disabled with sandbox_flag_off code regardless of sandbox state", async () => {
-    const t = createTestConvex();
-    const { workspaceId } = await seedWorkspace(t, {
-      withRepository: true,
-      withArtifact: true,
-      sandboxStatus: "ready",
-    });
-    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
-
-    expect(result!.availableServiceModes).not.toContain("lab");
-    expect(result!.disabledReasons.lab?.code).toBe("sandbox_flag_off");
-  });
-
-  test("viewer not on allowlist: lab disabled with sandbox_not_allowlisted code", async () => {
-    process.env.SANDBOX_MODE_ENABLED = "true";
-    process.env.SANDBOX_BETA_ALLOWLIST = "user|someone-else";
-
-    const t = createTestConvex();
-    const { workspaceId } = await seedWorkspace(t, {
-      withRepository: true,
-      withArtifact: true,
-      sandboxStatus: "ready",
-      ownerTokenIdentifier: OWNER,
-    });
-    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
-
-    expect(result!.disabledReasons.lab?.code).toBe("sandbox_not_allowlisted");
-  });
-});
-
 describe("serviceModeEligibility.evaluate (cost cap closed)", () => {
-  withSandboxFeatureGateOpen();
-
   let priorUserCapEnv: string | undefined;
   let priorEstimateEnv: string | undefined;
   beforeEach(() => {
@@ -424,8 +343,6 @@ describe("serviceModeEligibility.evaluate (cost cap closed)", () => {
 // ─── assertServiceModeEligible (write path) ──────────────────────────────
 
 describe("assertServiceModeEligible", () => {
-  withSandboxFeatureGateOpen();
-
   test("discuss is always eligible: short-circuits without a repository or workspace", async () => {
     const t = createTestConvex();
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });

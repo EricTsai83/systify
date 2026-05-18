@@ -349,16 +349,12 @@ describe("rate limits and interactive job guards", () => {
     let priorUserCapEnv: string | undefined;
     let priorWorkspaceCapEnv: string | undefined;
     let priorEstimateEnv: string | undefined;
-    let priorSandboxFlagEnv: string | undefined;
-    let priorAllowlistEnv: string | undefined;
     let priorOpenAiKeyEnv: string | undefined;
 
     beforeEach(() => {
       priorUserCapEnv = process.env.SANDBOX_DAILY_CAP_PER_USER_USD;
       priorWorkspaceCapEnv = process.env.SANDBOX_DAILY_CAP_PER_WORKSPACE_USD;
       priorEstimateEnv = process.env.SANDBOX_REPLY_ESTIMATE_USD;
-      priorSandboxFlagEnv = process.env.SANDBOX_MODE_ENABLED;
-      priorAllowlistEnv = process.env.SANDBOX_BETA_ALLOWLIST;
       priorOpenAiKeyEnv = process.env.OPENAI_API_KEY;
       // 5-cent cap: lets us settle one $0.04 reply, then hit the cap on
       // the next pre-check (1 cent estimate vs 1 cent remaining → ok;
@@ -366,8 +362,6 @@ describe("rate limits and interactive job guards", () => {
       process.env.SANDBOX_DAILY_CAP_PER_USER_USD = "0.05";
       process.env.SANDBOX_DAILY_CAP_PER_WORKSPACE_USD = "10";
       process.env.SANDBOX_REPLY_ESTIMATE_USD = "0.01";
-      process.env.SANDBOX_MODE_ENABLED = "true";
-      process.env.SANDBOX_BETA_ALLOWLIST = "*";
       // Disable real OpenAI calls so the action falls into the
       // heuristic path. We're testing the rate-limit accounting end-to-end
       // (send → finalize), and the heuristic path lets us drive that
@@ -386,8 +380,6 @@ describe("rate limits and interactive job guards", () => {
       restore("SANDBOX_DAILY_CAP_PER_USER_USD", priorUserCapEnv);
       restore("SANDBOX_DAILY_CAP_PER_WORKSPACE_USD", priorWorkspaceCapEnv);
       restore("SANDBOX_REPLY_ESTIMATE_USD", priorEstimateEnv);
-      restore("SANDBOX_MODE_ENABLED", priorSandboxFlagEnv);
-      restore("SANDBOX_BETA_ALLOWLIST", priorAllowlistEnv);
       restore("OPENAI_API_KEY", priorOpenAiKeyEnv);
     });
 

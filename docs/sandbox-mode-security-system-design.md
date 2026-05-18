@@ -129,7 +129,7 @@ await sandbox.process.executeCommand(
 
 Where `args.url` is the canonical HTTPS URL without embedded credentials, and `posixSingleQuote` wraps it in `'…'` (escaping any embedded single quotes via the standard close-escape-reopen idiom) so a less-sanitized future caller cannot break out of the command.
 
-This scrub runs unconditionally — it is hardening, not feature-gated on `SANDBOX_MODE_ENABLED` — and is awaited *before* the post-clone branch / SHA inspection commands, so a downstream failure cannot leave a tokened URL in `.git/config`.
+This scrub runs unconditionally — it is hardening at the clone layer — and is awaited *before* the post-clone branch / SHA inspection commands, so a downstream failure cannot leave a tokened URL in `.git/config`.
 
 This is preferred over alternatives because:
 

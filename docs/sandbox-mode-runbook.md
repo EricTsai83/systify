@@ -9,31 +9,23 @@ You're on call for Systify chat. Sandbox mode (`mode: "sandbox"`) is the only ch
 3. **Tool error spike** — `read_file` / `list_dir` / `run_shell` fail at an elevated rate without an obvious upstream cause.
 4. **Sandbox session latency regression** — p95 session duration walks up after a deploy.
 
-For the rollout playbook (10% → 50% → 100% ramp, abort thresholds, reset / pause procedure) see `docs/sandbox-mode-rollout.md`.
-
 ## Architecture refresher
 
 A sandbox-mode session emits two classes of structured logs from the Convex backend:
 
-- **Session-level**: `[metrics] sandbox_session_finished { … }` — one line per terminal-state path (`completed` / `failed` / `cancelled` / `aborted_orphan`). Carries `mode`, `model`, `had_tools`, rollout `bucket`, plus `tool_calls_count`, `tool_errors_count`, `input_tokens`, `output_tokens`, `cost_usd`, and the wall-clock `value` (= duration ms).
-- **Per-tool**: `[metrics] sandbox_tool_invoked { … }` — one line per tool result or tool error. Carries `tool` (`read_file` / `list_dir` / `run_shell`), `ok` (boolean), `error_code` (or undefined for success), the rollout `bucket`, and the `value` (= per-call duration ms). The `bucket` tag mirrors the session metric's so ramp-step diagnostics can slice tool-error rate by cohort without joining back to `sandbox_session_finished`.
+- **Session-level**: `[metrics] sandbox_session_finished { … }` — one line per terminal-state path (`completed` / `failed` / `cancelled` / `aborted_orphan`). Carries `mode`, `model`, `had_tools`, plus `tool_calls_count`, `tool_errors_count`, `input_tokens`, `output_tokens`, `cost_usd`, and the wall-clock `value` (= duration ms).
+- **Per-tool**: `[metrics] sandbox_tool_invoked { … }` — one line per tool result or tool error. Carries `tool` (`read_file` / `list_dir` / `run_shell`), `ok` (boolean), `error_code` (or undefined for success), and the `value` (= per-call duration ms).
 
 These two metric streams plus the existing `[chat] …` debug logs are the only data sources this runbook references. If your downstream logging pipeline supports it, group `tags.*` fields as dimensions — every dashboard recipe in this document filters on a `tags.*` value.
 
-## Quick reference: the kill switch
+## Quick reference: taking sandbox offline
 
-If anything is on fire and you need to take sandbox mode offline immediately:
+Sandbox mode does not have an env-var kill switch. If you need to disable it during an active incident:
 
-```bash
-# Convex dashboard → Settings → Environment Variables
-SANDBOX_MODE_ENABLED=false
-```
+- **Tighten the cost cap to zero**: set `SANDBOX_DAILY_CAP_PER_USER_USD=0`. The cap is re-read on every send; effective immediately, no deploy. The disabled tooltip will read "Daily sandbox spend limit reached for your account."
+- **Push a code revert**: `git revert` the offending change and `bunx convex deploy` (or your usual deploy command). Convex deploy is fast (~30s) and avoids leaving the system in a degraded "everyone blocked by cost cap" state.
 
-This causes `getSandboxFeatureGate` to return `{ enabled: false, reason: "flag_off" }` for every viewer on the next request. The mode selector greys out, in-flight `chat.sendMessage(mode: "sandbox")` calls reject, and the `chat/send.ts` mutation's gate re-check throws before any Daytona work is queued.
-
-In-flight replies that already passed the gate continue running until they complete or hit their lease window (`CHAT_JOB_LEASE_MS`, ~10 min). They are *not* killed by flipping the flag — that is a deliberate choice so an emergency flip cannot orphan a long-running tool call mid-execution.
-
-The flag is re-read fresh on every gate evaluation; no Convex deploy / restart is required.
+In-flight replies continue running until they complete or hit their lease window (`CHAT_JOB_LEASE_MS`, ~10 min) — neither approach kills running jobs mid-tool-call.
 
 ## Incident 1 — Daytona is unavailable
 
@@ -65,14 +57,14 @@ If `io_error` rate dominates `command_blocked` / `path_outside_repo`, the cause 
 ### Mitigate
 
 1. **Page the Daytona owner** — sandbox is hard-blocked without it.
-2. **Pause the rollout** — set `SANDBOX_ROLLOUT_PERCENT=0` (does NOT affect allowlisted viewers; see `sandbox-mode-rollout.md` "Pause without disabling allowlist access" for the rationale).
-3. If Daytona stays out for >30 min, **flip the kill switch** (`SANDBOX_MODE_ENABLED=false`). This forces the UI to render Sandbox as disabled with the "private beta" tooltip and stops new sandbox-mode sessions from queueing. Allowlisted viewers see the same disabled state.
+2. **Drop the cost cap to zero** to gate out new sandbox sessions while you investigate: `SANDBOX_DAILY_CAP_PER_USER_USD=0`. The cap re-reads on every send and surfaces the cap tooltip in the UI immediately.
+3. If Daytona stays out for >30 min and the cap-gate workaround is not enough (e.g. need to communicate maintenance copy specifically), push a temporary patch that returns a maintenance-mode error from `chat/send.ts` for sandbox mode.
 4. **Don't** clear sandbox rows from the database. Plan 09 (the dedicated Daytona-error-path doc) handles graceful sandbox lifecycle recovery once Daytona is back.
 
 ### Resolve
 
-- Roll the rollout percent back up gradually (per `sandbox-mode-rollout.md`) once `sandbox_session_finished { status = "completed" }` is back above 95% of total for one hour.
-- Post-mortem: file an incident note in the rollout doc's "Incident log" section so the next ramp inherits the context.
+- Restore `SANDBOX_DAILY_CAP_PER_USER_USD` to its normal value once `sandbox_session_finished { status = "completed" }` is back above 95% of total for one hour.
+- File a post-mortem note in your incident tracker.
 
 ## Incident 2 — Cost spike
 
@@ -103,7 +95,7 @@ These rate-limit peeks are exposed via `convex/threadContext.ts` and reflect the
 ### Mitigate
 
 1. **Tighten `SANDBOX_DAILY_CAP_PER_USER_USD`** to a temporary low value (e.g. `1`). Existing buckets reset at midnight UTC and pick up the new ceiling. Restart not needed.
-2. If a specific viewer is the source, **remove them from `SANDBOX_BETA_ALLOWLIST`** (if listed) or drop the rollout percent to a value below their `bucket` to gate them out (`bucket` is in the metric tags). Note: the allowlist override beats the rollout, so removing the viewer from the allowlist is necessary even if you also lower the rollout.
+2. If a specific viewer is the source, drop `SANDBOX_DAILY_CAP_PER_USER_USD` further (it's per-user, so this gates the offender immediately) and consider a hot-fix that adds a stricter per-account cap for new accounts under N days old.
 3. Watch for runaway tool loops — Plan 11's step budget (`SANDBOX_STEP_BUDGET = 8`) caps tool calls per reply, so a single reply cannot exceed ~8 × per-tool-cost. If you see >8 invocations in one `sandbox_session_finished` event, that's a bug worth filing.
 
 ### Resolve
@@ -195,20 +187,10 @@ filter: tags.mode = "sandbox"
 group_by: details.assistantMessageId  # join with messages.ownerTokenIdentifier offline
 sum: details.cost_usd
 
-# Rollout cohort coverage
-metric: sandbox_session_finished
-group_by: tags.bucket  # 0–99 buckets — should populate uniformly when rollout > 0
-
 # Per-tool error rate
 metric: sandbox_tool_invoked
 filter: tags.ok = false
 group_by: tags.tool, tags.error_code
-
-# Per-tool error rate sliced by rollout cohort (use during ramps to
-# spot a regression that's specific to the newly-admitted bucket range)
-metric: sandbox_tool_invoked
-filter: tags.ok = false
-group_by: tags.bucket, tags.tool, tags.error_code
 
 # Cancellation rate (proxy for "user gave up because reply was slow")
 metric: sandbox_session_finished
@@ -235,5 +217,5 @@ The table carries pre-redaction byte counts, durations, error codes, and which r
 
 - Daytona outage > 30 min with no mitigation in sight.
 - A cost spike that the per-user / per-workspace caps fail to contain (the caps are a Plan 10 invariant; if they're not working that is a P0).
-- Any incident that requires `SANDBOX_MODE_ENABLED=false` for >2h.
+- Any incident that requires sandbox mode to be globally cost-gated to zero for >2h.
 - Suspected secret leakage in `messages.toolCalls` or `sandboxToolCallLog` (cross-reference Plan 05's redaction module).

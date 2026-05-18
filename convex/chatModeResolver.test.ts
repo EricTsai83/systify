@@ -3,19 +3,12 @@ import {
   DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
   DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED,
   OPEN_SANDBOX_COST_CAP_GATE,
-  OPEN_SANDBOX_FEATURE_GATE,
   getDefaultThreadMode,
   resolveChatModes,
   type ChatMode,
   type ChatModeSandboxStatus,
   type SandboxCostCapGate,
 } from "./chatModeResolver";
-import {
-  SANDBOX_FLAG_OFF_TOOLTIP,
-  SANDBOX_NOT_ALLOWLISTED_TOOLTIP,
-  SANDBOX_NOT_IN_ROLLOUT_TOOLTIP,
-  type SandboxFeatureGate,
-} from "./lib/sandboxFeatureFlag";
 
 interface ChatModeResolverCase {
   name: string;
@@ -28,10 +21,10 @@ interface ChatModeResolverCase {
 
 // PRD §"Testing Decisions" requires the full cross-product of
 // (hasAttachedRepo) × (sandboxStatus ∈ {none, provisioning, ready, expired, failed}).
-// That is 2 × 5 = 10 cases, all evaluated with the Plan-04 feature gate
-// **open** so the existing repo / sandbox-lifecycle invariants are tested
-// without the gate masking them. Closed-gate cases are exercised in their
-// own describe block below.
+// That is 2 × 5 = 10 cases, all evaluated with the cost-cap gate left at
+// its default (open) so the repo / sandbox-lifecycle invariants are tested
+// without the gate masking them. Closed cost-cap cases are exercised in
+// their own describe block below.
 const cases: ChatModeResolverCase[] = [
   {
     name: "no repo + no sandbox: only discuss available, docs+sandbox disabled with unlock hints",
@@ -115,16 +108,16 @@ const cases: ChatModeResolverCase[] = [
   },
 ];
 
-describe("resolveChatModes (sandbox feature gate open)", () => {
+describe("resolveChatModes", () => {
   test("getDefaultThreadMode centralizes the repo-attached default-mode rule", () => {
     expect(getDefaultThreadMode(false)).toBe("discuss");
     expect(getDefaultThreadMode(true)).toBe("docs");
-    expect(getDefaultThreadMode(false)).toBe(resolveChatModes(false, "none", OPEN_SANDBOX_FEATURE_GATE).defaultMode);
-    expect(getDefaultThreadMode(true)).toBe(resolveChatModes(true, "none", OPEN_SANDBOX_FEATURE_GATE).defaultMode);
+    expect(getDefaultThreadMode(false)).toBe(resolveChatModes(false, "none").defaultMode);
+    expect(getDefaultThreadMode(true)).toBe(resolveChatModes(true, "none").defaultMode);
   });
 
   test.each(cases)("$name", (testCase) => {
-    const result = resolveChatModes(testCase.hasAttachedRepo, testCase.sandboxStatus, OPEN_SANDBOX_FEATURE_GATE);
+    const result = resolveChatModes(testCase.hasAttachedRepo, testCase.sandboxStatus);
 
     expect(result.availableModes).toEqual(testCase.expectedAvailableModes);
     expect(result.defaultMode).toBe(testCase.expectedDefaultMode);
@@ -139,14 +132,14 @@ describe("resolveChatModes (sandbox feature gate open)", () => {
 
   test("default mode is always one of the available modes", () => {
     for (const testCase of cases) {
-      const result = resolveChatModes(testCase.hasAttachedRepo, testCase.sandboxStatus, OPEN_SANDBOX_FEATURE_GATE);
+      const result = resolveChatModes(testCase.hasAttachedRepo, testCase.sandboxStatus);
       expect(result.availableModes).toContain(result.defaultMode);
     }
   });
 
   test("available modes and disabled-reason keys are mutually exclusive", () => {
     for (const testCase of cases) {
-      const result = resolveChatModes(testCase.hasAttachedRepo, testCase.sandboxStatus, OPEN_SANDBOX_FEATURE_GATE);
+      const result = resolveChatModes(testCase.hasAttachedRepo, testCase.sandboxStatus);
       const availableSet = new Set(result.availableModes);
       const disabledKeys = Object.keys(result.disabledReasons) as ChatMode[];
       for (const disabled of disabledKeys) {
@@ -159,10 +152,10 @@ describe("resolveChatModes (sandbox feature gate open)", () => {
     // Sanity check: each non-ready sandbox state should give a distinct
     // sandbox-mode hint so the UI tooltip can guide the user to the right
     // next step.
-    const provisioning = resolveChatModes(true, "provisioning", OPEN_SANDBOX_FEATURE_GATE).disabledReasons.sandbox;
-    const failed = resolveChatModes(true, "failed", OPEN_SANDBOX_FEATURE_GATE).disabledReasons.sandbox;
-    const expired = resolveChatModes(true, "expired", OPEN_SANDBOX_FEATURE_GATE).disabledReasons.sandbox;
-    const noSandbox = resolveChatModes(true, "none", OPEN_SANDBOX_FEATURE_GATE).disabledReasons.sandbox;
+    const provisioning = resolveChatModes(true, "provisioning").disabledReasons.sandbox;
+    const failed = resolveChatModes(true, "failed").disabledReasons.sandbox;
+    const expired = resolveChatModes(true, "expired").disabledReasons.sandbox;
+    const noSandbox = resolveChatModes(true, "none").disabledReasons.sandbox;
 
     const reasons = [provisioning, failed, expired, noSandbox];
     expect(new Set(reasons).size).toBe(reasons.length);
@@ -172,93 +165,11 @@ describe("resolveChatModes (sandbox feature gate open)", () => {
   });
 });
 
-describe("resolveChatModes (Plan-04 sandbox feature gate)", () => {
-  const FLAG_OFF_GATE: SandboxFeatureGate = {
-    enabled: false,
-    reason: "flag_off",
-    tooltip: SANDBOX_FLAG_OFF_TOOLTIP,
-  };
-  const NOT_ALLOWLISTED_GATE: SandboxFeatureGate = {
-    enabled: false,
-    reason: "not_allowlisted",
-    tooltip: SANDBOX_NOT_ALLOWLISTED_TOOLTIP,
-  };
-
-  test("closed gate removes sandbox from a fully-eligible (repo + ready sandbox) resolution", () => {
-    // The most expensive test of the gate: every other condition is
-    // satisfied (repo attached, sandbox ready). The gate alone must remove
-    // sandbox from `availableModes` and surface the gate's tooltip.
-    const result = resolveChatModes(true, "ready", FLAG_OFF_GATE);
-
-    expect(result.availableModes).toEqual(["discuss", "docs"]);
-    expect(result.defaultMode).toBe("docs");
-    expect(result.disabledReasons.sandbox).toBe(SANDBOX_FLAG_OFF_TOOLTIP);
-  });
-
-  test("closed gate's tooltip wins over the lifecycle tooltip when both would apply", () => {
-    // Without the gate, a `provisioning` sandbox would surface a
-    // "provisioning" tooltip. With the gate closed, the gate tooltip
-    // ("private beta") is the more actionable explanation — provisioning a
-    // sandbox would not unlock sandbox mode for an off-allowlist viewer.
-    const result = resolveChatModes(true, "provisioning", NOT_ALLOWLISTED_GATE);
-
-    expect(result.availableModes).toEqual(["discuss", "docs"]);
-    expect(result.disabledReasons.sandbox).toBe(SANDBOX_NOT_ALLOWLISTED_TOOLTIP);
-    expect(result.disabledReasons.sandbox).not.toMatch(/provisioning/i);
-  });
-
-  test("closed gate is a no-op when sandbox was already unavailable for other reasons", () => {
-    // No repo means sandbox was already disabled; the gate doesn't
-    // *additionally* break anything. The disabledReasons.sandbox tooltip
-    // shifts to the gate's copy because the gate now owns "sandbox is
-    // disabled" — but availableModes / defaultMode are unchanged.
-    const result = resolveChatModes(false, "none", FLAG_OFF_GATE);
-
-    expect(result.availableModes).toEqual(["discuss"]);
-    expect(result.defaultMode).toBe("discuss");
-    expect(result.disabledReasons.sandbox).toBe(SANDBOX_FLAG_OFF_TOOLTIP);
-    expect(result.disabledReasons.docs).toBeTruthy();
-  });
-
-  test("open gate is idempotent — leaves the underlying resolution untouched", () => {
-    const baseline = resolveChatModes(true, "ready", OPEN_SANDBOX_FEATURE_GATE);
-    expect(baseline.availableModes).toContain("sandbox");
-    expect(baseline.disabledReasons).toEqual({});
-  });
-
-  test("default mode invariant survives gate closure", () => {
-    // Sandbox is never the default (opt-in), so removing it from
-    // availableModes can never orphan defaultMode. Cover every (repo,
-    // sandbox-status) combo against a closed gate as a regression guard.
-    for (const testCase of cases) {
-      const result = resolveChatModes(testCase.hasAttachedRepo, testCase.sandboxStatus, FLAG_OFF_GATE);
-      expect(result.availableModes).toContain(result.defaultMode);
-      expect(result.availableModes).not.toContain("sandbox");
-    }
-  });
-
-  test("Plan 13 — `not_in_rollout` gate surfaces the cohort-aware tooltip", () => {
-    // The resolver doesn't know the gate's reason — only the tooltip.
-    // This test pins the contract that the rollout-specific tooltip
-    // flows through end-to-end so the UI renders "rolling out
-    // gradually" instead of the legacy allowlist copy when the gate
-    // closes for a viewer outside the rollout cohort.
-    const NOT_IN_ROLLOUT_GATE: SandboxFeatureGate = {
-      enabled: false,
-      reason: "not_in_rollout",
-      tooltip: SANDBOX_NOT_IN_ROLLOUT_TOOLTIP,
-    };
-    const result = resolveChatModes(true, "ready", NOT_IN_ROLLOUT_GATE);
-    expect(result.availableModes).toEqual(["discuss", "docs"]);
-    expect(result.disabledReasons.sandbox).toBe(SANDBOX_NOT_IN_ROLLOUT_TOOLTIP);
-  });
-});
-
 /**
- * Plan 10 — sandbox daily-cost-cap gate. Layered on top of the existing
- * resolver and feature gate so the resolver tests document the precedence
- * rule explicitly: cap-gate disables sandbox the same way the feature
- * gate does, but the feature gate's tooltip wins on conflict.
+ * Plan 10 — sandbox daily-cost-cap gate. Layered on top of the
+ * lifecycle resolution: cap-gate disables sandbox when the per-user
+ * or per-workspace daily spend cap is exhausted, regardless of the
+ * underlying sandbox state.
  */
 describe("resolveChatModes (Plan-10 sandbox cost-cap gate)", () => {
   const USER_CAP_GATE_CLOSED: SandboxCostCapGate = {
@@ -279,7 +190,7 @@ describe("resolveChatModes (Plan-10 sandbox cost-cap gate)", () => {
     // sandbox access has hit their user cap. The cap gate alone removes
     // sandbox and surfaces the user-cap tooltip — without it, the user
     // could still queue a send that would block server-side anyway.
-    const result = resolveChatModes(true, "ready", OPEN_SANDBOX_FEATURE_GATE, USER_CAP_GATE_CLOSED);
+    const result = resolveChatModes(true, "ready", USER_CAP_GATE_CLOSED);
 
     expect(result.availableModes).toEqual(["discuss", "docs"]);
     expect(result.defaultMode).toBe("docs");
@@ -287,7 +198,7 @@ describe("resolveChatModes (Plan-10 sandbox cost-cap gate)", () => {
   });
 
   test("closed workspace-cap gate uses the workspace-scoped tooltip", () => {
-    const result = resolveChatModes(true, "ready", OPEN_SANDBOX_FEATURE_GATE, WORKSPACE_CAP_GATE_CLOSED);
+    const result = resolveChatModes(true, "ready", WORKSPACE_CAP_GATE_CLOSED);
 
     expect(result.availableModes).toEqual(["discuss", "docs"]);
     expect(result.disabledReasons.sandbox).toBe(DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED);
@@ -296,31 +207,8 @@ describe("resolveChatModes (Plan-10 sandbox cost-cap gate)", () => {
     expect(DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED).not.toBe(DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED);
   });
 
-  test("feature gate wins over cap gate when both fire", () => {
-    // Precedence rule: a viewer outside the private-beta allowlist
-    // should see "private beta" rather than "you're over your cap" —
-    // the cap is irrelevant to a viewer who can't use sandbox at all.
-    const FLAG_OFF_GATE: SandboxFeatureGate = {
-      enabled: false,
-      reason: "flag_off",
-      tooltip: SANDBOX_FLAG_OFF_TOOLTIP,
-    };
-    const NOT_ALLOWLISTED_GATE: SandboxFeatureGate = {
-      enabled: false,
-      reason: "not_allowlisted",
-      tooltip: SANDBOX_NOT_ALLOWLISTED_TOOLTIP,
-    };
-
-    const flagOffResult = resolveChatModes(true, "ready", FLAG_OFF_GATE, USER_CAP_GATE_CLOSED);
-    expect(flagOffResult.disabledReasons.sandbox).toBe(SANDBOX_FLAG_OFF_TOOLTIP);
-    expect(flagOffResult.availableModes).not.toContain("sandbox");
-
-    const notAllowlistedResult = resolveChatModes(true, "ready", NOT_ALLOWLISTED_GATE, USER_CAP_GATE_CLOSED);
-    expect(notAllowlistedResult.disabledReasons.sandbox).toBe(SANDBOX_NOT_ALLOWLISTED_TOOLTIP);
-  });
-
   test("open cap gate is a no-op when sandbox was already eligible", () => {
-    const result = resolveChatModes(true, "ready", OPEN_SANDBOX_FEATURE_GATE, OPEN_SANDBOX_COST_CAP_GATE);
+    const result = resolveChatModes(true, "ready", OPEN_SANDBOX_COST_CAP_GATE);
     expect(result.availableModes).toEqual(["discuss", "docs", "sandbox"]);
     expect(result.disabledReasons).toEqual({});
   });
@@ -329,33 +217,26 @@ describe("resolveChatModes (Plan-10 sandbox cost-cap gate)", () => {
     // Defensive: the cap gate is sandbox-specific. Docs / discuss must
     // remain available regardless — they bill the cheaper `chat`
     // category and aren't subject to the sandbox cap.
-    const result = resolveChatModes(true, "ready", OPEN_SANDBOX_FEATURE_GATE, USER_CAP_GATE_CLOSED);
+    const result = resolveChatModes(true, "ready", USER_CAP_GATE_CLOSED);
     expect(result.availableModes).toContain("discuss");
     expect(result.availableModes).toContain("docs");
   });
 
   test("default mode invariant survives cost-cap closure across every (repo, sandbox-status) combo", () => {
-    // Same regression guard as the feature-gate test: defaultMode is
-    // never sandbox, so removing sandbox via the cap gate cannot
-    // orphan it.
+    // defaultMode is never sandbox, so removing sandbox via the cap
+    // gate cannot orphan it.
     for (const testCase of cases) {
-      const result = resolveChatModes(
-        testCase.hasAttachedRepo,
-        testCase.sandboxStatus,
-        OPEN_SANDBOX_FEATURE_GATE,
-        USER_CAP_GATE_CLOSED,
-      );
+      const result = resolveChatModes(testCase.hasAttachedRepo, testCase.sandboxStatus, USER_CAP_GATE_CLOSED);
       expect(result.availableModes).toContain(result.defaultMode);
       expect(result.availableModes).not.toContain("sandbox");
     }
   });
 
   test("resolveChatModes is backward-compatible (cap gate defaults to open)", () => {
-    // The 4-arg signature with the cap-gate default keeps existing
-    // 3-arg callers (tests, scripts, future code that doesn't care
-    // about the cap) working without a refactor sweep.
-    const withDefault = resolveChatModes(true, "ready", OPEN_SANDBOX_FEATURE_GATE);
-    const withExplicitOpen = resolveChatModes(true, "ready", OPEN_SANDBOX_FEATURE_GATE, OPEN_SANDBOX_COST_CAP_GATE);
+    // The 3-arg signature with the cap-gate default keeps callers that
+    // don't care about the cap working without a refactor sweep.
+    const withDefault = resolveChatModes(true, "ready");
+    const withExplicitOpen = resolveChatModes(true, "ready", OPEN_SANDBOX_COST_CAP_GATE);
     expect(withDefault).toEqual(withExplicitOpen);
   });
 });

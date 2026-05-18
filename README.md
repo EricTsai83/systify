@@ -133,7 +133,7 @@ Common runtime variables:
   - `DAYTONA_CPU_LIMIT`
   - `DAYTONA_MEMORY_GIB`
   - `DAYTONA_DISK_GIB`
-  - `DAYTONA_NETWORK_ALLOW_LIST`
+  - `DAYTONA_POST_CLONE_BLOCK_NETWORK`
 
 Optional rate-limit and lease overrides are also supported:
 

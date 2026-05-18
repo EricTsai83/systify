@@ -354,7 +354,6 @@ async function provisionAndClone(
       autoArchiveIntervalMinutes: provisioned.autoArchiveIntervalMinutes,
       autoDeleteIntervalMinutes: provisioned.autoDeleteIntervalMinutes,
       networkBlockAll: provisioned.networkBlockAll,
-      networkAllowList: provisioned.networkAllowList,
     });
 
     let githubToken: string | undefined;

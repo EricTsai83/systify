@@ -12,7 +12,6 @@ import {
   type ChatModeSandboxStatus,
   type SandboxCostCapGate,
 } from "./chatModeResolver";
-import { getSandboxFeatureGate } from "./lib/sandboxFeatureFlag";
 import {
   getSandboxReplyEstimateCents,
   peekSandboxDailyCostForUser,
@@ -82,9 +81,8 @@ async function loadThread(ctx: QueryCtx, threadId: Id<"threads">): Promise<Doc<"
  *
  * `viewerTokenIdentifier` is the *authenticated* viewer's identifier from
  * `requireViewerIdentity` — never a function argument or stored doc field.
- * It feeds the Plan-04 sandbox feature gate (`getSandboxFeatureGate`) so the
- * resolver can return the correct `disabledReasons.sandbox` tooltip for *this*
- * viewer (private-beta flag off vs. allowlist miss vs. lifecycle-derived).
+ * It identifies whose daily cost-cap to peek (per-user buckets are scoped
+ * by this).
  *
  * The internal variant of the query trusts its callers (other Convex
  * functions) and uses the thread's owner as the viewer — there is no
@@ -185,12 +183,7 @@ async function enrichThreadContext(
     sandboxCostBudgets = budgets;
   }
 
-  const chatModes = resolveChatModes(
-    attachedRepository !== null,
-    toChatModeSandboxStatus(sandboxModeStatus),
-    getSandboxFeatureGate(viewerTokenIdentifier),
-    costGate,
-  );
+  const chatModes = resolveChatModes(attachedRepository !== null, toChatModeSandboxStatus(sandboxModeStatus), costGate);
 
   return {
     thread,

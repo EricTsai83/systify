@@ -495,7 +495,6 @@ export const attachOnDemandSandboxRemoteInfo = internalMutation({
     autoArchiveIntervalMinutes: v.number(),
     autoDeleteIntervalMinutes: v.number(),
     networkBlockAll: v.boolean(),
-    networkAllowList: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.sandboxId, {
@@ -510,7 +509,6 @@ export const attachOnDemandSandboxRemoteInfo = internalMutation({
       autoArchiveIntervalMinutes: args.autoArchiveIntervalMinutes,
       autoDeleteIntervalMinutes: args.autoDeleteIntervalMinutes,
       networkBlockAll: args.networkBlockAll,
-      networkAllowList: args.networkAllowList,
     });
   },
 });
@@ -595,7 +593,6 @@ export const attachSandboxRemoteInfo = internalMutation({
     autoArchiveIntervalMinutes: v.number(),
     autoDeleteIntervalMinutes: v.number(),
     networkBlockAll: v.boolean(),
-    networkAllowList: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.sandboxId, {
@@ -610,7 +607,6 @@ export const attachSandboxRemoteInfo = internalMutation({
       autoArchiveIntervalMinutes: args.autoArchiveIntervalMinutes,
       autoDeleteIntervalMinutes: args.autoDeleteIntervalMinutes,
       networkBlockAll: args.networkBlockAll,
-      networkAllowList: args.networkAllowList,
     });
 
     await ctx.db.patch(args.importId, {

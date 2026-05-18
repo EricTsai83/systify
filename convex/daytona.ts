@@ -9,6 +9,7 @@ import {
   type Sandbox,
 } from "@daytona/sdk";
 import type { SandboxFsClient, SandboxShellOutcome } from "./chat/sandboxTools";
+import { withDaytonaRetry } from "./lib/daytonaRetry";
 import { shouldReadFile, type RepositorySnapshot } from "./lib/repoAnalysis";
 import { buildSandboxName } from "./lib/sandboxNames";
 import { logInfo, logWarn } from "./lib/observability";
@@ -22,12 +23,12 @@ import {
 } from "./lib/constants";
 
 /**
- * Truthy parse table shared with `convex/lib/sandboxFeatureFlag.ts` —
- * keeping the same set across env-var booleans so an operator who sets
- * `SANDBOX_MODE_ENABLED=on` can use the same value for
- * `DAYTONA_POST_CLONE_BLOCK_NETWORK`. Anything outside this set
- * (including unset and the empty string) is treated as truthy ONLY
- * via the explicit default in the resolver, never via `Boolean(value)`.
+ * Truthy parse table for `DAYTONA_POST_CLONE_BLOCK_NETWORK`. Anything
+ * outside this set (including unset and the empty string) is treated
+ * as truthy ONLY via the explicit default in the resolver, never via
+ * `Boolean(value)` — that would silently flip a security-relevant
+ * setting on misconfigurations like `"false"` (a non-empty truthy
+ * string under naive coercion).
  */
 const TRUTHY_ENV_VALUES = new Set(["true", "1", "yes", "on"]);
 const FALSY_ENV_VALUES = new Set(["false", "0", "no", "off"]);
@@ -55,7 +56,6 @@ export type SandboxProvisionResult = {
   autoArchiveIntervalMinutes: number;
   autoDeleteIntervalMinutes: number;
   networkBlockAll: boolean;
-  networkAllowList?: string;
 };
 
 export type ListedSandbox = {
@@ -98,34 +98,52 @@ export async function provisionSandbox(options: CreateSandboxOptions): Promise<S
   // lookup can only refer to a prior provisioning attempt for this sandbox row,
   // not the previous published sandbox for the repository.
   try {
-    const existing = await daytona.get(sandboxName);
-    await daytona.delete(existing);
+    const existing = await withDaytonaRetry(() => daytona.get(sandboxName), {
+      operation: "sandbox.get",
+      resourceId: sandboxName,
+    });
+    await withDaytonaRetry(() => daytona.delete(existing), {
+      operation: "sandbox.delete",
+      resourceId: sandboxName,
+    });
     console.log(`[daytona] Deleted pre-existing sandbox: ${sandboxName}`);
   } catch {
     // Sandbox doesn't exist on Daytona — no cleanup needed
   }
 
-  const networkAllowList = resolveNetworkAllowList();
   const cpuLimit = readNumberEnv("DAYTONA_CPU_LIMIT", DEFAULT_CPU_LIMIT);
   const memoryLimitGiB = readNumberEnv("DAYTONA_MEMORY_GIB", DEFAULT_MEMORY_GIB);
   const diskLimitGiB = readNumberEnv("DAYTONA_DISK_GIB", DEFAULT_DISK_GIB);
-  const sandbox = await daytona.create({
-    name: sandboxName,
-    language: CodeLanguage.TYPESCRIPT,
-    labels: {
-      ...SYSTIFY_DAYTONA_MANAGED_LABELS,
-      access: options.accessMode,
-      adapter: options.sourceAdapter,
-      repositoryId: options.repositoryId,
-    },
-    autoStopInterval: readNumberEnv("DAYTONA_AUTO_STOP_MINUTES", DEFAULT_AUTO_STOP_MINUTES),
-    autoArchiveInterval: readNumberEnv("DAYTONA_AUTO_ARCHIVE_MINUTES", DEFAULT_AUTO_ARCHIVE_MINUTES),
-    autoDeleteInterval: readNumberEnv("DAYTONA_AUTO_DELETE_MINUTES", DEFAULT_AUTO_DELETE_MINUTES),
-    networkBlockAll: false,
-    networkAllowList,
-  });
+  // The sandbox is created with Daytona's default network policy so the
+  // initial `git clone` can reach `github.com`. Egress is locked down
+  // immediately after the clone returns via
+  // `sandbox.updateNetworkSettings({ networkBlockAll: true })`
+  // (gated by `DAYTONA_POST_CLONE_BLOCK_NETWORK`, requires Tier 3+).
+  // See the Architecture section of `docs/sandbox-mode-system-design.md`.
+  const sandbox = await withDaytonaRetry(
+    () =>
+      daytona.create({
+        name: sandboxName,
+        language: CodeLanguage.TYPESCRIPT,
+        labels: {
+          ...SYSTIFY_DAYTONA_MANAGED_LABELS,
+          access: options.accessMode,
+          adapter: options.sourceAdapter,
+          repositoryId: options.repositoryId,
+        },
+        autoStopInterval: readNumberEnv("DAYTONA_AUTO_STOP_MINUTES", DEFAULT_AUTO_STOP_MINUTES),
+        autoArchiveInterval: readNumberEnv("DAYTONA_AUTO_ARCHIVE_MINUTES", DEFAULT_AUTO_ARCHIVE_MINUTES),
+        autoDeleteInterval: readNumberEnv("DAYTONA_AUTO_DELETE_MINUTES", DEFAULT_AUTO_DELETE_MINUTES),
+        networkBlockAll: false,
+      }),
+    { operation: "sandbox.create", resourceId: sandboxName },
+  );
 
-  const workDir = (await sandbox.getWorkDir()) ?? "workspace";
+  const workDir =
+    (await withDaytonaRetry(() => sandbox.getWorkDir(), {
+      operation: "sandbox.getWorkDir",
+      resourceId: sandbox.id,
+    })) ?? "workspace";
   return {
     remoteId: sandbox.id,
     workDir,
@@ -137,14 +155,16 @@ export async function provisionSandbox(options: CreateSandboxOptions): Promise<S
     autoArchiveIntervalMinutes: sandbox.autoArchiveInterval ?? DEFAULT_AUTO_ARCHIVE_MINUTES,
     autoDeleteIntervalMinutes: sandbox.autoDeleteInterval ?? DEFAULT_AUTO_DELETE_MINUTES,
     networkBlockAll: sandbox.networkBlockAll ?? false,
-    networkAllowList: sandbox.networkAllowList ?? undefined,
   };
 }
 
 export async function deleteSandbox(remoteId: string) {
   try {
     const sandbox = await getSandbox(remoteId);
-    await sandbox.delete();
+    await withDaytonaRetry(() => sandbox.delete(), {
+      operation: "sandbox.delete",
+      resourceId: remoteId,
+    });
   } catch (error) {
     if (isDaytonaNotFoundError(error)) {
       logInfo("daytona", "delete_sandbox_already_gone", { remoteId });
@@ -161,7 +181,10 @@ export async function listSandboxesByLabel(labels: Record<string, string>): Prom
   let totalPages = 1;
 
   while (page <= totalPages) {
-    const result = await daytona.list(labels, page, 100);
+    const result = await withDaytonaRetry(() => daytona.list(labels, page, 100), {
+      operation: "sandbox.list",
+      resourceId: `page=${page}`,
+    });
     sandboxes.push(
       ...result.items.map((sandbox) => ({
         remoteId: sandbox.id,
@@ -183,7 +206,10 @@ export async function listSandboxesByLabel(labels: Record<string, string>): Prom
  */
 export async function stopSandbox(remoteId: string) {
   const sandbox = await getSandbox(remoteId);
-  await sandbox.stop(60);
+  await withDaytonaRetry(() => sandbox.stop(60), {
+    operation: "sandbox.stop",
+    resourceId: remoteId,
+  });
 }
 
 /**
@@ -198,7 +224,10 @@ export async function stopSandbox(remoteId: string) {
  */
 export async function startSandbox(remoteId: string) {
   const sandbox = await getSandbox(remoteId);
-  await sandbox.start(60);
+  await withDaytonaRetry(() => sandbox.start(60), {
+    operation: "sandbox.start",
+    resourceId: remoteId,
+  });
 }
 
 /**
@@ -208,7 +237,10 @@ export async function startSandbox(remoteId: string) {
 export async function getSandboxState(remoteId: string): Promise<RemoteSandboxState> {
   try {
     const sandbox = await getSandbox(remoteId);
-    await sandbox.refreshData();
+    await withDaytonaRetry(() => sandbox.refreshData(), {
+      operation: "sandbox.refreshData",
+      resourceId: remoteId,
+    });
     return normalizeRemoteSandboxState(sandbox.state);
   } catch (error) {
     if (!isDaytonaNotFoundError(error)) {
@@ -301,7 +333,10 @@ export async function probeLiveSandbox(remoteId: string): Promise<LiveSandboxPro
 export async function getRemoteSandboxDetails(remoteId: string): Promise<RemoteSandboxDetails> {
   try {
     const sandbox = await getSandbox(remoteId);
-    await sandbox.refreshData();
+    await withDaytonaRetry(() => sandbox.refreshData(), {
+      operation: "sandbox.refreshData",
+      resourceId: remoteId,
+    });
 
     return {
       exists: true,
@@ -334,13 +369,17 @@ export async function cloneRepositoryInSandbox(args: {
 }) {
   const sandbox = await getSandbox(args.remoteId);
   try {
-    await sandbox.git.clone(
-      args.url,
-      "repo",
-      args.branch,
-      undefined,
-      args.token ? "x-access-token" : undefined,
-      args.token,
+    await withDaytonaRetry(
+      () =>
+        sandbox.git.clone(
+          args.url,
+          "repo",
+          args.branch,
+          undefined,
+          args.token ? "x-access-token" : undefined,
+          args.token,
+        ),
+      { operation: "sandbox.git.clone", resourceId: args.remoteId },
     );
   } catch (error) {
     throw wrapDaytonaCloneError(error, {
@@ -357,16 +396,19 @@ export async function cloneRepositoryInSandbox(args: {
   // sandbox deletion does NOT scrub. See
   // `docs/sandbox-mode-security-system-design.md`.
   //
-  // Unconditional (not gated on `SANDBOX_MODE_ENABLED`): the leak is
-  // created by the clone, not by the chat layer, so this is hardening
-  // rather than feature behavior. The `args.url` substitution is
+  // Unconditional: the leak is created by the clone, not by the chat
+  // layer, so this is hardening rather than feature behavior. The
+  // `args.url` substitution is
   // POSIX-single-quoted for defense in depth — `importsNode.ts` only
   // ever passes canonical HTTPS URLs today, but a less-sanitized
   // future caller must not break out of the command.
   //
   // Subsequent `git fetch` inside the sandbox will fail without re-auth,
   // which is the desired posture for a read-only analysis sandbox.
-  await sandbox.process.executeCommand(`git remote set-url origin ${posixSingleQuote(args.url)}`, "repo");
+  await withDaytonaRetry(
+    () => sandbox.process.executeCommand(`git remote set-url origin ${posixSingleQuote(args.url)}`, "repo"),
+    { operation: "sandbox.git_remote_set_url_scrub", resourceId: args.remoteId },
+  );
 
   // Post-clone network lockdown. Once the source is on disk, Systify never
   // needs sandbox-side egress: the LLM's `run_shell` is intended to be
@@ -396,7 +438,10 @@ export async function cloneRepositoryInSandbox(args: {
   //     as sufficient. See `docs/sandbox-mode-security-system-design.md`
   //     for the full posture analysis.
   if (resolvePostCloneBlockNetwork()) {
-    await sandbox.updateNetworkSettings({ networkBlockAll: true });
+    await withDaytonaRetry(() => sandbox.updateNetworkSettings({ networkBlockAll: true }), {
+      operation: "sandbox.updateNetworkSettings.block",
+      resourceId: args.remoteId,
+    });
   } else {
     logWarn("daytona", "post_clone_network_block_skipped", {
       remoteId: args.remoteId,
@@ -416,8 +461,14 @@ export async function cloneRepositoryInSandbox(args: {
   // are already closed; branch/SHA reads ride Daytona's control plane and
   // are not affected by the outbound iptables rule.
   const [branchCommand, shaCommand] = await Promise.all([
-    sandbox.process.executeCommand("git branch --show-current", "repo"),
-    sandbox.process.executeCommand("git rev-parse HEAD", "repo"),
+    withDaytonaRetry(() => sandbox.process.executeCommand("git branch --show-current", "repo"), {
+      operation: "sandbox.exec.git_branch_show",
+      resourceId: args.remoteId,
+    }),
+    withDaytonaRetry(() => sandbox.process.executeCommand("git rev-parse HEAD", "repo"), {
+      operation: "sandbox.exec.git_rev_parse",
+      resourceId: args.remoteId,
+    }),
   ]);
 
   return {
@@ -629,14 +680,18 @@ print(json.dumps({
 }))
 PY`;
 
-  const result = await sandbox.process.executeCommand(
-    inspectionCommand,
-    undefined,
-    {
-      REPO_PATH: repoPath,
-      ANALYSIS_PROMPT: prompt,
-    },
-    60,
+  const result = await withDaytonaRetry(
+    () =>
+      sandbox.process.executeCommand(
+        inspectionCommand,
+        undefined,
+        {
+          REPO_PATH: repoPath,
+          ANALYSIS_PROMPT: prompt,
+        },
+        60,
+      ),
+    { operation: "sandbox.exec.focused_inspection", resourceId: remoteId },
   );
 
   return result.result.trim();
@@ -647,17 +702,11 @@ PY`;
  * at the entry point of any action that will provision a sandbox so the
  * operator gets a single, actionable error before any Convex/Daytona side
  * effects (sandbox row reservation, GitHub permission probe, etc.) occur.
- *
- * The deeper layer (`provisionSandbox` → `resolveNetworkAllowList`) repeats
- * the allow-list check as defense in depth: if a future caller forgets the
- * fail-fast assertion, the inner layer still refuses to provision rather
- * than silently shipping a sandbox without an explicit network posture.
  */
 export function assertSandboxProvisioningConfigured(): void {
   if (!process.env.DAYTONA_API_KEY) {
     throw new Error("DAYTONA_API_KEY env var is not set. Add Daytona credentials before importing repositories.");
   }
-  resolveNetworkAllowList();
 }
 
 /**
@@ -699,57 +748,9 @@ function resolvePostCloneBlockNetwork(): boolean {
   if (TRUTHY_ENV_VALUES.has(normalized)) {
     return true;
   }
-  // Unrecognised value → secure default. Mirrors the
-  // `parseRolloutPercent` "invalid → fail closed to 0" pattern used in
-  // `sandboxRollout.ts`: a typo in env config should never silently
-  // disable a security control.
+  // Unrecognised value → secure default. A typo in env config should
+  // never silently disable a security control.
   return true;
-}
-
-/**
- * Resolves the Daytona network allow list from env, distinguishing two
- * intents that the previous "truthy / falsy" check collapsed:
- *
- *   - `undefined` (env var never configured) → operator has not made a
- *     choice. We fail-closed because shipping a sandbox without a
- *     considered network posture is a security regression.
- *   - `""` / whitespace (env var present but explicitly empty) → operator
- *     has opted in to Daytona's default network policy. This is the
- *     documented dev posture (see `docs/sandbox-mode-system-design.md`).
- *     We pass `undefined` to the Daytona SDK so its server-side default
- *     applies.
- *   - Non-empty → explicit allow list of IPv4 CIDR ranges. Validated and
- *     forwarded to Daytona.
- */
-function resolveNetworkAllowList(): string | undefined {
-  const raw = process.env.DAYTONA_NETWORK_ALLOW_LIST;
-  if (raw === undefined) {
-    throw new Error(
-      "DAYTONA_NETWORK_ALLOW_LIST env var is not set. " +
-        'Set it to a comma-separated list of IPv4 CIDR ranges (e.g. "140.82.112.0/20") ' +
-        'for production, or to an empty string ("") to opt in to the Daytona default ' +
-        "network policy. See docs/sandbox-mode-system-design.md. " +
-        "Note: Daytona rejects domain:port values such as `github.com:443` — the field is parsed as CIDR.",
-    );
-  }
-  const trimmed = raw.trim();
-  if (trimmed === "") {
-    return undefined;
-  }
-
-  // Validate CIDR format: comma-separated list of IPv4 CIDR ranges
-  const cidrPattern = /^\d{1,3}(\.\d{1,3}){3}\/\d{1,2}$/;
-  const entries = trimmed.split(",").map((e) => e.trim());
-  const invalid = entries.filter((e) => !cidrPattern.test(e));
-
-  if (invalid.length > 0) {
-    throw new Error(
-      `Invalid CIDR entries in DAYTONA_NETWORK_ALLOW_LIST: ${invalid.join(", ")}. ` +
-        "Each entry must be an IPv4 CIDR range (e.g. 140.82.112.0/20, 192.168.0.0/16).",
-    );
-  }
-
-  return trimmed;
 }
 
 /**
@@ -772,6 +773,19 @@ function resolveNetworkAllowList(): string | undefined {
  *     imports `@daytona/sdk` symbols. Other Daytona errors (auth, 404,
  *     network) keep throwing — they are infrastructural failures the tool's
  *     generic try/catch already maps to `io_error`.
+ *
+ * **Why these SDK calls are NOT wrapped in `withDaytonaRetry`**: the
+ * three operations exposed here (`downloadFile`, `listFiles`,
+ * `executeCommand`) are user-observable LLM tool calls. The chat
+ * generation loop expects to see each tool result (or error envelope)
+ * verbatim so it can decide whether to retry, switch approach, or
+ * surface the failure to the user. Silent SDK-level retries would
+ * smear that contract — a 429 that would naturally produce an
+ * `io_error` envelope (which the LLM can adapt to) would instead
+ * stall the tool call for tens of seconds, blowing the per-message
+ * latency budget without giving the LLM any signal. Infrastructure
+ * calls (provisioning, clone, network policy) keep their retries
+ * because they're not on the LLM's hot path.
  */
 export async function getSandboxFsClient(remoteId: string): Promise<SandboxFsClient> {
   const sandbox = await getSandbox(remoteId);
@@ -902,7 +916,10 @@ async function walkRepositoryTree(sandbox: Sandbox, repoPath: string): Promise<R
         if (depth > MAX_TREE_DEPTH)
           return { items: [] as readonly { name: string; isDir: boolean; size: number }[], depth, relativePath };
         const currentPath = relativePath ? `${repoPath}/${relativePath}` : repoPath;
-        const items = await sandbox.fs.listFiles(currentPath);
+        const items = await withDaytonaRetry(() => sandbox.fs.listFiles(currentPath), {
+          operation: "sandbox.fs.listFiles.walker",
+          resourceId: currentPath,
+        });
         const sorted = [...items].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
         return { items: sorted, depth, relativePath };
       }),
@@ -940,13 +957,19 @@ async function walkRepositoryTree(sandbox: Sandbox, repoPath: string): Promise<R
 }
 
 async function downloadUtf8File(sandbox: Sandbox, path: string) {
-  const buffer = await sandbox.fs.downloadFile(path, 30);
+  const buffer = await withDaytonaRetry(() => sandbox.fs.downloadFile(path, 30), {
+    operation: "sandbox.fs.downloadFile.importer",
+    resourceId: path,
+  });
   return buffer.toString("utf8").slice(0, 20_000);
 }
 
 async function getSandbox(remoteId: string) {
   const daytona = createDaytonaClient();
-  return daytona.get(remoteId);
+  return withDaytonaRetry(() => daytona.get(remoteId), {
+    operation: "sandbox.get",
+    resourceId: remoteId,
+  });
 }
 
 function isDaytonaNotFoundError(error: unknown): boolean {
