@@ -6,7 +6,7 @@ This document describes the overall system boundaries of Systify. Its goal is to
 
 ## Product Positioning
 
-Systify is an architecture analysis workspace that treats **live imported code as the eventual source of truth (SSOT)**: indexing and Sandbox/Lab tooling operate on facts from GitHub clones and Daytona runs. Users may **begin without attaching a repository** (Discuss on a Home workspace) and later bind a repo so import, Sandbox, Lab, and RAG surfaces come online. **`artifacts`** are markdown (and optionally structured traces) alongside the codebase: explanatory, citable outputs—not a substitute for the tree chunks in `repoFiles` / `repoChunks`. Over time artifacts can expose **minimal import-level drift cues** (`alignedImportCommitSha` vs the repository’s latest import SHA) separate from Lab “verification” freshness (`producedIn` / `lastVerifiedAt`).
+Systify is an architecture analysis workspace that treats **live imported code as the eventual source of truth (SSOT)**: indexing reads the GitHub API directly, while Lab and System Design tooling operate on Daytona-hosted clones provisioned on demand. Users may **begin without attaching a repository** (Discuss on a Home workspace) and later bind a repo so import, Library, Lab, and RAG surfaces come online. **`artifacts`** are markdown (and optionally structured traces) alongside the codebase: explanatory, citable outputs—not a substitute for the tree chunks in `repoFiles` / `repoChunks`. Over time artifacts can expose **minimal import-level drift cues** (`alignedImportCommitSha` vs the repository’s latest import SHA) separate from Lab “verification” freshness (`producedIn` / `lastVerifiedAt`).
 
 The product separates **Discuss** from **Library** by task:
 
@@ -17,7 +17,7 @@ The product separates **Discuss** from **Library** by task:
 
 **Attach repository** attaches the GitHub **`repositories`** record to the thread’s **`workspaces`** row (workspace gains `repositoryId`); Sandbox and Lab reuse that workspace binding—they are **not** “thread-only decoration.” Attaching **does not rewrite** historical messages; only newer replies gain the new grounding via `getReplyContext`. Swapping the bound repo mid-thread is discouraged; UI may expose it behind an explicit confirmation that scrollback stays on the older context unless the user forks to a new thread.
 
-After GitHub authorization, the system can import repositories into Daytona sandboxes, extract files and chunks, persist into Convex, and offer three foreground service modes plus background analysis:
+After GitHub authorization, the system imports repositories directly through the GitHub API (no sandbox involved), extracts files and chunks into Convex, and offers three foreground service modes plus background analysis. Sandboxes are provisioned lazily — only when Lab or System Design actually needs a live filesystem:
 
 - **Discuss**: free-form chat; defaults to **no repo** until the user attaches one to the workspace.
 - **Library**: read and edit artifact markdown plus **Ask** (hybrid retrieval over artifact chunks), with layout favoring documents on one side and thread + Ask on the other.
@@ -105,12 +105,11 @@ That means Convex simultaneously serves as the application database, application
 - The system verifies that the current signed-in user has an active GitHub App installation.
 - It creates `repositories`, `imports`, `jobs`, and a default `threads` record.
 - `importsNode.runImportPipeline` then runs in the Node runtime to:
-  - validate repository access
-  - provision a sandbox
-  - clone the repository
-  - scan files and important content
+  - validate repository access via the GitHub App installation
+  - fetch the repository snapshot through the GitHub API (`fetchRepositorySnapshot` in `githubRepoFetcher.ts`) — metadata, recursive tree, README, package manifests, important file contents
   - seed the default System Design folder tree for the repository
   - write `repoFiles` and `repoChunks` for retrieval
+- Import is **sandbox-free**. The Daytona SDK is not touched at all by the pipeline; `repositories.latestSandboxId` is left unchanged so any sandbox previously provisioned by Lab or System Design stays put.
 - Import does **not** generate any artifact bodies on its own. The user later opts into artifact creation by clicking **Generate System Design** from the empty Library page.
 
 ### 3. Chat and analysis
@@ -132,11 +131,10 @@ That means Convex simultaneously serves as the application database, application
 
 ### 5. Sandbox lifecycle
 
-- A repository import provisions a Daytona sandbox.
-- The system reserves the Convex sandbox row before calling Daytona so cleanup can still find the resource if provisioning fails mid-flight.
-- After import completes, the system proactively stops the sandbox to save resources.
-- The sandbox can still be reawakened later for Lab usage or System Design generation.
-- System Design generation requests extend sandbox TTL before queuing the background action so a valid sandbox is less likely to expire between request acceptance and execution start.
+- Sandboxes are provisioned **lazily**. Repository import never touches Daytona; users who only use Discuss or Library never incur sandbox cost.
+- A sandbox is provisioned on the first activation of Lab on a repository (`requestSandboxActivation` → `sandboxActivationNode.runSandboxActivation`), or when System Design generation includes at least one LLM-backed kind (`systemDesignNode.runSystemDesignGeneration`, gated by `ensureSandboxReady`).
+- `ensureSandboxReady` (in `convex/lib/sandboxLiveness.ts`) is the single orchestrator for "make a sandbox usable for this repository right now". It probes Daytona, wakes a stopped sandbox, or provisions a fresh one and patches `repositories.latestSandboxId` to the result.
+- Cost-control affordances live on the on-demand path: the Lab status bar shows the per-session running cost from `labSessions.spentCents`, and System Design's heuristic-only generations skip Daytona entirely.
 - Daytona webhook ingestion writes a durable event inbox plus a remote-observation projection so Convex can converge faster when Daytona state changes.
 - Cron-based reconciliation still handles expired sandboxes, Daytona-side orphan resources, and stuck webhook backlog, making sandbox cleanup a core reliability concern rather than a best-effort background task.
 

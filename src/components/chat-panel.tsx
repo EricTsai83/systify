@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState, type AnimationEvent, type FormEvent } from "react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
+import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { toUserErrorMessage } from "@/lib/errors";
 import { AppNotice } from "@/components/app-notice";
 import { EmptyChatHint, EmptyNoRepoHint } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
@@ -38,6 +40,13 @@ type ChatPanelProps = {
   setChatMode: (v: ChatMode) => void;
   availableModes: readonly ChatMode[];
   disabledModeReasons: Partial<Record<ChatMode, string>>;
+  /**
+   * True when sandbox isn't currently in `availableModes` but the
+   * disabled "Sandbox" option should still accept a click and trigger
+   * a lazy `requestSandboxActivation`. Sourced from the thread context
+   * (see `useThreadCapabilities`).
+   */
+  sandboxIsActivatable?: boolean;
   isSending: boolean;
   onSendMessage: (e: FormEvent<HTMLFormElement>) => Promise<void>;
   /**
@@ -131,6 +140,7 @@ export function ChatPanel({
   setChatMode,
   availableModes,
   disabledModeReasons,
+  sandboxIsActivatable = false,
   isSending,
   onSendMessage,
   onCancelInFlightReply,
@@ -173,6 +183,25 @@ export function ChatPanel({
 
   const availableModeSet = useMemo(() => new Set(availableModes), [availableModes]);
   const sandboxModeAvailable = sandboxModeStatus?.reasonCode === "available";
+
+  // Lazy-provision entry point. Wired here (not in `SandboxActivityPill`)
+  // so the ModeSelect can fire activation directly when the user clicks
+  // the otherwise-disabled "Sandbox" option — the pill is only mounted
+  // once `chatMode === "sandbox"`, so it can't be the sole trigger.
+  // `requestSandboxActivation` is idempotent (returns the in-flight job
+  // if one exists) so a duplicate click during activation is safe.
+  const requestSandboxActivation = useMutation(api.repositories.requestSandboxActivation);
+  const [activationError, setActivationError] = useState<string | null>(null);
+  const [, activateSandbox] = useAsyncCallback(async () => {
+    if (!repositoryId) return;
+    setActivationError(null);
+    try {
+      await requestSandboxActivation({ repositoryId });
+      setChatMode("sandbox");
+    } catch (err) {
+      setActivationError(toUserErrorMessage(err, "Couldn't start the sandbox. Try again."));
+    }
+  });
 
   /**
    * Plan 07 — derive "is the most recent assistant reply still in flight?"
@@ -427,6 +456,8 @@ export function ChatPanel({
                   setChatMode={setChatMode}
                   availableModeSet={availableModeSet}
                   disabledModeReasons={disabledModeReasons}
+                  sandboxIsActivatable={sandboxIsActivatable}
+                  onActivateSandbox={() => void activateSandbox()}
                   id="mode-compact-select"
                   ariaLabel="Answer mode selector mobile"
                   align="start"
@@ -435,6 +466,15 @@ export function ChatPanel({
               <div className="md:hidden">
                 <ModeInfoPopover entries={MODE_INFO_ENTRIES} />
               </div>
+              {activationError ? (
+                <p
+                  className="basis-full text-[11px] text-destructive md:hidden"
+                  role="alert"
+                  data-testid="sandbox-activation-error"
+                >
+                  {activationError}
+                </p>
+              ) : null}
               <div className="hidden md:flex md:min-w-0 md:items-center">
                 {showArtifactToggle && onToggleArtifactPanel ? (
                   <>
@@ -458,12 +498,23 @@ export function ChatPanel({
                   setChatMode={setChatMode}
                   availableModeSet={availableModeSet}
                   disabledModeReasons={disabledModeReasons}
+                  sandboxIsActivatable={sandboxIsActivatable}
+                  onActivateSandbox={() => void activateSandbox()}
                   id="mode-desktop-select"
                   ariaLabel="Answer mode selector"
                   align="end"
                 />
                 <ModeInfoPopover entries={MODE_INFO_ENTRIES} />
               </div>
+              {activationError ? (
+                <p
+                  className="hidden text-[11px] text-destructive md:inline-block"
+                  role="alert"
+                  data-testid="sandbox-activation-error-desktop"
+                >
+                  {activationError}
+                </p>
+              ) : null}
             </div>
             {canCancel && !isReadOnly ? (
               /*
@@ -503,7 +554,19 @@ export function ChatPanel({
                 variant="default"
                 size="sm"
                 className="w-full sm:w-auto"
-                disabled={isReadOnly || isSending || isSyncing || !selectedThreadId || !chatInput.trim()}
+                disabled={
+                  isReadOnly ||
+                  isSending ||
+                  isSyncing ||
+                  !selectedThreadId ||
+                  !chatInput.trim() ||
+                  // Sandbox mode requires a ready live source; if the user
+                  // picked Sandbox optimistically via the activate flow,
+                  // the send button stays disabled until the sandbox
+                  // lifecycle is `available`. Prevents a wasted round-trip
+                  // through the backend's `assertServiceModeEligible` reject.
+                  (chatMode === "sandbox" && !sandboxModeAvailable)
+                }
                 data-testid="chat-panel-send-button"
               >
                 <PaperPlaneTiltIcon weight="bold" />
@@ -534,6 +597,30 @@ export function ChatPanel({
   );
 }
 
+type ModeSelectProps = {
+  chatMode: ChatMode;
+  setChatMode: (v: ChatMode) => void;
+  availableModeSet: Set<ChatMode>;
+  disabledModeReasons: Partial<Record<ChatMode, string>>;
+  /**
+   * Sandbox is not in `availableModeSet` (lifecycle isn't ready) but the
+   * option should still accept a click and trigger a lazy provision.
+   * When true, sandbox renders as clickable with an "Activate" suffix
+   * instead of the locked-out disabled state.
+   */
+  sandboxIsActivatable: boolean;
+  /**
+   * Fired when the user picks the activatable Sandbox option. The
+   * caller is responsible for enqueuing `requestSandboxActivation` and
+   * (optimistically) switching `chatMode` to "sandbox" so the
+   * `SandboxActivityPill` mounts and shows provisioning progress.
+   */
+  onActivateSandbox: () => void;
+  id: string;
+  ariaLabel: string;
+  align: "start" | "end";
+};
+
 /**
  * Single shadcn/Radix `<Select>` over `MODE_CATALOG` — one component, two
  * responsive instances. Visibility (`md:hidden` for compact, `hidden md:flex`
@@ -554,20 +641,18 @@ function ModeSelect({
   setChatMode,
   availableModeSet,
   disabledModeReasons,
+  sandboxIsActivatable,
+  onActivateSandbox,
   id,
   ariaLabel,
   align,
-}: {
-  chatMode: ChatMode;
-  setChatMode: (v: ChatMode) => void;
-  availableModeSet: Set<ChatMode>;
-  disabledModeReasons: Partial<Record<ChatMode, string>>;
-  id: string;
-  ariaLabel: string;
-  align: "start" | "end";
-}) {
+}: ModeSelectProps) {
   const handleChange = (value: string) => {
     const mode = value as ChatMode;
+    if (mode === "sandbox" && !availableModeSet.has(mode) && sandboxIsActivatable) {
+      onActivateSandbox();
+      return;
+    }
     if (!availableModeSet.has(mode)) {
       return;
     }
@@ -587,14 +672,23 @@ function ModeSelect({
         <SelectGroup>
           {MODE_CATALOG.map((option) => {
             const isAvailable = availableModeSet.has(option.value);
+            const isActivatable = option.value === "sandbox" && !isAvailable && sandboxIsActivatable;
             const disabledReason = disabledModeReasons[option.value];
+            // Activatable sandbox is rendered as clickable: the radix
+            // SelectItem only fires `onValueChange` when `disabled={false}`,
+            // so we must surface it as enabled even though the resolver
+            // hasn't (yet) added it to `availableModes`.
+            const isItemDisabled = !isAvailable && !isActivatable;
+            const label = isAvailable
+              ? option.label
+              : isActivatable
+                ? `${option.label} (click to activate)`
+                : disabledReason
+                  ? `${option.label} (${disabledReason})`
+                  : `${option.label} (locked)`;
             return (
-              <SelectItem key={option.value} value={option.value} disabled={!isAvailable}>
-                {isAvailable
-                  ? option.label
-                  : disabledReason
-                    ? `${option.label} (${disabledReason})`
-                    : `${option.label} (locked)`}
+              <SelectItem key={option.value} value={option.value} disabled={isItemDisabled}>
+                {label}
               </SelectItem>
             );
           })}

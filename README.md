@@ -2,7 +2,7 @@
 
 Every answer points to its source.
 
-Systify is an open source repository analysis app for understanding unfamiliar codebases through grounded, repository-specific context. A user signs in with WorkOS, connects a GitHub App installation, imports a repository into a Daytona sandbox, indexes the codebase into Convex, and then explores it through two AI surfaces:
+Systify is an open source repository analysis app for understanding unfamiliar codebases through grounded, repository-specific context. A user signs in with WorkOS, connects a GitHub App installation, imports a repository's metadata, README, and key files directly through the GitHub API into Convex, and then explores it through two AI surfaces. Daytona sandboxes are provisioned lazily — only when the user enters `sandbox` chat mode or kicks off `Generate System Design` — so Discuss and Library work without ever paying sandbox cost:
 
 - **Chat** with three selectable modes that scale from cheap to grounded:
   - `discuss` (UI label "General Chat") — training-only, no repo context; for shaping a question before grounding
@@ -33,9 +33,9 @@ This repository is standardized on Bun for package management and script executi
 1. The user signs in with WorkOS AuthKit.
 2. The user connects a GitHub App installation.
 3. Systify verifies repository access and creates an import workflow.
-4. A Daytona sandbox is provisioned and the repository is cloned.
-5. The import pipeline scans the repository and writes files, chunks, summaries, and artifacts into Convex.
-6. The user explores the repository through chat (`discuss` / `docs` / `sandbox` modes) or by running `Generate System Design` from the Library.
+4. The import pipeline scans the repository via the GitHub API and writes files, chunks, summaries, and artifacts into Convex.
+5. The user explores the repository through chat (`discuss` / `docs` / `sandbox` modes) or by running `Generate System Design` from the Library.
+6. When entering `sandbox` mode or triggering `Generate System Design`, a Daytona sandbox is provisioned on-demand and the repository is cloned.
 7. Later syncs refresh the active snapshot without mixing old and new import data.
 
 ## Stack

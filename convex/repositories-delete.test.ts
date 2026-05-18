@@ -10,7 +10,6 @@ const modules = import.meta.glob("./**/*.ts");
 const {
   assertSandboxProvisioningConfiguredMock,
   cloneRepositoryInSandboxMock,
-  collectRepositorySnapshotMock,
   deleteSandboxMock,
   getSandboxStateMock,
   provisionSandboxMock,
@@ -19,7 +18,6 @@ const {
 } = vi.hoisted(() => ({
   assertSandboxProvisioningConfiguredMock: vi.fn(),
   cloneRepositoryInSandboxMock: vi.fn(),
-  collectRepositorySnapshotMock: vi.fn(),
   deleteSandboxMock: vi.fn(),
   getSandboxStateMock: vi.fn(),
   provisionSandboxMock: vi.fn(),
@@ -30,7 +28,6 @@ const {
 vi.mock("./daytona", () => ({
   assertSandboxProvisioningConfigured: assertSandboxProvisioningConfiguredMock,
   cloneRepositoryInSandbox: cloneRepositoryInSandboxMock,
-  collectRepositorySnapshot: collectRepositorySnapshotMock,
   deleteSandbox: deleteSandboxMock,
   getSandboxState: getSandboxStateMock,
   provisionSandbox: provisionSandboxMock,
@@ -43,7 +40,6 @@ describe("repository deletion cleanup", () => {
     vi.useFakeTimers();
     assertSandboxProvisioningConfiguredMock.mockReset();
     cloneRepositoryInSandboxMock.mockReset();
-    collectRepositorySnapshotMock.mockReset();
     deleteSandboxMock.mockReset();
     getSandboxStateMock.mockReset();
     provisionSandboxMock.mockReset();

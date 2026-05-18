@@ -128,9 +128,12 @@ describe("getThreadContext (internal)", () => {
     expect(result!.chatModes.availableModes).toEqual(["discuss"]);
     expect(result!.chatModes.defaultMode).toBe("discuss");
     expect(Object.keys(result!.chatModes.disabledReasons).sort()).toEqual(["docs", "sandbox"]);
+    // Without a repository there is nothing to provision against, so the
+    // disabled Sandbox option must not pretend it's actionable.
+    expect(result!.sandboxIsActivatable).toBe(false);
   });
 
-  test("thread with repository but no sandbox: discuss + docs available", async () => {
+  test("thread with repository but no sandbox: discuss + docs available, sandbox is activatable", async () => {
     const t = createTestConvex();
     const { threadId, repositoryId } = await seedThread(t, { withRepository: true });
 
@@ -143,6 +146,9 @@ describe("getThreadContext (internal)", () => {
     expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
     expect(result!.chatModes.defaultMode).toBe("docs");
     expect(Object.keys(result!.chatModes.disabledReasons)).toEqual(["sandbox"]);
+    // Lazy provisioning: the disabled Sandbox option must still be
+    // clickable so the UI can enqueue `requestSandboxActivation`.
+    expect(result!.sandboxIsActivatable).toBe(true);
   });
 
   test("thread with repository and ready sandbox: all three modes available, default docs", async () => {
@@ -160,6 +166,8 @@ describe("getThreadContext (internal)", () => {
     expect(result!.chatModes.availableModes).toEqual(["discuss", "docs", "sandbox"]);
     expect(result!.chatModes.defaultMode).toBe("docs");
     expect(result!.chatModes.disabledReasons).toEqual({});
+    // Already-ready sandboxes don't need re-activation.
+    expect(result!.sandboxIsActivatable).toBe(false);
   });
 
   test("thread with stopped sandbox maps to expired in resolver input", async () => {
@@ -176,6 +184,7 @@ describe("getThreadContext (internal)", () => {
     expect(result!.sandboxStatus).toBe("stopped");
     expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
     expect(result!.chatModes.disabledReasons.sandbox).toMatch(/expired|provision a new sandbox/i);
+    expect(result!.sandboxIsActivatable).toBe(true);
   });
 
   test("thread with archived sandbox maps to expired in resolver input", async () => {
@@ -192,6 +201,7 @@ describe("getThreadContext (internal)", () => {
     expect(result!.sandboxStatus).toBe("archived");
     expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
     expect(result!.chatModes.disabledReasons.sandbox).toMatch(/expired|provision a new sandbox/i);
+    expect(result!.sandboxIsActivatable).toBe(true);
   });
 
   test("thread with provisioning sandbox surfaces a provisioning hint for sandbox mode", async () => {
@@ -208,6 +218,9 @@ describe("getThreadContext (internal)", () => {
     expect(result!.sandboxStatus).toBe("provisioning");
     expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
     expect(result!.chatModes.disabledReasons.sandbox).toMatch(/provisioning/i);
+    // A second click during provisioning would just dedupe; we keep the
+    // option in its disabled state to avoid suggesting otherwise.
+    expect(result!.sandboxIsActivatable).toBe(false);
   });
 
   test("thread with failed sandbox surfaces a failed hint for sandbox mode", async () => {
@@ -223,6 +236,8 @@ describe("getThreadContext (internal)", () => {
 
     expect(result!.sandboxStatus).toBe("failed");
     expect(result!.chatModes.disabledReasons.sandbox).toMatch(/failed|provision a new sandbox/i);
+    // Failed sandboxes are re-activatable — same path provisions a fresh one.
+    expect(result!.sandboxIsActivatable).toBe(true);
   });
 });
 

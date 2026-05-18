@@ -4,16 +4,9 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
-import {
-  assertSandboxProvisioningConfigured,
-  cloneRepositoryInSandbox,
-  collectRepositorySnapshot,
-  provisionSandbox,
-  stopSandbox,
-} from "./daytona";
-import { getInstallationAccessToken } from "./githubAppNode";
-import { buildRepositoryManifest, createChunkRecords, createRepoFileRecords } from "./lib/repoAnalysis";
-import { logErrorWithId, logInfo, logWarn } from "./lib/observability";
+import { fetchRepositorySnapshot } from "./githubRepoFetcher";
+import { buildRepositoryManifest, createChunkRecords } from "./lib/repoAnalysis";
+import { logErrorWithId } from "./lib/observability";
 
 const PERSIST_BATCH_SIZE = 200;
 
@@ -40,13 +33,34 @@ type CompletedImportContext = {
 
 type ImportContext = ReadyImportContext | CancelledImportContext | CompletedImportContext;
 
+/**
+ * Repository import pipeline — GitHub-API-only.
+ *
+ * Tier 1 of the lazy-sandbox architecture: import never provisions a Daytona
+ * sandbox. The pipeline fetches metadata, the recursive tree, README, and
+ * package manifest contents directly from the GitHub API using the user's
+ * GitHub App installation token. Sandbox-backed features (Sandbox Mode chat,
+ * Generate System Design) own their own sandbox lifecycle through
+ * `ensureSandboxReady` and run on demand.
+ *
+ * Failure modes:
+ *   - Missing / expired installation → fail-fast with a user-facing message
+ *     pointing at GitHub Settings.
+ *   - Repository not included in the App's repo selection → caught by the
+ *     early `checkRepoAccess` probe and surfaced verbatim.
+ *   - GitHub API outage / rate-limit storm → `fetchRepositorySnapshot`
+ *     retries 5xx + 429 internally; persistent failure surfaces the wrapped
+ *     GitHub error with a Reference ID.
+ *
+ * No sandbox cleanup is needed in the error path because no sandbox was
+ * created.
+ */
 export const runImportPipeline = internalAction({
   args: {
     importId: v.id("imports"),
   },
   handler: async (ctx, args) => {
     let importContext: ImportContext | null = null;
-    let sandboxId: Id<"sandboxes"> | null = null;
 
     try {
       importContext = (await ctx.runQuery(internal.imports.getImportContext, {
@@ -88,17 +102,6 @@ export const runImportPipeline = internalAction({
         return;
       }
 
-      // Fail-fast: validate every Daytona env var before any side effects
-      // (sandbox row reservation, GitHub access probe). This surfaces a
-      // single actionable error to the operator instead of failing midway
-      // through provisioning.
-      assertSandboxProvisioningConfigured();
-
-      // -----------------------------------------------------------------------
-      // Early permission check: verify the GitHub App installation can access
-      // this repo BEFORE provisioning a sandbox. This avoids wasting resources
-      // when the repo is not included in the installation's repo selection.
-      // -----------------------------------------------------------------------
       const installationId: number | null = await ctx.runQuery(internal.github.getInstallationIdForOwner, {
         ownerTokenIdentifier: importContext.ownerTokenIdentifier,
       });
@@ -107,12 +110,14 @@ export const runImportPipeline = internalAction({
         throw new Error("No active GitHub App installation found. Please connect your GitHub account first.");
       }
 
-      // Parse owner/repo from sourceRepoFullName (format: "owner/repo")
       const [repoOwner, repoName] = importContext.sourceRepoFullName.split("/");
       if (!repoOwner || !repoName) {
         throw new Error(`Invalid repository name: ${importContext.sourceRepoFullName}`);
       }
 
+      // Early permission check via GitHub API. Cheaper than letting the snapshot
+      // fetcher's `/repos/...` call fail later, and produces a user-friendly
+      // "go fix your repo selection" message before any other work runs.
       const accessCheck = (await ctx.runAction(internal.githubAppNode.checkRepoAccess, {
         installationId,
         owner: repoOwner,
@@ -126,92 +131,32 @@ export const runImportPipeline = internalAction({
         );
       }
 
-      // Update the repository's visibility now that we know the actual value
       const detectedVisibility = accessCheck.isPrivate ? ("private" as const) : ("public" as const);
       await ctx.runMutation(internal.repositories.updateRepoVisibility, {
         repositoryId: importContext.repositoryId,
         visibility: detectedVisibility,
       });
 
-      // -----------------------------------------------------------------------
-      // Repo is accessible — proceed with import-scoped sandbox provisioning.
-      // The repository keeps pointing at the last published sandbox until the
-      // new snapshot finalizes successfully.
-      // -----------------------------------------------------------------------
-      sandboxId = await ctx.runMutation(internal.imports.reserveSandboxRow, {
-        importId: args.importId,
-        repositoryId: importContext.repositoryId,
-        ownerTokenIdentifier: importContext.ownerTokenIdentifier,
-        sourceAdapter: "git_clone",
+      // Tier 1 snapshot — single API-driven fetch produces the same
+      // `RepositorySnapshot` shape the legacy sandbox-clone path used to build,
+      // so `buildRepositoryManifest` / `createChunkRecords` stay unchanged.
+      const fetched = await fetchRepositorySnapshot({
+        installationId,
+        owner: repoOwner,
+        repo: repoName,
+        preferredBranch: importContext.branch,
       });
 
-      const sandbox = await provisionSandbox({
-        repositoryKey: importContext.sourceRepoFullName,
-        repositoryId: importContext.repositoryId,
-        sandboxId,
-        accessMode: importContext.accessMode,
-        sourceAdapter: "git_clone",
-      });
-
-      await ctx.runMutation(internal.imports.attachSandboxRemoteInfo, {
-        importId: args.importId,
-        sandboxId,
-        remoteId: sandbox.remoteId,
-        workDir: sandbox.workDir,
-        repoPath: sandbox.repoPath,
-        cpuLimit: sandbox.cpuLimit,
-        memoryLimitGiB: sandbox.memoryLimitGiB,
-        diskLimitGiB: sandbox.diskLimitGiB,
-        autoStopIntervalMinutes: sandbox.autoStopIntervalMinutes,
-        autoArchiveIntervalMinutes: sandbox.autoArchiveIntervalMinutes,
-        autoDeleteIntervalMinutes: sandbox.autoDeleteIntervalMinutes,
-        networkBlockAll: sandbox.networkBlockAll,
-      });
-
-      // Retrieve GitHub access token — required for private repos
-      let githubToken: string | undefined;
-      if (detectedVisibility === "private") {
-        githubToken = await getInstallationAccessToken(installationId);
-      } else {
-        try {
-          githubToken = await getInstallationAccessToken(installationId);
-        } catch (error) {
-          console.warn(
-            "[import] GitHub token unavailable, falling back to unauthenticated:",
-            error instanceof Error ? error.message : error,
-          );
-        }
-      }
-
-      const cloneResult = await cloneRepositoryInSandbox({
-        remoteId: sandbox.remoteId,
-        url: importContext.sourceUrl,
-        branch: importContext.branch,
-        token: githubToken,
-      });
-
-      const snapshot = await collectRepositorySnapshot(sandbox.remoteId, sandbox.repoPath);
-      const fileRecords = createRepoFileRecords(
-        snapshot.files.map((file) => ({
-          path: file.path,
-          fileType: file.fileType,
-          sizeBytes: file.sizeBytes,
-        })),
-      );
-      const manifest = buildRepositoryManifest({
-        ...snapshot,
-        files: fileRecords,
-      });
-      const chunkRecords = createChunkRecords({
-        ...snapshot,
-        files: fileRecords,
-      });
+      const snapshot = fetched.snapshot;
+      const fileRecords = snapshot.files;
+      const manifest = buildRepositoryManifest(snapshot);
+      const chunkRecords = createChunkRecords(snapshot);
 
       const headerResult = (await ctx.runMutation(internal.imports.persistImportHeader, {
         importId: args.importId,
         jobId: importContext.jobId,
-        commitSha: cloneResult.commitSha,
-        branch: cloneResult.branch,
+        commitSha: fetched.commitSha,
+        branch: fetched.branch,
       })) as { kind: "ready" } | { kind: "completed" } | { kind: "cancelled" };
 
       if (headerResult.kind !== "ready") {
@@ -242,12 +187,11 @@ export const runImportPipeline = internalAction({
         }
       }
 
-      const persistResult = (await ctx.runMutation(internal.imports.finalizeImportCompletion, {
+      await ctx.runMutation(internal.imports.finalizeImportCompletion, {
         importId: args.importId,
         jobId: importContext.jobId,
-        sandboxId,
-        commitSha: cloneResult.commitSha,
-        branch: cloneResult.branch,
+        commitSha: fetched.commitSha,
+        branch: fetched.branch,
         detectedLanguages: manifest.detectedLanguages,
         packageManagers: manifest.packageManagers,
         entrypoints: manifest.entrypoints,
@@ -255,41 +199,13 @@ export const runImportPipeline = internalAction({
         summary: manifest.summary,
         readmeSummary: summarizeReadme(snapshot.readmeContent),
         architectureSummary: "Repository imported and indexed for architecture review.",
-      })) as { kind: "completed" } | { kind: "cancelled" };
-
-      if (persistResult.kind === "cancelled") {
-        return;
-      }
-
-      // Immediately stop the sandbox to release CPU and memory.
-      // All indexed data is now persisted in Convex. The sandbox stays on disk
-      // and will auto-wake if Deep Path needs it later.
-      try {
-        await stopSandbox(sandbox.remoteId);
-        logInfo("import", "sandbox_stopped_after_import", {
-          repositoryId: importContext.repositoryId,
-          sandboxRemoteId: sandbox.remoteId,
-        });
-      } catch (stopError) {
-        // Non-fatal: sandbox will auto-stop after the idle interval anyway.
-        logWarn("import", "sandbox_stop_failed_after_import", {
-          repositoryId: importContext.repositoryId,
-          sandboxRemoteId: sandbox.remoteId,
-          error: stopError instanceof Error ? stopError.message : String(stopError),
-        });
-      }
+      });
     } catch (error) {
       let errorMessage = error instanceof Error ? error.message : "Unknown import error";
 
-      // Provide helpful error message for auth/access failures.
-      // When a repo is not included in the GitHub App installation,
-      // clone failures typically surface as "not found" (404) or permission denied.
       const lowerMsg = errorMessage.toLowerCase();
       const isAuthFailure =
         lowerMsg.includes("not found") ||
-        lowerMsg.includes("authentication failed") ||
-        lowerMsg.includes("could not read from remote") ||
-        lowerMsg.includes("private") ||
         lowerMsg.includes("401") ||
         lowerMsg.includes("403") ||
         lowerMsg.includes("404") ||
@@ -315,12 +231,6 @@ export const runImportPipeline = internalAction({
         jobId: importContext.jobId,
         errorMessage: `${errorMessage}\n\nReference: ${errorId}`,
       });
-
-      if (sandboxId) {
-        await ctx.runMutation(internal.ops.scheduleSandboxCleanup, {
-          sandboxId,
-        });
-      }
     }
   },
 });

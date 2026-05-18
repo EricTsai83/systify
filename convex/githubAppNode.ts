@@ -252,7 +252,9 @@ export const verifyRepoAccess = action({
  * Uses `GET /repos/{owner}/{repo}` with an installation access token.
  * Returns { accessible: true, ... } or { accessible: false, message: "..." }.
  *
- * This is used as an early-exit check before provisioning sandboxes for import.
+ * Used as the early-exit access probe by the import pipeline (before the
+ * GitHub-API snapshot fetch) and by `ensureSandboxReady` (before any Lab /
+ * System Design provisions a Daytona sandbox).
  */
 export const checkRepoAccess = internalAction({
   args: {

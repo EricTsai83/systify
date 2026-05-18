@@ -283,6 +283,17 @@ export const getRepositoryDetail = query({
       .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
       .order("desc")
       .take(30);
+
+    // `latestImportJobId` on the repository row points at the last *successful*
+    // import (`applyImportCompletionState` writes it), so it's the wrong source
+    // for surfacing failure details — for a repo whose first import failed it's
+    // undefined, and for a re-sync failure it points at the previous success.
+    // `jobs` is already ordered by `_creationTime` desc, so the first matching
+    // entry is the most recent failed import job and its `errorMessage` is what
+    // `markImportFailed` wrote.
+    const latestFailedImportError =
+      jobs.find((job) => job.kind === "import" && job.status === "failed")?.errorMessage ?? null;
+
     const threads = await ctx.db
       .query("threads")
       .withIndex("by_repositoryId_and_lastMessageAt", (q) => q.eq("repositoryId", args.repositoryId))
@@ -313,6 +324,7 @@ export const getRepositoryDetail = query({
       fileCountLabel,
       sandboxModeStatus,
       hasRemoteUpdates,
+      latestFailedImportError,
       sandbox: sandbox
         ? {
             status: sandbox.status,
@@ -387,7 +399,6 @@ export const createRepositoryImport = mutation({
     }
 
     await consumeImportRateLimit(ctx, identity.tokenIdentifier);
-    await consumeDaytonaGlobalRateLimit(ctx);
 
     if (!repository) {
       // Visibility will be updated after the import pipeline checks GitHub API.
@@ -499,7 +510,6 @@ export const syncRepository = mutation({
     }
 
     await consumeImportRateLimit(ctx, identity.tokenIdentifier);
-    await consumeDaytonaGlobalRateLimit(ctx);
 
     const { jobId, importId } = await queueImportWorkflow(ctx, {
       repositoryId: args.repositoryId,

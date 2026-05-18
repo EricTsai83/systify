@@ -308,6 +308,29 @@
   }
 }
 
+/*
+ * Radix Accordion height transitions. Radix exposes the measured content
+ * height as the CSS variable `--radix-accordion-content-height`, which lets
+ * us animate `0 ↔ content` with no measurement code on our side.
+ */
+@keyframes accordion-down {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--radix-accordion-content-height);
+  }
+}
+
+@keyframes accordion-up {
+  from {
+    height: var(--radix-accordion-content-height);
+  }
+  to {
+    height: 0;
+  }
+}
+
 @keyframes typing {
   from {
     width: 0;
@@ -395,6 +418,14 @@
     animation: send-press 0.35s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
 
+  .animate-accordion-down {
+    animation: accordion-down 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
+  .animate-accordion-up {
+    animation: accordion-up 0.2s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+
   .animate-hero-typing {
     overflow: hidden;
     white-space: nowrap;
@@ -430,6 +461,8 @@
     .animate-typing,
     .animate-fade-out,
     .animate-send-press,
+    .animate-accordion-down,
+    .animate-accordion-up,
     .animate-hero-typing {
       animation: none;
     }

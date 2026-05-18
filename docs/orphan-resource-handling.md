@@ -38,7 +38,7 @@ Because of that, orphan handling cannot depend on a single request path completi
 
 ```mermaid
 flowchart TD
-  A[Import starts] --> B[Reserve sandbox row in Convex]
+  A[On-demand provision starts: Lab activation or System Design] --> B[Reserve sandbox row in Convex]
   B --> C[Call Daytona create]
   C --> D{Did attachment back to Convex succeed?}
 
@@ -51,7 +51,7 @@ flowchart TD
   D -->|No| J[Potential orphan window]
   J --> K{Does Convex have a sandbox row?}
 
-  K -->|Yes| L[Import failure or repository deletion schedules cleanup]
+  K -->|Yes| L[Provision failure or repository deletion schedules cleanup]
   L --> H
 
   K -->|No| M[Daytona sandbox exists without DB row]
@@ -70,7 +70,7 @@ flowchart TD
 
 The system should create the Convex-side ownership record before creating the external resource whenever possible.
 
-For Daytona sandboxes, this means the import pipeline first reserves a `sandboxes` row in Convex and only then calls Daytona create. This prevents the worst orphan class, where the provider has a live resource but the application has no durable record that it ever intended to own it.
+For Daytona sandboxes, this means the on-demand sandbox path (`ensureSandboxReady` → `reserveOnDemandSandboxRow` → `provisionSandbox`) first writes a placeholder `sandboxes` row in Convex and only then calls Daytona create. This prevents the worst orphan class, where the provider has a live resource but the application has no durable record that it ever intended to own it. Repository import does not provision sandboxes, so the principle applies only to Lab activation and System Design generation paths.
 
 ### 2. Treat Provider State As Real, Local State As A Projection
 
@@ -127,7 +127,7 @@ That matters because earlier awareness can mean:
 
 This is the classic orphan case:
 
-1. Convex starts import orchestration
+1. Convex starts on-demand sandbox orchestration (Lab activation or System Design generation)
 2. Daytona successfully creates a sandbox
 3. the action crashes before remote metadata is attached back to Convex
 
@@ -135,7 +135,7 @@ Without protection, Daytona keeps a live sandbox while Convex cannot discover it
 
 ### Cleanup Was Scheduled, But Remote Delete Failed
 
-A repository can enter deletion or import failure cleanup correctly, but Daytona delete may still fail because of timeout, transient provider issues, or interrupted execution.
+A repository can enter deletion or on-demand provisioning failure cleanup correctly, but Daytona delete may still fail because of timeout, transient provider issues, or interrupted execution.
 
 In that case Convex still needs retryable cleanup and later reconciliation.
 
@@ -143,23 +143,23 @@ In that case Convex still needs retryable cleanup and later reconciliation.
 
 Daytona can move a sandbox through stopped, archived, or destroyed states due to provider lifecycle automation. Convex may still be holding an older local status until a later cleanup path or reconciliation pass updates it.
 
-### Deletion And Import Can Race
+### Deletion And On-Demand Provisioning Can Race
 
-A repository may enter deletion while an import is still provisioning or indexing. The system must allow the import flow to cancel cleanly while still ensuring any already-owned sandbox is discoverable and reclaimable.
+A repository may enter deletion while an on-demand sandbox provision (Lab activation, System Design generation) is still in flight. The system must allow that flow to cancel cleanly while still ensuring any already-owned sandbox is discoverable and reclaimable. Repository import cannot race with deletion at the sandbox layer, because the import pipeline never owns one.
 
 ## Current Architecture
 
 ### Layer 1: Prevention Through DB-First Provisioning
 
-The import pipeline now reserves the Convex sandbox row before calling Daytona create.
+The on-demand sandbox path (`reserveOnDemandSandboxRow` inside `ensureSandboxReady`) reserves the Convex `sandboxes` row before calling Daytona create.
 
 That placeholder row:
 
 - establishes ownership early
-- lets `imports.sandboxId` and `repositories.latestSandboxId` point at a durable record
+- lets `repositories.latestSandboxId` point at a durable record
 - gives later cleanup flows something concrete to find even if provisioning fails mid-flight
 
-This is the first and most important orphan-prevention layer.
+This is the first and most important orphan-prevention layer. Repository import does not exercise this path — it never provisions a sandbox, so it cannot orphan one.
 
 ### Layer 2: Request-Path Cleanup
 
@@ -168,7 +168,7 @@ When the system already knows a sandbox should be reclaimed, it creates a cleanu
 This happens on paths such as:
 
 - repository deletion
-- import failure after a sandbox row has been reserved
+- on-demand provisioning failure (Lab activation, System Design generation) after a sandbox row has been reserved
 
 `opsNode.runSandboxCleanup` then performs the operational delete step. If the sandbox row never received a Daytona `remoteId`, cleanup skips provider deletion gracefully and archives the local row. That keeps placeholder rows from becoming local orphan state.
 

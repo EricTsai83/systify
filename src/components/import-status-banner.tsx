@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 
 const STAGE_LABELS: Record<string, string> = {
   queued: "Preparing…",
-  provisioning_sandbox: "Cloning from GitHub…",
+  fetching_repository: "Reading repository from GitHub…",
   persisting_files: "Indexing files…",
   persisting_chunks: "Indexing code chunks…",
 };

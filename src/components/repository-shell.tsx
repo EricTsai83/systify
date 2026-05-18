@@ -6,6 +6,7 @@ import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ArtifactPanel } from "@/components/artifact-panel";
 import { TopBar } from "@/components/top-bar";
@@ -433,10 +434,17 @@ export function RepositoryShell({
     threadId: ThreadId | null;
     mode: ChatMode;
   } | null>(null);
+  // Sandbox is allowed as a picked mode while it's "activatable" so the
+  // user can sit in Sandbox mode (and see the SandboxActivityPill's
+  // progress) the instant they click the otherwise-disabled option — the
+  // resolver only re-adds sandbox to `availableModes` once activation
+  // completes, which would otherwise pop the user back to docs mid-
+  // provision.
+  const isSandboxPickedWhileActivating = pickedChatMode?.mode === "sandbox" && capabilities.sandboxIsActivatable;
   const chatMode: ChatMode =
     pickedChatMode &&
     pickedChatMode.threadId === urlThreadId &&
-    capabilities.availableModes.includes(pickedChatMode.mode)
+    (capabilities.availableModes.includes(pickedChatMode.mode) || isSandboxPickedWhileActivating)
       ? pickedChatMode.mode
       : capabilities.defaultMode;
   const setChatMode = useCallback(
@@ -917,12 +925,25 @@ export function RepositoryShell({
     setChatInput,
     setActionError,
     onAfterDeleteThread: () => {
-      // Stay inside the current workspace so the user keeps their context
-      // (sidebar selection, repo chrome). The workspace-landing redirect
-      // forwards to whichever thread is now most recent, or shows the empty
-      // state if this was the last one.
+      // Stay inside the current workspace AND the current service mode so the
+      // user keeps their context. Routing through `/w/:wid` would land on a
+      // transient (mode-less) URL where `intendedServiceMode` falls back to
+      // `lastServiceMode` or `availability.defaultServiceMode` — the latter
+      // is "library" for repo-attached workspaces, so deleting the last
+      // Discuss thread would yank the user into Library. Going straight to
+      // the mode-specific landing keeps `serviceMode !== null` across the
+      // navigation; the empty state for the mode renders if no threads of
+      // that mode remain.
       if (currentWorkspaceId !== null) {
-        void navigate(workspacePath(currentWorkspaceId));
+        if (serviceMode === "discuss") {
+          void navigate(discussPath(currentWorkspaceId));
+        } else if (serviceMode === "lab") {
+          void navigate(labPath(currentWorkspaceId));
+        } else if (serviceMode === "library") {
+          void navigate(libraryPath(currentWorkspaceId));
+        } else {
+          void navigate(workspacePath(currentWorkspaceId));
+        }
       } else {
         void navigate(DEFAULT_AUTHENTICATED_PATH);
       }
@@ -972,6 +993,7 @@ export function RepositoryShell({
       setChatMode={setChatMode}
       availableModes={capabilities.availableModes}
       disabledModeReasons={capabilities.disabledReasons}
+      sandboxIsActivatable={capabilities.sandboxIsActivatable}
       isSending={isSending}
       onSendMessage={handleSendMessage}
       onCancelInFlightReply={handleCancelInFlightReply}
@@ -1071,32 +1093,18 @@ export function RepositoryShell({
          * Shown regardless of which right-rail panel is open. Hidden when
          * archived because the import-failed state is no longer actionable
          * until the user restores.
+         *
+         * `latestFailedImportError` is computed in `getRepositoryDetail` —
+         * the UI deliberately doesn't know about the jobs table or which
+         * pointer to follow (the `latestImportJobId` pointer is only written
+         * on successful completion and is the wrong source for failures).
          */}
         {!isRepoArchived && repoDetail?.repository.importStatus === "failed" ? (
-          <div
-            className="flex shrink-0 items-start gap-2 border-b border-destructive/40 bg-destructive/5 px-6 py-3 text-destructive"
-            role="alert"
-            aria-live="assertive"
-            aria-atomic="true"
-          >
-            <WarningCircleIcon size={18} weight="fill" className="mt-0.5 shrink-0" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">Repository import failed</p>
-              <p className="mt-0.5 text-xs leading-5">
-                The latest sync did not finish. Retry to restore repo-aware features for this workspace.
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="gap-1.5 text-xs"
-              disabled={isSyncing || isRepositorySyncing}
-              onClick={() => void handleSync()}
-            >
-              {isSyncing || isRepositorySyncing ? "Retrying…" : "Retry sync"}
-            </Button>
-          </div>
+          <ImportFailedBanner
+            errorMessage={repoDetail.latestFailedImportError}
+            isSyncing={isSyncing || isRepositorySyncing}
+            onRetry={() => void handleSync()}
+          />
         ) : null}
 
         <div className="flex min-h-0 min-w-0 flex-1">
@@ -1250,6 +1258,60 @@ function RepositoryMissingState({ onBack }: { onBack: () => void }) {
           Back to chat
         </Button>
       </div>
+    </div>
+  );
+}
+
+function ImportFailedBanner({
+  errorMessage,
+  isSyncing,
+  onRetry,
+}: {
+  errorMessage: string | null;
+  isSyncing: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 flex-col border-b border-destructive/40 bg-destructive/5 px-6 py-3 text-destructive">
+      {/*
+       * The alert region is scoped to the headline + retry button only.
+       * Putting the Accordion inside an `aria-live="assertive"` region
+       * makes screen readers re-announce the whole banner every time the
+       * user toggles "Error details", which is noisy and not actionable.
+       */}
+      <div role="alert" aria-live="assertive" aria-atomic="true" className="flex items-start gap-2">
+        <WarningCircleIcon size={18} weight="fill" className="mt-0.5 shrink-0" />
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium">Repository import failed</p>
+          <p className="mt-0.5 text-xs leading-5">
+            The latest sync did not finish. Retry to restore repo-aware features for this workspace.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="gap-1.5 text-xs"
+          disabled={isSyncing}
+          onClick={onRetry}
+        >
+          {isSyncing ? "Retrying…" : "Retry sync"}
+        </Button>
+      </div>
+      {errorMessage ? (
+        <Accordion type="single" collapsible className="mt-1 ml-7">
+          <AccordionItem value="details" className="border-b-0">
+            <AccordionTrigger className="py-1 text-[11px] font-semibold tracking-wider uppercase text-destructive/80 hover:text-destructive hover:no-underline">
+              Error details
+            </AccordionTrigger>
+            <AccordionContent className="pt-1.5 pb-0">
+              <pre className="max-h-48 overflow-auto rounded-sm border border-destructive/20 bg-destructive/10 p-2 font-mono text-[11px] leading-snug whitespace-pre-wrap break-words text-destructive">
+                {errorMessage}
+              </pre>
+            </AccordionContent>
+          </AccordionItem>
+        </Accordion>
+      ) : null}
     </div>
   );
 }

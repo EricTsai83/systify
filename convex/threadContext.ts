@@ -49,6 +49,21 @@ export interface ThreadContext {
    * has no use for the value.
    */
   sandboxCostBudgets: ThreadContextSandboxCostBudgets | null;
+  /**
+   * True when clicking the (otherwise-disabled) Sandbox mode option
+   * should trigger a lazy sandbox provision via
+   * `repositories.requestSandboxActivation`. Sandbox stays out of
+   * `chatModes.availableModes` until the activation completes; this
+   * flag is the UI's signal that the disabled option is actionable
+   * (vs permanently locked out by cost cap / no repo / already
+   * provisioning).
+   *
+   * Activatable iff: a repository is attached, the cost-cap gate is
+   * open, and the sandbox lifecycle is in one of the "needs provision
+   * or re-provision" states (`none` / `expired` / `failed`). Already-
+   * provisioning sandboxes return false to avoid double-queueing.
+   */
+  sandboxIsActivatable: boolean;
 }
 
 /**
@@ -183,7 +198,13 @@ async function enrichThreadContext(
     sandboxCostBudgets = budgets;
   }
 
-  const chatModes = resolveChatModes(attachedRepository !== null, toChatModeSandboxStatus(sandboxModeStatus), costGate);
+  const chatModeSandboxStatus = toChatModeSandboxStatus(sandboxModeStatus);
+  const chatModes = resolveChatModes(attachedRepository !== null, chatModeSandboxStatus, costGate);
+
+  const sandboxIsActivatable =
+    attachedRepository !== null &&
+    costGate.enabled &&
+    (chatModeSandboxStatus === "none" || chatModeSandboxStatus === "expired" || chatModeSandboxStatus === "failed");
 
   return {
     thread,
@@ -192,6 +213,7 @@ async function enrichThreadContext(
     sandboxModeStatus,
     chatModes,
     sandboxCostBudgets,
+    sandboxIsActivatable,
   };
 }
 

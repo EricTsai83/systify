@@ -347,6 +347,7 @@ beforeEach(() => {
           fileCountLabel: "0",
           sandboxModeStatus: { reasonCode: "missing_sandbox", message: null },
           hasRemoteUpdates: false,
+          latestFailedImportError: null,
           sandbox: null,
         };
       case "chat/threads:listMessages":

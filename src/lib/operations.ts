@@ -41,7 +41,7 @@ const JOB_TITLES: Record<Doc<"jobs">["kind"], string> = {
  */
 const STAGE_LABELS: Record<string, string> = {
   queued: "Waiting for a worker",
-  provisioning_sandbox: "Preparing a live sandbox",
+  fetching_repository: "Reading repository metadata",
   indexing_repository: "Indexing repository knowledge",
   persisting_files: "Persisting source files",
   persisting_chunks: "Writing searchable chunks",

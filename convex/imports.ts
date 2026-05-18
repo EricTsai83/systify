@@ -62,7 +62,6 @@ type PersistGuardResult =
       kind: "ready";
       importRecord: Doc<"imports">;
       repository: Doc<"repositories">;
-      sandbox?: Doc<"sandboxes">;
     }
   | { kind: "completed" }
   | { kind: "cancelled" };
@@ -127,7 +126,7 @@ async function applyImportRunningState(
   const runningJob = await markQueuedJobRunning(ctx, {
     jobId: args.jobId,
     expectedKind: "import",
-    stage: "provisioning_sandbox",
+    stage: "fetching_repository",
     progress: 0.1,
     startedAt: now,
   });
@@ -148,7 +147,6 @@ async function applyImportCompletionState(
     importId: Id<"imports">;
     repositoryId: Id<"repositories">;
     jobId: Id<"jobs">;
-    sandboxId: Id<"sandboxes">;
     commitSha: string;
     branch?: string;
     detectedLanguages: string[];
@@ -178,11 +176,15 @@ async function applyImportCompletionState(
     branch: args.branch,
     completedAt,
   });
+  // Import no longer touches `latestSandboxId` — sandbox provisioning is
+  // owned by Sandbox Mode / System Design via `ensureSandboxReady`. A
+  // previously-published sandbox (from a legacy import or a prior sandbox-
+  // mode session) stays as the live source until the user does something
+  // that explicitly re-provisions it.
   await ctx.db.patch(args.repositoryId, {
     importStatus: "completed",
     latestImportId: args.importId,
     latestImportJobId: args.jobId,
-    latestSandboxId: args.sandboxId,
     defaultBranch: args.branch ?? args.repositoryDefaultBranch,
     summary: args.summary,
     readmeSummary: args.readmeSummary,
@@ -195,11 +197,6 @@ async function applyImportCompletionState(
     lastIndexedAt: completedAt,
     lastSyncedCommitSha: args.commitSha,
   });
-  await ctx.db.patch(args.sandboxId, {
-    status: "ready",
-    lastHeartbeatAt: completedAt,
-    lastUsedAt: completedAt,
-  });
   return { completed: true as const };
 }
 
@@ -208,7 +205,6 @@ async function guardPersistStage(
   args: {
     importId: Id<"imports">;
     jobId: Id<"jobs">;
-    sandboxId?: Id<"sandboxes">;
   },
 ): Promise<PersistGuardResult> {
   const importRecord = await ctx.db.get(args.importId);
@@ -234,33 +230,10 @@ async function guardPersistStage(
     return { kind: "cancelled" };
   }
 
-  if (!args.sandboxId) {
-    return {
-      kind: "ready",
-      importRecord,
-      repository,
-    };
-  }
-
-  if (importRecord.sandboxId && importRecord.sandboxId !== args.sandboxId) {
-    return { kind: "cancelled" };
-  }
-
-  const sandbox = await ctx.db.get(args.sandboxId);
-  if (!sandbox) {
-    await finalizeImportCancellation(ctx, {
-      importId: args.importId,
-      jobId: args.jobId,
-      reason: reasonForRepositoryTombstone(repository),
-    });
-    return { kind: "cancelled" };
-  }
-
   return {
     kind: "ready",
     importRecord,
     repository,
-    sandbox,
   };
 }
 
@@ -382,49 +355,6 @@ async function insertProvisioningSandboxRow(
   });
 }
 
-export const reserveSandboxRow = internalMutation({
-  args: {
-    importId: v.id("imports"),
-    repositoryId: v.id("repositories"),
-    ownerTokenIdentifier: v.string(),
-    sourceAdapter: v.union(v.literal("git_clone"), v.literal("source_service")),
-  },
-  handler: async (ctx, args) => {
-    const importRecord = await ctx.db.get(args.importId);
-    if (!importRecord) {
-      throw new Error("Import not found.");
-    }
-    if (importRecord.repositoryId !== args.repositoryId) {
-      throw new Error("Import does not belong to repository.");
-    }
-    if (
-      importRecord.status === "completed" ||
-      importRecord.status === "cancelled" ||
-      importRecord.status === "failed"
-    ) {
-      throw new Error("Cannot reserve a sandbox for a terminal import.");
-    }
-    if (importRecord.sandboxId) {
-      const existingSandbox = await ctx.db.get(importRecord.sandboxId);
-      if (existingSandbox) {
-        return existingSandbox._id;
-      }
-    }
-
-    const sandboxId = await insertProvisioningSandboxRow(ctx, {
-      repositoryId: args.repositoryId,
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      sourceAdapter: args.sourceAdapter,
-    });
-
-    await ctx.db.patch(args.importId, {
-      sandboxId,
-    });
-
-    return sandboxId;
-  },
-});
-
 /**
  * Repository-scoped variant for on-demand sandbox preparation (chat
  * activation, System Design retry after archive). Inserts a new
@@ -477,9 +407,8 @@ export const reserveOnDemandSandboxRow = internalMutation({
 
 /**
  * Attach Daytona handle to an in-flight on-demand sandbox row, before the
- * clone step runs. Splitting attach from "mark ready" mirrors the import
- * pipeline (`attachSandboxRemoteInfo` + later status patch) so that a
- * clone failure leaves the row with a valid `remoteId`, letting
+ * clone step runs. Splitting attach from "mark ready" means that a clone
+ * failure leaves the row with a valid `remoteId`, letting
  * `scheduleSandboxCleanup` delete the Daytona sandbox.
  */
 export const attachOnDemandSandboxRemoteInfo = internalMutation({
@@ -528,20 +457,23 @@ export const markOnDemandSandboxReady = internalMutation({
     branch: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const sandbox = await ctx.db.get(args.sandboxId);
+
+    if (args.commitSha && sandbox && sandbox.repositoryId !== args.repositoryId) {
+      console.warn(
+        `Sandbox ${args.sandboxId} repositoryId mismatch: expected ${args.repositoryId}, got ${sandbox.repositoryId}`,
+      );
+      return;
+    }
+
     const now = Date.now();
     await ctx.db.patch(args.sandboxId, {
       status: "ready",
       lastHeartbeatAt: now,
       lastUsedAt: now,
     });
+
     if (args.commitSha) {
-      const sandbox = await ctx.db.get(args.sandboxId);
-      if (sandbox && sandbox.repositoryId !== args.repositoryId) {
-        console.warn(
-          `Sandbox ${args.sandboxId} repositoryId mismatch: expected ${args.repositoryId}, got ${sandbox.repositoryId}`,
-        );
-        return;
-      }
       const repository = await ctx.db.get(args.repositoryId);
       if (repository) {
         await ctx.db.patch(args.repositoryId, {
@@ -575,42 +507,6 @@ export const failOnDemandSandboxProvisioning = internalMutation({
     await ctx.db.patch(args.sandboxId, {
       status: "failed",
       lastErrorMessage: args.errorMessage.slice(0, 500),
-    });
-  },
-});
-
-export const attachSandboxRemoteInfo = internalMutation({
-  args: {
-    importId: v.id("imports"),
-    sandboxId: v.id("sandboxes"),
-    remoteId: v.string(),
-    workDir: v.string(),
-    repoPath: v.string(),
-    cpuLimit: v.number(),
-    memoryLimitGiB: v.number(),
-    diskLimitGiB: v.number(),
-    autoStopIntervalMinutes: v.number(),
-    autoArchiveIntervalMinutes: v.number(),
-    autoDeleteIntervalMinutes: v.number(),
-    networkBlockAll: v.boolean(),
-  },
-  handler: async (ctx, args) => {
-    await ctx.db.patch(args.sandboxId, {
-      remoteId: args.remoteId,
-      workDir: args.workDir,
-      repoPath: args.repoPath,
-      cpuLimit: args.cpuLimit,
-      memoryLimitGiB: args.memoryLimitGiB,
-      diskLimitGiB: args.diskLimitGiB,
-      ttlExpiresAt: Date.now() + args.autoDeleteIntervalMinutes * 60_000,
-      autoStopIntervalMinutes: args.autoStopIntervalMinutes,
-      autoArchiveIntervalMinutes: args.autoArchiveIntervalMinutes,
-      autoDeleteIntervalMinutes: args.autoDeleteIntervalMinutes,
-      networkBlockAll: args.networkBlockAll,
-    });
-
-    await ctx.db.patch(args.importId, {
-      remoteSandboxId: args.remoteId,
     });
   },
 });
@@ -773,7 +669,6 @@ export const finalizeImportCompletion = internalMutation({
   args: {
     importId: v.id("imports"),
     jobId: v.id("jobs"),
-    sandboxId: v.id("sandboxes"),
     commitSha: v.string(),
     branch: v.optional(v.string()),
     detectedLanguages: v.array(v.string()),
@@ -788,7 +683,6 @@ export const finalizeImportCompletion = internalMutation({
     const state = await guardPersistStage(ctx, {
       importId: args.importId,
       jobId: args.jobId,
-      sandboxId: args.sandboxId,
     });
 
     if (state.kind !== "ready") {
@@ -799,13 +693,11 @@ export const finalizeImportCompletion = internalMutation({
 
     const previousCompletedImportId = state.repository.latestImportId;
     const previousCompletedImportJobId = state.repository.latestImportJobId;
-    const previousSandboxId = state.repository.latestSandboxId;
 
     const completed = await applyImportCompletionState(ctx, {
       importId: args.importId,
       repositoryId: state.repository._id,
       jobId: args.jobId,
-      sandboxId: args.sandboxId,
       commitSha: args.commitSha,
       branch: args.branch,
       detectedLanguages: args.detectedLanguages,
@@ -832,11 +724,10 @@ export const finalizeImportCompletion = internalMutation({
         importJobId: previousCompletedImportJobId,
       });
     }
-    if (previousSandboxId && previousSandboxId !== args.sandboxId) {
-      await ctx.runMutation(internal.ops.scheduleSandboxCleanup, {
-        sandboxId: previousSandboxId,
-      });
-    }
+    // Import no longer publishes a new sandbox, so there is nothing to retire
+    // here. The repository's `latestSandboxId` (if any) keeps pointing at the
+    // last sandbox provisioned by Sandbox Mode / System Design; that path
+    // owns its own lifecycle and cleanup.
 
     return {
       kind: "completed" as const,
@@ -924,18 +815,6 @@ export const markImportFailed = internalMutation({
       completedAt: now,
       errorMessage: args.errorMessage,
     });
-    if (importRecord.sandboxId) {
-      const sandbox = await ctx.db.get(importRecord.sandboxId);
-      if (sandbox) {
-        await ctx.db.patch(importRecord.sandboxId, {
-          status: "failed",
-          lastErrorMessage: args.errorMessage,
-        });
-        await ctx.runMutation(internal.ops.scheduleSandboxCleanup, {
-          sandboxId: importRecord.sandboxId,
-        });
-      }
-    }
     if (repository.importStatus !== "completed") {
       await ctx.db.patch(importRecord.repositoryId, {
         importStatus: "failed",

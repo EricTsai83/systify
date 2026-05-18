@@ -16,10 +16,8 @@ It also needs to update the repository's published snapshot metadata, including:
 
 - `latestImportId`
 - `latestImportJobId`
-- `latestSandboxId`
 - repository summaries
 - detected languages and entrypoints
-- sandbox readiness
 
 If all of that happens inside one mutation, two problems appear quickly:
 
@@ -82,14 +80,13 @@ Only the final step is allowed to update repository-visible snapshot state:
 
 - `latestImportId`
 - `latestImportJobId`
-- repository summaries
+- repository summaries (`summary`, `readmeSummary`, `architectureSummary`)
 - detected languages
 - package managers
 - entrypoints
-- `latestSandboxId`
-- sandbox `ready` state
+- `lastImportedAt` / `lastIndexedAt` / `lastSyncedCommitSha`
 
-This makes finalize the only publish boundary.
+This makes finalize the only publish boundary. Finalize is intentionally **not** allowed to touch `latestSandboxId` — sandbox lifecycle is owned by Lab and System Design via `ensureSandboxReady`, and the import pipeline never provisions one. See `repository-lifecycle.md` for the on-demand sandbox model.
 
 ## Why Publish Late
 
@@ -106,7 +103,7 @@ Late publish prevents that inconsistency. Readers either see:
 
 They never see an in-between version.
 
-The same rule applies to sandboxes. A sync provisions its new Daytona sandbox under `imports.sandboxId` first, while `repositories.latestSandboxId` continues to reference the previous usable sandbox. Finalize is the only step that promotes the new sandbox to `latestSandboxId`; only after that promotion does the system queue cleanup for the superseded sandbox.
+Sandbox state is intentionally outside this contract. Because import is GitHub-API-only and never touches `repositories.latestSandboxId`, the late-publish rule only has to cover the knowledge-base outputs above. Whatever sandbox Lab or System Design provisioned earlier keeps pointing where it was, and its own lifecycle (idle auto-stop, archive, deletion) is independent of import publication.
 
 ## Why Cleanup Runs On Failure And Cancellation
 
@@ -119,7 +116,7 @@ This gives the system a simple rule:
 - completed old snapshots are cleaned up after a successful publish
 - incomplete new snapshots are cleaned up after an unsuccessful publish
 
-Sandbox cleanup follows the same ownership boundary. Failed imports clean up only their import-scoped sandbox. Repository deletion is the path that schedules cleanup for every known sandbox belonging to the repository.
+Sandbox cleanup is no longer part of this contract. Imports do not provision sandboxes, so there is nothing to clean up on import failure. Repository deletion is the path that schedules cleanup for every known sandbox belonging to the repository (typically created by Lab or System Design).
 
 ## Idempotency Strategy
 

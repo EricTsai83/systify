@@ -40,76 +40,63 @@ function escapeHtml(value: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function githubCallbackPageResponse(status: number, title: string, message: string): Response {
+/**
+ * Renders the post-callback page shown after GitHub redirects back to us.
+ *
+ * The install / permissions flow can run in two browser contexts:
+ *   1. A popup opened by the dialog (`window.open(...)` in
+ *      `ImportRepoDialog#handleConnectGitHub`).
+ *   2. A full-page redirect when the popup was blocked.
+ * GitHub's redirect URL is the same for both, so the server can't tell them
+ * apart. The page renders the fallback content unconditionally and lets an
+ * inline script enhance behaviour:
+ *
+ *   popup + success/auto-close → `window.close()` (with the fallback as a
+ *      script-blocked degradation: "you can close this tab")
+ *   popup + error              → keep fallback visible so the user reads the
+ *      error before manually closing; the opener's `popup.closed` polling in
+ *      `ImportRepoDialog` resets `isAwaitingPopup` once they do
+ *   full-page + redirect       → `window.location.replace(redirect)`
+ *   full-page + no redirect    → keep fallback visible (e.g. the
+ *      permissions-update flow with no stored returnTo)
+ *
+ * The fallback is rendered visible by default — if scripts are blocked the
+ * user still sees a readable page rather than a blank one.
+ *
+ * `window.close()` is synchronous: when the browser honours it, the script
+ * context is destroyed at task end so anything after the `close()` call is a
+ * no-op; when blocked it returns immediately and we re-show the fallback.
+ * No `setTimeout` padding is needed.
+ */
+function renderCallbackPage(opts: {
+  status: number;
+  title: string;
+  message: string;
+  redirectTarget: string | null;
+  redirectParams: Record<string, string>;
+  isError: boolean;
+}): Response {
+  let finalRedirect: string | null = null;
+  if (opts.redirectTarget) {
+    try {
+      finalRedirect = buildRedirectUrl(normalizeReturnToUrl(opts.redirectTarget), opts.redirectParams);
+    } catch (error) {
+      logWarn("http", "github_callback_redirect_target_rejected", {
+        redirectTarget: opts.redirectTarget,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const redirectLiteral = finalRedirect ? JSON.stringify(finalRedirect) : "null";
+  const isErrorLiteral = opts.isError ? "true" : "false";
+
   const body = `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${escapeHtml(title)}</title>
-    <style>
-      body {
-        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-        margin: 0;
-        min-height: 100vh;
-        display: grid;
-        place-items: center;
-        background: #0b1020;
-        color: #e5e7eb;
-      }
-      main {
-        max-width: 36rem;
-        padding: 2rem;
-        border: 1px solid rgba(229, 231, 235, 0.16);
-        border-radius: 1rem;
-        background: rgba(15, 23, 42, 0.92);
-      }
-      h1 {
-        margin: 0 0 0.75rem;
-        font-size: 1.25rem;
-      }
-      p {
-        margin: 0;
-        line-height: 1.6;
-      }
-    </style>
-  </head>
-  <body>
-    <main>
-      <h1>${escapeHtml(title)}</h1>
-      <p>${escapeHtml(message)}</p>
-    </main>
-  </body>
-</html>`;
-
-  return new Response(body, {
-    status,
-    headers: {
-      "content-type": "text/html; charset=utf-8",
-      "cache-control": "no-store",
-    },
-  });
-}
-
-function githubCallbackErrorResponse(status: number, title: string, message: string): Response {
-  return githubCallbackPageResponse(status, title, message);
-}
-
-function githubCallbackSuccessResponse(title: string, message: string): Response {
-  return githubCallbackPageResponse(200, title, message);
-}
-
-/**
- * Returns a page that immediately attempts `window.close()`. If the browser
- * blocks it (e.g. the page was opened as a regular tab rather than a popup),
- * a fallback success message is shown instead.
- */
-function githubCallbackAutoCloseResponse(): Response {
-  const body = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <title>Closing…</title>
+    <title>${escapeHtml(opts.title)}</title>
     <style>
       body {
         font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -128,23 +115,46 @@ function githubCallbackAutoCloseResponse(): Response {
         background: rgba(15, 23, 42, 0.92);
         text-align: center;
       }
+      h1 { margin: 0 0 0.75rem; font-size: 1.25rem; }
       p { margin: 0; line-height: 1.6; }
     </style>
   </head>
   <body>
-    <main id="fallback" style="display:none">
-      <p>GitHub permissions updated. You can close this tab.</p>
+    <main id="fallback">
+      <h1>${escapeHtml(opts.title)}</h1>
+      <p>${escapeHtml(opts.message)}</p>
     </main>
     <script>
-      window.close();
-      // If the browser blocked window.close(), show the fallback message.
-      document.getElementById("fallback").style.display = "block";
+      (function () {
+        var redirect = ${redirectLiteral};
+        var isError = ${isErrorLiteral};
+        var hasOpener = false;
+        try { hasOpener = !!window.opener && window.opener !== window; } catch (_) {}
+        var fallback = document.getElementById("fallback");
+
+        if (hasOpener) {
+          if (isError) {
+            // Keep fallback visible — the opener has no signal for errors, so
+            // the popup is the user's only feedback channel.
+            return;
+          }
+          // Hide the fallback during the close attempt so a successful close
+          // doesn't briefly flash the "you can close this tab" message.
+          if (fallback) fallback.style.display = "none";
+          try { window.close(); } catch (_) {}
+          // Reached only when the browser blocked window.close().
+          if (fallback) fallback.style.display = "";
+        } else if (redirect) {
+          if (fallback) fallback.style.display = "none";
+          window.location.replace(redirect);
+        }
+      })();
     </script>
   </body>
 </html>`;
 
   return new Response(body, {
-    status: 200,
+    status: opts.status,
     headers: {
       "content-type": "text/html; charset=utf-8",
       "cache-control": "no-store",
@@ -152,43 +162,51 @@ function githubCallbackAutoCloseResponse(): Response {
   });
 }
 
-function redirectOrReturnPage(
+function callbackSuccess(
   redirectTarget: string | null,
-  params: Record<string, string>,
-  fallbackResponse: Response,
+  redirectParams: Record<string, string>,
+  title: string,
+  message: string,
 ): Response {
-  if (redirectTarget) {
-    try {
-      const sanitizedRedirectTarget = normalizeReturnToUrl(redirectTarget);
-      return Response.redirect(buildRedirectUrl(sanitizedRedirectTarget, params), 302);
-    } catch (error) {
-      logWarn("http", "github_callback_redirect_target_rejected", {
-        redirectTarget,
-        reason: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
-  return fallbackResponse;
+  return renderCallbackPage({
+    status: 200,
+    title,
+    message,
+    redirectTarget,
+    redirectParams,
+    isError: false,
+  });
 }
 
-function redirectOrReturnError(
+function callbackError(
   redirectTarget: string | null,
-  params: Record<string, string>,
+  redirectParams: Record<string, string>,
   status: number,
   title: string,
   message: string,
 ): Response {
-  return redirectOrReturnPage(redirectTarget, params, githubCallbackErrorResponse(status, title, message));
+  return renderCallbackPage({
+    status,
+    title,
+    message,
+    redirectTarget,
+    redirectParams,
+    isError: true,
+  });
 }
 
-function redirectOrReturnSuccess(
-  redirectTarget: string | null,
-  params: Record<string, string>,
-  title: string,
-  message: string,
-): Response {
-  return redirectOrReturnPage(redirectTarget, params, githubCallbackSuccessResponse(title, message));
+function callbackPermissionsUpdated(): Response {
+  // No stored returnTo (this flow is initiated from GitHub's UI, not ours),
+  // so the popup closes itself and the static message handles the
+  // popup-blocked / full-page-tab cases.
+  return renderCallbackPage({
+    status: 200,
+    title: "Permissions updated",
+    message: "GitHub permissions updated. You can close this tab.",
+    redirectTarget: null,
+    redirectParams: {},
+    isError: false,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -218,7 +236,7 @@ http.route({
       : null;
 
     if (!installationIdParam) {
-      return redirectOrReturnError(
+      return callbackError(
         redirectTarget,
         { github_error: "missing_params" },
         400,
@@ -229,7 +247,7 @@ http.route({
 
     const installationId = parseInt(installationIdParam, 10);
     if (isNaN(installationId)) {
-      return redirectOrReturnError(
+      return callbackError(
         redirectTarget,
         { github_error: "invalid_installation" },
         400,
@@ -257,12 +275,12 @@ http.route({
       logInfo("http", "github_callback_permissions_updated", {
         installationId,
       });
-      return githubCallbackAutoCloseResponse();
+      return callbackPermissionsUpdated();
     }
 
     // If no state but setup_action is not "update", treat as unexpected callback
     if (!state) {
-      return redirectOrReturnError(
+      return callbackError(
         redirectTarget,
         { github_error: "unexpected_callback" },
         400,
@@ -311,7 +329,7 @@ http.route({
           existingInstallationId: saveResult.existingInstallationId,
           existingAccountLogin: saveResult.existingAccountLogin,
         });
-        return redirectOrReturnError(
+        return callbackError(
           redirectTarget,
           { github_error: "already_connected" },
           409,
@@ -323,7 +341,7 @@ http.route({
       logInfo("http", "github_callback_completed", {
         installationId,
       });
-      return redirectOrReturnSuccess(
+      return callbackSuccess(
         redirectTarget,
         { github_connected: "true" },
         "GitHub connection completed.",
@@ -333,7 +351,7 @@ http.route({
       const errorId = logErrorWithId("http", "github_callback_failed", error, {
         installationId: installationIdParam,
       });
-      return redirectOrReturnError(
+      return callbackError(
         redirectTarget,
         {
           github_error: "callback_failed",

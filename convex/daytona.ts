@@ -1,26 +1,12 @@
 "use node";
 
-import {
-  CodeLanguage,
-  Daytona,
-  DaytonaError,
-  DaytonaNotFoundError,
-  DaytonaTimeoutError,
-  type Sandbox,
-} from "@daytona/sdk";
+import { CodeLanguage, Daytona, DaytonaError, DaytonaNotFoundError, DaytonaTimeoutError } from "@daytona/sdk";
 import type { SandboxFsClient, SandboxShellOutcome } from "./chat/sandboxTools";
 import { withDaytonaRetry } from "./lib/daytonaRetry";
-import { shouldReadFile, type RepositorySnapshot } from "./lib/repoAnalysis";
 import { buildSandboxName } from "./lib/sandboxNames";
 import { logInfo, logWarn } from "./lib/observability";
 import { LIVE_SOURCE_UNAVAILABLE_MESSAGE } from "./lib/sandboxLiveness";
-import {
-  DEFAULT_AUTO_STOP_MINUTES,
-  DEFAULT_AUTO_ARCHIVE_MINUTES,
-  DEFAULT_AUTO_DELETE_MINUTES,
-  MAX_LISTED_FILES,
-  MAX_TREE_DEPTH,
-} from "./lib/constants";
+import { DEFAULT_AUTO_STOP_MINUTES, DEFAULT_AUTO_ARCHIVE_MINUTES, DEFAULT_AUTO_DELETE_MINUTES } from "./lib/constants";
 
 /**
  * Truthy parse table for `DAYTONA_POST_CLONE_BLOCK_NETWORK`. Anything
@@ -587,83 +573,6 @@ function safeUrlHost(url: string): string {
   }
 }
 
-/**
- * Try to read a project manifest, returning `undefined` if the file does not
- * exist on disk. The distinction between "missing" (`undefined`) and "empty"
- * (`""`) is part of the `RepositorySnapshot` contract: downstream consumers
- * (system design, artifact synthesis, prompt building) treat them as
- * different signals — "this repo has no package.json at all" vs "package.json
- * exists but is intentionally empty". Collapsing both into `""` would break
- * "is this a JS/Python/Rust project?" inference at the source.
- *
- * Any thrown error from Daytona (404, network, malformed response) is
- * normalised to `undefined`. Differentiating "404" from "network error" here
- * would require importing Daytona-specific symbols and is out of scope —
- * the snapshot pass is best-effort and a transient miss simply means the
- * model gets fewer signals on this provisioning, not a fatal failure.
- */
-async function fetchManifest(sandbox: Sandbox, path: string): Promise<string | undefined> {
-  try {
-    return await downloadUtf8File(sandbox, path);
-  } catch {
-    return undefined;
-  }
-}
-
-export async function collectRepositorySnapshot(remoteId: string, repoPath: string): Promise<RepositorySnapshot> {
-  const sandbox = await getSandbox(remoteId);
-  const listed = await walkRepositoryTree(sandbox, repoPath);
-  const readmePath = listed.find(
-    (entry) => entry.fileType === "file" && /(^|\/)readme(\.[^.]+)?$/i.test(entry.path),
-  )?.path;
-
-  const importantFiles = listed
-    .filter((entry) => entry.fileType === "file" && shouldReadFile(entry.path))
-    .sort((left, right) => Number(right.path.includes("README")) - Number(left.path.includes("README")))
-    .slice(0, 12);
-
-  // Single fan-out for every disk read in the snapshot pass — manifests +
-  // readme + importantFiles all dispatch concurrently as one Promise.all.
-  // The previous incarnation (1) re-downloaded a manifest twice if it
-  // happened to land in `importantFiles.slice(0, 12)`, and (2) skipped the
-  // manifest entirely if it didn't. Manifests are *always* worth attempting
-  // because they are the primary signal for "what stack is this repo?";
-  // crowd-out by less-relevant important files lost that signal.
-  //
-  // Note: `Promise.all` itself does *not* cap upstream concurrency (the
-  // burst here is at most three manifests + a readme + 12 important files
-  // = 16 concurrent downloads). If `MAX_LISTED_FILES` ever grows to a
-  // point where 12 important files becomes too many, replace this with a
-  // bounded-concurrency pool — same pattern as `walkRepositoryTree`.
-  const [packageJsonContent, pyprojectContent, cargoTomlContent, readmeContent, importantFileContents] =
-    await Promise.all([
-      fetchManifest(sandbox, `${repoPath}/package.json`),
-      fetchManifest(sandbox, `${repoPath}/pyproject.toml`),
-      fetchManifest(sandbox, `${repoPath}/Cargo.toml`),
-      readmePath ? downloadUtf8File(sandbox, `${repoPath}/${readmePath}`) : Promise.resolve(undefined),
-      Promise.all(
-        importantFiles.map(async (file) => ({
-          path: file.path,
-          content: await downloadUtf8File(sandbox, `${repoPath}/${file.path}`),
-        })),
-      ),
-    ]);
-
-  return {
-    readmePath,
-    readmeContent,
-    packageJsonContent,
-    pyprojectContent,
-    cargoTomlContent,
-    // We do not filter empty `importantFileContents` — a legitimately-empty
-    // source file is still a signal that the file exists at that path.
-    // Downstream consumers that want to ignore empty content should do so
-    // explicitly so the choice is auditable.
-    importantFileContents,
-    files: listed,
-  };
-}
-
 export async function runFocusedInspection(remoteId: string, repoPath: string, prompt: string) {
   const sandbox = await getSandbox(remoteId);
   const inspectionCommand = `
@@ -875,118 +784,6 @@ export function isSystifyManagedSandbox(labels: Record<string, string> | undefin
   return labels.app === SYSTIFY_DAYTONA_MANAGED_LABELS.app;
 }
 
-/**
- * Bounded-concurrency repository walker.
- *
- * The previous implementation tried to parallelize a recursive DFS by
- * pushing each subdirectory's `walkRepositoryTree(...)` promise into a
- * shared array and `Promise.all`-ing them. That was a real concurrency
- * hazard for two reasons:
- *
- *   1. **Shared-array race.** Every parallel walk pushed into the same
- *      `acc` and independently checked `acc.length >= MAX_LISTED_FILES`.
- *      With N concurrent walks, all N could read `acc.length` below the
- *      cap at the same instant and proceed to push, blowing past
- *      MAX_LISTED_FILES by an unbounded margin. Sequential `await` was
- *      what made the cap actually mean something.
- *
- *   2. **Daytona burst.** A repo with 50 first-level subdirectories would
- *      issue 50 concurrent `listFiles` calls; the SDK has no internal
- *      rate limit, so this lands as a thundering herd on the Daytona API
- *      that can trigger throttling or fail individual calls.
- *
- * The fix here is **bounded BFS**:
- *
- *   - **Concurrency cap (`WALK_CONCURRENCY = 8`)**: each round dispatches at
- *     most 8 `listFiles` calls in parallel. A typical repo has well under
- *     200 directories and finishes in 2–3 rounds, going from a sequential
- *     ~5 s to ~600 ms — fast enough that sandbox provisioning UX isn't
- *     blocked, gentle enough that Daytona doesn't see a spike.
- *
- *   - **Single-writer merge phase**: after each round's `Promise.all`
- *     resolves, the synchronous merge loop is the only writer to `acc`,
- *     so the `acc.length >= MAX_LISTED_FILES` cap holds *strictly* (no
- *     overshoot). This is the key correctness property the old code lost.
- *
- *   - **Deterministic order via binary code-point sort**: each listing is
- *     sorted by name *before* merging into `acc`. Daytona's listFiles does
- *     not guarantee an order, and `localeCompare` is locale-dependent —
- *     binary comparison is stable across runtimes, matching the convention
- *     `sandboxTools.ts` already uses for `list_dir`.
- *
- *   - **BFS visit order**: the previous DFS recursed into each subdir
- *     before continuing siblings. Switching to BFS means depth-0 files
- *     appear in `acc` before depth-1 files. This is *better* for the
- *     downstream consumers — `readmePath` resolves to the root README
- *     deterministically rather than to whichever subdirectory's README
- *     happened to be visited first by the DFS recursion.
- */
-const WALK_CONCURRENCY = 8;
-
-async function walkRepositoryTree(sandbox: Sandbox, repoPath: string): Promise<RepositorySnapshot["files"]> {
-  const acc: RepositorySnapshot["files"] = [];
-  const frontier: Array<{ relativePath: string; depth: number }> = [{ relativePath: "", depth: 0 }];
-
-  while (frontier.length > 0 && acc.length < MAX_LISTED_FILES) {
-    const batch = frontier.splice(0, WALK_CONCURRENCY);
-
-    // I/O fan-out — at most WALK_CONCURRENCY listFiles in flight at once.
-    // Depth-exceeded entries return an empty listing rather than skipping
-    // the batch slot; this keeps the merge loop's iteration count fixed
-    // and avoids a separate filter step.
-    const listings = await Promise.all(
-      batch.map(async ({ relativePath, depth }) => {
-        if (depth > MAX_TREE_DEPTH)
-          return { items: [] as readonly { name: string; isDir: boolean; size: number }[], depth, relativePath };
-        const currentPath = relativePath ? `${repoPath}/${relativePath}` : repoPath;
-        const items = await withDaytonaRetry(() => sandbox.fs.listFiles(currentPath), {
-          operation: "sandbox.fs.listFiles.walker",
-          resourceId: currentPath,
-        });
-        const sorted = [...items].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-        return { items: sorted, depth, relativePath };
-      }),
-    );
-
-    // SINGLE-WRITER merge phase. All Daytona I/O has settled and we are in
-    // a synchronous loop, so the `acc.length` cap holds without races.
-    const nextFrontier: typeof frontier = [];
-    for (const { items, depth, relativePath } of listings) {
-      for (const item of items) {
-        if (acc.length >= MAX_LISTED_FILES) break;
-        const nextRelative = relativePath ? `${relativePath}/${item.name}` : item.name;
-        if (ignorePath(nextRelative)) continue;
-        acc.push({
-          path: nextRelative,
-          parentPath: relativePath,
-          fileType: item.isDir ? "dir" : "file",
-          extension: undefined,
-          language: undefined,
-          sizeBytes: item.size,
-          isEntryPoint: false,
-          isConfig: false,
-          isImportant: false,
-          summary: undefined,
-        });
-        if (item.isDir && depth < MAX_TREE_DEPTH) {
-          nextFrontier.push({ relativePath: nextRelative, depth: depth + 1 });
-        }
-      }
-    }
-    frontier.push(...nextFrontier);
-  }
-
-  return acc;
-}
-
-async function downloadUtf8File(sandbox: Sandbox, path: string) {
-  const buffer = await withDaytonaRetry(() => sandbox.fs.downloadFile(path, 30), {
-    operation: "sandbox.fs.downloadFile.importer",
-    resourceId: path,
-  });
-  return buffer.toString("utf8").slice(0, 20_000);
-}
-
 async function getSandbox(remoteId: string) {
   const daytona = createDaytonaClient();
   return withDaytonaRetry(() => daytona.get(remoteId), {
@@ -1029,17 +826,6 @@ function createDaytonaClient() {
     apiUrl: process.env.DAYTONA_API_URL,
     target: process.env.DAYTONA_TARGET,
   });
-}
-
-function ignorePath(path: string) {
-  return (
-    path.startsWith(".git/") ||
-    path.startsWith("node_modules/") ||
-    path.startsWith("dist/") ||
-    path.startsWith("build/") ||
-    path.startsWith(".next/") ||
-    path.startsWith(".turbo/")
-  );
 }
 
 function readNumberEnv(name: string, fallback: number) {

@@ -218,21 +218,32 @@ describe("rate limits and interactive job guards", () => {
     });
   });
 
-  test("daytona global limiter eventually rejects multi-owner imports without side effects", async () => {
+  test("daytona global limiter eventually rejects multi-owner sandbox activations without side effects", async () => {
+    // Import no longer consumes the Daytona global bucket (it runs purely
+    // against the GitHub API). The remaining Daytona-using surfaces are
+    // `requestSandboxActivation` and `requestSystemDesignGeneration` — this
+    // test exercises the activation path because it is the smallest
+    // mutation that consumes the bucket, with a single in-flight side
+    // effect (the `sandbox_activation` job row) we can assert is absent
+    // when the limit fires.
     const t = createTestConvex();
+
+    const owners: Array<{ ownerTokenIdentifier: string; repositoryId: Id<"repositories"> }> = [];
+    for (let index = 0; index < 80; index += 1) {
+      const ownerTokenIdentifier = `user|daytona-global-${index}`;
+      await seedGithubInstallation(t, ownerTokenIdentifier, index + 10);
+      const { repositoryId } = await createRepositoryFixture(t, ownerTokenIdentifier, `daytona-global-${index}`);
+      owners.push({ ownerTokenIdentifier, repositoryId });
+    }
 
     let successCount = 0;
     let blockedOwner: string | null = null;
     let blockedError: unknown = null;
 
-    for (let index = 0; index < 80; index += 1) {
-      const ownerTokenIdentifier = `user|daytona-global-${index}`;
-      await seedGithubInstallation(t, ownerTokenIdentifier, index + 10);
+    for (const { ownerTokenIdentifier, repositoryId } of owners) {
       const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
       const result = await viewer
-        .mutation(api.repositories.createRepositoryImport, {
-          url: `https://github.com/acme/daytona-global-${index}`,
-        })
+        .mutation(api.repositories.requestSandboxActivation, { repositoryId })
         .catch((caughtError) => caughtError);
 
       if (result instanceof Error) {
@@ -247,12 +258,17 @@ describe("rate limits and interactive job guards", () => {
     expect(successCount).toBeGreaterThan(0);
     expect(blockedOwner).not.toBeNull();
     expectStructuredError(blockedError, "RATE_LIMIT_EXCEEDED", "daytonaRequestsGlobal");
-    expect(await getOwnerImportCounts(t, blockedOwner!)).toEqual({
-      repositories: 0,
-      imports: 0,
-      jobs: 0,
-      workspaces: 0,
-    });
+
+    // Blocked owner must have no `sandbox_activation` job — the limit fires
+    // before the mutation inserts anything.
+    const blockedJobs = await t.run(async (ctx) =>
+      ctx.db
+        .query("jobs")
+        .withIndex("by_ownerTokenIdentifier", (q) => q.eq("ownerTokenIdentifier", blockedOwner!))
+        .filter((q) => q.eq(q.field("kind"), "sandbox_activation"))
+        .collect(),
+    );
+    expect(blockedJobs).toHaveLength(0);
   });
 
   test("stale chat recovery fails the job and assistant message", async () => {

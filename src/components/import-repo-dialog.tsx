@@ -498,13 +498,18 @@ export function ImportRepoDialog({
       });
       setPublicInput("");
       setBranch("");
-      setOpen(false);
+      // Navigate first, close dialog second. `onImported` calls `navigate()`
+      // synchronously, so the route change and the dialog state update batch
+      // into the same React render — the dialog unmounts as part of the
+      // route transition instead of playing its close animation against a
+      // page that's already swapping out.
       onImported(
         result.repositoryId,
         result.defaultThreadId ?? null,
         result.workspaceId,
         result.defaultThreadId ? result.defaultThreadMode : null,
       );
+      setOpen(false);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Import failed.");
     } finally {
@@ -520,13 +525,14 @@ export function ImportRepoDialog({
       const result = await createRepositoryImport({
         url: `https://github.com/${repo.fullName}`,
       });
-      setOpen(false);
+      // See `handleImportByUrl` for why navigation happens before `setOpen(false)`.
       onImported(
         result.repositoryId,
         result.defaultThreadId ?? null,
         result.workspaceId,
         result.defaultThreadId ? result.defaultThreadMode : null,
       );
+      setOpen(false);
     } catch (error) {
       setImportError(error instanceof Error ? error.message : "Import failed.");
     } finally {
