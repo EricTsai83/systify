@@ -118,8 +118,8 @@ export const HeroChat = forwardRef<HTMLDivElement>(function HeroChat(_props, ref
         {/* Wrapped in shadcn `<ScrollArea type="hover">` (Radix primitive)
             so the scrollbar (a) only reveals on hover or while actively
             scrolling — keeping the panel chrome quiet at rest — and (b)
-            paints the thumb in `bg-border`, which is wired to the theme
-            token (`--border`) and therefore re-colors automatically when
+            paints the thumb with the `--scrollbar-thumb` token, which is
+            redefined per theme and therefore re-colors automatically when
             the user toggles light/dark. This replaces the previous
             `scrollbar-themed` class which was referenced but had no CSS
             backing it (so the browser default scrollbar leaked through

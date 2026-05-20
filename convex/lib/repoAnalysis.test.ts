@@ -10,8 +10,8 @@ import {
 /**
  * These helpers are the single source of truth for the four cached
  * boolean fields on `repoFiles` (`isEntryPoint` / `isConfig` /
- * `isImportant` / `language`) and for the heuristic `manifest` and
- * `architecture_overview` artifacts derived from them. The rules ran
+ * `isImportant` / `language`) and for `buildRepositoryManifest`, which
+ * import uses to populate repository metadata. The rules ran
  * untested for months — silent regressions (e.g. the historical
  * `path.endsWith("src/main.")` dead-pattern) only surfaced once we
  * tried to widen ecosystem coverage. The cases here pin each

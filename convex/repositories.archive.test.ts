@@ -378,7 +378,7 @@ describe("write paths reject archived repositories with a clear message", () => 
     await expect(
       viewer.mutation(api.systemDesign.requestSystemDesignGeneration, {
         repositoryId,
-        selections: ["manifest"],
+        selections: ["architecture_overview"],
       }),
     ).rejects.toThrow(/archived/i);
   });

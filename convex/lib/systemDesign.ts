@@ -63,7 +63,6 @@ export async function ensureSystemDesignFolders(
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId: args.repositoryId,
       name: seed.name,
-      pinnedAt: Date.now(),
       systemKey: seed.systemKey,
     });
     result.set(seed.systemKey, created);
@@ -73,15 +72,12 @@ export async function ensureSystemDesignFolders(
 }
 
 /**
- * The 8 artifact kinds that the Library System Design publication can produce.
- * The 2 heuristic kinds (`manifest`, `architecture_overview`) derive from the
- * imported repo snapshot without an LLM call; the 6 LLM-backed kinds read live
- * source via sandbox tools so the doc tracks the current code state. README
- * Summary used to be heuristic but moved to LLM so the output is a real
- * condensation rather than a prefix slice of the README file.
+ * The 7 artifact kinds that the Library System Design publication can produce.
+ * Every kind is LLM-backed: the generator opens a Daytona sandbox and reads
+ * the repository's live source through sandbox tools, so each document tracks
+ * the current code state rather than a stale import snapshot.
  */
 export const SYSTEM_DESIGN_KINDS = [
-  "manifest",
   "readme_summary",
   "architecture_overview",
   "data_model_overview",
@@ -98,12 +94,21 @@ export function isSystemDesignKind(kind: Doc<"artifacts">["kind"]): kind is Syst
 }
 
 /**
- * Convex validator mirroring `SYSTEM_DESIGN_KINDS`. Lives in `lib/` (not
- * `convex/systemDesign.ts`) so `schema.ts` can import it without dragging the
- * mutation module's `lib/rateLimit` dependency into schema evaluation —
- * `process.env` reads in that module are forbidden at schema-eval time.
+ * Convex validator for a System Design kind, used by `schema.ts` for the
+ * `jobs.selections` and `jobs.kindFailures` columns. It is intentionally a
+ * *superset* of the currently-generatable `SYSTEM_DESIGN_KINDS`: the retired
+ * `manifest` literal is retained so historical `jobs` rows that recorded a
+ * `manifest` selection still pass schema validation. New generations never
+ * include `manifest` — `requestSystemDesignGeneration` filters incoming
+ * selections through `isSystemDesignKind`.
+ *
+ * Lives in `lib/` (not `convex/systemDesign.ts`) so `schema.ts` can import it
+ * without dragging the mutation module's `lib/rateLimit` dependency into
+ * schema evaluation — `process.env` reads in that module are forbidden at
+ * schema-eval time.
  */
 export const systemDesignKindValidator = v.union(
+  // Retired: no longer generated. Retained only so historical `jobs` rows validate.
   v.literal("manifest"),
   v.literal("readme_summary"),
   v.literal("architecture_overview"),
@@ -120,7 +125,6 @@ export const systemDesignKindValidator = v.union(
  * after the user has renamed the folder.
  */
 export const SYSTEM_DESIGN_KIND_TO_FOLDER: Record<SystemDesignKind, SystemDesignFolderKey> = {
-  manifest: "overview",
   readme_summary: "overview",
   architecture_overview: "architecture",
   data_model_overview: "data_model",
@@ -131,28 +135,10 @@ export const SYSTEM_DESIGN_KIND_TO_FOLDER: Record<SystemDesignKind, SystemDesign
 };
 
 /**
- * Whether a given kind is generated via a heuristic (no LLM call) or by an
- * LLM-backed sandbox session. Drives the "Free" vs "~1 LLM call" badge in
- * the Generate System Design dialog and the per-kind dispatch branch in the
- * generator action.
- */
-export const SYSTEM_DESIGN_KIND_GENERATOR: Record<SystemDesignKind, "heuristic" | "llm"> = {
-  manifest: "heuristic",
-  readme_summary: "llm",
-  architecture_overview: "heuristic",
-  data_model_overview: "llm",
-  api_surface_overview: "llm",
-  deployment_overview: "llm",
-  security_overview: "llm",
-  operations_overview: "llm",
-};
-
-/**
  * Human-readable titles for each generated artifact. Used as the artifact
  * row's `title` field at creation time.
  */
 export const SYSTEM_DESIGN_KIND_TITLES: Record<SystemDesignKind, string> = {
-  manifest: "Repository Manifest",
   readme_summary: "README Summary",
   architecture_overview: "Architecture Overview",
   data_model_overview: "Data Model Overview",

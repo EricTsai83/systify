@@ -83,6 +83,8 @@ const sandboxRemoteDiscoveryStatus = v.union(
 );
 
 const artifactKind = v.union(
+  // Retired System Design kind: no longer generated. Retained so historical
+  // `artifacts` rows created before its removal still pass schema validation.
   v.literal("manifest"),
   v.literal("readme_summary"),
   v.literal("architecture_overview"),
@@ -550,13 +552,13 @@ export default defineSchema({
    *     `by_repositoryId_and_parentFolderId` index lets the navigator pull a
    *     single level on demand and build the tree client-side.
    *   - `pinnedAt` lets the user pin folders to the top of the navigator,
-   *     independent of alphabetical ordering. Seeded System Design folders
-   *     are pinned by default at insert time; user-created folders start
-   *     unpinned and can be toggled via the kebab menu. The navigator
-   *     currently treats the field as a boolean (presence vs absence) and
-   *     sorts pinned siblings alphabetically — the timestamp value is
-   *     stored to mirror `threads.pinnedAt` so a future move to
-   *     pinned-recent-first ordering can land without a schema change.
+   *     independent of alphabetical ordering. Every folder — seeded System
+   *     Design folders included — starts unpinned; pinning is purely a
+   *     user action toggled via the kebab menu. The navigator currently
+   *     treats the field as a boolean (presence vs absence) and sorts
+   *     pinned siblings alphabetically — the timestamp value is stored to
+   *     mirror `threads.pinnedAt` so a future move to pinned-recent-first
+   *     ordering can land without a schema change.
    */
   artifactFolders: defineTable({
     ownerTokenIdentifier: v.string(),

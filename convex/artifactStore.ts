@@ -217,6 +217,7 @@ async function listByRepositoryAndKindInternal(
 }
 
 const artifactKindValidator = v.union(
+  // Retired: see `artifactKind` in `schema.ts`. Kept in sync for historical rows.
   v.literal("manifest"),
   v.literal("readme_summary"),
   v.literal("architecture_overview"),

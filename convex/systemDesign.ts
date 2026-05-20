@@ -6,7 +6,7 @@ import { requireViewerIdentity } from "./lib/auth";
 import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
 import {
   ensureSystemDesignFolders,
-  SYSTEM_DESIGN_KIND_GENERATOR,
+  isSystemDesignKind,
   SYSTEM_DESIGN_KIND_TITLES,
   SYSTEM_DESIGN_KIND_TO_FOLDER,
   systemDesignKindValidator,
@@ -32,10 +32,6 @@ const FAILURE_MODE_REQUESTED_COMMAND_PREFIX = "failure_mode_analysis:";
 
 function isFailureModeJob(job: Doc<"jobs">): boolean {
   return job.requestedCommand?.startsWith(FAILURE_MODE_REQUESTED_COMMAND_PREFIX) ?? false;
-}
-
-function hasLlmSelection(selections: ReadonlyArray<SystemDesignKind>): boolean {
-  return selections.some((kind) => SYSTEM_DESIGN_KIND_GENERATOR[kind] === "llm");
 }
 
 /**
@@ -64,23 +60,23 @@ export const requestSystemDesignGeneration = mutation({
       ownerTokenIdentifier: identity.tokenIdentifier,
     });
 
-    if (args.selections.length === 0) {
+    // Drop any non-generatable kind (e.g. the retired `manifest`) a stale
+    // client might still send, then dedup. The arg validator accepts the
+    // legacy literal for historical-row compatibility; the generator does not.
+    const uniqueSelections = Array.from(new Set(args.selections)).filter(isSystemDesignKind);
+    if (uniqueSelections.length === 0) {
       throw new Error("Select at least one document to generate.");
     }
 
-    const uniqueSelections = Array.from(new Set(args.selections)) as SystemDesignKind[];
-    const requiresSandbox = hasLlmSelection(uniqueSelections);
     const now = Date.now();
 
-    // The action now owns sandbox readiness via `ensureSandboxReady`, so the
-    // mutation no longer rejects when no sandbox is ready. The repository's
-    // current `latestSandboxId` is still attached to the job row so audit
-    // surfaces can correlate the request with whatever sandbox existed at
-    // queue time; if `ensureSandboxReady` provisions a new one mid-flight,
-    // the action patches the new row's id onto downstream artifact records.
-    const sandboxId: Id<"sandboxes"> | undefined = requiresSandbox
-      ? (repository.latestSandboxId ?? undefined)
-      : undefined;
+    // Every System Design kind is LLM-backed and reads live source through a
+    // sandbox, so the action always runs `ensureSandboxReady`. The repository's
+    // current `latestSandboxId` is attached to the job row so audit surfaces
+    // can correlate the request with whatever sandbox existed at queue time;
+    // if `ensureSandboxReady` provisions a new one mid-flight, the action
+    // patches the new row's id onto downstream artifact records.
+    const sandboxId: Id<"sandboxes"> | undefined = repository.latestSandboxId ?? undefined;
 
     // Library System Design generation and Failure Mode Analysis both ride the
     // `system_design` job kind. FMA jobs are distinguished by a
@@ -93,9 +89,7 @@ export const requestSystemDesignGeneration = mutation({
     }
 
     await consumeSystemDesignRateLimit(ctx, identity.tokenIdentifier);
-    if (requiresSandbox) {
-      await consumeDaytonaGlobalRateLimit(ctx);
-    }
+    await consumeDaytonaGlobalRateLimit(ctx);
 
     await ensureSystemDesignFolders(ctx, {
       repositoryId: repository._id,
@@ -464,27 +458,6 @@ export const getGenerationContext = internalQuery({
  * row through the standard `createArtifactInMutation` path so chunking +
  * indexing kick in automatically.
  */
-/**
- * Read every `repoFiles` row for the repo. The heuristic generators in
- * `systemDesignNode.ts` consume this list to recompute languages,
- * entrypoints, and important-file annotations without re-cloning the repo.
- *
- * Bounded by `take(2000)` because Convex queries cannot collect unbounded
- * rows; 2000 is well above the typical small-to-medium repo file count
- * and below the per-transaction read cap. Repositories larger than that
- * will silently lose the tail — acceptable for a heuristic doc, but flagged
- * via a `logWarn` in the action when truncation is detected.
- */
-export const listRepoFilesForHeuristics = internalQuery({
-  args: { repositoryId: v.id("repositories") },
-  handler: async (ctx, args): Promise<Doc<"repoFiles">[]> => {
-    return await ctx.db
-      .query("repoFiles")
-      .withIndex("by_repositoryId_and_path", (q) => q.eq("repositoryId", args.repositoryId))
-      .take(2000);
-  },
-});
-
 export const persistGeneratedArtifact = internalMutation({
   args: {
     repositoryId: v.id("repositories"),

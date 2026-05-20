@@ -9,6 +9,9 @@ import { Progress } from "@/components/ui/progress";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
 
+// Mirrors the `systemDesignKindValidator` union persisted on `jobs.selections`
+// and `jobs.kindFailures`. `manifest` is retired — no longer generatable — but
+// kept here so a historical job row that referenced it still renders a title.
 type SystemDesignKind =
   | "manifest"
   | "readme_summary"
