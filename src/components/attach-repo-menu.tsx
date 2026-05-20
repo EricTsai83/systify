@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useMutation } from "convex/react";
-import { CaretDownIcon, CircleNotchIcon, GlobeIcon, LinkIcon, LockIcon, XIcon } from "@phosphor-icons/react";
+import { CaretDownIcon, GlobeIcon, LinkIcon, LockIcon, XIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Spinner } from "@/components/ui/spinner";
 import { toUserErrorMessage } from "@/lib/errors";
 import type { RepositoryId, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
 
@@ -95,7 +96,7 @@ export function AttachRepoMenu({
             <span className="font-medium">Attach repository</span>
             {isPending ? (
               <span className="inline-flex items-center gap-1 text-muted-foreground" aria-live="polite">
-                <CircleNotchIcon size={11} className="animate-spin" />
+                <Spinner size={11} />
                 <span>Attaching…</span>
               </span>
             ) : null}

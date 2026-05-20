@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { CircleIcon, CircleNotchIcon, CircleHalfIcon } from "@phosphor-icons/react";
+import { CircleIcon, CircleHalfIcon } from "@phosphor-icons/react";
 import type { RepositoryId } from "@/lib/types";
 import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
@@ -79,7 +80,7 @@ export function SandboxActivityPill({ repositoryId }: { repositoryId: Repository
     const stage = status.activeJob?.stage ?? "Activating live source…";
     return (
       <div className="flex items-center gap-2 rounded-md border border-border/50 bg-blue-500/10 px-3 py-1.5 text-xs">
-        <CircleNotchIcon size={12} weight="bold" className="shrink-0 animate-spin text-blue-500" />
+        <Spinner size={12} className="shrink-0 text-blue-500" />
         <span className="min-w-0 flex-1 truncate text-blue-700 dark:text-blue-300">{stage}</span>
         <span className="shrink-0 tabular-nums text-[11px] text-blue-700/80 dark:text-blue-300/80">{progressPct}%</span>
       </div>

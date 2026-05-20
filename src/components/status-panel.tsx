@@ -2,7 +2,6 @@ import { memo, useMemo, type ReactNode } from "react";
 import {
   ArrowsClockwiseIcon,
   CheckCircleIcon,
-  CircleNotchIcon,
   ClockCounterClockwiseIcon,
   DatabaseIcon,
   EyeIcon,
@@ -14,6 +13,7 @@ import type { Doc } from "../../convex/_generated/dataModel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Spinner } from "@/components/ui/spinner";
 import { useRelativeTime, useTimeUntil } from "@/hooks/use-relative-time";
 import type { ArtifactId, SandboxModeStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -126,7 +126,7 @@ export function StatusPanel({
                   onClick={onSync}
                   className="w-full"
                 >
-                  <ArrowsClockwiseIcon weight="bold" className={cn(repositoryBusy && "animate-spin")} />
+                  <ArrowsClockwiseIcon weight="bold" className={cn(repositoryBusy && "motion-safe:animate-spin")} />
                   {repositoryBusy
                     ? "Syncing…"
                     : hasRemoteUpdates
@@ -290,7 +290,7 @@ const ActivityRow = memo(function ActivityRow({
         {operation.tone === "error" ? (
           <WarningCircleIcon size={11} weight="bold" />
         ) : operation.tone === "active" ? (
-          <CircleNotchIcon size={11} weight="bold" className="animate-spin" />
+          <Spinner size={11} />
         ) : (
           <CheckCircleIcon size={11} weight="bold" />
         )}

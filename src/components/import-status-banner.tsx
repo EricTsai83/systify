@@ -66,7 +66,7 @@ export function ImportStatusBanner({
             disabled={isSyncing}
             onClick={onRetry}
           >
-            <ArrowsClockwiseIcon weight="bold" className={cn("size-3", isSyncing && "animate-spin")} />
+            <ArrowsClockwiseIcon weight="bold" className={cn("size-3", isSyncing && "motion-safe:animate-spin")} />
             {isSyncing ? "Retrying…" : "Retry"}
           </Button>
         </AlertAction>
@@ -78,7 +78,7 @@ export function ImportStatusBanner({
   const stage = importJob?.stage ?? "queued";
   const progress = importJob?.progress ?? 0;
   const hasRealProgress = progress >= 0.5;
-  const progressValue = hasRealProgress ? Math.round(progress * 100) : 25;
+  const progressValue = hasRealProgress ? Math.round(progress * 100) : 0;
 
   return (
     <div className="border-b border-border/50">
@@ -92,10 +92,7 @@ export function ImportStatusBanner({
       <Progress
         value={progressValue}
         aria-valuenow={hasRealProgress ? progressValue : undefined}
-        className={cn(
-          "h-0.5 bg-border/30",
-          !hasRealProgress && "[&_[data-slot=progress-indicator]]:animate-indeterminate",
-        )}
+        className="h-0.5 bg-border/30"
       />
     </div>
   );

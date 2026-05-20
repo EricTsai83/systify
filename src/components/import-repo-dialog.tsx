@@ -5,7 +5,6 @@ import {
   LockIcon,
   MagnifyingGlassIcon,
   ShieldCheckIcon,
-  CircleNotchIcon,
   CheckCircleIcon,
   ArrowsClockwiseIcon,
   GithubLogoIcon,
@@ -18,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 // Tabs removed — connected state uses a single unified repo list (Vercel-style).
 import {
   Dialog,
@@ -136,7 +136,7 @@ function RepoRow({
       {/* Action area: status badge or import/sync button */}
       {isRunning ? (
         <Badge variant="muted" className="shrink-0 gap-1">
-          <CircleNotchIcon size={12} className="animate-spin" />
+          <Spinner size={12} />
           {runningLabel}
         </Badge>
       ) : hasCompletedImport ? (
@@ -561,7 +561,7 @@ export function ImportRepoDialog({
               /* ---- Waiting for popup authorization ---- */
               <>
                 <div className="flex flex-col items-center gap-3 text-center">
-                  <CircleNotchIcon size={28} className="animate-spin text-primary" />
+                  <Spinner size={28} className="text-primary" />
                   <p className="text-sm font-medium text-foreground">Waiting for GitHub&hellip;</p>
                   <p className="max-w-xs text-xs text-muted-foreground">Complete the setup in the popup window.</p>
                 </div>
@@ -620,7 +620,7 @@ export function ImportRepoDialog({
                 >
                   {isConnectingGitHub ? (
                     <>
-                      <CircleNotchIcon size={15} className="animate-spin" />
+                      <Spinner size={15} />
                       Connecting…
                     </>
                   ) : (
@@ -748,7 +748,7 @@ export function ImportRepoDialog({
                         <>
                           {isSearching && !searchResults ? (
                             <div className="flex items-center justify-center gap-2 py-6">
-                              <CircleNotchIcon size={16} className="animate-spin text-muted-foreground" />
+                              <Spinner size={16} className="text-muted-foreground" />
                               <p className="text-sm text-muted-foreground">Searching GitHub…</p>
                             </div>
                           ) : searchError ? (
@@ -757,7 +757,7 @@ export function ImportRepoDialog({
                             <>
                               {isSearching && (
                                 <div className="flex items-center justify-center gap-1.5 border-b border-border/50 py-2.5">
-                                  <CircleNotchIcon size={12} className="animate-spin text-muted-foreground" />
+                                  <Spinner size={12} className="text-muted-foreground" />
                                   <span className="text-[11px] text-muted-foreground">Updating…</span>
                                 </div>
                               )}

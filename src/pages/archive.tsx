@@ -6,7 +6,6 @@ import {
   ArrowCounterClockwiseIcon,
   CaretLeftIcon,
   CaretRightIcon,
-  CircleNotchIcon,
   ClockCounterClockwiseIcon,
   MagnifyingGlassIcon,
   TrashIcon,
@@ -20,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Spinner } from "@/components/ui/spinner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
@@ -224,7 +224,7 @@ function ArchiveList({
       <div className="mt-4 flex items-center justify-center" aria-live="polite">
         {isLoadingMore ? (
           <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-            <CircleNotchIcon size={14} weight="bold" className="motion-safe:animate-spin" />
+            <Spinner size={14} />
             Loading more
           </div>
         ) : isExhausted && archived.length > INITIAL_PAGE_SIZE ? (
@@ -265,7 +265,7 @@ function SearchPendingState() {
   return (
     <div className="mt-4 flex items-center justify-center border border-dashed border-border bg-card/40 px-6 py-10 text-center">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <CircleNotchIcon size={14} weight="bold" className="motion-safe:animate-spin" />
+        <Spinner size={14} />
         Searching archived repositories
       </div>
     </div>

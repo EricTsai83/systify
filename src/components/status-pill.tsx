@@ -1,7 +1,8 @@
 import { useMemo, type ButtonHTMLAttributes, type Ref } from "react";
-import { ArrowsClockwiseIcon, CircleNotchIcon, SparkleIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, SparkleIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
+import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useRelativeTime } from "@/hooks/use-relative-time";
 import { cn } from "@/lib/utils";
@@ -122,7 +123,7 @@ function PillIcon({ icon }: { icon: PillState["icon"] }) {
   if (!icon) return null;
   switch (icon) {
     case "spinner":
-      return <CircleNotchIcon size={12} weight="bold" className="animate-spin" />;
+      return <Spinner size={12} />;
     case "alert":
       return <WarningCircleIcon size={12} weight="bold" />;
     case "sparkle":

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { CircleNotchIcon, FileTextIcon, SparkleIcon } from "@phosphor-icons/react";
+import { FileTextIcon, SparkleIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ui/spinner";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
 import type { RepositoryId } from "@/lib/types";
@@ -248,7 +249,7 @@ export function GenerateSystemDesignDialog({
             >
               {isSubmitting ? (
                 <>
-                  <CircleNotchIcon size={14} className="mr-2 animate-spin" weight="bold" />
+                  <Spinner size={14} className="mr-2" />
                   Starting…
                 </>
               ) : (
