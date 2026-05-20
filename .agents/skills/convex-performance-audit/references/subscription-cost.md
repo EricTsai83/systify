@@ -192,9 +192,9 @@ const heartbeats = defineTable({
 });
 ```
 
-Because queries that only need `name` and `email` no longer re-run on every
-heartbeat, components can fetch the heartbeat document explicitly only when
-online status is required.
+Queries that only need `name` and `email` no longer re-run on every heartbeat.
+Queries that actually need online status fetch the heartbeat document
+explicitly.
 
 For an even further optimization, if you only need a coarse online/offline
 boolean rather than the exact `lastSeen` timestamp, add a separate presence
