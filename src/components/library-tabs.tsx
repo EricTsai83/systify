@@ -148,7 +148,7 @@ export const LibraryTabs = memo(function LibraryTabs({
                     }
                   }}
                   className={cn(
-                    "group flex max-w-[220px] cursor-pointer items-center gap-1.5 rounded-t-md border-b-2 px-2.5 py-1.5 text-xs transition-colors",
+                    "group flex max-w-[220px] cursor-pointer items-center gap-1.5 rounded-t-md border-t-2 px-2.5 py-1.5 text-xs transition-colors",
                     isActive
                       ? "border-primary bg-muted/60 text-foreground"
                       : "border-transparent bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground",
@@ -174,7 +174,7 @@ export const LibraryTabs = memo(function LibraryTabs({
             );
           })}
         </ul>
-        <ScrollBar orientation="horizontal" />
+        <ScrollBar orientation="horizontal" className="data-[orientation=horizontal]:h-1.5" />
       </ScrollArea>
       <div
         aria-hidden

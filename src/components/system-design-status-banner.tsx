@@ -8,8 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
-import { cn } from "@/lib/utils";
 
+// Mirrors the `systemDesignKindValidator` union persisted on `jobs.selections`
+// and `jobs.kindFailures`. `manifest` is retired — no longer generatable — but
+// kept here so a historical job row that referenced it still renders a title.
 type SystemDesignKind =
   | "manifest"
   | "readme_summary"
@@ -95,12 +97,12 @@ function ActiveBanner({
         : (stage ?? "Generating…");
   const progressValue = progress ?? 0;
   const hasRealProgress = status === "running" && progressValue > 0;
-  const renderedValue = hasRealProgress ? Math.round(progressValue * 100) : 25;
+  const renderedValue = hasRealProgress ? Math.round(progressValue * 100) : 0;
 
   return (
     <div className="border-b border-border/50">
       <div className="flex items-center gap-2 px-4 py-1.5 md:px-6">
-        <SparkleIcon size={14} weight="bold" className="shrink-0 animate-spin text-blue-500" />
+        <SparkleIcon size={14} weight="bold" className="shrink-0 motion-safe:animate-spin text-blue-500" />
         <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{label}</p>
         {hasRealProgress ? (
           <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">{renderedValue}%</span>
@@ -110,10 +112,7 @@ function ActiveBanner({
       <Progress
         value={renderedValue}
         aria-valuenow={hasRealProgress ? renderedValue : undefined}
-        className={cn(
-          "h-0.5 bg-border/30",
-          !hasRealProgress && "[&_[data-slot=progress-indicator]]:animate-indeterminate",
-        )}
+        className="h-0.5 bg-border/30"
       />
     </div>
   );

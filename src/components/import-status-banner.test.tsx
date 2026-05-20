@@ -117,7 +117,7 @@ describe("ImportStatusBanner stage labels", () => {
 });
 
 describe("ImportStatusBanner progress", () => {
-  test("shows indeterminate animation when progress < 0.5", () => {
+  test("shows indeterminate progress state when progress < 0.5", () => {
     renderBanner({
       importStatus: "running",
       jobs: [makeJob({ stage: "fetching_repository", progress: 0.1 })],

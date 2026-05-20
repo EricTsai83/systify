@@ -7,6 +7,7 @@ import { MermaidRenderer } from "@/components/mermaid-renderer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { formatRelativeTime } from "@/lib/format";
 import { formatArtifactKind } from "@/lib/operations";
@@ -170,11 +171,11 @@ export function LibraryBreadcrumb({ folderName, title }: { folderName: string | 
 function EditorSkeleton({ className }: { className?: string }) {
   return (
     <div className={cn("flex flex-1 flex-col gap-3 px-6 py-8", className)}>
-      <div className="h-7 w-2/3 animate-pulse rounded bg-muted/60" />
-      <div className="h-4 w-1/3 animate-pulse rounded bg-muted/60" />
+      <Skeleton className="h-7 w-2/3" />
+      <Skeleton className="h-4 w-1/3" />
       <div className="mt-4 flex flex-col gap-2">
         {Array.from({ length: 6 }).map((_, idx) => (
-          <div key={idx} className="h-3 w-full animate-pulse rounded bg-muted/40" />
+          <Skeleton key={idx} className="h-3 w-full" />
         ))}
       </div>
     </div>

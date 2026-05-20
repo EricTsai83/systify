@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
@@ -88,8 +89,8 @@ export function FolderOverview({ folderId, onSelectArtifact, onAfterDelete, clas
   if (folder === undefined || artifacts === undefined) {
     return (
       <div className={cn("flex flex-col gap-3 p-4", className)}>
-        <div className="h-6 w-40 animate-pulse rounded bg-muted/60" />
-        <div className="h-4 w-full animate-pulse rounded bg-muted/60" />
+        <Skeleton className="h-6 w-40" />
+        <Skeleton className="h-4 w-full" />
       </div>
     );
   }

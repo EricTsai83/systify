@@ -1,19 +1,13 @@
 import { memo, useCallback, useState, type ReactNode } from "react";
 import { useMutation } from "convex/react";
-import {
-  CaretDownIcon,
-  CircleNotchIcon,
-  FileTextIcon,
-  GraphIcon,
-  WarningCircleIcon,
-  XIcon,
-} from "@phosphor-icons/react";
+import { CaretDownIcon, FileTextIcon, GraphIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
+import { Spinner } from "@/components/ui/spinner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FolderNavigator } from "@/components/folder-navigator";
 import { FolderPicker } from "@/components/folder-picker";
@@ -371,7 +365,7 @@ const ActionRow = memo(function ActionRow({
       >
         {pending ? (
           <>
-            <CircleNotchIcon size={14} className="animate-spin" weight="bold" />
+            <Spinner size={14} />
             {pendingLabel}
           </>
         ) : (

@@ -27,23 +27,19 @@ afterEach(() => {
 const repositoryId = "repo_1" as RepositoryId;
 
 describe("GenerateSystemDesignDialog", () => {
-  test("renders dialog with all checkboxes in default state", () => {
+  test("checks every document by default", () => {
     useQueryMock.mockReturnValue(null);
     useMutationMock.mockReturnValue(vi.fn());
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // Check default selected items are checked (heuristic kinds)
-    const manifestCheckbox = screen.getByRole("checkbox", { name: /Repository Manifest/i });
-    const architectureCheckbox = screen.getByRole("checkbox", { name: /Architecture Overview/i });
-    expect(manifestCheckbox).toBeChecked();
-    expect(architectureCheckbox).toBeChecked();
-
-    // Check that LLM-backed items are unchecked by default
-    const readmeCheckbox = screen.getByRole("checkbox", { name: /README Summary/i });
-    const dataModelCheckbox = screen.getByRole("checkbox", { name: /Data Model Overview/i });
-    expect(readmeCheckbox).not.toBeChecked();
-    expect(dataModelCheckbox).not.toBeChecked();
+    // The publication opts the user in to the full set — all seven documents
+    // start checked.
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes).toHaveLength(7);
+    for (const checkbox of checkboxes) {
+      expect(checkbox).toBeChecked();
+    }
   });
 
   test("toggles selection when clicking checkboxes", () => {
@@ -53,36 +49,30 @@ describe("GenerateSystemDesignDialog", () => {
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
     const dataModelCheckbox = screen.getByRole("checkbox", { name: /Data Model Overview/i });
-    expect(dataModelCheckbox).not.toBeChecked();
-
-    fireEvent.click(dataModelCheckbox);
     expect(dataModelCheckbox).toBeChecked();
 
     fireEvent.click(dataModelCheckbox);
     expect(dataModelCheckbox).not.toBeChecked();
+
+    fireEvent.click(dataModelCheckbox);
+    expect(dataModelCheckbox).toBeChecked();
   });
 
-  test("updates counts when selections change", async () => {
+  test("updates the selected count when selections change", async () => {
     useQueryMock.mockReturnValue(null);
     useMutationMock.mockReturnValue(vi.fn());
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // Default: 2 free items are selected (manifest, architecture_overview)
-    expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 2 total (2 free, 0 LLM).");
+    // Default: all 7 documents selected.
+    expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 7 of 7 documents.");
 
-    // Toggle a free item off, toggle two LLM items on
-    const manifestCheckbox = screen.getByRole("checkbox", { name: /Repository Manifest/i });
-    const readmeCheckbox = screen.getByRole("checkbox", { name: /README Summary/i });
-    const dataModelCheckbox = screen.getByRole("checkbox", { name: /Data Model Overview/i });
+    // Toggle two documents off.
+    fireEvent.click(screen.getByRole("checkbox", { name: /README Summary/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /Security Overview/i }));
 
-    fireEvent.click(manifestCheckbox);
-    fireEvent.click(readmeCheckbox);
-    fireEvent.click(dataModelCheckbox);
-
-    // Now: 1 free + 2 llm
     await waitFor(() => {
-      expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 3 total (1 free, 2 LLM).");
+      expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 5 of 7 documents.");
     });
   });
 
@@ -107,7 +97,7 @@ describe("GenerateSystemDesignDialog", () => {
     expect(generateBtn).toBeDisabled();
   });
 
-  test("submits successfully and closes dialog on success", async () => {
+  test("submits the full default selection and closes dialog on success", async () => {
     useQueryMock.mockReturnValue(null);
     const requestGeneration = vi.fn().mockResolvedValue({ jobId: "job_1" });
     useMutationMock.mockReturnValue(requestGeneration);
@@ -119,12 +109,18 @@ describe("GenerateSystemDesignDialog", () => {
     fireEvent.click(generateBtn);
 
     await waitFor(() => {
-      expect(requestGeneration).toHaveBeenCalledWith(
-        expect.objectContaining({
-          repositoryId,
-          selections: expect.arrayContaining(["manifest", "architecture_overview"]),
-        }),
-      );
+      expect(requestGeneration).toHaveBeenCalledWith({
+        repositoryId,
+        selections: [
+          "readme_summary",
+          "architecture_overview",
+          "data_model_overview",
+          "api_surface_overview",
+          "deployment_overview",
+          "security_overview",
+          "operations_overview",
+        ],
+      });
       expect(onOpenChange).toHaveBeenCalledWith(false);
     });
   });
@@ -173,18 +169,16 @@ describe("GenerateSystemDesignDialog", () => {
     expect(screen.queryByText(/Network error/i)).not.toBeInTheDocument();
   });
 
-  test("disables submit button when no items are selected", async () => {
+  test("disables submit button when no items are selected", () => {
     useQueryMock.mockReturnValue(null);
     useMutationMock.mockReturnValue(vi.fn());
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // Uncheck all default items (only heuristic kinds are default-checked)
-    const manifestCheckbox = screen.getByRole("checkbox", { name: /Repository Manifest/i });
-    const architectureCheckbox = screen.getByRole("checkbox", { name: /Architecture Overview/i });
-
-    fireEvent.click(manifestCheckbox);
-    fireEvent.click(architectureCheckbox);
+    // Uncheck every document.
+    for (const checkbox of screen.getAllByRole("checkbox")) {
+      fireEvent.click(checkbox);
+    }
 
     // Generate button should be disabled
     const generateBtn = screen.getByRole("button", { name: /Generate selected/i });

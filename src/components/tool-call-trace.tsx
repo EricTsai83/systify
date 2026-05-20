@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "convex/react";
-import { CaretDownIcon, SpinnerGapIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { CaretDownIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 /**
@@ -204,7 +205,7 @@ export function ToolCallTrace({ messageId, persistedToolCalls, isStreaming }: To
           data-testid="tool-call-ticker"
           aria-live="polite"
         >
-          <SpinnerGapIcon size={14} className="animate-spin shrink-0" />
+          <Spinner size={14} className="shrink-0" />
           <span className="truncate">{tickerLabel(runningTool)}…</span>
         </div>
       ) : null}
@@ -256,7 +257,7 @@ function ToolCallEntry({ tool }: { tool: NormalizedToolCall }) {
           {path ? <span className="truncate text-muted-foreground">{path}</span> : null}
         </div>
         <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-          {tool.state === "running" ? <SpinnerGapIcon size={11} className="animate-spin" /> : null}
+          {tool.state === "running" ? <Spinner size={11} /> : null}
           {tool.state === "errored" ? <WarningCircleIcon size={11} weight="bold" className="text-destructive" /> : null}
           {tool.state !== "running" ? <span>{formatDuration(durationMs)}</span> : null}
         </div>

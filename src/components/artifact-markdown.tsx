@@ -4,8 +4,9 @@ import { cn } from "@/lib/utils";
 
 /**
  * Artifact bodies wrap content in Radix `<ScrollArea>` so the vertical
- * thumb is a real DOM element styled with `bg-border` — it re-colors with
- * the theme through the same token cascade as every other surface.
+ * thumb is a real DOM element painted with the `--scrollbar-thumb` token
+ * — it re-colors with the theme through the same token cascade as every
+ * other surface.
  *
  * Native `::-webkit-scrollbar-thumb` was the previous approach but Chromium
  * caches the `var()` lookup inside that pseudo against the document root

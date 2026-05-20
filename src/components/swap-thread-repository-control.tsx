@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation } from "convex/react";
-import { ArrowsLeftRightIcon, CircleNotchIcon } from "@phosphor-icons/react";
+import { ArrowsLeftRightIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Spinner } from "@/components/ui/spinner";
 import { toUserErrorMessage } from "@/lib/errors";
 import type { RepositoryId, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
 import { toast } from "sonner";
@@ -142,7 +143,7 @@ export function SwapThreadRepositoryControl({
             >
               {pending ? (
                 <>
-                  <CircleNotchIcon className="size-4 animate-spin" aria-hidden /> Swapping…
+                  <Spinner size={16} /> Swapping…
                 </>
               ) : (
                 "Confirm swap"

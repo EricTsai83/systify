@@ -222,56 +222,6 @@ export function createChunkRecords(snapshot: RepositorySnapshot): ChunkRecord[] 
   return records.slice(0, 60);
 }
 
-export function createManifestArtifactMarkdown(manifest: RepositoryManifest) {
-  const lines = [
-    "# Repository Manifest",
-    "",
-    `- Languages: ${manifest.detectedLanguages.join(", ") || "Unknown"}`,
-    `- Package managers: ${manifest.packageManagers.join(", ") || "Unknown"}`,
-    "",
-    "## Likely Entrypoints",
-    manifest.entrypoints.length > 0
-      ? manifest.entrypoints.map((path) => `- \`${path}\``).join("\n")
-      : "- None detected",
-    "",
-    "## Important Files",
-    manifest.importantFiles.length > 0
-      ? manifest.importantFiles.map((path) => `- \`${path}\``).join("\n")
-      : "- No important files detected yet",
-  ];
-
-  return lines.join("\n");
-}
-
-export function createArchitectureArtifactMarkdown(manifest: RepositoryManifest, snapshot: RepositorySnapshot) {
-  const importantFiles = snapshot.files
-    .filter((file) => file.isImportant && file.fileType === "file")
-    .map((file) => file.path)
-    .slice(0, 12);
-
-  const lines = [
-    "# Architecture Overview",
-    "",
-    "Architecture overview generated from repository layout.",
-    "",
-    manifest.entrypoints.length > 0
-      ? `Primary execution candidates: ${manifest.entrypoints.map((path) => `\`${path}\``).join(", ")}.`
-      : "Primary execution candidates were not detected automatically.",
-    "",
-    "## Files Worth Reading First",
-    importantFiles.length > 0
-      ? importantFiles.map((path) => `- \`${path}\``).join("\n")
-      : "- No high-signal files found yet.",
-    "",
-    "## Suggested Analysis Flow",
-    "- Read the README and top-level config files.",
-    "- Inspect entrypoints to locate the application boundary.",
-    "- Follow framework-specific folders to map data flow and API surface.",
-  ];
-
-  return lines.join("\n");
-}
-
 export function detectPackageManagers(snapshot: RepositorySnapshot) {
   const paths = new Set(snapshot.files.map((file) => file.path));
   const managers: string[] = [];

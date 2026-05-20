@@ -4,50 +4,39 @@ import { openai } from "@ai-sdk/openai";
 import { generateText, stepCountIs } from "ai";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import type { Doc, Id } from "./_generated/dataModel";
-import type { ActionCtx } from "./_generated/server";
+import type { Doc } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
 import { createSandboxTools } from "./chat/sandboxTools";
 import { resolveModelForMode } from "./chat/modelSelection";
 import { getSandboxFsClient } from "./daytona";
 import { ensureSandboxReady, SandboxPreparationError, type SandboxPreparationStage } from "./lib/sandboxLiveness";
-import {
-  buildRepositoryManifest,
-  createArchitectureArtifactMarkdown,
-  createManifestArtifactMarkdown,
-  type RepositorySnapshot,
-} from "./lib/repoAnalysis";
 import { logErrorWithId, logInfo, logWarn } from "./lib/observability";
-import { systemDesignKindValidator, type SystemDesignKind } from "./lib/systemDesign";
+import {
+  SYSTEM_DESIGN_KIND_TITLES,
+  isSystemDesignKind,
+  systemDesignKindValidator,
+  type SystemDesignKind,
+} from "./lib/systemDesign";
 
 const SYSTEM_DESIGN_STEP_BUDGET = 20;
-
-const HEURISTIC_FILES_TAKE_LIMIT = 2000;
-
-type HeuristicKind = Extract<SystemDesignKind, "manifest" | "architecture_overview">;
-
-function isHeuristicKind(kind: SystemDesignKind): kind is HeuristicKind {
-  return kind === "manifest" || kind === "architecture_overview";
-}
 
 /**
  * Library System Design generator.
  *
- * Concurrency model:
- *   - Heuristic kinds (`manifest` / `architecture_overview`) derive from
- *     imported `repoFiles` rows and only touch Convex. They run concurrently
- *     against the shared snapshot.
- *   - LLM kinds (`readme_summary` + `*_overview`) each spin a `generateText`
- *     call against the sandbox-backed model with the same `read_file` /
- *     `list_dir` / `run_shell` tool factory the chat-sandbox path uses. They
- *     run serially to honour the per-sandbox tool budget and the OpenAI rate
- *     limit; the job lease is refreshed before each one so a long publication
- *     does not trip the stale-recovery sweep.
+ * Every kind is LLM-backed: the action prepares a Daytona sandbox once via
+ * `ensureSandboxReady`, then runs one `generateText` call per selected kind
+ * against the sandbox-backed model with the same `read_file` / `list_dir` /
+ * `run_shell` tool factory the chat-sandbox path uses. Kinds run serially to
+ * honour the per-sandbox tool budget and the OpenAI rate limit; the job lease
+ * is refreshed before each one so a long publication (e.g. all seven kinds
+ * with high step budgets) does not trip the stale-recovery sweep while the
+ * action is still making progress.
  *
- * The two passes run in parallel so a long LLM run does not gate the cheap
- * heuristic publication. Per-kind failures are isolated: the catch logs an
- * errorId and the next kind continues. Progress flows back through
- * `updateGenerationProgress` after every kind completes (success or fail).
+ * Per-kind failures are isolated: the catch logs an errorId, records a
+ * structured `kindFailures` entry, and the next kind continues. Progress
+ * flows back through `updateGenerationProgress` after every kind completes
+ * (success or fail). If sandbox preparation fails up front the whole run is
+ * failed with the structured `userFacingMessage` and no kinds run.
  */
 export const runSystemDesignGeneration = internalAction({
   args: {
@@ -78,92 +67,86 @@ export const runSystemDesignGeneration = internalAction({
       return;
     }
 
-    const selections = args.selections as ReadonlyArray<SystemDesignKind>;
-    const heuristicKinds = selections.filter(isHeuristicKind);
-    const llmKinds = selections.filter(
-      (kind): kind is Exclude<SystemDesignKind, HeuristicKind> => !isHeuristicKind(kind),
-    );
+    const selections = args.selections.filter(isSystemDesignKind);
+    const totalCount = selections.length;
 
-    // Reach the LLM path only after `ensureSandboxReady` has confirmed live
-    // access to the repository. On failure the action records a job-level
-    // failure (no heuristic kinds run either, because the user requested
-    // them together and the banner copy reads as "this run failed") and
-    // surfaces the structured `userFacingMessage` to the banner.
-    let liveSandbox: Doc<"sandboxes"> | null = context.activeSandbox;
-    if (llmKinds.length > 0) {
-      const stageLabel: Record<SandboxPreparationStage, string> = {
-        probing: "Preparing environment for your request…",
-        waking: "Waking up your repository workspace…",
-        provisioning: "Setting up the repository workspace…",
-        cloning: "Cloning repository…",
-        polling: "Preparing environment for your request…",
-      };
-      try {
-        const prepared = await ensureSandboxReady(
-          ctx,
-          {
-            repositoryId: args.repositoryId,
-            ownerTokenIdentifier: args.ownerTokenIdentifier,
-          },
-          async (stage) => {
-            await ctx.runMutation(internal.systemDesign.updateGenerationProgress, {
-              jobId: args.jobId,
-              completedCount: 0,
-              totalCount: selections.length,
-              stage: stageLabel[stage] ?? "Preparing environment for your request…",
-            });
-          },
-        );
-        // Re-fetch the sandbox row so the LLM pass sees the post-clone
-        // state (`remoteId`, `repoPath`, status=ready) without re-reading
-        // through `runQuery` for every kind.
-        liveSandbox = await ctx.runQuery(internal.ops.getSandboxRow, { sandboxId: prepared.sandboxId });
-      } catch (error) {
-        if (error instanceof SandboxPreparationError) {
-          await ctx.runMutation(internal.systemDesign.failGeneration, {
-            jobId: args.jobId,
-            errorMessage: error.userFacingMessage,
-          });
-          logInfo("systemDesign", "generation_failed_sandbox_prep", {
-            jobId: args.jobId,
-            repositoryId: args.repositoryId,
-            reason: error.reason,
-          });
-          return;
-        }
-        throw error;
-      }
+    if (totalCount === 0) {
+      await ctx.runMutation(internal.systemDesign.failGeneration, {
+        jobId: args.jobId,
+        errorMessage: "No valid system design kinds selected.",
+      });
+      return;
     }
 
-    const heuristicSnapshot =
-      heuristicKinds.length > 0 ? await loadHeuristicSnapshot(ctx, args.repositoryId, args.jobId) : null;
+    // Every kind reads live source through the sandbox, so the run always
+    // needs a ready sandbox. `ensureSandboxReady` probes / wakes / provisions
+    // / clones as needed and reports each stage as job progress. On failure
+    // the whole run is failed with the structured `userFacingMessage` — no
+    // kinds run, because the user requested them together.
+    let liveSandbox: Doc<"sandboxes"> | null = context.activeSandbox;
+    const stageLabel: Record<SandboxPreparationStage, string> = {
+      probing: "Preparing environment for your request…",
+      waking: "Waking up your repository workspace…",
+      provisioning: "Setting up the repository workspace…",
+      cloning: "Cloning repository…",
+      polling: "Preparing environment for your request…",
+    };
+    try {
+      const prepared = await ensureSandboxReady(
+        ctx,
+        {
+          repositoryId: args.repositoryId,
+          ownerTokenIdentifier: args.ownerTokenIdentifier,
+        },
+        async (stage) => {
+          await ctx.runMutation(internal.systemDesign.updateGenerationProgress, {
+            jobId: args.jobId,
+            completedCount: 0,
+            totalCount,
+            stage: stageLabel[stage] ?? "Preparing environment for your request…",
+          });
+        },
+      );
+      // Re-fetch the sandbox row so the LLM pass sees the post-clone state
+      // (`remoteId`, `repoPath`, status=ready) without re-reading per kind.
+      liveSandbox = await ctx.runQuery(internal.ops.getSandboxRow, { sandboxId: prepared.sandboxId });
+    } catch (error) {
+      if (error instanceof SandboxPreparationError) {
+        await ctx.runMutation(internal.systemDesign.failGeneration, {
+          jobId: args.jobId,
+          errorMessage: error.userFacingMessage,
+        });
+        logInfo("systemDesign", "generation_failed_sandbox_prep", {
+          jobId: args.jobId,
+          repositoryId: args.repositoryId,
+          reason: error.reason,
+        });
+        return;
+      }
+      throw error;
+    }
 
-    const totalCount = selections.length;
     let completedCount = 0;
     let succeeded = 0;
     let failed = 0;
 
-    const reportProgress = async (kindLabel: string) => {
-      await ctx.runMutation(internal.systemDesign.updateGenerationProgress, {
-        jobId: args.jobId,
-        completedCount,
-        totalCount,
-        stage: `Generated ${completedCount} of ${totalCount}: ${kindLabel}`,
-      });
-    };
+    // Kinds run serially: each one is a sandbox-backed LLM session, so running
+    // them in parallel would contend on the per-sandbox tool budget and the
+    // OpenAI rate limit.
+    for (const kind of selections) {
+      // Refresh the running job's lease before each kind so a long multi-kind
+      // publication does not overrun the lease window and trigger a spurious
+      // stale-recovery while progress is still happening.
+      await ctx.runMutation(internal.systemDesign.refreshGenerationLease, { jobId: args.jobId });
 
-    const runKind = async (
-      kind: SystemDesignKind,
-      produce: () => Promise<{ contentMarkdown: string; summary: string; source: "heuristic" | "sandbox" }>,
-    ) => {
       try {
-        const result = await produce();
+        const result = await generateLlm(kind, liveSandbox, context.repository);
         await ctx.runMutation(internal.systemDesign.persistGeneratedArtifact, {
           repositoryId: args.repositoryId,
           ownerTokenIdentifier: args.ownerTokenIdentifier,
           jobId: args.jobId,
           kind,
-          title: HEADINGS[kind],
+          title: SYSTEM_DESIGN_KIND_TITLES[kind],
           summary: result.summary,
           contentMarkdown: result.contentMarkdown,
           source: result.source,
@@ -196,33 +179,15 @@ export const runSystemDesignGeneration = internalAction({
           reason,
         });
       }
+
       completedCount += 1;
-      await reportProgress(HEADINGS[kind]);
-    };
-
-    const heuristicPass = Promise.all(
-      heuristicKinds.map((kind) =>
-        runKind(kind, async () => {
-          if (heuristicSnapshot === null) {
-            throw new Error("Heuristic snapshot was not loaded.");
-          }
-          return generateHeuristic(kind, heuristicSnapshot);
-        }),
-      ),
-    );
-
-    const llmPass = (async () => {
-      for (const kind of llmKinds) {
-        // Refresh the running job's lease before each LLM kind so a long
-        // multi-kind publication does not overrun the initial lease window
-        // and trigger spurious stale-recovery while progress is still
-        // happening.
-        await ctx.runMutation(internal.systemDesign.refreshGenerationLease, { jobId: args.jobId });
-        await runKind(kind, () => generateLlm(kind, liveSandbox, context.repository));
-      }
-    })();
-
-    await Promise.all([heuristicPass, llmPass]);
+      await ctx.runMutation(internal.systemDesign.updateGenerationProgress, {
+        jobId: args.jobId,
+        completedCount,
+        totalCount,
+        stage: `Generated ${completedCount} of ${totalCount}: ${SYSTEM_DESIGN_KIND_TITLES[kind]}`,
+      });
+    }
 
     await ctx.runMutation(internal.systemDesign.completeGeneration, {
       jobId: args.jobId,
@@ -241,102 +206,49 @@ export const runSystemDesignGeneration = internalAction({
   },
 });
 
-const HEADINGS: Record<SystemDesignKind, string> = {
-  manifest: "Repository Manifest",
-  readme_summary: "README Summary",
-  architecture_overview: "Architecture Overview",
-  data_model_overview: "Data Model Overview",
-  api_surface_overview: "API Surface Overview",
-  deployment_overview: "Deployment Overview",
-  security_overview: "Security Overview",
-  operations_overview: "Operations Overview",
-};
+const LLM_PROMPTS: Record<SystemDesignKind, string> = {
+  readme_summary: `You are summarising a software repository for an engineer who needs to
+understand the system at a design level. Use the sandbox tools (read_file,
+list_dir, run_shell) to locate and read the README (usually README.md /
+README.rst / README.txt at the repo root). If the README points to other
+docs (CONTRIBUTING, ARCHITECTURE, docs/), you may follow them for context,
+but ground the summary in what the project's own documentation states.
+Identify:
 
-type HeuristicSnapshot = {
-  snapshot: RepositorySnapshot;
-};
-
-async function loadHeuristicSnapshot(
-  ctx: ActionCtx,
-  repositoryId: Id<"repositories">,
-  jobId: Id<"jobs">,
-): Promise<HeuristicSnapshot> {
-  const files = await ctx.runQuery(internal.systemDesign.listRepoFilesForHeuristics, { repositoryId });
-
-  if (files.length === HEURISTIC_FILES_TAKE_LIMIT) {
-    // We hit the per-query `take` cap. The heuristic generators still
-    // produce a usable doc, but it will under-represent very large repos —
-    // surface that explicitly so we can spot the silent truncation in
-    // logs without having to repro.
-    logWarn("systemDesign", "heuristic_file_list_truncated", {
-      jobId,
-      repositoryId,
-      takeLimit: HEURISTIC_FILES_TAKE_LIMIT,
-      hint: "Heuristic generators saw a truncated repo file list; consider paging the query or accepting partial coverage.",
-    });
-  }
-
-  const snapshot: RepositorySnapshot = {
-    importantFileContents: [],
-    files: files.map((file) => ({
-      path: file.path,
-      parentPath: file.parentPath,
-      fileType: file.fileType,
-      extension: file.extension,
-      language: file.language,
-      sizeBytes: file.sizeBytes,
-      isEntryPoint: file.isEntryPoint,
-      isConfig: file.isConfig,
-      isImportant: file.isImportant,
-      summary: file.summary,
-    })),
-  };
-
-  return { snapshot };
-}
-
-function generateHeuristic(
-  kind: HeuristicKind,
-  data: HeuristicSnapshot,
-): { contentMarkdown: string; summary: string; source: "heuristic" } {
-  const manifest = buildRepositoryManifest(data.snapshot);
-
-  if (kind === "manifest") {
-    return {
-      contentMarkdown: createManifestArtifactMarkdown(manifest),
-      summary: manifest.summary,
-      source: "heuristic",
-    };
-  }
-  return {
-    contentMarkdown: createArchitectureArtifactMarkdown(manifest, data.snapshot),
-    summary: "Initial architecture map derived from the repository layout.",
-    source: "heuristic",
-  };
-}
-
-const LLM_PROMPTS: Record<Exclude<SystemDesignKind, HeuristicKind>, string> = {
-  readme_summary: `You are summarising the README of a software repository for a new engineer
-joining the team. Use the sandbox tools (read_file, list_dir, run_shell) to
-locate the README (usually README.md / README.rst / README.txt at the repo
-root) and read its contents. If the README references other docs
-(CONTRIBUTING, ARCHITECTURE, docs/), you may follow them, but ground the
-summary in what the README itself states. Identify:
-
-- what the project is and the problem it solves (one or two sentences);
-- the intended audience or users;
-- headline features and capabilities the README actually advertises;
-- how to get started (install / run commands as documented);
-- notable status callouts: licence, maturity (early-access / beta / archived),
-  external dependencies the user must provision.
+- what the system is and the problem it exists to solve;
+- the services and capabilities it provides;
+- who its intended users / audience are;
+- the key operations and workflows those users perform;
+- notable constraints: licence, maturity (early-access / beta / archived),
+  and external services or accounts the user must provision to run it.
 
 Write a Markdown document titled "# README Summary" with these sections in
-order: 'Overview', 'Audience', 'Features', 'Getting Started', 'Notable
-Callouts', 'Source'. Under 'Source', cite the README file path in backticks.
-Stay faithful to what the README actually says — do not invent features or
-audiences. If the README is missing, empty, or boilerplate-only, say so
-explicitly in 'Overview' and write "Not documented in README." in the other
-sections rather than padding.`,
+order: 'Purpose', 'Services & Capabilities', 'Audience', 'Key Operations',
+'Notable Constraints', 'Source'. Under 'Source', cite the README (and any
+other doc you used) by file path in backticks. Stay faithful to what the
+documentation actually says — do not invent services, users, or operations.
+If the README is missing, empty, or boilerplate-only, say so explicitly in
+'Purpose' and write "Not documented." in the other sections rather than
+padding.`,
+  architecture_overview: `You are documenting the architecture of a software repository for a new
+engineer joining the team. Use the sandbox tools (read_file, list_dir,
+run_shell) to inspect the repository's structure and identify:
+
+- the overall shape of the system — its major components / modules /
+  services and how the codebase is organised;
+- what each major component is responsible for;
+- how a typical request or operation flows through the system;
+- the key boundaries and integrations — process boundaries, external
+  services, and how layers communicate;
+- the highest-signal files to read first.
+
+Write a Markdown document titled "# Architecture Overview" with these
+sections in order: 'System Shape', 'Components & Responsibilities', 'Data &
+Control Flow', 'Boundaries & Integrations', 'Where to Look First'. Cite
+concrete file paths in backticks. Be specific to this repository — do not
+invent components or describe a generic architecture. If the evidence for a
+section is thin, say what you could determine and what you could not rather
+than padding.`,
   data_model_overview: `You are documenting the data model of a software repository for a new
 engineer joining the team. Use the sandbox tools (read_file, list_dir,
 run_shell) to inspect the repository and identify:
@@ -420,9 +332,6 @@ async function generateLlm(
   sandbox: Doc<"sandboxes"> | null,
   repository: Doc<"repositories">,
 ): Promise<{ contentMarkdown: string; summary: string; source: "sandbox" }> {
-  if (isHeuristicKind(kind)) {
-    throw new Error(`generateLlm should not be called for heuristic kind ${kind}`);
-  }
   if (!sandbox || !sandbox.remoteId || !sandbox.repoPath) {
     throw new Error("Sandbox is not provisioned. Provision a sandbox to generate this document.");
   }

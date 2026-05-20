@@ -214,8 +214,8 @@ function LibraryEmptyState({ hasArtifacts, onGenerate }: { hasArtifacts: boolean
         <div className="w-full max-w-md text-center">
           <h2 className="text-base font-semibold text-foreground">No documents yet</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            Generate the System Design starter set — a manifest, README summary, and an architecture overview — straight
-            into your Library.
+            Generate the System Design starter set — architecture, data model, API, security and more — straight into
+            your Library.
           </p>
           <Button type="button" size="sm" className="mt-5 gap-1.5" onClick={onGenerate}>
             <SparkleIcon size={14} weight="bold" />

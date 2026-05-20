@@ -144,7 +144,7 @@ describe("repository access helpers", () => {
     await expect(
       viewer.mutation(api.systemDesign.requestSystemDesignGeneration, {
         repositoryId,
-        selections: ["manifest"],
+        selections: ["architecture_overview"],
       }),
     ).rejects.toThrow("Repository not found.");
 
