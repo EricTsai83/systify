@@ -11,7 +11,12 @@ import { resolveModelForMode } from "./chat/modelSelection";
 import { getSandboxFsClient } from "./daytona";
 import { ensureSandboxReady, SandboxPreparationError, type SandboxPreparationStage } from "./lib/sandboxLiveness";
 import { logErrorWithId, logInfo, logWarn } from "./lib/observability";
-import { SYSTEM_DESIGN_KIND_TITLES, systemDesignKindValidator, type SystemDesignKind } from "./lib/systemDesign";
+import {
+  SYSTEM_DESIGN_KIND_TITLES,
+  isSystemDesignKind,
+  systemDesignKindValidator,
+  type SystemDesignKind,
+} from "./lib/systemDesign";
 
 const SYSTEM_DESIGN_STEP_BUDGET = 20;
 
@@ -62,8 +67,16 @@ export const runSystemDesignGeneration = internalAction({
       return;
     }
 
-    const selections = args.selections as ReadonlyArray<SystemDesignKind>;
+    const selections = args.selections.filter(isSystemDesignKind);
     const totalCount = selections.length;
+
+    if (totalCount === 0) {
+      await ctx.runMutation(internal.systemDesign.failGeneration, {
+        jobId: args.jobId,
+        errorMessage: "No valid system design kinds selected.",
+      });
+      return;
+    }
 
     // Every kind reads live source through the sandbox, so the run always
     // needs a ready sandbox. `ensureSandboxReady` probes / wakes / provisions
