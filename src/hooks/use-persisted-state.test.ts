@@ -2,7 +2,7 @@
 
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
-import { useLocalStorageBoolean } from "./use-persisted-state";
+import { useLocalStorageBoolean, useLocalStorageEnum } from "./use-persisted-state";
 import { createStorageEvent } from "@/test-utils/storage";
 
 describe("useLocalStorageBoolean", () => {
@@ -195,6 +195,98 @@ describe("useLocalStorageBoolean", () => {
       });
 
       expect(result.current[0]).toBe(true);
+    });
+  });
+});
+
+// A fixed enum domain reused across the useLocalStorageEnum tests.
+const SIZES = ["small", "normal", "large"] as const;
+
+describe("useLocalStorageEnum", () => {
+  describe("initialization behavior", () => {
+    test("synchronously reads an existing stored value on first render", () => {
+      window.localStorage.setItem("systify.test.size", "large");
+
+      const { result } = renderHook(() => useLocalStorageEnum("systify.test.size", SIZES, "normal"));
+
+      expect(result.current[0]).toBe("large");
+    });
+
+    test("uses defaultValue when nothing is stored", () => {
+      const { result } = renderHook(() => useLocalStorageEnum("systify.test.size", SIZES, "normal"));
+
+      expect(result.current[0]).toBe("normal");
+    });
+
+    test("falls back to defaultValue when the stored value is outside the allowed set", () => {
+      // Schema drift: an older build wrote a member this build dropped, or
+      // the entry was hand-edited. Treated as a cache miss, not a crash.
+      window.localStorage.setItem("systify.test.size", "gigantic");
+
+      const { result } = renderHook(() => useLocalStorageEnum("systify.test.size", SIZES, "normal"));
+
+      expect(result.current[0]).toBe("normal");
+    });
+
+    test("does not write to storage when lazy-init falls back to defaultValue", () => {
+      // Same storage-pollution guard as the boolean hook: a fresh mount must
+      // not persist the default into an empty slot.
+      renderHook(() => useLocalStorageEnum("systify.test.size", SIZES, "normal"));
+
+      expect(window.localStorage.getItem("systify.test.size")).toBeNull();
+    });
+  });
+
+  describe("persistence behavior", () => {
+    test("writes value updates back to localStorage", () => {
+      const { result } = renderHook(() => useLocalStorageEnum("systify.test.size", SIZES, "normal"));
+
+      act(() => {
+        result.current[1]("large");
+      });
+
+      expect(window.localStorage.getItem("systify.test.size")).toBe("large");
+      expect(result.current[0]).toBe("large");
+    });
+
+    test("accepts an updater function for setState-style usage", () => {
+      window.localStorage.setItem("systify.test.size", "small");
+      const { result } = renderHook(() => useLocalStorageEnum("systify.test.size", SIZES, "normal"));
+
+      act(() => {
+        result.current[1]((prev) => (prev === "small" ? "large" : "small"));
+      });
+
+      expect(result.current[0]).toBe("large");
+      expect(window.localStorage.getItem("systify.test.size")).toBe("large");
+    });
+  });
+
+  describe("cross-tab synchronization behavior", () => {
+    test("syncs value when the same key changes in another tab", () => {
+      window.localStorage.setItem("systify.test.size", "small");
+      const { result } = renderHook(() => useLocalStorageEnum("systify.test.size", SIZES, "normal"));
+
+      expect(result.current[0]).toBe("small");
+
+      act(() => {
+        window.dispatchEvent(createStorageEvent("systify.test.size", "large"));
+      });
+
+      expect(result.current[0]).toBe("large");
+    });
+
+    test("falls back to defaultValue when another tab writes a value outside the allowed set", () => {
+      window.localStorage.setItem("systify.test.size", "large");
+      const { result } = renderHook(() => useLocalStorageEnum("systify.test.size", SIZES, "normal"));
+
+      expect(result.current[0]).toBe("large");
+
+      act(() => {
+        window.dispatchEvent(createStorageEvent("systify.test.size", "gigantic"));
+      });
+
+      expect(result.current[0]).toBe("normal");
     });
   });
 });

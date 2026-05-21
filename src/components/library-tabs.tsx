@@ -174,7 +174,7 @@ export const LibraryTabs = memo(function LibraryTabs({
             );
           })}
         </ul>
-        <ScrollBar orientation="horizontal" className="data-[orientation=horizontal]:h-1.5" />
+        <ScrollBar orientation="horizontal" />
       </ScrollArea>
       <div
         aria-hidden

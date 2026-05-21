@@ -1,18 +1,50 @@
 import { useState } from "react";
 import { useQuery } from "convex/react";
-import { CaretRightIcon, CheckIcon, CopySimpleIcon } from "@phosphor-icons/react";
+import { CaretRightIcon, CheckIcon, CopySimpleIcon, MinusIcon, PlusIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
-import { ArtifactMarkdown } from "@/components/artifact-markdown";
+import { Markdown } from "@/components/markdown";
 import { MermaidRenderer } from "@/components/mermaid-renderer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { useLocalStorageEnum } from "@/hooks/use-persisted-state";
 import { formatRelativeTime } from "@/lib/format";
 import { formatArtifactKind } from "@/lib/operations";
 import type { ArtifactFreshness, ArtifactId } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+/**
+ * Reader text-size preference. The Library editor renders long-form
+ * artifacts, so a viewer can scale the markdown body up or down for
+ * comfortable reading; the choice persists per browser via
+ * `useLocalStorageEnum`. Architecture diagrams are exempt — they render
+ * as SVG, not text, so the control is hidden for them.
+ *
+ * Scaling uses CSS `zoom` on a wrapper around the body. `zoom` reflows
+ * the content (text re-wraps within the fixed `68ch` measure) instead of
+ * merely transforming it, and — unlike a `font-size` override — scales
+ * the whole subtree uniformly without depending on the renderer
+ * (`Streamdown`) sizing every element in relative units.
+ *
+ * `FONT_SIZE_STEPS` is an ordered ladder, smallest → largest, that the
+ * −/+ control walks one rung per click. Each id is the `zoom` written as
+ * a whole-number percentage, so `fontSizeZoom` is a plain divide and the
+ * id stays self-describing in storage. Adding or removing a rung needs no
+ * other change — the stepper is two buttons whatever the ladder's length.
+ * A stored id outside the ladder (an older build's value, a hand-edited
+ * entry) is absorbed by `useLocalStorageEnum`, which falls back to
+ * `DEFAULT_FONT_SIZE`.
+ */
+const FONT_SIZE_STEPS = ["80", "90", "100", "110", "125", "140", "160", "180"] as const;
+type FontSize = (typeof FONT_SIZE_STEPS)[number];
+const DEFAULT_FONT_SIZE: FontSize = "100";
+
+/** The CSS `zoom` multiplier for a stored text-size rung. */
+function fontSizeZoom(size: FontSize): number {
+  return Number(size) / 100;
+}
 
 /**
  * Three-mode restructure — Library editor (center pane).
@@ -38,6 +70,12 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
     }
   });
 
+  const [fontSize, setFontSize] = useLocalStorageEnum<FontSize>(
+    "systify.library.fontSize",
+    FONT_SIZE_STEPS,
+    DEFAULT_FONT_SIZE,
+  );
+
   if (artifact === undefined) {
     return <EditorSkeleton className={className} />;
   }
@@ -54,11 +92,14 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
     );
   }
 
+  const isDiagram = artifact.kind === "architecture_diagram";
+
   return (
     <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur">
         <LibraryBreadcrumb folderName={folder?.name ?? null} title={artifact.title} />
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex items-center gap-1.5">
+          {!isDiagram ? <FontSizeControl value={fontSize} onChange={setFontSize} /> : null}
           <Button
             type="button"
             variant="ghost"
@@ -92,13 +133,12 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
             <p className="text-[14px] text-muted-foreground">{artifact.summary}</p>
           </header>
 
-          {artifact.kind === "architecture_diagram" ? (
+          {isDiagram ? (
             <MermaidRenderer source={artifact.contentMarkdown} />
           ) : (
-            <ArtifactMarkdown
-              source={artifact.contentMarkdown}
-              className="border-0 bg-transparent [&_[data-slot=scroll-area-viewport]]:max-h-none"
-            />
+            <div style={{ zoom: fontSizeZoom(fontSize) }}>
+              <Markdown>{artifact.contentMarkdown}</Markdown>
+            </div>
           )}
         </article>
       </ScrollArea>
@@ -165,6 +205,50 @@ export function LibraryBreadcrumb({ folderName, title }: { folderName: string | 
       ) : null}
       <span className="truncate font-medium text-foreground">{title}</span>
     </nav>
+  );
+}
+
+/**
+ * Stepper for the Reader's text-size preference: a −/+ pair that walks
+ * the `FONT_SIZE_STEPS` ladder one rung per click. Two buttons however
+ * long the ladder is — each end button disables at its bound, which is
+ * the only "you've hit the limit" feedback the control needs.
+ */
+function FontSizeControl({ value, onChange }: { value: FontSize; onChange: (next: FontSize) => void }) {
+  const index = FONT_SIZE_STEPS.indexOf(value);
+  const atMin = index <= 0;
+  const atMax = index >= FONT_SIZE_STEPS.length - 1;
+
+  const stepTo = (delta: number) => {
+    const next = FONT_SIZE_STEPS[index + delta];
+    if (next) onChange(next);
+  };
+
+  return (
+    <div className="flex items-center" role="group" aria-label="Reading text size">
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="w-8 px-0"
+        disabled={atMin}
+        onClick={() => stepTo(-1)}
+        aria-label="Decrease text size"
+      >
+        <MinusIcon size={13} weight="bold" />
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="w-8 px-0"
+        disabled={atMax}
+        onClick={() => stepTo(1)}
+        aria-label="Increase text size"
+      >
+        <PlusIcon size={13} weight="bold" />
+      </Button>
+    </div>
   );
 }
 
