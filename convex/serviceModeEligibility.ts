@@ -485,5 +485,20 @@ export async function assertServiceModeEligible(
       message: verdict.askReadiness.reason.message,
     });
   }
+  // Lab navigation is available whenever a repo is attached, but a lab
+  // session can only *run* once the sandbox is provisioned and `ready`
+  // (and the daily cost cap is open). Defer to `labReadiness` so the
+  // write path stays tied to the real sandbox precondition — the same
+  // navigation/write split Library uses with `askReadiness` above.
+  if (args.mode === "lab" && !verdict.labReadiness.canStart && verdict.labReadiness.reason) {
+    throw new ConvexError({
+      code: verdict.labReadiness.reason.code,
+      mode: "lab",
+      message: verdict.labReadiness.reason.message,
+      ...(verdict.labReadiness.reason.retryAfterMs !== undefined
+        ? { retryAfterMs: verdict.labReadiness.reason.retryAfterMs }
+        : {}),
+    });
+  }
   throwIfDisabled(verdict, args.mode);
 }

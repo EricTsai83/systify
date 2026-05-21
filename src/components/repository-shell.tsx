@@ -548,10 +548,12 @@ export function RepositoryShell({
    *
    *   2. `/w/:workspaceId` (no thread) → canonical mode URL for the
    *      workspace's intended service mode:
-   *        - discuss → `/w/:wid/discuss/:mostRecent` (if threads exist)
+   *        - discuss → `/w/:wid/discuss/:mostRecent`, or the bare
+   *          `/w/:wid/discuss` when the workspace has no discuss thread
    *        - library → `/w/:wid/library` (with optional `?ask=:tid` for
    *          the most recent ask thread)
-   *        - lab     → `/w/:wid/lab/:mostRecent` (if threads exist)
+   *        - lab     → `/w/:wid/lab/:mostRecent`, or the bare `/w/:wid/lab`
+   *          when the workspace has no lab thread
    *      Going straight to the mode-aware URL — instead of the legacy
    *      mode-agnostic `/w/:wid/t/:tid` — keeps `useServiceMode`'s value
    *      stable across the redirect: it stays `null` while the URL is on
@@ -594,10 +596,15 @@ export function RepositoryShell({
     // bounce us out.
     if (availability === undefined) return;
     if (workspaces === undefined) return;
-    // Library always redirects (the artifact overview is its landing
-    // surface); discuss and lab only redirect when a thread of the
-    // matching mode exists so empty workspaces stay on `/w/:wid` and
-    // render their EmptyState.
+    // Every service mode redirects off the bare `/w/:wid` landing so the
+    // user always settles on a canonical mode URL. Library lands on its
+    // artifact overview. Discuss / Lab land on their most recent thread
+    // when one exists; when the workspace has none, the bare `/w/:wid`
+    // landing still redirects onto the bare mode URL (`/w/:wid/discuss` or
+    // `/w/:wid/lab`) so a remembered discuss/lab `lastServiceMode` settles
+    // the user *in that mode* (its empty state) instead of being stranded
+    // on the mode-less `/w/:wid`, which falls back to the structural
+    // default (library for a repo-attached workspace).
     if (intendedServiceMode === "library") {
       const askThreadId = ownerThreads?.[0]?._id;
       const base = libraryPath(urlWorkspaceId);
@@ -605,16 +612,29 @@ export function RepositoryShell({
       void navigate(target, { replace: true });
       return;
     }
-    if (!ownerThreads || ownerThreads.length === 0) return;
-    const tid = ownerThreads[0]._id;
-    const target = intendedServiceMode === "lab" ? labPath(urlWorkspaceId, tid) : discussPath(urlWorkspaceId, tid);
-    void navigate(target, { replace: true });
+    // Wait for the thread list before deciding so we promote onto the most
+    // recent thread when there is one.
+    if (ownerThreads === undefined) return;
+    const tid = ownerThreads[0]?._id;
+    if (tid) {
+      const target = intendedServiceMode === "lab" ? labPath(urlWorkspaceId, tid) : discussPath(urlWorkspaceId, tid);
+      void navigate(target, { replace: true });
+      return;
+    }
+    // No thread of this mode. Only the bare `/w/:wid` landing redirects onto
+    // the mode URL; once already on `/w/:wid/discuss` (or `/lab`) we are in
+    // the right place — stay so the mode's empty state can render.
+    if (serviceMode === null) {
+      const target = intendedServiceMode === "lab" ? labPath(urlWorkspaceId) : discussPath(urlWorkspaceId);
+      void navigate(target, { replace: true });
+    }
   }, [
     navigate,
     ownerThreads,
     urlWorkspaceId,
     urlThreadId,
     activeWorkspaceId,
+    serviceMode,
     intendedServiceMode,
     availability,
     workspaces,
@@ -666,15 +686,18 @@ export function RepositoryShell({
   /*
    * `isAboutToRedirect` signals that the URL is on a transient stop along
    * the canonicalisation chain — `/chat` waiting for `activeWorkspaceId` to
-   * promote into `/w/:wsId`, or `/w/:wsId` waiting for `ownerThreads` to
-   * resolve so the most-recent-thread redirect can fire. Either way, the
-   * shell is "initializing" because the surface we ultimately render is one
-   * navigation away.
+   * promote into `/w/:wsId`, or a workspace URL waiting for the Tier 2
+   * redirect to settle on a canonical mode URL. The bare `/w/:wsId` landing
+   * (`serviceMode === null`) is always transient — Tier 2 sends it onward to
+   * a mode URL regardless of thread count. A mode URL with no thread
+   * (`/w/:wsId/discuss`) is only transient while it still has a thread to
+   * promote onto; once `ownerThreads` resolves empty it is a settled surface
+   * (the mode's empty state), not a redirect stop.
    */
   const isAboutToRedirect =
     urlThreadId === null &&
     ((urlWorkspaceId === null && activeWorkspaceId !== null) ||
-      (urlWorkspaceId !== null && (ownerThreads === undefined || ownerThreads.length > 0)));
+      (urlWorkspaceId !== null && (serviceMode === null || ownerThreads === undefined || ownerThreads.length > 0)));
 
   const workspaceStatus: RepositoryWorkspaceStatus =
     isRepositoriesLoading || workspaces === undefined || isAboutToRedirect

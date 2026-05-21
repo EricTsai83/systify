@@ -290,15 +290,18 @@ export function resolveServiceModes(
     available.add("library");
   }
 
-  // Lab availability layers the existing chat-mode resolver: anything that
-  // disables `sandbox` over there should disable `lab` here. We re-use the
-  // cost-cap precedence (cap-gate beats lifecycle tooltip) so the user gets
-  // one consistent reason regardless of which entry point they came from.
+  // Lab *navigation* only needs an attached repository — the sidebar Lab
+  // button must stay clickable so the user can open Lab and provision a
+  // sandbox from inside it (the sandbox may not exist yet at click time).
+  // Whether a lab session can actually *run* — sandbox `ready`, cost cap
+  // open — is the separate `labReadiness` axis below; the write path
+  // (`assertServiceModeEligible`) gates on that. This mirrors how Library
+  // navigation is decoupled from `askReadiness`.
   const legacyResolution = resolveChatModes(hasAttachedRepo, sandboxStatus, sandboxCostCapGate);
-  if (legacyResolution.availableModes.includes("sandbox")) {
+  if (hasAttachedRepo) {
     available.add("lab");
   } else {
-    disabledReasons.lab = legacyResolution.disabledReasons.sandbox ?? DISABLED_REASON_LAB_NO_REPO;
+    disabledReasons.lab = DISABLED_REASON_LAB_NO_REPO;
   }
 
   const askReadiness: ServiceModeResolution["askReadiness"] = !hasAttachedRepo

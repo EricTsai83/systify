@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { RepositoryShell } from "./repository-shell";
 import type { OnImportedCallback, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
-import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
+import { DEFAULT_AUTHENTICATED_PATH, discussPath } from "@/route-paths";
 
 // Convex's `api`/`anyApi` proxy returns a fresh FunctionReference object on
 // every property access, so `query === api.foo.bar` is never true. Compare the
@@ -675,6 +675,46 @@ describe("RepositoryShell workspace reconciliation", () => {
     });
     expect(touchWorkspaceMock).not.toHaveBeenCalledWith({ workspaceId: "ws_missing" });
     expect(screen.getByTestId("sidebar")).not.toHaveAttribute("data-active-workspace-id", "ws_missing");
+  });
+
+  test("workspace landing redirects into the remembered discuss mode even with no discuss thread", async () => {
+    // Regression: the workspace's `lastServiceMode` is "discuss", so the
+    // `/chat` → `/w/:wid` redirect must settle the user in Discuss. The
+    // Tier 2 redirect previously bailed without navigating when no thread of
+    // the matching mode existed, stranding the user on the mode-less
+    // `/w/:wid` URL — which renders the structural default (library) instead
+    // of the mode they were last in.
+    useServiceModeMock.mockReturnValue({
+      serviceMode: null,
+      availability: {
+        availableServiceModes: ["discuss", "library"] as const,
+        defaultServiceMode: "library" as const,
+        disabledReasons: {},
+        hasAttachedRepo: true,
+        hasAtLeastOneArtifact: true,
+        askReadiness: { canBind: true, reason: null },
+        labReadiness: { canStart: false, reason: null },
+      },
+      placeholderAvailability: {
+        availableServiceModes: ["discuss"],
+        defaultServiceMode: "discuss",
+        disabledReasons: {},
+        hasAttachedRepo: false,
+        hasAtLeastOneArtifact: false,
+        askReadiness: { canBind: false, reason: null },
+        labReadiness: { canStart: false, reason: null },
+      },
+    });
+    const urlWorkspaceId = "ws_discuss_memory" as WorkspaceId;
+    workspacesResult = [makeWorkspace({ _id: "ws_discuss_memory", lastServiceMode: "discuss" })];
+    storedActiveWorkspaceId = "ws_discuss_memory";
+    ownerThreadsResult = [];
+
+    render(<RepositoryShell urlWorkspaceId={urlWorkspaceId} urlThreadId={null} />);
+
+    await waitFor(() => {
+      expect(navigateMock).toHaveBeenCalledWith(discussPath(urlWorkspaceId), { replace: true });
+    });
   });
 
   test("live cross-tab push updates the active workspace without remounting", async () => {
