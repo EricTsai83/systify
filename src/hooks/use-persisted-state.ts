@@ -106,21 +106,20 @@ export function useLocalStorageBoolean(
  * per-render state), and keeping it stable keeps `parse` — and the sync
  * effects that list it as a dependency — identity-stable across renders.
  */
-export function useLocalStorageEnum<T extends string>(
+export function useLocalStorageEnum<const T extends readonly string[]>(
   key: string,
-  allowed: readonly T[],
-  defaultValue: T,
-): readonly [T, (next: T | ((prev: T) => T)) => void] {
+  allowed: T,
+  defaultValue: T[number],
+): readonly [T[number], (next: T[number] | ((prev: T[number]) => T[number])) => void] {
   const parse = useCallback(
-    (raw: string | null): T | null => {
+    (raw: string | null): T[number] | null => {
       if (raw === null) return null;
-      const candidate = raw as T;
-      return allowed.includes(candidate) ? candidate : null;
+      return allowed.includes(raw as T[number]) ? (raw as T[number]) : null;
     },
     [allowed],
   );
 
-  const [value, setValue] = useState<T>(() => parse(readString(key)) ?? defaultValue);
+  const [value, setValue] = useState<T[number]>(() => parse(readString(key)) ?? defaultValue);
   const hasUserSetRef = useRef<boolean>(parse(readString(key)) !== null);
   const prevUserSetKeyRef = useRef<string>(key);
 
@@ -149,7 +148,7 @@ export function useLocalStorageEnum<T extends string>(
   }, [key, defaultValue, parse]);
 
   const setPersisted = useCallback(
-    (next: T | ((prev: T) => T)) => {
+    (next: T[number] | ((prev: T[number]) => T[number])) => {
       hasUserSetRef.current = true;
       prevUserSetKeyRef.current = key;
       setValue((prev) => (typeof next === "function" ? next(prev) : next));

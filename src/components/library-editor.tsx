@@ -70,11 +70,7 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
     }
   });
 
-  const [fontSize, setFontSize] = useLocalStorageEnum<FontSize>(
-    "systify.library.fontSize",
-    FONT_SIZE_STEPS,
-    DEFAULT_FONT_SIZE,
-  );
+  const [fontSize, setFontSize] = useLocalStorageEnum("systify.library.fontSize", FONT_SIZE_STEPS, DEFAULT_FONT_SIZE);
 
   if (artifact === undefined) {
     return <EditorSkeleton className={className} />;
