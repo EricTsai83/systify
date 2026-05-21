@@ -203,7 +203,7 @@ describe("serviceModeEligibility.evaluate", () => {
     expect(result!.askReadiness.canBind).toBe(true);
   });
 
-  test("provisioning sandbox: lab disabled with sandbox_provisioning code", async () => {
+  test("provisioning sandbox: lab is navigable but not runnable (sandbox_provisioning)", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
       withRepository: true,
@@ -213,13 +213,15 @@ describe("serviceModeEligibility.evaluate", () => {
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.availableServiceModes).not.toContain("lab");
-    expect(result!.disabledReasons.lab?.code).toBe("sandbox_provisioning");
+    // Lab navigation only needs a repo, so the sidebar button stays clickable;
+    // the not-ready sandbox surfaces through `labReadiness`, not `disabledReasons`.
+    expect(result!.availableServiceModes).toContain("lab");
+    expect(result!.disabledReasons.lab).toBeUndefined();
     expect(result!.labReadiness.canStart).toBe(false);
     expect(result!.labReadiness.reason?.code).toBe("sandbox_provisioning");
   });
 
-  test("expired sandbox: lab disabled with sandbox_expired code", async () => {
+  test("expired sandbox: lab is navigable but not runnable (sandbox_expired)", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
       withRepository: true,
@@ -229,10 +231,11 @@ describe("serviceModeEligibility.evaluate", () => {
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.disabledReasons.lab?.code).toBe("sandbox_expired");
+    expect(result!.availableServiceModes).toContain("lab");
+    expect(result!.labReadiness.reason?.code).toBe("sandbox_expired");
   });
 
-  test("failed sandbox: lab disabled with sandbox_failed code", async () => {
+  test("failed sandbox: lab is navigable but not runnable (sandbox_failed)", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
       withRepository: true,
@@ -242,10 +245,11 @@ describe("serviceModeEligibility.evaluate", () => {
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.disabledReasons.lab?.code).toBe("sandbox_failed");
+    expect(result!.availableServiceModes).toContain("lab");
+    expect(result!.labReadiness.reason?.code).toBe("sandbox_failed");
   });
 
-  test("repo without a sandbox: lab disabled with sandbox_missing code", async () => {
+  test("repo without a sandbox: lab is navigable but not runnable (sandbox_missing)", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
       withRepository: true,
@@ -255,7 +259,12 @@ describe("serviceModeEligibility.evaluate", () => {
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.disabledReasons.lab?.code).toBe("sandbox_missing");
+    // The most common real case: a freshly-imported repo with no sandbox yet.
+    // Lab must still be clickable so the user can provision one from Lab.
+    expect(result!.availableServiceModes).toContain("lab");
+    expect(result!.disabledReasons.lab).toBeUndefined();
+    expect(result!.labReadiness.canStart).toBe(false);
+    expect(result!.labReadiness.reason?.code).toBe("sandbox_missing");
   });
 });
 
@@ -281,7 +290,7 @@ describe("serviceModeEligibility.evaluate (cost cap closed)", () => {
     }
   });
 
-  test("user cap exhausted: lab disabled with sandbox_user_cap_exceeded + retryAfterMs", async () => {
+  test("user cap exhausted: lab navigable but not runnable (sandbox_user_cap_exceeded + retryAfterMs)", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
       withRepository: true,
@@ -302,12 +311,13 @@ describe("serviceModeEligibility.evaluate (cost cap closed)", () => {
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.availableServiceModes).not.toContain("lab");
-    expect(result!.disabledReasons.lab?.code).toBe("sandbox_user_cap_exceeded");
-    expect(result!.disabledReasons.lab?.retryAfterMs).toBeGreaterThan(0);
+    expect(result!.availableServiceModes).toContain("lab");
+    expect(result!.labReadiness.canStart).toBe(false);
+    expect(result!.labReadiness.reason?.code).toBe("sandbox_user_cap_exceeded");
+    expect(result!.labReadiness.reason?.retryAfterMs).toBeGreaterThan(0);
   });
 
-  test("workspace cap exhausted: lab disabled with sandbox_workspace_cap_exceeded + retryAfterMs", async () => {
+  test("workspace cap exhausted: lab navigable but not runnable (sandbox_workspace_cap_exceeded + retryAfterMs)", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
       withRepository: true,
@@ -335,8 +345,9 @@ describe("serviceModeEligibility.evaluate (cost cap closed)", () => {
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.disabledReasons.lab?.code).toBe("sandbox_workspace_cap_exceeded");
-    expect(result!.disabledReasons.lab?.retryAfterMs).toBeGreaterThan(0);
+    expect(result!.availableServiceModes).toContain("lab");
+    expect(result!.labReadiness.reason?.code).toBe("sandbox_workspace_cap_exceeded");
+    expect(result!.labReadiness.reason?.retryAfterMs).toBeGreaterThan(0);
   });
 });
 

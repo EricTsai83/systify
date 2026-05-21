@@ -89,3 +89,72 @@ export function useLocalStorageBoolean(
 
   return [value, setPersisted] as const;
 }
+
+/**
+ * Persist a string-enum preference in `localStorage`.
+ *
+ * The string-valued sibling of {@link useLocalStorageBoolean}: it shares the
+ * same synchronous lazy read, conservative-write, mid-mount key-swap, and
+ * cross-tab-sync behavior — see that hook's comment for the reasoning behind
+ * each. The single addition is membership validation. A stored string
+ * outside `allowed` (schema drift from an older build that wrote a value
+ * this one no longer knows, or a hand-edited entry) is treated as a cache
+ * miss and falls back to `defaultValue`, exactly as an absent key would.
+ *
+ * `allowed` must be a stable reference — pass a module-scope constant, not
+ * an inline array literal. It describes the key's value domain (not
+ * per-render state), and keeping it stable keeps `parse` — and the sync
+ * effects that list it as a dependency — identity-stable across renders.
+ */
+export function useLocalStorageEnum<const T extends readonly string[]>(
+  key: string,
+  allowed: T,
+  defaultValue: T[number],
+): readonly [T[number], (next: T[number] | ((prev: T[number]) => T[number])) => void] {
+  const parse = useCallback(
+    (raw: string | null): T[number] | null => {
+      if (raw === null) return null;
+      return allowed.includes(raw as T[number]) ? (raw as T[number]) : null;
+    },
+    [allowed],
+  );
+
+  const [value, setValue] = useState<T[number]>(() => parse(readString(key)) ?? defaultValue);
+  const hasUserSetRef = useRef<boolean>(parse(readString(key)) !== null);
+  const prevUserSetKeyRef = useRef<string>(key);
+
+  useEffect(() => {
+    const stored = parse(readString(key));
+    hasUserSetRef.current = stored !== null;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setValue(stored ?? defaultValue);
+  }, [key, defaultValue, parse]);
+
+  useEffect(() => {
+    if (!hasUserSetRef.current || prevUserSetKeyRef.current !== key) return;
+    if (parse(readString(key)) === value) return;
+    writeString(key, value);
+  }, [key, value, parse]);
+
+  useEffect(() => {
+    return onLocalStorageChange(key, (newValue) => {
+      const parsed = parse(newValue);
+      hasUserSetRef.current = parsed !== null;
+      if (parsed !== null) {
+        prevUserSetKeyRef.current = key;
+      }
+      setValue(parsed ?? defaultValue);
+    });
+  }, [key, defaultValue, parse]);
+
+  const setPersisted = useCallback(
+    (next: T[number] | ((prev: T[number]) => T[number])) => {
+      hasUserSetRef.current = true;
+      prevUserSetKeyRef.current = key;
+      setValue((prev) => (typeof next === "function" ? next(prev) : next));
+    },
+    [key],
+  );
+
+  return [value, setPersisted] as const;
+}
