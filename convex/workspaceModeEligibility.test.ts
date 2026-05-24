@@ -137,7 +137,7 @@ describe("serviceModeEligibility.evaluate", () => {
       return id;
     });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId: fakeId });
+    const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId: fakeId });
     expect(result).toBeNull();
   });
 
@@ -145,7 +145,7 @@ describe("serviceModeEligibility.evaluate", () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, { ownerTokenIdentifier: OWNER });
     const intruder = t.withIdentity({ tokenIdentifier: OTHER_OWNER });
-    const result = await intruder.query(api.serviceModeEligibility.evaluate, { workspaceId });
+    const result = await intruder.query(api.workspaceModeEligibility.evaluate, { workspaceId });
     expect(result).toBeNull();
   });
 
@@ -153,11 +153,11 @@ describe("serviceModeEligibility.evaluate", () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, { withRepository: false });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
+    const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
     expect(result).not.toBeNull();
-    expect(result!.availableServiceModes).toEqual(["discuss"]);
-    expect(result!.defaultServiceMode).toBe("discuss");
+    expect(result!.availableModes).toEqual(["discuss"]);
+    expect(result!.defaultMode).toBe("discuss");
     expect(result!.hasAttachedRepo).toBe(false);
     expect(result!.hasAtLeastOneArtifact).toBe(false);
 
@@ -179,9 +179,9 @@ describe("serviceModeEligibility.evaluate", () => {
       sandboxStatus: "ready",
     });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
+    const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.availableServiceModes.slice().sort()).toEqual(["discuss", "lab", "library"]);
+    expect(result!.availableModes.slice().sort()).toEqual(["discuss", "lab", "library"]);
     expect(result!.disabledReasons.library).toBeUndefined();
     expect(result!.askReadiness.canBind).toBe(false);
     expect(result!.askReadiness.reason?.code).toBe("library_no_artifact");
@@ -195,9 +195,9 @@ describe("serviceModeEligibility.evaluate", () => {
       sandboxStatus: "ready",
     });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
+    const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.availableServiceModes.slice().sort()).toEqual(["discuss", "lab", "library"]);
+    expect(result!.availableModes.slice().sort()).toEqual(["discuss", "lab", "library"]);
     expect(result!.disabledReasons).toEqual({});
     expect(result!.labReadiness.canStart).toBe(true);
     expect(result!.askReadiness.canBind).toBe(true);
@@ -211,11 +211,11 @@ describe("serviceModeEligibility.evaluate", () => {
       sandboxStatus: "provisioning",
     });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
+    const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
     // Lab navigation only needs a repo, so the sidebar button stays clickable;
     // the not-ready sandbox surfaces through `labReadiness`, not `disabledReasons`.
-    expect(result!.availableServiceModes).toContain("lab");
+    expect(result!.availableModes).toContain("lab");
     expect(result!.disabledReasons.lab).toBeUndefined();
     expect(result!.labReadiness.canStart).toBe(false);
     expect(result!.labReadiness.reason?.code).toBe("sandbox_provisioning");
@@ -229,9 +229,9 @@ describe("serviceModeEligibility.evaluate", () => {
       sandboxStatus: "stopped",
     });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
+    const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.availableServiceModes).toContain("lab");
+    expect(result!.availableModes).toContain("lab");
     expect(result!.labReadiness.reason?.code).toBe("sandbox_expired");
   });
 
@@ -243,9 +243,9 @@ describe("serviceModeEligibility.evaluate", () => {
       sandboxStatus: "failed",
     });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
+    const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.availableServiceModes).toContain("lab");
+    expect(result!.availableModes).toContain("lab");
     expect(result!.labReadiness.reason?.code).toBe("sandbox_failed");
   });
 
@@ -257,11 +257,11 @@ describe("serviceModeEligibility.evaluate", () => {
       sandboxStatus: null,
     });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
+    const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
     // The most common real case: a freshly-imported repo with no sandbox yet.
     // Lab must still be clickable so the user can provision one from Lab.
-    expect(result!.availableServiceModes).toContain("lab");
+    expect(result!.availableModes).toContain("lab");
     expect(result!.disabledReasons.lab).toBeUndefined();
     expect(result!.labReadiness.canStart).toBe(false);
     expect(result!.labReadiness.reason?.code).toBe("sandbox_missing");
@@ -309,9 +309,9 @@ describe("serviceModeEligibility.evaluate (cost cap closed)", () => {
     });
 
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
+    const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.availableServiceModes).toContain("lab");
+    expect(result!.availableModes).toContain("lab");
     expect(result!.labReadiness.canStart).toBe(false);
     expect(result!.labReadiness.reason?.code).toBe("sandbox_user_cap_exceeded");
     expect(result!.labReadiness.reason?.retryAfterMs).toBeGreaterThan(0);
@@ -343,17 +343,17 @@ describe("serviceModeEligibility.evaluate (cost cap closed)", () => {
     });
 
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.serviceModeEligibility.evaluate, { workspaceId });
+    const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.availableServiceModes).toContain("lab");
+    expect(result!.availableModes).toContain("lab");
     expect(result!.labReadiness.reason?.code).toBe("sandbox_workspace_cap_exceeded");
     expect(result!.labReadiness.reason?.retryAfterMs).toBeGreaterThan(0);
   });
 });
 
-// ─── assertServiceModeEligible (write path) ──────────────────────────────
+// ─── assertWorkspaceModeEligible (write path) ──────────────────────────────
 
-describe("assertServiceModeEligible", () => {
+describe("assertWorkspaceModeEligible", () => {
   test("discuss is always eligible: short-circuits without a repository or workspace", async () => {
     const t = createTestConvex();
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
@@ -361,8 +361,8 @@ describe("assertServiceModeEligible", () => {
     // void-returning callbacks as `null`; we only care that no exception
     // crossed the boundary).
     await viewer.run(async (ctx) => {
-      const { assertServiceModeEligible } = await import("./serviceModeEligibility");
-      await assertServiceModeEligible(ctx, { repositoryId: null, workspaceId: null, mode: "discuss" });
+      const { assertWorkspaceModeEligible } = await import("./workspaceModeEligibility");
+      await assertWorkspaceModeEligible(ctx, { repositoryId: null, workspaceId: null, mode: "discuss" });
     });
   });
 
@@ -372,8 +372,8 @@ describe("assertServiceModeEligible", () => {
     let caught: unknown;
     try {
       await viewer.run(async (ctx) => {
-        const { assertServiceModeEligible } = await import("./serviceModeEligibility");
-        await assertServiceModeEligible(ctx, { repositoryId: null, workspaceId: null, mode: "library" });
+        const { assertWorkspaceModeEligible } = await import("./workspaceModeEligibility");
+        await assertWorkspaceModeEligible(ctx, { repositoryId: null, workspaceId: null, mode: "library" });
       });
     } catch (err) {
       caught = err;
@@ -388,8 +388,8 @@ describe("assertServiceModeEligible", () => {
     let caught: unknown;
     try {
       await viewer.run(async (ctx) => {
-        const { assertServiceModeEligible } = await import("./serviceModeEligibility");
-        await assertServiceModeEligible(ctx, { repositoryId: undefined, workspaceId: undefined, mode: "lab" });
+        const { assertWorkspaceModeEligible } = await import("./workspaceModeEligibility");
+        await assertWorkspaceModeEligible(ctx, { repositoryId: undefined, workspaceId: undefined, mode: "lab" });
       });
     } catch (err) {
       caught = err;
@@ -409,8 +409,8 @@ describe("assertServiceModeEligible", () => {
     let caught: unknown;
     try {
       await viewer.run(async (ctx) => {
-        const { assertServiceModeEligible } = await import("./serviceModeEligibility");
-        await assertServiceModeEligible(ctx, { repositoryId, workspaceId, mode: "lab" });
+        const { assertWorkspaceModeEligible } = await import("./workspaceModeEligibility");
+        await assertWorkspaceModeEligible(ctx, { repositoryId, workspaceId, mode: "lab" });
       });
     } catch (err) {
       caught = err;
@@ -429,8 +429,8 @@ describe("assertServiceModeEligible", () => {
     let caught: unknown;
     try {
       await viewer.run(async (ctx) => {
-        const { assertServiceModeEligible } = await import("./serviceModeEligibility");
-        await assertServiceModeEligible(ctx, { repositoryId, workspaceId, mode: "lab" });
+        const { assertWorkspaceModeEligible } = await import("./workspaceModeEligibility");
+        await assertWorkspaceModeEligible(ctx, { repositoryId, workspaceId, mode: "lab" });
       });
     } catch (err) {
       caught = err;
@@ -447,8 +447,8 @@ describe("assertServiceModeEligible", () => {
     });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     await viewer.run(async (ctx) => {
-      const { assertServiceModeEligible } = await import("./serviceModeEligibility");
-      await assertServiceModeEligible(ctx, { repositoryId, workspaceId, mode: "lab" });
+      const { assertWorkspaceModeEligible } = await import("./workspaceModeEligibility");
+      await assertWorkspaceModeEligible(ctx, { repositoryId, workspaceId, mode: "lab" });
     });
   });
 
@@ -464,8 +464,8 @@ describe("assertServiceModeEligible", () => {
     });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     await viewer.run(async (ctx) => {
-      const { assertServiceModeEligible } = await import("./serviceModeEligibility");
-      await assertServiceModeEligible(ctx, { repositoryId, workspaceId: undefined, mode: "lab" });
+      const { assertWorkspaceModeEligible } = await import("./workspaceModeEligibility");
+      await assertWorkspaceModeEligible(ctx, { repositoryId, workspaceId: undefined, mode: "lab" });
     });
   });
 
@@ -483,8 +483,8 @@ describe("assertServiceModeEligible", () => {
     let caught: unknown;
     try {
       await viewer.run(async (ctx) => {
-        const { assertServiceModeEligible } = await import("./serviceModeEligibility");
-        await assertServiceModeEligible(ctx, { repositoryId, workspaceId, mode: "library" });
+        const { assertWorkspaceModeEligible } = await import("./workspaceModeEligibility");
+        await assertWorkspaceModeEligible(ctx, { repositoryId, workspaceId, mode: "library" });
       });
     } catch (err) {
       caught = err;
@@ -500,8 +500,8 @@ describe("assertServiceModeEligible", () => {
     });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     await viewer.run(async (ctx) => {
-      const { assertServiceModeEligible } = await import("./serviceModeEligibility");
-      await assertServiceModeEligible(ctx, { repositoryId, workspaceId, mode: "library" });
+      const { assertWorkspaceModeEligible } = await import("./workspaceModeEligibility");
+      await assertWorkspaceModeEligible(ctx, { repositoryId, workspaceId, mode: "library" });
     });
   });
 });
@@ -510,12 +510,12 @@ describe("assertServiceModeEligible", () => {
 
 describe("throwIfDisabled (pure)", () => {
   test("available mode: no throw", async () => {
-    const { throwIfDisabled } = await import("./serviceModeEligibility");
+    const { throwIfDisabled } = await import("./workspaceModeEligibility");
     expect(() =>
       throwIfDisabled(
         {
-          availableServiceModes: ["discuss", "library", "lab"],
-          defaultServiceMode: "library",
+          availableModes: ["discuss", "library", "lab"],
+          defaultMode: "library",
           disabledReasons: {},
           labReadiness: { canStart: true, reason: null },
           askReadiness: { canBind: true, reason: null },
@@ -528,13 +528,13 @@ describe("throwIfDisabled (pure)", () => {
   });
 
   test("disabled with structured reason: throws ConvexError carrying code + retryAfterMs", async () => {
-    const { throwIfDisabled } = await import("./serviceModeEligibility");
+    const { throwIfDisabled } = await import("./workspaceModeEligibility");
     let caught: unknown;
     try {
       throwIfDisabled(
         {
-          availableServiceModes: ["discuss"],
-          defaultServiceMode: "discuss",
+          availableModes: ["discuss"],
+          defaultMode: "discuss",
           disabledReasons: {
             lab: {
               code: "sandbox_user_cap_exceeded",
@@ -559,14 +559,14 @@ describe("throwIfDisabled (pure)", () => {
     });
   });
 
-  test("disabled without a structured reason (defensive): throws generic service_mode_unavailable", async () => {
-    const { throwIfDisabled } = await import("./serviceModeEligibility");
+  test("disabled without a structured reason (defensive): throws generic workspace_mode_unavailable", async () => {
+    const { throwIfDisabled } = await import("./workspaceModeEligibility");
     let caught: unknown;
     try {
       throwIfDisabled(
         {
-          availableServiceModes: ["discuss"],
-          defaultServiceMode: "discuss",
+          availableModes: ["discuss"],
+          defaultMode: "discuss",
           disabledReasons: {},
           labReadiness: { canStart: false, reason: null },
           askReadiness: { canBind: false, reason: null },
@@ -579,6 +579,6 @@ describe("throwIfDisabled (pure)", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(ConvexError);
-    expect((caught as ConvexError<{ code: string }>).data.code).toBe("service_mode_unavailable");
+    expect((caught as ConvexError<{ code: string }>).data.code).toBe("workspace_mode_unavailable");
   });
 });

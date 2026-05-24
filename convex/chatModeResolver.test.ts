@@ -32,7 +32,7 @@ const cases: ChatModeResolverCase[] = [
     sandboxStatus: "none",
     expectedAvailableModes: ["discuss"],
     expectedDefaultMode: "discuss",
-    expectedDisabledModes: ["docs", "sandbox"],
+    expectedDisabledModes: ["lab", "library"],
   },
   {
     name: "no repo + provisioning sandbox: sandbox status ignored, docs+sandbox still disabled",
@@ -40,7 +40,7 @@ const cases: ChatModeResolverCase[] = [
     sandboxStatus: "provisioning",
     expectedAvailableModes: ["discuss"],
     expectedDefaultMode: "discuss",
-    expectedDisabledModes: ["docs", "sandbox"],
+    expectedDisabledModes: ["lab", "library"],
   },
   {
     name: "no repo + ready sandbox: sandbox status ignored, docs+sandbox still disabled",
@@ -48,7 +48,7 @@ const cases: ChatModeResolverCase[] = [
     sandboxStatus: "ready",
     expectedAvailableModes: ["discuss"],
     expectedDefaultMode: "discuss",
-    expectedDisabledModes: ["docs", "sandbox"],
+    expectedDisabledModes: ["lab", "library"],
   },
   {
     name: "no repo + expired sandbox: sandbox status ignored, docs+sandbox still disabled",
@@ -56,7 +56,7 @@ const cases: ChatModeResolverCase[] = [
     sandboxStatus: "expired",
     expectedAvailableModes: ["discuss"],
     expectedDefaultMode: "discuss",
-    expectedDisabledModes: ["docs", "sandbox"],
+    expectedDisabledModes: ["lab", "library"],
   },
   {
     name: "no repo + failed sandbox: sandbox status ignored, docs+sandbox still disabled",
@@ -64,54 +64,54 @@ const cases: ChatModeResolverCase[] = [
     sandboxStatus: "failed",
     expectedAvailableModes: ["discuss"],
     expectedDefaultMode: "discuss",
-    expectedDisabledModes: ["docs", "sandbox"],
+    expectedDisabledModes: ["lab", "library"],
   },
   {
     name: "repo + no sandbox: discuss+docs available, sandbox disabled (no sandbox)",
     hasAttachedRepo: true,
     sandboxStatus: "none",
-    expectedAvailableModes: ["discuss", "docs"],
-    expectedDefaultMode: "docs",
-    expectedDisabledModes: ["sandbox"],
+    expectedAvailableModes: ["discuss", "library"],
+    expectedDefaultMode: "library",
+    expectedDisabledModes: ["lab"],
   },
   {
     name: "repo + provisioning sandbox: discuss+docs available, sandbox disabled (provisioning)",
     hasAttachedRepo: true,
     sandboxStatus: "provisioning",
-    expectedAvailableModes: ["discuss", "docs"],
-    expectedDefaultMode: "docs",
-    expectedDisabledModes: ["sandbox"],
+    expectedAvailableModes: ["discuss", "library"],
+    expectedDefaultMode: "library",
+    expectedDisabledModes: ["lab"],
   },
   {
     name: "repo + ready sandbox: all three available, default still docs (sandbox is opt-in)",
     hasAttachedRepo: true,
     sandboxStatus: "ready",
-    expectedAvailableModes: ["discuss", "docs", "sandbox"],
-    expectedDefaultMode: "docs",
+    expectedAvailableModes: ["discuss", "library", "lab"],
+    expectedDefaultMode: "library",
     expectedDisabledModes: [],
   },
   {
     name: "repo + expired sandbox: discuss+docs available, sandbox disabled (expired)",
     hasAttachedRepo: true,
     sandboxStatus: "expired",
-    expectedAvailableModes: ["discuss", "docs"],
-    expectedDefaultMode: "docs",
-    expectedDisabledModes: ["sandbox"],
+    expectedAvailableModes: ["discuss", "library"],
+    expectedDefaultMode: "library",
+    expectedDisabledModes: ["lab"],
   },
   {
     name: "repo + failed sandbox: discuss+docs available, sandbox disabled (failed)",
     hasAttachedRepo: true,
     sandboxStatus: "failed",
-    expectedAvailableModes: ["discuss", "docs"],
-    expectedDefaultMode: "docs",
-    expectedDisabledModes: ["sandbox"],
+    expectedAvailableModes: ["discuss", "library"],
+    expectedDefaultMode: "library",
+    expectedDisabledModes: ["lab"],
   },
 ];
 
 describe("resolveChatModes", () => {
   test("getDefaultThreadMode centralizes the repo-attached default-mode rule", () => {
     expect(getDefaultThreadMode(false)).toBe("discuss");
-    expect(getDefaultThreadMode(true)).toBe("docs");
+    expect(getDefaultThreadMode(true)).toBe("library");
     expect(getDefaultThreadMode(false)).toBe(resolveChatModes(false, "none").defaultMode);
     expect(getDefaultThreadMode(true)).toBe(resolveChatModes(true, "none").defaultMode);
   });
@@ -152,10 +152,10 @@ describe("resolveChatModes", () => {
     // Sanity check: each non-ready sandbox state should give a distinct
     // sandbox-mode hint so the UI tooltip can guide the user to the right
     // next step.
-    const provisioning = resolveChatModes(true, "provisioning").disabledReasons.sandbox;
-    const failed = resolveChatModes(true, "failed").disabledReasons.sandbox;
-    const expired = resolveChatModes(true, "expired").disabledReasons.sandbox;
-    const noSandbox = resolveChatModes(true, "none").disabledReasons.sandbox;
+    const provisioning = resolveChatModes(true, "provisioning").disabledReasons.lab;
+    const failed = resolveChatModes(true, "failed").disabledReasons.lab;
+    const expired = resolveChatModes(true, "expired").disabledReasons.lab;
+    const noSandbox = resolveChatModes(true, "none").disabledReasons.lab;
 
     const reasons = [provisioning, failed, expired, noSandbox];
     expect(new Set(reasons).size).toBe(reasons.length);
@@ -192,16 +192,16 @@ describe("resolveChatModes (Plan-10 sandbox cost-cap gate)", () => {
     // could still queue a send that would block server-side anyway.
     const result = resolveChatModes(true, "ready", USER_CAP_GATE_CLOSED);
 
-    expect(result.availableModes).toEqual(["discuss", "docs"]);
-    expect(result.defaultMode).toBe("docs");
-    expect(result.disabledReasons.sandbox).toBe(DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED);
+    expect(result.availableModes).toEqual(["discuss", "library"]);
+    expect(result.defaultMode).toBe("library");
+    expect(result.disabledReasons.lab).toBe(DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED);
   });
 
   test("closed workspace-cap gate uses the workspace-scoped tooltip", () => {
     const result = resolveChatModes(true, "ready", WORKSPACE_CAP_GATE_CLOSED);
 
-    expect(result.availableModes).toEqual(["discuss", "docs"]);
-    expect(result.disabledReasons.sandbox).toBe(DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED);
+    expect(result.availableModes).toEqual(["discuss", "library"]);
+    expect(result.disabledReasons.lab).toBe(DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED);
     // Sanity: user-cap and workspace-cap tooltips are distinct so the UI
     // can render scope-specific guidance.
     expect(DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED).not.toBe(DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED);
@@ -209,7 +209,7 @@ describe("resolveChatModes (Plan-10 sandbox cost-cap gate)", () => {
 
   test("open cap gate is a no-op when sandbox was already eligible", () => {
     const result = resolveChatModes(true, "ready", OPEN_SANDBOX_COST_CAP_GATE);
-    expect(result.availableModes).toEqual(["discuss", "docs", "sandbox"]);
+    expect(result.availableModes).toEqual(["discuss", "library", "lab"]);
     expect(result.disabledReasons).toEqual({});
   });
 
@@ -219,7 +219,7 @@ describe("resolveChatModes (Plan-10 sandbox cost-cap gate)", () => {
     // category and aren't subject to the sandbox cap.
     const result = resolveChatModes(true, "ready", USER_CAP_GATE_CLOSED);
     expect(result.availableModes).toContain("discuss");
-    expect(result.availableModes).toContain("docs");
+    expect(result.availableModes).toContain("library");
   });
 
   test("default mode invariant survives cost-cap closure across every (repo, sandbox-status) combo", () => {
@@ -228,7 +228,7 @@ describe("resolveChatModes (Plan-10 sandbox cost-cap gate)", () => {
     for (const testCase of cases) {
       const result = resolveChatModes(testCase.hasAttachedRepo, testCase.sandboxStatus, USER_CAP_GATE_CLOSED);
       expect(result.availableModes).toContain(result.defaultMode);
-      expect(result.availableModes).not.toContain("sandbox");
+      expect(result.availableModes).not.toContain("lab");
     }
   });
 

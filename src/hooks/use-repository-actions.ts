@@ -6,7 +6,7 @@ import { api } from "../../convex/_generated/api";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
 import { ARCHIVE_PATH } from "@/route-paths";
-import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
+import type { ChatMode, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 
 /**
  * Aggregates all repo / thread mutations the workspace can fire and exposes
@@ -15,40 +15,52 @@ import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
  * currently in view, and we hand back navigation hooks via
  * `onAfterDeleteThread` / `onAfterArchiveRepo` etc. so the parent can update
  * the URL once a destructive mutation succeeds.
+ *
+ * Send path branches on whether a thread already exists:
+ *   - has-thread: forwards to `chat.sendMessage` with the current thread id;
+ *   - no-thread:  forwards to `chat.sendMessageStartingNewThread` so the
+ *                 backend atomically creates the thread and dispatches the
+ *                 first reply. The shell hands back `onAfterCreateThread`
+ *                 to replace the URL with the canonical mode-aware path.
  */
 export function useRepositoryActions({
   selectedRepositoryId,
   selectedThreadId,
+  workspaceId,
   threadToDelete,
   chatInput,
   chatMode,
-  setChatInput,
+  clearChatInput,
   setActionError,
   onAfterDeleteThread,
   onAfterArchiveRepo,
   onAfterRestoreRepo,
   onAfterPermanentDeleteRepo,
+  onAfterCreateThread,
   setThreadToDelete,
   setShowArchiveDialog,
   setShowPermanentDeleteDialog,
 }: {
   selectedRepositoryId: RepositoryId | null;
   selectedThreadId: ThreadId | null;
+  workspaceId: WorkspaceId | null;
   threadToDelete: ThreadId | null;
   chatInput: string;
   chatMode: ChatMode;
-  setChatInput: (value: string) => void;
+  clearChatInput: () => void;
   setActionError: (value: string | null) => void;
   onAfterDeleteThread: (deletedThreadId: ThreadId) => void;
   onAfterArchiveRepo: () => void;
   onAfterRestoreRepo: () => void;
   onAfterPermanentDeleteRepo: () => void;
+  onAfterCreateThread: (threadId: ThreadId, mode: ChatMode) => void;
   setThreadToDelete: (value: ThreadId | null) => void;
   setShowArchiveDialog: (value: boolean) => void;
   setShowPermanentDeleteDialog: (value: boolean) => void;
 }) {
   const navigate = useNavigate();
   const sendMessageMutation = useMutation(api.chat.send.sendMessage);
+  const sendMessageStartingNewThreadMutation = useMutation(api.chat.send.sendMessageStartingNewThread);
   const cancelInFlightReplyMutation = useMutation(api.chat.cancel.cancelInFlightReply);
   const syncRepositoryMutation = useMutation(api.repositories.syncRepository);
   const deleteThreadMutation = useMutation(api.chat.threads.deleteThread);
@@ -60,20 +72,42 @@ export function useRepositoryActions({
     useCallback(
       async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-        if (!selectedThreadId || !chatInput.trim()) return;
+        const trimmed = chatInput.trim();
+        if (!trimmed) return;
         setActionError(null);
         try {
-          await sendMessageMutation({
-            threadId: selectedThreadId,
+          if (selectedThreadId) {
+            await sendMessageMutation({
+              threadId: selectedThreadId,
+              content: chatInput,
+              mode: chatMode,
+            });
+            clearChatInput();
+            return;
+          }
+          if (!workspaceId) return;
+          const result = await sendMessageStartingNewThreadMutation({
+            workspaceId,
             content: chatInput,
             mode: chatMode,
           });
-          setChatInput("");
+          clearChatInput();
+          onAfterCreateThread(result.threadId, result.mode);
         } catch (error) {
           setActionError(toUserErrorMessage(error, "Failed to send the message."));
         }
       },
-      [chatInput, chatMode, selectedThreadId, sendMessageMutation, setActionError, setChatInput],
+      [
+        chatInput,
+        chatMode,
+        clearChatInput,
+        onAfterCreateThread,
+        selectedThreadId,
+        sendMessageMutation,
+        sendMessageStartingNewThreadMutation,
+        setActionError,
+        workspaceId,
+      ],
     ),
   );
 

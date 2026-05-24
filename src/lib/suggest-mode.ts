@@ -123,12 +123,12 @@ export function suggestMode(
   // to actual content; docs answers from a synthesized artifact would
   // hallucinate line numbers.
   if (
-    (currentMode === "discuss" || currentMode === "docs") &&
-    availableModes.includes("sandbox") &&
+    (currentMode === "discuss" || currentMode === "library") &&
+    availableModes.includes("lab") &&
     SOURCE_PATH_REGEX.test(input)
   ) {
     return {
-      suggested: "sandbox",
+      suggested: "lab",
       key: "specific-file:sandbox",
       reason: "This question references a specific file. Sandbox mode would give a more accurate answer.",
     };
@@ -142,7 +142,7 @@ export function suggestMode(
     return {
       suggested: "discuss",
       key: "open-ended:discuss",
-      reason: "This sounds open-ended; General Chat might be better.",
+      reason: "This sounds open-ended; Discuss might be better.",
     };
   }
 

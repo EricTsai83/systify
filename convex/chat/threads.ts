@@ -4,6 +4,7 @@ import type { Id } from "../_generated/dataModel";
 import { internalMutation, mutation, query, type MutationCtx } from "../_generated/server";
 import { getDefaultThreadMode } from "../chatModeResolver";
 import { requireViewerIdentity } from "../lib/auth";
+import { chatModeValidator } from "../lib/chatMode";
 import { MAX_STREAM_CHUNKS_PER_PASS, MAX_VISIBLE_MESSAGES } from "../lib/constants";
 import { ensureRepositoryWorkspace, findHomeWorkspaceId } from "../lib/workspaces";
 import { loadRecentMessages } from "./context";
@@ -11,12 +12,12 @@ import { deleteMessageStreamState } from "./streamStore";
 import { drainMessageToolCallEvents } from "./toolCallEventStore";
 
 /**
- * Three-mode restructure — upper bound on the per-thread Ask scope filter.
- * 20 ids keeps the filter lookup small (the scope filter is applied during
- * RAG retrieval, where each candidate chunk is filtered by `artifactId IN
- * scope`). A workspace with more than 20 artifacts the user wants to scope
- * the question to almost certainly wants the unbounded "whole workspace"
- * variant (empty array) instead.
+ * Upper bound on the per-thread Ask scope filter. 20 ids keeps the filter
+ * lookup small (the scope filter is applied during RAG retrieval, where
+ * each candidate chunk is filtered by `artifactId IN scope`). A workspace
+ * with more than 20 artifacts the user wants to scope the question to
+ * almost certainly wants the unbounded "whole workspace" variant (empty
+ * array) instead.
  */
 const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
 
@@ -25,19 +26,16 @@ export const listThreads = query({
     repositoryId: v.optional(v.id("repositories")),
     workspaceId: v.optional(v.id("workspaces")),
     /**
-     * Three-mode restructure — service-mode-scoped listing. Each service
-     * mode (Discuss / Library Ask / Lab) owns its own thread slice, so
-     * the sidebar query forwards the active mode and the backend serves
-     * only the matching rows. Without this filter, a Library Ask thread
-     * would surface in the Discuss sidebar (and the discuss-page
-     * landing's most-recent-thread redirect would bounce the user into a
-     * mode-mismatched chat). Only the workspace-scoped path honours the
-     * filter; repo / owner listings are admin / debug paths and stay
+     * Service-mode-scoped listing. Each chat mode (Discuss / Docs / Sandbox)
+     * owns its own thread slice, so the sidebar query forwards the active
+     * mode and the backend serves only the matching rows. Without this
+     * filter, threads of a non-matching mode would surface in the wrong
+     * sidebar (and the most-recent-thread redirect would bounce the user
+     * into a mode-mismatched chat). Only the workspace-scoped path honours
+     * the filter; repo / owner listings are admin / debug paths and stay
      * mode-blind.
      */
-    mode: v.optional(
-      v.union(v.literal("discuss"), v.literal("docs"), v.literal("sandbox"), v.literal("ask"), v.literal("lab")),
-    ),
+    mode: v.optional(chatModeValidator),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -142,6 +140,34 @@ export const listMessages = query({
 });
 
 /**
+ * All thread ids the viewer owns, capped at 1000. Used by the frontend
+ * `useStorageGC` thread-scoped sweep to drop composer-draft localStorage
+ * entries (`systify.composer.draft.thread.{tid}`) whose owning thread has
+ * been deleted. The cap is intentional — beyond 1000 threads a power user
+ * may see drafts on extremely old threads collected as orphans, which is
+ * an acceptable trade-off versus paginating the whole table on every
+ * subscription tick.
+ *
+ * The query walks the `by_ownerTokenIdentifier_and_lastMessageAt` index
+ * (already present in the schema) so no schema work is needed; descending
+ * order means the freshest 1000 threads always survive the cap.
+ */
+export const listAllOwnerThreadIds = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await requireViewerIdentity(ctx);
+    const rows = await ctx.db
+      .query("threads")
+      .withIndex("by_ownerTokenIdentifier_and_lastMessageAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier),
+      )
+      .order("desc")
+      .take(1000);
+    return rows.map((row) => row._id);
+  },
+});
+
+/**
  * Lightweight thread-existence probe. Unlike {@link listMessages} (which
  * throws "Thread not found." so a broken thread surfaces as an error
  * boundary), this returns `null` when the thread is missing or owned by
@@ -169,16 +195,11 @@ export const createThread = mutation({
     repositoryId: v.optional(v.id("repositories")),
     workspaceId: v.optional(v.id("workspaces")),
     title: v.optional(v.string()),
-    mode: v.optional(
-      v.union(v.literal("discuss"), v.literal("docs"), v.literal("sandbox"), v.literal("ask"), v.literal("lab")),
-    ),
+    mode: v.optional(chatModeValidator),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
 
-    // When a workspaceId is provided, inherit its repositoryId unless the
-    // caller explicitly supplies one. This means threads created inside a
-    // workspace automatically attach to the workspace's repo.
     let repositoryId = args.repositoryId;
     const workspaceId = args.workspaceId;
     if (workspaceId) {
@@ -194,17 +215,10 @@ export const createThread = mutation({
       }
     }
 
-    // `docs`, `sandbox`, `ask`, and `lab` all require an attached repo; the
-    // resolver's capability ladder already prevents the UI from offering
-    // them in the no-repo case, but we re-check here so direct callers
-    // (and racing UI states) can't bypass it. We do NOT enforce
-    // sandbox-ready at thread creation; `sendMessage` re-validates at the
-    // actual send moment.
-    const requestedMode = args.mode ?? getDefaultThreadMode(!!repositoryId);
-    const mode = requestedMode === "sandbox" ? "lab" : requestedMode === "docs" ? "ask" : requestedMode;
+    const mode = args.mode ?? getDefaultThreadMode(!!repositoryId);
 
-    if ((mode === "ask" || mode === "lab") && !repositoryId) {
-      throw new Error(`'${args.mode}' mode requires an attached repository.`);
+    if ((mode === "library" || mode === "lab") && !repositoryId) {
+      throw new Error(`'${mode}' mode requires an attached repository.`);
     }
 
     let title = args.title;
@@ -235,19 +249,13 @@ export const createThread = mutation({
 });
 
 /**
- * Three-mode restructure — create a Library Ask thread bound to a
- * workspace. Distinct from {@link createThread} because Ask carries a
- * scope-filter (`artifactContext`) and never accepts a `mode` other than
- * `"ask"`; routing it through `createThread` would smear that distinction
- * across the legacy mode validator.
- *
- * Phase 1 widens the schema and ships the mutation; the frontend does not
- * call it yet (Library Ask UI lands in Phase 2). Wiring the mutation early
- * lets contract tests (Phase 1.7 verification) assert that `mode === "ask"`
- * survives a round-trip through the validator and the persistence layer
- * before the read path goes live.
+ * Create a Library Ask thread bound to a workspace. Distinct from
+ * {@link createThread} because Ask carries a scope-filter
+ * (`artifactContext`) the plain thread mutation has no place for. The
+ * thread is persisted with `mode: "library"` — "Ask" is the user-facing
+ * label for an artifact-scoped chat within Library mode.
  */
-export const createAskThread = mutation({
+export const createLibraryAskThread = mutation({
   args: {
     workspaceId: v.id("workspaces"),
     artifactContext: v.optional(v.array(v.id("artifacts"))),
@@ -293,7 +301,7 @@ export const createAskThread = mutation({
       repositoryId: workspace.repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
       title: args.title ?? "Library Ask",
-      mode: "ask",
+      mode: "library",
       lastMessageAt: Date.now(),
       // Stored as `undefined` when empty so the "whole workspace" sentinel
       // and a deliberately-empty user filter both share one shape.
@@ -302,7 +310,7 @@ export const createAskThread = mutation({
     // Mirror `createThread`'s return shape (`{ _id, mode }`) so callers can
     // route to the canonical mode-aware URL uniformly regardless of which
     // mutation created the thread.
-    return { _id: threadId, mode: "ask" as const };
+    return { _id: threadId, mode: "library" as const };
   },
 });
 
@@ -358,20 +366,11 @@ export const setThreadRepository = mutation({
       //      below). Spec says discuss is "no repo, no sandbox", so leaving
       //      it in `discuss` after attaching a repo would create the exact
       //      stale-mode state the resolver is supposed to forbid. Lift the
-      //      thread into the repo default (`docs`) to mirror createThread.
+      //      thread into the repo default (`library`) to mirror createThread.
       //   2. repo-A   → repo-B:    the thread already has a repo and the user
-      //      may have explicitly chosen `docs` or `sandbox`. Preserve their
+      //      may have explicitly chosen `library` or `lab`. Preserve their
       //      choice; only `repositoryId`/`workspaceId` need to change.
-      const defaultRepoMode = getDefaultThreadMode(true);
-      const nextMode = thread.repositoryId
-        ? thread.mode === "sandbox"
-          ? "lab"
-          : thread.mode === "docs"
-            ? "ask"
-            : thread.mode
-        : defaultRepoMode === "docs"
-          ? "ask"
-          : defaultRepoMode;
+      const nextMode = thread.repositoryId ? thread.mode : getDefaultThreadMode(true);
       const previousRepositoryId = thread.repositoryId;
       const swappedFromRepositoryId =
         previousRepositoryId && previousRepositoryId !== args.repositoryId ? previousRepositoryId : undefined;
@@ -391,7 +390,7 @@ export const setThreadRepository = mutation({
     // Detach atomically: dropping the repository while resetting the persisted
     // mode keeps the thread in the same repo-less default state as
     // `createThread`, so a racing `sendMessage` call never sees a stale
-    // repo-dependent mode like `docs` / `sandbox`.
+    // repo-dependent mode like `library` / `lab`.
     const detachedMode = getDefaultThreadMode(false);
     const workspaceId = await findHomeWorkspaceId(ctx, identity.tokenIdentifier);
     await ctx.db.patch(args.threadId, {

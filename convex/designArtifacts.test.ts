@@ -42,7 +42,7 @@ async function seedThreadWithRepository(
       repositoryId,
       ownerTokenIdentifier,
       title: "Design thread",
-      mode: "docs",
+      mode: "library",
       lastMessageAt: Date.now(),
     });
 
@@ -52,7 +52,7 @@ async function seedThreadWithRepository(
       ownerTokenIdentifier,
       role: "user",
       status: "completed",
-      mode: "docs",
+      mode: "library",
       content: "We should isolate write paths behind a service boundary.",
     });
     await ctx.db.insert("messages", {
@@ -61,7 +61,7 @@ async function seedThreadWithRepository(
       ownerTokenIdentifier,
       role: "assistant",
       status: "completed",
-      mode: "docs",
+      mode: "library",
       content: "Adopt a dedicated write service and keep reads in existing handlers.",
     });
 

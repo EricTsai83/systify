@@ -44,7 +44,7 @@ describe("chat reply context", () => {
         repositoryId,
         ownerTokenIdentifier,
         title: "Sandbox context thread",
-        mode: "sandbox",
+        mode: "lab",
         lastMessageAt: Date.now(),
       });
 
@@ -122,7 +122,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "sandbox",
+        mode: "lab",
         content: "What does the latest source tree look like?",
       });
 
@@ -190,7 +190,7 @@ describe("chat reply context", () => {
         repositoryId,
         ownerTokenIdentifier,
         title: "Tooling thread",
-        mode: "sandbox",
+        mode: "lab",
         lastMessageAt: Date.now(),
       });
       const userMessageId = await ctx.db.insert("messages", {
@@ -199,7 +199,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "sandbox",
+        mode: "lab",
         content: "Read the entrypoint.",
       });
 
@@ -267,7 +267,7 @@ describe("chat reply context", () => {
           repositoryId,
           ownerTokenIdentifier,
           title: `Tooling ${sandboxStatus} thread`,
-          mode: "sandbox",
+          mode: "lab",
           lastMessageAt: Date.now(),
         });
         const userMessageId = await ctx.db.insert("messages", {
@@ -276,7 +276,7 @@ describe("chat reply context", () => {
           ownerTokenIdentifier,
           role: "user",
           status: "completed",
-          mode: "sandbox",
+          mode: "lab",
           content: "Try to use a tool.",
         });
 
@@ -407,7 +407,7 @@ describe("chat reply context", () => {
         repositoryId,
         ownerTokenIdentifier,
         title: "Docs thread",
-        mode: "docs",
+        mode: "library",
         lastMessageAt: Date.now(),
       });
 
@@ -475,7 +475,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "docs",
+        mode: "library",
         content: "What did we already decide about architecture?",
       });
 
@@ -518,7 +518,7 @@ describe("chat reply context", () => {
         repositoryId,
         ownerTokenIdentifier,
         title: "Docs single kind thread",
-        mode: "docs",
+        mode: "library",
         lastMessageAt: Date.now(),
       });
 
@@ -542,7 +542,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "docs",
+        mode: "library",
         content: "Show the latest architecture artifacts.",
       });
 
@@ -705,18 +705,18 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "docs",
+        mode: "library",
         content: "Question pinned to docs mode.",
       });
 
       // Newer user message lands after queueing, before generation runs.
-      // Picking it would make the test fail with mode === "sandbox".
+      // Picking it would make the test fail with mode === "lab".
       await ctx.db.insert("messages", {
         threadId,
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "sandbox",
+        mode: "lab",
         content: "Newer message, different mode.",
       });
 
@@ -728,7 +728,7 @@ describe("chat reply context", () => {
       userMessageId: queuedUserMessageId,
     });
 
-    expect(context.mode).toBe("docs");
+    expect(context.mode).toBe("library");
   });
 
   // NOTE: Plan 04 retired the per-mode chunk-search code path entirely
@@ -811,7 +811,7 @@ describe("chat reply context", () => {
         repositoryId,
         ownerTokenIdentifier,
         title: "Docs id thread",
-        mode: "docs",
+        mode: "library",
         lastMessageAt: Date.now(),
       });
 
@@ -833,7 +833,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "docs",
+        mode: "library",
         content: "Where is the boundary between A and B?",
       });
 
@@ -845,74 +845,6 @@ describe("chat reply context", () => {
     expect(context.artifacts).toHaveLength(1);
     expect(context.artifacts[0]?.id).toBe(expectedArtifactId);
     expect(context.artifacts[0]?.title).toBe("Architecture diagram");
-  });
-
-  test("ask mode skips the prompt-level artifact pre-load (retrieval lives on the chunks path)", async () => {
-    // Library Ask retrieves through `artifactChunks` (lexical + embedding
-    // RAG) rather than pre-loading whole artifacts into the prompt. Ask is
-    // therefore a non-docs mode that produces an empty `artifacts` array —
-    // the chunks path is the authoritative context source.
-    const ownerTokenIdentifier = "user|ask-repo-backed-context";
-    const t = convexTest(schema, modules);
-
-    const { threadId, userMessageId } = await t.run(async (ctx) => {
-      const repositoryId = await ctx.db.insert("repositories", {
-        ownerTokenIdentifier,
-        sourceHost: "github",
-        sourceUrl: "https://github.com/acme/ask-context",
-        sourceRepoFullName: "acme/ask-context",
-        sourceRepoOwner: "acme",
-        sourceRepoName: "ask-context",
-        defaultBranch: "main",
-        visibility: "private",
-        accessMode: "private",
-        importStatus: "completed",
-        detectedLanguages: [],
-        packageManagers: [],
-        entrypoints: [],
-        fileCount: 0,
-      });
-
-      const threadId = await ctx.db.insert("threads", {
-        repositoryId,
-        ownerTokenIdentifier,
-        title: "Ask context thread",
-        mode: "ask",
-        lastMessageAt: Date.now(),
-      });
-
-      await ctx.db.insert("artifacts", {
-        repositoryId,
-        threadId,
-        ownerTokenIdentifier,
-        kind: "manifest",
-        title: "Manifest excluded from Ask fallback",
-        summary: "Should not appear",
-        contentMarkdown: "manifest body",
-        source: "heuristic",
-        version: 1,
-      });
-
-      const userMessageId = await ctx.db.insert("messages", {
-        repositoryId,
-        threadId,
-        ownerTokenIdentifier,
-        role: "user",
-        status: "completed",
-        mode: "ask",
-        content: "What do the artifacts say?",
-      });
-
-      return { threadId, userMessageId };
-    });
-
-    const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
-
-    expect(context.mode).toBe("ask");
-    expect(context.sourceRepoFullName).toBe("acme/ask-context");
-    expect(context.artifacts).toEqual([]);
-    expect(context.chunks).toEqual([]);
-    expect(context.sandboxTooling).toBeUndefined();
   });
 
   test("rejects a userMessageId that points to an assistant message", async () => {
@@ -994,7 +926,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "sandbox",
+        mode: "lab",
         content: "How do we implement the factory pattern in this repo?",
       });
       // A prior `sandbox` reply from earlier in the thread (here we model it
@@ -1006,7 +938,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         role: "assistant",
         status: "completed",
-        mode: "sandbox",
+        mode: "lab",
         content: "Earlier sandbox-mode answer.",
       });
 
@@ -1141,7 +1073,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "sandbox",
+        mode: "lab",
         content: "Earlier sandbox question.",
       });
       await ctx.db.insert("messages", {
@@ -1149,7 +1081,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         role: "assistant",
         status: "completed",
-        mode: "sandbox",
+        mode: "lab",
         content: "Earlier sandbox answer.",
       });
 
@@ -1158,7 +1090,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "sandbox",
+        mode: "lab",
         content: "Queued sandbox question.",
       });
 

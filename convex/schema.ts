@@ -1,6 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
-import { serviceModeValidator } from "./lib/serviceMode";
+import { chatModeValidator } from "./lib/chatMode";
 import { systemDesignKindValidator } from "./lib/systemDesign";
 
 const repositoryStatus = v.union(
@@ -107,51 +107,30 @@ const artifactKind = v.union(
 
 /**
  * Chat mode persisted on `threads.mode` and `messages.mode`. The enum mirrors
- * the UI's mode selector verbatim (no legacy quick/deep aliasing) per the PRD's
- * Architectural reversal section: frontend and backend share one vocabulary.
+ * the UI's mode selector and URL segment verbatim — DB literal, URL path, and
+ * UI label all use the same word.
  *
  * - `discuss`  — LLM training only; no repo, no sandbox.
- * - `docs`     — Legacy. RAG over the user's accumulated artifacts for the
- *                attached repository. Phase 3 of the three-mode restructure
- *                will narrow this out; until then, existing rows remain valid
- *                and `chat.sendMessage` continues to honour them.
- * - `sandbox`  — Legacy alias for `lab`. Live filesystem + execution in a
- *                Daytona sandbox. Phase 3 will rename existing rows to `lab`
- *                and narrow this literal away.
- * - `ask`      — Library Ask sub-mode. Hybrid RAG over chunked artifacts.
- *                Provisioned in Phase 1; first wired through to the user in
- *                Phase 2. NEVER has access to sandbox tools.
- * - `lab`      — Sandbox-backed mode (the new name for `sandbox`). Distinct
- *                literal so new threads can be persisted with the post-
- *                restructure vocabulary while legacy `sandbox` rows continue
- *                to work.
+ * - `library`  — RAG over the user's accumulated artifacts for the attached
+ *                repository.
+ * - `lab`      — Live filesystem + execution in a Daytona sandbox.
  *
  * Mode preconditions (repo-required, sandbox-required) are enforced in
  * `chat.sendMessage` / `chat.createThread`, not in the schema.
  */
-const threadMode = v.union(
-  v.literal("discuss"),
-  v.literal("docs"),
-  v.literal("sandbox"),
-  v.literal("ask"),
-  v.literal("lab"),
-);
+const threadMode = chatModeValidator;
 
 const messageRole = v.union(v.literal("system"), v.literal("user"), v.literal("assistant"), v.literal("tool"));
 
 /**
- * Plan 07 — `cancelled` joins the terminal-state set alongside `completed` /
- * `failed`. Used when the owner stops their own in-flight reply via
+ * `cancelled` joins the terminal-state set alongside `completed` / `failed`.
+ * Used when the owner stops their own in-flight reply via
  * `chat.cancel.cancelInFlightReply`. Distinct from `failed` because:
  *
  *   - the message body is not an error — partial content is still useful;
  *   - the status label should read "Cancelled" (not "Failed") in the UI;
  *   - audit trails / metrics should distinguish user intent from upstream
  *     failures.
- *
- * Schema migration: pure widen (the union now accepts an additional literal
- * the database has never previously held). No backfill — existing rows still
- * map cleanly to one of the four legacy values.
  */
 const messageStatus = v.union(
   v.literal("pending"),
@@ -180,15 +159,15 @@ export default defineSchema({
     color: workspaceColor,
     lastAccessedAt: v.number(),
     /**
-     * Last service mode the user landed on inside this workspace
+     * Last mode the user landed on inside this workspace
      * (discuss / library / lab). The workspace-landing redirect
      * (`/chat` → `/w/:wid` → canonical mode URL) consults this so the
      * user comes back to the mode they were last in, instead of the
      * workspace's structural default. Optional because pre-existing
      * workspaces don't have it set yet; the redirect falls back to
-     * `availability.defaultServiceMode` when missing.
+     * `getDefaultThreadMode()` when missing.
      */
-    lastServiceMode: v.optional(serviceModeValidator),
+    lastMode: v.optional(chatModeValidator),
   })
     .index("by_ownerTokenIdentifier_and_lastAccessedAt", ["ownerTokenIdentifier", "lastAccessedAt"])
     .index("by_ownerTokenIdentifier_and_repositoryId", ["ownerTokenIdentifier", "repositoryId"]),
@@ -418,37 +397,22 @@ export default defineSchema({
      */
     folderId: v.optional(v.id("artifactFolders")),
     /**
-     * Three-mode restructure — origin tag for the freshness UI.
-     *
-     *   - `discuss` — produced from a no-repo discussion thread.
-     *   - `lab`     — produced or last verified by a sandbox-backed Lab
-     *                 session (this is the only origin that grants the
-     *                 "verified against current source" badge).
-     *   - `legacy`  — pre-restructure rows backfilled by `migrations.ts`.
-     *
-     * Optional so existing rows are valid; the backfill rewrites them to
-     * `legacy`.
-     */
-    producedIn: v.optional(v.union(v.literal("discuss"), v.literal("lab"), v.literal("legacy"))),
-    /**
      * Wall-clock ms epoch of the most recent Lab-session verification.
      * Stamped by the Lab session when the LLM reads / re-reads the live
-     * tree to confirm the artifact is still accurate. Phase 3's Library
-     * tree pills derive freshness purely from this column.
+     * tree to confirm the artifact is still accurate. The Library tree
+     * pills derive freshness purely from this column — an artifact is
+     * "verified" iff this field is set.
      */
     lastVerifiedAt: v.optional(v.number()),
     /**
-     * Phase 2 chunking pipeline status.
-     *   - `pending`  — backfilled or just-updated; the indexer hasn't
-     *                  produced chunks yet.
+     * Chunking pipeline status.
+     *   - `pending`  — just-updated; the indexer hasn't produced chunks yet.
      *   - `indexed`  — `artifactChunks` rows match the current
      *                  `lastChunkedVersion`; embeddings may still be
      *                  partial when an embed fallback is in effect.
      *   - `failed`   — embedding pipeline exhausted retries; the
      *                  `retryFailedArtifactIndexing` cron will pick the
      *                  row up again.
-     *
-     * Phase 1 lays the column down; Phase 2 mutates it.
      */
     chunkingStatus: v.optional(v.union(v.literal("pending"), v.literal("indexed"), v.literal("failed"))),
     /**
@@ -640,28 +604,20 @@ export default defineSchema({
     lastMessageAt: v.number(),
     lastAssistantMessageAt: v.optional(v.number()),
     /**
-     * Library Ask scope filter. Phase 1 widen, Phase 2 read by RAG retriever.
-     * Empty / undefined means "search the whole workspace" — does NOT mean
-     * "load these artifacts as context"; the actual context shrink happens
-     * via per-query top-N chunk retrieval. Capped at 20 ids by mutation
+     * Library Ask scope filter, read by the RAG retriever. Empty / undefined
+     * means "search the whole workspace" — does NOT mean "load these
+     * artifacts as context"; the actual context shrink happens via
+     * per-query top-N chunk retrieval. Capped at 20 ids by mutation
      * validators so the filter list itself stays small.
      */
     artifactContext: v.optional(v.array(v.id("artifacts"))),
     /**
      * Lab thread → workspace-level lab session pointer. Workspace's single
      * active session is shared across every Lab thread in that workspace, so
-     * thread switching never re-provisions a sandbox. Phase 1 carries the
-     * column for schema parity; Phase 2 wires the lifecycle. Optional and
-     * unused on `discuss` / `ask` / legacy threads.
+     * thread switching never re-provisions a sandbox. Optional and unused
+     * on `discuss` / `library` threads.
      */
     labSessionId: v.optional(v.id("labSessions")),
-    /**
-     * Phase 3 — non-null timestamp when a legacy `docs` thread is locked
-     * during the docs → ask narrowing. `chat.sendMessage` rejects writes
-     * to locked threads so users get pointed at the Library Ask
-     * replacement instead of accidentally adding more legacy turns.
-     */
-    lockedAt: v.optional(v.number()),
     /**
      * Wall-clock ms epoch when the viewer pinned this thread to the top of
      * their sidebar. Unset on unpin (drop the field via patch). The value
@@ -703,20 +659,20 @@ export default defineSchema({
      *      a finer breakdown than the job-level rollup.
      *
      * Optional + only written for assistant replies whose model is in the
-     * pricing table; messages predating Plan 10 (and discuss / docs
+     * pricing table; messages predating Plan 10 (and discuss / library
      * heuristic replies) keep the field unset rather than stored as 0,
      * so the frontend can render "—" instead of "$0.00" when cost is
      * genuinely unknown vs. genuinely zero.
      */
     estimatedCostUsd: v.optional(v.number()),
     /**
-     * Numbered artifact citation map for `docs` mode replies. Index 1 in the
-     * array is the artifact the prompt rendered as `## [A1] …`, index 2 the
-     * `[A2]` artifact, and so on. The frontend uses this to turn `[A#]`
+     * Numbered artifact citation map for `library` mode replies. Index 1 in
+     * the array is the artifact the prompt rendered as `## [A1] …`, index 2
+     * the `[A2]` artifact, and so on. The frontend uses this to turn `[A#]`
      * tokens in the assistant's content into links that jump to the right
      * artifact in the side panel. Optional + only written when the reply
-     * actually had artifacts in scope (docs mode), so messages predating
-     * Plan 02 stay valid without backfill (widen-migrate-narrow).
+     * actually had artifacts in scope (library mode), so messages predating
+     * citationMap stay valid without backfill (widen-migrate-narrow).
      */
     citationMap: v.optional(
       v.array(
@@ -724,11 +680,10 @@ export default defineSchema({
           index: v.number(),
           artifactId: v.id("artifacts"),
           /**
-           * Three-mode restructure — chunk-level citation. Phase 1 widen,
-           * Phase 2 the Library Ask flow writes one entry per retrieved
-           * chunk so `[A1#section]` deep-links jump to the matching
-           * heading. Optional so legacy `docs` rows that only carry
-           * `index + artifactId` continue to validate.
+           * Chunk-level citation. The Library Ask flow writes one entry per
+           * retrieved chunk so `[A1#section]` deep-links jump to the
+           * matching heading. Optional so `library`-mode rows that only
+           * carry `index + artifactId` continue to validate.
            */
           chunkId: v.optional(v.id("artifactChunks")),
           /**
@@ -789,12 +744,12 @@ export default defineSchema({
      * design (we never reject the model's output).
      *
      * Computed by `convex/chat/citationLint.ts:lintCitations` at finalize
-     * / fail / cancel time. Optional + only written for sandbox-mode
-     * replies that produced at least one flagged sentence; messages
-     * predating Plan 11 (and discuss / docs replies) keep the field
-     * unset rather than `[]` — the renderer treats both as "no
-     * highlights", so this matches the widen-migrate-narrow contract
-     * documented in `docs/sandbox-mode-system-design.md`.
+     * / fail / cancel time. Optional + only written for lab-mode replies
+     * that produced at least one flagged sentence; messages predating
+     * Plan 11 (and discuss / library replies) keep the field unset rather
+     * than `[]` — the renderer treats both as "no highlights", so this
+     * matches the widen-migrate-narrow contract documented in
+     * `docs/lab-mode-system-design.md`.
      *
      * Capped at `MAX_UNVERIFIED_CLAIMS_PER_MESSAGE` (50) inside the lint
      * function so a runaway pathological reply cannot push the message
@@ -994,8 +949,6 @@ export default defineSchema({
     .index("by_expiresAt", ["expiresAt"]),
 
   /**
-   * Three-mode restructure (Phase 1 widen, Phase 2 writes / reads).
-   *
    * Markdown-aware chunks of every artifact, indexed for hybrid lexical +
    * embedding retrieval by Library Ask. Only the *latest* version's chunks
    * live here — the indexing pipeline replaces the row set in one
@@ -1054,8 +1007,6 @@ export default defineSchema({
     }),
 
   /**
-   * Three-mode restructure (Phase 1 widen, Phase 2 lifecycle wiring).
-   *
    * Workspace-level Lab session: at most one `active` row per workspace at
    * any time, shared across every Lab thread in that workspace. Session
    * lifecycle:

@@ -209,8 +209,8 @@ describe("ChatPanel streaming rendering", () => {
         setChatMode={vi.fn()}
         availableModes={["discuss"]}
         disabledModeReasons={{
-          docs: "Attach a repository to use Design Docs mode.",
-          sandbox: "Attach a repository with a ready sandbox to use Sandbox mode.",
+          library: "Attach a repository to use Library mode.",
+          lab: "Attach a repository with a ready sandbox to use Lab mode.",
         }}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -245,10 +245,10 @@ describe("ChatPanel streaming rendering", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="docs"
+        chatMode="library"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs"]}
-        disabledModeReasons={{ sandbox: "Provision a sandbox to use Sandbox mode." }}
+        availableModes={["discuss", "library"]}
+        disabledModeReasons={{ lab: "Provision a sandbox to use Lab mode." }}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -275,10 +275,10 @@ describe("ChatPanel streaming rendering", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="docs"
+        chatMode="library"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs"]}
-        disabledModeReasons={{ sandbox: "Provision a sandbox to use Sandbox mode." }}
+        availableModes={["discuss", "library"]}
+        disabledModeReasons={{ lab: "Provision a sandbox to use Lab mode." }}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -301,7 +301,7 @@ describe("ChatPanel streaming rendering", () => {
         setChatInput={vi.fn()}
         chatMode="discuss"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs", "sandbox"]}
+        availableModes={["discuss", "library", "lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -330,7 +330,7 @@ describe("ChatPanel mode badge and inline citations", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "docs",
+            mode: "library",
             content: "Answer body.",
             errorMessage: undefined,
           } as unknown as Doc<"messages">,
@@ -339,9 +339,9 @@ describe("ChatPanel mode badge and inline citations", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="docs"
+        chatMode="library"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs"]}
+        availableModes={["discuss", "library"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -351,12 +351,12 @@ describe("ChatPanel mode badge and inline citations", () => {
       />,
     );
 
-    // The badge label must come from the mode catalog ("Design Docs"),
-    // not the raw DB literal ("docs"). Anchoring the assertion on the
+    // The badge label must come from the mode catalog ("Library"),
+    // not the raw DB literal ("library"). Anchoring the assertion on the
     // user-facing label catches any future drift between the badge and
     // the mode-selector pill.
     const badge = screen.getByTestId("message-mode-badge");
-    expect(badge).toHaveTextContent("Design Docs");
+    expect(badge).toHaveTextContent("Library");
   });
 
   test("does not render a mode chip on user messages", () => {
@@ -370,7 +370,7 @@ describe("ChatPanel mode badge and inline citations", () => {
             _id: "message_user_1" as MessageId,
             role: "user",
             status: "completed",
-            mode: "docs",
+            mode: "library",
             content: "What about X?",
             errorMessage: undefined,
           } as unknown as Doc<"messages">,
@@ -379,9 +379,9 @@ describe("ChatPanel mode badge and inline citations", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="docs"
+        chatMode="library"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs"]}
+        availableModes={["discuss", "library"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -407,7 +407,7 @@ describe("ChatPanel mode badge and inline citations", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "docs",
+            mode: "library",
             content: "The boundary is documented [A1] and the risk is tracked [A2].",
             citationMap: [
               { index: 1, artifactId: artifactAlpha },
@@ -420,9 +420,9 @@ describe("ChatPanel mode badge and inline citations", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="docs"
+        chatMode="library"
         setChatMode={vi.fn()}
-        availableModes={["docs"]}
+        availableModes={["library"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -461,7 +461,7 @@ describe("ChatPanel mode badge and inline citations", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "docs",
+            mode: "library",
             content: "See [A99] for details.",
             citationMap: [{ index: 1, artifactId: "artifact_alpha" as ArtifactId }],
             errorMessage: undefined,
@@ -471,9 +471,9 @@ describe("ChatPanel mode badge and inline citations", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="docs"
+        chatMode="library"
         setChatMode={vi.fn()}
-        availableModes={["docs"]}
+        availableModes={["library"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -533,7 +533,7 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "sandbox",
+            mode: "lab",
             content,
             unverifiedClaims: [{ start, end }],
             errorMessage: undefined,
@@ -543,9 +543,9 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="sandbox"
+        chatMode="lab"
         setChatMode={vi.fn()}
-        availableModes={["sandbox"]}
+        availableModes={["lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -585,7 +585,7 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "sandbox",
+            mode: "lab",
             content,
             citationMap: [{ index: 1, artifactId }],
             unverifiedClaims: [{ start, end }],
@@ -596,9 +596,9 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="sandbox"
+        chatMode="lab"
         setChatMode={vi.fn()}
-        availableModes={["sandbox"]}
+        availableModes={["lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -635,7 +635,7 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "streaming",
-            mode: "sandbox",
+            mode: "lab",
             content: "",
             unverifiedClaims: [{ start: 0, end: 10 }],
             errorMessage: undefined,
@@ -650,9 +650,9 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="sandbox"
+        chatMode="lab"
         setChatMode={vi.fn()}
-        availableModes={["sandbox"]}
+        availableModes={["lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -681,7 +681,7 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
               _id: assistantMessageId,
               role: "assistant",
               status: "completed",
-              mode: "sandbox",
+              mode: "lab",
               content: "All claims cite the source [convex/api/foo.ts:1-10].",
               unverifiedClaims: claims,
               errorMessage: undefined,
@@ -691,9 +691,9 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
           isChatLoading={false}
           chatInput=""
           setChatInput={vi.fn()}
-          chatMode="sandbox"
+          chatMode="lab"
           setChatMode={vi.fn()}
-          availableModes={["sandbox"]}
+          availableModes={["lab"]}
           disabledModeReasons={{}}
           isSending={false}
           onSendMessage={vi.fn()}
@@ -728,7 +728,7 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "sandbox",
+            mode: "lab",
             content,
             unverifiedClaims: [
               { start: secondStart, end: secondEnd },
@@ -741,9 +741,9 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="sandbox"
+        chatMode="lab"
         setChatMode={vi.fn()}
-        availableModes={["sandbox"]}
+        availableModes={["lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -1107,7 +1107,7 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "sandbox",
+            mode: "lab",
             content: "Done.",
             estimatedInputTokens: 800,
             estimatedOutputTokens: 400,
@@ -1119,9 +1119,9 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="sandbox"
+        chatMode="lab"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs", "sandbox"]}
+        availableModes={["discuss", "library", "lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -1146,7 +1146,7 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "sandbox",
+            mode: "lab",
             content: "Done.",
             estimatedInputTokens: 1200,
             estimatedOutputTokens: 800,
@@ -1176,9 +1176,9 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="sandbox"
+        chatMode="lab"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs", "sandbox"]}
+        availableModes={["discuss", "library", "lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -1201,7 +1201,7 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "sandbox",
+            mode: "lab",
             content: "Done.",
             estimatedInputTokens: 50,
             estimatedOutputTokens: 30,
@@ -1213,9 +1213,9 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="sandbox"
+        chatMode="lab"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs", "sandbox"]}
+        availableModes={["discuss", "library", "lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -1240,7 +1240,7 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "streaming",
-            mode: "sandbox",
+            mode: "lab",
             content: "partial",
             estimatedInputTokens: 200,
             estimatedOutputTokens: 100,
@@ -1251,9 +1251,9 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="sandbox"
+        chatMode="lab"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs", "sandbox"]}
+        availableModes={["discuss", "library", "lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -1368,7 +1368,7 @@ describe("ChatPanel mode examples (Plan 14)", () => {
         setChatInput={vi.fn()}
         chatMode="discuss"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs", "sandbox"]}
+        availableModes={["discuss", "library", "lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -1381,7 +1381,7 @@ describe("ChatPanel mode examples (Plan 14)", () => {
     const grid = screen.getByTestId("mode-examples");
     // The `data-mode` attribute pins the grid to the active mode so the
     // test fails loudly if the catalog wiring drifts (e.g. someone hard-
-    // codes "sandbox" prompts in the discuss branch).
+    // codes "lab" prompts in the discuss branch).
     expect(grid).toHaveAttribute("data-mode", "discuss");
     // discuss-mode catalog has 3 entries; we anchor on data-testid prefix
     // so adding a 4th in the future doesn't silently flip this assertion.
@@ -1399,9 +1399,9 @@ describe("ChatPanel mode examples (Plan 14)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="docs"
+        chatMode="library"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs", "sandbox"]}
+        availableModes={["discuss", "library", "lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -1411,8 +1411,8 @@ describe("ChatPanel mode examples (Plan 14)", () => {
       />,
     );
 
-    expect(screen.getByTestId("mode-examples")).toHaveAttribute("data-mode", "docs");
-    expect(screen.getByTestId("mode-example-docs-0")).toBeInTheDocument();
+    expect(screen.getByTestId("mode-examples")).toHaveAttribute("data-mode", "library");
+    expect(screen.getByTestId("mode-example-library-0")).toBeInTheDocument();
 
     rerender(
       <ChatPanel
@@ -1422,9 +1422,9 @@ describe("ChatPanel mode examples (Plan 14)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="sandbox"
+        chatMode="lab"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs", "sandbox"]}
+        availableModes={["discuss", "library", "lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -1434,11 +1434,11 @@ describe("ChatPanel mode examples (Plan 14)", () => {
       />,
     );
 
-    expect(screen.getByTestId("mode-examples")).toHaveAttribute("data-mode", "sandbox");
-    expect(screen.getByTestId("mode-example-sandbox-0")).toBeInTheDocument();
+    expect(screen.getByTestId("mode-examples")).toHaveAttribute("data-mode", "lab");
+    expect(screen.getByTestId("mode-example-lab-0")).toBeInTheDocument();
     // The previous mode's cards must be gone — no duplicate test ids
     // hanging around from the prior render tree.
-    expect(screen.queryByTestId("mode-example-docs-0")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("mode-example-library-0")).not.toBeInTheDocument();
   });
 
   test("clicking an example card seeds the composer without auto-submitting", () => {
@@ -1454,7 +1454,7 @@ describe("ChatPanel mode examples (Plan 14)", () => {
         setChatInput={setChatInput}
         chatMode="discuss"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs", "sandbox"]}
+        availableModes={["discuss", "library", "lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={onSendMessage}
@@ -1521,7 +1521,7 @@ describe("ChatPanel mode examples (Plan 14)", () => {
  *     and the first example prompt from `MODE_CATALOG`.
  */
 describe("ChatPanel mode info popover (Plan 14)", () => {
-  test("renders the (i) info trigger and the three-mode descriptor list", () => {
+  test("renders the (i) info trigger and the mode descriptor list", () => {
     render(
       <ChatPanel
         selectedThreadId={threadId}
@@ -1532,7 +1532,7 @@ describe("ChatPanel mode info popover (Plan 14)", () => {
         setChatInput={vi.fn()}
         chatMode="discuss"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs", "sandbox"]}
+        availableModes={["discuss", "library", "lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -1553,8 +1553,8 @@ describe("ChatPanel mode info popover (Plan 14)", () => {
     // entry test ids rather than the visible labels so a future copy
     // change to "Sandbox (beta)" does not flap this test.
     const discussEntries = screen.getAllByTestId("mode-info-entry-discuss");
-    const docsEntries = screen.getAllByTestId("mode-info-entry-docs");
-    const sandboxEntries = screen.getAllByTestId("mode-info-entry-sandbox");
+    const docsEntries = screen.getAllByTestId("mode-info-entry-library");
+    const sandboxEntries = screen.getAllByTestId("mode-info-entry-lab");
     expect(discussEntries).toHaveLength(2);
     expect(docsEntries).toHaveLength(2);
     expect(sandboxEntries).toHaveLength(2);
@@ -1598,9 +1598,9 @@ describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
         isChatLoading={false}
         chatInput="Explain convex/chat/send.ts line 80"
         setChatInput={vi.fn()}
-        chatMode="docs"
+        chatMode="library"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs", "sandbox"]}
+        availableModes={["discuss", "library", "lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -1615,7 +1615,7 @@ describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
     ).toBeInTheDocument();
     // The CTA names the destination explicitly so the user knows what
     // the click will change before they click.
-    expect(screen.getByRole("button", { name: "Switch to Sandbox" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Switch to Lab" })).toBeInTheDocument();
   });
 
   test("shows a Switch-to-General-Chat hint for an open-ended sandbox-mode question", () => {
@@ -1627,9 +1627,9 @@ describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
         isChatLoading={false}
         chatInput="How should I structure auth in this codebase?"
         setChatInput={vi.fn()}
-        chatMode="sandbox"
+        chatMode="lab"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs", "sandbox"]}
+        availableModes={["discuss", "library", "lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -1639,8 +1639,8 @@ describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
       />,
     );
 
-    expect(screen.getByText("This sounds open-ended; General Chat might be better.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Switch to General Chat" })).toBeInTheDocument();
+    expect(screen.getByText("This sounds open-ended; Discuss might be better.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Switch to Discuss" })).toBeInTheDocument();
   });
 
   test("clicking the Switch CTA invokes setChatMode with the suggested mode", () => {
@@ -1655,7 +1655,7 @@ describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
         setChatInput={vi.fn()}
         chatMode="discuss"
         setChatMode={setChatMode}
-        availableModes={["discuss", "docs", "sandbox"]}
+        availableModes={["discuss", "library", "lab"]}
         disabledModeReasons={{}}
         isSending={false}
         onSendMessage={vi.fn()}
@@ -1665,9 +1665,9 @@ describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Switch to Sandbox" }));
+    fireEvent.click(screen.getByRole("button", { name: "Switch to Lab" }));
     expect(setChatMode).toHaveBeenCalledTimes(1);
-    expect(setChatMode).toHaveBeenCalledWith("sandbox");
+    expect(setChatMode).toHaveBeenCalledWith("lab");
   });
 
   test("dismiss button hides the hint and keeps it hidden for the same heuristic key", () => {
@@ -1692,7 +1692,7 @@ describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
           setChatInput={setChatInput}
           chatMode="discuss"
           setChatMode={vi.fn()}
-          availableModes={["discuss", "docs", "sandbox"]}
+          availableModes={["discuss", "library", "lab"]}
           disabledModeReasons={{}}
           isSending={false}
           onSendMessage={vi.fn()}
@@ -1738,8 +1738,8 @@ describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
         setChatInput={vi.fn()}
         chatMode="discuss"
         setChatMode={vi.fn()}
-        availableModes={["discuss", "docs"]}
-        disabledModeReasons={{ sandbox: "Provision a sandbox to use Sandbox mode." }}
+        availableModes={["discuss", "library"]}
+        disabledModeReasons={{ lab: "Provision a sandbox to use Lab mode." }}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}

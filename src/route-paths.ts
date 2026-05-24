@@ -46,16 +46,14 @@ export const PROTECTED_ROUTE_SEGMENTS = {
   archive: "archive",
   resources: "resources",
   /**
-   * Three-mode restructure — top-level service modes:
+   * Top-level service modes:
    *
    *   - `discuss/:threadId?` — free-form chat, with or without a thread.
    *   - `library` / `library/a/:artifactId` — read-mostly artifact reader.
    *     The artifact owns the path; the active Library Ask thread travels
    *     as a `?ask=:threadId` query param. The Ask panel is always visible,
    *     so the thread is secondary view-state, not its own route.
-   *   - `lab/:threadId?` — sandbox-backed mode. Same chat surface as
-   *     Discuss for Phase 1; Phase 2 adds the LabStatusBar and explicit
-   *     session lifecycle.
+   *   - `lab/:threadId?` — sandbox-backed mode.
    */
   workspaceDiscuss: "w/:workspaceId/discuss",
   workspaceDiscussThread: "w/:workspaceId/discuss/:threadId",
@@ -87,28 +85,23 @@ export function workspacePath(workspaceId: WorkspaceId): string {
  * thread's mode (sidebar row clicks, fresh thread creation via the
  * mutation's `{ _id, mode }` return, post-import navigation via the
  * import's `defaultThreadMode` field, attach/swap via `setThreadRepository`'s
- * returned mode). Routing through this helper instead of the
- * mode-agnostic `/w/:wid/t/:tid` URL keeps the user on the same shell
- * component when navigating within a mode — e.g. clicking a Discuss
- * thread while already on `/w/:wid/discuss/:tid_prev` reaches
- * `/w/:wid/discuss/:tid_next` with only a params change, so
- * `RepositoryShell` and its Convex subscriptions stay mounted instead of
- * unmounting through `LegacyThreadRedirect`.
+ * returned mode). Routing through this helper keeps the user on the same
+ * shell as the thread's mode, so a freshly-created or freshly-imported
+ * thread never paints chrome that contradicts where it really lives.
  *
  * Maps:
- *   - discuss / docs / sandbox → `/w/:wid/discuss/:tid` (Discuss service mode
- *     hosts all three thread sub-modes)
- *   - ask → `/w/:wid/library?ask=:tid` (Library Ask threads live in the
- *     Library reader as a query param, not their own route)
- *   - lab → `/w/:wid/lab/:tid`
+ *   - `discuss` → `/w/:wid/discuss/:tid`
+ *   - `library` → `/w/:wid/library?ask=:tid` (Library Ask threads —
+ *     created via `createLibraryAskThread` or as the repo-attached
+ *     default — render inside the Library shell's Ask panel; the artifact
+ *     owns the URL path, the thread travels as a query param)
+ *   - `lab`     → `/w/:wid/lab/:tid`
  */
 export function modeAwareThreadPath(workspaceId: WorkspaceId, threadId: ThreadId, mode: ThreadMode): string {
   switch (mode) {
     case "discuss":
-    case "docs":
-    case "sandbox":
       return discussPath(workspaceId, threadId);
-    case "ask":
+    case "library":
       return withLibraryAskParam(libraryPath(workspaceId), threadId);
     case "lab":
       return labPath(workspaceId, threadId);
@@ -116,13 +109,11 @@ export function modeAwareThreadPath(workspaceId: WorkspaceId, threadId: ThreadId
 }
 
 /**
- * Three-mode restructure — Discuss service mode URL builders. With a
- * thread id, the URL is the canonical "render this thread inside Discuss
- * service mode"; without one, the workspace shell either finds the most
- * recent discuss thread or shows the no-repo empty state. Distinct from
- * the legacy `workspaceThreadPath` because Discuss never renders the
- * artifact panel — surfacing it would imply repo context the mode does
- * not have.
+ * Discuss service mode URL builders. With a thread id, the URL is the
+ * canonical "render this thread inside Discuss service mode"; without one,
+ * the workspace shell either finds the most recent discuss thread or shows
+ * the no-repo empty state. Discuss never renders the artifact panel —
+ * surfacing it would imply repo context the mode does not have.
  */
 export function discussPath(workspaceId: WorkspaceId, threadId?: ThreadId): string {
   return threadId ? `/w/${workspaceId}/discuss/${threadId}` : `/w/${workspaceId}/discuss`;
@@ -151,8 +142,8 @@ export function libraryArtifactPath(
   }
   // `open` carries the side-tab set so a deep link restores the user's
   // tab strip. Comma-separated to keep the URL human-readable; the
-  // canonical writer (Phase 1.5's `useLibraryTabs`) debounces updates
-  // so navigation doesn't churn the history.
+  // canonical writer (`useLibraryTabs`) debounces updates so navigation
+  // doesn't churn the history.
   const params = new URLSearchParams({ open: options.open.join(",") });
   return `${base}?${params.toString()}`;
 }
@@ -180,8 +171,7 @@ export function withLibraryAskParam(base: string, askThreadId: ThreadId | null):
 /**
  * Lab service mode URL — sandbox-backed chat. Same shape as
  * {@link discussPath} so routing stays uniform; the difference lives in
- * the shell that mounts at the URL (Phase 2 adds the LabStatusBar +
- * session lifecycle there).
+ * the shell that mounts at the URL.
  */
 export function labPath(workspaceId: WorkspaceId, threadId?: ThreadId): string {
   return threadId ? `/w/${workspaceId}/lab/${threadId}` : `/w/${workspaceId}/lab`;

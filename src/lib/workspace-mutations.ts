@@ -1,7 +1,7 @@
 import type { OptimisticLocalStore } from "convex/browser";
 import type { Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
-import type { ServiceMode } from "@/lib/types";
+import type { ChatMode } from "@/lib/types";
 
 /**
  * Optimistic mirror for `api.workspaces.touchWorkspace`.
@@ -21,7 +21,7 @@ import type { ServiceMode } from "@/lib/types";
  *   2. `workspaces.lastAccessedAt` (with a re-sort) — snaps the sidebar's
  *      most-recent ordering into place immediately. The DB index is
  *      descending on `lastAccessedAt`, so we sort the same way.
- *   3. `workspaces.lastServiceMode` (when provided) — lets the Tier 2
+ *   3. `workspaces.lastMode` (when provided) — lets the Tier 2
  *      workspace-landing redirect read the user's just-picked mode on the
  *      same render without waiting for the server roundtrip. Without this,
  *      a fast Archive → back round-trip would still race the network and
@@ -34,7 +34,7 @@ import type { ServiceMode } from "@/lib/types";
  */
 export function applyTouchWorkspaceOptimistic(
   store: OptimisticLocalStore,
-  args: { workspaceId: Id<"workspaces">; serviceMode?: ServiceMode },
+  args: { workspaceId: Id<"workspaces">; mode?: ChatMode },
 ) {
   const now = Date.now();
 
@@ -53,7 +53,7 @@ export function applyTouchWorkspaceOptimistic(
           ? {
               ...ws,
               lastAccessedAt: now,
-              ...(args.serviceMode !== undefined ? { lastServiceMode: args.serviceMode } : {}),
+              ...(args.mode !== undefined ? { lastMode: args.mode } : {}),
             }
           : ws,
       )

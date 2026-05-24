@@ -20,13 +20,13 @@ const diagramDepthValidator = v.union(v.literal("service"), v.literal("module"),
 /**
  * Requests an architecture diagram for the thread's attached repository.
  *
- * PRD #19 — Modules to build (backend), ArchitectureDiagramGenerator: given a
- * repository and a chosen depth (service / module / file), produces a Mermaid
- * `graph TD` describing modules, data flow, and external dependencies. The
- * artifact is persisted to both `threadId` and `repositoryId` so it appears
- * both in the in-thread ArtifactPanel (right rail) and in the repository's
- * artifact list — repositories accumulate diagrams across threads, and a
- * thread sees the diagrams produced for its grounding repo.
+ * Given a repository and a chosen depth (service / module / file), produces
+ * a Mermaid `graph TD` describing modules, data flow, and external
+ * dependencies. The artifact is persisted to both `threadId` and
+ * `repositoryId` so it appears both in the in-thread ArtifactPanel (right
+ * rail) and in the repository's artifact list — repositories accumulate
+ * diagrams across threads, and a thread sees the diagrams produced for its
+ * grounding repo.
  *
  * The generator itself is a pure function (`convex/lib/architectureDiagram`)
  * that consumes a snapshot built from `repoFiles` and (if available) the

@@ -110,7 +110,7 @@ export function TopBar({
   /**
    * Whether the system-status chrome (StatusPill + sandbox badge next to the
    * title) is allowed to render. Driven from the workspace shell's
-   * `serviceMode !== "discuss"` derivation — the same gate
+   * `mode !== "discuss"` derivation — the same gate
    * `isArtifactPanelEnabled` uses, so all repo-aware chrome (artifact panel,
    * sandbox pill, sandbox badge) appears and disappears together when the
    * user toggles between Discuss and Library / Lab. Discuss is captioned "no
@@ -119,10 +119,10 @@ export function TopBar({
    * the user enters a repo-bound mode the pill repaints with whatever was
    * suppressed.
    *
-   * Driven by URL (`useServiceMode`), not by the per-thread `chatMode`, so
+   * Driven by URL (`useChatMode`), not by the per-thread `chatMode`, so
    * the gate survives the Tier 2 redirect from `/w/:wid/discuss` to
    * `/w/:wid/t/:tid` — once redirected, `chatMode` falls back to the
-   * workspace default ("docs" when a repo is attached) and would no longer
+   * workspace default ("library" when a repo is attached) and would no longer
    * read as "discuss", but the user's intent is still Discuss.
    */
   showSystemStatus: boolean;

@@ -1,15 +1,13 @@
 import type { Doc, Id } from "../../convex/_generated/dataModel";
-import type { ChatMode, ServiceMode } from "../../convex/chatModeResolver";
+import type { ChatMode } from "../../convex/chatModeResolver";
 
 export type WorkspaceId = Id<"workspaces">;
 export type RepositoryId = Id<"repositories">;
 export type ThreadId = Id<"threads">;
 /**
  * Stored mode of any thread document (matches the schema-level
- * `threadMode` validator). Distinct from {@link ChatMode}, which only
- * covers the three Discuss sub-modes the chat composer exposes to the
- * user — `ThreadMode` is the broader union that includes `ask` and `lab`
- * threads owned by other service modes.
+ * `threadMode` validator). Alias of {@link ChatMode} — DB literal, URL
+ * segment, and UI label are the same word, by design.
  */
 export type ThreadMode = Doc<"threads">["mode"];
 
@@ -49,7 +47,6 @@ export type ArtifactListItem = Pick<
   | "source"
   | "version"
   | "folderId"
-  | "producedIn"
   | "lastVerifiedAt"
   | "chunkingStatus"
   | "lastChunkedAt"
@@ -61,22 +58,13 @@ export type ArtifactListItem = Pick<
 };
 
 /**
- * UI-level chat mode the user picks in the ChatPanel selector. The frontend
- * type and the schema-level `threads.mode` / `messages.mode` enum share the
- * exact same string literals (`discuss | docs | sandbox`) — there is no
- * mapping layer between them, by design (PRD §"Architectural reversal":
- * "Frontend and backend share the same mode enum"). Re-exported here so
- * frontend imports do not have to reach into `convex/` for the type.
+ * Canonical chat mode. The frontend type and the schema-level
+ * `threads.mode` / `messages.mode` enum share the exact same string
+ * literals (`discuss | library | lab`) — no mapping layer, by design.
+ * Re-exported here so frontend imports do not have to reach into `convex/`
+ * for the type.
  */
 export type { ChatMode };
-
-/**
- * Three-mode restructure — top-level user-intent enum surfaced by the
- * workspace shell's vertical service mode switcher. Re-exported via
- * `lib/types` so frontend code never reaches into `convex/` directly
- * (the project's import boundary).
- */
-export type { ServiceMode };
 
 export type ActiveMessageStream = {
   assistantMessageId: MessageId;

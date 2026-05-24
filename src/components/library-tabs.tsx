@@ -6,7 +6,7 @@ import type { ArtifactId, ArtifactListItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
- * Three-mode restructure — Library tab strip.
+ * Library tab strip.
  *
  * Renders the open-tab list above the editor, mirroring the IDE chrome
  * users already know. Click activates, middle-click closes, drag

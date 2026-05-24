@@ -2,30 +2,29 @@ import { useMemo } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import type { ServiceMode, WorkspaceId } from "@/lib/types";
+import type { ChatMode, WorkspaceId } from "@/lib/types";
 
-interface ServiceModeDisabledLike {
+interface ChatModeDisabledLike {
   code: string;
   message: string;
   retryAfterMs?: number;
 }
 
 const NULL_RESOLUTION = {
-  availableServiceModes: ["discuss"] as ReadonlyArray<ServiceMode>,
-  defaultServiceMode: "discuss" as ServiceMode,
-  disabledReasons: {} as Partial<Record<ServiceMode, ServiceModeDisabledLike>>,
+  availableModes: ["discuss"] as ReadonlyArray<ChatMode>,
+  defaultMode: "discuss" as ChatMode,
+  disabledReasons: {} as Partial<Record<ChatMode, ChatModeDisabledLike>>,
   hasAttachedRepo: false,
   hasAtLeastOneArtifact: false,
-  askReadiness: { canBind: false, reason: null as ServiceModeDisabledLike | null },
-  labReadiness: { canStart: false, reason: null as ServiceModeDisabledLike | null },
+  askReadiness: { canBind: false, reason: null as ChatModeDisabledLike | null },
+  labReadiness: { canStart: false, reason: null as ChatModeDisabledLike | null },
 };
 
 /**
- * Three-mode restructure — bridge between the workspace URL and the
- * service-mode resolver.
+ * Bridge between the workspace URL and the service-mode resolver.
  *
  * Returns:
- *   - `serviceMode` — the mode the URL is currently rendering, or `null` if
+ *   - `mode` — the mode the URL is currently rendering, or `null` if
  *     the URL is a transient / non-canonical one (`/chat`, `/w/:wid`,
  *     `/w/:wid/t/:tid`). Callers that gate chrome on the user's "current
  *     mode" should treat `null` as "no mode chrome yet" — never paint
@@ -39,7 +38,7 @@ const NULL_RESOLUTION = {
  *   - `availability` — the resolver output keyed by service mode, used by
  *     the switcher to decide which buttons to grey out, by the workspace
  *     shell to decide which mode to redirect transient URLs to, and the
- *     tooltip to render. Independent of `serviceMode` — the URL tells us
+ *     tooltip to render. Independent of `mode` — the URL tells us
  *     what's currently displayed; availability tells us what the
  *     workspace's *intended* default is.
  *
@@ -50,12 +49,12 @@ const NULL_RESOLUTION = {
  * resolution so the switcher can paint a usable surface on first paint
  * and reconcile once the query resolves.
  */
-export function useServiceMode(workspaceId: WorkspaceId | null) {
+export function useChatMode(workspaceId: WorkspaceId | null) {
   const location = useLocation();
   const params = useParams<{ workspaceId?: string; threadId?: string; artifactId?: string }>();
-  const availability = useQuery(api.serviceModeEligibility.evaluate, workspaceId ? { workspaceId } : "skip");
+  const availability = useQuery(api.workspaceModeEligibility.evaluate, workspaceId ? { workspaceId } : "skip");
 
-  const serviceMode = useMemo<ServiceMode | null>(() => {
+  const mode = useMemo<ChatMode | null>(() => {
     // The URL prefix tells us which mode is mounted. We match the path
     // segment after the workspace id; query params (`?ask=1`, `?open=…`)
     // do not change the service-mode bucket.
@@ -84,7 +83,7 @@ export function useServiceMode(workspaceId: WorkspaceId | null) {
   }, [location.pathname, params.workspaceId]);
 
   return {
-    serviceMode,
+    mode,
     /**
      * `undefined` while the workspace query loads. Consumers that need a
      * never-undefined value can fall back to {@link NULL_RESOLUTION}.

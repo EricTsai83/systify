@@ -5,7 +5,7 @@ import { libraryArtifactPath, libraryPath } from "@/route-paths";
 import { readJSON, writeJSON } from "@/lib/storage";
 
 /**
- * Three-mode restructure — Library tab strip state.
+ * Library tab strip state.
  *
  * The URL is the canonical source of truth — the active tab lives in the
  * path (`/library/a/:artifactId`) and the rest of the open set in

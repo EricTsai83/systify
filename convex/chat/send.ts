@@ -1,11 +1,12 @@
-import { ConvexError, v } from "convex/values";
+import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import type { MutationCtx } from "../_generated/server";
 import { mutation } from "../_generated/server";
-import { serviceModeForThreadMode } from "../chatModeResolver";
-import { assertServiceModeEligible } from "../serviceModeEligibility";
+import type { ChatMode } from "../chatModeResolver";
+import { assertWorkspaceModeEligible } from "../workspaceModeEligibility";
 import { requireViewerIdentity } from "../lib/auth";
+import { chatModeValidator } from "../lib/chatMode";
 import { requireActiveRepositoryForOwner } from "../lib/repositoryAccess";
 import {
   CHAT_JOB_LEASE_MS,
@@ -40,15 +41,186 @@ async function getActiveChatJobForThread(ctx: MutationCtx, threadId: Id<"threads
   return null;
 }
 
+async function insertChatTurn(
+  ctx: MutationCtx,
+  args: {
+    thread: Doc<"threads">;
+    repository: Doc<"repositories"> | null;
+    mode: ChatMode;
+    trimmedContent: string;
+    ownerTokenIdentifier: string;
+    now: number;
+    labSessionId?: Id<"labSessions">;
+  },
+): Promise<{ jobId: Id<"jobs">; userMessageId: Id<"messages">; assistantMessageId: Id<"messages"> }> {
+  const jobId = await ctx.db.insert("jobs", {
+    repositoryId: args.thread.repositoryId,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    sandboxId: args.repository?.latestSandboxId,
+    threadId: args.thread._id,
+    kind: "chat",
+    status: "queued",
+    stage: "queued",
+    progress: 0,
+    costCategory: args.mode === "lab" ? "system_design" : "chat",
+    triggerSource: "user",
+    leaseExpiresAt: args.now + CHAT_JOB_LEASE_MS,
+  });
+
+  const userMessageId = await ctx.db.insert("messages", {
+    repositoryId: args.thread.repositoryId,
+    threadId: args.thread._id,
+    jobId,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    role: "user",
+    status: "completed",
+    mode: args.mode,
+    content: args.trimmedContent,
+  });
+
+  const assistantMessageId = await ctx.db.insert("messages", {
+    repositoryId: args.thread.repositoryId,
+    threadId: args.thread._id,
+    jobId,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    role: "assistant",
+    status: "pending",
+    mode: args.mode,
+    content: "",
+  });
+
+  await ctx.db.insert("messageStreams", {
+    repositoryId: args.thread.repositoryId,
+    threadId: args.thread._id,
+    jobId,
+    assistantMessageId,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    compactedContent: "",
+    compactedThroughSequence: -1,
+    nextSequence: 0,
+    startedAt: args.now,
+    lastAppendedAt: args.now,
+  });
+
+  await ctx.db.patch(args.thread._id, {
+    mode: args.mode,
+    lastMessageAt: args.now,
+    ...(args.labSessionId !== undefined && { labSessionId: args.labSessionId }),
+  });
+
+  await ctx.scheduler.runAfter(0, internal.chat.generation.generateAssistantReply, {
+    threadId: args.thread._id,
+    userMessageId,
+    assistantMessageId,
+    jobId,
+  });
+
+  return { jobId, userMessageId, assistantMessageId };
+}
+
+export const sendMessageStartingNewThread = mutation({
+  args: {
+    workspaceId: v.id("workspaces"),
+    content: v.string(),
+    mode: chatModeValidator,
+    title: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireViewerIdentity(ctx);
+
+    const workspace = await ctx.db.get(args.workspaceId);
+    if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      throw new Error("Workspace not found.");
+    }
+
+    const repositoryId = workspace.repositoryId;
+
+    if ((args.mode === "library" || args.mode === "lab") && !repositoryId) {
+      throw new Error(`'${args.mode}' mode requires an attached repository.`);
+    }
+
+    const trimmedContent = args.content.trim();
+    if (!trimmedContent) {
+      throw new Error("Message content cannot be empty.");
+    }
+
+    let repository: Doc<"repositories"> | null = null;
+    if (repositoryId) {
+      repository = await requireActiveRepositoryForOwner(ctx, {
+        repositoryId,
+        ownerTokenIdentifier: identity.tokenIdentifier,
+        notFoundMessage: "Workspace repository not found.",
+        archivedMessage: "The workspace repository is archived. Restore it to continue chatting.",
+      });
+    }
+
+    await assertWorkspaceModeEligible(ctx, {
+      repositoryId,
+      workspaceId: args.workspaceId,
+      mode: args.mode,
+    });
+
+    const now = Date.now();
+
+    await consumeChatRateLimit(ctx, identity.tokenIdentifier);
+    await consumeChatGlobalRateLimit(ctx);
+
+    let title = args.title;
+    if (repositoryId) {
+      const repo = await ctx.db.get(repositoryId);
+      title ??= repo ? `${repo.sourceRepoName} chat` : "New chat";
+    } else {
+      title ??= "New design conversation";
+    }
+
+    const threadId = await ctx.db.insert("threads", {
+      workspaceId: args.workspaceId,
+      repositoryId,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      title,
+      mode: args.mode,
+      lastMessageAt: now,
+    });
+
+    const thread = (await ctx.db.get(threadId))!;
+
+    let labSessionId: Id<"labSessions"> | undefined;
+    if (args.mode === "lab") {
+      labSessionId = await ctx.runMutation(internal.labSessions.ensureLabSessionForThread, {
+        threadId,
+      });
+    }
+
+    const { jobId, userMessageId, assistantMessageId } = await insertChatTurn(ctx, {
+      thread,
+      repository,
+      mode: args.mode,
+      trimmedContent,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      now,
+      labSessionId,
+    });
+
+    return {
+      threadId,
+      jobId,
+      userMessageId,
+      assistantMessageId,
+      mode: args.mode,
+    };
+  },
+});
+
 export const sendMessage = mutation({
   args: {
     threadId: v.id("threads"),
     content: v.string(),
-    mode: v.optional(
-      v.union(v.literal("discuss"), v.literal("docs"), v.literal("sandbox"), v.literal("ask"), v.literal("lab")),
-    ),
+    mode: v.optional(chatModeValidator),
   },
-  handler: async (ctx, args) => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ jobId: Id<"jobs">; userMessageId: Id<"messages">; assistantMessageId: Id<"messages"> }> => {
     const identity = await requireViewerIdentity(ctx);
     const thread = await ctx.db.get(args.threadId);
     if (!thread) {
@@ -57,13 +229,6 @@ export const sendMessage = mutation({
 
     if (thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
       throw new Error("Thread not found.");
-    }
-
-    if (thread.lockedAt !== undefined) {
-      throw new ConvexError({
-        code: "ThreadLocked",
-        message: "This legacy Design Docs thread is archived. Open Library Ask or Lab to continue.",
-      });
     }
 
     let repository: Doc<"repositories"> | null = null;
@@ -76,20 +241,12 @@ export const sendMessage = mutation({
       });
     }
 
-    const requestedMode = args.mode ?? thread.mode;
-    const mode = requestedMode === "sandbox" ? "lab" : requestedMode === "docs" ? "ask" : requestedMode;
+    const mode = args.mode ?? thread.mode;
 
-    // Single source of truth for "can this viewer use mode X for this
-    // workspace right now?" — composes sandbox availability + daily cost
-    // cap + (for Library) artifact existence and throws a structured
-    // ConvexError with a stable code on disabled. The reactive
-    // service-mode-switcher query subscribes to the same evaluator; the
-    // write-path check here keeps a stale UI / direct mutation caller / UI
-    // race (mode picked then sandbox expired) from slipping through.
-    await assertServiceModeEligible(ctx, {
+    await assertWorkspaceModeEligible(ctx, {
       repositoryId: thread.repositoryId,
       workspaceId: thread.workspaceId,
-      mode: serviceModeForThreadMode(mode),
+      mode,
     });
 
     const trimmedContent = args.content.trim();
@@ -118,78 +275,14 @@ export const sendMessage = mutation({
       });
     }
 
-    const jobId = await ctx.db.insert("jobs", {
-      repositoryId: thread.repositoryId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
-      sandboxId: repository?.latestSandboxId,
-      threadId: args.threadId,
-      kind: "chat",
-      status: "queued",
-      stage: "queued",
-      progress: 0,
-      // Sandbox / Lab modes are the only ones that consume Daytona
-      // compute, so they bill against the `system_design` cost category
-      // (shared with System Design generation + Failure Mode Analysis).
-      // `discuss`, `docs`, and `ask` all stay on the standard `chat`
-      // category — Ask runs entirely on chunk retrieval + LLM, no
-      // sandbox.
-      costCategory: mode === "lab" ? "system_design" : "chat",
-      triggerSource: "user",
-      leaseExpiresAt: now + CHAT_JOB_LEASE_MS,
-    });
-
-    const userMessageId = await ctx.db.insert("messages", {
-      repositoryId: thread.repositoryId,
-      threadId: args.threadId,
-      jobId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
-      role: "user",
-      status: "completed",
+    return await insertChatTurn(ctx, {
+      thread,
+      repository,
       mode,
-      content: trimmedContent,
-    });
-
-    const assistantMessageId = await ctx.db.insert("messages", {
-      repositoryId: thread.repositoryId,
-      threadId: args.threadId,
-      jobId,
+      trimmedContent,
       ownerTokenIdentifier: identity.tokenIdentifier,
-      role: "assistant",
-      status: "pending",
-      mode,
-      content: "",
-    });
-
-    await ctx.db.insert("messageStreams", {
-      repositoryId: thread.repositoryId,
-      threadId: args.threadId,
-      jobId,
-      assistantMessageId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
-      compactedContent: "",
-      compactedThroughSequence: -1,
-      nextSequence: 0,
-      startedAt: now,
-      lastAppendedAt: now,
-    });
-
-    await ctx.db.patch(args.threadId, {
-      mode,
-      lastMessageAt: now,
+      now,
       labSessionId,
     });
-
-    await ctx.scheduler.runAfter(0, internal.chat.generation.generateAssistantReply, {
-      threadId: args.threadId,
-      userMessageId,
-      assistantMessageId,
-      jobId,
-    });
-
-    return {
-      jobId,
-      userMessageId,
-      assistantMessageId,
-    };
   },
 });

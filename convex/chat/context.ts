@@ -21,10 +21,6 @@ export type ReplyContext = {
    *
    * Exposed on the context so `generation.ts` can hand it to
    * `buildSystemPrompt` without re-deriving the rule.
-   *
-   * Three-mode restructure: this widens to `ExtendedChatMode` so the field
-   * can carry the new persisted literals (`ask`, `lab`). Ask threads stay
-   * repository-backed, but generation keeps them tool-free.
    */
   mode: ExtendedChatMode;
   repositoryId?: Id<"repositories">;
@@ -54,10 +50,10 @@ export type ReplyContext = {
   chunks: Array<{ path: string; summary: string; content: string }>;
   messages: Array<{ id: Id<"messages">; role: "user" | "assistant" | "system" | "tool"; content: string }>;
   /**
-   * Plan-04 sandbox-tool wiring information. Populated **only** for
-   * `mode === "sandbox"` replies that have a ready sandbox attached to the
-   * repository, and `undefined` in every other case (discuss, docs, missing
-   * sandbox, sandbox not in `ready` state).
+   * Sandbox-tool wiring information. Populated **only** for
+   * `mode === "lab"` replies that have a ready sandbox attached to the
+   * repository, and `undefined` in every other case (discuss, library,
+   * missing sandbox, sandbox not in `ready` state).
    *
    * The fields are everything `generation.ts` needs to construct a
    * `SandboxFsClient`, pass it to `createSandboxTools`, and record audit
@@ -209,19 +205,12 @@ async function loadReplyContextMessages(
     .order("desc")
     .take(overfetchLimit);
 
-  const canonicalEffectiveMode =
-    effectiveMode === "lab" || effectiveMode === "sandbox" ? ("sandbox" as const) : effectiveMode;
-
   const filtered = candidateMessages.filter((message) => {
     if (message.content.trim().length === 0) {
       return false;
     }
-    if (message.role === "assistant" && message.mode !== undefined) {
-      const canonicalMessageMode =
-        message.mode === "lab" || message.mode === "sandbox" ? ("sandbox" as const) : message.mode;
-      if (canonicalMessageMode !== canonicalEffectiveMode) {
-        return false;
-      }
+    if (message.role === "assistant" && message.mode !== undefined && message.mode !== effectiveMode) {
+      return false;
     }
     return true;
   });
@@ -277,10 +266,10 @@ export const getReplyContext = internalQuery({
     // explicitly asked for an unattached / training-only conversation, so we
     // return the same shape as the repo-less branch and skip every
     // repo-scoped lookup. This is also why `discuss` is grouped with the
-    // no-repo case here rather than with `docs`/`sandbox` below.
+    // no-repo case here rather than with `library`/`lab` below.
     //
-    // Ask also requires a repository (enforced at thread/send creation) and
-    // must not fall through to the empty discuss shape; it uses the
+    // Library Ask also requires a repository (enforced at thread/send creation)
+    // and must not fall through to the empty discuss shape; it uses the
     // repository-backed context below while `generation.ts` keeps it tool-free.
     if (!thread.repositoryId || effectiveMode === "discuss") {
       return {
@@ -309,22 +298,22 @@ export const getReplyContext = internalQuery({
       throw new Error("Repository not found.");
     }
 
-    // Plan 04: sandbox mode is now LLM-driven retrieval — the model uses
-    // `read_file` / `list_dir` tools to fetch exactly what it needs from the
-    // live sandbox. Pre-loading indexed `repoChunks` is therefore wasted
-    // work (and would silently outvote tool results when the index is
-    // stale). Design context for sandbox/lab modes is acquired on demand
-    // through tool reads of the System Design artifacts.
+    // Lab mode is LLM-driven retrieval — the model uses `read_file` /
+    // `list_dir` tools to fetch exactly what it needs from the live
+    // sandbox. Pre-loading indexed `repoChunks` is therefore wasted work
+    // (and would silently outvote tool results when the index is stale).
+    // Design context for Lab is acquired on demand through tool reads of
+    // the System Design artifacts.
     //
-    // `docs` mode keeps its existing artifact-only retrieval. Every code
-    // path is now an explicit per-mode contract — no implicit fallback.
-    const artifacts = effectiveMode === "docs" ? await loadLatestDocsArtifacts(ctx, repository._id) : [];
+    // `library` mode keeps artifact-only retrieval. Every code path is an
+    // explicit per-mode contract — no implicit fallback.
+    const artifacts = effectiveMode === "library" ? await loadLatestDocsArtifacts(ctx, repository._id) : [];
 
-    // Phase 4 rollout: `docs` mode is artifact-only retrieval and `sandbox`
-    // mode is tool-driven retrieval. Both intentionally skip pre-loaded
-    // code chunks so knowledge sources stay non-overlapping (`docs` =>
-    // artifacts, `sandbox` => live tool calls). `discuss` is handled by
-    // the early return above.
+    // `library` mode is artifact-only retrieval and `lab` mode is
+    // tool-driven retrieval. Both intentionally skip pre-loaded code
+    // chunks so knowledge sources stay non-overlapping (`library` =>
+    // artifacts, `lab` => live tool calls). `discuss` is handled by the
+    // early return above.
     const chunks: Array<{ path: string; summary: string; content: string }> = [];
 
     // Plan 04 sandbox-tool wiring: surface the live sandbox handle here so
@@ -334,12 +323,7 @@ export const getReplyContext = internalQuery({
     // failure mid-stream, which is much worse UX than answering without
     // tools and telling the user the sandbox isn't ready.
     let sandboxTooling: ReplyContext["sandboxTooling"];
-    // Three-mode restructure: `lab` is the new persisted literal for what
-    // used to be `sandbox`. Treat them as synonyms here so a Phase 2 Lab
-    // session that persists `mode = "lab"` still gets sandbox tools wired
-    // through. Phase 3 narrows `sandbox` away.
-    const isLiveTreeMode = effectiveMode === "sandbox" || effectiveMode === "lab";
-    if (isLiveTreeMode && repository.latestSandboxId) {
+    if (effectiveMode === "lab" && repository.latestSandboxId) {
       const sandbox = await ctx.db.get(repository.latestSandboxId);
       if (sandbox?.status === "ready" && sandbox.remoteId && sandbox.repoPath) {
         sandboxTooling = {

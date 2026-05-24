@@ -76,7 +76,7 @@ describe("workspace initialization", () => {
         repositoryId,
         ownerTokenIdentifier,
         title: "Repo thread in legacy home",
-        mode: "docs",
+        mode: "library",
         lastMessageAt: Date.now(),
       });
       const homeThreadId = await ctx.db.insert("threads", {
@@ -153,7 +153,7 @@ describe("workspace initialization", () => {
         repositoryId,
         ownerTokenIdentifier,
         title: "Repo thread",
-        mode: "docs",
+        mode: "library",
         lastMessageAt: Date.now(),
       });
       return workspaceId;

@@ -1,17 +1,17 @@
 /**
  * ArchitectureDiagramGenerator — pure heuristic generator that turns a
  * repository snapshot into a Mermaid `graph TD` describing modules, data flow,
- * and external dependencies (PRD #19, "Modules to build (backend)").
+ * and external dependencies.
  *
  * The generator is intentionally a pure function:
  *   - all inputs come in via `DiagramSnapshot` (no Convex `ctx`, no `Date.now`)
  *   - all outputs are deterministic for stable input (sorted lexicographically)
  *
- * This keeps it snapshot-testable per PRD's Testing Decisions section, and
- * lets the caller (`convex/architectureDiagram.ts`) own the Convex-side
- * concerns (auth, persistence, artifact insert).
+ * This keeps it snapshot-testable, and lets the caller
+ * (`convex/architectureDiagram.ts`) own the Convex-side concerns (auth,
+ * persistence, artifact insert).
  *
- * Depth ladder (PRD US 18 — "choose the depth … service / module / file"):
+ * Depth ladder — service / module / file:
  *   - `service`: top-level directories. Cheapest, best for high-level sketch.
  *   - `module`:  top + 2nd-level directories grouped via subgraphs.
  *                Default depth, balances detail and legibility.

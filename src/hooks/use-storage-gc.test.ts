@@ -41,6 +41,25 @@ describe("useStorageGC", () => {
     expect(window.localStorage.getItem("systify.library.askTabs.ws_gone")).toBeNull();
   });
 
+  test("removes orphan composer-draft workspace keys for any mode segment", () => {
+    window.localStorage.setItem("systify.composer.draft.workspace.ws_alive.discuss", "live discuss");
+    window.localStorage.setItem("systify.composer.draft.workspace.ws_alive.lab", "live lab");
+    window.localStorage.setItem("systify.composer.draft.workspace.ws_gone.discuss", "dead discuss");
+    window.localStorage.setItem("systify.composer.draft.workspace.ws_gone.lab", "dead lab");
+
+    renderHook(() =>
+      useStorageGC({
+        liveWorkspaceIds: new Set(["ws_alive"]),
+        liveRepositoryIds: null,
+      }),
+    );
+
+    expect(window.localStorage.getItem("systify.composer.draft.workspace.ws_alive.discuss")).toBe("live discuss");
+    expect(window.localStorage.getItem("systify.composer.draft.workspace.ws_alive.lab")).toBe("live lab");
+    expect(window.localStorage.getItem("systify.composer.draft.workspace.ws_gone.discuss")).toBeNull();
+    expect(window.localStorage.getItem("systify.composer.draft.workspace.ws_gone.lab")).toBeNull();
+  });
+
   test("removes orphan repository-scoped keys, preserving live repo keys across multiple nodes", () => {
     window.localStorage.setItem("systify.folderNav.open.repo_alive.node1", "true");
     window.localStorage.setItem("systify.folderNav.open.repo_alive.node2", "false");
@@ -58,6 +77,35 @@ describe("useStorageGC", () => {
     expect(window.localStorage.getItem("systify.folderNav.open.repo_alive.node2")).toBe("false");
     expect(window.localStorage.getItem("systify.folderNav.open.repo_gone.nodeX")).toBeNull();
     expect(window.localStorage.getItem("systify.folderNav.open.repo_gone.nodeY")).toBeNull();
+  });
+
+  test("removes orphan thread-scoped composer draft keys when the thread is no longer live", () => {
+    window.localStorage.setItem("systify.composer.draft.thread.tid_alive", "live draft");
+    window.localStorage.setItem("systify.composer.draft.thread.tid_gone", "gone draft");
+
+    renderHook(() =>
+      useStorageGC({
+        liveWorkspaceIds: null,
+        liveRepositoryIds: null,
+        liveThreadIds: new Set(["tid_alive"]),
+      }),
+    );
+
+    expect(window.localStorage.getItem("systify.composer.draft.thread.tid_alive")).toBe("live draft");
+    expect(window.localStorage.getItem("systify.composer.draft.thread.tid_gone")).toBeNull();
+  });
+
+  test("does not sweep thread-scoped keys when liveThreadIds is null (query loading or not subscribed)", () => {
+    window.localStorage.setItem("systify.composer.draft.thread.tid_anything", "x");
+
+    renderHook(() =>
+      useStorageGC({
+        liveWorkspaceIds: null,
+        liveRepositoryIds: null,
+      }),
+    );
+
+    expect(window.localStorage.getItem("systify.composer.draft.thread.tid_anything")).toBe("x");
   });
 
   test("re-runs the sweep when the live set shrinks (cross-tab deletion path)", () => {

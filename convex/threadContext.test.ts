@@ -127,7 +127,7 @@ describe("getThreadContext (internal)", () => {
     expect(result!.sandboxStatus).toBeNull();
     expect(result!.chatModes.availableModes).toEqual(["discuss"]);
     expect(result!.chatModes.defaultMode).toBe("discuss");
-    expect(Object.keys(result!.chatModes.disabledReasons).sort()).toEqual(["docs", "sandbox"]);
+    expect(Object.keys(result!.chatModes.disabledReasons).sort()).toEqual(["lab", "library"]);
     // Without a repository there is nothing to provision against, so the
     // disabled Sandbox option must not pretend it's actionable.
     expect(result!.sandboxIsActivatable).toBe(false);
@@ -143,9 +143,9 @@ describe("getThreadContext (internal)", () => {
 
     expect(result!.attachedRepository?._id).toBe(repositoryId);
     expect(result!.sandboxStatus).toBeNull();
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
-    expect(result!.chatModes.defaultMode).toBe("docs");
-    expect(Object.keys(result!.chatModes.disabledReasons)).toEqual(["sandbox"]);
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
+    expect(result!.chatModes.defaultMode).toBe("library");
+    expect(Object.keys(result!.chatModes.disabledReasons)).toEqual(["lab"]);
     // Lazy provisioning: the disabled Sandbox option must still be
     // clickable so the UI can enqueue `requestSandboxActivation`.
     expect(result!.sandboxIsActivatable).toBe(true);
@@ -163,8 +163,8 @@ describe("getThreadContext (internal)", () => {
     });
 
     expect(result!.sandboxStatus).toBe("ready");
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs", "sandbox"]);
-    expect(result!.chatModes.defaultMode).toBe("docs");
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "library", "lab"]);
+    expect(result!.chatModes.defaultMode).toBe("library");
     expect(result!.chatModes.disabledReasons).toEqual({});
     // Already-ready sandboxes don't need re-activation.
     expect(result!.sandboxIsActivatable).toBe(false);
@@ -182,8 +182,8 @@ describe("getThreadContext (internal)", () => {
     });
 
     expect(result!.sandboxStatus).toBe("stopped");
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
-    expect(result!.chatModes.disabledReasons.sandbox).toMatch(/expired|provision a new sandbox/i);
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
+    expect(result!.chatModes.disabledReasons.lab).toMatch(/expired|provision a new sandbox/i);
     expect(result!.sandboxIsActivatable).toBe(true);
   });
 
@@ -199,8 +199,8 @@ describe("getThreadContext (internal)", () => {
     });
 
     expect(result!.sandboxStatus).toBe("archived");
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
-    expect(result!.chatModes.disabledReasons.sandbox).toMatch(/expired|provision a new sandbox/i);
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
+    expect(result!.chatModes.disabledReasons.lab).toMatch(/expired|provision a new sandbox/i);
     expect(result!.sandboxIsActivatable).toBe(true);
   });
 
@@ -216,8 +216,8 @@ describe("getThreadContext (internal)", () => {
     });
 
     expect(result!.sandboxStatus).toBe("provisioning");
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
-    expect(result!.chatModes.disabledReasons.sandbox).toMatch(/provisioning/i);
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
+    expect(result!.chatModes.disabledReasons.lab).toMatch(/provisioning/i);
     // A second click during provisioning would just dedupe; we keep the
     // option in its disabled state to avoid suggesting otherwise.
     expect(result!.sandboxIsActivatable).toBe(false);
@@ -235,7 +235,7 @@ describe("getThreadContext (internal)", () => {
     });
 
     expect(result!.sandboxStatus).toBe("failed");
-    expect(result!.chatModes.disabledReasons.sandbox).toMatch(/failed|provision a new sandbox/i);
+    expect(result!.chatModes.disabledReasons.lab).toMatch(/failed|provision a new sandbox/i);
     // Failed sandboxes are re-activatable — same path provisions a fresh one.
     expect(result!.sandboxIsActivatable).toBe(true);
   });
@@ -360,8 +360,8 @@ describe("getThreadContext sandbox cost-cap gate (Plan 10)", () => {
 
     const result = await t.query(internal.threadContext.getThreadContextInternal, { threadId });
 
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
-    expect(result!.chatModes.disabledReasons.sandbox).toMatch(/daily.*spend.*account/i);
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
+    expect(result!.chatModes.disabledReasons.lab).toMatch(/daily.*spend.*account/i);
     // Bucket peek reflects the exhaustion in the exposed snapshot too.
     expect(result!.sandboxCostBudgets!.userBudget.remainingCents).toBe(0);
   });
@@ -404,8 +404,8 @@ describe("getThreadContext sandbox cost-cap gate (Plan 10)", () => {
 
     const result = await t.query(internal.threadContext.getThreadContextInternal, { threadId });
 
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs"]);
-    expect(result!.chatModes.disabledReasons.sandbox).toMatch(/daily.*spend.*workspace/i);
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
+    expect(result!.chatModes.disabledReasons.lab).toMatch(/daily.*spend.*workspace/i);
     expect(result!.sandboxCostBudgets!.workspaceBudget!.remainingCents).toBe(0);
   });
 });
@@ -457,7 +457,7 @@ describe("getThreadContext — no env-driven feature gate is consulted", () => {
       threadId,
     });
 
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "docs", "sandbox"]);
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "library", "lab"]);
     expect(result!.chatModes.disabledReasons).toEqual({});
   });
 });

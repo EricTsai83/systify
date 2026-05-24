@@ -208,8 +208,8 @@ describe("createRepoFileRecords — isConfig", () => {
   });
 
   test.each([
-    // The Phase 3 narrow: business logic under convex/ used to be
-    // matched by the blanket "convex/" pattern. It must not be now.
+    // Business logic under convex/ must not be matched by the blanket
+    // "convex/" config pattern.
     "convex/agent/chat.ts",
     "convex/chat/redaction.ts",
     "convex/repositories.ts",

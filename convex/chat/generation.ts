@@ -19,7 +19,7 @@
  *      tool events (logged for telemetry — Plan 06 turns these into a
  *      persisted trace and a live ticker).
  *
- *   2. **Text-only path.** Discuss / docs / sandbox-without-tooling all use
+ *   2. **Text-only path.** Discuss / library / lab-without-tooling all use
  *      the same shape: a plain `streamText` over `textStream`, no tools.
  *      The deltas flow through the same character-budget flush as before.
  *
@@ -36,7 +36,6 @@ import { internalAction } from "../_generated/server";
 import { getSandboxFsClient } from "../daytona";
 import { verifyAndSyncSandbox, SandboxPreparationError } from "../lib/sandboxLiveness";
 import { STREAM_FLUSH_THRESHOLD } from "../lib/constants";
-import { retrieveArtifactChunks } from "../lib/artifactRag";
 import { emitMetric, logInfo, logWarn } from "../lib/observability";
 import { estimateCostUsd } from "../lib/openaiPricing";
 import type { ReplyContext } from "./context";
@@ -128,9 +127,7 @@ interface SessionTelemetry {
   startedAt: number;
   /**
    * Filled in once `getReplyContext` returns; remains undefined on
-   * pre-context throws. Three-mode restructure: widened to
-   * {@link ExtendedChatMode} so the new `ask` / `lab` literals can
-   * tag their session metric without coercion.
+   * pre-context throws.
    */
   mode?: ExtendedChatMode;
   /** Set in the streaming path once `resolveModelForMode` resolves. Heuristic / pre-context paths leave it undefined. */
@@ -156,7 +153,7 @@ interface EmitSessionMetricArgs {
  * Emit the session-finished metric once per action exit.
  *
  * Sandbox-only by design: the metric tag space (mode, model,
- * had_tools) is shaped for sandbox sessions, and discuss / docs
+ * had_tools) is shaped for lab sessions, and discuss / library
  * replies have a distinct cost / latency profile that would
  * otherwise muddy the time series. Pre-context failures (where
  * `mode` is unknown) skip the emit — we lack the data to attribute
@@ -168,7 +165,7 @@ interface EmitSessionMetricArgs {
  * locally and swallowed.
  */
 function emitSessionFinishedMetric(telemetry: SessionTelemetry, args: EmitSessionMetricArgs): void {
-  if (telemetry.mode !== "sandbox") {
+  if (telemetry.mode !== "lab") {
     return;
   }
   const durationMs = Date.now() - telemetry.startedAt;
@@ -407,19 +404,8 @@ export const generateAssistantReply = internalAction({
         throw new Error("Queued user message not present in conversational window for this assistant reply.");
       }
       const userPrompt = queuedUserMessage.content;
-      const askArtifactChunks =
-        replyContext.mode === "ask" && replyContext.workspaceId && replyContext.repositoryId
-          ? await retrieveArtifactChunks(ctx, {
-              workspaceId: replyContext.workspaceId,
-              repositoryId: replyContext.repositoryId,
-              artifactScope: replyContext.artifactContext,
-              query: userPrompt,
-            })
-          : [];
-      const groundedReplyContext: ReplyContext =
-        askArtifactChunks.length > 0 ? { ...replyContext, artifactChunks: askArtifactChunks } : replyContext;
-      const relevantChunks =
-        groundedReplyContext.mode === "ask" ? [] : selectRelevantChunks(groundedReplyContext.chunks, userPrompt);
+      const groundedReplyContext: ReplyContext = replyContext;
+      const relevantChunks = selectRelevantChunks(groundedReplyContext.chunks, userPrompt);
 
       // Build the citation map *before* the heuristic / streaming branches so
       // both paths persist the same `[A#] → artifactId` lookup the prompt is
@@ -485,8 +471,7 @@ export const generateAssistantReply = internalAction({
       const userPromptText = buildUserPrompt(groundedReplyContext, userPrompt, relevantChunks);
 
       // Resolve sandbox tooling once. We only attach tools when:
-      //   1. The reply is in sandbox mode (or its three-mode-restructure
-      //      synonym `lab`).
+      //   1. The reply is in lab mode.
       //   2. `getReplyContext` saw a `ready` sandbox attached to the repo
       //      (it returns `sandboxTooling: undefined` otherwise — see
       //      context.ts for the full eligibility rules).
@@ -497,7 +482,7 @@ export const generateAssistantReply = internalAction({
       //      a mid-stream 404 from `getSandboxFsClient` and syncs the
       //      cache so the next reply skips the sandbox tooling cleanly.
       //
-      // `assertServiceModeEligible` (chat/send.ts) already blocks the
+      // `assertWorkspaceModeEligible` (chat/send.ts) already blocks the
       // common case where the sandbox is not ready at mutation time, so
       // this verification only covers the edge case where the sandbox
       // disappears between mutation and action (e.g. manual deletion in
@@ -545,17 +530,6 @@ export const generateAssistantReply = internalAction({
         ? await buildSandboxTools(resolvedSandboxTooling)
         : undefined;
       telemetry.hadTools = sandboxTools !== undefined;
-
-      // Three-mode restructure invariant: Library Ask MUST NEVER receive
-      // tools. The Ask system prompt explicitly tells the LLM it has no
-      // live source access; surfacing tools would let the model defy that
-      // and silently spend Daytona compute. The cost-transparency
-      // contract is "Library never starts a sandbox" — this assertion is
-      // the last line of defense if a future refactor accidentally
-      // wires `replyContext.sandboxTooling` for an Ask thread.
-      if (replyContext.mode === "ask" && sandboxTools !== undefined) {
-        throw new Error("Invariant violated: Library Ask reply received sandbox tools. Ask is read-only by design.");
-      }
 
       const flushIfNeeded = async () => {
         if (pendingDelta.length >= STREAM_FLUSH_THRESHOLD) {
@@ -627,7 +601,7 @@ export const generateAssistantReply = internalAction({
         // Plan 11 — surface the per-step budget consumption to the model
         // so it can self-pace mid-flight ("3 of 8 tool steps remain;
         // wrap up if your evidence is sufficient"). Only attached on the
-        // tool-driven path: discuss / docs replies are single-step
+        // tool-driven path: discuss / library replies are single-step
         // text-only and would never reach `prepareStep`'s second
         // invocation.
         //
@@ -1064,7 +1038,7 @@ export const generateAssistantReply = internalAction({
  * the model tools after telling it (via the system prompt) it has tools,
  * it will hallucinate file contents. The action's outer catch surfaces
  * the error to the user as a normal failure. Plan 09 introduces a richer
- * fallback (degrade to docs mode mid-session) once we have a redaction
+ * fallback (degrade to library mode mid-session) once we have a redaction
  * layer to safely persist partial tool results.
  */
 async function buildSandboxTools(sandboxTooling: NonNullable<ReplyContext["sandboxTooling"]>): Promise<ToolSet> {

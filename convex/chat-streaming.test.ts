@@ -478,7 +478,7 @@ describe("citation lint integration (Plan 11)", () => {
     // gating field, so patching it post-fixture is the minimal
     // mutation that exercises the lint path.
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+      await ctx.db.patch(assistantMessageId, { mode: "lab" });
     });
 
     // Mix one cited sentence and one unverified sentence so the lint has
@@ -524,7 +524,7 @@ describe("citation lint integration (Plan 11)", () => {
     );
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+      await ctx.db.patch(assistantMessageId, { mode: "lab" });
     });
 
     await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
@@ -545,7 +545,7 @@ describe("citation lint integration (Plan 11)", () => {
     // sandbox prompt, so applying it to docs / discuss would generate
     // false positives on every artifact-grounded sentence (the docs
     // prompt teaches `[A#]`, which is not a `[path:line]` shape).
-    for (const mode of ["discuss", "docs"] as const) {
+    for (const mode of ["discuss", "library"] as const) {
       const ownerTokenIdentifier = `user|lint-finalize-${mode}`;
       const t = convexTest(schema, modules);
       const { threadId, jobId, assistantMessageId } = await createStreamingFixture(
@@ -559,7 +559,7 @@ describe("citation lint integration (Plan 11)", () => {
       });
 
       // Same flag-able prose as the sandbox-positive test — the lint
-      // would happily flag it, but the gate must skip on `mode !== "sandbox"`.
+      // would happily flag it, but the gate must skip on `mode !== "lab"`.
       await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
         threadId,
         assistantMessageId,
@@ -583,7 +583,7 @@ describe("citation lint integration (Plan 11)", () => {
     const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "lint-fail-sandbox");
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+      await ctx.db.patch(assistantMessageId, { mode: "lab" });
     });
 
     // Stream partial content first so the lint sees a non-empty
@@ -619,7 +619,7 @@ describe("citation lint integration (Plan 11)", () => {
     const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "lint-cancel-sandbox");
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+      await ctx.db.patch(assistantMessageId, { mode: "lab" });
     });
 
     await t.mutation(internal.chat.streaming.appendAssistantStreamChunk, {
@@ -653,7 +653,7 @@ describe("citation lint integration (Plan 11)", () => {
     const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "lint-cancel-empty");
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+      await ctx.db.patch(assistantMessageId, { mode: "lab" });
     });
 
     await t.mutation(internal.chat.streaming.markAssistantReplyCancelled, {
@@ -680,7 +680,7 @@ describe("citation lint integration (Plan 11)", () => {
     const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "lint-recover-sandbox");
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+      await ctx.db.patch(assistantMessageId, { mode: "lab" });
     });
 
     // Stream partial content first so `streamSnapshot.content` is
@@ -1008,7 +1008,7 @@ describe("chat tool-call event lifecycle (Plan 06)", () => {
     );
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "sandbox" });
+      await ctx.db.patch(assistantMessageId, { mode: "lab" });
     });
 
     // Stream partial content before the job stalls, so the lint sees a

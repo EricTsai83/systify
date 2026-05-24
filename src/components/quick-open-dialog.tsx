@@ -8,8 +8,7 @@ import type { ArtifactId, ArtifactListItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
- * Three-mode restructure — Cmd/Ctrl-P quick-open dialog for Library
- * artifacts.
+ * Cmd/Ctrl-P quick-open dialog for Library artifacts.
  *
  * Pure-frontend fuzzy filter: the dialog receives the workspace's full
  * artifact list (already loaded by the Library shell for the tree, so

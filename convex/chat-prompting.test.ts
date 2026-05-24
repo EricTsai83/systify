@@ -18,7 +18,7 @@ function makeArtifactId(suffix: string): Id<"artifacts"> {
 function makeContext(overrides: Partial<ReplyContext> & { artifacts?: ReplyContext["artifacts"] } = {}): ReplyContext {
   return {
     ownerTokenIdentifier: "owner|test",
-    mode: "docs",
+    mode: "library",
     artifacts: [],
     chunks: [],
     messages: [],
@@ -75,7 +75,7 @@ describe("buildSystemPrompt", () => {
   });
 
   test("docs prompt makes design artifacts the sole source of truth", () => {
-    const prompt = buildSystemPrompt("docs");
+    const prompt = buildSystemPrompt("library");
 
     expect(prompt.toLowerCase()).toContain("artifact");
     // "Sole source of truth" framing is what stops the model from mixing
@@ -85,7 +85,7 @@ describe("buildSystemPrompt", () => {
   });
 
   test("sandbox prompt names the read_file, list_dir, and run_shell tools (Plan 04 + Plan 08)", () => {
-    const prompt = buildSystemPrompt("sandbox");
+    const prompt = buildSystemPrompt("lab");
 
     // Plan 04 wired `read_file` / `list_dir`; Plan 08 added `run_shell`.
     // The system prompt must name all three so the model picks them up —
@@ -98,7 +98,7 @@ describe("buildSystemPrompt", () => {
   });
 
   test("sandbox prompt frames run_shell as read-only inspection (Plan 08)", () => {
-    const prompt = buildSystemPrompt("sandbox");
+    const prompt = buildSystemPrompt("lab");
 
     // Plan 08's success criterion: "stdout 走 redaction" + "LLM 不會試圖
     // 跑外網（透過 system prompt 強調 + workdir 鎖在 repoPath 內)". The
@@ -116,7 +116,7 @@ describe("buildSystemPrompt", () => {
   });
 
   test("sandbox prompt forbids network egress so the LLM does not even attempt curl (Plan 08)", () => {
-    const prompt = buildSystemPrompt("sandbox");
+    const prompt = buildSystemPrompt("lab");
 
     // The post-clone `networkBlockAll: true` iptables rule
     // (`DAYTONA_POST_CLONE_BLOCK_NETWORK`) is the network-layer
@@ -129,7 +129,7 @@ describe("buildSystemPrompt", () => {
   });
 
   test("sandbox prompt teaches the command_blocked / command_timeout error codes (Plan 08)", () => {
-    const prompt = buildSystemPrompt("sandbox");
+    const prompt = buildSystemPrompt("lab");
 
     // Layered with the existing `path_outside_repo` / `invalid_path`
     // assertion: the model must learn that the deny list and the
@@ -140,7 +140,7 @@ describe("buildSystemPrompt", () => {
   });
 
   test("sandbox prompt teaches the structured error envelope shape", () => {
-    const prompt = buildSystemPrompt("sandbox");
+    const prompt = buildSystemPrompt("lab");
 
     // Tool errors are *values*, not throws (see `sandboxTools.ts`). The
     // model needs to know an `{ ok: false, errorCode, message }` envelope
@@ -153,7 +153,7 @@ describe("buildSystemPrompt", () => {
   });
 
   test("sandbox prompt enforces a per-reply citation contract pointing at file:line", () => {
-    const prompt = buildSystemPrompt("sandbox");
+    const prompt = buildSystemPrompt("lab");
 
     // The model now knows exact line numbers (it can `read_file` to find
     // them), so the citation contract is stricter than docs mode's
@@ -166,7 +166,7 @@ describe("buildSystemPrompt", () => {
   });
 
   test("sandbox prompt mentions the per-reply tool-call budget so the model knows when to stop", () => {
-    const prompt = buildSystemPrompt("sandbox");
+    const prompt = buildSystemPrompt("lab");
 
     // The literal `8` mirrors `SANDBOX_STEP_BUDGET` in `generation.ts`.
     // The two values must agree — if the budget changes, this assertion
@@ -176,7 +176,7 @@ describe("buildSystemPrompt", () => {
   });
 
   test("sandbox prompt does not promise future product capability (no roadmap leak)", () => {
-    const prompt = buildSystemPrompt("sandbox");
+    const prompt = buildSystemPrompt("lab");
 
     // System prompts ship to users today via the model's responses; they
     // are not the place to promise future product capability. Names and
@@ -200,7 +200,7 @@ describe("buildSystemPrompt", () => {
     // legitimate descriptive uses ("a live-sandbox mode") that are not
     // UI-coupled.
     const uiOnlyLabels = ["General Chat", "Design Docs"];
-    const modes: ChatMode[] = ["discuss", "docs", "sandbox"];
+    const modes: ChatMode[] = ["discuss", "library", "lab"];
     for (const mode of modes) {
       const prompt = buildSystemPrompt(mode);
       for (const label of uiOnlyLabels) {
@@ -210,7 +210,7 @@ describe("buildSystemPrompt", () => {
   });
 
   test("each mode receives a distinct, non-empty prompt", () => {
-    const modes: ChatMode[] = ["discuss", "docs", "sandbox"];
+    const modes: ChatMode[] = ["discuss", "library", "lab"];
     const prompts = modes.map((mode) => buildSystemPrompt(mode));
 
     for (const prompt of prompts) {
@@ -231,7 +231,7 @@ describe("buildSystemPrompt", () => {
    * Plan 02's frontend rewrites into clickable links.
    */
   test("docs prompt teaches the [A#] citation contract", () => {
-    const prompt = buildSystemPrompt("docs");
+    const prompt = buildSystemPrompt("library");
 
     // The literal `[A#]` (or an `[A1]` / `[A2]` example) must appear
     // verbatim — paraphrases like "use bracketed references" are too

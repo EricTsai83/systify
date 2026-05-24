@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import { suggestMode } from "./suggest-mode";
 import type { ChatMode } from "./types";
 
-const ALL_MODES: readonly ChatMode[] = ["discuss", "docs", "sandbox"];
+const ALL_MODES: readonly ChatMode[] = ["discuss", "library", "lab"];
 
 /**
  * Plan 14 — `suggestMode` is the pure heuristic powering the inline
@@ -25,7 +25,7 @@ describe("suggestMode — file-path → sandbox heuristic", () => {
   test("nudges discuss → sandbox when the input mentions a .ts source file", () => {
     const result = suggestMode("Walk me through convex/chat/send.ts line 80.", "discuss", ALL_MODES);
     expect(result).not.toBeNull();
-    expect(result?.suggested).toBe("sandbox");
+    expect(result?.suggested).toBe("lab");
     expect(result?.key).toBe("specific-file:sandbox");
     // The reason copy is part of the user-visible contract — anchor the
     // assertion on it so any future drift forces a deliberate update
@@ -39,8 +39,8 @@ describe("suggestMode — file-path → sandbox heuristic", () => {
     // Docs mode has artifacts but cannot resolve concrete file:line ranges,
     // so a docs-mode answer about a specific file would have to invent
     // line numbers. Sandbox is unambiguously a better fit.
-    const result = suggestMode("Why does src/components/chat-panel.tsx re-render so often?", "docs", ALL_MODES);
-    expect(result?.suggested).toBe("sandbox");
+    const result = suggestMode("Why does src/components/chat-panel.tsx re-render so often?", "library", ALL_MODES);
+    expect(result?.suggested).toBe("lab");
   });
 
   test("recognises every supported source extension", () => {
@@ -58,7 +58,7 @@ describe("suggestMode — file-path → sandbox heuristic", () => {
     ];
     for (const sample of samples) {
       const result = suggestMode(sample, "discuss", ALL_MODES);
-      expect(result?.suggested).toBe("sandbox");
+      expect(result?.suggested).toBe("lab");
     }
   });
 
@@ -67,13 +67,13 @@ describe("suggestMode — file-path → sandbox heuristic", () => {
     // rollout %, the repo isn't attached, or quotas ran out, suppressing
     // the suggestion is more useful than showing a [Switch] button that
     // does nothing.
-    expect(suggestMode("Look at convex/foo.ts", "discuss", ["discuss", "docs"])).toBeNull();
+    expect(suggestMode("Look at convex/foo.ts", "discuss", ["discuss", "library"])).toBeNull();
   });
 
   test("does not fire when the user is already in sandbox", () => {
     // A file mention in sandbox mode is the *expected* shape, not a
     // suggestion to switch.
-    expect(suggestMode("Look at convex/foo.ts", "sandbox", ALL_MODES)).toBeNull();
+    expect(suggestMode("Look at convex/foo.ts", "lab", ALL_MODES)).toBeNull();
   });
 
   test("is anchored on word boundaries — bare extension strings do not fire", () => {
@@ -95,14 +95,14 @@ describe("suggestMode — file-path → sandbox heuristic", () => {
 
 describe("suggestMode — open-ended → discuss heuristic", () => {
   test("nudges docs → discuss for 'how should I' prefixes", () => {
-    const result = suggestMode("How should I structure auth in this app?", "docs", ALL_MODES);
+    const result = suggestMode("How should I structure auth in this app?", "library", ALL_MODES);
     expect(result?.suggested).toBe("discuss");
     expect(result?.key).toBe("open-ended:discuss");
-    expect(result?.reason).toBe("This sounds open-ended; General Chat might be better.");
+    expect(result?.reason).toBe("This sounds open-ended; Discuss might be better.");
   });
 
   test('nudges sandbox → discuss for "what\'s the best way to" prefixes', () => {
-    const result = suggestMode("What's the best way to memoize a selector?", "sandbox", ALL_MODES);
+    const result = suggestMode("What's the best way to memoize a selector?", "lab", ALL_MODES);
     expect(result?.suggested).toBe("discuss");
   });
 
@@ -111,13 +111,13 @@ describe("suggestMode — open-ended → discuss heuristic", () => {
     // the hint would silently disappear for a non-trivial fraction of
     // mobile users; that fail-quiet behavior is the kind of bug that
     // never gets reported.
-    expect(suggestMode("What’s the best way to handle errors?", "sandbox", ALL_MODES)?.suggested).toBe("discuss");
-    expect(suggestMode("Whats the best way to handle errors?", "sandbox", ALL_MODES)?.suggested).toBe("discuss");
+    expect(suggestMode("What’s the best way to handle errors?", "lab", ALL_MODES)?.suggested).toBe("discuss");
+    expect(suggestMode("Whats the best way to handle errors?", "lab", ALL_MODES)?.suggested).toBe("discuss");
   });
 
   test("matches case-insensitively and tolerates leading whitespace", () => {
-    expect(suggestMode("HOW SHOULD I scale this?", "docs", ALL_MODES)?.suggested).toBe("discuss");
-    expect(suggestMode("   how should I scale this?", "docs", ALL_MODES)?.suggested).toBe("discuss");
+    expect(suggestMode("HOW SHOULD I scale this?", "library", ALL_MODES)?.suggested).toBe("discuss");
+    expect(suggestMode("   how should I scale this?", "library", ALL_MODES)?.suggested).toBe("discuss");
   });
 
   test("does not fire when already in discuss (no useful switch target)", () => {
@@ -128,7 +128,7 @@ describe("suggestMode — open-ended → discuss heuristic", () => {
     // "I'm wondering how should I scale this" is a real but rare phrasing;
     // we keep the heuristic anchored to message-start to avoid catching
     // every reflective question that mentions the words in passing.
-    expect(suggestMode("I'm wondering how should I scale this?", "docs", ALL_MODES)).toBeNull();
+    expect(suggestMode("I'm wondering how should I scale this?", "library", ALL_MODES)).toBeNull();
   });
 });
 
@@ -138,8 +138,8 @@ describe("suggestMode — rule precedence and defaults", () => {
     // a file. Sandbox grounding still pays off here because the answer
     // benefits from reading the file, even if the question is phrased
     // open-endedly. Order in the implementation matters.
-    const result = suggestMode("How should I refactor convex/foo.ts for testability?", "docs", ALL_MODES);
-    expect(result?.suggested).toBe("sandbox");
+    const result = suggestMode("How should I refactor convex/foo.ts for testability?", "library", ALL_MODES);
+    expect(result?.suggested).toBe("lab");
     expect(result?.key).toBe("specific-file:sandbox");
   });
 
@@ -150,7 +150,7 @@ describe("suggestMode — rule precedence and defaults", () => {
   });
 
   test("returns null for generic prose with no path mention and no open-ended prefix", () => {
-    expect(suggestMode("Explain CQRS to me.", "docs", ALL_MODES)).toBeNull();
+    expect(suggestMode("Explain CQRS to me.", "library", ALL_MODES)).toBeNull();
     expect(suggestMode("What are the trade-offs of optimistic locking?", "discuss", ALL_MODES)).toBeNull();
   });
 });

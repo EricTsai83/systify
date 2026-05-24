@@ -1,32 +1,31 @@
 /**
- * Plan 11 — per-mode OpenAI model selection.
+ * Per-mode OpenAI model selection.
  *
  * Each chat mode reaches the model through this resolver so the choice of
  * underlying model (and therefore the price tier and reasoning strength)
  * stays out of `generation.ts`'s control flow. Resolution order, first
  * defined wins:
  *
- *   1. **Mode-specific override env var** — `OPENAI_MODEL_SANDBOX`,
- *      `OPENAI_MODEL_DOCS`, `OPENAI_MODEL_DISCUSS`. These let an operator
- *      pin a tier independently per mode (e.g. test a new model in
- *      sandbox without changing discuss/docs spend) without code changes.
- *   2. **Legacy global override** — `OPENAI_MODEL`. Kept so an operator
- *      who pinned the previous global default during the Plan 04-10
- *      rollout window keeps that behavior across all three modes until
- *      they explicitly opt into the per-mode split. Removing this fallback
- *      would silently re-route their replies onto the new defaults.
+ *   1. **Mode-specific override env var** — `OPENAI_MODEL_LAB`,
+ *      `OPENAI_MODEL_LIBRARY`, `OPENAI_MODEL_DISCUSS`. These let an operator
+ *      pin a tier independently per mode (e.g. test a new model in lab
+ *      without changing discuss/library spend) without code changes.
+ *   2. **Global override** — `OPENAI_MODEL`. Single env var that applies
+ *      to every mode; kept so an operator who wants one tier across the
+ *      board can set it once instead of three times. The per-mode override
+ *      above wins when both are set.
  *   3. **Per-mode hard-coded default**. Sized so `OPENAI_API_KEY` alone
- *      is enough for the system to "just work": sandbox gets the full
- *      tier (it drives tool use and benefits from stronger reasoning);
- *      docs / discuss get the mini tier (text-only, latency-sensitive,
- *      and the lighter cost profile suits the per-message volume).
+ *      is enough for the system to "just work": lab gets the full tier
+ *      (it drives tool use and benefits from stronger reasoning); library
+ *      / discuss get the mini tier (text-only, latency-sensitive, and the
+ *      lighter cost profile suits the per-message volume).
  *
  * The defaults below match the pricing table snapshot in
  * `convex/lib/openaiPricing.ts`. The pairing matters: an unknown model
  * silently produces `costUsd === undefined` from `estimateCostUsd`,
- * which Plan 10's daily-cap settlement treats as "no cost recorded" —
- * so a default that drifts out of the pricing table would let users
- * spend without ever charging the cap. The colocated test in
+ * which the daily-cap settlement treats as "no cost recorded" — so a
+ * default that drifts out of the pricing table would let users spend
+ * without ever charging the cap. The colocated test in
  * `modelSelection.test.ts` asserts the pricing/default pairing as a
  * compile-time-style invariant.
  *
@@ -44,7 +43,7 @@
  *     model selection.
  */
 
-import type { ExtendedChatMode } from "./prompting";
+import type { ChatMode } from "../chatModeResolver";
 
 /**
  * Per-mode default model identifier. Wired to the pricing table in
@@ -52,46 +51,37 @@ import type { ExtendedChatMode } from "./prompting";
  * the pricing table in the same commit and re-run
  * `convex/chat/modelSelection.test.ts` to verify the pairing.
  *
- * Sandbox uses the full GPT-5 tier because tool-driven replies benefit
- * from stronger reasoning (the model has to plan a `list_dir` →
- * `read_file` → answer trajectory under a step budget); discuss / docs
- * use the mini tier since they are single-step text replies where the
- * mini tier is empirically indistinguishable on this workload while
- * costing ~5–8× less.
- *
- * Three-mode restructure: `lab` shares the sandbox tier (it is the same
- * tool-driven workload under a new persisted name); `ask` shares the
- * mini tier (single-step text reply over retrieved chunks).
+ * Lab uses the full GPT-5 tier because tool-driven replies benefit from
+ * stronger reasoning (the model has to plan a `list_dir` → `read_file`
+ * → answer trajectory under a step budget); discuss / library use the
+ * mini tier since they are single-step text replies where the mini tier
+ * is empirically indistinguishable on this workload while costing ~5–8×
+ * less.
  */
-const DEFAULT_MODEL_BY_MODE: Record<ExtendedChatMode, string> = {
-  sandbox: "gpt-5",
+const DEFAULT_MODEL_BY_MODE: Record<ChatMode, string> = {
   lab: "gpt-5",
-  docs: "gpt-5-mini",
+  library: "gpt-5-mini",
   discuss: "gpt-5-mini",
-  ask: "gpt-5-mini",
 };
 
 /**
  * Mode → mode-specific override env var name. Kept as a typed
- * `Record<ExtendedChatMode, string>` so adding a new mode literal forces
+ * `Record<ChatMode, string>` so adding a new mode literal forces
  * a compile error here, mirroring the exhaustiveness pattern used in
  * `convex/chat/prompting.ts:SYSTEM_PROMPTS`.
  */
-const MODE_ENV_VAR: Record<ExtendedChatMode, string> = {
-  sandbox: "OPENAI_MODEL_SANDBOX",
+const MODE_ENV_VAR: Record<ChatMode, string> = {
   lab: "OPENAI_MODEL_LAB",
-  docs: "OPENAI_MODEL_DOCS",
+  library: "OPENAI_MODEL_LIBRARY",
   discuss: "OPENAI_MODEL_DISCUSS",
-  ask: "OPENAI_MODEL_ASK",
 };
 
 /**
- * Read an env var with the trim-or-undefined shape every Plan 11 / 13
- * env knob expects. A missing variable, an empty string, or a
- * whitespace-only string all produce `undefined` so the resolver can
- * fall through to the next layer instead of selecting an empty model
- * name (which would fail at the AI SDK boundary with a confusing
- * "model: '' not found" error).
+ * Read an env var with the trim-or-undefined shape every env knob expects.
+ * A missing variable, an empty string, or a whitespace-only string all
+ * produce `undefined` so the resolver can fall through to the next layer
+ * instead of selecting an empty model name (which would fail at the AI
+ * SDK boundary with a confusing "model: '' not found" error).
  */
 function readEnv(name: string): string | undefined {
   const raw = process.env[name];
@@ -112,14 +102,14 @@ function readEnv(name: string): string | undefined {
  * throws — a missing API key is detected upstream by `generation.ts`
  * before this resolver is ever consulted.
  */
-export function resolveModelForMode(mode: ExtendedChatMode): string {
+export function resolveModelForMode(mode: ChatMode): string {
   const override = readEnv(MODE_ENV_VAR[mode]);
   if (override !== undefined) {
     return override;
   }
-  const legacy = readEnv("OPENAI_MODEL");
-  if (legacy !== undefined) {
-    return legacy;
+  const global = readEnv("OPENAI_MODEL");
+  if (global !== undefined) {
+    return global;
   }
   return DEFAULT_MODEL_BY_MODE[mode];
 }

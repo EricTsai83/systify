@@ -9,10 +9,18 @@ import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { usePrewarmThread } from "@/hooks/use-prewarm-thread";
 import { toUserErrorMessage } from "@/lib/errors";
 import type { ThreadMode } from "@/route-paths";
-import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ChatMode, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type ThreadModeFilter = "discuss" | "ask" | "lab";
+/**
+ * The sidebar rail surfaces threads by the chat mode they were persisted
+ * under. The filter mirrors the canonical `ChatMode` union (DB literal +
+ * URL segment + UI label all share one vocabulary), and the Library
+ * variant of the rail uses {@link createLibraryAskThread} so the freshly
+ * created thread carries an `artifactContext` scope filter on top of the
+ * shared `mode: "library"` persistence.
+ */
+type ThreadModeFilter = ChatMode;
 
 export function WorkspaceThreadsRail({
   workspaceId,
@@ -27,6 +35,7 @@ export function WorkspaceThreadsRail({
   newThreadButtonLabel,
   showRepoBadge,
   requireWorkspaceForCreate = false,
+  onRequestNewThread,
 }: {
   workspaceId: WorkspaceId | null;
   repositories: Doc<"repositories">[] | undefined;
@@ -35,8 +44,7 @@ export function WorkspaceThreadsRail({
   /**
    * Selects a thread or clears the selection. `mode` is always supplied:
    * row clicks read it off `thread.mode` (the rendered Doc), and the new-
-   * thread CTA derives it from the rail's active filter (Library Ask is
-   * always `"ask"`; everything else matches `threadMode`). The consumer
+   * thread CTA derives it from the rail's active filter. The consumer
    * routes directly to the canonical mode URL via {@link modeAwareThreadPath}
    * so a freshly-selected thread never bounces through `LegacyThreadRedirect`.
    * The id is `ThreadId | null` because some consumers (e.g. delete-then-
@@ -53,9 +61,18 @@ export function WorkspaceThreadsRail({
   showRepoBadge: boolean;
   /** Library Ask always needs a concrete workspace; Discuss sidebar historically allowed creating from a null pointer. */
   requireWorkspaceForCreate?: boolean;
+  /**
+   * When supplied, clicking "New Thread" on the default rail variant navigates
+   * to the workspace's mode URL (no thread id) instead of pre-creating an
+   * orphan thread. The chat composer's first send then triggers the lazy
+   * `sendMessageStartingNewThread` path. Library Ask keeps the immediate-
+   * create flow because Ask threads carry an `artifactContext` scope filter
+   * that has no place on the lazy path.
+   */
+  onRequestNewThread?: () => void;
 }) {
   const createThreadMutation = useMutation(api.chat.threads.createThread);
-  const createAskThreadMutation = useMutation(api.chat.threads.createAskThread);
+  const createLibraryAskThreadMutation = useMutation(api.chat.threads.createLibraryAskThread);
   const setThreadPinnedMutation = useMutation(api.chat.threads.setThreadPinned);
 
   const threads = useQuery(api.chat.threads.listThreads, workspaceId ? { workspaceId, mode: threadMode } : {});
@@ -73,36 +90,38 @@ export function WorkspaceThreadsRail({
       if (requireWorkspaceForCreate && !workspaceId) return;
       onError(null);
       try {
-        let created: { _id: ThreadId; mode: ThreadMode };
         if (newThreadVariant === "libraryAsk") {
           if (!workspaceId) {
             return;
           }
-          created = await createAskThreadMutation({ workspaceId });
-        } else {
-          // Forward the rail's service mode so the new thread is persisted
-          // with the mode the sidebar filters on. Without this, the backend
-          // falls back to `getDefaultThreadMode(hasAttachedRepo)` — which is
-          // `docs`/`ask` for a repo-bound workspace — and the freshly created
-          // thread never matches the `discuss` filter, so it never appears.
-          created = await createThreadMutation({
-            workspaceId: workspaceId ?? undefined,
-            mode: threadMode,
-          });
+          const created = await createLibraryAskThreadMutation({ workspaceId });
+          onSelectThread(created._id, created.mode);
+          return;
         }
-        // Use the mutation's persisted `mode` rather than reconstructing it
-        // from the rail's filter — `createThread` normalises some requested
-        // modes (`docs → ask`, `sandbox → lab`), so the stored value is the
-        // only safe source of truth for routing.
+        // Default rail variant: if the shell supplied a navigate-only
+        // callback, prefer it over `createThreadMutation`. The lazy first
+        // send (`sendMessageStartingNewThread`) materialises the thread the
+        // moment the user actually sends a message, so we no longer leave
+        // an empty orphan thread behind when the user clicks New Thread
+        // and then navigates away.
+        if (onRequestNewThread) {
+          onRequestNewThread();
+          return;
+        }
+        const created = await createThreadMutation({
+          workspaceId: workspaceId ?? undefined,
+          mode: threadMode,
+        });
         onSelectThread(created._id, created.mode);
       } catch (error) {
         onError(toUserErrorMessage(error, "Failed to start a conversation."));
       }
     }, [
-      createAskThreadMutation,
+      createLibraryAskThreadMutation,
       createThreadMutation,
       newThreadVariant,
       onError,
+      onRequestNewThread,
       onSelectThread,
       requireWorkspaceForCreate,
       threadMode,

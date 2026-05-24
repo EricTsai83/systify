@@ -2,25 +2,13 @@ import { useMemo, type ReactNode } from "react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { LibraryAskPanel } from "@/components/library-ask-panel";
 import { ProfileCard } from "@/components/profile-card";
-import { ServiceModeSwitcher } from "@/components/service-mode-switcher";
+import { WorkspaceModeSwitcher } from "@/components/workspace-mode-switcher";
 import { WorkspaceThreadsRail } from "@/components/workspace-threads-rail";
 import { WorkspaceSelector } from "@/components/workspace-switcher";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
-import { useServiceMode } from "@/hooks/use-service-mode";
-import type { ArtifactId, OnImportedCallback, ServiceMode, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
-
-/**
- * Service-mode → thread-mode mapping for the sidebar's thread query. Each
- * service mode owns a single thread mode (Discuss → discuss threads,
- * Library → Library Ask threads, Lab → lab threads); filtering the list
- * by this mode keeps each mode's sidebar from showing the others' threads.
- */
-const SERVICE_MODE_TO_THREAD_MODE: Record<ServiceMode, "discuss" | "ask" | "lab"> = {
-  discuss: "discuss",
-  library: "ask",
-  lab: "lab",
-};
+import { useChatMode } from "@/hooks/use-service-mode";
+import type { ArtifactId, OnImportedCallback, ChatMode, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
 
 /**
  * Library Ask gets its own width memory + a roomier default — it carries a
@@ -59,6 +47,13 @@ type AppSidebarProps = {
       selectedThreadId: ThreadId | null;
       onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
       onDeleteThread: (id: ThreadId) => void;
+      /**
+       * Forwarded to {@link WorkspaceThreadsRail.onRequestNewThread} — when
+       * supplied, the "New Thread" button navigates to the workspace mode URL
+       * (no thread id) instead of pre-creating an orphan thread. Optional so
+       * legacy callers that still want immediate-create can omit it.
+       */
+      onRequestNewThread?: () => void;
     }
   | {
       variant: "libraryAsk";
@@ -83,14 +78,13 @@ type AppSidebarProps = {
  */
 export function AppSidebar(props: AppSidebarProps) {
   const { repositories, workspaces, activeWorkspaceId, onSwitchWorkspace, onImported, onError } = props;
-  const { serviceMode, availability } = useServiceMode(activeWorkspaceId);
-  // `serviceMode` is `null` on transient URLs (`/chat`, `/w/:wid` workspace
+  const { mode, availability } = useChatMode(activeWorkspaceId);
+  // `mode` is `null` on transient URLs (`/chat`, `/w/:wid` workspace
   // landing, legacy `/w/:wid/t/:tid`) — fall back to the workspace's intended
-  // default so the sidebar can paint a stable thread list and ServiceModeSwitcher
+  // default so the sidebar can paint a stable thread list and WorkspaceModeSwitcher
   // highlight while the canonicalising redirect resolves. Once the URL settles
   // on a canonical mode prefix the URL value takes over again.
-  const effectiveServiceMode: ServiceMode = serviceMode ?? availability?.defaultServiceMode ?? "discuss";
-  const threadModeFilter = SERVICE_MODE_TO_THREAD_MODE[effectiveServiceMode];
+  const effectiveChatMode: ChatMode = mode ?? availability?.defaultMode ?? "discuss";
 
   const activeWorkspace = useMemo(
     () => workspaces?.find((ws) => ws._id === activeWorkspaceId) ?? null,
@@ -123,11 +117,12 @@ export function AppSidebar(props: AppSidebarProps) {
         <WorkspaceThreadsRail
           workspaceId={activeWorkspaceId}
           repositories={repositories}
-          threadMode={threadModeFilter}
+          threadMode={effectiveChatMode}
           selectedThreadId={props.selectedThreadId}
           onSelectThread={props.onSelectThread}
           onDeleteThread={props.onDeleteThread}
           onError={onError}
+          onRequestNewThread={props.onRequestNewThread}
           showRepoBadge={!activeWorkspace?.repositoryId}
         />
       </SidebarContent>
@@ -147,11 +142,7 @@ export function AppSidebar(props: AppSidebarProps) {
         </div>
       </SidebarHeader>
 
-      <ServiceModeSwitcher
-        workspaceId={activeWorkspaceId}
-        serviceMode={effectiveServiceMode}
-        availability={availability}
-      />
+      <WorkspaceModeSwitcher workspaceId={activeWorkspaceId} mode={effectiveChatMode} availability={availability} />
 
       {content}
 

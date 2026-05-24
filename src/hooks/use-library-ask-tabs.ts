@@ -3,7 +3,7 @@ import type { ThreadId, WorkspaceId } from "@/lib/types";
 import { readJSON, writeJSON } from "@/lib/storage";
 
 /**
- * Three-mode restructure — Library Ask "open tab" set.
+ * Library Ask "open tab" set.
  *
  * The Ask thread tab strip is an IDE-style *open set*, not the full thread
  * list: tabs are threads the user has explicitly opened, persisted to

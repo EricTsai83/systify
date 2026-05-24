@@ -44,7 +44,7 @@ async function seedRepositoryAccessFixture(
       repositoryId,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       title: "Repository access fixture",
-      mode: "docs",
+      mode: "library",
       lastMessageAt: Date.now(),
     });
 
@@ -54,7 +54,7 @@ async function seedRepositoryAccessFixture(
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       role: "user",
       status: "completed",
-      mode: "docs",
+      mode: "library",
       content: "Capture the architecture decision.",
     });
 
@@ -137,7 +137,7 @@ describe("repository access helpers", () => {
       viewer.mutation(api.chat.send.sendMessage, {
         threadId,
         content: "What should we inspect?",
-        mode: "docs",
+        mode: "library",
       }),
     ).rejects.toThrow("Thread not found.");
 

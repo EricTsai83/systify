@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
-import { serviceModeValidator, type ServiceMode } from "./lib/serviceMode";
+import { chatModeValidator, type ChatMode } from "./lib/chatMode";
 import { clearLastActiveWorkspaceIfMatches, upsertLastActiveWorkspace } from "./lib/userPreferences";
 import { ensureHomeWorkspace, ensureRepositoryWorkspace } from "./lib/workspaces";
 
@@ -73,25 +73,25 @@ export const deleteWorkspace = mutation({
 
 /**
  * Mark `workspaceId` as the viewer's currently active workspace, optionally
- * recording which service mode (discuss / library / lab) the user just
- * landed in inside that workspace.
+ * recording which mode (discuss / library / lab) the user just landed in
+ * inside that workspace.
  *
  * This single mutation owns three writes that must move together:
  *
  * - bump `workspaces.lastAccessedAt` so the sidebar's recency ordering and
  *   the "most recent workspace" fallback both reflect the latest touch
- * - when `serviceMode` is supplied, persist it as `workspaces.lastServiceMode`
- *   so the next `/chat` → `/w/:wid` → mode-canonical-URL redirect lands the
- *   user back in the mode they were last using inside this workspace
- *   (instead of the workspace's structural default — the cross-session
- *   "I was in discuss, why am I in library?" surprise this argument fixes)
+ * - when `mode` is supplied, persist it as `workspaces.lastMode` so the
+ *   next `/chat` → `/w/:wid` → mode-canonical-URL redirect lands the user
+ *   back in the mode they were last using inside this workspace (instead
+ *   of the workspace's structural default — the cross-session "I was in
+ *   discuss, why am I in library?" surprise this argument fixes)
  * - upsert `userPreferences.lastActiveWorkspaceId` so a fresh browser /
  *   device converges to the same selection on next load
  *
- * `serviceMode` is intentionally optional. Callers that only know the
- * workspace changed (URL → state sync on first paint) omit it so the
- * stored mode is not clobbered with whatever the *previous* workspace was
- * showing; callers that observe a settled mode URL (`/w/:wid/discuss`,
+ * `mode` is intentionally optional. Callers that only know the workspace
+ * changed (URL → state sync on first paint) omit it so the stored mode is
+ * not clobbered with whatever the *previous* workspace was showing;
+ * callers that observe a settled mode URL (`/w/:wid/discuss`,
  * `/w/:wid/library`, `/w/:wid/lab`) pass it so the workspace remembers
  * the user's pick.
  *
@@ -103,7 +103,7 @@ export const deleteWorkspace = mutation({
 export const touchWorkspace = mutation({
   args: {
     workspaceId: v.id("workspaces"),
-    serviceMode: v.optional(serviceModeValidator),
+    mode: v.optional(chatModeValidator),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -111,19 +111,19 @@ export const touchWorkspace = mutation({
     if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
       throw new Error("Workspace not found.");
     }
-    // Skip the `lastServiceMode` field entirely when the caller didn't pass
-    // one, or when the supplied mode already matches what's stored.
+    // Skip the `lastMode` field entirely when the caller didn't pass one,
+    // or when the supplied mode already matches what's stored.
     // `ctx.db.patch` interprets `undefined` as "leave this field alone" for
     // optional fields, so the conditional both narrows the patch object to
     // only what actually changed (easier to grep when auditing workspace
     // mutations) and short-circuits redundant writes when the optimistic
     // update has already converged the client cache on the same value the
     // server holds.
-    const patch: { lastAccessedAt: number; lastServiceMode?: ServiceMode } = {
+    const patch: { lastAccessedAt: number; lastMode?: ChatMode } = {
       lastAccessedAt: Date.now(),
     };
-    if (args.serviceMode !== undefined && args.serviceMode !== workspace.lastServiceMode) {
-      patch.lastServiceMode = args.serviceMode;
+    if (args.mode !== undefined && args.mode !== workspace.lastMode) {
+      patch.lastMode = args.mode;
     }
     await ctx.db.patch(args.workspaceId, patch);
     await upsertLastActiveWorkspace(ctx, {

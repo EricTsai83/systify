@@ -230,21 +230,21 @@ describe("userPreferences", () => {
     const workspaces = await viewer.query(api.workspaces.listWorkspaces, {});
     const homeId = workspaces[0]._id;
 
-    expect(workspaces[0].lastServiceMode).toBeUndefined();
+    expect(workspaces[0].lastMode).toBeUndefined();
 
-    await viewer.mutation(api.workspaces.touchWorkspace, { workspaceId: homeId, serviceMode: "discuss" });
+    await viewer.mutation(api.workspaces.touchWorkspace, { workspaceId: homeId, mode: "discuss" });
     const afterDiscuss = await viewer.query(api.workspaces.listWorkspaces, {});
-    expect(afterDiscuss[0].lastServiceMode).toBe("discuss");
+    expect(afterDiscuss[0].lastMode).toBe("discuss");
 
     // A subsequent touch in a different mode overwrites the pick so the
     // workspace tracks the user's most recent choice, not the first one
     // they ever made.
-    await viewer.mutation(api.workspaces.touchWorkspace, { workspaceId: homeId, serviceMode: "lab" });
+    await viewer.mutation(api.workspaces.touchWorkspace, { workspaceId: homeId, mode: "lab" });
     const afterLab = await viewer.query(api.workspaces.listWorkspaces, {});
-    expect(afterLab[0].lastServiceMode).toBe("lab");
+    expect(afterLab[0].lastMode).toBe("lab");
   });
 
-  test("touchWorkspace without serviceMode preserves the existing lastServiceMode", async () => {
+  test("touchWorkspace without serviceMode preserves the existing lastMode", async () => {
     // Workspace-switch callsites (URL → state sync, fallback effect) must
     // not clobber the destination workspace's recorded mode with `undefined`
     // — that would erase the very preference the redirect needs to read on
@@ -257,10 +257,10 @@ describe("userPreferences", () => {
     await viewer.mutation(api.workspaces.initializeWorkspaces, {});
     const homeId = (await viewer.query(api.workspaces.listWorkspaces, {}))[0]._id;
 
-    await viewer.mutation(api.workspaces.touchWorkspace, { workspaceId: homeId, serviceMode: "library" });
+    await viewer.mutation(api.workspaces.touchWorkspace, { workspaceId: homeId, mode: "library" });
     await viewer.mutation(api.workspaces.touchWorkspace, { workspaceId: homeId });
 
     const preserved = await viewer.query(api.workspaces.listWorkspaces, {});
-    expect(preserved[0].lastServiceMode).toBe("library");
+    expect(preserved[0].lastMode).toBe("library");
   });
 });

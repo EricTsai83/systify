@@ -72,7 +72,9 @@ export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArt
     version: 1,
     folderId: args.folderId,
     alignedImportCommitSha: args.alignedImportCommitSha,
-    producedIn: args.source === "sandbox" ? "lab" : args.repositoryId ? "legacy" : "discuss",
+    // Lab-sourced artifacts are "verified at creation"; everything else
+    // starts unverified until a Lab session stamps it. The presence of
+    // `lastVerifiedAt` is the single signal the Library freshness UI reads.
     lastVerifiedAt: args.source === "sandbox" ? now : undefined,
     chunkingStatus: args.repositoryId ? "pending" : undefined,
     updatedAt: now,
@@ -309,7 +311,6 @@ export const markVerified = internalMutation({
       return { patched: false };
     }
     await ctx.db.patch(args.artifactId, {
-      producedIn: "lab",
       lastVerifiedAt: Date.now(),
     });
     return { patched: true };
