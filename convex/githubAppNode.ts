@@ -3,7 +3,7 @@
 import { v } from "convex/values";
 import jwt from "jsonwebtoken";
 import { createPrivateKey, type KeyObject } from "node:crypto";
-import { action, internalAction } from "./_generated/server";
+import { action, internalAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireViewerIdentity } from "./lib/auth";
 import { parseGitHubUrl } from "./lib/github";
@@ -129,20 +129,39 @@ export async function getInstallationAccessToken(installationId: number): Promis
 }
 
 // ---------------------------------------------------------------------------
-// Internal action: cross-runtime wrapper for getInstallationAccessToken
+// Installation token for owner — single front door for "give me a usable
+// GitHub token for this owner". Absorbs the (lookup installation → fetch
+// token) dance that every Node and V8 caller used to repeat.
 // ---------------------------------------------------------------------------
 
 /**
- * Wrapper action so V8-runtime modules (e.g. githubCheck.ts) can obtain an
- * installation token via ctx.runAction.
+ * Node-runtime helper. Returns `null` when the owner has no active GitHub App
+ * installation, so callers can decide whether to fail loudly (private repo
+ * access required) or fall back (unauthenticated public read).
  */
-export const getInstallationToken = internalAction({
+export async function resolveInstallationTokenForOwner(
+  ctx: ActionCtx,
+  ownerTokenIdentifier: string,
+): Promise<{ installationId: number; token: string } | null> {
+  const installationId: number | null = await ctx.runQuery(internal.github.getInstallationIdForOwner, {
+    ownerTokenIdentifier,
+  });
+  if (!installationId) {
+    return null;
+  }
+  const token = await getInstallationAccessToken(installationId);
+  return { installationId, token };
+}
+
+/**
+ * V8-callable wrapper. V8 mutations / actions reach the Node-only token
+ * fetch through `ctx.runAction(internal.githubAppNode.getInstallationTokenForOwner, ...)`.
+ */
+export const getInstallationTokenForOwner = internalAction({
   args: {
-    installationId: v.number(),
+    ownerTokenIdentifier: v.string(),
   },
-  handler: async (_ctx, args) => {
-    return await getInstallationAccessToken(args.installationId);
-  },
+  handler: async (ctx, args) => await resolveInstallationTokenForOwner(ctx, args.ownerTokenIdentifier),
 });
 
 // ---------------------------------------------------------------------------
@@ -317,15 +336,11 @@ export const listInstallationRepos = action({
   handler: async (ctx) => {
     const identity = await requireViewerIdentity(ctx);
 
-    const installationId: number | null = await ctx.runQuery(internal.github.getInstallationIdForOwner, {
-      ownerTokenIdentifier: identity.tokenIdentifier,
-    });
-
-    if (!installationId) {
+    const resolved = await resolveInstallationTokenForOwner(ctx, identity.tokenIdentifier);
+    if (!resolved) {
       return { repos: [], totalCount: 0 };
     }
-
-    const token = await getInstallationAccessToken(installationId);
+    const { token } = resolved;
 
     const allRepos: Array<{
       full_name: string;
@@ -409,15 +424,11 @@ export const searchGitHubRepos = action({
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
 
-    const installationId: number | null = await ctx.runQuery(internal.github.getInstallationIdForOwner, {
-      ownerTokenIdentifier: identity.tokenIdentifier,
-    });
-
-    if (!installationId) {
+    const resolved = await resolveInstallationTokenForOwner(ctx, identity.tokenIdentifier);
+    if (!resolved) {
       return { repos: [], totalCount: 0 };
     }
-
-    const token = await getInstallationAccessToken(installationId);
+    const { token } = resolved;
 
     const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(args.query)}&sort=updated&order=desc&per_page=20`;
 

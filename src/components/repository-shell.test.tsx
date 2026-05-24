@@ -182,18 +182,21 @@ vi.mock("@/hooks/use-check-for-updates", () => ({
   useCheckForUpdates: vi.fn(),
 }));
 
-vi.mock("@/hooks/use-repository-actions", () => ({
-  useRepositoryActions: () => ({
+vi.mock("@/hooks/use-chat-lifecycle", () => ({
+  useChatLifecycle: () => ({
     isSending: false,
     handleSendMessage: vi.fn(),
     isCancellingReply: false,
     handleCancelInFlightReply: vi.fn(),
-    isRunningAnalysis: false,
-    handleRunAnalysis: vi.fn(),
-    isSyncing: false,
-    handleSync: vi.fn(),
     isDeletingThread: false,
     handleDeleteThread: vi.fn(),
+  }),
+}));
+
+vi.mock("@/hooks/use-repository-lifecycle", () => ({
+  useRepositoryLifecycle: () => ({
+    isSyncing: false,
+    handleSync: vi.fn(),
     isArchivingRepo: false,
     handleArchiveRepo: vi.fn(),
     isRestoringRepo: false,

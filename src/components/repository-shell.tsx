@@ -20,7 +20,8 @@ import { useCheckForUpdates } from "@/hooks/use-check-for-updates";
 import { useComposerDraft } from "@/hooks/use-composer-draft";
 import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
 import { useRecentThreads } from "@/hooks/use-recent-threads";
-import { useRepositoryActions } from "@/hooks/use-repository-actions";
+import { useChatLifecycle } from "@/hooks/use-chat-lifecycle";
+import { useRepositoryLifecycle } from "@/hooks/use-repository-lifecycle";
 import { useChatMode } from "@/hooks/use-service-mode";
 import { useStorageGC } from "@/hooks/use-storage-gc";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
@@ -990,18 +991,9 @@ export function RepositoryShell({
     handleSendMessage,
     isCancellingReply,
     handleCancelInFlightReply,
-    isSyncing,
-    handleSync,
     isDeletingThread,
     handleDeleteThread,
-    isArchivingRepo,
-    handleArchiveRepo,
-    isRestoringRepo,
-    handleRestoreRepo,
-    isPermanentDeletingRepo,
-    handlePermanentDeleteRepo,
-  } = useRepositoryActions({
-    selectedRepositoryId: effectiveSelectedRepositoryId,
+  } = useChatLifecycle({
     selectedThreadId: effectiveSelectedThreadId,
     workspaceId: currentWorkspaceId,
     threadToDelete,
@@ -1009,6 +1001,7 @@ export function RepositoryShell({
     chatMode,
     clearChatInput,
     setActionError,
+    setThreadToDelete,
     onAfterCreateThread,
     onAfterDeleteThread: () => {
       // Stay inside the current workspace AND the current service mode so the
@@ -1034,6 +1027,22 @@ export function RepositoryShell({
         void navigate(DEFAULT_AUTHENTICATED_PATH);
       }
     },
+  });
+
+  const {
+    isSyncing,
+    handleSync,
+    isArchivingRepo,
+    handleArchiveRepo,
+    isRestoringRepo,
+    handleRestoreRepo,
+    isPermanentDeletingRepo,
+    handlePermanentDeleteRepo,
+  } = useRepositoryLifecycle({
+    selectedRepositoryId: effectiveSelectedRepositoryId,
+    setActionError,
+    setShowArchiveDialog,
+    setShowPermanentDeleteDialog,
     onAfterArchiveRepo: () => {
       // Bounce out of the workspace entirely — the repo (and therefore the
       // workspace's chrome) is no longer the active surface for the user.
@@ -1051,9 +1060,6 @@ export function RepositoryShell({
       // next workspace.
       void navigate(DEFAULT_AUTHENTICATED_PATH);
     },
-    setThreadToDelete,
-    setShowArchiveDialog,
-    setShowPermanentDeleteDialog,
   });
 
   // The chat surface is identical across breakpoints — only the layout
