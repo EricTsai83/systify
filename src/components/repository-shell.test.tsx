@@ -20,10 +20,11 @@ const queryName = (query: unknown) => {
   }
 };
 
-const { useMutationMock, useQueryMock, useChatModeMock } = vi.hoisted(() => ({
+const { useMutationMock, useQueryMock, useChatModeMock, useThreadCapabilitiesMock } = vi.hoisted(() => ({
   useMutationMock: vi.fn(),
   useQueryMock: vi.fn(),
   useChatModeMock: vi.fn(),
+  useThreadCapabilitiesMock: vi.fn(),
 }));
 
 const navigateMock = vi.fn();
@@ -83,15 +84,17 @@ vi.mock("@/components/top-bar", () => ({
 
 vi.mock("@/components/chat-panel", () => ({
   ChatContainer: ({
+    chatMode,
     showArtifactToggle,
     isArtifactPanelOpen,
     onToggleArtifactPanel,
   }: {
+    chatMode?: string;
     showArtifactToggle?: boolean;
     isArtifactPanelOpen?: boolean;
     onToggleArtifactPanel?: () => void;
   }) => (
-    <div data-testid="chat-panel">
+    <div data-testid="chat-panel" data-chat-mode={chatMode ?? ""}>
       {showArtifactToggle ? (
         <button
           data-testid="artifact-panel-toggle"
@@ -172,18 +175,7 @@ vi.mock("@/components/ui/skeleton", () => ({
 }));
 
 vi.mock("@/hooks/use-thread-capabilities", () => ({
-  useThreadCapabilities: () => ({
-    availableModes: ["discuss"],
-    defaultMode: "discuss",
-    attachedRepository: null,
-    sandboxModeStatus: { reasonCode: "missing_sandbox", message: null },
-    disabledReasons: {},
-    isMissingThread: false,
-    isLoading: false,
-    // Plan 10 — sandboxCostBudget is null when no repo is attached
-    // (which is the no-repo fixture case here).
-    sandboxCostBudget: null,
-  }),
+  useThreadCapabilities: useThreadCapabilitiesMock,
 }));
 
 vi.mock("@/hooks/use-check-for-updates", () => ({
@@ -301,6 +293,18 @@ beforeEach(() => {
       askReadiness: { canBind: false, reason: null },
       labReadiness: { canStart: true, reason: null },
     },
+  });
+  useThreadCapabilitiesMock.mockReset();
+  useThreadCapabilitiesMock.mockReturnValue({
+    availableModes: ["discuss"],
+    defaultMode: "discuss",
+    attachedRepository: null,
+    sandboxModeStatus: { reasonCode: "missing_sandbox", message: null },
+    disabledReasons: {},
+    isMissingThread: false,
+    isLoading: false,
+    sandboxCostBudget: null,
+    sandboxIsActivatable: false,
   });
   // Dispatch by mutation name so each call site gets its own spy. Falls
   // back to a fresh resolved-null mock for mutations the tests don't assert on.
@@ -510,6 +514,103 @@ describe("RepositoryShell artifact toggle behavior", () => {
     expect(screen.queryByTestId("artifact-panel-toggle")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("artifact-drawer")).not.toBeInTheDocument();
     expect(screen.queryByTestId("artifact-panel")).not.toBeInTheDocument();
+  });
+
+  test("derives chatMode from the URL segment, not capability defaultMode, for an existing thread", () => {
+    // Regression: `capabilities.defaultMode` is what
+    // `getDefaultThreadMode(hasAttachedRepo)` returns — "library" for any
+    // repo-attached workspace. Using it as the chatMode fallback on a
+    // canonical discuss-thread URL silently sent `mode: "library"` to
+    // `sendMessage`, which then tripped the `askReadiness` gate
+    // ("Library Ask needs at least one artifact in this workspace") even
+    // though the user was on /discuss/:tid and never touched Library.
+    // The URL's mode-aware segment is the source of truth for an
+    // existing thread's mode; the resolver default only applies to
+    // brand-new threads created via `sendMessageStartingNewThread`.
+    useChatModeMock.mockReturnValue({
+      mode: "discuss",
+      availability: {
+        availableModes: ["discuss", "library"] as const,
+        defaultMode: "library" as const,
+        disabledReasons: {},
+        hasAttachedRepo: true,
+        hasAtLeastOneArtifact: false,
+        askReadiness: { canBind: false, reason: null },
+        labReadiness: { canStart: false, reason: null },
+      },
+      placeholderAvailability: {
+        availableModes: ["discuss"],
+        defaultMode: "discuss",
+        disabledReasons: {},
+        hasAttachedRepo: false,
+        hasAtLeastOneArtifact: false,
+        askReadiness: { canBind: false, reason: null },
+        labReadiness: { canStart: false, reason: null },
+      },
+    });
+    useThreadCapabilitiesMock.mockReturnValue({
+      availableModes: ["discuss", "library"],
+      defaultMode: "library",
+      attachedRepository: { id: repoId, fullName: "octocat/hello-world", shortName: "hello-world" },
+      sandboxModeStatus: { reasonCode: "missing_sandbox", message: null },
+      disabledReasons: {},
+      isMissingThread: false,
+      isLoading: false,
+      sandboxCostBudget: null,
+      sandboxIsActivatable: false,
+    });
+    repositoriesResult = [makeRepository()];
+    const { workspaceId, workspace } = makeRepoWorkspace();
+    workspacesResult = [workspace];
+
+    render(<RepositoryShell urlWorkspaceId={workspaceId} urlThreadId={"thread_discuss" as ThreadId} />);
+
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-chat-mode", "discuss");
+  });
+
+  test("derives chatMode from the URL segment for a lab thread URL", () => {
+    // Symmetric to the discuss case above: `/w/:wid/lab/:tid` must
+    // resolve chatMode to "lab" even though `capabilities.defaultMode`
+    // is "library" for any repo-attached workspace.
+    useChatModeMock.mockReturnValue({
+      mode: "lab",
+      availability: {
+        availableModes: ["discuss", "library", "lab"] as const,
+        defaultMode: "library" as const,
+        disabledReasons: {},
+        hasAttachedRepo: true,
+        hasAtLeastOneArtifact: true,
+        askReadiness: { canBind: true, reason: null },
+        labReadiness: { canStart: true, reason: null },
+      },
+      placeholderAvailability: {
+        availableModes: ["discuss"],
+        defaultMode: "discuss",
+        disabledReasons: {},
+        hasAttachedRepo: false,
+        hasAtLeastOneArtifact: false,
+        askReadiness: { canBind: false, reason: null },
+        labReadiness: { canStart: false, reason: null },
+      },
+    });
+    useThreadCapabilitiesMock.mockReturnValue({
+      availableModes: ["discuss", "library", "lab"],
+      defaultMode: "library",
+      attachedRepository: { id: repoId, fullName: "octocat/hello-world", shortName: "hello-world" },
+      sandboxModeStatus: { reasonCode: "available", message: null },
+      disabledReasons: {},
+      isMissingThread: false,
+      isLoading: false,
+      sandboxCostBudget: null,
+      sandboxIsActivatable: false,
+    });
+    repositoriesResult = [makeRepository()];
+    const { workspaceId, workspace } = makeRepoWorkspace();
+    workspacesResult = [workspace];
+
+    render(<RepositoryShell urlWorkspaceId={workspaceId} urlThreadId={"thread_lab" as ThreadId} />);
+
+    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-chat-mode", "lab");
   });
 });
 

@@ -441,20 +441,43 @@ export function RepositoryShell({
   // provision.
   const isSandboxPickedWhileActivating = pickedChatMode?.mode === "lab" && capabilities.sandboxIsActivatable;
   // `chatMode` derivation depends on whether a thread exists:
-  //   - has-thread: thread capabilities drive `availableModes` / `defaultMode`
-  //     (the `pickedChatMode` override applies when the user explicitly
-  //     selected a mode for that thread).
+  //   - has-thread: the URL's mode-aware segment (`/discuss/:tid`,
+  //     `/lab/:tid`) is the source of truth for an existing thread's
+  //     mode — `modeAwareThreadPath` only builds those URLs for threads
+  //     whose persisted `thread.mode` matches the segment. `pickedChatMode`
+  //     overrides when the user explicitly chose a different mode for that
+  //     thread; capability defaults only apply as a last-resort fallback
+  //     for transient/legacy URLs (`mode === null`).
   //   - no-thread:  capabilities collapse to "discuss" (NO_THREAD_CAPABILITIES),
   //     so the URL's mode is the only signal — `/w/:wid/lab` must imply
   //     sandbox mode for the lazy first send, even though the capabilities
   //     resolver doesn't know about the URL.
+  //
+  // Why not `capabilities.defaultMode` for the has-thread fallback:
+  // `defaultMode` is `getDefaultThreadMode(hasAttachedRepo)` — i.e.
+  // "library" for any repo-attached workspace. Using it would silently
+  // promote a discuss-thread URL to library mode whenever a repo is
+  // attached, which then sends `mode: "library"` to `sendMessage` and
+  // trips the `askReadiness` gate ("Library Ask needs at least one
+  // artifact") even though the user never left the discuss surface.
   const chatMode: ChatMode = useMemo(() => {
     if (urlThreadId !== null) {
-      return pickedChatMode &&
+      if (
+        pickedChatMode &&
         pickedChatMode.threadId === urlThreadId &&
         (capabilities.availableModes.includes(pickedChatMode.mode) || isSandboxPickedWhileActivating)
-        ? pickedChatMode.mode
-        : capabilities.defaultMode;
+      ) {
+        return pickedChatMode.mode;
+      }
+      // Canonical mode-aware thread URLs encode the thread's mode in the
+      // path segment. `library` is excluded because library threads render
+      // in `LibraryAskPanel`, not in this shell's `ChatPanel`.
+      if (mode === "discuss" || mode === "lab") {
+        return mode;
+      }
+      // Legacy `/w/:wid/t/:tid` (mode === null) — no URL signal, defer to
+      // the resolver's structural default.
+      return capabilities.defaultMode;
     }
     switch (mode) {
       case "lab":
