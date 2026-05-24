@@ -4,7 +4,7 @@ import type React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
-import { AppSidebar } from "./app-sidebar";
+import { AppSidebarLeft, AppSidebarRight } from "./app-sidebar";
 import type { ThreadId, WorkspaceId } from "@/lib/types";
 
 const { createThreadMutationMock, useMutationMock, useQueryMock } = vi.hoisted(() => ({
@@ -96,11 +96,18 @@ vi.mock("@/components/confirm-dialog", () => ({
   ConfirmDialog: () => null,
 }));
 
-// `LibraryAskPanel` is only rendered by the `libraryAsk` variant; the
-// thread-list tests below exercise the `threads` variant. Mock it so the
-// suite doesn't pull in the Ask panel's transitive module graph.
+// `LibraryAskPanel` is rendered by `AppSidebarRight`; the thread-list
+// tests below exercise `AppSidebarLeft`. Mock it so the suite doesn't
+// pull in the Ask panel's transitive module graph.
 vi.mock("@/components/library-ask-panel", () => ({
   LibraryAskPanel: () => <div data-testid="library-ask-panel" />,
+}));
+
+// `LibraryTree` is only rendered when the left sidebar runs in Library
+// mode (effectiveChatMode === "library"). Mocking it keeps the
+// thread-rail tests below independent of the folder-tree module graph.
+vi.mock("@/components/library-tree", () => ({
+  LibraryTree: () => <div data-testid="library-tree" />,
 }));
 
 const threadOne = {
@@ -139,12 +146,12 @@ afterEach(() => {
   cleanup();
 });
 
-describe("AppSidebar", () => {
+describe("AppSidebarLeft", () => {
   test("surfaces create-thread failures through the shared error callback", async () => {
     const onError = vi.fn();
     createThreadMutationMock.mockRejectedValueOnce(new Error("Rate limit exceeded."));
 
-    renderSidebar({ onError });
+    renderLeftSidebar({ onError });
 
     fireEvent.click(screen.getByRole("button", { name: /new thread/i }));
 
@@ -156,7 +163,7 @@ describe("AppSidebar", () => {
   test("forwards the active service mode so the new thread matches the sidebar filter", async () => {
     createThreadMutationMock.mockResolvedValueOnce("thread_new" as ThreadId);
 
-    renderSidebar();
+    renderLeftSidebar();
 
     fireEvent.click(screen.getByRole("button", { name: /new thread/i }));
 
@@ -169,40 +176,36 @@ describe("AppSidebar", () => {
 
   test("announces thread-count deltas with distinct live-region text", () => {
     threadsResult = [threadOne];
-    const { rerender } = renderSidebar();
+    const { rerender } = renderLeftSidebar();
 
     expect(screen.getByRole("status")).toHaveTextContent("");
 
     threadsResult = [threadOne, threadTwo];
-    rerender(createSidebarElement());
+    rerender(createLeftSidebarElement());
     expect(screen.getByRole("status")).toHaveTextContent("1 new conversation. 2 total.");
 
     threadsResult = [threadOne, threadTwo, threadThree];
-    rerender(createSidebarElement());
+    rerender(createLeftSidebarElement());
     expect(screen.getByRole("status")).toHaveTextContent("1 new conversation. 3 total.");
   });
 
   test("offers repository import instead of manual workspace creation", () => {
-    renderSidebar();
+    renderLeftSidebar();
 
     expect(screen.queryByText(/new workspace/i)).not.toBeInTheDocument();
     expect(screen.getByText(/import repo/i)).toBeInTheDocument();
   });
+});
 
-  test("renders the Library Ask panel instead of the thread rail for the libraryAsk variant", () => {
+describe("AppSidebarRight", () => {
+  test("renders the Library Ask panel", () => {
     render(
-      <AppSidebar
-        repositories={[] as Doc<"repositories">[]}
-        workspaces={[] as Doc<"workspaces">[]}
+      <AppSidebarRight
         activeWorkspaceId={"workspace_1" as WorkspaceId}
-        onSwitchWorkspace={vi.fn()}
-        variant="libraryAsk"
         askThreadId={null}
         activeArtifactId={null}
         onSelectArtifact={vi.fn()}
         onSelectAskThread={vi.fn()}
-        onImported={vi.fn()}
-        onError={vi.fn()}
       />,
     );
 
@@ -211,21 +214,21 @@ describe("AppSidebar", () => {
   });
 });
 
-function renderSidebar({
+function renderLeftSidebar({
   onError = vi.fn(),
 }: {
   onError?: (message: string | null) => void;
 } = {}) {
-  return render(createSidebarElement({ onError }));
+  return render(createLeftSidebarElement({ onError }));
 }
 
-function createSidebarElement({
+function createLeftSidebarElement({
   onError = vi.fn(),
 }: {
   onError?: (message: string | null) => void;
 } = {}) {
   return (
-    <AppSidebar
+    <AppSidebarLeft
       repositories={[] as Doc<"repositories">[]}
       workspaces={[] as Doc<"workspaces">[]}
       activeWorkspaceId={null as WorkspaceId | null}

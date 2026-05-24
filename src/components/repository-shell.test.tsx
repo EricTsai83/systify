@@ -52,7 +52,7 @@ vi.mock("@/hooks/use-service-mode", () => ({
 }));
 
 vi.mock("@/components/app-sidebar", () => ({
-  AppSidebar: ({
+  AppSidebarLeft: ({
     activeWorkspaceId,
     onImported,
   }: {
@@ -76,6 +76,7 @@ vi.mock("@/components/app-sidebar", () => ({
       </button>
     </div>
   ),
+  AppSidebarRight: () => null,
 }));
 
 vi.mock("@/components/top-bar", () => ({

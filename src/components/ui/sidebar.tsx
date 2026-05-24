@@ -1,21 +1,26 @@
 /* eslint-disable react-refresh/only-export-components */
 import * as React from "react";
 import { useLocation } from "react-router-dom";
-import { List } from "@phosphor-icons/react";
+import { ChatCircleText, List } from "@phosphor-icons/react";
 import { cn } from "@/lib/utils";
 import { readString, writeString } from "@/lib/storage";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { useIsMobile } from "@/hooks/use-mobile";
 
-type SidebarContextValue = {
+type SidebarSideState = {
   open: boolean;
   setOpen: (open: boolean) => void;
   toggle: () => void;
-  isMobile: boolean;
-  isSheetMode: boolean;
   openMobile: boolean;
   setOpenMobile: (open: boolean) => void;
+};
+
+type SidebarContextValue = {
+  isMobile: boolean;
+  isSheetMode: boolean;
+  left: SidebarSideState;
+  right: SidebarSideState;
 };
 
 const SidebarContext = React.createContext<SidebarContextValue | null>(null);
@@ -50,10 +55,12 @@ function persistSidebarWidth(storageKey: string, value: number): void {
   writeString(storageKey, String(value));
 }
 
-export function useSidebar() {
+export function useSidebar(): SidebarSideState;
+export function useSidebar(side: "left" | "right"): SidebarSideState;
+export function useSidebar(side: "left" | "right" = "left"): SidebarSideState {
   const ctx = React.useContext(SidebarContext);
   if (!ctx) throw new Error("useSidebar must be used within a SidebarProvider");
-  return ctx;
+  return side === "right" ? ctx.right : ctx.left;
 }
 
 export function SidebarProvider({
@@ -71,15 +78,18 @@ export function SidebarProvider({
     return window.matchMedia(SIDEBAR_DOCKED_QUERY).matches;
   });
   const isSheetMode = isMobile || !isDockedViewport;
-  const [open, setOpen] = React.useState(defaultOpen);
-  const [openMobile, setOpenMobile] = React.useState(false);
+  const [openLeft, setOpenLeft] = React.useState(defaultOpen);
+  const [openMobileLeft, setOpenMobileLeft] = React.useState(false);
+  const [openRight, setOpenRight] = React.useState(defaultOpen);
+  const [openMobileRight, setOpenMobileRight] = React.useState(false);
 
   React.useEffect(() => {
     const mediaQuery = window.matchMedia(SIDEBAR_DOCKED_QUERY);
     const handleChange = (event: MediaQueryListEvent) => {
       setIsDockedViewport(event.matches);
       if (event.matches) {
-        setOpenMobile(false);
+        setOpenMobileLeft(false);
+        setOpenMobileRight(false);
       }
     };
     mediaQuery.addEventListener("change", handleChange);
@@ -107,20 +117,43 @@ export function SidebarProvider({
   //      `body.style.pointerEvents`, so the reset is safe.
   const { pathname } = useLocation();
   React.useEffect(() => {
-    setOpenMobile(false);
+    setOpenMobileLeft(false);
+    setOpenMobileRight(false);
     if (typeof document !== "undefined") {
       document.body.style.pointerEvents = "";
     }
   }, [pathname]);
 
-  const toggle = React.useCallback(() => {
-    if (isSheetMode) setOpenMobile((v) => !v);
-    else setOpen((v) => !v);
+  const toggleLeft = React.useCallback(() => {
+    if (isSheetMode) setOpenMobileLeft((v) => !v);
+    else setOpenLeft((v) => !v);
+  }, [isSheetMode]);
+
+  const toggleRight = React.useCallback(() => {
+    if (isSheetMode) setOpenMobileRight((v) => !v);
+    else setOpenRight((v) => !v);
   }, [isSheetMode]);
 
   const value = React.useMemo<SidebarContextValue>(
-    () => ({ open, setOpen, toggle, isMobile, isSheetMode, openMobile, setOpenMobile }),
-    [open, toggle, isMobile, isSheetMode, openMobile],
+    () => ({
+      isMobile,
+      isSheetMode,
+      left: {
+        open: openLeft,
+        setOpen: setOpenLeft,
+        toggle: toggleLeft,
+        openMobile: openMobileLeft,
+        setOpenMobile: setOpenMobileLeft,
+      },
+      right: {
+        open: openRight,
+        setOpen: setOpenRight,
+        toggle: toggleRight,
+        openMobile: openMobileRight,
+        setOpenMobile: setOpenMobileRight,
+      },
+    }),
+    [openLeft, toggleLeft, openMobileLeft, openRight, toggleRight, openMobileRight, isMobile, isSheetMode],
   );
 
   return <SidebarContext.Provider value={value}>{children}</SidebarContext.Provider>;
@@ -129,12 +162,15 @@ export function SidebarProvider({
 export function Sidebar({
   children,
   className,
+  side = "left",
   widthStorageKey = SIDEBAR_WIDTH_STORAGE_KEY,
   defaultWidth = SIDEBAR_MIN_WIDTH,
   maxWidth = SIDEBAR_MAX_WIDTH,
 }: {
   children: React.ReactNode;
   className?: string;
+  /** Which side of the viewport this sidebar attaches to. */
+  side?: "left" | "right";
   /** localStorage key for the resizable width. Defaults to the shared key. */
   widthStorageKey?: string;
   /** Width to use when nothing is stored yet. Clamped to the min/max bounds. */
@@ -146,7 +182,9 @@ export function Sidebar({
    */
   maxWidth?: number;
 }) {
-  const { isSheetMode, open, openMobile, setOpenMobile } = useSidebar();
+  const { isSheetMode } = React.useContext(SidebarContext) ?? { isSheetMode: false };
+  const sideState = useSidebar(side);
+  const { open, openMobile, setOpenMobile } = sideState;
   const [width, setWidth] = React.useState<number>(() =>
     readStoredSidebarWidth(widthStorageKey, defaultWidth, maxWidth),
   );
@@ -180,7 +218,9 @@ export function Sidebar({
       document.body.style.userSelect = "none";
 
       const handleMove = (moveEvent: PointerEvent) => {
-        const next = clampSidebarWidth(startWidth + (moveEvent.clientX - startX), maxWidth);
+        // Right sidebar: dragging left (negative delta) grows the sidebar
+        const delta = side === "right" ? -(moveEvent.clientX - startX) : moveEvent.clientX - startX;
+        const next = clampSidebarWidth(startWidth + delta, maxWidth);
         setWidth(next);
       };
 
@@ -201,16 +241,22 @@ export function Sidebar({
       window.addEventListener("pointerup", handleEnd);
       window.addEventListener("pointercancel", handleEnd);
     },
-    [width, widthStorageKey, maxWidth],
+    [width, widthStorageKey, maxWidth, side],
   );
 
   const handleResizeKeyDown = React.useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
       const step = event.shiftKey ? 32 : 8;
       let next: number | null = null;
-      if (event.key === "ArrowLeft") next = -step;
-      else if (event.key === "ArrowRight") next = step;
-      else if (event.key === "Home") {
+      // Right sidebar: ArrowLeft grows, ArrowRight shrinks (opposite of left)
+      if (side === "right") {
+        if (event.key === "ArrowLeft") next = step;
+        else if (event.key === "ArrowRight") next = -step;
+      } else {
+        if (event.key === "ArrowLeft") next = -step;
+        else if (event.key === "ArrowRight") next = step;
+      }
+      if (event.key === "Home") {
         event.preventDefault();
         setWidth(() => {
           persistSidebarWidth(widthStorageKey, SIDEBAR_MIN_WIDTH);
@@ -229,19 +275,21 @@ export function Sidebar({
       if (next === null) return;
       event.preventDefault();
       setWidth((current) => {
-        const updated = clampSidebarWidth(current + (next ?? 0), maxWidth);
+        const updated = clampSidebarWidth(current + next, maxWidth);
         persistSidebarWidth(widthStorageKey, updated);
         return updated;
       });
     },
-    [widthStorageKey, maxWidth],
+    [widthStorageKey, maxWidth, side],
   );
+
+  const sheetSide = side === "right" ? "right" : "left";
 
   if (isSheetMode) {
     return (
       <Sheet open={openMobile} onOpenChange={setOpenMobile}>
         <SheetContent
-          side="left"
+          side={sheetSide}
           className={cn(
             "w-[min(18rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] bg-background p-0 data-[state=closed]:duration-200 data-[state=open]:duration-200",
             className,
@@ -256,6 +304,10 @@ export function Sidebar({
     );
   }
 
+  const isLeftSide = side === "left";
+  const borderClass = isLeftSide ? "border-r" : "border-l";
+  const resizeEdgeClass = isLeftSide ? "right-0" : "left-0";
+
   return (
     // Width animates because the sidebar must reflow chat (push UX) — the
     // SidebarTrigger lives at TopBar's left edge, so an absolute-positioned
@@ -265,11 +317,14 @@ export function Sidebar({
     // the cursor 1:1; open/close toggles still animate.
     <aside
       data-state={open ? "open" : "closed"}
-      style={{ width: open ? width : 0 }}
+      data-side={side}
+      style={{ width: open ? width : 0, [isLeftSide ? "left" : "right"]: 0 }}
       className={cn(
-        "relative hidden shrink-0 flex-col overflow-hidden border-r border-border bg-background motion-safe:duration-200 motion-safe:ease-out [will-change:width] xl:flex",
+        "relative hidden shrink-0 flex-col overflow-hidden bg-background motion-safe:duration-200 motion-safe:ease-out [will-change:width] xl:flex",
+        borderClass,
+        "border-border",
         isResizing ? "transition-none" : "motion-safe:transition-[width] motion-reduce:transition-none",
-        open ? "" : "border-r-0",
+        open ? "" : isLeftSide ? "border-r-0" : "border-l-0",
         className,
       )}
     >
@@ -288,7 +343,10 @@ export function Sidebar({
           data-resizing={isResizing ? "true" : "false"}
           onPointerDown={handleResizePointerDown}
           onKeyDown={handleResizeKeyDown}
-          className="absolute right-0 top-0 h-full w-1 cursor-col-resize bg-transparent transition-colors hover:bg-primary/40 focus-visible:bg-primary/60 focus-visible:outline-none data-[resizing=true]:bg-primary/60"
+          className={cn(
+            "absolute top-0 h-full w-1 cursor-col-resize bg-transparent transition-colors hover:bg-primary/40 focus-visible:bg-primary/60 focus-visible:outline-none data-[resizing=true]:bg-primary/60",
+            resizeEdgeClass,
+          )}
         />
       ) : null}
     </aside>
@@ -311,17 +369,23 @@ export function SidebarSection({ children, className }: { children: React.ReactN
   return <div className={cn("flex flex-col gap-2 px-3 py-3", className)}>{children}</div>;
 }
 
-export function SidebarTrigger({ className }: { className?: string }) {
-  const { toggle } = useSidebar();
+export function SidebarTrigger({ className, side = "left" }: { className?: string; side?: "left" | "right" }) {
+  const { toggle } = useSidebar(side);
+  // Distinct glyphs per side so the two triggers in the Library header read as
+  // separate controls at a glance. Left carries the workspace nav (threads /
+  // tree) — the hamburger is the universal "menu" affordance. Right carries
+  // the Library Ask chat surface, so the chat bubble points the user at what
+  // the toggle reveals.
+  const TriggerIcon = side === "right" ? ChatCircleText : List;
   return (
     <Button
       variant="ghost"
       size="icon"
       className={cn("text-muted-foreground hover:text-foreground", className)}
       onClick={toggle}
-      aria-label="Toggle sidebar"
+      aria-label={`Toggle ${side} sidebar`}
     >
-      <List weight="bold" />
+      <TriggerIcon weight="bold" />
     </Button>
   );
 }

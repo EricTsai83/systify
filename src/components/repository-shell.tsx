@@ -7,7 +7,7 @@ import { SidebarInset } from "@/components/ui/sidebar";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { AppSidebar } from "@/components/app-sidebar";
+import { AppSidebarLeft } from "@/components/app-sidebar";
 import { ArtifactPanel } from "@/components/artifact-panel";
 import { TopBar } from "@/components/top-bar";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -1105,7 +1105,7 @@ export function RepositoryShell({
 
   return (
     <>
-      <AppSidebar
+      <AppSidebarLeft
         repositories={repositories}
         workspaces={workspaces}
         activeWorkspaceId={activeWorkspaceId}
