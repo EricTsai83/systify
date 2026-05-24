@@ -1,10 +1,8 @@
 import { useCallback, useMemo, useState } from "react";
-import { SparkleIcon } from "@phosphor-icons/react";
 import { LibraryEditor } from "@/components/library-editor";
 import { LibraryTabs } from "@/components/library-tabs";
 import { QuickOpenDialog } from "@/components/quick-open-dialog";
 import { SystemDesignStatusBanner } from "@/components/system-design-status-banner";
-import { Button } from "@/components/ui/button";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useLibraryShortcuts } from "@/hooks/use-library-shortcuts";
 import type { LibraryTabsApi } from "@/hooks/use-library-tabs";
@@ -25,13 +23,11 @@ export function LibraryShell({
   tabs,
   allArtifacts,
   hasArtifacts,
-  onGenerate,
 }: {
   repositoryId: RepositoryId;
   tabs: LibraryTabsApi;
   allArtifacts: ReadonlyArray<ArtifactListItem> | undefined;
   hasArtifacts: boolean;
-  onGenerate: () => void;
 }) {
   const artifactsById = useMemo(() => {
     const map = new Map<ArtifactId, ArtifactListItem>();
@@ -96,7 +92,7 @@ export function LibraryShell({
       {tabs.activeArtifactId ? (
         <LibraryEditor artifactId={tabs.activeArtifactId} />
       ) : allArtifacts === undefined ? null : (
-        <LibraryEmptyState hasArtifacts={hasArtifacts} onGenerate={onGenerate} />
+        <LibraryEmptyState hasArtifacts={hasArtifacts} />
       )}
 
       <QuickOpenDialog
@@ -111,20 +107,16 @@ export function LibraryShell({
   );
 }
 
-function LibraryEmptyState({ hasArtifacts, onGenerate }: { hasArtifacts: boolean; onGenerate: () => void }) {
+function LibraryEmptyState({ hasArtifacts }: { hasArtifacts: boolean }) {
   if (!hasArtifacts) {
     return (
       <div className="flex flex-1 items-center justify-center px-6 py-10">
         <div className="w-full max-w-md text-center">
           <h2 className="text-base font-semibold text-foreground">No documents yet</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            Generate the System Design starter set — architecture, data model, API, security and more — straight into
-            your Library.
+            This Library has no System Design documents to read. Generate them from the Ask panel on the right to get
+            started.
           </p>
-          <Button type="button" size="sm" className="mt-5 gap-1.5" onClick={onGenerate}>
-            <SparkleIcon size={14} weight="bold" />
-            Generate System Design
-          </Button>
         </div>
       </div>
     );

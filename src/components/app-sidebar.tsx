@@ -176,8 +176,20 @@ type AppSidebarRightProps = {
   activeWorkspaceId: WorkspaceId;
   askThreadId: ThreadId | null;
   activeArtifactId: ArtifactId | null;
+  /**
+   * Whether the workspace has at least one indexed artifact. Forwarded to
+   * {@link LibraryAskPanel} so the composer locks (and the empty state
+   * surfaces a Generate CTA) instead of letting the user hit the
+   * `library_no_artifact` backend gate on submit.
+   */
+  hasArtifacts: boolean;
   onSelectArtifact: (id: ArtifactId) => void;
   onSelectAskThread: (id: ThreadId | null) => void;
+  /**
+   * Open the Generate System Design dialog. The page owns the dialog state
+   * so the Ask panel and the editor empty state share one dialog instance.
+   */
+  onGenerate?: () => void;
 };
 
 /**
@@ -192,8 +204,10 @@ export function AppSidebarRight({
   activeWorkspaceId,
   askThreadId,
   activeArtifactId,
+  hasArtifacts,
   onSelectArtifact,
   onSelectAskThread,
+  onGenerate,
 }: AppSidebarRightProps) {
   return (
     <Sidebar
@@ -207,8 +221,10 @@ export function AppSidebarRight({
           workspaceId={activeWorkspaceId}
           threadId={askThreadId}
           activeArtifactId={activeArtifactId}
+          hasArtifacts={hasArtifacts}
           onSelectArtifact={onSelectArtifact}
           onSelectThread={onSelectAskThread}
+          onGenerate={onGenerate}
         />
       </div>
     </Sidebar>

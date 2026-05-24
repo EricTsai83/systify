@@ -291,7 +291,6 @@ function LibraryWorkspace({
               tabs={tabs}
               allArtifacts={allArtifacts}
               hasArtifacts={hasArtifacts}
-              onGenerate={openGenerateDialog}
             />
           ) : null}
         </div>
@@ -301,8 +300,10 @@ function LibraryWorkspace({
           activeWorkspaceId={workspaceId}
           askThreadId={askThreadId}
           activeArtifactId={tabs.activeArtifactId}
+          hasArtifacts={hasArtifacts}
           onSelectArtifact={tabs.openTab}
           onSelectAskThread={handleSelectLibraryThread}
+          onGenerate={openGenerateDialog}
         />
       ) : null}
       {repositoryId ? (

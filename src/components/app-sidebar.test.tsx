@@ -204,6 +204,7 @@ describe("AppSidebarRight", () => {
         activeWorkspaceId={"workspace_1" as WorkspaceId}
         askThreadId={null}
         activeArtifactId={null}
+        hasArtifacts={true}
         onSelectArtifact={vi.fn()}
         onSelectAskThread={vi.fn()}
       />,
