@@ -51,10 +51,10 @@ async function seedRepo(
         ownerTokenIdentifier,
         provider: "daytona",
         sourceAdapter: "git_clone",
-        remoteId: args.sandbox.remoteId ?? "remote-fixture",
+        remoteId: args.sandbox.remoteId ?? "",
         status: args.sandbox.status,
         workDir: "/workspace",
-        repoPath: args.sandbox.repoPath ?? "/workspace/repo",
+        repoPath: args.sandbox.repoPath ?? "",
         cpuLimit: 2,
         memoryLimitGiB: 4,
         diskLimitGiB: 10,
@@ -77,7 +77,7 @@ describe("getRepositorySandboxStatus", () => {
   test("returns available + sandbox row when sandbox is ready and remote metadata is populated", async () => {
     const t = convexTest(schema, modules);
     const { repository, sandboxId } = await seedRepo(t, {
-      sandbox: { status: "ready" },
+      sandbox: { status: "ready", remoteId: "remote-fixture", repoPath: "/workspace/repo" },
     });
 
     const result = await t.run(async (ctx) => getRepositorySandboxStatus(ctx, repository));
@@ -129,6 +129,17 @@ describe("getRepositorySandboxStatus", () => {
     expect(result.sandboxModeStatus.reasonCode).toBe("sandbox_provisioning");
   });
 
+  test("ready sandbox without remote metadata surfaces as provisioning", async () => {
+    const t = convexTest(schema, modules);
+    const { repository } = await seedRepo(t, {
+      sandbox: { status: "ready", remoteId: undefined, repoPath: undefined },
+    });
+
+    const result = await t.run(async (ctx) => getRepositorySandboxStatus(ctx, repository));
+
+    expect(result.sandboxModeStatus.reasonCode).toBe("sandbox_provisioning");
+  });
+
   test("stopped sandbox surfaces as expired", async () => {
     const t = convexTest(schema, modules);
     const { repository } = await seedRepo(t, { sandbox: { status: "stopped" } });
@@ -152,7 +163,9 @@ describe("getRepositorySandboxStatus", () => {
 describe("requireRepositorySandbox", () => {
   test("returns sandbox row when available", async () => {
     const t = convexTest(schema, modules);
-    const { repository, sandboxId } = await seedRepo(t, { sandbox: { status: "ready" } });
+    const { repository, sandboxId } = await seedRepo(t, {
+      sandbox: { status: "ready", remoteId: "remote-fixture", repoPath: "/workspace/repo" },
+    });
 
     const result = await t.run(async (ctx) => requireRepositorySandbox(ctx, repository));
 
