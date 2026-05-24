@@ -28,7 +28,7 @@ Artifacts carry two unrelated staleness signals. They must not be merged.
 
 | Axis | Source fields | Question it answers |
 | ---- | ------------- | ------------------- |
-| **Lab verification freshness** (`freshness`) | `producedIn`, `lastVerifiedAt` | "Was this checked against a live sandbox, and how long ago?" |
+| **Lab verification freshness** (`freshness`) | `lastVerifiedAt` | "Was this checked against a live sandbox, and how long ago?" |
 | **Import snapshot drift** (`importDriftFromLatestSync`) | `alignedImportCommitSha` vs latest import SHA | "Has the repository been re-imported since this was written?" |
 
 An `architecture_overview` artifact can be Lab-verified (`fresh`) and *also*

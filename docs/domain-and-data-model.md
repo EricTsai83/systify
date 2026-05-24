@@ -19,7 +19,7 @@ Discuss vs Library (behavioral SSOT boundary):
 | Mode | Repo | Default focus |
 | ---- | ----- | ------------- |
 | `discuss` | Optional | Ungrounded or multi-topic ideation |
-| `ask` (“Library Ask”) | Required (`threads.repositoryId`) | Queries scoped to chunked artifacts |
+| `library` (“Library Ask”) | Required (`threads.repositoryId`) | Queries scoped to chunked artifacts |
 
 ### Traceability snapshot (minimal v1)
 
@@ -189,7 +189,7 @@ Together, these tables form the indexing layer:
 
 Chat data follows a standard thread/message model:
 
-- `threads` stores the title, mode, and last interaction timestamps. Current product modes are `discuss`, `ask`, and `lab`.
+- `threads` stores the title, mode, and last interaction timestamps. Current product modes are `discuss`, `library`, and `lab` — the same vocabulary appears in the persisted DB literal, the URL segment, and the UI label.
 - `messages` stores role, status, content, mode, and error information
 
 Beyond the basics, `messages` carries a few optional fields that are only populated when the corresponding feature applies:

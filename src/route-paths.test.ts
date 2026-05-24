@@ -1,11 +1,5 @@
 import { describe, expect, test } from "vitest";
-import {
-  discussPath,
-  labPath,
-  libraryPath,
-  modeAwareThreadPath,
-  withLibraryAskParam,
-} from "@/route-paths";
+import { discussPath, labPath, libraryPath, modeAwareThreadPath, withLibraryAskParam } from "@/route-paths";
 import type { ThreadId, WorkspaceId } from "@/lib/types";
 
 const WID = "ws_test" as WorkspaceId;

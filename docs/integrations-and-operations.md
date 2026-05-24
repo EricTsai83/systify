@@ -283,7 +283,7 @@ These jobs make the webhook path durable instead of best-effort.
 
 ### Role
 
-OpenAI is currently used mainly for chat response generation across all current modes (`discuss` / `ask` / `lab`). If `OPENAI_API_KEY` is absent, the system falls back to a heuristic answer.
+OpenAI is currently used mainly for chat response generation across all current modes (`discuss` / `library` / `lab`). If `OPENAI_API_KEY` is absent, the system falls back to a heuristic answer.
 
 ### Design implications
 

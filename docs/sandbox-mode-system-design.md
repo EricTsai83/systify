@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document describes the system-level isolation guarantees that the Systify sandbox chat mode runs inside, and the responsibilities split between Daytona (the sandbox provider), Systify's backend (the chat tooling layer), and the LLM itself.
+This document describes the system-level isolation guarantees that the Systify Lab chat mode (DB literal `lab`) runs inside, and the responsibilities split between Daytona (the sandbox provider), Systify's backend (the chat tooling layer), and the LLM itself.
 
 The companion `sandbox-mode-security-system-design.md` covers the *content* boundary — how secrets that flow through the LLM are kept out of durable storage. This document covers the *runtime* boundary — what the LLM can and cannot do inside a sandbox once it has the `read_file`, `list_dir`, and `run_shell` tools.
 
@@ -231,7 +231,7 @@ Plan 12 (`sandboxToolCallLog`) does need the slug array, but it reads it from a 
 ## Open Questions / Future Work
 
 - **Empirical Daytona limits.** The defaults table above documents what Systify configures, but the underlying container (kernel, cgroups, seccomp, capability set) is not directly measured from within Systify. A focused validation pass against a live sandbox — running `cat /proc/self/status`, `cat /proc/self/limits`, and a controlled fork-bomb / `rm -rf` against a non-existent path — would let us replace the "we rely on Daytona's documented isolation" qualifier with concrete observed limits.
-- **Per-tool deny lists.** The current deny list is one set of patterns applied uniformly to `run_shell`. If a future tool (Plan 09's degraded `docs` fallback, hypothetical `git_diff`, etc.) is added, this design accommodates a per-tool list without restructuring — each tool's `executeXxx` calls its own deny check.
+- **Per-tool deny lists.** The current deny list is one set of patterns applied uniformly to `run_shell`. If a future tool (e.g. a degraded `library`-mode fallback path or a hypothetical `git_diff`) is added, this design accommodates a per-tool list without restructuring — each tool's `executeXxx` calls its own deny check.
 - **Streaming tool output.** Daytona's `executeCommand` returns the entire result at once. For very long-running inspection tools (e.g. a multi-GB `git log -p`) the LLM cannot react until the call returns. A future enhancement could expose Daytona's PTY surface for streaming, but that materially complicates the truncation and redaction story (we cannot redact a stream we have not finished receiving) and is deferred until there is a concrete need.
 - **Cancellation × in-flight `run_shell`.** Plan 07's `cancelInFlightReply` aborts the surrounding `streamText` via `AbortController`, but `SandboxFsClient.executeCommand` does not currently accept an `AbortSignal` — the Daytona SDK's `Process.executeCommand(command, cwd, env, timeout)` has no abort plumbing. Concretely: if a user cancels mid-`run_shell`, the in-flight shell continues running on the Daytona side until its `timeoutSeconds` elapses (worst case 60 s). The downstream effects:
   - The cancelled assistant message is finalised correctly (Plan 07's path runs to completion); the eventual tool-result is dropped by the `if (wasCancelled) break` guard in `convex/chat/generation.ts`.

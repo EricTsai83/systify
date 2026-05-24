@@ -6,11 +6,11 @@ This document describes the two AI interaction paths currently available in Syst
 
 - Chat — interactive Q&A through the current product modes:
   - `discuss` — no repository context
-  - `ask` — Library Ask, grounded in artifact chunks
+  - `library` — Library Ask, grounded in artifact chunks
   - `lab` — sandbox-backed answers grounded in the live source tree
 - System Design generation — a sandbox-backed background job, triggered by the user clicking **Generate System Design** from the empty Library page, that writes a starter set of System Design artifacts (`manifest`, `readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`).
 
-Both are repository-centered, but they depend on different data sources and execution models. Chat and System Design generation are also complementary: System Design generation writes artifacts that later Library Ask and Lab replies can cite.
+Both are repository-centered, but they depend on different data sources and execution models. Chat and System Design generation are also complementary: System Design generation writes artifacts that later Library and Lab replies can cite.
 
 ## Differences Between the Two Paths
 
@@ -18,10 +18,10 @@ Both are repository-centered, but they depend on different data sources and exec
 | Capability               | Chat (per mode)                                                                                                                                | System Design generation                                              |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | Main entry point         | `chat.sendMessage`                                                                                                                             | `systemDesign.requestSystemDesignGeneration`                          |
-| Primary data source      | `discuss`: none · `ask`: `artifactChunks` + artifact metadata · `lab`: live sandbox tools plus durable artifacts                             | live sandbox                                                          |
+| Primary data source      | `discuss`: none · `library`: `artifactChunks` + artifact metadata · `lab`: live sandbox tools plus durable artifacts                           | live sandbox                                                          |
 | Execution location       | Convex action                                                                                                                                  | Convex Node action + Daytona                                          |
 | UI presentation          | stable history + active stream merge                                                                                                           | a starter set of System Design artifacts plus job state               |
-| Availability requirement | `discuss`: always · `ask`: repository has artifacts and indexed chunks · `lab`: repository has a usable sandbox                                | repository has a usable sandbox                                       |
+| Availability requirement | `discuss`: always · `library`: repository has artifacts and indexed chunks · `lab`: repository has a usable sandbox                            | repository has a usable sandbox                                       |
 
 
 ## Chat Flow
@@ -97,10 +97,10 @@ This allows the UI to immediately show a reply that is waiting to be generated.
 `getReplyContext` assembles the reply context based on the effective mode for the reply (`latestUserMessage.mode ?? thread.mode`, exposed on `ReplyContext.mode`):
 
 - `discuss`: skips every repo-scoped lookup — returns empty `artifacts`, empty `chunks`, and no repo summaries. The early return is what makes `discuss` training-only by design even when the thread has a `repositoryId` attached.
-- `ask`: Library retrieval over `artifactChunks`, scoped to the active workspace and optional artifact context.
+- `library`: Library retrieval over `artifactChunks`, scoped to the active workspace and optional artifact context.
 - `lab`: sandbox-backed execution through guarded tools, with durable artifacts available as reusable context.
 
-In every mode, the context also includes recent conversation messages bounded by `MAX_CONTEXT_MESSAGES`. Discuss skips repository data, Ask reads the processed artifact knowledge layer, and Lab can use the live sandbox via `read_file`, `list_dir`, and `run_shell`. Tool output is scrubbed for credential-shaped patterns before reaching the LLM. Tool response payloads also carry an audit signal in their `redactedTypes` field so integrators can see what kinds of content were redacted without learning the secret value.
+In every mode, the context also includes recent conversation messages bounded by `MAX_CONTEXT_MESSAGES`. Discuss skips repository data, Library reads the processed artifact knowledge layer, and Lab can use the live sandbox via `read_file`, `list_dir`, and `run_shell`. Tool output is scrubbed for credential-shaped patterns before reaching the LLM. Tool response payloads also carry an audit signal in their `redactedTypes` field so integrators can see what kinds of content were redacted without learning the secret value.
 
 ### 4. Retrieve grounding context
 
@@ -278,8 +278,8 @@ Both passes run concurrently against each other so a long LLM session does not g
 
 The `source` field encodes how the artifact was produced and drives the freshness UI:
 
-- Heuristic kinds carry `source: "heuristic"`. `createArtifactInMutation` translates that to `producedIn: "legacy"` and leaves `lastVerifiedAt` unset — the freshness UI does not award a "verified" badge to heuristic output.
-- LLM-backed kinds carry `source: "sandbox"` because they read live source through the sandbox tool factory. `createArtifactInMutation` translates that to `producedIn: "lab"` + `lastVerifiedAt: now`, which gates the "verified against current source" badge in the Library freshness UI.
+- Heuristic kinds carry `source: "heuristic"`. `createArtifactInMutation` leaves `lastVerifiedAt` unset — the freshness UI does not award a "verified" badge to heuristic output.
+- LLM-backed kinds carry `source: "sandbox"` because they read live source through the sandbox tool factory. `createArtifactInMutation` stamps `lastVerifiedAt: now` on the row, which gates the "verified against current source" badge in the Library freshness UI. (`lastVerifiedAt` is the single signal the freshness UI reads — an artifact is "verified" iff this field is set.)
 
 ### 5. Finalize
 
@@ -309,7 +309,7 @@ Library mode is **not** gated on having artifacts. Any repository with a valid a
 
 Chat and System Design generation are not mutually exclusive. They form layered capabilities:
 
-- Chat (`discuss` / `ask` / `lab`): fast, interactive, with cost and grounding scaling per mode
+- Chat (`discuss` / `library` / `lab`): fast, interactive, with cost and grounding scaling per mode
 - System Design generation: slower and sandbox-dependent, but produces durable, repository-grounded prose covering the main system surfaces in one pass
 
 Artifacts produced by System Design generation flow back into later Library Ask and Lab context, so the overall system forms a cumulative knowledge loop.
