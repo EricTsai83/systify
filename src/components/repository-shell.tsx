@@ -622,6 +622,13 @@ export function RepositoryShell({
     // bounce us out.
     if (availability === undefined) return;
     if (workspaces === undefined) return;
+    // Wait for the thread list before deciding so we promote onto the most
+    // recent thread when there is one. The library branch also needs this
+    // because the bare `/w/:wid/library` landing should deep-link to the
+    // most recent Ask thread when one exists — without the wait, an
+    // unresolved `ownerThreads` would silently strip the `?ask=:tid`
+    // param.
+    if (ownerThreads === undefined) return;
     // Every service mode redirects off the bare `/w/:wid` landing so the
     // user always settles on a canonical mode URL. Library lands on its
     // artifact overview. Discuss / Lab land on their most recent thread
@@ -632,15 +639,12 @@ export function RepositoryShell({
     // on the mode-less `/w/:wid`, which falls back to the structural
     // default (library for a repo-attached workspace).
     if (intendedChatMode === "library") {
-      const askThreadId = ownerThreads?.[0]?._id;
+      const askThreadId = ownerThreads[0]?._id;
       const base = libraryPath(urlWorkspaceId);
       const target = askThreadId ? withLibraryAskParam(base, askThreadId) : base;
       void navigate(target, { replace: true });
       return;
     }
-    // Wait for the thread list before deciding so we promote onto the most
-    // recent thread when there is one.
-    if (ownerThreads === undefined) return;
     const tid = ownerThreads[0]?._id;
     if (tid) {
       const target = intendedChatMode === "lab" ? labPath(urlWorkspaceId, tid) : discussPath(urlWorkspaceId, tid);

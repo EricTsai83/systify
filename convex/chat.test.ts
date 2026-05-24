@@ -290,7 +290,7 @@ describe("sendMessageStartingNewThread", () => {
 
   test("library mode without an attached repository throws", async () => {
     const ownerTokenIdentifier = "user|lazy-library-no-repo";
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const homeWorkspaceId = await insertHomeWorkspace(t, ownerTokenIdentifier);
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
@@ -306,7 +306,7 @@ describe("sendMessageStartingNewThread", () => {
   test("a different viewer cannot start a thread in someone else's workspace", async () => {
     const ownerTokenIdentifier = "user|lazy-owner";
     const intruderIdentifier = "user|lazy-intruder";
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const homeWorkspaceId = await insertHomeWorkspace(t, ownerTokenIdentifier);
 
     const intruder = t.withIdentity({ tokenIdentifier: intruderIdentifier });
@@ -321,7 +321,7 @@ describe("sendMessageStartingNewThread", () => {
 
   test("empty content is rejected without inserting a thread", async () => {
     const ownerTokenIdentifier = "user|lazy-empty-content";
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const homeWorkspaceId = await insertHomeWorkspace(t, ownerTokenIdentifier);
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
@@ -345,7 +345,7 @@ describe("sendMessageStartingNewThread", () => {
 
   test("lab mode without a repo workspace throws and leaves no orphan thread", async () => {
     const ownerTokenIdentifier = "user|lazy-lab-no-repo";
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const homeWorkspaceId = await insertHomeWorkspace(t, ownerTokenIdentifier);
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });

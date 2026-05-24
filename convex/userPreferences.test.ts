@@ -217,7 +217,7 @@ describe("userPreferences", () => {
     expect(bobPrefs).toBeNull();
   });
 
-  test("touchWorkspace persists serviceMode when supplied so cross-route returns restore the user's last mode", async () => {
+  test("touchWorkspace persists mode when supplied so cross-route returns restore the user's last mode", async () => {
     // End-to-end contract for the "Archive → back to chat" round-trip:
     // visiting `/w/:wid/discuss/:tid` records "discuss" on the workspace,
     // and the next workspace-landing redirect can read that back instead
@@ -244,13 +244,13 @@ describe("userPreferences", () => {
     expect(afterLab[0].lastMode).toBe("lab");
   });
 
-  test("touchWorkspace without serviceMode preserves the existing lastMode", async () => {
+  test("touchWorkspace without mode preserves the existing lastMode", async () => {
     // Workspace-switch callsites (URL → state sync, fallback effect) must
     // not clobber the destination workspace's recorded mode with `undefined`
     // — that would erase the very preference the redirect needs to read on
-    // the next visit. The serviceMode-less call path is for "the user moved
+    // the next visit. The mode-less call path is for "the user moved
     // workspaces, we don't have a mode opinion to record".
-    const ownerTokenIdentifier = "user|prefs-service-mode-preserve";
+    const ownerTokenIdentifier = "user|prefs-mode-preserve";
     const t = convexTest(schema, modules);
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
 

@@ -305,9 +305,19 @@ export const getReplyContext = internalQuery({
     // Design context for Lab is acquired on demand through tool reads of
     // the System Design artifacts.
     //
-    // `library` mode keeps artifact-only retrieval. Every code path is an
-    // explicit per-mode contract — no implicit fallback.
-    const artifacts = effectiveMode === "library" ? await loadLatestDocsArtifacts(ctx, repository._id) : [];
+    // `library` mode keeps artifact-only retrieval. When the thread carries
+    // an Ask scope filter (`thread.artifactContext`), load only those
+    // artifacts so the answer stays bounded to the user's chosen scope.
+    // Otherwise fall back to the most recent docs artifacts repo-wide.
+    let artifacts: Array<Doc<"artifacts">> = [];
+    if (effectiveMode === "library") {
+      if (thread.artifactContext && thread.artifactContext.length > 0) {
+        const scoped = await Promise.all(thread.artifactContext.map((artifactId) => ctx.db.get(artifactId)));
+        artifacts = scoped.filter((artifact): artifact is Doc<"artifacts"> => artifact !== null);
+      } else {
+        artifacts = await loadLatestDocsArtifacts(ctx, repository._id);
+      }
+    }
 
     // `library` mode is artifact-only retrieval and `lab` mode is
     // tool-driven retrieval. Both intentionally skip pre-loaded code

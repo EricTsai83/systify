@@ -1611,7 +1611,7 @@ describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
     );
 
     expect(
-      screen.getByText("This question references a specific file. Sandbox mode would give a more accurate answer."),
+      screen.getByText("This question references a specific file. Lab mode would give a more accurate answer."),
     ).toBeInTheDocument();
     // The CTA names the destination explicitly so the user knows what
     // the click will change before they click.
@@ -1671,7 +1671,7 @@ describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
   });
 
   test("dismiss button hides the hint and keeps it hidden for the same heuristic key", () => {
-    // The dismiss memory is keyed on the *heuristic* ("specific-file:sandbox"),
+    // The dismiss memory is keyed on the *heuristic* ("specific-file:lab"),
     // not the literal input. So dismissing once for `convex/chat/send.ts`
     // must also silence a later message about `convex/chat/context.ts` that
     // would otherwise re-fire the same rule. This is the "session-local
@@ -1706,22 +1706,22 @@ describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
     render(<Harness />);
 
     // Hint visible for the first file-path mention.
-    expect(screen.getByText(/Sandbox mode would give a more accurate answer\./)).toBeInTheDocument();
+    expect(screen.getByText(/Lab mode would give a more accurate answer\./)).toBeInTheDocument();
 
     fireEvent.click(screen.getByLabelText("Dismiss suggestion"));
 
     // Hint disappears immediately on dismiss.
-    expect(screen.queryByText(/Sandbox mode would give a more accurate answer\./)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Lab mode would give a more accurate answer\./)).not.toBeInTheDocument();
 
     // Drive the same panel mount to a *different* file-path input. The
     // heuristic would otherwise re-fire because `convex/chat/context.ts`
     // matches the same regex; the dismiss is keyed on the heuristic
-    // ("specific-file:sandbox") rather than the literal input, so the
+    // ("specific-file:lab") rather than the literal input, so the
     // hint must stay hidden.
     fireEvent.change(screen.getByPlaceholderText(/Ask about architecture/i), {
       target: { value: "Now check convex/chat/context.ts instead" },
     });
-    expect(screen.queryByText(/Sandbox mode would give a more accurate answer\./)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Lab mode would give a more accurate answer\./)).not.toBeInTheDocument();
   });
 
   test("does not render a hint when the suggested mode is not in availableModes", () => {
@@ -1749,7 +1749,7 @@ describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
     );
 
     expect(
-      screen.queryByText("This question references a specific file. Sandbox mode would give a more accurate answer."),
+      screen.queryByText("This question references a specific file. Lab mode would give a more accurate answer."),
     ).not.toBeInTheDocument();
   });
 });
