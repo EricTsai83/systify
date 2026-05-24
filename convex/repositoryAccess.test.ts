@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest";
 import { register as registerRateLimiter } from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
 import { api } from "./_generated/api";
+import { hasRemoteUpdates } from "./lib/repositoryAccess";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -163,5 +164,32 @@ describe("repository access helpers", () => {
     ).rejects.toThrow("Repository not found.");
 
     await expect(viewer.mutation(api.designArtifacts.captureAdr, { threadId })).rejects.toThrow("Thread not found.");
+  });
+});
+
+describe("hasRemoteUpdates", () => {
+  test("returns false when both SHAs are unset", () => {
+    expect(hasRemoteUpdates({})).toBe(false);
+  });
+
+  test("returns false when only latestRemoteSha is set", () => {
+    expect(hasRemoteUpdates({ latestRemoteSha: "abc" })).toBe(false);
+  });
+
+  test("returns false when only lastSyncedCommitSha is set", () => {
+    expect(hasRemoteUpdates({ lastSyncedCommitSha: "abc" })).toBe(false);
+  });
+
+  test("returns false when SHAs are equal", () => {
+    expect(hasRemoteUpdates({ latestRemoteSha: "abc", lastSyncedCommitSha: "abc" })).toBe(false);
+  });
+
+  test("returns true when SHAs are both set and differ", () => {
+    expect(hasRemoteUpdates({ latestRemoteSha: "abc", lastSyncedCommitSha: "def" })).toBe(true);
+  });
+
+  test("returns false for null/undefined repositories", () => {
+    expect(hasRemoteUpdates(null)).toBe(false);
+    expect(hasRemoteUpdates(undefined)).toBe(false);
   });
 });

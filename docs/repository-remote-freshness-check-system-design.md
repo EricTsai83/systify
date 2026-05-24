@@ -58,13 +58,16 @@ Every other piece of state in the freshness flow is derived from these three.
 
 ### Comparison is computed at read time
 
-`hasRemoteUpdates` is not stored on the repository. `getRepositoryDetail` computes it on each read:
+`hasRemoteUpdates` is not stored on the repository. The pure predicate lives in `convex/lib/repositoryAccess.ts` and is called from every read site (`getRepositoryDetail`, the inventory query, and `getImportedRepoSummaries`) so they cannot drift:
 
 ```ts
-const hasRemoteUpdates =
-  !!repository.latestRemoteSha &&
-  !!repository.lastSyncedCommitSha &&
-  repository.latestRemoteSha !== repository.lastSyncedCommitSha;
+export function hasRemoteUpdates(repository: RepositoryFreshnessFields | null | undefined): boolean {
+  return (
+    !!repository?.latestRemoteSha &&
+    !!repository.lastSyncedCommitSha &&
+    repository.latestRemoteSha !== repository.lastSyncedCommitSha
+  );
+}
 ```
 
 The flag is only true when both SHAs are known and they differ. Until at least one remote check has succeeded, the field stays false.

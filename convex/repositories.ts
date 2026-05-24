@@ -12,6 +12,7 @@ import { CASCADE_BATCH_SIZE } from "./lib/constants";
 import { ensureRepositoryWorkspace } from "./lib/workspaces";
 import { clearLastActiveWorkspaceIfMatches } from "./lib/userPreferences";
 import {
+  hasRemoteUpdates,
   isRepositoryArchived,
   isRepositoryDeleting,
   loadAccessibleRepositoryForViewer,
@@ -139,15 +140,13 @@ export const listResourceInventory = query({
             .unique(),
         ]);
         const { sandboxModeStatus, sandbox } = sandboxStatus;
-        const hasRemoteUpdates =
-          !!repo.latestRemoteSha && !!repo.lastSyncedCommitSha && repo.latestRemoteSha !== repo.lastSyncedCommitSha;
         return {
           repositoryId: repo._id,
           workspaceId: workspace?._id ?? null,
           fullName: repo.sourceRepoFullName,
           importStatus: repo.importStatus,
           lastImportedAt: repo.lastImportedAt,
-          hasRemoteUpdates,
+          hasRemoteUpdates: hasRemoteUpdates(repo),
           sandboxModeStatus,
           sandbox: sandbox ? { status: sandbox.status, ttlExpiresAt: sandbox.ttlExpiresAt } : null,
         };
@@ -249,8 +248,7 @@ export const getImportedRepoSummaries = query({
       summaries[repo.sourceRepoFullName] = {
         importStatus: repo.importStatus,
         lastImportedAt: repo.lastImportedAt,
-        hasRemoteUpdates:
-          !!repo.latestRemoteSha && !!repo.lastSyncedCommitSha && repo.latestRemoteSha !== repo.lastSyncedCommitSha,
+        hasRemoteUpdates: hasRemoteUpdates(repo),
       };
     }
 
@@ -305,12 +303,6 @@ export const getRepositoryDetail = query({
 
     const { sandboxModeStatus, sandbox } = await getRepositorySandboxStatus(ctx, repository);
 
-    // Determine whether the remote has commits we haven't synced yet
-    const hasRemoteUpdates =
-      !!repository.latestRemoteSha &&
-      !!repository.lastSyncedCommitSha &&
-      repository.latestRemoteSha !== repository.lastSyncedCommitSha;
-
     return {
       repository,
       isArchived,
@@ -321,7 +313,7 @@ export const getRepositoryDetail = query({
       fileCount,
       fileCountLabel,
       sandboxModeStatus,
-      hasRemoteUpdates,
+      hasRemoteUpdates: hasRemoteUpdates(repository),
       latestFailedImportError,
       sandbox: sandbox
         ? {

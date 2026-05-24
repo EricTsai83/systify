@@ -9,6 +9,11 @@ type RepositoryStateFields = {
   archivedAt?: number;
 };
 
+type RepositoryFreshnessFields = {
+  latestRemoteSha?: string;
+  lastSyncedCommitSha?: string;
+};
+
 const DEFAULT_REPOSITORY_NOT_FOUND_MESSAGE = "Repository not found.";
 const DEFAULT_REPOSITORY_ARCHIVED_MESSAGE = "Repository is archived. Restore it to continue.";
 
@@ -22,6 +27,14 @@ export function isRepositoryArchived(repository: RepositoryStateFields | null | 
 
 export function isActiveRepository(repository: RepositoryStateFields | null | undefined) {
   return !!repository && !isRepositoryDeleting(repository) && !isRepositoryArchived(repository);
+}
+
+export function hasRemoteUpdates(repository: RepositoryFreshnessFields | null | undefined): boolean {
+  return (
+    !!repository?.latestRemoteSha &&
+    !!repository.lastSyncedCommitSha &&
+    repository.latestRemoteSha !== repository.lastSyncedCommitSha
+  );
 }
 
 export async function requireActiveRepository(

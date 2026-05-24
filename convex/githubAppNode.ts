@@ -199,6 +199,64 @@ export const initiateGitHubInstall = action({
  * when access is denied so the UI can show the error *before* any import
  * records or sandbox resources are created.
  */
+/**
+ * Single GitHub-side probe for "can the installation read this repository?"
+ *
+ * Plain async function (not a Convex action) so both the user-facing
+ * `verifyRepoAccess` and the internal `checkRepoAccess` can call it without
+ * paying an extra `ctx.runAction` round-trip. Pure return shape — no throws —
+ * so the user-facing wrapper can map it onto its throw contract while internal
+ * callers consume the discriminated union directly.
+ */
+async function fetchRepoAccessFromGitHub(args: {
+  installationId: number;
+  owner: string;
+  repo: string;
+}): Promise<
+  | { accessible: true; isPrivate: boolean; fullName: string; defaultBranch: string }
+  | { accessible: false; message: string }
+> {
+  const token = await getInstallationAccessToken(args.installationId);
+
+  const response = await fetch(`https://api.github.com/repos/${args.owner}/${args.repo}`, {
+    headers: {
+      "Accept": "application/vnd.github.v3+json",
+      "Authorization": `token ${token}`,
+      "User-Agent": "systify",
+    },
+  });
+
+  if (response.ok) {
+    const data = (await response.json()) as {
+      private: boolean;
+      full_name: string;
+      default_branch: string;
+    };
+    return {
+      accessible: true,
+      isPrivate: data.private,
+      fullName: data.full_name,
+      defaultBranch: data.default_branch,
+    };
+  }
+
+  if (response.status === 404 || response.status === 403) {
+    return {
+      accessible: false,
+      message:
+        `Repository "${args.owner}/${args.repo}" is not accessible. ` +
+        `Make sure it is included in your GitHub App installation. ` +
+        `Go to GitHub Settings → Applications → Configure to update your repository selection.`,
+    };
+  }
+
+  const body = await response.text();
+  return {
+    accessible: false,
+    message: `GitHub API error (${response.status}): ${body}`,
+  };
+}
+
 export const verifyRepoAccess = action({
   args: {
     url: v.string(),
@@ -215,30 +273,11 @@ export const verifyRepoAccess = action({
       throw new Error("No active GitHub App installation found. Please connect your GitHub account first.");
     }
 
-    const token = await getInstallationAccessToken(installationId);
-
-    const response = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`, {
-      headers: {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": `token ${token}`,
-        "User-Agent": "systify",
-      },
-    });
-
-    if (response.ok) {
-      return { accessible: true as const };
+    const result = await fetchRepoAccessFromGitHub({ installationId, owner: parsed.owner, repo: parsed.repo });
+    if (!result.accessible) {
+      throw new Error(result.message);
     }
-
-    if (response.status === 404 || response.status === 403) {
-      throw new Error(
-        `Repository "${parsed.fullName}" is not accessible. ` +
-          `Make sure it is included in your GitHub App installation. ` +
-          `Go to GitHub Settings → Applications → Configure to update your repository selection.`,
-      );
-    }
-
-    const body = await response.text();
-    throw new Error(`GitHub API error (${response.status}): ${body}`);
+    return { accessible: true as const };
   },
 });
 
@@ -249,7 +288,6 @@ export const verifyRepoAccess = action({
 /**
  * Verifies that the GitHub App installation has access to a specific repository.
  *
- * Uses `GET /repos/{owner}/{repo}` with an installation access token.
  * Returns { accessible: true, ... } or { accessible: false, message: "..." }.
  *
  * Used as the early-exit access probe by the import pipeline (before the
@@ -262,47 +300,7 @@ export const checkRepoAccess = internalAction({
     owner: v.string(),
     repo: v.string(),
   },
-  handler: async (_ctx, args) => {
-    const token = await getInstallationAccessToken(args.installationId);
-
-    const response = await fetch(`https://api.github.com/repos/${args.owner}/${args.repo}`, {
-      headers: {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": `token ${token}`,
-        "User-Agent": "systify",
-      },
-    });
-
-    if (response.ok) {
-      const data = (await response.json()) as {
-        private: boolean;
-        full_name: string;
-        default_branch: string;
-      };
-      return {
-        accessible: true as const,
-        isPrivate: data.private,
-        fullName: data.full_name,
-        defaultBranch: data.default_branch,
-      };
-    }
-
-    if (response.status === 404 || response.status === 403) {
-      return {
-        accessible: false as const,
-        message:
-          `Repository "${args.owner}/${args.repo}" is not accessible. ` +
-          `Make sure it is included in your GitHub App installation. ` +
-          `Go to GitHub Settings → Applications → Configure to update your repository selection.`,
-      };
-    }
-
-    const body = await response.text();
-    return {
-      accessible: false as const,
-      message: `GitHub API error (${response.status}): ${body}`,
-    };
-  },
+  handler: async (_ctx, args) => fetchRepoAccessFromGitHub(args),
 });
 
 // ---------------------------------------------------------------------------
