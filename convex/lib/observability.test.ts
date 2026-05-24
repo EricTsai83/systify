@@ -29,7 +29,7 @@ describe("emitMetric", () => {
     // The prefix is the cheap grep target the runbook leans on. If
     // the scope drifts ("[metric]", "[telemetry]"), every recipe
     // breaks — pin it.
-    emitMetric("sandbox_session_finished", { value: 1234, tags: { mode: "sandbox" } });
+    emitMetric("sandbox_session_finished", { value: 1234, tags: { mode: "lab" } });
     expect(logSpy).toHaveBeenCalledTimes(1);
     const [prefix] = logSpy.mock.calls[0];
     expect(prefix).toBe(`[${METRIC_SCOPE}] sandbox_session_finished`);
@@ -86,13 +86,13 @@ describe("emitMetric", () => {
     // envelope keys (`metric`, `value`, `tags`) — a caller-supplied
     // `details.metric` can never overwrite the envelope's metric name.
     emitMetric("sandbox_session_finished", {
-      tags: { mode: "sandbox" },
+      tags: { mode: "lab" },
       details: { jobId: "j_xyz", model: "gpt-5" },
     });
     const [, payload] = logSpy.mock.calls[0];
     expect(payload).toMatchObject({
       metric: "sandbox_session_finished",
-      tags: { mode: "sandbox" },
+      tags: { mode: "lab" },
       details: { jobId: "j_xyz", model: "gpt-5" },
     });
   });
@@ -102,7 +102,7 @@ describe("emitMetric", () => {
     // payload should not surface a stale `details: {}` in the body,
     // so JSON pipelines that test on `details` presence stay
     // deterministic.
-    emitMetric("sandbox_session_finished", { tags: { mode: "sandbox" } });
+    emitMetric("sandbox_session_finished", { tags: { mode: "lab" } });
     const [, payload] = logSpy.mock.calls[0];
     expect(payload).not.toHaveProperty("details");
   });
@@ -119,7 +119,7 @@ describe("emitMetric", () => {
     };
     expect(() => {
       emitMetric("sandbox_session_finished", {
-        tags: { mode: "sandbox" },
+        tags: { mode: "lab" },
         details: { exploding } as never,
       });
     }).not.toThrow();

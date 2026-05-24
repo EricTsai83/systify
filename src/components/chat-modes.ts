@@ -3,30 +3,24 @@ import type { ModeInfoEntry } from "@/components/mode-info-popover";
 import type { ChatMode } from "@/lib/types";
 
 /**
- * Static catalogue of every mode the selector can render. Order is stable and
- * doubles as the visual order of the pill bar so the user's eye learns the
- * capability ladder left-to-right: discuss → docs → sandbox, lowest-context
- * to highest-context (and lowest-cost to highest-cost).
+ * Static catalogue of every mode the selector can render. Order is stable
+ * and doubles as the visual order of the pill bar so the user's eye learns
+ * the capability ladder left-to-right: discuss → library → lab,
+ * lowest-context to highest-context (and lowest-cost to highest-cost).
  *
- * `value` is the persisted DB literal (`messages.mode` / `threads.mode`) and
- * never changes — only the user-facing `label` / `caption` evolve. The new
- * labels ("General Chat" / "Design Docs" / "Sandbox") are aimed at making the
- * differences obvious to engineering users without requiring the onboarding
- * popover (Plan 14): "Discuss" by itself didn't tell anyone the mode is
- * *training-only*, and "Docs" was ambiguous (README? design artifacts?). The
- * "Sandbox" label is intentionally kept unchanged — it is already the shared
- * vocabulary on the engineering side (Daytona sandbox, sandbox lifecycle,
- * sandbox.process.executeCommand) so renaming it would create a needless
- * translation layer between UI copy and code.
+ * `value` is the persisted DB literal (`messages.mode` / `threads.mode`)
+ * AND the URL segment AND the user-facing label — one vocabulary across
+ * the whole stack, by design. Adding a new mode means a single edit to
+ * `chatModeValidator`; this catalogue is the UI side of the same coin.
  *
- * Each caption is the short user-facing answer to "what does this mode read
- * from?". The disabled-mode tooltip (rendered by the resolver via
+ * Each caption is the short user-facing answer to "what does this mode
+ * read from?". The disabled-mode tooltip (rendered by the resolver via
  * `disabledModeReasons`) takes over when the option isn't usable.
  *
  * Lives in its own module so every consumer (mode selector, per-message
- * badge, info popover, empty-state examples, suggestion display) can import
- * the catalog directly without forming sibling-import edges through
- * `chat-panel.tsx`.
+ * badge, info popover, empty-state examples, suggestion display) can
+ * import the catalog directly without forming sibling-import edges
+ * through `chat-panel.tsx`.
  */
 export const MODE_CATALOG: ReadonlyArray<{
   value: ChatMode;
@@ -34,26 +28,23 @@ export const MODE_CATALOG: ReadonlyArray<{
   caption: string;
   icon: typeof ChatCircleIcon;
   /**
-   * Plan 14 — example prompts shown in `<ModeExamples>` above the
-   * composer when the thread is empty, and re-used (first entry only)
-   * by `<ModeInfoPopover>` so the popover doubles as a quick "what
-   * should I ask in this mode?" reference. Two-to-three entries per
-   * mode keeps the empty-state grid balanced (two columns on tablet,
-   * three on desktop) and avoids overwhelming a fresh user.
+   * Example prompts shown in `<ModeExamples>` above the composer when
+   * the thread is empty, and re-used (first entry only) by
+   * `<ModeInfoPopover>` so the popover doubles as a quick "what should
+   * I ask in this mode?" reference. Two-to-three entries per mode keeps
+   * the empty-state grid balanced (two columns on tablet, three on
+   * desktop) and avoids overwhelming a fresh user.
    *
-   * Wording targets engineering users who already know what each
-   * mode does (the badge and caption tell them); the prompts are
-   * meant to be *good* questions in that mode, not introductions to
-   * the modes themselves. They are also intentionally answerable —
-   * dropping the user into a question whose answer requires another
-   * three turns to disambiguate would be a worse first impression
-   * than no examples at all.
+   * Wording targets engineering users who already know what each mode
+   * does (the badge and caption tell them); the prompts are meant to be
+   * *good* questions in that mode, not introductions to the modes
+   * themselves.
    */
   examplePrompts: ReadonlyArray<string>;
 }> = [
   {
     value: "discuss",
-    label: "General Chat",
+    label: "Discuss",
     caption: "training-only · no repo context",
     icon: ChatCircleIcon,
     examplePrompts: [
@@ -63,8 +54,8 @@ export const MODE_CATALOG: ReadonlyArray<{
     ],
   },
   {
-    value: "docs",
-    label: "Design Docs",
+    value: "library",
+    label: "Library",
     caption: "grounded in your design artifacts",
     icon: FileTextIcon,
     examplePrompts: [
@@ -74,8 +65,8 @@ export const MODE_CATALOG: ReadonlyArray<{
     ],
   },
   {
-    value: "sandbox",
-    label: "Sandbox",
+    value: "lab",
+    label: "Lab",
     caption: "grounded in the live sandbox source tree",
     icon: CubeIcon,
     examplePrompts: [
@@ -116,28 +107,20 @@ export const MODE_EXAMPLES: Record<ChatMode, ReadonlyArray<string>> = MODE_CATAL
 );
 
 /**
- * Three-mode restructure — message-mode literals that may appear on
- * persisted messages, including the new `ask` / `lab` modes from the
- * three-mode restructure. Distinct from `ChatMode` (which is the
- * legacy dropdown vocabulary) so adding new persisted modes doesn't
- * smear them into the dropdown.
+ * Message-mode literals that may appear on persisted messages. Identical to
+ * {@link ChatMode}; retained as a separate name so future broader message-only
+ * modes can extend it without touching the dropdown vocabulary.
  */
-export type MessageBadgeMode = ChatMode | "ask" | "lab";
+export type MessageBadgeMode = ChatMode;
 
 /**
- * Lookup keyed by every persisted message mode so the per-message
- * badge (Plan 02) renders a label even for the new `ask` / `lab`
- * literals. The legacy entries come from `MODE_CATALOG`; the new
- * entries get hand-written labels matching the service-mode switcher.
+ * Lookup keyed by every persisted message mode so the per-message badge
+ * (Plan 02) renders a label for any mode the schema permits.
  */
-export const MODE_LABELS: Record<MessageBadgeMode, string> = {
-  ...MODE_CATALOG.reduce(
-    (acc, entry) => {
-      acc[entry.value] = entry.label;
-      return acc;
-    },
-    {} as Record<ChatMode, string>,
-  ),
-  ask: "Library Ask",
-  lab: "Lab",
-};
+export const MODE_LABELS: Record<MessageBadgeMode, string> = MODE_CATALOG.reduce(
+  (acc, entry) => {
+    acc[entry.value] = entry.label;
+    return acc;
+  },
+  {} as Record<ChatMode, string>,
+);

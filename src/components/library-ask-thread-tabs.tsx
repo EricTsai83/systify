@@ -10,7 +10,7 @@ import type { ThreadId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
- * Three-mode restructure — Library Ask thread tab strip.
+ * Library Ask thread tab strip.
  *
  * An IDE-style *open set*: one tab per thread the user has opened, mirroring
  * the artifact tab strip's chrome (`LibraryTabs`) — horizontal scroll with a

@@ -29,7 +29,7 @@ import type { ChatMode } from "./types";
  *
  *   4. **Stable `key` per heuristic.** The chat panel keeps a session
  *      `Set<string>` of dismissed keys; matching keys must collapse so
- *      dismissing "specific-file:sandbox" once silences every future
+ *      dismissing "specific-file:lab" once silences every future
  *      file-path suggestion this session.
  *
  * The two heuristics intentionally cover only the highest-precision
@@ -118,19 +118,19 @@ export function suggestMode(
     return null;
   }
 
-  // Rule 1 — file path mention: nudge from discuss/docs to sandbox.
-  // Sandbox is the only mode that can resolve `convex/chat/send.ts`
-  // to actual content; docs answers from a synthesized artifact would
+  // Rule 1 — file path mention: nudge from discuss/library to lab.
+  // Lab is the only mode that can resolve `convex/chat/send.ts`
+  // to actual content; library answers from a synthesized artifact would
   // hallucinate line numbers.
   if (
-    (currentMode === "discuss" || currentMode === "docs") &&
-    availableModes.includes("sandbox") &&
+    (currentMode === "discuss" || currentMode === "library") &&
+    availableModes.includes("lab") &&
     SOURCE_PATH_REGEX.test(input)
   ) {
     return {
-      suggested: "sandbox",
-      key: "specific-file:sandbox",
-      reason: "This question references a specific file. Sandbox mode would give a more accurate answer.",
+      suggested: "lab",
+      key: "specific-file:lab",
+      reason: "This question references a specific file. Lab mode would give a more accurate answer.",
     };
   }
 
@@ -142,7 +142,7 @@ export function suggestMode(
     return {
       suggested: "discuss",
       key: "open-ended:discuss",
-      reason: "This sounds open-ended; General Chat might be better.",
+      reason: "This sounds open-ended; Discuss might be better.",
     };
   }
 

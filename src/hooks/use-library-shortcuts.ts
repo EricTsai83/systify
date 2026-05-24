@@ -16,8 +16,7 @@ interface LibraryShortcuts {
 }
 
 /**
- * Three-mode restructure — IDE-style keyboard shortcuts for the Library
- * shell.
+ * IDE-style keyboard shortcuts for the Library shell.
  *
  * Mirrors the editor key bindings the user already knows from VS Code
  * et al. so navigating the library doesn't require re-learning the

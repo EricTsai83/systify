@@ -21,12 +21,8 @@ function readPositiveNumberEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function computeFreshness(args: {
-  producedIn?: "discuss" | "lab" | "legacy";
-  lastVerifiedAt?: number;
-  now: number;
-}): Freshness {
-  if (args.producedIn !== "lab" || args.lastVerifiedAt === undefined) {
+function computeFreshness(args: { lastVerifiedAt?: number; now: number }): Freshness {
+  if (args.lastVerifiedAt === undefined) {
     return "unverified";
   }
 
@@ -91,7 +87,6 @@ function toArtifactMetadata(
     source: artifact.source,
     version: artifact.version,
     folderId: artifact.folderId,
-    producedIn: artifact.producedIn,
     lastVerifiedAt: artifact.lastVerifiedAt,
     chunkingStatus: artifact.chunkingStatus,
     lastChunkedAt: artifact.lastChunkedAt,
@@ -105,8 +100,7 @@ function toArtifactMetadata(
 /**
  * Public, owner-scoped list of artifacts attached to a thread.
  *
- * Drives the right-rail ArtifactPanel (PRD #19, US 23 — "all artifacts
- * associated with a thread visible in a side panel"). The internal
+ * Drives the right-rail ArtifactPanel. The internal
  * `artifactStore.listByThread` is kept private because it skips ownership
  * checks; this query is the public-facing entry point.
  *
@@ -158,7 +152,6 @@ export const getById = query({
     return {
       ...artifact,
       freshness: computeFreshness({
-        producedIn: artifact.producedIn,
         lastVerifiedAt: artifact.lastVerifiedAt,
         now: Date.now(),
       }),
@@ -191,11 +184,12 @@ export const listByRepository = query({
 });
 
 /**
- * Repository artifact listing with Phase 3 freshness metadata.
+ * Repository artifact listing with freshness metadata.
  *
- * Freshness is derived from Lab verification only: legacy and discussion
- * artifacts are deliberately `unverified` even when they were recently
- * created, because Library must not imply that snapshots match live code.
+ * Freshness is derived from Lab verification only: artifacts produced
+ * outside a Lab session are deliberately `unverified` even when they were
+ * recently created, because Library must not imply that snapshots match
+ * live code.
  */
 export const listByRepositoryWithFreshness = query({
   args: { repositoryId: v.id("repositories") },
@@ -217,7 +211,6 @@ export const listByRepositoryWithFreshness = query({
     return artifacts.map((artifact) => ({
       ...artifact,
       freshness: computeFreshness({
-        producedIn: artifact.producedIn,
         lastVerifiedAt: artifact.lastVerifiedAt,
         now,
       }),
@@ -251,7 +244,6 @@ export const listMetadataByRepositoryWithFreshness = query({
     return artifacts.map((artifact) =>
       toArtifactMetadata(artifact, {
         freshness: computeFreshness({
-          producedIn: artifact.producedIn,
           lastVerifiedAt: artifact.lastVerifiedAt,
           now,
         }),

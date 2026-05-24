@@ -24,24 +24,24 @@ function getUILanguage(_context: ReplyContext): UILanguage {
  *     conversation has nothing attached. The language pivots on "general
  *     architecture knowledge" and explicitly bans pretending to have access
  *     to source code.
- *   - `docs` (DB literal): artifact-grounded. The supplied artifacts (ADRs,
+ *   - `library` (DB literal): artifact-grounded. The supplied artifacts (ADRs,
  *     diagrams, deep analyses, …) are the *only* source of truth; the model
  *     must say "the artifacts are silent on that" rather than guess.
- *   - `sandbox` (DB literal, Plan 04): live-source-grounded. The model is
- *     given two read-only file-system tools (`read_file` / `list_dir`) that
- *     return the actual contents of the attached sandbox. The prompt
- *     instructs the model to *use the tools* before claiming anything about
- *     specific files / line ranges, and to be honest when a tool call
- *     returns an error envelope (`{ ok: false, errorCode, message }`) — that
- *     is signal, not failure.
+ *   - `lab` (DB literal): live-source-grounded. The model is given two
+ *     read-only file-system tools (`read_file` / `list_dir`) that return
+ *     the actual contents of the attached sandbox. The prompt instructs
+ *     the model to *use the tools* before claiming anything about specific
+ *     files / line ranges, and to be honest when a tool call returns an
+ *     error envelope (`{ ok: false, errorCode, message }`) — that is
+ *     signal, not failure.
  *
  * Two style invariants worth preserving across all three prompts (and tested
  * in `chat-prompting.test.ts`):
  *
- *   1. **No UI display labels.** Prompts refer to other modes by their
- *      *capability* ("an artifact-grounded mode", "a live-sandbox mode"),
- *      never by the UI display label from `MODE_CATALOG` ("General Chat",
- *      "Design Docs"). UI copy can then be renamed without silently changing
+ *   1. **Refer to modes by capability, not DB literal.** Prompts refer to
+ *      other modes by their *capability* ("an artifact-grounded mode",
+ *      "a live-sandbox mode"), never by the DB literal or UI label
+ *      directly. UI copy can then be renamed without silently changing
  *      what the LLM tells the user.
  *   2. **No product roadmap.** Prompts describe the *current* capability gap
  *      rather than promising future tools. Specific upcoming tool names live
@@ -62,7 +62,7 @@ const SYSTEM_PROMPT_DISCUSS = [
   "Be concrete, mention likely trade-offs, and state uncertainty when reasoning is speculative.",
 ].join(" ");
 
-const SYSTEM_PROMPT_DOCS = [
+const SYSTEM_PROMPT_LIBRARY = [
   "You are an open source architecture analyst answering questions about the attached project.",
   "Your sole source of truth is the design artifacts (ADRs, diagrams, deep analyses, design reviews, etc.) supplied in the user prompt.",
   "Each artifact in the prompt is numbered as `[A1]`, `[A2]`, …; cite every factual claim by appending the matching `[A#]` token immediately after the claim, so the user can trace each statement back to a specific artifact.",
@@ -109,7 +109,7 @@ const SYSTEM_PROMPT_DOCS = [
  *     stops the LLM from even attempting `curl example.com`, which would
  *     burn a step on a guaranteed failure.
  */
-const SYSTEM_PROMPT_SANDBOX = [
+const SYSTEM_PROMPT_LAB = [
   "You are a senior architect with read-only access to the attached project's live source tree via three tools: `read_file({ path })`, `list_dir({ path })`, and `run_shell({ command, workdir?, timeout_seconds? })`. Paths and workdirs are always relative to the repository root.",
   "When the user asks about specific files, modules, line ranges, or behavior, USE THE TOOLS to verify rather than guess from the artifact summaries. A short `list_dir` followed by a targeted `read_file` is almost always the right opening move; reach for `run_shell` when you need composition (`grep -rn`, `find -name`, `git log --oneline`, `wc -l`).",
   "Use `run_shell` for read-only inspection commands ONLY: `grep`, `find`, `git log`, `git diff`, `tree`, `wc`, `head`, `tail`, `cat`, `ls`. Do not modify files, install packages, or attempt network egress — the sandbox is read-only by policy and outbound network is unavailable. Destructive commands (`rm -rf /`, fork bombs, `mkfs`, `dd`, `sudo`, `shutdown`, piping `curl`/`wget` into a shell) are blocked at the tool layer and return `errorCode: 'command_blocked'` with a reason; do not retry the same shape, rephrase as a non-destructive read.",
@@ -119,67 +119,22 @@ const SYSTEM_PROMPT_SANDBOX = [
   "Stay within the per-reply tool budget (you have at most 8 tool calls). When the budget is nearly spent, stop drilling and write the best answer you can with what you have.",
 ].join(" ");
 
-/**
- * Three-mode restructure — Library Ask system prompt.
- *
- * Phase 1 ships the constant; Phase 2's `chat/context.ts` Ask branch is
- * what feeds it into the LLM. The contract:
- *
- *   - LLM is told it has NO live source access and NO tools. The
- *     generation action enforces this by passing `tools: undefined` for
- *     `mode === "ask"` (assertion in `generation.ts`).
- *   - Each retrieved chunk arrives as `[A1#section]`, `[A2#section]`,
- *     etc. The LLM cites every factual claim with the matching token, and
- *     the frontend turns the token into a deep-link to the artifact +
- *     heading.
- *   - When the user's question genuinely needs live source, the LLM emits
- *     a single-line structured handoff (`{"type":"lab_handoff_offer",
- *     ...}`) and stops. Phase 2's `chat/parsing.ts` parses that line and
- *     the frontend renders two buttons (Best-effort / Open in Lab). This
- *     keeps the cost-transparency invariant intact: Library Ask never
- *     silently spins up a sandbox.
- */
-const SYSTEM_PROMPT_ASK = [
-  "You answer questions about the design artifacts retrieved for this conversation.",
-  "The user's question is augmented with the most relevant chunks from the workspace's artifact corpus, shown as `[A1#section]`, `[A2#section]`, … . Your sole source of truth is those retrieved chunks.",
-  "You do NOT have access to live source code, the file system, or any tools. Cite every factual claim with the matching `[A#]` token. If a chunk does not contain enough information to answer, say so explicitly — do not extrapolate.",
-  'If the user\'s question requires reading the live tree (specific file contents, line numbers, current code state, or verifying that an artifact still matches reality), STOP and respond with this exact structured JSON object on its own line, followed by a brief explanation:\n\n```{"type":"lab_handoff_offer","reason":"<one sentence>","suggestedLabPrompt":"<draft prompt>"}```\n\nThen wait for the user\'s choice. NEVER fabricate file paths, line numbers, or function signatures.',
-].join(" ");
+export type ExtendedChatMode = ChatMode;
 
 /**
- * Three-mode restructure — superset of `ChatMode` covering the new
- * persisted thread modes (`ask`, `lab`). The legacy `ChatMode` stays
- * narrow so the existing 3-arg resolver tests and the per-thread mode
- * selector keep their exhaustiveness; this superset is what the prompt
- * builder and the generation action read so they can serve every
- * thread-mode literal that may live in the database during the
- * transition.
- */
-export type ExtendedChatMode = ChatMode | "ask" | "lab";
-
-/**
- * Lookup keyed by `ExtendedChatMode` so adding a new mode literal forces
+ * Lookup keyed by `ChatMode` so adding a new mode literal forces
  * a compile error here (TypeScript exhaustiveness on `Record<Union, T>`
  * is stricter than on a `switch` statement, which only errors on
  * accidental fall-through if the function signature explicitly returns a
  * non-union type).
- *
- * Rules of the table:
- *   - `ask` returns the new chunk-cited prompt and is enforced tool-free
- *     by `generation.ts`.
- *   - `lab` reuses the existing sandbox prompt verbatim — Phase 1
- *     persists `lab` as a synonym for `sandbox`, and the prompt language
- *     is identical (Phase 3 narrows `sandbox` away).
  */
-const SYSTEM_PROMPTS: Record<ExtendedChatMode, string> = {
+const SYSTEM_PROMPTS: Record<ChatMode, string> = {
   discuss: SYSTEM_PROMPT_DISCUSS,
-  docs: SYSTEM_PROMPT_DOCS,
-  sandbox: SYSTEM_PROMPT_SANDBOX,
-  ask: SYSTEM_PROMPT_ASK,
-  lab: SYSTEM_PROMPT_SANDBOX,
+  library: SYSTEM_PROMPT_LIBRARY,
+  lab: SYSTEM_PROMPT_LAB,
 };
 
-export function buildSystemPrompt(mode: ExtendedChatMode): string {
+export function buildSystemPrompt(mode: ChatMode): string {
   return SYSTEM_PROMPTS[mode];
 }
 
@@ -204,14 +159,6 @@ export type CitationMapEntry = {
  * resolve to a citation client-side either.
  */
 export function buildCitationMap(context: ReplyContext): CitationMapEntry[] {
-  if (context.mode === "ask") {
-    return (context.artifactChunks ?? []).map((chunk, index) => ({
-      index: index + 1,
-      artifactId: chunk.artifactId,
-      chunkId: chunk.chunkId,
-      headingPath: chunk.headingPath,
-    }));
-  }
   return context.artifacts
     .slice(0, MAX_CONTEXT_ARTIFACTS)
     .map((artifact, index) => ({ index: index + 1, artifactId: artifact.id }));
@@ -222,30 +169,8 @@ export function buildUserPrompt(
   question: string,
   relevantChunks: Array<{ path: string; summary: string; content: string }>,
 ) {
-  if (context.mode === "ask") {
-    const artifactChunkSection = (context.artifactChunks ?? [])
-      .map((chunk, index) => {
-        const sectionPath = chunk.headingPath.length > 0 ? chunk.headingPath.join(" › ") : "Overview";
-        const citationToken = `[A${index + 1}#${slugSectionPath(chunk.headingPath)}]`;
-        return `## ${citationToken} ${chunk.artifactTitle} › ${sectionPath}\n${chunk.content.slice(0, 1400)}`;
-      })
-      .join("\n\n");
-
-    return [
-      context.sourceRepoFullName ? `Repository: ${context.sourceRepoFullName}` : undefined,
-      "Retrieved artifact chunks:",
-      artifactChunkSection || "No artifact chunks were retrieved for this question.",
-      "",
-      `The user's question:\n${question}`,
-      "",
-      "Cite every factual claim with the matching [A#] token. If chunks are insufficient, say so.",
-    ]
-      .filter((line): line is string => line !== undefined)
-      .join("\n");
-  }
-
   // Each artifact gets a `[A1]`, `[A2]`, … prefix matching the citation
-  // contract in `SYSTEM_PROMPT_DOCS`. Numbering is 1-based and order-stable
+  // contract in `SYSTEM_PROMPT_LIBRARY`. Numbering is 1-based and order-stable
   // with `buildCitationMap` (same slice, same iteration order) so the
   // frontend can resolve each `[A#]` token in the model's reply back to a
   // specific artifact id without re-deriving the mapping.
@@ -286,18 +211,6 @@ export function buildUserPrompt(
   ]
     .filter((line): line is string => line !== undefined)
     .join("\n");
-}
-
-function slugSectionPath(headingPath: string[]): string {
-  if (headingPath.length === 0) {
-    return "overview";
-  }
-  const slug = headingPath
-    .join("-")
-    .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug.length > 0 ? slug : "section";
 }
 
 /**
@@ -404,10 +317,7 @@ export function buildHeuristicAnswer(
 ) {
   const language = getUILanguage(context);
 
-  // Three-mode restructure: `lab` is the new persisted literal that
-  // replaces `sandbox`. The heuristic answer is identical (no API key →
-  // no LLM tools → degrade to "set OPENAI_API_KEY to enable Lab").
-  if (context.mode === "sandbox" || context.mode === "lab") {
+  if (context.mode === "lab") {
     return HEURISTIC_MESSAGES[language].sandbox(question).join("\n");
   }
 

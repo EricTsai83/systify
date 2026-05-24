@@ -15,7 +15,11 @@ vi.mock("@workos-inc/authkit-react", async () => {
   return {
     AuthKitProvider: ({ children }: { children: React.ReactNode }) =>
       React.createElement(React.Fragment, null, children),
-    useAuth: vi.fn(),
+    // Default mock: signed-out viewer. The cleanup hook (`useAuthBoundCleanup`)
+    // calls this when its `AuthBoundEffects` wrapper mounts; without a default
+    // return value vi.fn() would yield `undefined` and the destructure crashes
+    // the whole tree.
+    useAuth: vi.fn(() => ({ user: null, isLoading: false })),
   };
 });
 

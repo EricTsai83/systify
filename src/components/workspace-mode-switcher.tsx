@@ -3,20 +3,20 @@ import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion, type Transition } from "framer-motion";
 import { BookOpenIcon, ChatCircleIcon, FlaskIcon } from "@phosphor-icons/react";
 import { discussPath, labPath, libraryPath } from "@/route-paths";
-import type { ServiceMode, WorkspaceId } from "@/lib/types";
+import type { ChatMode, WorkspaceId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-interface ServiceModeDisabledLike {
+interface ChatModeDisabledLike {
   message: string;
 }
 
-interface ServiceModeAvailability {
-  availableServiceModes: ReadonlyArray<ServiceMode>;
-  disabledReasons: Partial<Record<ServiceMode, ServiceModeDisabledLike>>;
+interface ChatModeAvailability {
+  availableModes: ReadonlyArray<ChatMode>;
+  disabledReasons: Partial<Record<ChatMode, ChatModeDisabledLike>>;
 }
 
-const SERVICE_MODE_ENTRIES: ReadonlyArray<{
-  value: ServiceMode;
+const CHAT_MODE_ENTRIES: ReadonlyArray<{
+  value: ChatMode;
   label: string;
   icon: typeof ChatCircleIcon;
 }> = [
@@ -61,37 +61,37 @@ const INACTIVE_FLEX = {
 // re-creates the component tree). Keyed by workspaceId so a switch in
 // one workspace doesn't trigger a phantom mount transition when the
 // user later opens a different workspace.
-const persistedModeByWorkspace = new Map<WorkspaceId | null, ServiceMode>();
+const persistedModeByWorkspace = new Map<WorkspaceId | null, ChatMode>();
 
-export function ServiceModeSwitcher({
+export function WorkspaceModeSwitcher({
   workspaceId,
-  serviceMode,
+  mode,
   availability,
   className,
 }: {
   workspaceId: WorkspaceId | null;
-  serviceMode: ServiceMode;
-  availability: ServiceModeAvailability | null | undefined;
+  mode: ChatMode;
+  availability: ChatModeAvailability | null | undefined;
   className?: string;
 }) {
   const navigate = useNavigate();
   const shouldReduceMotion = useReducedMotion();
 
-  const [transitionFrom] = useState<ServiceMode | null>(() => {
+  const [transitionFrom] = useState<ChatMode | null>(() => {
     const prev = persistedModeByWorkspace.get(workspaceId);
-    return prev !== undefined && prev !== serviceMode ? prev : null;
+    return prev !== undefined && prev !== mode ? prev : null;
   });
   const [exitPillDone, setExitPillDone] = useState(transitionFrom === null);
 
   useEffect(() => {
-    persistedModeByWorkspace.set(workspaceId, serviceMode);
-  }, [serviceMode, workspaceId]);
+    persistedModeByWorkspace.set(workspaceId, mode);
+  }, [mode, workspaceId]);
 
   const isMountTransition = transitionFrom !== null && !exitPillDone && !shouldReduceMotion;
 
-  const handleSelect = (value: ServiceMode, isAvailable: boolean) => {
+  const handleSelect = (value: ChatMode, isAvailable: boolean) => {
     if (!workspaceId) return;
-    if (value === serviceMode) return;
+    if (value === mode) return;
     if (!isAvailable) return;
     if (value === "discuss") {
       void navigate(discussPath(workspaceId));
@@ -106,12 +106,12 @@ export function ServiceModeSwitcher({
     <div className={cn("border-b border-border px-2 py-2", className)}>
       <div
         role="group"
-        aria-label="Service mode"
+        aria-label="Workspace mode"
         className="flex h-9 gap-1 rounded-md border border-border bg-muted/40 p-1"
       >
-        {SERVICE_MODE_ENTRIES.map((entry) => {
-          const isActive = serviceMode === entry.value;
-          const isAvailable = availability ? availability.availableServiceModes.includes(entry.value) : true;
+        {CHAT_MODE_ENTRIES.map((entry) => {
+          const isActive = mode === entry.value;
+          const isAvailable = availability ? availability.availableModes.includes(entry.value) : true;
           const isFromMode = entry.value === transitionFrom;
           const Icon = entry.icon;
 

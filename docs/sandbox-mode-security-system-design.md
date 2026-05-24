@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document explains the security model for Systify's `sandbox` chat mode, in which an LLM is given shell-like tools (`read_file`, `list_dir`, `run_shell`) over a Daytona-hosted clone of the user's repository.
+This document explains the security model for Systify's `lab` chat mode, in which an LLM is given shell-like tools (`read_file`, `list_dir`, `run_shell`) over a Daytona-hosted clone of the user's repository.
 
 The scope is the boundary between sandbox tool output and persisted message content. Network isolation, sandbox lifecycle, and Daytona's own isolation properties are out of scope here.
 

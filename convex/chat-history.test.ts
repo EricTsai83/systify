@@ -121,7 +121,7 @@ describe("chat history ordering", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "sandbox",
+        mode: "lab",
         content: "sandbox-question",
       });
       vi.advanceTimersByTime(1_000);
@@ -130,7 +130,7 @@ describe("chat history ordering", () => {
         ownerTokenIdentifier,
         role: "assistant",
         status: "completed",
-        mode: "sandbox",
+        mode: "lab",
         content: "sandbox-answer",
       });
 
@@ -145,78 +145,9 @@ describe("chat history ordering", () => {
     expect(messages.map((message) => ({ role: message.role, mode: message.mode, content: message.content }))).toEqual([
       { role: "user", mode: "discuss", content: "discuss-question" },
       { role: "assistant", mode: "discuss", content: "discuss-answer" },
-      { role: "user", mode: "sandbox", content: "sandbox-question" },
-      { role: "assistant", mode: "sandbox", content: "sandbox-answer" },
+      { role: "user", mode: "lab", content: "sandbox-question" },
+      { role: "assistant", mode: "lab", content: "sandbox-answer" },
     ]);
-  });
-
-  test("getReplyContext treats lab and sandbox assistant replies as the same mode", async () => {
-    const ownerTokenIdentifier = "user|chat-history-lab-sandbox";
-    const t = convexTest(schema, modules);
-
-    const { threadId, latestUserMessageId } = await t.run(async (ctx) => {
-      const repositoryId = await ctx.db.insert("repositories", {
-        ownerTokenIdentifier,
-        sourceHost: "github",
-        sourceUrl: "https://github.com/acme/lab-sandbox",
-        sourceRepoFullName: "acme/lab-sandbox",
-        sourceRepoOwner: "acme",
-        sourceRepoName: "lab-sandbox",
-        visibility: "private",
-        accessMode: "private",
-        importStatus: "completed",
-        detectedLanguages: [],
-        packageManagers: [],
-        entrypoints: [],
-        fileCount: 0,
-      });
-      const threadId = await ctx.db.insert("threads", {
-        repositoryId,
-        ownerTokenIdentifier,
-        title: "Lab context thread",
-        mode: "lab",
-        lastMessageAt: Date.now(),
-      });
-
-      await ctx.db.insert("messages", {
-        repositoryId,
-        threadId,
-        ownerTokenIdentifier,
-        role: "assistant",
-        status: "completed",
-        mode: "sandbox",
-        content: "legacy-sandbox-answer",
-      });
-      vi.advanceTimersByTime(1_000);
-      await ctx.db.insert("messages", {
-        repositoryId,
-        threadId,
-        ownerTokenIdentifier,
-        role: "assistant",
-        status: "completed",
-        mode: "docs",
-        content: "docs-answer",
-      });
-      vi.advanceTimersByTime(1_000);
-      const latestUserMessageId = await ctx.db.insert("messages", {
-        repositoryId,
-        threadId,
-        ownerTokenIdentifier,
-        role: "user",
-        status: "completed",
-        mode: "lab",
-        content: "lab-question",
-      });
-
-      return { threadId, latestUserMessageId };
-    });
-
-    const context = await t.query(internal.chat.context.getReplyContext, {
-      threadId,
-      userMessageId: latestUserMessageId,
-    });
-
-    expect(context.messages.map((message) => message.content)).toEqual(["legacy-sandbox-answer", "lab-question"]);
   });
 });
 

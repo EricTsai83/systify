@@ -1,26 +1,26 @@
 /**
- * Service mode eligibility — runtime evaluator for the (Discuss / Library / Lab)
- * service-mode trio.
+ * Workspace mode eligibility — runtime evaluator for the (Discuss / Library /
+ * Lab) mode trio at workspace scope.
  *
  * Owns the runtime composition for "can this viewer use mode X for this
  * workspace right now?" — load workspace + repository + sandbox doc + artifact
  * existence + sandbox cost cap (rate-limit peek), then run them through the
- * pure {@link resolveServiceModes} resolver and augment the resolver's string
+ * pure {@link resolveWorkspaceModes} resolver and augment the resolver's string
  * `disabledReasons` with structured `{ code, message, retryAfterMs? }` objects
  * so write-path callers can throw structured `ConvexError`s.
  *
  * Three exposed seams:
  *
  *   1. {@link evaluate} — public Convex query. UI subscribes; action callers
- *      fetch via `ctx.runQuery(api.serviceModeEligibility.evaluate, ...)`.
- *   2. {@link assertServiceModeEligible} — mutation-context sugar. Throws a
+ *      fetch via `ctx.runQuery(api.workspaceModeEligibility.evaluate, ...)`.
+ *   2. {@link assertWorkspaceModeEligible} — mutation-context sugar. Throws a
  *      structured `ConvexError` when the caller-supplied mode is disabled.
  *   3. {@link throwIfDisabled} — pure assertion over a verdict + mode. Action
  *      callers compose `runQuery` + this when they need verdict-aware control
  *      flow before deciding to throw (e.g., Lab generation tolerating an
  *      emergency feature-flag flip mid-flight).
  *
- * The pure {@link resolveServiceModes} resolver is the internal seam — it
+ * The pure {@link resolveWorkspaceModes} resolver is the internal seam — it
  * stays untouched and trivially testable; this module only adds the runtime
  * loading + structured-reason augmentation around it.
  */
@@ -32,11 +32,11 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
   DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
   DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED,
-  resolveServiceModes,
+  resolveWorkspaceModes,
   type ChatModeSandboxStatus,
   type SandboxCostCapGate,
-  type ServiceMode,
-  type ServiceModeResolution,
+  type ChatMode,
+  type WorkspaceModeResolution,
 } from "./chatModeResolver";
 import { requireViewerIdentity } from "./lib/auth";
 import { getSandboxModeStatus, type SandboxModeStatus } from "./lib/sandboxAvailability";
@@ -49,16 +49,17 @@ import {
 // ─── Types ────────────────────────────────────────────────────────────────
 
 /**
- * Stable enum of *why* a service mode is disabled. Exists so write-path
- * callers can branch on `code` (e.g. surface a "Resets at midnight UTC"
- * countdown for cost-cap codes) instead of regex-matching tooltip strings.
+ * Stable enum of *why* a mode is disabled at workspace scope. Exists so
+ * write-path callers can branch on `code` (e.g. surface a "Resets at
+ * midnight UTC" countdown for cost-cap codes) instead of regex-matching
+ * tooltip strings.
  *
- * Codes are deliberately disjoint across the three service modes — there is
- * no "library_provisioning" or "lab_no_artifact" because those combinations
+ * Codes are deliberately disjoint across the three modes — there is no
+ * "library_provisioning" or "lab_no_artifact" because those combinations
  * cannot fire. The pure resolver in `chatModeResolver.ts` enumerates the
  * possible disabled states; this enum names each one.
  */
-export type ServiceModeDisabledReasonCode =
+export type WorkspaceModeDisabledReasonCode =
   | "no_repository_attached"
   | "library_no_artifact"
   | "sandbox_missing"
@@ -68,8 +69,8 @@ export type ServiceModeDisabledReasonCode =
   | "sandbox_user_cap_exceeded"
   | "sandbox_workspace_cap_exceeded";
 
-export interface ServiceModeDisabled {
-  readonly code: ServiceModeDisabledReasonCode;
+export interface WorkspaceModeDisabled {
+  readonly code: WorkspaceModeDisabledReasonCode;
   /** Tooltip-quality message taken verbatim from the pure resolver. */
   readonly message: string;
   /**
@@ -81,12 +82,12 @@ export interface ServiceModeDisabled {
   readonly retryAfterMs?: number;
 }
 
-export interface ServiceModeEligibility {
-  readonly availableServiceModes: ReadonlyArray<ServiceMode>;
-  readonly defaultServiceMode: ServiceMode;
-  readonly disabledReasons: Partial<Record<ServiceMode, ServiceModeDisabled>>;
-  readonly labReadiness: { canStart: boolean; reason: ServiceModeDisabled | null };
-  readonly askReadiness: { canBind: boolean; reason: ServiceModeDisabled | null };
+export interface WorkspaceModeEligibility {
+  readonly availableModes: ReadonlyArray<ChatMode>;
+  readonly defaultMode: ChatMode;
+  readonly disabledReasons: Partial<Record<ChatMode, WorkspaceModeDisabled>>;
+  readonly labReadiness: { canStart: boolean; reason: WorkspaceModeDisabled | null };
+  readonly askReadiness: { canBind: boolean; reason: WorkspaceModeDisabled | null };
   /** Convenience flag — frontend uses it to short-circuit "import a repo" CTAs. */
   readonly hasAttachedRepo: boolean;
   /** Convenience flag — frontend uses it to gate first-system-design UI. */
@@ -98,8 +99,8 @@ export interface ServiceModeEligibility {
 /**
  * Maps the centralized sandbox availability result onto the resolver's
  * input domain. Mirrors the same translation used by `threadContext.ts`'s
- * legacy chat-mode read path so both queries report the same lifecycle
- * state for the same sandbox doc.
+ * chat-mode read path so both queries report the same lifecycle state for
+ * the same sandbox doc.
  */
 function toChatModeSandboxStatus(status: SandboxModeStatus | null): ChatModeSandboxStatus {
   switch (status?.reasonCode ?? "missing_sandbox") {
@@ -123,11 +124,11 @@ function toChatModeSandboxStatus(status: SandboxModeStatus | null): ChatModeSand
  * Both peeks happen inside the surrounding query's transaction so the gate
  * decision and the displayed budget agree even under concurrent settlement.
  *
- * Same precedence rule as the legacy `threadContext.computeSandboxCostBudgets`:
- * user cap blocks first (more user-actionable than the workspace cap, which
- * also gates every other workspace member). Kept identical so the new
- * service-mode read path reports the same gate the legacy chat-mode read
- * path reports for the same caller.
+ * Same precedence rule as `threadContext.computeSandboxCostBudgets`: user
+ * cap blocks first (more user-actionable than the workspace cap, which
+ * also gates every other workspace member). Kept identical so the
+ * workspace-mode read path reports the same gate the per-thread chat-mode
+ * read path reports for the same caller.
  */
 async function computeSandboxCostCapGate(
   ctx: QueryCtx,
@@ -173,7 +174,7 @@ function deriveLabDisabledCode(args: {
   hasAttachedRepo: boolean;
   sandboxStatus: ChatModeSandboxStatus;
   sandboxCostCapGate: SandboxCostCapGate;
-}): ServiceModeDisabledReasonCode {
+}): WorkspaceModeDisabledReasonCode {
   if (!args.sandboxCostCapGate.enabled) {
     return args.sandboxCostCapGate.reason === "user_daily_cap_exceeded"
       ? "sandbox_user_cap_exceeded"
@@ -207,7 +208,7 @@ function deriveLabRetryAfterMs(costCapGate: SandboxCostCapGate, now: number): nu
 
 /**
  * Augment the resolver's string `disabledReasons` into structured
- * `ServiceModeDisabled` objects. The resolver knows the `message` (tooltip
+ * `WorkspaceModeDisabled` objects. The resolver knows the `message` (tooltip
  * text); this layer adds the `code` (derived from the same input matrix
  * the resolver used) and the optional `retryAfterMs` (only meaningful for
  * cost-cap codes).
@@ -223,7 +224,7 @@ function deriveLabRetryAfterMs(costCapGate: SandboxCostCapGate, now: number): nu
  * resolver string under the closest matching code (defensive default).
  */
 function augmentResolution(
-  resolution: ServiceModeResolution,
+  resolution: WorkspaceModeResolution,
   inputs: {
     hasAttachedRepo: boolean;
     hasAtLeastOneArtifact: boolean;
@@ -232,11 +233,11 @@ function augmentResolution(
   },
   now: number,
 ): {
-  disabledReasons: Partial<Record<ServiceMode, ServiceModeDisabled>>;
-  labReadiness: ServiceModeEligibility["labReadiness"];
-  askReadiness: ServiceModeEligibility["askReadiness"];
+  disabledReasons: Partial<Record<ChatMode, WorkspaceModeDisabled>>;
+  labReadiness: WorkspaceModeEligibility["labReadiness"];
+  askReadiness: WorkspaceModeEligibility["askReadiness"];
 } {
-  const disabledReasons: Partial<Record<ServiceMode, ServiceModeDisabled>> = {};
+  const disabledReasons: Partial<Record<ChatMode, WorkspaceModeDisabled>> = {};
 
   // Discuss is always available — the resolver never disables it. No code
   // needed; the `disabledReasons.discuss` slot stays unset.
@@ -263,7 +264,7 @@ function augmentResolution(
   }
 
   // Lab readiness
-  let labReadiness: ServiceModeEligibility["labReadiness"];
+  let labReadiness: WorkspaceModeEligibility["labReadiness"];
   if (resolution.labReadiness.canStart) {
     labReadiness = { canStart: true, reason: null };
   } else {
@@ -280,7 +281,7 @@ function augmentResolution(
 
   // Ask readiness — same disabled codes as Library since Ask is the
   // interactive surface inside Library mode.
-  const askReadiness: ServiceModeEligibility["askReadiness"] = resolution.askReadiness.canBind
+  const askReadiness: WorkspaceModeEligibility["askReadiness"] = resolution.askReadiness.canBind
     ? { canBind: true, reason: null }
     : {
         canBind: false,
@@ -315,7 +316,7 @@ async function evaluateFromRepository(
     tokenIdentifier: string;
     now: number;
   },
-): Promise<ServiceModeEligibility> {
+): Promise<WorkspaceModeEligibility> {
   let sandboxModeStatus: SandboxModeStatus | null = null;
   let hasAtLeastOneArtifact = false;
 
@@ -339,7 +340,7 @@ async function evaluateFromRepository(
   const sandboxStatus = toChatModeSandboxStatus(sandboxModeStatus);
   const hasAttachedRepo = args.repository !== null;
 
-  const resolution = resolveServiceModes(hasAttachedRepo, hasAtLeastOneArtifact, sandboxStatus, costGate);
+  const resolution = resolveWorkspaceModes(hasAttachedRepo, hasAtLeastOneArtifact, sandboxStatus, costGate);
 
   const augmented = augmentResolution(
     resolution,
@@ -353,8 +354,8 @@ async function evaluateFromRepository(
   );
 
   return {
-    availableServiceModes: resolution.availableServiceModes,
-    defaultServiceMode: resolution.defaultServiceMode,
+    availableModes: resolution.availableModes,
+    defaultMode: resolution.defaultMode,
     disabledReasons: augmented.disabledReasons,
     labReadiness: augmented.labReadiness,
     askReadiness: augmented.askReadiness,
@@ -366,9 +367,9 @@ async function evaluateFromRepository(
 // ─── Public surface ────────────────────────────────────────────────────────
 
 /**
- * Public Convex query. The frontend service-mode switcher subscribes here;
+ * Public Convex query. The frontend workspace-mode switcher subscribes here;
  * action callers (e.g. Lab `chat.generation.generateAssistantReply`) fetch
- * via `ctx.runQuery(api.serviceModeEligibility.evaluate, ...)` for an
+ * via `ctx.runQuery(api.workspaceModeEligibility.evaluate, ...)` for an
  * execute-time recheck against the same view the user sees.
  *
  * Returns `null` when the workspace doesn't exist or the viewer doesn't own
@@ -378,7 +379,7 @@ async function evaluateFromRepository(
  */
 export const evaluate = query({
   args: { workspaceId: v.id("workspaces") },
-  handler: async (ctx, args): Promise<ServiceModeEligibility | null> => {
+  handler: async (ctx, args): Promise<WorkspaceModeEligibility | null> => {
     const identity = await requireViewerIdentity(ctx);
     const workspace = await ctx.db.get(args.workspaceId);
     if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
@@ -400,14 +401,14 @@ export const evaluate = query({
  * touch `ctx`. Use from action callers after a `ctx.runQuery(evaluate, ...)`
  * when verdict-aware control flow is needed (e.g. tolerating an emergency
  * feature-flag flip mid-flight). Mutation callers should prefer
- * {@link assertServiceModeEligible}, which bundles the load + assert.
+ * {@link assertWorkspaceModeEligible}, which bundles the load + assert.
  */
-export function throwIfDisabled(verdict: ServiceModeEligibility, mode: ServiceMode): void {
-  if (verdict.availableServiceModes.includes(mode)) return;
+export function throwIfDisabled(verdict: WorkspaceModeEligibility, mode: ChatMode): void {
+  if (verdict.availableModes.includes(mode)) return;
   const reason = verdict.disabledReasons[mode];
   if (!reason) {
     throw new ConvexError({
-      code: "service_mode_unavailable",
+      code: "workspace_mode_unavailable",
       mode,
       message: `'${mode}' mode is unavailable.`,
     });
@@ -441,12 +442,12 @@ export function throwIfDisabled(verdict: ServiceModeEligibility, mode: ServiceMo
  * `RepositoryNotFound` — same opaque-not-found contract the existing
  * `chat.send` mutation uses for thread/repo ownership mismatches.
  */
-export async function assertServiceModeEligible(
+export async function assertWorkspaceModeEligible(
   ctx: MutationCtx,
   args: {
     repositoryId: Id<"repositories"> | null | undefined;
     workspaceId: Id<"workspaces"> | null | undefined;
-    mode: ServiceMode;
+    mode: ChatMode;
   },
 ): Promise<void> {
   // Identity check first so unsigned-in callers always get the same

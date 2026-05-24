@@ -8,8 +8,7 @@ import { cn } from "@/lib/utils";
 /**
  * MermaidRenderer — safe in-app renderer for Mermaid diagrams.
  *
- * PRD #19, "Modules to build (frontend)": MermaidRenderer is the deep
- * component pair for ArchitectureDiagramGenerator's output. Three things make
+ * Renders the output of `ArchitectureDiagramGenerator`. Three things make
  * this component "safe":
  *
  *   1. **Sandboxed parsing.** Mermaid is invoked with `securityLevel: 'strict'`

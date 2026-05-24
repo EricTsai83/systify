@@ -47,7 +47,7 @@ function fontSizeZoom(size: FontSize): number {
 }
 
 /**
- * Three-mode restructure — Library editor (center pane).
+ * Library editor (center pane).
  *
  * Renders one artifact in the IDE-style shell: breadcrumb at top,
  * artifact metadata header, then the rendered body. The shell relies

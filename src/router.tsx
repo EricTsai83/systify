@@ -27,12 +27,10 @@ async function loadResourcesRoute() {
 }
 
 /**
- * Three-mode restructure — lazy loaders for the new top-level service
- * modes. Each route mounts its own shell so the mode the user is in maps
- * 1:1 to the URL, and code-splitting separates the Library Read bundle
- * (no chat streaming, no sandbox SDK) from the Lab bundle (Daytona-aware
- * status bar, file viewer in Phase 2). Phase 3 will use these split
- * points to land the bundle-size cuts the plan calls for.
+ * Lazy loaders for the top-level service modes. Each route mounts its own
+ * shell so the mode the user is in maps 1:1 to the URL, and code-splitting
+ * separates the Library Read bundle (no chat streaming, no sandbox SDK)
+ * from the Lab bundle (Daytona-aware status bar, file viewer).
  */
 async function loadDiscussRoute() {
   const module = await import("@/pages/discuss");
@@ -58,9 +56,9 @@ async function loadLabRoute() {
  */
 const protectedRoutes: RouteObject[] = [
   // `/chat` is the workspaceless entry point: ChatPage redirects to the most
-  // recently used workspace's most-recent thread (PRD #19 user story 27).
-  // It exists primarily as the post-login landing target and the place we
-  // bounce to after destructive operations clear the current selection.
+  // recently used workspace's most-recent thread. It exists primarily as the
+  // post-login landing target and the place we bounce to after destructive
+  // operations clear the current selection.
   { path: PROTECTED_ROUTE_SEGMENTS.chat, lazy: loadChatRoute },
   // `/w/:workspaceId` is the workspace landing target. Same redirect-to-most-
   // recent-thread behaviour as `/chat`, but scoped to the workspace named in
@@ -74,11 +72,11 @@ const protectedRoutes: RouteObject[] = [
   // redirect canonicalises onto the service-mode-aware path
   // (`/w/:wid/discuss/:tid`, `/w/:wid/lab/:tid`, or
   // `/w/:wid/library?ask=:tid`) so the URL itself carries the user's mode
-  // and `useServiceMode` reads it directly without a placeholder fallback.
+  // and `useChatMode` reads it directly without a placeholder fallback.
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceThread, Component: LegacyThreadRedirect },
-  // Three-mode restructure — top-level service modes live under their own
-  // path prefixes. The page components wrap the shared workspace chrome
-  // (sidebar, top-bar) and pivot the inset content based on mode.
+  // Top-level service modes live under their own path prefixes. The page
+  // components wrap the shared workspace chrome (sidebar, top-bar) and
+  // pivot the inset content based on mode.
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceDiscuss, lazy: loadDiscussRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceDiscussThread, lazy: loadDiscussRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.workspaceLibrary, lazy: loadLibraryRoute },

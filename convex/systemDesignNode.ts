@@ -376,9 +376,9 @@ async function generateLlm(
   }
   // `source: "sandbox"` carries the semantic load here: the artifact was
   // produced by an LLM session that read live source through the sandbox
-  // tool factory. `createArtifactInMutation` translates that to
-  // `producedIn: "lab"` + `lastVerifiedAt: now`, which gates the
-  // "verified against current source" badge in the Library freshness UI.
+  // tool factory. `createArtifactInMutation` translates that to a
+  // `lastVerifiedAt: now` stamp, which gates the "verified against
+  // current source" badge in the Library freshness UI.
   return {
     contentMarkdown: text,
     summary: extractSummary(text),

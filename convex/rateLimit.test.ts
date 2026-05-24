@@ -454,11 +454,11 @@ describe("rate limits and interactive job guards", () => {
         .mutation(api.chat.send.sendMessage, {
           threadId,
           content: "Inspect the lease logic.",
-          mode: "sandbox",
+          mode: "lab",
         })
         .catch((caughtError) => caughtError);
 
-      // chat.sendMessage throws via assertServiceModeEligible → throwIfDisabled.
+      // chat.sendMessage throws via assertWorkspaceModeEligible → throwIfDisabled.
       // Structured shape: { code: "sandbox_user_cap_exceeded", mode: "lab",
       // message, retryAfterMs }. The bucket / capUsd fields stay on
       // assertSandboxDailyCostBudget's own throws (still tested below) but
@@ -523,7 +523,7 @@ describe("rate limits and interactive job guards", () => {
         .mutation(api.chat.send.sendMessage, {
           threadId,
           content: "Inspect the lease logic.",
-          mode: "sandbox",
+          mode: "lab",
         })
         .catch((caughtError) => caughtError);
 
@@ -566,7 +566,7 @@ describe("rate limits and interactive job guards", () => {
           ownerTokenIdentifier,
           role: "assistant",
           status: "streaming",
-          mode: "sandbox",
+          mode: "lab",
           content: "",
         });
         await ctx.db.insert("messageStreams", {

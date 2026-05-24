@@ -48,13 +48,11 @@ export interface ThreadCapabilities {
   defaultMode: ChatMode;
   /** Tooltip text keyed by mode for the greyed-out options. */
   disabledReasons: ChatModeResolution["disabledReasons"];
-  /** Non-null when a legacy thread has been archived for read-only browsing. */
-  lockedAt: number | null;
   /**
    * True when the disabled Sandbox option should still accept a click
    * and trigger a lazy sandbox provision. The UI uses this to render
    * the option as clickable (with an "activate" affordance) and to
-   * keep `chatMode === "sandbox"` selectable while activation runs.
+   * keep `chatMode === "lab"` selectable while activation runs.
    */
   sandboxIsActivatable: boolean;
   /**
@@ -73,8 +71,8 @@ export interface ThreadCapabilities {
  * them to start a conversation first, then attach a repo.
  */
 const NO_THREAD_DISABLED_REASONS: ChatModeResolution["disabledReasons"] = {
-  docs: "Start a thread and attach a repository to use Design Docs mode.",
-  sandbox: "Start a thread, attach a repository, and provision a sandbox to use Sandbox mode.",
+  library: "Start a thread and attach a repository to use Library mode.",
+  lab: "Start a thread, attach a repository, and provision a sandbox to use Lab mode.",
 };
 
 const NO_THREAD_CAPABILITIES: ThreadCapabilities = {
@@ -87,7 +85,6 @@ const NO_THREAD_CAPABILITIES: ThreadCapabilities = {
   defaultMode: getDefaultThreadMode(false),
   disabledReasons: NO_THREAD_DISABLED_REASONS,
   sandboxCostBudget: null,
-  lockedAt: null,
   sandboxIsActivatable: false,
 };
 
@@ -150,7 +147,6 @@ export function useThreadCapabilities(threadId: ThreadId | null): ThreadCapabili
     availableModes: ctx.chatModes.availableModes,
     defaultMode: ctx.chatModes.defaultMode,
     disabledReasons: ctx.chatModes.disabledReasons,
-    lockedAt: ctx.thread.lockedAt ?? null,
     sandboxCostBudget: deriveSandboxCostBudget(ctx.sandboxCostBudgets),
     sandboxIsActivatable: ctx.sandboxIsActivatable,
   };

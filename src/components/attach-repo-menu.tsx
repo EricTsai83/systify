@@ -19,8 +19,8 @@ import type { RepositoryId, ThreadId, ThreadMode, WorkspaceId } from "@/lib/type
 /**
  * One-shot CTA for binding a no-repo thread to a repository workspace,
  * surfaced in the TopBar when the thread is sitting in Home with no repo
- * attached yet. PRD #19 user story 2: promote a free-form discussion thread
- * into a grounded repo workspace.
+ * attached yet. Promotes a free-form discussion thread into a grounded
+ * repo workspace.
  *
  * **The binding is permanent by design.** Once a repo is attached, this
  * component stops rendering (TopBar gates on `attachedRepository === null`)

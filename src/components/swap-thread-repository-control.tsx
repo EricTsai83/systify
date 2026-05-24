@@ -20,8 +20,8 @@ import { toast } from "sonner";
 /**
  * Rare escape hatch — bind the current thread to a different repository /
  * workspace. Historical messages retain their older grounding; newer sends
- * follow `getReplyContext` rules. Mirrors the UX warning in Phase 1 of the
- * product alignment plan ("Frankenstein scrollback").
+ * follow `getReplyContext` rules. The UX warns about the "Frankenstein
+ * scrollback" that results.
  */
 export function SwapThreadRepositoryControl({
   threadId,

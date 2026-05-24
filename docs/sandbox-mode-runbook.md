@@ -1,26 +1,28 @@
-# Sandbox Mode Operations Runbook
+# Lab Mode Operations Runbook
 
 ## Audience
 
-You're on call for Systify chat. Sandbox mode (`mode: "sandbox"`) is the only chat mode that drives Daytona compute, executes live tools (`read_file`, `list_dir`, `run_shell`) inside per-repository sandboxes, and bills against the `system_design` cost category. This document gives you the queries, thresholds, and remediation playbook you need to handle the four most common incidents:
+You're on call for Systify chat. Lab mode (`mode: "lab"`) is the only chat mode that drives Daytona compute, executes live tools (`read_file`, `list_dir`, `run_shell`) inside per-repository sandboxes, and bills against the `system_design` cost category. This document gives you the queries, thresholds, and remediation playbook you need to handle the four most common incidents:
 
 1. **Daytona is unavailable** — sandbox provisioning or tool execution fails for every viewer.
 2. **Cost spike** — a viewer or workspace burns through their daily cap unusually fast.
 3. **Tool error spike** — `read_file` / `list_dir` / `run_shell` fail at an elevated rate without an obvious upstream cause.
-4. **Sandbox session latency regression** — p95 session duration walks up after a deploy.
+4. **Lab session latency regression** — p95 session duration walks up after a deploy.
 
 ## Architecture refresher
 
-A sandbox-mode session emits two classes of structured logs from the Convex backend:
+A Lab-mode session emits two classes of structured logs from the Convex backend:
 
-- **Session-level**: `[metrics] sandbox_session_finished { … }` — one line per terminal-state path (`completed` / `failed` / `cancelled` / `aborted_orphan`). Carries `mode`, `model`, `had_tools`, plus `tool_calls_count`, `tool_errors_count`, `input_tokens`, `output_tokens`, `cost_usd`, and the wall-clock `value` (= duration ms).
+- **Session-level**: `[metrics] sandbox_session_finished { … }` — one line per terminal-state path (`completed` / `failed` / `cancelled` / `aborted_orphan`). Carries `mode` (always `"lab"`), `model`, `had_tools`, plus `tool_calls_count`, `tool_errors_count`, `input_tokens`, `output_tokens`, `cost_usd`, and the wall-clock `value` (= duration ms).
 - **Per-tool**: `[metrics] sandbox_tool_invoked { … }` — one line per tool result or tool error. Carries `tool` (`read_file` / `list_dir` / `run_shell`), `ok` (boolean), `error_code` (or undefined for success), and the `value` (= per-call duration ms).
+
+The metric names are kept on the historical `sandbox_*` prefix so existing dashboards and alert recipes stay stable across the `sandbox` → `lab` chat-mode rename. The `tags.mode` value is the current DB literal (`"lab"`), not the metric prefix.
 
 These two metric streams plus the existing `[chat] …` debug logs are the only data sources this runbook references. If your downstream logging pipeline supports it, group `tags.*` fields as dimensions — every dashboard recipe in this document filters on a `tags.*` value.
 
-## Quick reference: taking sandbox offline
+## Quick reference: taking Lab offline
 
-Sandbox mode does not have an env-var kill switch. If you need to disable it during an active incident:
+Lab mode does not have an env-var kill switch. If you need to disable it during an active incident:
 
 - **Tighten the cost cap to zero**: set `SANDBOX_DAILY_CAP_PER_USER_USD=0`. The cap is re-read on every send; effective immediately, no deploy. The disabled tooltip will read "Daily sandbox spend limit reached for your account."
 - **Push a code revert**: `git revert` the offending change and `bunx convex deploy` (or your usual deploy command). Convex deploy is fast (~30s) and avoids leaving the system in a degraded "everyone blocked by cost cap" state.
@@ -42,7 +44,7 @@ In-flight replies continue running until they complete or hit their lease window
 metric: sandbox_session_finished
 group_by: tags.status
 window: 15m
-filter: tags.mode = "sandbox"
+filter: tags.mode = "lab"
 ```
 
 If `tags.status = "failed"` exceeds 25% of total `sandbox_session_finished` events for two consecutive 15-minute windows, treat as a Daytona-side outage.
@@ -58,7 +60,7 @@ If `io_error` rate dominates `command_blocked` / `path_outside_repo`, the cause 
 
 1. **Page the Daytona owner** — sandbox is hard-blocked without it.
 2. **Drop the cost cap to zero** to gate out new sandbox sessions while you investigate: `SANDBOX_DAILY_CAP_PER_USER_USD=0`. The cap re-reads on every send and surfaces the cap tooltip in the UI immediately.
-3. If Daytona stays out for >30 min and the cap-gate workaround is not enough (e.g. need to communicate maintenance copy specifically), push a temporary patch that returns a maintenance-mode error from `chat/send.ts` for sandbox mode.
+3. If Daytona stays out for >30 min and the cap-gate workaround is not enough (e.g. need to communicate maintenance copy specifically), push a temporary patch that returns a maintenance-mode error from `chat/send.ts` for Lab mode.
 4. **Don't** clear sandbox rows from the database. Plan 09 (the dedicated Daytona-error-path doc) handles graceful sandbox lifecycle recovery once Daytona is back.
 
 ### Resolve
@@ -77,7 +79,7 @@ If `io_error` rate dominates `command_blocked` / `path_outside_repo`, the cause 
 
 ```text
 metric: sandbox_session_finished
-filter: tags.mode = "sandbox"
+filter: tags.mode = "lab"
 group_by: details.assistantMessageId  # or group by tags.mode, tags.model
 sort by: details.cost_usd desc
 window: 24h
@@ -150,13 +152,13 @@ The `error_code` distribution is the diagnostic signal:
 
 ```text
 metric: sandbox_session_finished
-filter: tags.mode = "sandbox" AND tags.status = "completed"
+filter: tags.mode = "lab" AND tags.status = "completed"
 percentile: p50, p95
 window: 1h
 group_by: tags.model
 ```
 
-p50 should be 5–15s for a typical sandbox reply (sandbox cold-start + 2–3 tool calls + finalize). p95 should be under 30s. If both walk up by >30%, treat as a regression.
+p50 should be 5–15s for a typical Lab reply (sandbox cold-start + 2–3 tool calls + finalize). p95 should be under 30s. If both walk up by >30%, treat as a regression.
 
 ```text
 # Decompose: was the time spent in tool calls?
@@ -180,14 +182,14 @@ If `read_file` p95 walked up but `run_shell` did not, the regression is in the f
 ## Common queries (cheat sheet)
 
 ```text
-# In-flight sandbox sessions count (instantaneous)
+# In-flight Lab sessions count (instantaneous)
 metric: sandbox_session_finished
 window: 5m
 group_by: tags.status
 
 # Top viewers by spend, last 24h
 metric: sandbox_session_finished
-filter: tags.mode = "sandbox"
+filter: tags.mode = "lab"
 group_by: details.assistantMessageId  # join with messages.ownerTokenIdentifier offline
 sum: details.cost_usd
 
@@ -221,5 +223,5 @@ The table carries pre-redaction byte counts, durations, error codes, and which r
 
 - Daytona outage > 30 min with no mitigation in sight.
 - A cost spike that the per-user / per-workspace caps fail to contain (the caps are a Plan 10 invariant; if they're not working that is a P0).
-- Any incident that requires sandbox mode to be globally cost-gated to zero for >2h.
+- Any incident that requires Lab mode to be globally cost-gated to zero for >2h.
 - Suspected secret leakage in `messages.toolCalls` or `sandboxToolCallLog` (cross-reference Plan 05's redaction module).

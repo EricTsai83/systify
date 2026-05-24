@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { ServiceModeSwitcher } from "./service-mode-switcher";
+import { WorkspaceModeSwitcher } from "./workspace-mode-switcher";
 import { libraryPath } from "@/route-paths";
 import type { WorkspaceId } from "@/lib/types";
 
@@ -22,11 +22,9 @@ afterEach(() => {
   cleanup();
 });
 
-describe("ServiceModeSwitcher", () => {
+describe("WorkspaceModeSwitcher", () => {
   test("renders all three service modes", () => {
-    render(
-      <ServiceModeSwitcher workspaceId={"workspace_1" as WorkspaceId} serviceMode="discuss" availability={null} />,
-    );
+    render(<WorkspaceModeSwitcher workspaceId={"workspace_1" as WorkspaceId} mode="discuss" availability={null} />);
 
     expect(screen.getByRole("button", { name: "Discuss" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Library" })).toBeInTheDocument();
@@ -34,9 +32,7 @@ describe("ServiceModeSwitcher", () => {
   });
 
   test("marks active mode with aria-pressed=true", () => {
-    render(
-      <ServiceModeSwitcher workspaceId={"workspace_1" as WorkspaceId} serviceMode="discuss" availability={null} />,
-    );
+    render(<WorkspaceModeSwitcher workspaceId={"workspace_1" as WorkspaceId} mode="discuss" availability={null} />);
 
     const discussBtn = screen.getByRole("button", { name: "Discuss" });
     const libraryBtn = screen.getByRole("button", { name: "Library" });
@@ -47,11 +43,11 @@ describe("ServiceModeSwitcher", () => {
 
   test("navigates to new mode on click when available", async () => {
     render(
-      <ServiceModeSwitcher
+      <WorkspaceModeSwitcher
         workspaceId={"workspace_1" as WorkspaceId}
-        serviceMode="discuss"
+        mode="discuss"
         availability={{
-          availableServiceModes: ["discuss", "library", "lab"],
+          availableModes: ["discuss", "library", "lab"],
           disabledReasons: {},
         }}
       />,
@@ -67,11 +63,11 @@ describe("ServiceModeSwitcher", () => {
 
   test("does not navigate when clicking disabled mode", async () => {
     render(
-      <ServiceModeSwitcher
+      <WorkspaceModeSwitcher
         workspaceId={"workspace_1" as WorkspaceId}
-        serviceMode="discuss"
+        mode="discuss"
         availability={{
-          availableServiceModes: ["discuss"],
+          availableModes: ["discuss"],
           disabledReasons: {
             library: { message: "Attach a repo to unlock" },
             lab: { message: "Attach a repo to unlock" },
@@ -88,11 +84,11 @@ describe("ServiceModeSwitcher", () => {
 
   test("marks unavailable modes with aria-disabled and reduced opacity", () => {
     render(
-      <ServiceModeSwitcher
+      <WorkspaceModeSwitcher
         workspaceId={"workspace_1" as WorkspaceId}
-        serviceMode="discuss"
+        mode="discuss"
         availability={{
-          availableServiceModes: ["discuss"],
+          availableModes: ["discuss"],
           disabledReasons: {
             library: { message: "Attach a repo to unlock" },
           },
@@ -106,7 +102,7 @@ describe("ServiceModeSwitcher", () => {
   });
 
   test("does not navigate when workspaceId is null", () => {
-    render(<ServiceModeSwitcher workspaceId={null} serviceMode="discuss" availability={null} />);
+    render(<WorkspaceModeSwitcher workspaceId={null} mode="discuss" availability={null} />);
 
     const libraryBtn = screen.getByRole("button", { name: "Library" });
     fireEvent.click(libraryBtn);
@@ -116,11 +112,11 @@ describe("ServiceModeSwitcher", () => {
 
   test("does not navigate when clicking the current mode", () => {
     render(
-      <ServiceModeSwitcher
+      <WorkspaceModeSwitcher
         workspaceId={"workspace_1" as WorkspaceId}
-        serviceMode="discuss"
+        mode="discuss"
         availability={{
-          availableServiceModes: ["discuss", "library"],
+          availableModes: ["discuss", "library"],
           disabledReasons: {},
         }}
       />,
@@ -134,11 +130,11 @@ describe("ServiceModeSwitcher", () => {
 
   test("available mode renders as interactive (aria-disabled=false)", () => {
     render(
-      <ServiceModeSwitcher
+      <WorkspaceModeSwitcher
         workspaceId={"workspace_1" as WorkspaceId}
-        serviceMode="discuss"
+        mode="discuss"
         availability={{
-          availableServiceModes: ["discuss", "library"],
+          availableModes: ["discuss", "library"],
           disabledReasons: {},
         }}
       />,
@@ -150,9 +146,7 @@ describe("ServiceModeSwitcher", () => {
   });
 
   test("active mode shows label and pill", () => {
-    render(
-      <ServiceModeSwitcher workspaceId={"workspace_1" as WorkspaceId} serviceMode="discuss" availability={null} />,
-    );
+    render(<WorkspaceModeSwitcher workspaceId={"workspace_1" as WorkspaceId} mode="discuss" availability={null} />);
 
     const discussBtn = screen.getByRole("button", { name: "Discuss" });
     expect(discussBtn).toHaveTextContent("Discuss");
@@ -161,9 +155,7 @@ describe("ServiceModeSwitcher", () => {
   });
 
   test("inactive label sits outside the visible button area (clipped by overflow)", () => {
-    render(
-      <ServiceModeSwitcher workspaceId={"workspace_1" as WorkspaceId} serviceMode="discuss" availability={null} />,
-    );
+    render(<WorkspaceModeSwitcher workspaceId={"workspace_1" as WorkspaceId} mode="discuss" availability={null} />);
 
     const libraryBtn = screen.getByRole("button", { name: "Library" });
     expect(libraryBtn).toHaveClass("overflow-hidden");

@@ -58,7 +58,7 @@ describe("archiveRepository", () => {
         repositoryId,
         ownerTokenIdentifier,
         title: "Repo thread",
-        mode: "docs",
+        mode: "library",
         lastMessageAt: Date.now(),
       });
       await ctx.db.insert("messages", {
@@ -67,7 +67,7 @@ describe("archiveRepository", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "docs",
+        mode: "library",
         content: "What's the architecture?",
       });
       return threadId;

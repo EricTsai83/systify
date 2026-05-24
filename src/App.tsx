@@ -1,8 +1,9 @@
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
 import { RouterProvider } from "react-router-dom";
 import { Toaster } from "@/components/ui/sonner";
+import { useAuthBoundCleanup } from "@/hooks/use-auth-bound-cleanup";
 import { ConvexProviderWithAuthKit } from "@/providers/convex-provider-with-auth-kit";
 import { ErrorBoundary } from "@/providers/error-boundary";
 import { ThemeProvider } from "@/providers/theme-provider";
@@ -37,11 +38,18 @@ export function App({
       <ThemeProvider defaultTheme="system" storageKey="vite-ui-theme">
         <AuthKitProvider clientId={workosClientId} redirectUri={redirectUri}>
           <ConvexProviderWithAuthKit client={convexClient} useAuth={useAuthHook}>
-            <RouterProvider router={appRouter} />
+            <AuthBoundEffects>
+              <RouterProvider router={appRouter} />
+            </AuthBoundEffects>
             <Toaster />
           </ConvexProviderWithAuthKit>
         </AuthKitProvider>
       </ThemeProvider>
     </ErrorBoundary>
   );
+}
+
+function AuthBoundEffects({ children }: { children: ReactNode }) {
+  useAuthBoundCleanup();
+  return <>{children}</>;
 }

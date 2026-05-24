@@ -6,7 +6,7 @@ This document describes the overall system boundaries of Systify. Its goal is to
 
 ## Product Positioning
 
-Systify is an architecture analysis workspace that treats **live imported code as the eventual source of truth (SSOT)**: indexing reads the GitHub API directly, while Lab and System Design tooling operate on Daytona-hosted clones provisioned on demand. Users may **begin without attaching a repository** (Discuss on a Home workspace) and later bind a repo so import, Library, Lab, and RAG surfaces come online. **`artifacts`** are markdown (and optionally structured traces) alongside the codebase: explanatory, citable outputs—not a substitute for the tree chunks in `repoFiles` / `repoChunks`. Over time artifacts can expose **minimal import-level drift cues** (`alignedImportCommitSha` vs the repository’s latest import SHA) separate from Lab “verification” freshness (`producedIn` / `lastVerifiedAt`).
+Systify is an architecture analysis workspace that treats **live imported code as the eventual source of truth (SSOT)**: indexing reads the GitHub API directly, while Lab and System Design tooling operate on Daytona-hosted clones provisioned on demand. Users may **begin without attaching a repository** (Discuss on a Home workspace) and later bind a repo so import, Library, Lab, and RAG surfaces come online. **`artifacts`** are markdown (and optionally structured traces) alongside the codebase: explanatory, citable outputs—not a substitute for the tree chunks in `repoFiles` / `repoChunks`. Over time artifacts can expose **minimal import-level drift cues** (`alignedImportCommitSha` vs the repository’s latest import SHA) separate from Lab “verification” freshness (`lastVerifiedAt`).
 
 The product separates **Discuss** from **Library** by task:
 

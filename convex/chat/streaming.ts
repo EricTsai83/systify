@@ -115,12 +115,12 @@ async function settleSandboxReplyCost(
     costUsd: number | undefined;
   },
 ): Promise<void> {
-  // Only sandbox-mode replies bill against the daily cap. The check on
+  // Only lab-mode replies bill against the daily cap. The check on
   // `assistantMessage.mode` is the source of truth — using the job's
-  // `costCategory` would also work today (sandbox ↔ system_design), but
+  // `costCategory` would also work today (lab ↔ system_design), but
   // the message-level mode keeps this code resilient if the costCategory
   // mapping ever changes.
-  if (!args.assistantMessage || (args.assistantMessage.mode !== "sandbox" && args.assistantMessage.mode !== "lab")) {
+  if (!args.assistantMessage || args.assistantMessage.mode !== "lab") {
     return;
   }
   const cents = costUsdToCents(args.costUsd);
@@ -185,11 +185,11 @@ async function recordLabSessionActivityForReply(
  * Plan 11 — run the citation lint against a finalized assistant reply
  * and return the persisted shape (or `undefined` to clear the field).
  *
- * Gated on `mode === "sandbox"`: the lint contract exists *only* for the
- * sandbox prompt (which teaches `[path:line]` + `Unverified:`). Discuss
- * and docs replies have their own citation conventions (`[A#]` for
- * docs; nothing for discuss) so applying this lint there would generate
- * a wall of false positives.
+ * Gated on `mode === "lab"`: the lint contract exists *only* for the
+ * lab prompt (which teaches `[path:line]` + `Unverified:`). Discuss and
+ * library replies have their own citation conventions (`[A#]` for
+ * library; nothing for discuss) so applying this lint there would
+ * generate a wall of false positives.
  *
  * Empty content is also a `undefined` return — the lint produces no
  * ranges on an empty string, but spelling out the early-return keeps
@@ -210,10 +210,7 @@ function lintSandboxClaims(
   message: Pick<Doc<"messages">, "mode">,
   finalContent: string,
 ): UnverifiedClaimRange[] | undefined {
-  // Three-mode restructure: `lab` reuses the sandbox citation contract
-  // verbatim (the system prompt is identical), so the lint applies to
-  // both literals.
-  if (message.mode !== "sandbox" && message.mode !== "lab") {
+  if (message.mode !== "lab") {
     return undefined;
   }
   if (finalContent.length === 0) {
@@ -527,10 +524,11 @@ export const finalizeAssistantReply = internalMutation({
     outputTokens: v.optional(v.number()),
     costUsd: v.optional(v.number()),
     /**
-     * Plan 02 citation map: numbered `[A#] → artifactId` entries for the
-     * artifacts that ended up in the prompt. Optional so non-docs replies
-     * (and pre-Plan-02 messages) keep the field unset rather than written as
-     * an empty array — the frontend treats both as "no resolvable citations".
+     * Citation map: numbered `[A#] → artifactId` entries for the artifacts
+     * that ended up in the prompt. Optional so non-library replies (and
+     * messages predating citationMap) keep the field unset rather than
+     * written as an empty array — the frontend treats both as "no
+     * resolvable citations".
      */
     citationMap: v.optional(
       v.array(
@@ -584,7 +582,7 @@ export const finalizeAssistantReply = internalMutation({
         // status (it only renders highlights for terminal states), so
         // a transactional write means a refresh-after-finalize never
         // sees the message as completed-but-unlinted. Sandbox-only via
-        // `lintSandboxClaims`; discuss / docs return `undefined` and
+        // `lintSandboxClaims`; discuss / library return `undefined` and
         // the optional schema field stays unset.
         const unverifiedClaims = lintSandboxClaims(message, finalContent);
         await ctx.db.patch(args.assistantMessageId, {
@@ -641,7 +639,7 @@ export const finalizeAssistantReply = internalMutation({
       // their statuses. Doing it last means a hypothetical settle failure
       // never blocks the message's terminal-state write, which is the
       // user-visible part of finalize. Settle is a no-op for non-sandbox
-      // replies, so this is also free for discuss / docs.
+      // replies, so this is also free for discuss / library.
       await settleSandboxReplyCost(ctx, {
         jobId: args.jobId,
         assistantMessage: message ?? null,
@@ -1032,7 +1030,7 @@ export const recoverStaleChatJob = internalMutation({
       // as a known shortfall: the daily cap may be slightly under-
       // recorded for stalled replies. Logged so ops can correlate
       // billing reconciliation findings with stale-recovery events.
-      if (assistantMessage && (assistantMessage.mode === "sandbox" || assistantMessage.mode === "lab")) {
+      if (assistantMessage && assistantMessage.mode === "lab") {
         logWarn("chat", "sandbox_cost_settlement_skipped_on_stale_recovery", {
           jobId: args.jobId,
           assistantMessageId: assistantMessage._id,

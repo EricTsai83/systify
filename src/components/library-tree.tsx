@@ -5,7 +5,7 @@ import type { ArtifactId, ArtifactListItem, FolderId, RepositoryId } from "@/lib
 import { cn } from "@/lib/utils";
 
 /**
- * Three-mode restructure — Library Tree.
+ * Library Tree.
  *
  * Wraps {@link FolderNavigator} so the Library shell has a single import
  * surface for the right rail. Adds a header bar above the navigator carrying

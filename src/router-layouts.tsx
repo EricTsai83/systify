@@ -287,7 +287,7 @@ export function LibraryAskLegacyRedirect() {
  * external links saved before the canonical-URL switchover.
  *
  * It still earns its place: without it, a stale bookmark would land
- * `useServiceMode` in `null` and the shell would paint nothing useful.
+ * `useChatMode` in `null` and the shell would paint nothing useful.
  * The component reads the thread's stored mode, computes the matching
  * canonical URL via `modeAwareThreadPath`, and `<Navigate replace>`s the
  * browser there. Renders no shell chrome while the `getThreadContext`

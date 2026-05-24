@@ -23,7 +23,7 @@ import { toast } from "sonner";
 const ACTIVE_WORKSPACE_STORAGE_KEY = "systify.activeWorkspaceId";
 
 /**
- * Three-mode restructure — Library service mode entry point.
+ * Library service mode entry point.
  *
  * Mounted at:
  *   - `/w/:workspaceId/library`               → folder overview, no
@@ -48,7 +48,7 @@ const ACTIVE_WORKSPACE_STORAGE_KEY = "systify.activeWorkspaceId";
  *      lease.
  *   2. The page guards against entering Library for a workspace
  *      without an attached repo / artifact — the resolver-level check
- *      in `useServiceMode` greys the Library button out, but a direct
+ *      in `useChatMode` greys the Library button out, but a direct
  *      URL hit from a browser bookmark still needs a graceful redirect
  *      to Discuss.
  */
@@ -97,10 +97,10 @@ function LibraryWorkspace({
   );
 
   // Persist workspace activity so re-entering /chat lands the user back
-  // on this workspace, and record `serviceMode: "library"` so the next
+  // on this workspace, and record `mode: "library"` so the next
   // `/chat → /w/:wid → canonical mode URL` redirect returns the user to
   // Library instead of bouncing them to the workspace's structural
-  // default (the "Archive → back" round-trip the `lastServiceMode` field
+  // default (the "Archive → back" round-trip the `lastMode` field
   // exists to make sticky for *every* mode, not just Discuss/Lab whose
   // shell happens to live in `repository-shell.tsx`). The mutation
   // short-circuits when the stored value already matches, so this is a
@@ -108,7 +108,7 @@ function LibraryWorkspace({
   useEffect(() => {
     if (!workspaceId) return;
     writeString(ACTIVE_WORKSPACE_STORAGE_KEY, workspaceId);
-    void touchWorkspace({ workspaceId, serviceMode: "library" }).catch(() => {});
+    void touchWorkspace({ workspaceId, mode: "library" }).catch(() => {});
   }, [touchWorkspace, workspaceId]);
 
   const currentWorkspace = useMemo(
@@ -220,7 +220,7 @@ function LibraryWorkspace({
   useEffect(() => {
     if (!askThreadId) return;
     if (askThreadProbe === undefined) return;
-    if (askThreadProbe === null || askThreadProbe.workspaceId !== workspaceId || askThreadProbe.mode !== "ask") {
+    if (askThreadProbe === null || askThreadProbe.workspaceId !== workspaceId || askThreadProbe.mode !== "library") {
       handleSelectLibraryThread(null, { replace: true });
     }
   }, [askThreadId, askThreadProbe, handleSelectLibraryThread, workspaceId]);

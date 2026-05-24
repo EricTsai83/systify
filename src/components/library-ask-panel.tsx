@@ -33,12 +33,12 @@ export function LibraryAskPanel({
    */
   onSelectThread: (threadId: ThreadId | null) => void;
 }) {
-  const createAskThread = useMutation(api.chat.threads.createAskThread);
+  const createLibraryAskThread = useMutation(api.chat.threads.createLibraryAskThread);
   const sendMessage = useMutation(api.chat.send.sendMessage);
   const deleteThread = useMutation(api.chat.threads.deleteThread);
   const setThreadPinned = useMutation(api.chat.threads.setThreadPinned);
 
-  const threads = useQuery(api.chat.threads.listThreads, { workspaceId, mode: "ask" });
+  const threads = useQuery(api.chat.threads.listThreads, { workspaceId, mode: "library" });
   // Dual-purpose: confirms the active thread exists (so the message queries
   // below can be gated and never throw the route into its error boundary)
   // and supplies the tab title when the thread has aged out of `listThreads`.
@@ -204,7 +204,7 @@ export function LibraryAskPanel({
       let targetThreadId = threadId;
       let createdNew = false;
       if (!targetThreadId) {
-        const created = await createAskThread({
+        const created = await createLibraryAskThread({
           workspaceId,
           artifactContext: activeArtifactId ? [activeArtifactId] : undefined,
           title: "Library Ask",
@@ -215,7 +215,7 @@ export function LibraryAskPanel({
       await sendMessage({
         threadId: targetThreadId,
         content,
-        mode: "ask",
+        mode: "library",
       });
       setInput("");
       if (createdNew) {

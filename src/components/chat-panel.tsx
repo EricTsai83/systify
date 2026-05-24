@@ -103,6 +103,15 @@ type ChatPanelProps = {
    * pre-repo and unit-test render paths can omit it.
    */
   repositoryId?: RepositoryId;
+  /**
+   * Workspace the composer is rendered inside, when it differs from the
+   * thread context (no-thread URLs). Acts as the anchor for the lazy
+   * `sendMessageStartingNewThread` path — when supplied the Send button
+   * stays enabled on a no-thread URL so the first send can create the
+   * thread atomically. Optional so legacy callers without a workspace
+   * context can omit it.
+   */
+  workspaceId?: WorkspaceId | null;
 };
 
 type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream" | "isChatLoading"> & {
@@ -159,6 +168,7 @@ export function ChatPanel({
   isReadOnly = false,
   readOnlyHint,
   repositoryId,
+  workspaceId,
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
 
@@ -187,7 +197,7 @@ export function ChatPanel({
   // Lazy-provision entry point. Wired here (not in `SandboxActivityPill`)
   // so the ModeSelect can fire activation directly when the user clicks
   // the otherwise-disabled "Sandbox" option — the pill is only mounted
-  // once `chatMode === "sandbox"`, so it can't be the sole trigger.
+  // once `chatMode === "lab"`, so it can't be the sole trigger.
   // `requestSandboxActivation` is idempotent (returns the in-flight job
   // if one exists) so a duplicate click during activation is safe.
   const requestSandboxActivation = useMutation(api.repositories.requestSandboxActivation);
@@ -197,7 +207,7 @@ export function ChatPanel({
     setActivationError(null);
     try {
       await requestSandboxActivation({ repositoryId });
-      setChatMode("sandbox");
+      setChatMode("lab");
     } catch (err) {
       setActivationError(toUserErrorMessage(err, "Couldn't start the sandbox. Try again."));
     }
@@ -267,10 +277,9 @@ export function ChatPanel({
   const visibleSuggestion = rawSuggestion && !dismissedHintKeys.has(rawSuggestion.key) ? rawSuggestion : null;
   const suggestedModeLabel = visibleSuggestion ? MODE_LABELS[visibleSuggestion.suggested] : null;
 
-  const shouldShowSandboxWarning =
-    !isChatLoading && chatMode === "sandbox" && sandboxModeStatus && !sandboxModeAvailable;
+  const shouldShowSandboxWarning = !isChatLoading && chatMode === "lab" && sandboxModeStatus && !sandboxModeAvailable;
   const shouldShowEmptyState = !isChatLoading && !hasMessages;
-  const shouldShowSandboxPill = chatMode === "sandbox" && repositoryId !== undefined;
+  const shouldShowSandboxPill = chatMode === "lab" && repositoryId !== undefined;
 
   // Hoisted so the empty-state branch (no ScrollArea) and the messages
   // branch (inside ScrollArea) can both render the warning above their
@@ -558,14 +567,16 @@ export function ChatPanel({
                   isReadOnly ||
                   isSending ||
                   isSyncing ||
-                  !selectedThreadId ||
                   !chatInput.trim() ||
-                  // Sandbox mode requires a ready live source; if the user
-                  // picked Sandbox optimistically via the activate flow,
-                  // the send button stays disabled until the sandbox
-                  // lifecycle is `available`. Prevents a wasted round-trip
-                  // through the backend's `assertServiceModeEligible` reject.
-                  (chatMode === "sandbox" && !sandboxModeAvailable)
+                  // Lazy first send needs at least one anchor: an existing
+                  // thread or the workspace we'd create the thread in.
+                  (selectedThreadId === null && !workspaceId) ||
+                  // Lab mode requires a ready live source; if the user picked
+                  // Lab optimistically via the activate flow, the send button
+                  // stays disabled until the sandbox lifecycle is `available`.
+                  // Prevents a wasted round-trip through the backend's
+                  // `assertWorkspaceModeEligible` reject.
+                  (chatMode === "lab" && !sandboxModeAvailable)
                 }
                 data-testid="chat-panel-send-button"
               >
@@ -612,7 +623,7 @@ type ModeSelectProps = {
   /**
    * Fired when the user picks the activatable Sandbox option. The
    * caller is responsible for enqueuing `requestSandboxActivation` and
-   * (optimistically) switching `chatMode` to "sandbox" so the
+   * (optimistically) switching `chatMode` to "lab" so the
    * `SandboxActivityPill` mounts and shows provisioning progress.
    */
   onActivateSandbox: () => void;
@@ -649,7 +660,7 @@ function ModeSelect({
 }: ModeSelectProps) {
   const handleChange = (value: string) => {
     const mode = value as ChatMode;
-    if (mode === "sandbox" && !availableModeSet.has(mode) && sandboxIsActivatable) {
+    if (mode === "lab" && !availableModeSet.has(mode) && sandboxIsActivatable) {
       onActivateSandbox();
       return;
     }
@@ -672,7 +683,7 @@ function ModeSelect({
         <SelectGroup>
           {MODE_CATALOG.map((option) => {
             const isAvailable = availableModeSet.has(option.value);
-            const isActivatable = option.value === "sandbox" && !isAvailable && sandboxIsActivatable;
+            const isActivatable = option.value === "lab" && !isAvailable && sandboxIsActivatable;
             const disabledReason = disabledModeReasons[option.value];
             // Activatable sandbox is rendered as clickable: the radix
             // SelectItem only fires `onValueChange` when `disabled={false}`,

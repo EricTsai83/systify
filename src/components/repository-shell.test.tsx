@@ -20,10 +20,10 @@ const queryName = (query: unknown) => {
   }
 };
 
-const { useMutationMock, useQueryMock, useServiceModeMock } = vi.hoisted(() => ({
+const { useMutationMock, useQueryMock, useChatModeMock } = vi.hoisted(() => ({
   useMutationMock: vi.fn(),
   useQueryMock: vi.fn(),
-  useServiceModeMock: vi.fn(),
+  useChatModeMock: vi.fn(),
 }));
 
 const navigateMock = vi.fn();
@@ -41,13 +41,13 @@ vi.mock("react-router-dom", () => ({
   useParams: () => ({}),
 }));
 
-// `useServiceMode` is mocked at the hook level so tests can dictate the
+// `useChatMode` is mocked at the hook level so tests can dictate the
 // active service mode without depending on URL-shape mocks. The shell now
-// gates the artifact panel surface on `serviceMode !== "discuss"`, so the
+// gates the artifact panel surface on `mode !== "discuss"`, so the
 // suite defaults to `lab` to keep the legacy "ready state" artifact-toggle
 // assertions intact; the dedicated discuss test below overrides it.
 vi.mock("@/hooks/use-service-mode", () => ({
-  useServiceMode: useServiceModeMock,
+  useChatMode: useChatModeMock,
 }));
 
 vi.mock("@/components/app-sidebar", () => ({
@@ -288,13 +288,13 @@ beforeEach(() => {
 
   useMutationMock.mockReset();
   useQueryMock.mockReset();
-  useServiceModeMock.mockReset();
-  useServiceModeMock.mockReturnValue({
-    serviceMode: "lab",
+  useChatModeMock.mockReset();
+  useChatModeMock.mockReturnValue({
+    mode: "lab",
     availability: undefined,
     placeholderAvailability: {
-      availableServiceModes: ["discuss", "lab"],
-      defaultServiceMode: "lab",
+      availableModes: ["discuss", "lab"],
+      defaultMode: "lab",
       disabledReasons: {},
       hasAttachedRepo: true,
       hasAtLeastOneArtifact: false,
@@ -354,13 +354,13 @@ beforeEach(() => {
         return [];
       case "chat/streaming:getActiveMessageStream":
         return null;
-      case "serviceModeEligibility:evaluate":
-        // `useServiceMode` is mocked at the hook level above, so this case
+      case "workspaceModeEligibility:evaluate":
+        // `useChatMode` is mocked at the hook level above, so this case
         // is defensive: returning a placeholder keeps the underlying query
         // shape coherent for any code path that might subscribe directly.
         return {
-          availableServiceModes: ["discuss"],
-          defaultServiceMode: "discuss",
+          availableModes: ["discuss"],
+          defaultMode: "discuss",
           disabledReasons: {},
           hasAttachedRepo: false,
           hasAtLeastOneArtifact: false,
@@ -488,12 +488,12 @@ describe("RepositoryShell artifact toggle behavior", () => {
     // affordances (the ChatPanel toggle, the mobile drawer, the desktop
     // column container) so a future refactor can't quietly bring one of
     // them back without a failing test.
-    useServiceModeMock.mockReturnValue({
-      serviceMode: "discuss",
+    useChatModeMock.mockReturnValue({
+      mode: "discuss",
       availability: undefined,
       placeholderAvailability: {
-        availableServiceModes: ["discuss"],
-        defaultServiceMode: "discuss",
+        availableModes: ["discuss"],
+        defaultMode: "discuss",
         disabledReasons: {},
         hasAttachedRepo: true,
         hasAtLeastOneArtifact: false,
@@ -554,18 +554,18 @@ describe("RepositoryShell workspace reconciliation", () => {
     // `ws_db` and not issue a redundant workspace-switch touchWorkspace (the
     // DB already holds the right value).
     //
-    // `serviceMode: null` mirrors what `useServiceMode` would return on a
+    // `mode: null` mirrors what `useChatMode` would return on a
     // transient URL like `/chat` (URL has no `/w/:wid/{discuss,library,lab}`
     // prefix). Without this override, the suite-wide mock's hard-coded
     // "lab" would fire the mode-record effect against `ws_cached` during
     // the brief window before DB-wins reconciliation lands — irrelevant
     // noise for what this test is actually asserting.
-    useServiceModeMock.mockReturnValue({
-      serviceMode: null,
+    useChatModeMock.mockReturnValue({
+      mode: null,
       availability: undefined,
       placeholderAvailability: {
-        availableServiceModes: ["discuss"],
-        defaultServiceMode: "discuss",
+        availableModes: ["discuss"],
+        defaultMode: "discuss",
         disabledReasons: {},
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
@@ -678,17 +678,17 @@ describe("RepositoryShell workspace reconciliation", () => {
   });
 
   test("workspace landing redirects into the remembered discuss mode even with no discuss thread", async () => {
-    // Regression: the workspace's `lastServiceMode` is "discuss", so the
+    // Regression: the workspace's `lastMode` is "discuss", so the
     // `/chat` → `/w/:wid` redirect must settle the user in Discuss. The
     // Tier 2 redirect previously bailed without navigating when no thread of
     // the matching mode existed, stranding the user on the mode-less
     // `/w/:wid` URL — which renders the structural default (library) instead
     // of the mode they were last in.
-    useServiceModeMock.mockReturnValue({
-      serviceMode: null,
+    useChatModeMock.mockReturnValue({
+      mode: null,
       availability: {
-        availableServiceModes: ["discuss", "library"] as const,
-        defaultServiceMode: "library" as const,
+        availableModes: ["discuss", "library"] as const,
+        defaultMode: "library" as const,
         disabledReasons: {},
         hasAttachedRepo: true,
         hasAtLeastOneArtifact: true,
@@ -696,8 +696,8 @@ describe("RepositoryShell workspace reconciliation", () => {
         labReadiness: { canStart: false, reason: null },
       },
       placeholderAvailability: {
-        availableServiceModes: ["discuss"],
-        defaultServiceMode: "discuss",
+        availableModes: ["discuss"],
+        defaultMode: "discuss",
         disabledReasons: {},
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
@@ -706,7 +706,7 @@ describe("RepositoryShell workspace reconciliation", () => {
       },
     });
     const urlWorkspaceId = "ws_discuss_memory" as WorkspaceId;
-    workspacesResult = [makeWorkspace({ _id: "ws_discuss_memory", lastServiceMode: "discuss" })];
+    workspacesResult = [makeWorkspace({ _id: "ws_discuss_memory", lastMode: "discuss" })];
     storedActiveWorkspaceId = "ws_discuss_memory";
     ownerThreadsResult = [];
 
@@ -750,15 +750,15 @@ describe("RepositoryShell workspace reconciliation", () => {
   test("records the URL's settled service mode when it differs from the workspace's stored pick", async () => {
     // The user lands on a canonical mode URL whose mode differs from what
     // the workspace last recorded. The shell must fire a touchWorkspace
-    // with `serviceMode` so the next `/chat` → `/w/:wid` redirect lands
+    // with `mode` so the next `/chat` → `/w/:wid` redirect lands
     // the user back here instead of bouncing them to the structural
     // default — the "Archive → back" round-trip this whole code path
     // exists to make sticky.
-    useServiceModeMock.mockReturnValue({
-      serviceMode: "lab",
+    useChatModeMock.mockReturnValue({
+      mode: "lab",
       availability: {
-        availableServiceModes: ["discuss", "library", "lab"] as const,
-        defaultServiceMode: "library" as const,
+        availableModes: ["discuss", "library", "lab"] as const,
+        defaultMode: "library" as const,
         disabledReasons: {},
         hasAttachedRepo: true,
         hasAtLeastOneArtifact: true,
@@ -766,8 +766,8 @@ describe("RepositoryShell workspace reconciliation", () => {
         labReadiness: { canStart: true, reason: null },
       },
       placeholderAvailability: {
-        availableServiceModes: ["discuss"],
-        defaultServiceMode: "discuss",
+        availableModes: ["discuss"],
+        defaultMode: "discuss",
         disabledReasons: {},
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
@@ -776,13 +776,13 @@ describe("RepositoryShell workspace reconciliation", () => {
       },
     });
     const urlWorkspaceId = "ws_canonical" as WorkspaceId;
-    workspacesResult = [makeWorkspace({ _id: "ws_canonical", lastServiceMode: "library" })];
+    workspacesResult = [makeWorkspace({ _id: "ws_canonical", lastMode: "library" })];
     storedActiveWorkspaceId = "ws_canonical";
 
     render(<RepositoryShell urlWorkspaceId={urlWorkspaceId} urlThreadId={"thread_canonical" as ThreadId} />);
 
     await waitFor(() => {
-      expect(touchWorkspaceMock).toHaveBeenCalledWith({ workspaceId: "ws_canonical", serviceMode: "lab" });
+      expect(touchWorkspaceMock).toHaveBeenCalledWith({ workspaceId: "ws_canonical", mode: "lab" });
     });
   });
 
@@ -791,11 +791,11 @@ describe("RepositoryShell workspace reconciliation", () => {
     // workspace. The mode-record effect must not fire a redundant write
     // every render — that would burn DB writes on every URL pathname
     // tick and undermine the optimistic-update fast path.
-    useServiceModeMock.mockReturnValue({
-      serviceMode: "discuss",
+    useChatModeMock.mockReturnValue({
+      mode: "discuss",
       availability: {
-        availableServiceModes: ["discuss"] as const,
-        defaultServiceMode: "discuss" as const,
+        availableModes: ["discuss"] as const,
+        defaultMode: "discuss" as const,
         disabledReasons: {},
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
@@ -803,8 +803,8 @@ describe("RepositoryShell workspace reconciliation", () => {
         labReadiness: { canStart: false, reason: null },
       },
       placeholderAvailability: {
-        availableServiceModes: ["discuss"],
-        defaultServiceMode: "discuss",
+        availableModes: ["discuss"],
+        defaultMode: "discuss",
         disabledReasons: {},
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
@@ -813,7 +813,7 @@ describe("RepositoryShell workspace reconciliation", () => {
       },
     });
     const urlWorkspaceId = "ws_steady" as WorkspaceId;
-    workspacesResult = [makeWorkspace({ _id: "ws_steady", lastServiceMode: "discuss" })];
+    workspacesResult = [makeWorkspace({ _id: "ws_steady", lastMode: "discuss" })];
     storedActiveWorkspaceId = "ws_steady";
 
     render(<RepositoryShell urlWorkspaceId={urlWorkspaceId} urlThreadId={"thread_steady" as ThreadId} />);
@@ -823,7 +823,7 @@ describe("RepositoryShell workspace reconciliation", () => {
       expect(screen.getByTestId("sidebar")).toHaveAttribute("data-active-workspace-id", "ws_steady");
     });
     expect(touchWorkspaceMock).not.toHaveBeenCalledWith(
-      expect.objectContaining({ workspaceId: "ws_steady", serviceMode: "discuss" }),
+      expect.objectContaining({ workspaceId: "ws_steady", mode: "discuss" }),
     );
   });
 });

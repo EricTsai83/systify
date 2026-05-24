@@ -17,7 +17,7 @@ type ThreadSection = {
 };
 
 /**
- * Three-mode restructure — Library Ask thread history popover.
+ * Library Ask thread history popover.
  *
  * The searchable "all threads" surface for Library Ask, anchored as a popup
  * beneath the clock button on the thread tab strip. The strip itself is only
