@@ -13,7 +13,7 @@ import {
   isLeaseActive,
   throwOperationAlreadyInProgress,
 } from "./lib/rateLimit";
-import { getSandboxAvailability } from "./lib/sandboxAvailability";
+import { requireRepositorySandbox } from "./lib/repositorySandbox";
 import { createOpaqueErrorId } from "./lib/observability";
 import { completeRunningJob, failRunningJob, failStaleActiveJob, markQueuedJobRunning } from "./jobLifecycle";
 
@@ -119,11 +119,7 @@ export const requestFailureModeAnalysis = mutation({
       }
     }
 
-    const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
-    const sandboxAvailability = getSandboxAvailability(sandbox);
-    if (!sandboxAvailability.available || !sandbox) {
-      throw new Error(sandboxAvailability.message ?? "Failure mode analysis requires an available sandbox.");
-    }
+    const { sandbox } = await requireRepositorySandbox(ctx, repository);
 
     const now = Date.now();
     const activeJob = await getActiveFailureModeJob(ctx, args.threadId, now);
@@ -182,11 +178,7 @@ export const getFailureModeContext = internalQuery({
     if (!repository) {
       throw new Error("Repository not found.");
     }
-    const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
-    const sandboxAvailability = getSandboxAvailability(sandbox);
-    if (!sandboxAvailability.available || !sandbox) {
-      throw new Error(sandboxAvailability.message ?? "Failure mode analysis requires an available sandbox.");
-    }
+    const { sandbox } = await requireRepositorySandbox(ctx, repository);
 
     return {
       threadId: thread._id,

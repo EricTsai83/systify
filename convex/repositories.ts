@@ -6,7 +6,7 @@ import { mutation, query, internalQuery, internalMutation, type MutationCtx } fr
 import { drainMessageToolCallEvents } from "./chat/toolCallEventStore";
 import { getDefaultThreadMode } from "./chatModeResolver";
 import { requireViewerIdentity } from "./lib/auth";
-import { getSandboxModeStatus } from "./lib/sandboxAvailability";
+import { getRepositorySandboxStatus } from "./lib/repositorySandbox";
 import { makeRepositoryTitle, parseGitHubUrl } from "./lib/github";
 import { CASCADE_BATCH_SIZE } from "./lib/constants";
 import { ensureRepositoryWorkspace } from "./lib/workspaces";
@@ -96,7 +96,7 @@ export const listRepositories = query({
  *
  * One query feeds the page so the client renders without an N+1 over
  * `getRepositoryDetail`. We re-use the same helpers the per-repo TopBar
- * status pill consumes (`getSandboxModeStatus`, the remote-sha diff for
+ * status pill consumes (`getRepositorySandboxStatus`, the remote-sha diff for
  * `hasRemoteUpdates`) so the Resources cards and the per-thread chrome
  * never disagree about what a given sandbox is doing.
  *
@@ -129,8 +129,8 @@ export const listResourceInventory = query({
     // trips share one network batch.
     const inventory = await Promise.all(
       activeRepositories.map(async (repo) => {
-        const [sandbox, workspace] = await Promise.all([
-          repo.latestSandboxId ? ctx.db.get(repo.latestSandboxId) : Promise.resolve(null),
+        const [sandboxStatus, workspace] = await Promise.all([
+          getRepositorySandboxStatus(ctx, repo),
           ctx.db
             .query("workspaces")
             .withIndex("by_ownerTokenIdentifier_and_repositoryId", (q) =>
@@ -138,7 +138,7 @@ export const listResourceInventory = query({
             )
             .unique(),
         ]);
-        const sandboxModeStatus = getSandboxModeStatus(sandbox);
+        const { sandboxModeStatus, sandbox } = sandboxStatus;
         const hasRemoteUpdates =
           !!repo.latestRemoteSha && !!repo.lastSyncedCommitSha && repo.latestRemoteSha !== repo.lastSyncedCommitSha;
         return {
@@ -303,9 +303,7 @@ export const getRepositoryDetail = query({
     const fileCount = repository.fileCount;
     const fileCountLabel = fileCount >= FILE_COUNT_DISPLAY_LIMIT ? `${FILE_COUNT_DISPLAY_LIMIT}+` : String(fileCount);
 
-    const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
-
-    const sandboxModeStatus = getSandboxModeStatus(sandbox);
+    const { sandboxModeStatus, sandbox } = await getRepositorySandboxStatus(ctx, repository);
 
     // Determine whether the remote has commits we haven't synced yet
     const hasRemoteUpdates =

@@ -63,12 +63,12 @@ Lab sessions are stored in `labSessions`, scoped to a workspace, and linked to a
 
 ## Availability
 
-Sandbox availability is centralized in `convex/lib/sandboxAvailability.ts`. Callers must not decide Lab readiness from `sandboxes.status` alone; availability also depends on TTL, `remoteId`, and `repoPath`.
+Sandbox availability is centralized in `convex/lib/repositorySandbox.ts`. Callers must not decide Lab readiness from `sandboxes.status` alone; availability also depends on TTL, `remoteId`, and `repoPath`.
 
 ```mermaid
 flowchart TD
   SandboxRow[sandboxes]
-  Availability[getSandboxAvailability]
+  Availability[getRepositorySandboxStatus]
   ChatSend[chat.sendMessage]
   ThreadContext[threadContext]
   SystemDesignJob[system design generation]

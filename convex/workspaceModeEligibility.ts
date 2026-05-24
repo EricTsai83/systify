@@ -39,7 +39,7 @@ import {
   type WorkspaceModeResolution,
 } from "./chatModeResolver";
 import { requireViewerIdentity } from "./lib/auth";
-import { getSandboxModeStatus, type SandboxModeStatus } from "./lib/sandboxAvailability";
+import { getRepositorySandboxStatus, type SandboxModeStatus } from "./lib/repositorySandbox";
 import {
   getSandboxReplyEstimateCents,
   peekSandboxDailyCostForUser,
@@ -328,8 +328,7 @@ async function evaluateFromRepository(
       .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repository!._id))
       .take(1);
     hasAtLeastOneArtifact = probe.length > 0;
-    const sandbox = args.repository.latestSandboxId ? await ctx.db.get(args.repository.latestSandboxId) : null;
-    sandboxModeStatus = getSandboxModeStatus(sandbox);
+    sandboxModeStatus = (await getRepositorySandboxStatus(ctx, args.repository)).sandboxModeStatus;
   }
 
   let costGate: SandboxCostCapGate = { enabled: true };
