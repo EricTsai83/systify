@@ -1,48 +1,34 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useQuery } from "convex/react";
-import { FolderIcon, SparkleIcon } from "@phosphor-icons/react";
-import { api } from "../../convex/_generated/api";
-import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
+import { useCallback, useMemo, useState } from "react";
 import { LibraryEditor } from "@/components/library-editor";
 import { LibraryTabs } from "@/components/library-tabs";
-import { LibraryTree } from "@/components/library-tree";
 import { QuickOpenDialog } from "@/components/quick-open-dialog";
 import { SystemDesignStatusBanner } from "@/components/system-design-status-banner";
-import { Button } from "@/components/ui/button";
-import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
-import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
+import { useSidebar } from "@/components/ui/sidebar";
 import { useLibraryShortcuts } from "@/hooks/use-library-shortcuts";
 import type { LibraryTabsApi } from "@/hooks/use-library-tabs";
 import { useWarmArtifactSubscriptions } from "@/hooks/use-warm-artifact-subscriptions";
 import type { ArtifactId, ArtifactListItem, FolderId, RepositoryId } from "@/lib/types";
-import { cn } from "@/lib/utils";
 
 /**
- * Library shell — two-column desktop layout:
+ * Library shell — single-column desktop layout.
  *
- *   LEFT  — Document: artifact tab strip + editor.
- *   RIGHT — Folder tree (collapsible via Cmd+B).
- *
- * Library Ask is no longer a column here — it lives in the app sidebar.
- * The tab-strip state is owned by the Library page and handed in via
- * `tabs` so the sidebar's Ask panel and this document column stay in sync.
- *
- * On narrow viewports the document column is the base layer and the folder
- * tree moves into a Sheet.
+ * The folder tree moved to the left {@link AppSidebarLeft} (Library mode)
+ * and Library Ask moved to the right {@link AppSidebarRight}. This shell
+ * now owns only the artifact tab strip + editor + tab-aware shortcuts.
+ * Artifact data is hoisted to {@link LibraryPage} so the same query feeds
+ * the sidebar's tree, the right sidebar's Ask panel, and the editor.
  */
-export function LibraryShell({ repositoryId, tabs }: { repositoryId: RepositoryId; tabs: LibraryTabsApi }) {
-  const allArtifacts = useQuery(api.artifacts.listMetadataByRepositoryWithFreshness, { repositoryId });
-  const { isUnseen, markViewed } = useArtifactViewState(repositoryId);
-
-  // Clear the "changed since you last looked" dot the moment the user
-  // activates an artifact tab — clicking from the tree, switching tabs,
-  // and URL-driven activation all land here.
-  useEffect(() => {
-    if (tabs.activeArtifactId) {
-      markViewed(tabs.activeArtifactId);
-    }
-  }, [tabs.activeArtifactId, markViewed]);
-
+export function LibraryShell({
+  repositoryId,
+  tabs,
+  allArtifacts,
+  hasArtifacts,
+}: {
+  repositoryId: RepositoryId;
+  tabs: LibraryTabsApi;
+  allArtifacts: ReadonlyArray<ArtifactListItem> | undefined;
+  hasArtifacts: boolean;
+}) {
   const artifactsById = useMemo(() => {
     const map = new Map<ArtifactId, ArtifactListItem>();
     for (const artifact of allArtifacts ?? []) {
@@ -61,32 +47,8 @@ export function LibraryShell({ repositoryId, tabs }: { repositoryId: RepositoryI
   }, [tabs.openArtifactIds, artifactsById]);
   useWarmArtifactSubscriptions(tabs.openArtifactIds, openFolderIds);
 
-  const [isTreeOpenMobile, setIsTreeOpenMobile] = useState(false);
-  const [isTreeCollapsedDesktop, setIsTreeCollapsedDesktop] = useState(false);
   const [isQuickOpenOpen, setIsQuickOpenOpen] = useState(false);
-  const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false);
-  const [isLargeViewport, setIsLargeViewport] = useState(
-    () => typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches,
-  );
-
-  const hasArtifacts = (allArtifacts?.length ?? 0) > 0;
-  const openGenerateDialog = useCallback(() => setIsGenerateDialogOpen(true), []);
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia("(min-width: 1024px)");
-    const handleChange = () => setIsLargeViewport(mediaQuery.matches);
-    handleChange();
-    mediaQuery.addEventListener("change", handleChange);
-    return () => mediaQuery.removeEventListener("change", handleChange);
-  }, []);
-
-  const handleSelectArtifact = useCallback(
-    (artifactId: ArtifactId) => {
-      tabs.openTab(artifactId);
-      setIsTreeOpenMobile(false);
-    },
-    [tabs],
-  );
+  const { toggle: toggleLeftSidebar } = useSidebar("left");
 
   useLibraryShortcuts({
     onQuickOpen: () => setIsQuickOpenOpen(true),
@@ -95,99 +57,43 @@ export function LibraryShell({ repositoryId, tabs }: { repositoryId: RepositoryI
         tabs.closeTab(tabs.activeArtifactId);
       }
     },
-    onToggleTree: () => {
-      if (typeof window !== "undefined" && window.matchMedia("(min-width: 1024px)").matches) {
-        setIsTreeCollapsedDesktop((collapsed) => !collapsed);
-      } else {
-        setIsTreeOpenMobile((open) => !open);
-      }
-    },
+    // Cmd+B now toggles the left sidebar (which carries the Library tree
+    // in Library mode), matching Discuss/Lab behaviour. The previous
+    // separate "collapse icon rail" affordance is intentionally dropped
+    // in exchange for a single muscle-memory across all modes.
+    onToggleTree: toggleLeftSidebar,
     onFocusTab: (index) => {
       const target = tabs.openArtifactIds[index];
       if (target) tabs.activateTab(target);
     },
   });
 
-  const navigatorPanel = (
-    <LibraryTree
-      repositoryId={repositoryId}
-      artifacts={allArtifacts ?? []}
-      selectedArtifactId={tabs.activeArtifactId}
-      onSelectArtifact={handleSelectArtifact}
-      onGenerate={openGenerateDialog}
-      isUnseen={isUnseen}
-      className="min-h-[160px]"
-    />
+  const handleSelectArtifact = useCallback(
+    (artifactId: ArtifactId) => {
+      tabs.openTab(artifactId);
+    },
+    [tabs],
   );
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col lg:flex-row">
-      {/* LEFT: Document stack */}
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur lg:hidden">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="gap-1.5"
-            onClick={() => setIsTreeOpenMobile(true)}
-          >
-            <FolderIcon size={13} weight="duotone" /> Folders
-          </Button>
-        </div>
+    <div className="flex h-full min-h-0 w-full flex-col">
+      <SystemDesignStatusBanner repositoryId={repositoryId} />
 
-        <SystemDesignStatusBanner repositoryId={repositoryId} />
+      <LibraryTabs
+        openArtifactIds={tabs.openArtifactIds}
+        activeArtifactId={tabs.activeArtifactId}
+        artifactsById={artifactsById}
+        onActivate={tabs.activateTab}
+        onClose={tabs.closeTab}
+        onReorder={tabs.reorderTabs}
+        className="shrink-0"
+      />
 
-        <LibraryTabs
-          openArtifactIds={tabs.openArtifactIds}
-          activeArtifactId={tabs.activeArtifactId}
-          artifactsById={artifactsById}
-          onActivate={tabs.activateTab}
-          onClose={tabs.closeTab}
-          onReorder={tabs.reorderTabs}
-          className="shrink-0"
-        />
-
-        {tabs.activeArtifactId ? (
-          <LibraryEditor artifactId={tabs.activeArtifactId} />
-        ) : allArtifacts === undefined ? null : (
-          <LibraryEmptyState hasArtifacts={hasArtifacts} onGenerate={openGenerateDialog} />
-        )}
-      </div>
-
-      {/* RIGHT: Folder tree — collapsible */}
-      <aside
-        aria-label="Library folder tree"
-        className={cn(
-          "hidden min-h-0 shrink-0 overflow-hidden border-l border-border bg-muted/20 lg:flex lg:flex-col",
-          isTreeCollapsedDesktop ? "lg:w-12" : "lg:w-[min(20rem,26vw)]",
-        )}
-      >
-        {isTreeCollapsedDesktop ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="m-2 h-8 w-8"
-            aria-label="Expand Library folder tree"
-            onClick={() => setIsTreeCollapsedDesktop(false)}
-          >
-            <FolderIcon size={14} weight="duotone" />
-          </Button>
-        ) : (
-          <div className="min-h-0 flex-1 overflow-hidden">{navigatorPanel}</div>
-        )}
-      </aside>
-
-      <Sheet open={isTreeOpenMobile && !isLargeViewport} onOpenChange={setIsTreeOpenMobile}>
-        <SheetContent side="right" className="flex w-[min(100vw,24rem)] flex-col p-0 sm:w-[min(100vw,28rem)] lg:hidden">
-          <SheetTitle className="sr-only">Library folder tree</SheetTitle>
-          <SheetDescription className="sr-only">
-            Browse artifact folders, then return to your document column.
-          </SheetDescription>
-          <div className="min-h-0 flex-1 overflow-hidden">{navigatorPanel}</div>
-        </SheetContent>
-      </Sheet>
+      {tabs.activeArtifactId ? (
+        <LibraryEditor artifactId={tabs.activeArtifactId} />
+      ) : allArtifacts === undefined ? null : (
+        <LibraryEmptyState hasArtifacts={hasArtifacts} />
+      )}
 
       <QuickOpenDialog
         open={isQuickOpenOpen}
@@ -197,30 +103,20 @@ export function LibraryShell({ repositoryId, tabs }: { repositoryId: RepositoryI
           handleSelectArtifact(artifactId);
         }}
       />
-
-      <GenerateSystemDesignDialog
-        open={isGenerateDialogOpen}
-        onOpenChange={setIsGenerateDialogOpen}
-        repositoryId={repositoryId}
-      />
     </div>
   );
 }
 
-function LibraryEmptyState({ hasArtifacts, onGenerate }: { hasArtifacts: boolean; onGenerate: () => void }) {
+function LibraryEmptyState({ hasArtifacts }: { hasArtifacts: boolean }) {
   if (!hasArtifacts) {
     return (
       <div className="flex flex-1 items-center justify-center px-6 py-10">
         <div className="w-full max-w-md text-center">
           <h2 className="text-base font-semibold text-foreground">No documents yet</h2>
           <p className="mt-2 text-sm text-muted-foreground">
-            Generate the System Design starter set — architecture, data model, API, security and more — straight into
-            your Library.
+            This Library has no System Design documents to read. Generate them from the Ask panel on the right to get
+            started.
           </p>
-          <Button type="button" size="sm" className="mt-5 gap-1.5" onClick={onGenerate}>
-            <SparkleIcon size={14} weight="bold" />
-            Generate System Design
-          </Button>
         </div>
       </div>
     );

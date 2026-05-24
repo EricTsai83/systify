@@ -3,7 +3,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalQuery, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
-import { getSandboxModeStatus, type SandboxModeStatus } from "./lib/sandboxAvailability";
+import { getRepositorySandboxStatus, type SandboxModeStatus } from "./lib/repositorySandbox";
 import {
   DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
   DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED,
@@ -69,7 +69,7 @@ export interface ThreadContext {
 /**
  * Maps the centralized sandbox availability result onto the legacy
  * ChatModeResolver input domain. This keeps TTL, missing remote id/path, and
- * provider status semantics in `lib/sandboxAvailability` instead of duplicating
+ * provider status semantics in `lib/repositorySandbox` instead of duplicating
  * them across UI capability queries.
  */
 function toChatModeSandboxStatus(status: SandboxModeStatus | null): ChatModeSandboxStatus {
@@ -173,12 +173,10 @@ async function enrichThreadContext(
 
   if (thread.repositoryId) {
     attachedRepository = await ctx.db.get(thread.repositoryId);
-    if (attachedRepository?.latestSandboxId) {
-      const sandbox = await ctx.db.get(attachedRepository.latestSandboxId);
-      sandboxStatus = sandbox?.status ?? null;
-      sandboxModeStatus = getSandboxModeStatus(sandbox);
-    } else if (attachedRepository) {
-      sandboxModeStatus = getSandboxModeStatus(null);
+    if (attachedRepository) {
+      const result = await getRepositorySandboxStatus(ctx, attachedRepository);
+      sandboxStatus = result.sandbox?.status ?? null;
+      sandboxModeStatus = result.sandboxModeStatus;
     }
   }
 

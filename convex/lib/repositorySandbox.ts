@@ -1,9 +1,5 @@
-export type SandboxAvailabilityInput = {
-  status: "provisioning" | "ready" | "stopped" | "archived" | "failed";
-  ttlExpiresAt: number;
-  remoteId?: string;
-  repoPath?: string;
-};
+import type { Doc } from "../_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 export type SandboxUnavailableCode =
   | "missing_sandbox"
@@ -11,18 +7,16 @@ export type SandboxUnavailableCode =
   | "sandbox_expired"
   | "sandbox_provisioning";
 
-export type SandboxAvailability = {
-  available: boolean;
+export type SandboxModeStatus = {
   reasonCode: "available" | SandboxUnavailableCode;
   message: string | null;
 };
 
-export type SandboxModeStatus = Pick<SandboxAvailability, "reasonCode" | "message">;
+type SandboxAvailability = SandboxModeStatus & { available: boolean };
 
-export function getSandboxAvailability(
-  sandbox: SandboxAvailabilityInput | null | undefined,
-  now = Date.now(),
-): SandboxAvailability {
+type SandboxReadCtx = QueryCtx | MutationCtx;
+
+function classifySandbox(sandbox: Doc<"sandboxes"> | null, now = Date.now()): SandboxAvailability {
   if (!sandbox) {
     return {
       available: false,
@@ -54,7 +48,6 @@ export function getSandboxAvailability(
   // configured idle interval) — treat it the same as a TTL-expired sandbox so
   // the UI surfaces it as a warning ("Sandbox expired") rather than a red
   // "Sandbox error", which is reserved for the genuine `failed` case above.
-  // Mirrors the `archived → expired` collapse already in chatModeResolver.
   if (sandbox.status === "stopped" || sandbox.status === "archived" || now > sandbox.ttlExpiresAt) {
     return {
       available: false,
@@ -80,18 +73,25 @@ export function getSandboxAvailability(
   };
 }
 
-export function getSandboxModeStatus(
-  sandbox: SandboxAvailabilityInput | null | undefined,
-  now = Date.now(),
-): SandboxModeStatus {
-  const { available: _available, ...status } = getSandboxAvailability(sandbox, now);
-  return status;
+export async function getRepositorySandboxStatus(
+  ctx: SandboxReadCtx,
+  repository: Doc<"repositories">,
+): Promise<{
+  sandboxModeStatus: SandboxModeStatus;
+  sandbox: Doc<"sandboxes"> | null;
+}> {
+  const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
+  const { available: _available, ...sandboxModeStatus } = classifySandbox(sandbox);
+  return { sandboxModeStatus, sandbox };
 }
 
-export function getSandboxUnavailableReason(sandbox: SandboxAvailabilityInput | null | undefined, now = Date.now()) {
-  return getSandboxAvailability(sandbox, now).message;
-}
-
-export function isSandboxAvailable(sandbox: SandboxAvailabilityInput | null | undefined, now = Date.now()) {
-  return getSandboxAvailability(sandbox, now).available;
+export async function requireRepositorySandbox(
+  ctx: SandboxReadCtx,
+  repository: Doc<"repositories">,
+): Promise<{ sandbox: Doc<"sandboxes"> }> {
+  const { sandboxModeStatus, sandbox } = await getRepositorySandboxStatus(ctx, repository);
+  if (sandboxModeStatus.reasonCode !== "available" || !sandbox) {
+    throw new Error(sandboxModeStatus.message ?? "Sandbox is not available for this repository.");
+  }
+  return { sandbox };
 }

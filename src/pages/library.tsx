@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { AppSidebar } from "@/components/app-sidebar";
+import { AppSidebarLeft, AppSidebarRight } from "@/components/app-sidebar";
+import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
 import { LibraryShell } from "@/components/library-shell";
 import { ScreenState } from "@/components/screen-state";
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
+import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
 import {
   DEFAULT_AUTHENTICATED_PATH,
@@ -118,11 +120,36 @@ function LibraryWorkspace({
   const repositoryId = currentWorkspace?.repositoryId ?? null;
 
   // The Library tab strip drives both the document column (LibraryShell)
-  // and the Ask panel's artifact context (the sidebar). State is owned
-  // here and handed to both. It mounts ahead of the repo-guard redirect
-  // below — that is the hooks rule, and the redirect's unmount cleanly
-  // cancels this hook's debounced URL write.
+  // and the Ask panel's artifact context (the right sidebar). State is
+  // owned here and handed to both. It mounts ahead of the repo-guard
+  // redirect below — that is the hooks rule, and the redirect's unmount
+  // cleanly cancels this hook's debounced URL write.
   const tabs = useLibraryTabs(workspaceId, artifactId);
+
+  // Hoisted artifact subscription. Powers the left sidebar's tree, the
+  // editor column, and the right Ask panel's artifact context — taking it
+  // once here means switching modes / sidebars never re-subscribes.
+  const allArtifacts = useQuery(
+    api.artifacts.listMetadataByRepositoryWithFreshness,
+    repositoryId ? { repositoryId } : "skip",
+  );
+  const { isUnseen, markViewed } = useArtifactViewState(repositoryId);
+
+  const hasArtifacts = (allArtifacts?.length ?? 0) > 0;
+
+  // Clear the "changed since you last looked" dot the moment the user
+  // activates an artifact tab — clicking from the tree, switching tabs,
+  // and URL-driven activation all land here. Hoisted with the artifact
+  // data so the dot clears even when the editor column is not what
+  // surfaces the selection (e.g. an Ask citation jump).
+  useEffect(() => {
+    if (tabs.activeArtifactId) {
+      markViewed(tabs.activeArtifactId);
+    }
+  }, [tabs.activeArtifactId, markViewed]);
+
+  const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false);
+  const openGenerateDialog = useCallback(() => setIsGenerateDialogOpen(true), []);
 
   const handleSwitchWorkspace = useCallback(
     (id: WorkspaceId) => {
@@ -231,31 +258,61 @@ function LibraryWorkspace({
 
   return (
     <>
-      <AppSidebar
+      <AppSidebarLeft
         repositories={repositories}
         workspaces={workspaces}
         activeWorkspaceId={workspaceId}
         onSwitchWorkspace={handleSwitchWorkspace}
-        variant="libraryAsk"
-        askThreadId={askThreadId}
-        activeArtifactId={tabs.activeArtifactId}
-        onSelectArtifact={tabs.openTab}
-        onSelectAskThread={handleSelectLibraryThread}
+        selectedThreadId={null}
+        onSelectThread={() => {}}
+        onDeleteThread={() => {}}
         onImported={handleImported}
         onError={handleRailError}
+        libraryRepositoryId={repositoryId}
+        libraryArtifacts={allArtifacts}
+        libraryActiveArtifactId={tabs.activeArtifactId}
+        onSelectLibraryArtifact={tabs.openTab}
+        onGenerate={openGenerateDialog}
+        isUnseen={isUnseen}
       />
       <SidebarInset>
         <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
-          <SidebarTrigger />
+          <SidebarTrigger side="left" />
           <h1 className="min-w-0 truncate text-sm font-semibold tracking-tight text-foreground md:text-base">
             {currentWorkspace?.name ?? "Library"}
           </h1>
           <span className="shrink-0 text-[11px] text-muted-foreground">Read Only</span>
+          <SidebarTrigger side="right" className="ml-auto" />
         </header>
         <div className="flex min-h-0 min-w-0 flex-1">
-          {repositoryId ? <LibraryShell repositoryId={repositoryId} tabs={tabs} /> : null}
+          {repositoryId ? (
+            <LibraryShell
+              repositoryId={repositoryId}
+              tabs={tabs}
+              allArtifacts={allArtifacts}
+              hasArtifacts={hasArtifacts}
+            />
+          ) : null}
         </div>
       </SidebarInset>
+      {repositoryId ? (
+        <AppSidebarRight
+          activeWorkspaceId={workspaceId}
+          askThreadId={askThreadId}
+          activeArtifactId={tabs.activeArtifactId}
+          hasArtifacts={hasArtifacts}
+          onSelectArtifact={tabs.openTab}
+          onSelectAskThread={handleSelectLibraryThread}
+          onGenerate={openGenerateDialog}
+        />
+      ) : null}
+      {repositoryId ? (
+        <GenerateSystemDesignDialog
+          open={isGenerateDialogOpen}
+          onOpenChange={setIsGenerateDialogOpen}
+          repositoryId={repositoryId}
+        />
+      ) : null}
     </>
   );
 }

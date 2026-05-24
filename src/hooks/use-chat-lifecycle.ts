@@ -1,0 +1,136 @@
+import { useCallback } from "react";
+import { useMutation } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { toUserErrorMessage } from "@/lib/errors";
+import type { ChatMode, ThreadId, WorkspaceId } from "@/lib/types";
+
+/**
+ * Owns the in-flight reply lifecycle (send, cancel) plus thread teardown.
+ * Selection-aware but selection-state-agnostic: callers pass the current
+ * thread / workspace and the thread queued for deletion, and the hook hands
+ * back navigation hooks via `onAfterCreateThread` / `onAfterDeleteThread` so
+ * the parent can update the URL once a mutation succeeds.
+ *
+ * Send path branches on whether a thread already exists:
+ *   - has-thread: forwards to `chat.sendMessage` with the current thread id;
+ *   - no-thread:  forwards to `chat.sendMessageStartingNewThread` so the
+ *                 backend atomically creates the thread and dispatches the
+ *                 first reply.
+ */
+export function useChatLifecycle({
+  selectedThreadId,
+  workspaceId,
+  threadToDelete,
+  chatInput,
+  chatMode,
+  clearChatInput,
+  setActionError,
+  setThreadToDelete,
+  onAfterCreateThread,
+  onAfterDeleteThread,
+}: {
+  selectedThreadId: ThreadId | null;
+  workspaceId: WorkspaceId | null;
+  threadToDelete: ThreadId | null;
+  chatInput: string;
+  chatMode: ChatMode;
+  clearChatInput: () => void;
+  setActionError: (value: string | null) => void;
+  setThreadToDelete: (value: ThreadId | null) => void;
+  onAfterCreateThread: (threadId: ThreadId, mode: ChatMode) => void;
+  onAfterDeleteThread: (deletedThreadId: ThreadId) => void;
+}) {
+  const sendMessageMutation = useMutation(api.chat.send.sendMessage);
+  const sendMessageStartingNewThreadMutation = useMutation(api.chat.send.sendMessageStartingNewThread);
+  const cancelInFlightReplyMutation = useMutation(api.chat.cancel.cancelInFlightReply);
+  const deleteThreadMutation = useMutation(api.chat.threads.deleteThread);
+
+  const [isSending, handleSendMessage] = useAsyncCallback(
+    useCallback(
+      async (event: React.FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        const trimmed = chatInput.trim();
+        if (!trimmed) return;
+        setActionError(null);
+        try {
+          if (selectedThreadId) {
+            await sendMessageMutation({
+              threadId: selectedThreadId,
+              content: chatInput,
+              mode: chatMode,
+            });
+            clearChatInput();
+            return;
+          }
+          if (!workspaceId) return;
+          const result = await sendMessageStartingNewThreadMutation({
+            workspaceId,
+            content: chatInput,
+            mode: chatMode,
+          });
+          clearChatInput();
+          onAfterCreateThread(result.threadId, result.mode);
+        } catch (error) {
+          setActionError(toUserErrorMessage(error, "Failed to send the message."));
+        }
+      },
+      [
+        chatInput,
+        chatMode,
+        clearChatInput,
+        onAfterCreateThread,
+        selectedThreadId,
+        sendMessageMutation,
+        sendMessageStartingNewThreadMutation,
+        setActionError,
+        workspaceId,
+      ],
+    ),
+  );
+
+  const [isCancellingReply, handleCancelInFlightReply] = useAsyncCallback(
+    useCallback(async () => {
+      if (!selectedThreadId) return;
+      setActionError(null);
+      try {
+        await cancelInFlightReplyMutation({ threadId: selectedThreadId });
+      } catch (error) {
+        setActionError(toUserErrorMessage(error, "Failed to stop the reply."));
+      }
+    }, [cancelInFlightReplyMutation, selectedThreadId, setActionError]),
+  );
+
+  const [isDeletingThread, handleDeleteThread] = useAsyncCallback(
+    useCallback(async () => {
+      if (!threadToDelete) return;
+      setActionError(null);
+      try {
+        await deleteThreadMutation({ threadId: threadToDelete });
+        const deletedId = threadToDelete;
+        setThreadToDelete(null);
+        if (selectedThreadId === deletedId) {
+          onAfterDeleteThread(deletedId);
+        }
+      } catch (error) {
+        setActionError(toUserErrorMessage(error, "Failed to delete the thread."));
+      }
+    }, [
+      deleteThreadMutation,
+      onAfterDeleteThread,
+      selectedThreadId,
+      setActionError,
+      setThreadToDelete,
+      threadToDelete,
+    ]),
+  );
+
+  return {
+    isSending,
+    handleSendMessage,
+    isCancellingReply,
+    handleCancelInFlightReply,
+    isDeletingThread,
+    handleDeleteThread,
+  };
+}

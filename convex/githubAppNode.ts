@@ -3,7 +3,7 @@
 import { v } from "convex/values";
 import jwt from "jsonwebtoken";
 import { createPrivateKey, type KeyObject } from "node:crypto";
-import { action, internalAction } from "./_generated/server";
+import { action, internalAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireViewerIdentity } from "./lib/auth";
 import { parseGitHubUrl } from "./lib/github";
@@ -129,20 +129,39 @@ export async function getInstallationAccessToken(installationId: number): Promis
 }
 
 // ---------------------------------------------------------------------------
-// Internal action: cross-runtime wrapper for getInstallationAccessToken
+// Installation token for owner — single front door for "give me a usable
+// GitHub token for this owner". Absorbs the (lookup installation → fetch
+// token) dance that every Node and V8 caller used to repeat.
 // ---------------------------------------------------------------------------
 
 /**
- * Wrapper action so V8-runtime modules (e.g. githubCheck.ts) can obtain an
- * installation token via ctx.runAction.
+ * Node-runtime helper. Returns `null` when the owner has no active GitHub App
+ * installation, so callers can decide whether to fail loudly (private repo
+ * access required) or fall back (unauthenticated public read).
  */
-export const getInstallationToken = internalAction({
+export async function resolveInstallationTokenForOwner(
+  ctx: ActionCtx,
+  ownerTokenIdentifier: string,
+): Promise<{ installationId: number; token: string } | null> {
+  const installationId: number | null = await ctx.runQuery(internal.github.getInstallationIdForOwner, {
+    ownerTokenIdentifier,
+  });
+  if (!installationId) {
+    return null;
+  }
+  const token = await getInstallationAccessToken(installationId);
+  return { installationId, token };
+}
+
+/**
+ * V8-callable wrapper. V8 mutations / actions reach the Node-only token
+ * fetch through `ctx.runAction(internal.githubAppNode.getInstallationTokenForOwner, ...)`.
+ */
+export const getInstallationTokenForOwner = internalAction({
   args: {
-    installationId: v.number(),
+    ownerTokenIdentifier: v.string(),
   },
-  handler: async (_ctx, args) => {
-    return await getInstallationAccessToken(args.installationId);
-  },
+  handler: async (ctx, args) => await resolveInstallationTokenForOwner(ctx, args.ownerTokenIdentifier),
 });
 
 // ---------------------------------------------------------------------------
@@ -199,6 +218,64 @@ export const initiateGitHubInstall = action({
  * when access is denied so the UI can show the error *before* any import
  * records or sandbox resources are created.
  */
+/**
+ * Single GitHub-side probe for "can the installation read this repository?"
+ *
+ * Plain async function (not a Convex action) so both the user-facing
+ * `verifyRepoAccess` and the internal `checkRepoAccess` can call it without
+ * paying an extra `ctx.runAction` round-trip. Pure return shape — no throws —
+ * so the user-facing wrapper can map it onto its throw contract while internal
+ * callers consume the discriminated union directly.
+ */
+async function fetchRepoAccessFromGitHub(args: {
+  installationId: number;
+  owner: string;
+  repo: string;
+}): Promise<
+  | { accessible: true; isPrivate: boolean; fullName: string; defaultBranch: string }
+  | { accessible: false; message: string }
+> {
+  const token = await getInstallationAccessToken(args.installationId);
+
+  const response = await fetch(`https://api.github.com/repos/${args.owner}/${args.repo}`, {
+    headers: {
+      "Accept": "application/vnd.github.v3+json",
+      "Authorization": `token ${token}`,
+      "User-Agent": "systify",
+    },
+  });
+
+  if (response.ok) {
+    const data = (await response.json()) as {
+      private: boolean;
+      full_name: string;
+      default_branch: string;
+    };
+    return {
+      accessible: true,
+      isPrivate: data.private,
+      fullName: data.full_name,
+      defaultBranch: data.default_branch,
+    };
+  }
+
+  if (response.status === 404 || response.status === 403) {
+    return {
+      accessible: false,
+      message:
+        `Repository "${args.owner}/${args.repo}" is not accessible. ` +
+        `Make sure it is included in your GitHub App installation. ` +
+        `Go to GitHub Settings → Applications → Configure to update your repository selection.`,
+    };
+  }
+
+  const body = await response.text();
+  return {
+    accessible: false,
+    message: `GitHub API error (${response.status}): ${body}`,
+  };
+}
+
 export const verifyRepoAccess = action({
   args: {
     url: v.string(),
@@ -215,30 +292,11 @@ export const verifyRepoAccess = action({
       throw new Error("No active GitHub App installation found. Please connect your GitHub account first.");
     }
 
-    const token = await getInstallationAccessToken(installationId);
-
-    const response = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`, {
-      headers: {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": `token ${token}`,
-        "User-Agent": "systify",
-      },
-    });
-
-    if (response.ok) {
-      return { accessible: true as const };
+    const result = await fetchRepoAccessFromGitHub({ installationId, owner: parsed.owner, repo: parsed.repo });
+    if (!result.accessible) {
+      throw new Error(result.message);
     }
-
-    if (response.status === 404 || response.status === 403) {
-      throw new Error(
-        `Repository "${parsed.fullName}" is not accessible. ` +
-          `Make sure it is included in your GitHub App installation. ` +
-          `Go to GitHub Settings → Applications → Configure to update your repository selection.`,
-      );
-    }
-
-    const body = await response.text();
-    throw new Error(`GitHub API error (${response.status}): ${body}`);
+    return { accessible: true as const };
   },
 });
 
@@ -249,7 +307,6 @@ export const verifyRepoAccess = action({
 /**
  * Verifies that the GitHub App installation has access to a specific repository.
  *
- * Uses `GET /repos/{owner}/{repo}` with an installation access token.
  * Returns { accessible: true, ... } or { accessible: false, message: "..." }.
  *
  * Used as the early-exit access probe by the import pipeline (before the
@@ -262,47 +319,7 @@ export const checkRepoAccess = internalAction({
     owner: v.string(),
     repo: v.string(),
   },
-  handler: async (_ctx, args) => {
-    const token = await getInstallationAccessToken(args.installationId);
-
-    const response = await fetch(`https://api.github.com/repos/${args.owner}/${args.repo}`, {
-      headers: {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": `token ${token}`,
-        "User-Agent": "systify",
-      },
-    });
-
-    if (response.ok) {
-      const data = (await response.json()) as {
-        private: boolean;
-        full_name: string;
-        default_branch: string;
-      };
-      return {
-        accessible: true as const,
-        isPrivate: data.private,
-        fullName: data.full_name,
-        defaultBranch: data.default_branch,
-      };
-    }
-
-    if (response.status === 404 || response.status === 403) {
-      return {
-        accessible: false as const,
-        message:
-          `Repository "${args.owner}/${args.repo}" is not accessible. ` +
-          `Make sure it is included in your GitHub App installation. ` +
-          `Go to GitHub Settings → Applications → Configure to update your repository selection.`,
-      };
-    }
-
-    const body = await response.text();
-    return {
-      accessible: false as const,
-      message: `GitHub API error (${response.status}): ${body}`,
-    };
-  },
+  handler: async (_ctx, args) => fetchRepoAccessFromGitHub(args),
 });
 
 // ---------------------------------------------------------------------------
@@ -319,15 +336,11 @@ export const listInstallationRepos = action({
   handler: async (ctx) => {
     const identity = await requireViewerIdentity(ctx);
 
-    const installationId: number | null = await ctx.runQuery(internal.github.getInstallationIdForOwner, {
-      ownerTokenIdentifier: identity.tokenIdentifier,
-    });
-
-    if (!installationId) {
+    const resolved = await resolveInstallationTokenForOwner(ctx, identity.tokenIdentifier);
+    if (!resolved) {
       return { repos: [], totalCount: 0 };
     }
-
-    const token = await getInstallationAccessToken(installationId);
+    const { token } = resolved;
 
     const allRepos: Array<{
       full_name: string;
@@ -411,15 +424,11 @@ export const searchGitHubRepos = action({
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
 
-    const installationId: number | null = await ctx.runQuery(internal.github.getInstallationIdForOwner, {
-      ownerTokenIdentifier: identity.tokenIdentifier,
-    });
-
-    if (!installationId) {
+    const resolved = await resolveInstallationTokenForOwner(ctx, identity.tokenIdentifier);
+    if (!resolved) {
       return { repos: [], totalCount: 0 };
     }
-
-    const token = await getInstallationAccessToken(installationId);
+    const { token } = resolved;
 
     const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(args.query)}&sort=updated&order=desc&per_page=20`;
 

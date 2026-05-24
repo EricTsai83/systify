@@ -289,7 +289,7 @@ If the action dies (process restart, panic) before `completeGeneration`, the dai
 
 ## Sandbox Availability
 
-Two distinct surfaces depend on a live Daytona sandbox: Lab mode and the LLM-backed kinds of the System Design generation background job. Both gate themselves through `convex/lib/sandboxAvailability.ts`. If the sandbox:
+Two distinct surfaces depend on a live Daytona sandbox: Lab mode and the LLM-backed kinds of the System Design generation background job. Both gate themselves through `convex/lib/repositorySandbox.ts`. If the sandbox:
 
 - has passed its TTL
 - is archived

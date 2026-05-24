@@ -46,19 +46,14 @@ export const checkForUpdates = action({
     // Always use authenticated GitHub API (5,000 req/hr per user) when
     // possible, regardless of whether the repo is public or private.
     let githubToken: string | undefined;
-    const installationId = await ctx.runQuery(internal.github.getInstallationIdForOwner, {
-      ownerTokenIdentifier: repo.ownerTokenIdentifier,
-    });
-
-    if (installationId) {
-      try {
-        githubToken = await ctx.runAction(internal.githubAppNode.getInstallationToken, {
-          installationId,
-        });
-      } catch (error) {
-        // Non-fatal — fall back to unauthenticated (60 req/hr).
-        console.warn("[github-check] Failed to get GitHub token:", error instanceof Error ? error.message : error);
-      }
+    try {
+      const resolved = await ctx.runAction(internal.githubAppNode.getInstallationTokenForOwner, {
+        ownerTokenIdentifier: repo.ownerTokenIdentifier,
+      });
+      githubToken = resolved?.token;
+    } catch (error) {
+      // Non-fatal — fall back to unauthenticated (60 req/hr).
+      console.warn("[github-check] Failed to get GitHub token:", error instanceof Error ? error.message : error);
     }
 
     const sha = await fetchLatestRemoteSha(repo.owner, repo.repo, repo.defaultBranch, githubToken);

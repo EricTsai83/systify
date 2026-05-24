@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { BookOpenIcon, PaperPlaneTiltIcon } from "@phosphor-icons/react";
+import { BookOpenIcon, PaperPlaneTiltIcon, SparkleIcon } from "@phosphor-icons/react";
 import { useMutation, useQuery } from "convex/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
@@ -15,16 +15,30 @@ import { toUserErrorMessage } from "@/lib/errors";
 import type { ArtifactId, ThreadId, WorkspaceId } from "@/lib/types";
 import { toast } from "sonner";
 
+const LOCKED_PLACEHOLDER = "Generate a System Design to unlock Library Ask.";
+const LOCKED_HINT = "Library Ask needs at least one artifact in this workspace before you can send a question.";
+
 export function LibraryAskPanel({
   workspaceId,
   threadId,
   activeArtifactId,
+  hasArtifacts,
   onSelectArtifact,
   onSelectThread,
+  onGenerate,
 }: {
   workspaceId: WorkspaceId;
   threadId: ThreadId | null;
   activeArtifactId: ArtifactId | null;
+  /**
+   * Whether the workspace's repository has at least one indexed artifact.
+   * Library Ask runs RAG over those artifacts, so when this is `false` the
+   * composer is locked and the empty state surfaces a "Generate System
+   * Design" CTA — the same gate the backend's
+   * `assertWorkspaceModeEligible` enforces with `library_no_artifact`,
+   * surfaced in the UI so the user never hits that error path.
+   */
+  hasArtifacts: boolean;
   onSelectArtifact: (artifactId: ArtifactId) => void;
   /**
    * Set or clear the active Ask thread (`?ask=`). Used for tab clicks, the
@@ -32,6 +46,12 @@ export function LibraryAskPanel({
    * when the current one is closed or deleted.
    */
   onSelectThread: (threadId: ThreadId | null) => void;
+  /**
+   * Open the Generate System Design dialog. Surfaced in the no-artifacts
+   * empty state and inline lock hint so the user can act on the gate
+   * without leaving the Ask panel.
+   */
+  onGenerate?: () => void;
 }) {
   const createLibraryAskThread = useMutation(api.chat.threads.createLibraryAskThread);
   const sendMessage = useMutation(api.chat.send.sendMessage);
@@ -223,13 +243,15 @@ export function LibraryAskPanel({
         onSelectThread(targetThreadId);
       }
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Failed to ask Library.");
+      setError(toUserErrorMessage(caught, "Failed to ask Library."));
     } finally {
       submissionLockRef.current = false;
       setIsSending(false);
       setIsStarting(false);
     }
   };
+
+  const isLocked = !hasArtifacts;
 
   return (
     // Plain container, not a landmark: this panel renders inside the app
@@ -261,6 +283,8 @@ export function LibraryAskPanel({
             ))}
           </div>
         </ScrollArea>
+      ) : isLocked ? (
+        <NoArtifactsHint onGenerate={onGenerate} />
       ) : (
         <div className="flex min-h-0 flex-1 animate-in flex-col gap-5 px-4 py-6 fade-in duration-300">
           <div className="flex flex-1 items-center justify-center">
@@ -286,6 +310,31 @@ export function LibraryAskPanel({
         </div>
       )}
 
+      {/*
+       * Inline lock notice. Surfaces above the composer whenever the
+       * artifact gate is closed AND the user is on an existing thread,
+       * where the no-thread empty state's CTA isn't reachable (the
+       * messages list takes that slot). The no-thread case renders
+       * `NoArtifactsHint` instead, which already carries the CTA.
+       */}
+      {isLocked && threadId ? (
+        <div className="flex items-start gap-2 border-t border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
+          <SparkleIcon size={12} weight="fill" className="mt-0.5 shrink-0 text-amber-500" />
+          <p id="library-ask-locked-hint" className="min-w-0 flex-1 leading-4">
+            {LOCKED_HINT}
+          </p>
+          {onGenerate ? (
+            <button
+              type="button"
+              onClick={onGenerate}
+              className="shrink-0 font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            >
+              Generate
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       <form
         onSubmit={(event) => {
           void handleSubmit(event);
@@ -297,12 +346,19 @@ export function LibraryAskPanel({
           ref={textareaRef}
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          placeholder={activeArtifactId ? "Question about the open artifact..." : "Question about this library..."}
+          placeholder={
+            isLocked
+              ? LOCKED_PLACEHOLDER
+              : activeArtifactId
+                ? "Question about the open artifact..."
+                : "Question about this library..."
+          }
           className="min-h-24 resize-none text-sm"
-          disabled={isSending || latestAssistantInFlight}
+          disabled={isSending || latestAssistantInFlight || isLocked}
+          aria-describedby={isLocked && threadId ? "library-ask-locked-hint" : undefined}
         />
         <div className="mt-2 flex justify-end">
-          <Button type="submit" size="sm" disabled={!input.trim() || isSending || latestAssistantInFlight}>
+          <Button type="submit" size="sm" disabled={!input.trim() || isSending || latestAssistantInFlight || isLocked}>
             <PaperPlaneTiltIcon size={14} weight="fill" />
             {isSending || isStarting ? "Asking..." : "Ask"}
           </Button>
@@ -334,3 +390,33 @@ const LIBRARY_SUGGESTIONS = [
   "Walk me through the architecture.",
   "How is data modeled across the system?",
 ];
+
+/**
+ * Empty-state shown when the workspace has no artifacts yet. The Ask panel
+ * is the single home for the Generate System Design CTA — the Library
+ * main canvas only narrates the missing-document state and points users
+ * here. Centering the hero + button together keeps the action immediately
+ * below the description text, instead of stranded at the bottom of the
+ * tall sidebar column.
+ */
+function NoArtifactsHint({ onGenerate }: { onGenerate?: () => void }) {
+  return (
+    <div className="flex min-h-0 flex-1 animate-in flex-col items-center justify-center gap-4 px-4 py-6 fade-in duration-300">
+      <EmptyStateHero
+        visual={
+          <div className="flex size-11 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
+            <SparkleIcon size={20} weight="duotone" />
+          </div>
+        }
+        title="No artifacts to ask about yet"
+        description="Library Ask cites indexed artifacts. Generate the System Design starter set so it has something to retrieve."
+      />
+      {onGenerate ? (
+        <Button type="button" size="sm" className="gap-1.5" onClick={onGenerate}>
+          <SparkleIcon size={14} weight="bold" />
+          Generate System Design
+        </Button>
+      ) : null}
+    </div>
+  );
+}
