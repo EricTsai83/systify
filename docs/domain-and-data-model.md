@@ -12,7 +12,7 @@ The current data model has three clear centers:
 - **Narratives** — `artifacts` hold longer-lived prose (System Design overviews, ADRs, notes). They link to repos (and optionally threads) via `repositoryId` / `threadId` and citations in chat—not a substitute for chunk-level grounding.
 - **Workspace shell** — `workspaces` are the UX container; attaching a repo means `workspaces.repositoryId` is populated so Sandbox/Lab/import share the **same workspace binding**.
 - **Tenant isolation** — `ownerTokenIdentifier` scopes every viewer-owned row.
-- **Workflow progress** — `imports`, `jobs`, `sandboxes`, `messages`, `labSessions` carry lifecycle fields.
+- **Workflow progress** — `imports`, `jobs`, `sandboxes`, `messages`, `sandboxSessions` carry lifecycle fields.
 
 Discuss vs Library (behavioral SSOT boundary):
 
@@ -41,7 +41,7 @@ flowchart TD
   Workspace[workspaces]
   ArtifactFolder[artifactFolders]
   ArtifactChunk[artifactChunks]
-  LabSession[labSessions]
+  SandboxSession[sandboxSessions]
   Thread[threads]
   Message[messages]
   Installation[githubInstallations]
@@ -56,7 +56,7 @@ flowchart TD
   Repository --> Workspace
   Repository --> ArtifactFolder
   Artifact --> ArtifactChunk
-  Workspace --> LabSession
+  Workspace --> SandboxSession
   Repository --> Thread
   Thread --> Message
   Import --> RepoFile
@@ -212,9 +212,9 @@ These three tables hold ephemeral state for an in-flight assistant reply. They e
 
 See `streaming-reply-optimization-system-design.md` for the design reasoning behind splitting these out from `messages`.
 
-### `labSessions`
+### `sandboxSessions`
 
-`labSessions` tracks workspace-level Lab execution state: `starting`, `active`, `paused`, `stopped`, or `ended`. A Lab session owns cost transparency (`spentCents`) and idle auto-pause state so sandbox compute is explicit and observable.
+`sandboxSessions` tracks workspace-level sandbox execution state: `starting`, `active`, `paused`, `stopped`, or `ended`. The session owns cost transparency (`spentCents`) and idle auto-pause state so sandbox compute is explicit and observable. A workspace has at most one reusable sandbox session shared across every Discuss thread that flips the Sandbox grounding toggle on, so thread switching never reprovisions compute.
 
 ### `githubInstallations` and `githubOAuthStates`
 

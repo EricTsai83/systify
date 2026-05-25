@@ -23,6 +23,7 @@ import {
   AUTH_CALLBACK_PATH,
   DEFAULT_AUTHENTICATED_PATH,
   LANDING_PATH,
+  discussPath,
   isProtectedReturnTo,
   modeAwareThreadPath,
   workspacePath,
@@ -115,8 +116,8 @@ export function ProtectedLayout() {
 
   // SidebarProvider lives here, above the route Outlet, so it stays mounted
   // across protected-route navigation. With it inside each page, navigating
-  // from a page that renders Sidebar (/chat, /discuss, /library, /lab) into
-  // one that doesn't (/archive, /resources) unmounted the provider mid-open
+  // from a page that renders Sidebar (/chat, /discuss, /library) into one
+  // that doesn't (/archive, /resources) unmounted the provider mid-open
   // and stranded Radix's mobile-Sheet overlay + scroll lock on the
   // destination page. Hoisting it lets the pathname effect inside the
   // provider observe the route change and close the Sheet cleanly.
@@ -274,6 +275,27 @@ export function LibraryAskLegacyRedirect() {
   }
   const base = `/w/${workspaceId}/library`;
   const target = threadId ? `${base}?ask=${threadId}` : base;
+  return <Navigate to={target} replace />;
+}
+
+/**
+ * Legacy Lab-mode URL redirect. The old "/lab" path was the original
+ * naming for what is now the "discuss" mode. Old bookmarks/links land here
+ * and bounce to the canonical discuss URL; `replace` keeps the dead URL out
+ * of history so Back doesn't ping-pong between the two forms.
+ *
+ * This path is deliberately NOT registered in `PROTECTED_ROUTE_SEGMENTS` /
+ * `isProtectedReturnTo` — re-adding the literal there would reintroduce the
+ * route-table drift that allowlist is designed to prevent. The narrow cost:
+ * a logged-out user hitting a stale lab bookmark returns to the default
+ * path after sign-in rather than to the thread.
+ */
+export function LabLegacyRedirect() {
+  const { workspaceId, threadId } = useParams<{ workspaceId: string; threadId?: string }>();
+  if (!workspaceId) {
+    return <Navigate to={LANDING_PATH} replace />;
+  }
+  const target = discussPath(workspaceId as WorkspaceId, threadId as ThreadId | undefined);
   return <Navigate to={target} replace />;
 }
 

@@ -8,7 +8,7 @@ import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
 const DEFAULT_IDLE_AUTO_PAUSE_MINUTES = 10;
 
 function getIdleAutoPauseMinutes(): number {
-  const raw = process.env.LAB_SESSION_IDLE_AUTO_PAUSE_MINUTES;
+  const raw = process.env.SANDBOX_SESSION_IDLE_AUTO_PAUSE_MINUTES;
   const parsed = raw ? Number(raw) : DEFAULT_IDLE_AUTO_PAUSE_MINUTES;
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_IDLE_AUTO_PAUSE_MINUTES;
 }
@@ -16,10 +16,10 @@ function getIdleAutoPauseMinutes(): number {
 async function findReusableSession(
   ctx: MutationCtx,
   workspaceId: Id<"workspaces">,
-): Promise<Doc<"labSessions"> | null> {
+): Promise<Doc<"sandboxSessions"> | null> {
   for (const status of ["active", "starting", "paused"] as const) {
     const session = await ctx.db
-      .query("labSessions")
+      .query("sandboxSessions")
       .withIndex("by_workspaceId_and_status", (q) => q.eq("workspaceId", workspaceId).eq("status", status))
       .first();
     if (session) {
@@ -29,7 +29,7 @@ async function findReusableSession(
   return null;
 }
 
-export const startLabSession = mutation({
+export const startSandboxSession = mutation({
   args: { workspaceId: v.id("workspaces"), repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -44,7 +44,7 @@ export const startLabSession = mutation({
       repositoryId: args.repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
       notFoundMessage: "Repository not found.",
-      archivedMessage: "This repository is archived. Restore it to start Lab.",
+      archivedMessage: "This repository is archived. Restore it to start a sandbox session.",
     });
 
     const existing = await findReusableSession(ctx, args.workspaceId);
@@ -61,7 +61,7 @@ export const startLabSession = mutation({
     }
 
     const now = Date.now();
-    return await ctx.db.insert("labSessions", {
+    return await ctx.db.insert("sandboxSessions", {
       ownerTokenIdentifier: identity.tokenIdentifier,
       workspaceId: args.workspaceId,
       repositoryId: args.repositoryId,
@@ -76,13 +76,13 @@ export const startLabSession = mutation({
   },
 });
 
-export const pauseLabSession = mutation({
-  args: { sessionId: v.id("labSessions") },
+export const pauseSandboxSession = mutation({
+  args: { sessionId: v.id("sandboxSessions") },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
     const session = await ctx.db.get(args.sessionId);
     if (!session || session.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Lab session not found.");
+      throw new Error("Sandbox session not found.");
     }
     if (session.status !== "active") {
       return { paused: false, status: session.status };
@@ -92,20 +92,20 @@ export const pauseLabSession = mutation({
       pausedAt: Date.now(),
       lastActivityAt: Date.now(),
     });
-    await ctx.scheduler.runAfter(0, internal.labSessionsNode.stopRemoteSandboxForSession, {
+    await ctx.scheduler.runAfter(0, internal.sandboxSessionsNode.stopRemoteSandboxForSession, {
       sessionId: args.sessionId,
     });
     return { paused: true, status: "paused" as const };
   },
 });
 
-export const stopLabSession = mutation({
-  args: { sessionId: v.id("labSessions") },
+export const stopSandboxSession = mutation({
+  args: { sessionId: v.id("sandboxSessions") },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
     const session = await ctx.db.get(args.sessionId);
     if (!session || session.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Lab session not found.");
+      throw new Error("Sandbox session not found.");
     }
     if (session.status === "stopped" || session.status === "ended") {
       return { stopped: false, status: session.status };
@@ -115,14 +115,14 @@ export const stopLabSession = mutation({
       endedAt: Date.now(),
       lastActivityAt: Date.now(),
     });
-    await ctx.scheduler.runAfter(0, internal.labSessionsNode.stopRemoteSandboxForSession, {
+    await ctx.scheduler.runAfter(0, internal.sandboxSessionsNode.stopRemoteSandboxForSession, {
       sessionId: args.sessionId,
     });
     return { stopped: true, status: "stopped" as const };
   },
 });
 
-export const getLabSessionCostSummary = query({
+export const getSandboxSessionCostSummary = query({
   args: { workspaceId: v.id("workspaces") },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -131,7 +131,7 @@ export const getLabSessionCostSummary = query({
       throw new Error("Workspace not found.");
     }
     const sessions = await ctx.db
-      .query("labSessions")
+      .query("sandboxSessions")
       .withIndex("by_ownerTokenIdentifier_and_startedAt", (q) => q.eq("ownerTokenIdentifier", identity.tokenIdentifier))
       .order("desc")
       .take(100);
@@ -153,15 +153,15 @@ export const getLabSessionCostSummary = query({
   },
 });
 
-export const ensureLabSessionForThread = internalMutation({
+export const ensureSandboxSessionForThread = internalMutation({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
     const thread = await ctx.db.get(args.threadId);
     if (!thread || !thread.workspaceId || !thread.repositoryId) {
-      throw new Error("Lab thread must be workspace and repository scoped.");
+      throw new Error("Sandbox-grounded thread must be workspace and repository scoped.");
     }
-    const reusable = thread.labSessionId
-      ? await ctx.db.get(thread.labSessionId)
+    const reusable = thread.sandboxSessionId
+      ? await ctx.db.get(thread.sandboxSessionId)
       : await findReusableSession(ctx, thread.workspaceId);
     if (reusable && reusable.status !== "stopped" && reusable.status !== "ended") {
       const now = Date.now();
@@ -175,8 +175,8 @@ export const ensureLabSessionForThread = internalMutation({
       } else {
         await ctx.db.patch(reusable._id, { lastActivityAt: now });
       }
-      if (thread.labSessionId !== reusable._id) {
-        await ctx.db.patch(thread._id, { labSessionId: reusable._id });
+      if (thread.sandboxSessionId !== reusable._id) {
+        await ctx.db.patch(thread._id, { sandboxSessionId: reusable._id });
       }
       return reusable._id;
     }
@@ -186,7 +186,7 @@ export const ensureLabSessionForThread = internalMutation({
       throw new Error("Repository not found.");
     }
     const now = Date.now();
-    const sessionId = await ctx.db.insert("labSessions", {
+    const sessionId = await ctx.db.insert("sandboxSessions", {
       ownerTokenIdentifier: thread.ownerTokenIdentifier,
       workspaceId: thread.workspaceId,
       repositoryId: thread.repositoryId,
@@ -198,14 +198,14 @@ export const ensureLabSessionForThread = internalMutation({
       idleAutoPauseMinutes: getIdleAutoPauseMinutes(),
       spentCents: 0,
     });
-    await ctx.db.patch(thread._id, { labSessionId: sessionId });
+    await ctx.db.patch(thread._id, { sandboxSessionId: sessionId });
     return sessionId;
   },
 });
 
-export const recordLabActivity = internalMutation({
+export const recordSandboxSessionActivity = internalMutation({
   args: {
-    sessionId: v.id("labSessions"),
+    sessionId: v.id("sandboxSessions"),
     spentCentsDelta: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -226,7 +226,7 @@ export const recordLabActivity = internalMutation({
 });
 
 export const getSessionInternal = internalQuery({
-  args: { sessionId: v.id("labSessions") },
+  args: { sessionId: v.id("sandboxSessions") },
   handler: async (ctx, args) => await ctx.db.get(args.sessionId),
 });
 
@@ -239,7 +239,7 @@ export const listAutoPauseCandidates = internalQuery({
   args: { now: v.number(), limit: v.number() },
   handler: async (ctx, args) => {
     const rows = await ctx.db
-      .query("labSessions")
+      .query("sandboxSessions")
       .withIndex("by_status_and_lastActivityAt", (q) => q.eq("status", "active"))
       .take(Math.max(1, Math.floor(args.limit)));
     return rows.filter((session) => session.lastActivityAt < args.now - session.idleAutoPauseMinutes * 60_000);
@@ -247,7 +247,7 @@ export const listAutoPauseCandidates = internalQuery({
 });
 
 export const markSessionPausedByIdle = internalMutation({
-  args: { sessionId: v.id("labSessions"), now: v.number() },
+  args: { sessionId: v.id("sandboxSessions"), now: v.number() },
   handler: async (ctx, args) => {
     const session = await ctx.db.get(args.sessionId);
     if (!session || session.status !== "active") {

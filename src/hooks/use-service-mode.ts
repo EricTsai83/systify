@@ -17,7 +17,10 @@ const NULL_RESOLUTION = {
   hasAttachedRepo: false,
   hasAtLeastOneArtifact: false,
   askReadiness: { canBind: false, reason: null as ChatModeDisabledLike | null },
-  labReadiness: { canStart: false, reason: null as ChatModeDisabledLike | null },
+  grounding: {
+    library: { available: false, reason: null as ChatModeDisabledLike | null },
+    sandbox: { available: false, reason: null as ChatModeDisabledLike | null, isActivatable: false },
+  },
 };
 
 /**
@@ -75,9 +78,6 @@ export function useChatMode(workspaceId: WorkspaceId | null) {
     }
     if (path.startsWith(`${prefix}/library`)) {
       return "library";
-    }
-    if (path.startsWith(`${prefix}/lab`)) {
-      return "lab";
     }
     return null;
   }, [location.pathname, params.workspaceId]);

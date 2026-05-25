@@ -47,10 +47,17 @@ async function insertChatTurn(
     thread: Doc<"threads">;
     repository: Doc<"repositories"> | null;
     mode: ChatMode;
+    /**
+     * Discuss-mode grounding flags persisted on both the user and
+     * assistant messages so the generation action can read them off
+     * the queued user message. Unset on Library-mode turns.
+     */
+    groundLibrary?: boolean;
+    groundSandbox?: boolean;
     trimmedContent: string;
     ownerTokenIdentifier: string;
     now: number;
-    labSessionId?: Id<"labSessions">;
+    sandboxSessionId?: Id<"sandboxSessions">;
   },
 ): Promise<{ jobId: Id<"jobs">; userMessageId: Id<"messages">; assistantMessageId: Id<"messages"> }> {
   const jobId = await ctx.db.insert("jobs", {
@@ -62,7 +69,10 @@ async function insertChatTurn(
     status: "queued",
     stage: "queued",
     progress: 0,
-    costCategory: args.mode === "lab" ? "system_design" : "chat",
+    // Sandbox-grounded Discuss replies cost the same as the old Lab mode
+    // (tool use + larger model) — keep them on the `system_design` budget
+    // line so the daily cost cap still gates correctly.
+    costCategory: args.groundSandbox ? "system_design" : "chat",
     triggerSource: "user",
     leaseExpiresAt: args.now + CHAT_JOB_LEASE_MS,
   });
@@ -76,6 +86,11 @@ async function insertChatTurn(
     status: "completed",
     mode: args.mode,
     content: args.trimmedContent,
+    // Persist grounding flags only when truthy; an unset field reads as
+    // "false" on the generation path, so storing `false` would just waste
+    // doc bytes on every legacy-equivalent turn.
+    ...(args.groundLibrary === true ? { groundLibrary: true } : {}),
+    ...(args.groundSandbox === true ? { groundSandbox: true } : {}),
   });
 
   const assistantMessageId = await ctx.db.insert("messages", {
@@ -87,6 +102,8 @@ async function insertChatTurn(
     status: "pending",
     mode: args.mode,
     content: "",
+    ...(args.groundLibrary === true ? { groundLibrary: true } : {}),
+    ...(args.groundSandbox === true ? { groundSandbox: true } : {}),
   });
 
   await ctx.db.insert("messageStreams", {
@@ -102,11 +119,25 @@ async function insertChatTurn(
     lastAppendedAt: args.now,
   });
 
-  await ctx.db.patch(args.thread._id, {
+  // Update thread defaults so the composer pre-fills the toggles with the
+  // user's most recent preference on the next visit. Library-mode turns
+  // skip this — the thread's grounding defaults are a Discuss-only concept.
+  const threadPatch: {
+    mode: ChatMode;
+    lastMessageAt: number;
+    sandboxSessionId?: Id<"sandboxSessions">;
+    defaultGroundLibrary?: boolean;
+    defaultGroundSandbox?: boolean;
+  } = {
     mode: args.mode,
     lastMessageAt: args.now,
-    ...(args.labSessionId !== undefined && { labSessionId: args.labSessionId }),
-  });
+    ...(args.sandboxSessionId !== undefined && { sandboxSessionId: args.sandboxSessionId }),
+  };
+  if (args.mode === "discuss") {
+    threadPatch.defaultGroundLibrary = args.groundLibrary === true;
+    threadPatch.defaultGroundSandbox = args.groundSandbox === true;
+  }
+  await ctx.db.patch(args.thread._id, threadPatch);
 
   await ctx.scheduler.runAfter(0, internal.chat.generation.generateAssistantReply, {
     threadId: args.thread._id,
@@ -124,6 +155,13 @@ export const sendMessageStartingNewThread = mutation({
     content: v.string(),
     mode: chatModeValidator,
     title: v.optional(v.string()),
+    /**
+     * Discuss-only grounding flags. Ignored for `library` mode (Library
+     * grounding is implicit in the mode). Either may be omitted; both
+     * default to `false`.
+     */
+    groundLibrary: v.optional(v.boolean()),
+    groundSandbox: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -135,8 +173,16 @@ export const sendMessageStartingNewThread = mutation({
 
     const repositoryId = workspace.repositoryId;
 
-    if ((args.mode === "library" || args.mode === "lab") && !repositoryId) {
+    if (args.mode === "library" && !repositoryId) {
       throw new Error(`'${args.mode}' mode requires an attached repository.`);
+    }
+    // Discuss-with-grounding must also have a repo: both axes are
+    // repository-scoped (artifacts come from the repo, sandbox is the
+    // repo's). Reject up front so we never persist a Discuss turn whose
+    // grounding flags can't be satisfied.
+    const requestsGrounding = args.groundLibrary === true || args.groundSandbox === true;
+    if (requestsGrounding && !repositoryId) {
+      throw new Error("Library / Sandbox grounding requires an attached repository.");
     }
 
     const trimmedContent = args.content.trim();
@@ -158,6 +204,8 @@ export const sendMessageStartingNewThread = mutation({
       repositoryId,
       workspaceId: args.workspaceId,
       mode: args.mode,
+      groundLibrary: args.groundLibrary === true,
+      groundSandbox: args.groundSandbox === true,
     });
 
     const now = Date.now();
@@ -180,13 +228,19 @@ export const sendMessageStartingNewThread = mutation({
       title,
       mode: args.mode,
       lastMessageAt: now,
+      ...(args.mode === "discuss"
+        ? {
+            defaultGroundLibrary: args.groundLibrary === true,
+            defaultGroundSandbox: args.groundSandbox === true,
+          }
+        : {}),
     });
 
     const thread = (await ctx.db.get(threadId))!;
 
-    let labSessionId: Id<"labSessions"> | undefined;
-    if (args.mode === "lab") {
-      labSessionId = await ctx.runMutation(internal.labSessions.ensureLabSessionForThread, {
+    let sandboxSessionId: Id<"sandboxSessions"> | undefined;
+    if (args.groundSandbox === true) {
+      sandboxSessionId = await ctx.runMutation(internal.sandboxSessions.ensureSandboxSessionForThread, {
         threadId,
       });
     }
@@ -195,10 +249,12 @@ export const sendMessageStartingNewThread = mutation({
       thread,
       repository,
       mode: args.mode,
+      groundLibrary: args.groundLibrary,
+      groundSandbox: args.groundSandbox,
       trimmedContent,
       ownerTokenIdentifier: identity.tokenIdentifier,
       now,
-      labSessionId,
+      sandboxSessionId,
     });
 
     return {
@@ -216,6 +272,12 @@ export const sendMessage = mutation({
     threadId: v.id("threads"),
     content: v.string(),
     mode: v.optional(chatModeValidator),
+    /**
+     * Discuss-only grounding flags (see `sendMessageStartingNewThread`).
+     * Both default to `false` when omitted.
+     */
+    groundLibrary: v.optional(v.boolean()),
+    groundSandbox: v.optional(v.boolean()),
   },
   handler: async (
     ctx,
@@ -242,11 +304,22 @@ export const sendMessage = mutation({
     }
 
     const mode = args.mode ?? thread.mode;
+    // Library grounding makes no sense in Library Mode (it's the same
+    // thing); Sandbox grounding only applies in Discuss. Coerce both to
+    // false on Library-mode turns so a stale composer toggle does not
+    // accidentally tag a Library reply with grounding metadata.
+    const groundLibrary = mode === "discuss" && args.groundLibrary === true;
+    const groundSandbox = mode === "discuss" && args.groundSandbox === true;
+    if ((groundLibrary || groundSandbox) && !thread.repositoryId) {
+      throw new Error("Library / Sandbox grounding requires an attached repository.");
+    }
 
     await assertWorkspaceModeEligible(ctx, {
       repositoryId: thread.repositoryId,
       workspaceId: thread.workspaceId,
       mode,
+      groundLibrary,
+      groundSandbox,
     });
 
     const trimmedContent = args.content.trim();
@@ -268,9 +341,9 @@ export const sendMessage = mutation({
     await consumeChatRateLimit(ctx, identity.tokenIdentifier);
     await consumeChatGlobalRateLimit(ctx);
 
-    let labSessionId: Id<"labSessions"> | undefined;
-    if (mode === "lab") {
-      labSessionId = await ctx.runMutation(internal.labSessions.ensureLabSessionForThread, {
+    let sandboxSessionId: Id<"sandboxSessions"> | undefined;
+    if (groundSandbox) {
+      sandboxSessionId = await ctx.runMutation(internal.sandboxSessions.ensureSandboxSessionForThread, {
         threadId: args.threadId,
       });
     }
@@ -279,10 +352,12 @@ export const sendMessage = mutation({
       thread,
       repository,
       mode,
+      groundLibrary,
+      groundSandbox,
       trimmedContent,
       ownerTokenIdentifier: identity.tokenIdentifier,
       now,
-      labSessionId,
+      sandboxSessionId,
     });
   },
 });

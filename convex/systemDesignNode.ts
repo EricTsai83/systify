@@ -7,7 +7,7 @@ import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
 import { createSandboxTools } from "./chat/sandboxTools";
-import { resolveModelForMode } from "./chat/modelSelection";
+import { resolveModelForReply } from "./chat/modelSelection";
 import { getSandboxFsClient } from "./daytona";
 import { ensureSandboxReady, SandboxPreparationError, type SandboxPreparationStage } from "./lib/sandboxLiveness";
 import { logErrorWithId, logInfo, logWarn } from "./lib/observability";
@@ -342,7 +342,7 @@ async function generateLlm(
   const client = await getSandboxFsClient(sandbox.remoteId);
   const tools = createSandboxTools(client, sandbox.repoPath);
 
-  const modelName = resolveModelForMode("lab");
+  const modelName = resolveModelForReply({ mode: "discuss", groundSandbox: true });
   // Appended once for every LLM kind so the per-kind prompts don't have to
   // each restate the budget — keeps the limit in sync with
   // `SYSTEM_DESIGN_STEP_BUDGET` and avoids drift.

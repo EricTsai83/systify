@@ -39,7 +39,7 @@ import { STREAM_FLUSH_THRESHOLD } from "../lib/constants";
 import { emitMetric, logInfo, logWarn } from "../lib/observability";
 import { estimateCostUsd } from "../lib/openaiPricing";
 import type { ReplyContext } from "./context";
-import { resolveModelForMode } from "./modelSelection";
+import { resolveModelForReply } from "./modelSelection";
 import {
   buildCitationMap,
   buildHeuristicAnswer,
@@ -110,7 +110,7 @@ type SessionTerminalStatus = "completed" | "failed" | "cancelled" | "aborted_orp
  *
  * The action doesn't know everything about its session up front: the
  * mode is unknown until `getReplyContext` returns, the model is
- * unknown until `resolveModelForMode` runs, the tool-call count
+ * unknown until `resolveModelForReply` runs, the tool-call count
  * depends on what the model decides to do. So we keep a single
  * mutable `SessionTelemetry` object and update its fields as the
  * action makes progress. At each terminal exit, we emit one
@@ -130,7 +130,7 @@ interface SessionTelemetry {
    * pre-context throws.
    */
   mode?: ExtendedChatMode;
-  /** Set in the streaming path once `resolveModelForMode` resolves. Heuristic / pre-context paths leave it undefined. */
+  /** Set in the streaming path once `resolveModelForReply` resolves. Heuristic / pre-context paths leave it undefined. */
   modelName?: string;
   /** True only when the streaming path actually built and passed a non-empty `ToolSet` to streamText. */
   hadTools: boolean;
@@ -152,10 +152,10 @@ interface EmitSessionMetricArgs {
 /**
  * Emit the session-finished metric once per action exit.
  *
- * Sandbox-only by design: the metric tag space (mode, model,
- * had_tools) is shaped for lab sessions, and discuss / library
- * replies have a distinct cost / latency profile that would
- * otherwise muddy the time series. Pre-context failures (where
+ * Sandbox-only by design: the metric tag space (model, had_tools,
+ * tool counts) is shaped for sandbox-grounded sessions, and ungrounded
+ * Discuss / Library replies have a distinct cost / latency profile that
+ * would otherwise muddy the time series. Pre-context failures (where
  * `mode` is unknown) skip the emit — we lack the data to attribute
  * the failure correctly, and the action's existing `failAssistantReply`
  * mutation already records the failure for ops via `messages.status`.
@@ -165,7 +165,7 @@ interface EmitSessionMetricArgs {
  * locally and swallowed.
  */
 function emitSessionFinishedMetric(telemetry: SessionTelemetry, args: EmitSessionMetricArgs): void {
-  if (telemetry.mode !== "lab") {
+  if (!telemetry.hadTools) {
     return;
   }
   const durationMs = Date.now() - telemetry.startedAt;
@@ -279,7 +279,7 @@ export const generateAssistantReply = internalAction({
     // model the stream actually ran on, otherwise a typo in the per-mode env
     // var (resolved on the success path) would diverge from the legacy
     // global default the catch path used to fall back to. `undefined`
-    // before `resolveModelForMode` runs — `extractStreamUsage` short-
+    // before `resolveModelForReply` runs — `extractStreamUsage` short-
     // circuits on `streamResponse === undefined` so the model name is
     // moot in that case.
     let modelName: string | undefined;
@@ -460,18 +460,23 @@ export const generateAssistantReply = internalAction({
         return;
       }
 
-      // Plan 11 — pick the model based on the queued message's effective
-      // mode. Per-mode overrides keep sandbox on the full GPT-5 tier
-      // (it drives tool use) while letting docs / discuss stay on the
-      // mini tier. See `resolveModelForMode` for the resolution order
-      // (mode-specific override → legacy `OPENAI_MODEL` → default).
-      modelName = resolveModelForMode(replyContext.mode);
+      // Pick the model based on the reply's capability requirements. The
+      // sandbox-grounded Discuss path is the heaviest (tool use) and stays on
+      // the full GPT-5 tier; library / ungrounded discuss stay on the mini tier.
+      modelName = resolveModelForReply({
+        mode: replyContext.mode,
+        groundSandbox: groundedReplyContext.groundSandbox,
+      });
       telemetry.modelName = modelName;
-      const systemPrompt = buildSystemPrompt(groundedReplyContext.mode);
+      const systemPrompt = buildSystemPrompt(groundedReplyContext.mode, {
+        groundLibrary: groundedReplyContext.groundLibrary,
+        groundSandbox: groundedReplyContext.groundSandbox,
+      });
       const userPromptText = buildUserPrompt(groundedReplyContext, userPrompt, relevantChunks);
 
       // Resolve sandbox tooling once. We only attach tools when:
-      //   1. The reply is in lab mode.
+      //   1. The queued user message had `groundSandbox: true` (Discuss
+      //      with sandbox grounding enabled).
       //   2. `getReplyContext` saw a `ready` sandbox attached to the repo
       //      (it returns `sandboxTooling: undefined` otherwise — see
       //      context.ts for the full eligibility rules).
@@ -963,7 +968,7 @@ export const generateAssistantReply = internalAction({
       //
       // Plan 11 — `modelName` is the same per-mode pick the success
       // path used. The fallback only fires when the catch lands before
-      // `resolveModelForMode` ever ran (e.g. `getReplyContext` threw),
+      // `resolveModelForReply` ever ran (e.g. `getReplyContext` threw),
       // in which case `streamResponse` is also `undefined` and
       // `extractStreamUsage` short-circuits to `{}` — so the fallback
       // string is moot at runtime, just there to satisfy the helper's

@@ -73,18 +73,21 @@ describe("useComposerDraft", () => {
     expect(result.current[0]).toBe("from B");
   });
 
-  test("changing mode re-reads the per-mode draft for the workspace", () => {
+  test("changing mode to library drops the workspace draft key (Library has its own panel)", () => {
     window.localStorage.setItem(`systify.composer.draft.workspace.${WS_A}.discuss`, "discuss draft");
-    window.localStorage.setItem(`systify.composer.draft.workspace.${WS_A}.lab`, "lab draft");
 
     const { result, rerender } = renderHook(
-      ({ mode }: { mode: "discuss" | "lab" }) => useComposerDraft({ workspaceId: WS_A, threadId: null, mode }),
+      ({ mode }: { mode: "discuss" | "library" }) => useComposerDraft({ workspaceId: WS_A, threadId: null, mode }),
       { initialProps: { mode: "discuss" } },
     );
     expect(result.current[0]).toBe("discuss draft");
 
-    rerender({ mode: "lab" });
-    expect(result.current[0]).toBe("lab draft");
+    rerender({ mode: "library" });
+    // Library mode derives no key, so the discuss draft is no longer
+    // surfaced to this hook and writes do not touch storage.
+    expect(result.current[0]).toBe("");
+    act(() => result.current[1]("library typing"));
+    expect(window.localStorage.getItem(`systify.composer.draft.workspace.${WS_A}.library`)).toBeNull();
   });
 
   test("changing workspaceId re-reads the new workspace's draft", () => {

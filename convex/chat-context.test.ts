@@ -44,7 +44,7 @@ describe("chat reply context", () => {
         repositoryId,
         ownerTokenIdentifier,
         title: "Sandbox context thread",
-        mode: "lab",
+        mode: "discuss",
         lastMessageAt: Date.now(),
       });
 
@@ -122,7 +122,8 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "lab",
+        mode: "discuss",
+        groundSandbox: true,
         content: "What does the latest source tree look like?",
       });
 
@@ -190,7 +191,7 @@ describe("chat reply context", () => {
         repositoryId,
         ownerTokenIdentifier,
         title: "Tooling thread",
-        mode: "lab",
+        mode: "discuss",
         lastMessageAt: Date.now(),
       });
       const userMessageId = await ctx.db.insert("messages", {
@@ -199,7 +200,8 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "lab",
+        mode: "discuss",
+        groundSandbox: true,
         content: "Read the entrypoint.",
       });
 
@@ -267,7 +269,7 @@ describe("chat reply context", () => {
           repositoryId,
           ownerTokenIdentifier,
           title: `Tooling ${sandboxStatus} thread`,
-          mode: "lab",
+          mode: "discuss",
           lastMessageAt: Date.now(),
         });
         const userMessageId = await ctx.db.insert("messages", {
@@ -276,7 +278,8 @@ describe("chat reply context", () => {
           ownerTokenIdentifier,
           role: "user",
           status: "completed",
-          mode: "lab",
+          mode: "discuss",
+          groundSandbox: true,
           content: "Try to use a tool.",
         });
 
@@ -710,13 +713,13 @@ describe("chat reply context", () => {
       });
 
       // Newer user message lands after queueing, before generation runs.
-      // Picking it would make the test fail with mode === "lab".
+      // Picking it would make the test fail with mode === "discuss".
       await ctx.db.insert("messages", {
         threadId,
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "lab",
+        mode: "discuss",
         content: "Newer message, different mode.",
       });
 
@@ -884,15 +887,32 @@ describe("chat reply context", () => {
     // Plan 03: when the user switches modes mid-thread, the previous mode's
     // assistant answer (e.g. an unattached `discuss` hypothetical) must not
     // bleed into the new mode's prompt — the model would otherwise treat
-    // that hypothetical as ground truth for the live-grounded reply.
+    // that hypothetical as ground truth for the new mode's reply.
     // User turns (every role except `assistant`) are kept regardless of mode
     // so the conversational continuity the user expects ("you remember what
     // I asked before, right?") survives the switch.
     const ownerTokenIdentifier = "user|cross-mode-filter";
     const t = convexTest(schema, modules);
 
-    const { threadId, sandboxUserMessageId } = await t.run(async (ctx) => {
+    const { threadId, libraryUserMessageId } = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/cross-mode-filter",
+        sourceRepoFullName: "acme/cross-mode-filter",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "cross-mode-filter",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 0,
+      });
       const threadId = await ctx.db.insert("threads", {
+        repositoryId,
         ownerTokenIdentifier,
         title: "Cross-mode thread",
         // Thread default `discuss` is irrelevant once each row carries its
@@ -904,6 +924,7 @@ describe("chat reply context", () => {
 
       // Round 1 — `discuss`: user asks, assistant answers from training.
       await ctx.db.insert("messages", {
+        repositoryId,
         threadId,
         ownerTokenIdentifier,
         role: "user",
@@ -912,6 +933,7 @@ describe("chat reply context", () => {
         content: "What is a design pattern?",
       });
       await ctx.db.insert("messages", {
+        repositoryId,
         threadId,
         ownerTokenIdentifier,
         role: "assistant",
@@ -920,38 +942,41 @@ describe("chat reply context", () => {
         content: "Design patterns are reusable solutions to common problems.",
       });
 
-      // Round 2 — `sandbox`: user follows up. This is the queued reply.
-      const sandboxUserMessageId = await ctx.db.insert("messages", {
+      // Round 2 — `library`: user follows up under a new mode. This is the
+      // queued reply.
+      const libraryUserMessageId = await ctx.db.insert("messages", {
+        repositoryId,
         threadId,
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "lab",
+        mode: "library",
         content: "How do we implement the factory pattern in this repo?",
       });
-      // A prior `sandbox` reply from earlier in the thread (here we model it
+      // A prior `library` reply from earlier in the thread (here we model it
       // as the same round; in practice it would be the previous turn). It
       // must survive the cross-mode filter because it shares the queued
       // mode.
       await ctx.db.insert("messages", {
+        repositoryId,
         threadId,
         ownerTokenIdentifier,
         role: "assistant",
         status: "completed",
-        mode: "lab",
-        content: "Earlier sandbox-mode answer.",
+        mode: "library",
+        content: "Earlier library-mode answer.",
       });
 
-      return { threadId, sandboxUserMessageId };
+      return { threadId, libraryUserMessageId };
     });
 
     const context = await t.query(internal.chat.context.getReplyContext, {
       threadId,
-      userMessageId: sandboxUserMessageId,
+      userMessageId: libraryUserMessageId,
     });
 
     // User turns survive across the mode switch — both `discuss` and
-    // `sandbox` user messages remain visible to the model.
+    // `library` user messages remain visible to the model.
     const userMessages = context.messages.filter((message) => message.role === "user");
     expect(userMessages.map((message) => message.content)).toEqual([
       "What is a design pattern?",
@@ -959,9 +984,9 @@ describe("chat reply context", () => {
     ]);
 
     // Assistant turns are mode-scoped: the `discuss` answer is dropped, the
-    // `sandbox` answer stays.
+    // `library` answer stays.
     const assistantMessages = context.messages.filter((message) => message.role === "assistant");
-    expect(assistantMessages.map((message) => message.content)).toEqual(["Earlier sandbox-mode answer."]);
+    expect(assistantMessages.map((message) => message.content)).toEqual(["Earlier library-mode answer."]);
   });
 
   test("keeps every assistant turn when the thread never switches modes", async () => {
@@ -1034,9 +1059,9 @@ describe("chat reply context", () => {
     //
     // Layout:
     //   - 18 stale `discuss` assistant rows (oldest)
-    //   - 1 alternating user/assistant pair in `sandbox` (so the queued
+    //   - 1 alternating user/assistant pair in `library` (so the queued
     //     mode has a non-trivial recent history of its own)
-    //   - The queued `sandbox` user message (newest)
+    //   - The queued `library` user message (newest)
     //
     // Total raw rows: 21. Naive `take(20)` would drop the oldest stale
     // row but keep 17 stale ones; after the cross-mode filter we'd have
@@ -1047,7 +1072,24 @@ describe("chat reply context", () => {
     const t = convexTest(schema, modules);
 
     const { threadId, queuedUserMessageId } = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/cross-mode-overfetch",
+        sourceRepoFullName: "acme/cross-mode-overfetch",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "cross-mode-overfetch",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 0,
+      });
       const threadId = await ctx.db.insert("threads", {
+        repositoryId,
         ownerTokenIdentifier,
         title: "Cross-mode over-fetch thread",
         mode: "discuss",
@@ -1058,6 +1100,7 @@ describe("chat reply context", () => {
       // the queued-mode history under naive `take(MAX_CONTEXT_MESSAGES)`.
       for (let index = 0; index < 18; index += 1) {
         await ctx.db.insert("messages", {
+          repositoryId,
           threadId,
           ownerTokenIdentifier,
           role: "assistant",
@@ -1067,31 +1110,34 @@ describe("chat reply context", () => {
         });
       }
 
-      // Earlier `sandbox` round (user + assistant) before the queued one.
+      // Earlier `library` round (user + assistant) before the queued one.
       await ctx.db.insert("messages", {
+        repositoryId,
         threadId,
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "lab",
-        content: "Earlier sandbox question.",
+        mode: "library",
+        content: "Earlier library question.",
       });
       await ctx.db.insert("messages", {
+        repositoryId,
         threadId,
         ownerTokenIdentifier,
         role: "assistant",
         status: "completed",
-        mode: "lab",
-        content: "Earlier sandbox answer.",
+        mode: "library",
+        content: "Earlier library answer.",
       });
 
       const queuedUserMessageId = await ctx.db.insert("messages", {
+        repositoryId,
         threadId,
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "lab",
-        content: "Queued sandbox question.",
+        mode: "library",
+        content: "Queued library question.",
       });
 
       return { threadId, queuedUserMessageId };
@@ -1103,11 +1149,11 @@ describe("chat reply context", () => {
     });
 
     // The 18 stale `discuss` assistant rows are filtered out; the 3
-    // sandbox-mode rows remain, in ascending creation order.
+    // library-mode rows remain, in ascending creation order.
     expect(context.messages.map((message) => ({ role: message.role, content: message.content }))).toEqual([
-      { role: "user", content: "Earlier sandbox question." },
-      { role: "assistant", content: "Earlier sandbox answer." },
-      { role: "user", content: "Queued sandbox question." },
+      { role: "user", content: "Earlier library question." },
+      { role: "assistant", content: "Earlier library answer." },
+      { role: "user", content: "Queued library question." },
     ]);
   });
 });

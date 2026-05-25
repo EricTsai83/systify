@@ -454,17 +454,18 @@ describe("rate limits and interactive job guards", () => {
         .mutation(api.chat.send.sendMessage, {
           threadId,
           content: "Inspect the lease logic.",
-          mode: "lab",
+          mode: "discuss",
+          groundSandbox: true,
         })
         .catch((caughtError) => caughtError);
 
       // chat.sendMessage throws via assertWorkspaceModeEligible → throwIfDisabled.
-      // Structured shape: { code: "sandbox_user_cap_exceeded", mode: "lab",
+      // Structured shape: { code: "sandbox_user_cap_exceeded", mode: "discuss",
       // message, retryAfterMs }. The bucket / capUsd fields stay on
       // assertSandboxDailyCostBudget's own throws (still tested below) but
       // are not part of the eligibility module's contract.
       const data = typeof error?.data === "string" ? JSON.parse(error.data) : error?.data;
-      expect(data).toMatchObject({ code: "sandbox_user_cap_exceeded", mode: "lab" });
+      expect(data).toMatchObject({ code: "sandbox_user_cap_exceeded", mode: "discuss" });
       expect(data.retryAfterMs).toEqual(expect.any(Number));
       // No job, message, or stream rows should be created when the
       // pre-check rejects — the failure must happen *before* any
@@ -523,12 +524,13 @@ describe("rate limits and interactive job guards", () => {
         .mutation(api.chat.send.sendMessage, {
           threadId,
           content: "Inspect the lease logic.",
-          mode: "lab",
+          mode: "discuss",
+          groundSandbox: true,
         })
         .catch((caughtError) => caughtError);
 
       const data = typeof error?.data === "string" ? JSON.parse(error.data) : error?.data;
-      expect(data).toMatchObject({ code: "sandbox_workspace_cap_exceeded", mode: "lab" });
+      expect(data).toMatchObject({ code: "sandbox_workspace_cap_exceeded", mode: "discuss" });
       expect(data.retryAfterMs).toEqual(expect.any(Number));
     });
 
@@ -566,7 +568,8 @@ describe("rate limits and interactive job guards", () => {
           ownerTokenIdentifier,
           role: "assistant",
           status: "streaming",
-          mode: "lab",
+          mode: "discuss",
+          groundSandbox: true,
           content: "",
         });
         await ctx.db.insert("messageStreams", {

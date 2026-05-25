@@ -24,6 +24,8 @@ export function useChatLifecycle({
   threadToDelete,
   chatInput,
   chatMode,
+  groundLibrary,
+  groundSandbox,
   clearChatInput,
   setActionError,
   setThreadToDelete,
@@ -35,6 +37,13 @@ export function useChatLifecycle({
   threadToDelete: ThreadId | null;
   chatInput: string;
   chatMode: ChatMode;
+  /**
+   * Discuss-only per-message grounding flags. Forwarded into the send
+   * mutation only when `chatMode === "discuss"` — Library Mode ignores
+   * them (its grounding is implicit in the mode).
+   */
+  groundLibrary?: boolean;
+  groundSandbox?: boolean;
   clearChatInput: () => void;
   setActionError: (value: string | null) => void;
   setThreadToDelete: (value: ThreadId | null) => void;
@@ -53,12 +62,20 @@ export function useChatLifecycle({
         const trimmed = chatInput.trim();
         if (!trimmed) return;
         setActionError(null);
+        const groundingArgs =
+          chatMode === "discuss"
+            ? {
+                groundLibrary: groundLibrary === true,
+                groundSandbox: groundSandbox === true,
+              }
+            : {};
         try {
           if (selectedThreadId) {
             await sendMessageMutation({
               threadId: selectedThreadId,
               content: chatInput,
               mode: chatMode,
+              ...groundingArgs,
             });
             clearChatInput();
             return;
@@ -68,6 +85,7 @@ export function useChatLifecycle({
             workspaceId,
             content: chatInput,
             mode: chatMode,
+            ...groundingArgs,
           });
           clearChatInput();
           onAfterCreateThread(result.threadId, result.mode);
@@ -78,6 +96,8 @@ export function useChatLifecycle({
       [
         chatInput,
         chatMode,
+        groundLibrary,
+        groundSandbox,
         clearChatInput,
         onAfterCreateThread,
         selectedThreadId,

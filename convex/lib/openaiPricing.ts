@@ -2,7 +2,7 @@
  * Pricing snapshot for OpenAI text models the chat replies are allowed to use.
  *
  * The set deliberately covers more than the current `OPENAI_MODEL` default so
- * Plan 11's per-mode model selection (`OPENAI_MODEL_LAB` / `_LIBRARY` /
+ * capability-keyed model selection (`OPENAI_MODEL_SANDBOX` / `_LIBRARY` /
  * `_DISCUSS`) can land without a second pricing pass — adding a model that
  * isn't in the table would silently drop it from the daily-cap accounting
  * (Plan 10's `estimatedCostUsd` returns `undefined` for unknown models),

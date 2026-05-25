@@ -617,7 +617,7 @@ async function createAuditLogFixture(t: ReturnType<typeof convexTest>, ownerToke
       repositoryId,
       ownerTokenIdentifier,
       title: `${slug} thread`,
-      mode: "lab",
+      mode: "discuss",
       lastMessageAt: Date.now(),
     });
 
@@ -641,7 +641,8 @@ async function createAuditLogFixture(t: ReturnType<typeof convexTest>, ownerToke
       ownerTokenIdentifier,
       role: "assistant",
       status: "streaming",
-      mode: "lab",
+      mode: "discuss",
+      groundSandbox: true,
       content: "",
     });
 

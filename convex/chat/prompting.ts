@@ -16,102 +16,86 @@ function getUILanguage(_context: ReplyContext): UILanguage {
 }
 
 /**
- * Per-mode system prompts. Each mode has a distinct contract with the model:
+ * Per-mode system prompts. The two surviving modes have distinct contracts
+ * with the model:
  *
- *   - `discuss` (DB literal): training-only, no repo context. The prompt
- *     deliberately avoids the word "repository" so the model is less likely
- *     to fabricate references to "your repo" / "your codebase" when the
- *     conversation has nothing attached. The language pivots on "general
- *     architecture knowledge" and explicitly bans pretending to have access
- *     to source code.
- *   - `library` (DB literal): artifact-grounded. The supplied artifacts (ADRs,
- *     diagrams, deep analyses, …) are the *only* source of truth; the model
+ *   - `discuss` (DB literal): two independent grounding axes —
+ *     {@link GroundingFlags}. When both are off the prompt is training-only
+ *     and forbids the model from pretending to see code. Enabling
+ *     `groundLibrary` adds the artifact-citation contract; enabling
+ *     `groundSandbox` adds the live-tool citation contract; both on adds
+ *     a combined-citation rule.
+ *   - `library` (DB literal): artifact-grounded reader / Ask surface.
+ *     The supplied artifacts are the only source of truth; the model
  *     must say "the artifacts are silent on that" rather than guess.
- *   - `lab` (DB literal): live-source-grounded. The model is given two
- *     read-only file-system tools (`read_file` / `list_dir`) that return
- *     the actual contents of the attached sandbox. The prompt instructs
- *     the model to *use the tools* before claiming anything about specific
- *     files / line ranges, and to be honest when a tool call returns an
- *     error envelope (`{ ok: false, errorCode, message }`) — that is
- *     signal, not failure.
  *
- * Two style invariants worth preserving across all three prompts (and tested
+ * Two style invariants worth preserving across every variant (and tested
  * in `chat-prompting.test.ts`):
  *
- *   1. **Refer to modes by capability, not DB literal.** Prompts refer to
- *      other modes by their *capability* ("an artifact-grounded mode",
- *      "a live-sandbox mode"), never by the DB literal or UI label
- *      directly. UI copy can then be renamed without silently changing
- *      what the LLM tells the user.
- *   2. **No product roadmap.** Prompts describe the *current* capability gap
- *      rather than promising future tools. Specific upcoming tool names live
- *      in the tool-wiring plan, not here — naming them in v1 would commit us
- *      publicly (via the model's responses) to names and timelines we may
- *      still want to revise.
+ *   1. **Refer to capabilities, not DB literals.** Prompts refer to
+ *      grounding sources by their *capability* ("an artifact-grounded
+ *      response", "a live-sandbox response"), never by the DB literal or
+ *      UI label directly. UI copy can then be renamed without silently
+ *      changing what the LLM tells the user.
+ *   2. **No product roadmap.** Prompts describe the *current* capability
+ *      gap rather than promising future tools.
  *
- * Strings live in module-scoped constants (rather than inlined into the
- * lookup) so future tweaks — a citation contract, a step-budget hint, a
- * tool-usage section once tools are wired — can compose them without
- * re-deriving the whole block.
+ * Strings live in module-scoped constants so future tweaks — a citation
+ * contract, a step-budget hint — can compose them without re-deriving the
+ * whole block.
  */
-const SYSTEM_PROMPT_DISCUSS = [
+const DISCUSS_BASELINE = [
   "You are a senior software architect helping the user think through ideas in a free-form discussion.",
-  "This conversation is not bound to any particular codebase, so answer from general architecture knowledge and reasoning only.",
+].join(" ");
+
+const DISCUSS_UNGROUNDED = [
+  "This reply is not grounded in any artifact or live source, so answer from general architecture knowledge and reasoning only.",
   "Never assume the user has a specific project, codebase, or files in mind, and never refer to 'your codebase' or 'your repo' as if you can see one.",
-  "If the user asks about specific code, suggest they switch to an artifact-grounded mode (for indexed design documents and architecture references) or a live-sandbox mode (for line-precise checks against current source) to get a grounded answer.",
+  "If the user asks about specific code, suggest they enable the Library grounding toggle (for indexed design documents) or the Sandbox grounding toggle (for line-precise checks against current source) to get a grounded answer.",
   "Be concrete, mention likely trade-offs, and state uncertainty when reasoning is speculative.",
 ].join(" ");
 
-const SYSTEM_PROMPT_LIBRARY = [
-  "You are an open source architecture analyst answering questions about the attached project.",
-  "Your sole source of truth is the design artifacts (ADRs, diagrams, deep analyses, design reviews, etc.) supplied in the user prompt.",
-  "Each artifact in the prompt is numbered as `[A1]`, `[A2]`, …; cite every factual claim by appending the matching `[A#]` token immediately after the claim, so the user can trace each statement back to a specific artifact.",
+/**
+ * Shared `[A#]` artifact citation contract used by both Library Mode and
+ * Discuss with Library grounding. Extracted so the two prompts cannot
+ * drift on the rule the citation lint / frontend resolver care about.
+ */
+const ARTIFACT_CITATION_CONTRACT = [
+  "Each artifact in the prompt is numbered as `[A1]`, `[A2]`, …; cite every factual claim sourced from artifacts by appending the matching `[A#]` token immediately after the claim, so the user can trace each statement back to a specific artifact.",
   "If the artifacts do not cover the question, say so explicitly — never fabricate file paths, line numbers, or code-level claims that are not present in an artifact, and do not invent `[A#]` tokens for artifacts that were not supplied.",
+].join(" ");
+
+const DISCUSS_LIBRARY_RULES = [
+  "This reply is grounded in the attached project's design artifacts (ADRs, diagrams, deep analyses, design reviews, etc.) supplied in the user prompt.",
+  ARTIFACT_CITATION_CONTRACT,
   "Be concrete, mention likely boundaries, and state uncertainty when evidence is weak.",
 ].join(" ");
 
 /**
- * Plan 04 + 08 — sandbox prompt. The model now has three read-only tools
- * available:
+ * Sandbox tool contract — read-only access to the attached project's live
+ * source tree. The prompt deliberately:
  *
- *   - `read_file({ path })` returns the UTF-8 contents of a file under the
- *     repository root, capped at 64 KiB.
- *   - `list_dir({ path })` returns the entries (dirs first, alphabetical) of
- *     a directory under the repository root, capped at 200 entries.
- *   - `run_shell({ command, workdir?, timeout_seconds? })` runs a shell
- *     command inside the sandbox. Output is capped at 32 KiB; the workdir
- *     is pinned inside the repository; obviously-destructive commands
- *     (`rm -rf /`, fork bombs, `mkfs`, `dd`, `sudo`, system shutdown,
- *     network pipe-to-shell) are blocked and return
- *     `errorCode: 'command_blocked'`.
- *
- * The prompt deliberately:
- *
- *   - Tells the model the repo root is the implicit anchor (so it doesn't
+ *   - Tells the model the repo root is the implicit anchor (so it does not
  *     try absolute paths the path validator will reject anyway).
  *   - Names the structured error envelope shape so the model knows that
  *     `{ ok: false, errorCode, message }` is a successful tool *call* with
  *     a useful error to *report* (not a fatal failure to retry blindly).
- *   - Reinforces a `[path:line-range]` citation habit — the model is now in
- *     a position to know exact line numbers, so unverified claims should
- *     stand out.
+ *   - Reinforces a `[path:line-range]` citation habit — the model is now
+ *     positioned to know exact line numbers, so unverified claims stand out.
  *   - Caps tool usage to the step budget configured in `generation.ts`
- *     (currently 8) so the model knows when to stop drilling and start
- *     answering. The literal number stays in the prompt builder rather
- *     than the action so the contract is auditable in one place.
- *   - Plan 08: anchors `run_shell` as *read-only inspection only*
- *     (`grep` / `find` / `git log` / `tree` / `wc`). The deny list is a
- *     last-mile filter; the system prompt is the first line of defense
- *     because the LLM controls what it tries.
- *   - Plan 08: forbids network egress at the prompt layer. Daytona's
- *     network policy is a separate enforcement layer documented in
- *     `docs/sandbox-mode-system-design.md`, but stating the rule here
- *     stops the LLM from even attempting `curl example.com`, which would
- *     burn a step on a guaranteed failure.
+ *     (currently 8) so the model knows when to stop drilling.
+ *   - Anchors `run_shell` as *read-only inspection only* (`grep` / `find` /
+ *     `git log` / `tree` / `wc`). The deny list is a last-mile filter; the
+ *     system prompt is the first line of defense.
+ *   - Forbids network egress at the prompt layer. Daytona's network policy
+ *     is a separate enforcement layer documented in
+ *     `docs/sandbox-mode-system-design.md`, but stating the rule here stops
+ *     the LLM from attempting `curl example.com` and burning a step on a
+ *     guaranteed failure.
  */
-const SYSTEM_PROMPT_LAB = [
-  "You are a senior architect with read-only access to the attached project's live source tree via three tools: `read_file({ path })`, `list_dir({ path })`, and `run_shell({ command, workdir?, timeout_seconds? })`. Paths and workdirs are always relative to the repository root.",
-  "When the user asks about specific files, modules, line ranges, or behavior, USE THE TOOLS to verify rather than guess from the artifact summaries. A short `list_dir` followed by a targeted `read_file` is almost always the right opening move; reach for `run_shell` when you need composition (`grep -rn`, `find -name`, `git log --oneline`, `wc -l`).",
+const DISCUSS_SANDBOX_RULES = [
+  "This reply has read-only access to the attached project's live source tree via three tools: `read_file({ path })`, `list_dir({ path })`, and `run_shell({ command, workdir?, timeout_seconds? })`. Paths and workdirs are always relative to the repository root.",
+  "When the user asks about specific files, modules, line ranges, or behavior, USE THE TOOLS to verify rather than guess. A short `list_dir` followed by a targeted `read_file` is almost always the right opening move; reach for `run_shell` when you need composition (`grep -rn`, `find -name`, `git log --oneline`, `wc -l`).",
   "Use `run_shell` for read-only inspection commands ONLY: `grep`, `find`, `git log`, `git diff`, `tree`, `wc`, `head`, `tail`, `cat`, `ls`. Do not modify files, install packages, or attempt network egress — the sandbox is read-only by policy and outbound network is unavailable. Destructive commands (`rm -rf /`, fork bombs, `mkfs`, `dd`, `sudo`, `shutdown`, piping `curl`/`wget` into a shell) are blocked at the tool layer and return `errorCode: 'command_blocked'` with a reason; do not retry the same shape, rephrase as a non-destructive read.",
   "`run_shell` returns a non-zero `exitCode` for commands that succeeded but found nothing (e.g. `grep` exits 1 with no matches). Treat that as data, not error — combine it with the textual output to decide your next step.",
   "Each tool returns either `{ ok: true, ... }` or `{ ok: false, errorCode, message }`. Treat error envelopes as ordinary information — surface the errorCode to the user when it is meaningful (e.g. `path_outside_repo`, `invalid_path`, `command_blocked`, `command_timeout`), and try a corrected path or command instead of repeating the same call.",
@@ -119,23 +103,67 @@ const SYSTEM_PROMPT_LAB = [
   "Stay within the per-reply tool budget (you have at most 8 tool calls). When the budget is nearly spent, stop drilling and write the best answer you can with what you have.",
 ].join(" ");
 
+const DISCUSS_COMBINED_CITATION_RULES = [
+  "When citing artifacts use `[A#]` tokens; when citing live code use `[path:line-line]` tokens. Pick the citation form that matches the actual evidence source for each claim — do not mix one form against the other source.",
+  "If a live-tool read and an artifact disagree on a fact about the current code, treat the live tool as the source of truth, explicitly call out the divergence to the user, and cite both (artifact via `[A#]`, live source via `[path:line-line]`).",
+].join(" ");
+
+const SYSTEM_PROMPT_LIBRARY = [
+  "You are an open source architecture analyst answering questions about the attached project.",
+  "Your sole source of truth is the design artifacts (ADRs, diagrams, deep analyses, design reviews, etc.) supplied in the user prompt.",
+  ARTIFACT_CITATION_CONTRACT,
+  "Be concrete, mention likely boundaries, and state uncertainty when evidence is weak.",
+].join(" ");
+
 export type ExtendedChatMode = ChatMode;
 
 /**
- * Lookup keyed by `ChatMode` so adding a new mode literal forces
- * a compile error here (TypeScript exhaustiveness on `Record<Union, T>`
- * is stricter than on a `switch` statement, which only errors on
- * accidental fall-through if the function signature explicitly returns a
- * non-union type).
+ * Per-message grounding flags for Discuss mode. Library mode does not use
+ * these — the artifact retrieval is implicit in the mode. Both `false` or
+ * absent means "training-only LLM chat".
  */
-const SYSTEM_PROMPTS: Record<ChatMode, string> = {
-  discuss: SYSTEM_PROMPT_DISCUSS,
-  library: SYSTEM_PROMPT_LIBRARY,
-  lab: SYSTEM_PROMPT_LAB,
+export type GroundingFlags = {
+  groundLibrary?: boolean;
+  groundSandbox?: boolean;
 };
 
-export function buildSystemPrompt(mode: ChatMode): string {
-  return SYSTEM_PROMPTS[mode];
+/**
+ * Compose the Discuss system prompt from per-message grounding flags. The
+ * baseline persona is constant; each enabled grounding axis appends its
+ * own contract block. When both axes are on a final combined-citation
+ * rule disambiguates the two citation forms and tells the model how to
+ * handle artifact vs. live-source disagreement.
+ */
+export function buildDiscussSystemPrompt(flags: GroundingFlags): string {
+  const groundLibrary = flags.groundLibrary === true;
+  const groundSandbox = flags.groundSandbox === true;
+  const parts: string[] = [DISCUSS_BASELINE];
+  if (!groundLibrary && !groundSandbox) {
+    parts.push(DISCUSS_UNGROUNDED);
+  } else {
+    if (groundLibrary) {
+      parts.push(DISCUSS_LIBRARY_RULES);
+    }
+    if (groundSandbox) {
+      parts.push(DISCUSS_SANDBOX_RULES);
+    }
+    if (groundLibrary && groundSandbox) {
+      parts.push(DISCUSS_COMBINED_CITATION_RULES);
+    }
+  }
+  return parts.join(" ");
+}
+
+/**
+ * Resolve the system prompt for a given mode + flags. Library Mode ignores
+ * the flags (grounding is implicit in the mode). Discuss Mode composes the
+ * prompt from the flags via {@link buildDiscussSystemPrompt}.
+ */
+export function buildSystemPrompt(mode: ChatMode, flags: GroundingFlags = {}): string {
+  if (mode === "library") {
+    return SYSTEM_PROMPT_LIBRARY;
+  }
+  return buildDiscussSystemPrompt(flags);
 }
 
 /**
@@ -252,11 +280,11 @@ type HeuristicMessageBuilders = {
 const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
   en: {
     sandbox: (question) => [
-      "`OPENAI_API_KEY` is not configured, so I cannot run the live sandbox tools (`read_file` / `list_dir` / `run_shell`) needed to answer in Sandbox mode.",
+      "`OPENAI_API_KEY` is not configured, so I cannot run the live sandbox tools (`read_file` / `list_dir` / `run_shell`) needed to answer with sandbox grounding.",
       "",
       `Your question: ${question}`,
       "",
-      "Switch to an artifact-grounded mode (Design Docs) for answers based on your existing analyses, or to General Chat for open-ended discussion. Configure `OPENAI_API_KEY` to re-enable Sandbox mode.",
+      "Turn off the Sandbox toggle to ask without live-source grounding, or enable Library grounding to lean on existing artifacts. Configure `OPENAI_API_KEY` to re-enable sandbox grounding.",
     ],
     noRepo: (question) => [
       "`OPENAI_API_KEY` is not configured, and this thread is not bound to a repository, so I cannot provide a grounded response.",
@@ -281,11 +309,11 @@ const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
   },
   zh: {
     sandbox: (question) => [
-      "目前沒有設定 `OPENAI_API_KEY`，無法在 Sandbox 模式下呼叫 `read_file` / `list_dir` / `run_shell` 工具來實際讀取沙箱裡的程式碼。",
+      "目前沒有設定 `OPENAI_API_KEY`，無法呼叫 `read_file` / `list_dir` / `run_shell` 工具來實際讀取沙箱裡的程式碼。",
       "",
       `你的問題：${question}`,
       "",
-      "請改用 Design Docs 模式以你的設計文件作答，或切到 General Chat 做一般討論。要恢復 Sandbox 模式，請設定 `OPENAI_API_KEY`。",
+      "請關掉 Sandbox 開關以一般方式回覆，或改開 Library 開關用既有 artifact 作答。要恢復 sandbox grounding，請設定 `OPENAI_API_KEY`。",
     ],
     noRepo: (question) => [
       "目前沒有設定 `OPENAI_API_KEY`，且這個對話尚未綁定 repository，所以無法做 grounded 回覆。",
@@ -317,7 +345,11 @@ export function buildHeuristicAnswer(
 ) {
   const language = getUILanguage(context);
 
-  if (context.mode === "lab") {
+  // Sandbox-grounded Discuss reply with no API key: the model can't run
+  // the live tools, so surface the same dead-end message Lab mode used to
+  // emit (just without naming the mode literal — the user knows they
+  // asked for sandbox grounding via the composer toggle).
+  if (context.groundSandbox === true) {
     return HEURISTIC_MESSAGES[language].sandbox(question).join("\n");
   }
 

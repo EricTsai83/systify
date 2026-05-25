@@ -107,16 +107,17 @@ const artifactKind = v.union(
 
 /**
  * Chat mode persisted on `threads.mode` and `messages.mode`. The enum mirrors
- * the UI's mode selector and URL segment verbatim — DB literal, URL path, and
+ * the UI's mode switcher and URL segment verbatim — DB literal, URL path, and
  * UI label all use the same word.
  *
- * - `discuss`  — LLM training only; no repo, no sandbox.
- * - `library`  — RAG over the user's accumulated artifacts for the attached
- *                repository.
- * - `lab`      — Live filesystem + execution in a Daytona sandbox.
+ * - `discuss`  — free-form chat with per-message Library / Sandbox
+ *                grounding toggles (see `messages.groundLibrary` /
+ *                `messages.groundSandbox`).
+ * - `library`  — RAG over the user's accumulated artifacts for the
+ *                attached repository.
  *
- * Mode preconditions (repo-required, sandbox-required) are enforced in
- * `chat.sendMessage` / `chat.createThread`, not in the schema.
+ * Mode preconditions (repo-required) are enforced in `chat.sendMessage` /
+ * `chat.createThread`, not in the schema.
  */
 const threadMode = chatModeValidator;
 
@@ -612,12 +613,25 @@ export default defineSchema({
      */
     artifactContext: v.optional(v.array(v.id("artifacts"))),
     /**
-     * Lab thread → workspace-level lab session pointer. Workspace's single
-     * active session is shared across every Lab thread in that workspace, so
-     * thread switching never re-provisions a sandbox. Optional and unused
-     * on `discuss` / `library` threads.
+     * Discuss thread → workspace-level sandbox session pointer. The single
+     * active sandbox session per workspace is shared across every Discuss
+     * thread whose user has enabled sandbox grounding, so thread switching
+     * never re-provisions a sandbox. Optional and unused on `library` threads
+     * and on Discuss threads that have never used sandbox grounding.
      */
-    labSessionId: v.optional(v.id("labSessions")),
+    sandboxSessionId: v.optional(v.id("sandboxSessions")),
+    /**
+     * Composer defaults for Discuss threads — the initial toggle state when
+     * the user opens an existing thread. Updated whenever the user sends a
+     * Discuss message with a particular grounding flag combination so the
+     * thread "remembers" their last preference. Unset on `library` threads
+     * (Library Mode has its own UI for artifact context) and on legacy
+     * Discuss threads created before this column existed; consumers default
+     * both to `false` when absent for an unattached thread, or to
+     * `defaultGroundLibrary: true` for a repo-bound thread with artifacts.
+     */
+    defaultGroundLibrary: v.optional(v.boolean()),
+    defaultGroundSandbox: v.optional(v.boolean()),
     /**
      * Wall-clock ms epoch when the viewer pinned this thread to the top of
      * their sidebar. Unset on unpin (drop the field via patch). The value
@@ -665,6 +679,25 @@ export default defineSchema({
      * genuinely unknown vs. genuinely zero.
      */
     estimatedCostUsd: v.optional(v.number()),
+    /**
+     * Discuss-mode per-message grounding flags. Both are optional and
+     * meaningful only for `mode === "discuss"` messages — Library Mode
+     * replies do not consult these (their grounding is implicit in the
+     * mode). When both are unset / false the reply is unbound LLM
+     * training-only chat; the flags compose independently:
+     *
+     *   - `groundLibrary: true` — artifact-grounded reply with `[A#]`
+     *     citations against the workspace's design artifacts.
+     *   - `groundSandbox: true` — live-source-grounded reply with
+     *     `[path:line]` citations and read-only sandbox tool calls.
+     *
+     * Persisted on both the user message (as a record of what the user
+     * asked for) and the assistant placeholder (so the generation action
+     * can read them off the queued message). Both stay unset on
+     * `library` mode messages.
+     */
+    groundLibrary: v.optional(v.boolean()),
+    groundSandbox: v.optional(v.boolean()),
     /**
      * Numbered artifact citation map for `library` mode replies. Index 1 in
      * the array is the artifact the prompt rendered as `## [A1] …`, index 2
@@ -733,7 +766,7 @@ export default defineSchema({
       ),
     ),
     /**
-     * Plan 11 — sandbox-mode citation lint output.
+     * Plan 11 — sandbox-grounded citation lint output.
      *
      * Half-open `[start, end)` offsets into `messages.content` marking
      * sentences the model emitted without either (a) a `[path:line]`
@@ -744,12 +777,11 @@ export default defineSchema({
      * design (we never reject the model's output).
      *
      * Computed by `convex/chat/citationLint.ts:lintCitations` at finalize
-     * / fail / cancel time. Optional + only written for lab-mode replies
-     * that produced at least one flagged sentence; messages predating
-     * Plan 11 (and discuss / library replies) keep the field unset rather
-     * than `[]` — the renderer treats both as "no highlights", so this
-     * matches the widen-migrate-narrow contract documented in
-     * `docs/lab-mode-system-design.md`.
+     * / fail / cancel time. Optional + only written for sandbox-grounded
+     * replies (`groundSandbox === true`) that produced at least one
+     * flagged sentence; messages predating Plan 11 (and ungrounded
+     * Discuss / Library replies) keep the field unset rather than `[]`
+     * — the renderer treats both as "no highlights".
      *
      * Capped at `MAX_UNVERIFIED_CLAIMS_PER_MESSAGE` (50) inside the lint
      * function so a runaway pathological reply cannot push the message
@@ -769,8 +801,7 @@ export default defineSchema({
   })
     .index("by_threadId", ["threadId"])
     .index("by_threadId_and_status", ["threadId", "status"])
-    .index("by_jobId", ["jobId"])
-    .index("by_mode", ["mode"]),
+    .index("by_jobId", ["jobId"]),
 
   /**
    * Application invariant: each assistant reply owns at most one `messageStreams`
@@ -1007,17 +1038,16 @@ export default defineSchema({
     }),
 
   /**
-   * Workspace-level Lab session: at most one `active` row per workspace at
-   * any time, shared across every Lab thread in that workspace. Session
-   * lifecycle:
+   * Workspace-level sandbox session: at most one `active` row per workspace
+   * at any time, shared across every Discuss thread in that workspace whose
+   * user has enabled the Sandbox grounding toggle. Session lifecycle:
    *
    *   `starting` → `active` → `paused` (idle auto-pause) → `active`
    *                                  ↘                        ↗
    *                                   `stopped` (user) / `ended` (cleanup)
    *
    * Cost transparency lives entirely on this row — `spentCents` is the
-   * per-session running total, the Lab status bar reads it through a
-   * subscription. `idleAutoPauseMinutes` drives the cron in
+   * per-session running total. `idleAutoPauseMinutes` drives the cron in
    * `convex/crons.ts` so the value is observable in the dashboard rather
    * than hidden in env-var-only config.
    *
@@ -1029,7 +1059,7 @@ export default defineSchema({
    *   - `by_ownerTokenIdentifier_and_startedAt` is for the daily cost
    *     rollup over a viewer's sessions.
    */
-  labSessions: defineTable({
+  sandboxSessions: defineTable({
     ownerTokenIdentifier: v.string(),
     workspaceId: v.id("workspaces"),
     repositoryId: v.id("repositories"),

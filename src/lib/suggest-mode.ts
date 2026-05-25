@@ -74,6 +74,13 @@ const OPEN_ENDED_PREFIX_REGEX = /^\s*(?:how should i\b|what(?:['’‘]?)s\s+the
 export type ModeSuggestion = {
   /** Mode the [Switch] button should jump to. */
   readonly suggested: ChatMode;
+  /**
+   * Discuss-mode grounding hint. When the suggestion targets `discuss`
+   * and a grounding axis would materially improve the reply, the
+   * composer applies this hint by pre-flipping the matching toggle.
+   * Undefined means the suggestion is mode-only.
+   */
+  readonly grounding?: "library" | "sandbox";
   /** Stable key used by the composer's session-level dismiss set. */
   readonly key: string;
   /** User-facing single-sentence reason rendered in the inline hint. */
@@ -86,17 +93,17 @@ export type ModeSuggestion = {
  *
  * Heuristic precedence — first match wins, evaluated top-to-bottom:
  *
- *   1. **Specific-file → sandbox.** Triggers only when the user is in
- *      `discuss` or `docs` and types something that looks like a source
- *      path. Sandbox is the only mode that can read the live tree, so
- *      this is unambiguously the right mode for a file-specific
- *      question.
+ *   1. **Specific-file → Discuss + Sandbox grounding.** Triggers when
+ *      the user is in `library` and types something that looks like a
+ *      source path. Sandbox-grounded Discuss is the only way to read
+ *      the live tree, so this is unambiguously the right surface for
+ *      a file-specific question.
  *
  *   2. **Open-ended → discuss.** Triggers when the input starts with
  *      one of the two open-ended advice prefixes and the user is *not*
- *      already in `discuss`. These questions don't benefit from RAG /
- *      sandbox grounding, so docs / sandbox mode would just spend more
- *      tokens for the same general answer.
+ *      already in `discuss`. These questions don't benefit from
+ *      grounding, so a grounded mode would just spend more tokens for
+ *      the same general answer.
  *
  * Order matters: a message like "How should I refactor `convex/foo.ts`
  * for testability?" would match both rules; the file-path rule wins
@@ -118,19 +125,18 @@ export function suggestMode(
     return null;
   }
 
-  // Rule 1 — file path mention: nudge from discuss/library to lab.
-  // Lab is the only mode that can resolve `convex/chat/send.ts`
-  // to actual content; library answers from a synthesized artifact would
-  // hallucinate line numbers.
-  if (
-    (currentMode === "discuss" || currentMode === "library") &&
-    availableModes.includes("lab") &&
-    SOURCE_PATH_REGEX.test(input)
-  ) {
+  // Rule 1 — file path mention while in Library: nudge into Discuss with
+  // the Sandbox grounding toggle pre-flipped. Sandbox grounding is the
+  // only path that can resolve `convex/chat/send.ts` to actual content;
+  // a Library answer would have to interpolate from artifacts that may
+  // never reference the file directly.
+  if (currentMode === "library" && availableModes.includes("discuss") && SOURCE_PATH_REGEX.test(input)) {
     return {
-      suggested: "lab",
-      key: "specific-file:lab",
-      reason: "This question references a specific file. Lab mode would give a more accurate answer.",
+      suggested: "discuss",
+      grounding: "sandbox",
+      key: "specific-file:sandbox",
+      reason:
+        "This question references a specific file. Discuss with Sandbox grounding would give a more accurate answer.",
     };
   }
 

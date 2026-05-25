@@ -8,15 +8,13 @@ import { toUserErrorMessage } from "@/lib/errors";
 import { AppNotice } from "@/components/app-notice";
 import { EmptyChatHint, EmptyNoRepoHint } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
-import { MODE_CATALOG, MODE_EXAMPLES, MODE_INFO_ENTRIES, MODE_LABELS } from "@/components/chat-modes";
+import { MODE_EXAMPLES } from "@/components/chat-modes";
+import { GroundingToggleBar, type GroundingAxisLike } from "@/components/grounding-toggle-bar";
 import { ModeExamples } from "@/components/mode-examples";
-import { ModeInfoPopover } from "@/components/mode-info-popover";
 import { SandboxActivityPill } from "@/components/sandbox-activity-pill";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
-import { suggestMode } from "@/lib/suggest-mode";
 import type {
   ActiveMessageStream,
   ArtifactId,
@@ -36,17 +34,37 @@ type ChatPanelProps = {
   isChatLoading: boolean;
   chatInput: string;
   setChatInput: (v: string) => void;
-  chatMode: ChatMode;
-  setChatMode: (v: ChatMode) => void;
-  availableModes: readonly ChatMode[];
-  disabledModeReasons: Partial<Record<ChatMode, string>>;
   /**
-   * True when sandbox isn't currently in `availableModes` but the
-   * disabled "Sandbox" option should still accept a click and trigger
-   * a lazy `requestSandboxActivation`. Sourced from the thread context
-   * (see `useThreadCapabilities`).
+   * The thread's persisted mode. After the Lab collapse this is always
+   * `"discuss"` for panels rendered by the Discuss page; Library has its
+   * own surface. Kept as a prop so future surfaces that reuse the panel
+   * (e.g. a hypothetical preview shell) can drive it.
    */
-  sandboxIsActivatable?: boolean;
+  chatMode: ChatMode;
+  /**
+   * Per-message grounding toggle state. The Discuss composer mirrors
+   * these into the send-mutation args so the assistant reply observes
+   * the same flags the user saw at click time.
+   */
+  groundLibrary: boolean;
+  groundSandbox: boolean;
+  setGroundLibrary: (v: boolean) => void;
+  setGroundSandbox: (v: boolean) => void;
+  /**
+   * Per-axis availability verdict from `workspaceModeEligibility.evaluate`.
+   * Mirrors the structured shape the eligibility module exposes, but typed
+   * loosely here so the panel can render the toggle bar before the type
+   * narrows on first paint.
+   */
+  grounding:
+    | {
+        library: GroundingAxisLike;
+        sandbox: GroundingAxisLike;
+      }
+    | null
+    | undefined;
+  /** Fires when the user clicks the Library "Generate System Design" CTA. */
+  onOpenGenerateSystemDesign?: () => void;
   isSending: boolean;
   onSendMessage: (e: FormEvent<HTMLFormElement>) => Promise<void>;
   /**
@@ -146,10 +164,12 @@ export function ChatPanel({
   chatInput,
   setChatInput,
   chatMode,
-  setChatMode,
-  availableModes,
-  disabledModeReasons,
-  sandboxIsActivatable = false,
+  groundLibrary,
+  groundSandbox,
+  setGroundLibrary,
+  setGroundSandbox,
+  grounding,
+  onOpenGenerateSystemDesign,
   isSending,
   onSendMessage,
   onCancelInFlightReply,
@@ -191,15 +211,15 @@ export function ChatPanel({
     [selectedThreadId],
   );
 
-  const availableModeSet = useMemo(() => new Set(availableModes), [availableModes]);
   const sandboxModeAvailable = sandboxModeStatus?.reasonCode === "available";
 
   // Lazy-provision entry point. Wired here (not in `SandboxActivityPill`)
-  // so the ModeSelect can fire activation directly when the user clicks
-  // the otherwise-disabled "Sandbox" option — the pill is only mounted
-  // once `chatMode === "lab"`, so it can't be the sole trigger.
-  // `requestSandboxActivation` is idempotent (returns the in-flight job
-  // if one exists) so a duplicate click during activation is safe.
+  // so the GroundingToggleBar can fire activation directly when the user
+  // clicks the otherwise-disabled Sandbox toggle in its activatable
+  // sub-state — the pill is only mounted once `groundSandbox === true`,
+  // so it can't be the sole trigger. `requestSandboxActivation` is
+  // idempotent (returns the in-flight job if one exists) so a duplicate
+  // click during activation is safe.
   const requestSandboxActivation = useMutation(api.repositories.requestSandboxActivation);
   const [activationError, setActivationError] = useState<string | null>(null);
   const [, activateSandbox] = useAsyncCallback(async () => {
@@ -207,7 +227,6 @@ export function ChatPanel({
     setActivationError(null);
     try {
       await requestSandboxActivation({ repositoryId });
-      setChatMode("lab");
     } catch (err) {
       setActivationError(toUserErrorMessage(err, "Couldn't start the sandbox. Try again."));
     }
@@ -243,43 +262,10 @@ export function ChatPanel({
 
   const canCancel = inFlightAssistantMessage !== null && typeof onCancelInFlightReply === "function";
 
-  /**
-   * Plan 14 — session-local set of `suggestMode` keys the user has
-   * dismissed. Persistence is intentionally limited to this
-   * `ChatPanel` mount: a hard reload or a navigation that re-mounts
-   * the panel resets the set. The dismissal models a "not this task"
-   * preference rather than a long-term setting — a user who dismisses
-   * the file-path nudge while drafting one message often does want
-   * it back next session, and persisting forever would surface a
-   * dismissed nudge as a permanent silence.
-   *
-   * Lazy initializer (`() => new Set()`) avoids allocating a fresh
-   * `Set` on every render; React only invokes the initializer once.
-   */
-  const [dismissedHintKeys, setDismissedHintKeys] = useState<Set<string>>(() => new Set());
-
-  /**
-   * Plan 14 — pure heuristic suggestion based on the current input,
-   * mode, and the available-mode budget. Memoized so the regex passes
-   * inside `suggestMode` only run when one of the inputs actually
-   * changes; without the memo every keystroke would re-evaluate even
-   * when only an unrelated panel prop (e.g. `isSyncing`) flipped.
-   *
-   * The dismiss filter is applied *outside* the memo because the
-   * dismiss set changes orthogonally to the suggestion shape — re-
-   * memoizing on dismiss would be wasted work, and the membership
-   * check is `O(1)` on a small set.
-   */
-  const rawSuggestion = useMemo(
-    () => suggestMode(chatInput, chatMode, availableModes),
-    [chatInput, chatMode, availableModes],
-  );
-  const visibleSuggestion = rawSuggestion && !dismissedHintKeys.has(rawSuggestion.key) ? rawSuggestion : null;
-  const suggestedModeLabel = visibleSuggestion ? MODE_LABELS[visibleSuggestion.suggested] : null;
-
-  const shouldShowSandboxWarning = !isChatLoading && chatMode === "lab" && sandboxModeStatus && !sandboxModeAvailable;
+  const shouldShowSandboxWarning =
+    !isChatLoading && groundSandbox && sandboxModeStatus !== null && !sandboxModeAvailable;
   const shouldShowEmptyState = !isChatLoading && !hasMessages;
-  const shouldShowSandboxPill = chatMode === "lab" && repositoryId !== undefined;
+  const shouldShowSandboxPill = groundSandbox && repositoryId !== undefined;
 
   // Hoisted so the empty-state branch (no ScrollArea) and the messages
   // branch (inside ScrollArea) can both render the warning above their
@@ -396,38 +382,6 @@ export function ChatPanel({
               {readOnlyHint}
             </p>
           ) : null}
-          {visibleSuggestion && suggestedModeLabel ? (
-            /*
-             * Plan 14 — passive mode-suggestion hint. Sits between the
-             * textarea and the toolbar so the user sees it without
-             * losing visual contact with what they just typed. The
-             * heuristic only fires when the suggested mode is actually
-             * available (see `suggestMode`), so `[Switch]` is always
-             * actionable. `onDismiss` records the suggestion key in
-             * the session-local set, suppressing future occurrences
-             * of the same heuristic until the panel re-mounts — per
-             * Plan 14 this is intentional, no localStorage required.
-             */
-            <AppNotice
-              title="Suggestion"
-              message={visibleSuggestion.reason}
-              tone="info"
-              actionLabel={`Switch to ${suggestedModeLabel}`}
-              onAction={() => setChatMode(visibleSuggestion.suggested)}
-              onDismiss={() =>
-                setDismissedHintKeys((prev) => {
-                  // Copy-on-write so React detects the state change;
-                  // mutating the existing Set in place would short-
-                  // circuit the re-render and the hint would stick.
-                  const next = new Set(prev);
-                  next.add(visibleSuggestion.key);
-                  return next;
-                })
-              }
-              dismissLabel="Dismiss suggestion"
-              className="text-left"
-            />
-          ) : null}
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-center gap-2">
               {showArtifactToggle && onToggleArtifactPanel ? (
@@ -438,88 +392,28 @@ export function ChatPanel({
                   onClick={onToggleArtifactPanel}
                   aria-label="Toggle artifacts panel"
                   aria-pressed={isArtifactPanelOpen}
-                  className="h-8 shrink-0 gap-1.5 px-2 text-xs md:hidden"
+                  className="h-8 shrink-0 gap-1.5 px-2 text-xs"
                 >
                   <FileTextIcon size={14} weight="bold" />
                   <span className="hidden sm:inline">Artifacts</span>
                 </Button>
               ) : null}
-              {/*
-               * Compact (mobile) selector + `(i)` info trigger. The
-               * `md:hidden` wrappers live on the parent `<div>`s rather
-               * than inside `<ModeSelect>` / `<ModeInfoPopover>` so the
-               * sub-components stay layout-agnostic — the panel is the
-               * single owner of breakpoint visibility, which keeps any
-               * future copy of these widgets easy to drop into a non-
-               * responsive surface.
-               *
-               * Two info-popover instances (one here, one in the
-               * desktop branch below) is cheaper than one positioned
-               * cleverly at this scale: only one is visible per
-               * breakpoint, and co-locating each with its selector
-               * keeps the relationship clear.
-               */}
-              <div className="md:hidden">
-                <ModeSelect
-                  chatMode={chatMode}
-                  setChatMode={setChatMode}
-                  availableModeSet={availableModeSet}
-                  disabledModeReasons={disabledModeReasons}
-                  sandboxIsActivatable={sandboxIsActivatable}
+              {chatMode === "discuss" ? (
+                <GroundingToggleBar
+                  groundLibrary={groundLibrary}
+                  groundSandbox={groundSandbox}
+                  setGroundLibrary={setGroundLibrary}
+                  setGroundSandbox={setGroundSandbox}
+                  grounding={grounding}
                   onActivateSandbox={() => void activateSandbox()}
-                  id="mode-compact-select"
-                  ariaLabel="Answer mode selector mobile"
-                  align="start"
+                  onOpenGenerateSystemDesign={onOpenGenerateSystemDesign}
                 />
-              </div>
-              <div className="md:hidden">
-                <ModeInfoPopover entries={MODE_INFO_ENTRIES} />
-              </div>
+              ) : null}
               {activationError ? (
                 <p
-                  className="basis-full text-[11px] text-destructive md:hidden"
+                  className="basis-full text-[11px] text-destructive"
                   role="alert"
                   data-testid="sandbox-activation-error"
-                >
-                  {activationError}
-                </p>
-              ) : null}
-              <div className="hidden md:flex md:min-w-0 md:items-center">
-                {showArtifactToggle && onToggleArtifactPanel ? (
-                  <>
-                    <Button
-                      type="button"
-                      variant={isArtifactPanelOpen ? "secondary" : "ghost"}
-                      size="xs"
-                      onClick={onToggleArtifactPanel}
-                      aria-label="Toggle artifacts panel"
-                      aria-pressed={isArtifactPanelOpen}
-                      className="gap-1.5"
-                    >
-                      <FileTextIcon size={14} weight="bold" />
-                      <span>Artifacts</span>
-                    </Button>
-                    <span aria-hidden="true" className="mx-2 h-4 w-px bg-border/70" />
-                  </>
-                ) : null}
-                <ModeSelect
-                  chatMode={chatMode}
-                  setChatMode={setChatMode}
-                  availableModeSet={availableModeSet}
-                  disabledModeReasons={disabledModeReasons}
-                  sandboxIsActivatable={sandboxIsActivatable}
-                  onActivateSandbox={() => void activateSandbox()}
-                  id="mode-desktop-select"
-                  ariaLabel="Answer mode selector"
-                  align="end"
-                />
-                <ModeInfoPopover entries={MODE_INFO_ENTRIES} />
-              </div>
-              {activationError ? (
-                <p
-                  className="hidden text-[11px] text-destructive md:inline-block"
-                  role="alert"
-                  data-testid="sandbox-activation-error-desktop"
                 >
                   {activationError}
                 </p>
@@ -571,12 +465,11 @@ export function ChatPanel({
                   // Lazy first send needs at least one anchor: an existing
                   // thread or the workspace we'd create the thread in.
                   (selectedThreadId === null && !workspaceId) ||
-                  // Lab mode requires a ready live source; if the user picked
-                  // Lab optimistically via the activate flow, the send button
-                  // stays disabled until the sandbox lifecycle is `available`.
-                  // Prevents a wasted round-trip through the backend's
-                  // `assertWorkspaceModeEligible` reject.
-                  (chatMode === "lab" && !sandboxModeAvailable)
+                  // Sandbox grounding requires a ready live source. Disable
+                  // send until the sandbox lifecycle is `available` so an
+                  // optimistically-flipped toggle does not produce a
+                  // round-trip into a backend reject.
+                  (groundSandbox && !sandboxModeAvailable)
                 }
                 data-testid="chat-panel-send-button"
               >
@@ -605,107 +498,6 @@ export function ChatPanel({
         </form>
       </div>
     </div>
-  );
-}
-
-type ModeSelectProps = {
-  chatMode: ChatMode;
-  setChatMode: (v: ChatMode) => void;
-  availableModeSet: Set<ChatMode>;
-  disabledModeReasons: Partial<Record<ChatMode, string>>;
-  /**
-   * Sandbox is not in `availableModeSet` (lifecycle isn't ready) but the
-   * option should still accept a click and trigger a lazy provision.
-   * When true, sandbox renders as clickable with an "Activate" suffix
-   * instead of the locked-out disabled state.
-   */
-  sandboxIsActivatable: boolean;
-  /**
-   * Fired when the user picks the activatable Sandbox option. The
-   * caller is responsible for enqueuing `requestSandboxActivation` and
-   * (optimistically) switching `chatMode` to "lab" so the
-   * `SandboxActivityPill` mounts and shows provisioning progress.
-   */
-  onActivateSandbox: () => void;
-  id: string;
-  ariaLabel: string;
-  align: "start" | "end";
-};
-
-/**
- * Single shadcn/Radix `<Select>` over `MODE_CATALOG` — one component, two
- * responsive instances. Visibility (`md:hidden` for compact, `hidden md:flex`
- * around the desktop variant) lives in the panel's JSX so this widget stays
- * layout-agnostic; the only knobs are `id` / `ariaLabel` (so each instance
- * has a unique accessible name and form association) and `align` (the
- * dropdown opens from the *other* edge of the trigger on mobile vs desktop
- * so it does not clip the form border).
- *
- * Disabled modes still render with their tooltip-style suffix
- * (`Sandbox (Provision a sandbox to use Sandbox mode.)`) so a glance at the
- * dropdown is enough to tell *why* a mode is locked — important because
- * the resolver surfaces these reasons through `disabledModeReasons` and we
- * want them readable without hovering.
- */
-function ModeSelect({
-  chatMode,
-  setChatMode,
-  availableModeSet,
-  disabledModeReasons,
-  sandboxIsActivatable,
-  onActivateSandbox,
-  id,
-  ariaLabel,
-  align,
-}: ModeSelectProps) {
-  const handleChange = (value: string) => {
-    const mode = value as ChatMode;
-    if (mode === "lab" && !availableModeSet.has(mode) && sandboxIsActivatable) {
-      onActivateSandbox();
-      return;
-    }
-    if (!availableModeSet.has(mode)) {
-      return;
-    }
-    setChatMode(mode);
-  };
-
-  return (
-    <Select value={chatMode} onValueChange={handleChange}>
-      <SelectTrigger
-        id={id}
-        aria-label={ariaLabel}
-        className="h-7 w-auto gap-2 rounded-sm border-0 bg-transparent px-2 py-0 text-xs text-muted-foreground/80 hover:bg-muted hover:text-foreground data-[state=open]:bg-muted data-[state=open]:text-foreground focus-visible:border-0"
-      >
-        <SelectValue placeholder="Answer mode" />
-      </SelectTrigger>
-      <SelectContent align={align} sideOffset={6} collisionPadding={12} className="w-[min(15rem,calc(100vw-1.5rem))]">
-        <SelectGroup>
-          {MODE_CATALOG.map((option) => {
-            const isAvailable = availableModeSet.has(option.value);
-            const isActivatable = option.value === "lab" && !isAvailable && sandboxIsActivatable;
-            const disabledReason = disabledModeReasons[option.value];
-            // Activatable sandbox is rendered as clickable: the radix
-            // SelectItem only fires `onValueChange` when `disabled={false}`,
-            // so we must surface it as enabled even though the resolver
-            // hasn't (yet) added it to `availableModes`.
-            const isItemDisabled = !isAvailable && !isActivatable;
-            const label = isAvailable
-              ? option.label
-              : isActivatable
-                ? `${option.label} (click to activate)`
-                : disabledReason
-                  ? `${option.label} (${disabledReason})`
-                  : `${option.label} (locked)`;
-            return (
-              <SelectItem key={option.value} value={option.value} disabled={isItemDisabled}>
-                {label}
-              </SelectItem>
-            );
-          })}
-        </SelectGroup>
-      </SelectContent>
-    </Select>
   );
 }
 

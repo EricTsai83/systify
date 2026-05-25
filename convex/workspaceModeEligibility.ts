@@ -46,6 +46,15 @@ import {
   peekSandboxDailyCostForWorkspace,
 } from "./lib/rateLimit";
 
+/**
+ * Internal helper — true when `code` is a sandbox-cost-cap gate code. Used
+ * by the augment layer to drop the `retryAfterMs` field cleanly when the
+ * reason is unrelated to cost caps.
+ */
+function isCostCapCode(code: WorkspaceModeDisabledReasonCode): boolean {
+  return code === "sandbox_user_cap_exceeded" || code === "sandbox_workspace_cap_exceeded";
+}
+
 // ─── Types ────────────────────────────────────────────────────────────────
 
 /**
@@ -82,11 +91,36 @@ export interface WorkspaceModeDisabled {
   readonly retryAfterMs?: number;
 }
 
+/**
+ * Per-axis grounding availability for the Discuss composer. Each axis
+ * collapses the underlying preconditions (repo attached, artifact exists,
+ * sandbox lifecycle, cost cap) into a single yes/no plus reason, so the
+ * composer can render the toggle bar without re-deriving the rules.
+ */
+export interface GroundingAxisAvailability {
+  readonly available: boolean;
+  readonly reason: WorkspaceModeDisabled | null;
+  /**
+   * Sandbox-only: when `available` is false but the user can still click
+   * the toggle to lazily provision a sandbox. The composer renders an
+   * "Activate sandbox" CTA in that case.
+   */
+  readonly isActivatable?: boolean;
+}
+
 export interface WorkspaceModeEligibility {
   readonly availableModes: ReadonlyArray<ChatMode>;
   readonly defaultMode: ChatMode;
   readonly disabledReasons: Partial<Record<ChatMode, WorkspaceModeDisabled>>;
-  readonly labReadiness: { canStart: boolean; reason: WorkspaceModeDisabled | null };
+  /**
+   * Grounding-toggle availability for the Discuss composer. The two axes
+   * are independent: the user can enable either or both. Library Mode
+   * does not consult this — its grounding is implicit in the mode.
+   */
+  readonly grounding: {
+    readonly library: GroundingAxisAvailability;
+    readonly sandbox: GroundingAxisAvailability;
+  };
   readonly askReadiness: { canBind: boolean; reason: WorkspaceModeDisabled | null };
   /** Convenience flag — frontend uses it to short-circuit "import a repo" CTAs. */
   readonly hasAttachedRepo: boolean;
@@ -161,16 +195,17 @@ async function computeSandboxCostCapGate(
 }
 
 /**
- * Derive the structured `code` for a Lab-disabled state from the same input
- * matrix the resolver used. The resolver returns string `disabledReasons`;
- * this helper extracts the matching code so write-path callers can branch
- * on it without regex-matching the message.
+ * Derive the structured `code` for a sandbox-grounding disabled state
+ * from the same input matrix the resolver used. The resolver returns
+ * string `reason` text; this helper extracts the matching code so write-
+ * path callers and the composer can branch on it without regex-matching
+ * the message.
  *
  * Precedence mirrors the resolver exactly (cost cap → lifecycle): the
  * cost-cap gate wins over lifecycle tooltips because the cap is the more
  * actionable signal for a viewer who already has a healthy sandbox.
  */
-function deriveLabDisabledCode(args: {
+function deriveSandboxGroundingCode(args: {
   hasAttachedRepo: boolean;
   sandboxStatus: ChatModeSandboxStatus;
   sandboxCostCapGate: SandboxCostCapGate;
@@ -193,13 +228,11 @@ function deriveLabDisabledCode(args: {
     case "none":
       return "sandbox_missing";
     case "ready":
-      // Unreachable: caller only invokes this when lab is in `disabledReasons`,
-      // which implies the resolver removed it from `availableModes`.
-      throw new Error("deriveLabDisabledCode: sandboxStatus is `ready` but lab is disabled");
+      throw new Error("deriveSandboxGroundingCode: sandboxStatus is `ready` but sandbox grounding is disabled");
   }
 }
 
-function deriveLabRetryAfterMs(costCapGate: SandboxCostCapGate, now: number): number | undefined {
+function deriveSandboxRetryAfterMs(costCapGate: SandboxCostCapGate, now: number): number | undefined {
   if (!costCapGate.enabled) {
     return Math.max(1, costCapGate.resetAtMs - now);
   }
@@ -207,21 +240,11 @@ function deriveLabRetryAfterMs(costCapGate: SandboxCostCapGate, now: number): nu
 }
 
 /**
- * Augment the resolver's string `disabledReasons` into structured
- * `WorkspaceModeDisabled` objects. The resolver knows the `message` (tooltip
- * text); this layer adds the `code` (derived from the same input matrix
- * the resolver used) and the optional `retryAfterMs` (only meaningful for
- * cost-cap codes).
- *
- * Library disabled-reason codes collapse to `no_repository_attached` —
- * the only reason the resolver disables Library after the
- * `hasAtLeastOneArtifact` gate was removed. Lab disabled-reason codes
- * derive via {@link deriveLabDisabledCode} from the (sandboxStatus,
- * gates) matrix.
- *
- * The resolver may surface a mode as disabled even when the message is
- * unknown to us — we keep that contract by wrapping any unfamiliar
- * resolver string under the closest matching code (defensive default).
+ * Augment the resolver's string `disabledReasons` and grounding axes
+ * into structured `WorkspaceModeDisabled` objects. The resolver knows
+ * the `message` (tooltip text); this layer adds the `code` (derived from
+ * the same input matrix the resolver used) and the optional
+ * `retryAfterMs` (only meaningful for cost-cap codes).
  */
 function augmentResolution(
   resolution: WorkspaceModeResolution,
@@ -234,17 +257,11 @@ function augmentResolution(
   now: number,
 ): {
   disabledReasons: Partial<Record<ChatMode, WorkspaceModeDisabled>>;
-  labReadiness: WorkspaceModeEligibility["labReadiness"];
+  grounding: WorkspaceModeEligibility["grounding"];
   askReadiness: WorkspaceModeEligibility["askReadiness"];
 } {
   const disabledReasons: Partial<Record<ChatMode, WorkspaceModeDisabled>> = {};
 
-  // Discuss is always available — the resolver never disables it. No code
-  // needed; the `disabledReasons.discuss` slot stays unset.
-
-  // Library — only one disabled reason after the no-artifact gate was
-  // dropped: a missing repository. Empty repos land on the Library page
-  // and surface the Generate System Design CTA from the empty state.
   if (resolution.disabledReasons.library !== undefined) {
     disabledReasons.library = {
       code: "no_repository_attached",
@@ -252,30 +269,33 @@ function augmentResolution(
     };
   }
 
-  // Lab
-  if (resolution.disabledReasons.lab !== undefined) {
-    const code = deriveLabDisabledCode(inputs);
-    const retryAfterMs = deriveLabRetryAfterMs(inputs.sandboxCostCapGate, now);
-    disabledReasons.lab = {
-      code,
-      message: resolution.disabledReasons.lab,
-      ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-    };
-  }
+  const libraryAxis = resolution.grounding.library;
+  const sandboxAxis = resolution.grounding.sandbox;
 
-  // Lab readiness
-  let labReadiness: WorkspaceModeEligibility["labReadiness"];
-  if (resolution.labReadiness.canStart) {
-    labReadiness = { canStart: true, reason: null };
+  const libraryAvailability: WorkspaceModeEligibility["grounding"]["library"] = libraryAxis.available
+    ? { available: true, reason: null }
+    : {
+        available: false,
+        reason: {
+          code: !inputs.hasAttachedRepo ? "no_repository_attached" : "library_no_artifact",
+          message: libraryAxis.reason ?? "Library grounding is unavailable.",
+        },
+      };
+
+  let sandboxAvailability: WorkspaceModeEligibility["grounding"]["sandbox"];
+  if (sandboxAxis.available) {
+    sandboxAvailability = { available: true, reason: null, isActivatable: false };
   } else {
-    const retryAfterMs = deriveLabRetryAfterMs(inputs.sandboxCostCapGate, now);
-    labReadiness = {
-      canStart: false,
+    const code = deriveSandboxGroundingCode(inputs);
+    const retryAfterMs = isCostCapCode(code) ? deriveSandboxRetryAfterMs(inputs.sandboxCostCapGate, now) : undefined;
+    sandboxAvailability = {
+      available: false,
       reason: {
-        code: deriveLabDisabledCode(inputs),
-        message: resolution.labReadiness.reason ?? "Lab is unavailable.",
+        code,
+        message: sandboxAxis.reason ?? "Sandbox grounding is unavailable.",
         ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
       },
+      isActivatable: sandboxAxis.isActivatable,
     };
   }
 
@@ -291,7 +311,11 @@ function augmentResolution(
         },
       };
 
-  return { disabledReasons, labReadiness, askReadiness };
+  return {
+    disabledReasons,
+    grounding: { library: libraryAvailability, sandbox: sandboxAvailability },
+    askReadiness,
+  };
 }
 
 /**
@@ -356,7 +380,7 @@ async function evaluateFromRepository(
     availableModes: resolution.availableModes,
     defaultMode: resolution.defaultMode,
     disabledReasons: augmented.disabledReasons,
-    labReadiness: augmented.labReadiness,
+    grounding: augmented.grounding,
     askReadiness: augmented.askReadiness,
     hasAttachedRepo,
     hasAtLeastOneArtifact,
@@ -423,19 +447,23 @@ export function throwIfDisabled(verdict: WorkspaceModeEligibility, mode: ChatMod
 /**
  * Mutation-context sugar: load the eligibility verdict for `args.repositoryId`
  * (with `args.workspaceId` contributing to the workspace cost-cap key when
- * present) and throw a structured `ConvexError` if `args.mode` is disabled.
+ * present) and throw a structured `ConvexError` if `args.mode` or the
+ * requested grounding axes are disabled.
  *
  * Takes both `repositoryId` and `workspaceId` so the caller (typically
  * `chat/send.ts` working from a `thread` doc) can pass the thread's existing
  * pointers without having to first dereference the workspace. Either or
  * both may be `null` / `undefined`:
  *
- *   - `repositoryId === null`: treated as no repo attached. Library / Lab
- *     are denied with `no_repository_attached`; Discuss short-circuits.
+ *   - `repositoryId === null`: treated as no repo attached. Library is
+ *     denied with `no_repository_attached`; Discuss is allowed only when
+ *     no grounding flags are requested.
  *   - `workspaceId === null`: per-workspace cost cap is skipped (the
- *     per-user cap still applies). Legacy threads without a workspace
- *     therefore still get Lab eligibility checks; only the workspace-
- *     scoped cost cap is skipped (it has no key without a workspace).
+ *     per-user cap still applies).
+ *
+ * Grounding flags (`groundLibrary` / `groundSandbox`) are validated only
+ * for `mode === "discuss"` turns; Library-mode callers can pass `false`
+ * for both (Library grounding is implicit in the mode).
  *
  * A non-null `repositoryId` whose row the viewer doesn't own surfaces as
  * `RepositoryNotFound` — same opaque-not-found contract the existing
@@ -447,17 +475,28 @@ export async function assertWorkspaceModeEligible(
     repositoryId: Id<"repositories"> | null | undefined;
     workspaceId: Id<"workspaces"> | null | undefined;
     mode: ChatMode;
+    groundLibrary?: boolean;
+    groundSandbox?: boolean;
   },
 ): Promise<void> {
   // Identity check first so unsigned-in callers always get the same
   // "must sign in" error regardless of the mode they tried to assert.
   const identity = await requireViewerIdentity(ctx);
-  if (args.mode === "discuss") return;
+  const groundLibrary = args.mode === "discuss" && args.groundLibrary === true;
+  const groundSandbox = args.mode === "discuss" && args.groundSandbox === true;
+
+  // Discuss with no grounding flags has no preconditions beyond auth.
+  if (args.mode === "discuss" && !groundLibrary && !groundSandbox) {
+    return;
+  }
   if (!args.repositoryId) {
     throw new ConvexError({
       code: "no_repository_attached",
       mode: args.mode,
-      message: `'${args.mode}' mode requires an attached repository.`,
+      message:
+        args.mode === "library"
+          ? "Library mode requires an attached repository."
+          : "Library / Sandbox grounding requires an attached repository.",
     });
   }
   const repository = await ctx.db.get(args.repositoryId);
@@ -473,6 +512,7 @@ export async function assertWorkspaceModeEligible(
     tokenIdentifier: identity.tokenIdentifier,
     now: Date.now(),
   });
+
   // Library mode is read-mostly: navigation is available whenever a repo is
   // attached (the empty Library page surfaces a Generate System Design CTA),
   // but the write surface — Library Ask — still needs at least one indexed
@@ -485,20 +525,24 @@ export async function assertWorkspaceModeEligible(
       message: verdict.askReadiness.reason.message,
     });
   }
-  // Lab navigation is available whenever a repo is attached, but a lab
-  // session can only *run* once the sandbox is provisioned and `ready`
-  // (and the daily cost cap is open). Defer to `labReadiness` so the
-  // write path stays tied to the real sandbox precondition — the same
-  // navigation/write split Library uses with `askReadiness` above.
-  if (args.mode === "lab" && !verdict.labReadiness.canStart && verdict.labReadiness.reason) {
+
+  if (groundLibrary && !verdict.grounding.library.available && verdict.grounding.library.reason) {
+    const reason = verdict.grounding.library.reason;
     throw new ConvexError({
-      code: verdict.labReadiness.reason.code,
-      mode: "lab",
-      message: verdict.labReadiness.reason.message,
-      ...(verdict.labReadiness.reason.retryAfterMs !== undefined
-        ? { retryAfterMs: verdict.labReadiness.reason.retryAfterMs }
-        : {}),
+      code: reason.code,
+      mode: "discuss",
+      message: reason.message,
     });
   }
+  if (groundSandbox && !verdict.grounding.sandbox.available && verdict.grounding.sandbox.reason) {
+    const reason = verdict.grounding.sandbox.reason;
+    throw new ConvexError({
+      code: reason.code,
+      mode: "discuss",
+      message: reason.message,
+      ...(reason.retryAfterMs !== undefined ? { retryAfterMs: reason.retryAfterMs } : {}),
+    });
+  }
+
   throwIfDisabled(verdict, args.mode);
 }

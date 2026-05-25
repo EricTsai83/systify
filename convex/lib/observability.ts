@@ -153,7 +153,7 @@ export function logErrorWithId(
  * emitter could add buffering, sampling, or a dedicated transport,
  * but every one of those is premature without a real bottleneck. The
  * wrapper standardises the *shape* (so dashboards that filter on
- * `tags.mode === "lab"` keep working as we add new metrics)
+ * `tags.mode === "discuss"` keep working as we add new metrics)
  * without committing to a particular transport.
  *
  * **Envelope isolation**: tags ride inside `tags: {...}` and details
@@ -186,7 +186,7 @@ export function emitMetric(
     /**
      * Low-cardinality categorical fields that downstream backends
      * group / filter on. Keep the count small and the value space
-     * small — `mode: "lab"` is a good tag, `assistantMessageId:
+     * small — `mode: "discuss"` is a good tag, `assistantMessageId:
      * <opaque-id>` is not (would explode dashboard cardinality).
      */
     tags?: Record<string, MetricTagValue>;
@@ -221,7 +221,7 @@ export function emitMetric(
  * the observability output. `undefined` tags are dropped entirely —
  * downstream JSON serializers that omit `undefined` keys wouldn't see
  * them anyway, and dropping them here keeps the runbook's grep
- * patterns ("`tags.mode === 'lab'`") deterministic.
+ * patterns ("`tags.mode === 'discuss'`") deterministic.
  */
 function serializeTagsForLog(tags: Record<string, MetricTagValue> | undefined): Record<string, SerializableValue> {
   if (!tags) {

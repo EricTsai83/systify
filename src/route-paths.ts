@@ -27,17 +27,7 @@ export const AUTH_CALLBACK_PATH = `/${AUTH_CALLBACK_ROUTE_SEGMENT}` as const;
  *
  * Workspace is the schema's primary container: every thread either lives in a
  * repo-bound workspace (1:1 with the repository) or in the user's single
- * no-repo "Home" workspace. Encoding the workspace id directly in the URL lets
- * the shell resolve `repository.repositoryId` synchronously from the cached
- * `listWorkspaces` query, instead of waiting on `getThreadContext` to tell us
- * which workspace this thread belongs to. That removes the loading-window
- * flicker that previously appeared on every workspace transition.
- *
- * The flat `/t/:threadId` and `/r/:repoId` routes used by earlier versions are
- * removed deliberately — they couldn't carry workspace context, so navigations
- * through them always paid for a server round-trip before the chrome could
- * display the right repo. A hard cutover keeps the route table small and
- * eliminates the "is this URL canonical?" branch from every render.
+ * no-repo "Home" workspace.
  */
 export const PROTECTED_ROUTE_SEGMENTS = {
   chat: "chat",
@@ -48,19 +38,17 @@ export const PROTECTED_ROUTE_SEGMENTS = {
   /**
    * Top-level service modes:
    *
-   *   - `discuss/:threadId?` — free-form chat, with or without a thread.
+   *   - `discuss/:threadId?` — free-form chat with per-message grounding
+   *     toggles (Library / Sandbox) the composer surfaces above the input.
    *   - `library` / `library/a/:artifactId` — read-mostly artifact reader.
    *     The artifact owns the path; the active Library Ask thread travels
    *     as a `?ask=:threadId` query param. The Ask panel is always visible,
    *     so the thread is secondary view-state, not its own route.
-   *   - `lab/:threadId?` — sandbox-backed mode.
    */
   workspaceDiscuss: "w/:workspaceId/discuss",
   workspaceDiscussThread: "w/:workspaceId/discuss/:threadId",
   workspaceLibrary: "w/:workspaceId/library",
   workspaceLibraryArtifact: "w/:workspaceId/library/a/:artifactId",
-  workspaceLab: "w/:workspaceId/lab",
-  workspaceLabThread: "w/:workspaceId/lab/:threadId",
 } as const;
 
 export const ARCHIVE_PATH = `/${PROTECTED_ROUTE_SEGMENTS.archive}` as const;
@@ -86,16 +74,11 @@ export function workspacePath(workspaceId: WorkspaceId): string {
  * mutation's `{ _id, mode }` return, post-import navigation via the
  * import's `defaultThreadMode` field, attach/swap via `setThreadRepository`'s
  * returned mode). Routing through this helper keeps the user on the same
- * shell as the thread's mode, so a freshly-created or freshly-imported
- * thread never paints chrome that contradicts where it really lives.
+ * shell as the thread's mode.
  *
  * Maps:
  *   - `discuss` → `/w/:wid/discuss/:tid`
- *   - `library` → `/w/:wid/library?ask=:tid` (Library Ask threads —
- *     created via `createLibraryAskThread` or as the repo-attached
- *     default — render inside the Library shell's Ask panel; the artifact
- *     owns the URL path, the thread travels as a query param)
- *   - `lab`     → `/w/:wid/lab/:tid`
+ *   - `library` → `/w/:wid/library?ask=:tid`
  */
 export function modeAwareThreadPath(workspaceId: WorkspaceId, threadId: ThreadId, mode: ThreadMode): string {
   switch (mode) {
@@ -103,8 +86,6 @@ export function modeAwareThreadPath(workspaceId: WorkspaceId, threadId: ThreadId
       return discussPath(workspaceId, threadId);
     case "library":
       return withLibraryAskParam(libraryPath(workspaceId), threadId);
-    case "lab":
-      return labPath(workspaceId, threadId);
   }
 }
 
@@ -166,15 +147,6 @@ export function withLibraryAskParam(base: string, askThreadId: ThreadId | null):
   }
   const query = params.toString();
   return query ? `${path}?${query}` : path;
-}
-
-/**
- * Lab service mode URL — sandbox-backed chat. Same shape as
- * {@link discussPath} so routing stays uniform; the difference lives in
- * the shell that mounts at the URL.
- */
-export function labPath(workspaceId: WorkspaceId, threadId?: ThreadId): string {
-  return threadId ? `/w/${workspaceId}/lab/${threadId}` : `/w/${workspaceId}/lab`;
 }
 
 const protectedReturnRoutes: RouteObject[] = Object.values(PROTECTED_ROUTE_SEGMENTS).map((path) => ({

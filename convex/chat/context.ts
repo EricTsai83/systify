@@ -23,6 +23,16 @@ export type ReplyContext = {
    * `buildSystemPrompt` without re-deriving the rule.
    */
   mode: ExtendedChatMode;
+  /**
+   * Per-message grounding flags anchored to the queued user message.
+   * Meaningful only on `mode === "discuss"` — Library mode leaves both
+   * unset and uses the implicit artifact-grounded contract. Both default
+   * to `false` for legacy rows. `generation.ts` reads these to decide
+   * which system prompt block to compose and whether to wire sandbox
+   * tools.
+   */
+  groundLibrary: boolean;
+  groundSandbox: boolean;
   repositoryId?: Id<"repositories">;
   repositorySummary?: string;
   readmeSummary?: string;
@@ -50,10 +60,11 @@ export type ReplyContext = {
   chunks: Array<{ path: string; summary: string; content: string }>;
   messages: Array<{ id: Id<"messages">; role: "user" | "assistant" | "system" | "tool"; content: string }>;
   /**
-   * Sandbox-tool wiring information. Populated **only** for
-   * `mode === "lab"` replies that have a ready sandbox attached to the
-   * repository, and `undefined` in every other case (discuss, library,
-   * missing sandbox, sandbox not in `ready` state).
+   * Sandbox-tool wiring information. Populated **only** when the queued
+   * user message has `groundSandbox: true` AND a ready sandbox is attached
+   * to the repository; `undefined` in every other case (Library mode,
+   * Discuss with sandbox grounding off, missing sandbox, sandbox not in
+   * `ready` state).
    *
    * The fields are everything `generation.ts` needs to construct a
    * `SandboxFsClient`, pass it to `createSandboxTools`, and record audit
@@ -251,6 +262,14 @@ export const getReplyContext = internalQuery({
       throw new Error("Queued user message not found for this thread.");
     }
     const effectiveMode = userMessage.mode ?? thread.mode;
+    // Per-message grounding flags only carry meaning on `discuss` replies.
+    // Library mode ignores them — its grounding contract is implicit in
+    // the mode — and Lab-era persisted rows (post-migration) shouldn't
+    // exist, but if they do they map to {library: false, sandbox: true}
+    // via the migration patch, so reading directly from the row is correct
+    // either way.
+    const groundLibrary = effectiveMode === "discuss" && userMessage.groundLibrary === true;
+    const groundSandbox = effectiveMode === "discuss" && userMessage.groundSandbox === true;
 
     // Plan 03: cross-mode filtering + empty-content filtering happen inside
     // `loadReplyContextMessages` so the helper can over-fetch a bounded
@@ -261,21 +280,18 @@ export const getReplyContext = internalQuery({
     // switch left stale assistant rows in the most recent `limit` slots.
     const messages = await loadReplyContextMessages(ctx, args.threadId, effectiveMode, MAX_CONTEXT_MESSAGES);
 
-    // `discuss` mode is "no repo, no sandbox" by design (per the schema/resolver
-    // contract): even if the thread has a repositoryId attached, the user has
-    // explicitly asked for an unattached / training-only conversation, so we
-    // return the same shape as the repo-less branch and skip every
-    // repo-scoped lookup. This is also why `discuss` is grouped with the
-    // no-repo case here rather than with `library`/`lab` below.
-    //
-    // Library Ask also requires a repository (enforced at thread/send creation)
-    // and must not fall through to the empty discuss shape; it uses the
-    // repository-backed context below while `generation.ts` keeps it tool-free.
-    if (!thread.repositoryId || effectiveMode === "discuss") {
+    // Discuss with both grounding axes off is "training-only chat": no
+    // repo lookup even if the thread has one attached, because the user
+    // explicitly turned grounding off in the composer. The unattached-
+    // thread branch shares the same empty shape — Library mode never
+    // lands here (it always uses the repository-backed branch below).
+    if (!thread.repositoryId || (effectiveMode === "discuss" && !groundLibrary && !groundSandbox)) {
       return {
         ownerTokenIdentifier: thread.ownerTokenIdentifier,
         workspaceId: thread.workspaceId,
         mode: effectiveMode,
+        groundLibrary,
+        groundSandbox,
         repositoryId: undefined,
         repositorySummary: undefined,
         readmeSummary: undefined,
@@ -298,19 +314,17 @@ export const getReplyContext = internalQuery({
       throw new Error("Repository not found.");
     }
 
-    // Lab mode is LLM-driven retrieval — the model uses `read_file` /
-    // `list_dir` tools to fetch exactly what it needs from the live
-    // sandbox. Pre-loading indexed `repoChunks` is therefore wasted work
-    // (and would silently outvote tool results when the index is stale).
-    // Design context for Lab is acquired on demand through tool reads of
-    // the System Design artifacts.
+    // Artifact retrieval is two-pronged:
+    //   - Library mode always loads artifacts (Ask scope filter when
+    //     present, latest docs artifacts otherwise).
+    //   - Discuss mode loads artifacts only when the user enabled the
+    //     Library grounding toggle for this message.
     //
-    // `library` mode keeps artifact-only retrieval. When the thread carries
-    // an Ask scope filter (`thread.artifactContext`), load only those
-    // artifacts so the answer stays bounded to the user's chosen scope.
-    // Otherwise fall back to the most recent docs artifacts repo-wide.
+    // Both branches read the same artifact set; the difference is the
+    // toggle gate.
     let artifacts: Array<Doc<"artifacts">> = [];
-    if (effectiveMode === "library") {
+    const shouldLoadArtifacts = effectiveMode === "library" || groundLibrary;
+    if (shouldLoadArtifacts) {
       if (thread.artifactContext && thread.artifactContext.length > 0) {
         const scoped = await Promise.all(thread.artifactContext.map((artifactId) => ctx.db.get(artifactId)));
         artifacts = scoped.filter((artifact): artifact is Doc<"artifacts"> => artifact !== null);
@@ -319,21 +333,22 @@ export const getReplyContext = internalQuery({
       }
     }
 
-    // `library` mode is artifact-only retrieval and `lab` mode is
-    // tool-driven retrieval. Both intentionally skip pre-loaded code
-    // chunks so knowledge sources stay non-overlapping (`library` =>
-    // artifacts, `lab` => live tool calls). `discuss` is handled by the
-    // early return above.
+    // Library mode is artifact-only retrieval; sandbox-grounded Discuss
+    // replies are tool-driven (the model fetches what it needs via
+    // `read_file` / `list_dir` / `run_shell`). Both paths intentionally
+    // skip pre-loaded code chunks so knowledge sources stay
+    // non-overlapping (artifacts vs. live tool calls).
     const chunks: Array<{ path: string; summary: string; content: string }> = [];
 
-    // Plan 04 sandbox-tool wiring: surface the live sandbox handle here so
-    // the action can build a `SandboxFsClient` without an extra fetch. We
-    // only expose it when the sandbox is in `ready` state — `provisioning`,
-    // `stopped`, `archived`, and `failed` would all surface as a tool-call
-    // failure mid-stream, which is much worse UX than answering without
-    // tools and telling the user the sandbox isn't ready.
+    // Sandbox-tool wiring: surface the live sandbox handle here so the
+    // action can build a `SandboxFsClient` without an extra fetch. We
+    // only expose it when the message asked for sandbox grounding AND
+    // the sandbox is in `ready` state — `provisioning`, `stopped`,
+    // `archived`, and `failed` would all surface as a tool-call failure
+    // mid-stream, which is much worse UX than answering without tools
+    // and telling the user the sandbox isn't ready.
     let sandboxTooling: ReplyContext["sandboxTooling"];
-    if (effectiveMode === "lab" && repository.latestSandboxId) {
+    if (groundSandbox && repository.latestSandboxId) {
       const sandbox = await ctx.db.get(repository.latestSandboxId);
       if (sandbox?.status === "ready" && sandbox.remoteId && sandbox.repoPath) {
         sandboxTooling = {
@@ -348,6 +363,8 @@ export const getReplyContext = internalQuery({
       ownerTokenIdentifier: repository.ownerTokenIdentifier,
       workspaceId: thread.workspaceId,
       mode: effectiveMode,
+      groundLibrary,
+      groundSandbox,
       repositoryId: repository._id,
       repositorySummary: repository.summary,
       readmeSummary: repository.readmeSummary,

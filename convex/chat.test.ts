@@ -80,7 +80,7 @@ describe("chat thread defaults", () => {
         repositoryId,
         ownerTokenIdentifier,
         title: "Grounded thread",
-        mode: "lab",
+        mode: "library",
         lastMessageAt: Date.now(),
       });
     });
@@ -343,8 +343,12 @@ describe("sendMessageStartingNewThread", () => {
     expect(threads).toHaveLength(0);
   });
 
-  test("lab mode without a repo workspace throws and leaves no orphan thread", async () => {
-    const ownerTokenIdentifier = "user|lazy-lab-no-repo";
+  test("discuss + groundSandbox without a repo workspace throws and leaves no orphan thread", async () => {
+    // Post-Lab collapse: Sandbox grounding requires a repository, just like
+    // the old `lab` mode did. The reject-up-front contract preserves the
+    // no-orphan-thread invariant (no thread row is persisted when grounding
+    // can't be satisfied).
+    const ownerTokenIdentifier = "user|lazy-sandbox-no-repo";
     const t = createTestConvex();
     const homeWorkspaceId = await insertHomeWorkspace(t, ownerTokenIdentifier);
 
@@ -352,10 +356,11 @@ describe("sendMessageStartingNewThread", () => {
     await expect(
       viewer.mutation(api.chat.send.sendMessageStartingNewThread, {
         workspaceId: homeWorkspaceId,
-        content: "lab attempt",
-        mode: "lab",
+        content: "sandbox attempt",
+        mode: "discuss",
+        groundSandbox: true,
       }),
-    ).rejects.toThrow("'lab' mode requires an attached repository.");
+    ).rejects.toThrow(/grounding requires an attached repository/i);
 
     const threads = await t.run(
       async (ctx) =>

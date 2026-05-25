@@ -14,6 +14,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { AppNotice } from "@/components/app-notice";
 import { ChatContainer } from "@/components/chat-panel";
+import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
 import { StatusPanel } from "@/components/status-panel";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useCheckForUpdates } from "@/hooks/use-check-for-updates";
@@ -42,7 +43,6 @@ import { applyTouchWorkspaceOptimistic } from "@/lib/workspace-mutations";
 import {
   DEFAULT_AUTHENTICATED_PATH,
   discussPath,
-  labPath,
   libraryArtifactPath,
   libraryPath,
   modeAwareThreadPath,
@@ -339,13 +339,13 @@ export function RepositoryShell({
     [workspaces, currentWorkspaceId],
   );
 
-  // RepositoryShell is mounted by Chat, Discuss, and Lab — three of the
-  // service modes. The redirect must scope to threads of the mode the
-  // user is currently in, otherwise a Library Ask thread (persisted as
-  // `mode: "library"`) would be the "most recent thread" returned to the
-  // discuss-page landing and the user would silently end up rendering an
-  // Ask thread inside the Discuss chat panel. Library has its own shell
-  // and never routes through here.
+  // RepositoryShell is mounted by Chat and Discuss. The redirect must
+  // scope to threads of the mode the user is currently in, otherwise a
+  // Library Ask thread (persisted as `mode: "library"`) would be the
+  // "most recent thread" returned to the discuss-page landing and the
+  // user would silently end up rendering an Ask thread inside the
+  // Discuss chat panel. Library has its own shell and never routes
+  // through here.
   //
   // `mode` is URL-derived (or `null` on transient URLs like
   // `/chat`, `/w/:wid`, `/w/:wid/t/:tid`); we use it to gate chrome that
@@ -382,22 +382,17 @@ export function RepositoryShell({
     return availability?.defaultMode ?? "discuss";
   }, [mode, currentWorkspace?.lastMode, availability]);
 
-  // Discuss is "free-form discussion with no repository grounding" per
-  // docs/service-modes-library-lab-system-design.md. The right-rail
-  // ArtifactPanel — repo-scoped folder tree plus sandbox-backed launchers
-  // — is therefore mounted only outside Discuss. The toggle button, the
-  // desktop column, the mobile drawer, and the keyboard shortcut all gate
-  // on this single flag so the surface and its affordances stay
-  // consistent.
+  // The right-rail ArtifactPanel — repo-scoped folder tree plus
+  // sandbox-backed launchers — surfaces in Library Mode and in Discuss
+  // Mode when a repository is attached (so the user can browse artifacts
+  // alongside the chat). The toggle button, the desktop column, the
+  // mobile drawer, and the keyboard shortcut all gate on this single
+  // flag so the surface and its affordances stay consistent.
   //
-  // We gate on URL-derived `mode` being explicitly `library` or
-  // `lab` (not just `!== "discuss"`). `null` is the transient-URL case
-  // and intentionally falls through to `false`: on `/w/:wid` and the
-  // legacy `/w/:wid/t/:tid` the user is mid-canonicalisation and the
-  // chrome we'd paint here is mode-dependent. Waiting for the URL to
-  // settle on a canonical mode path keeps the StatusPill, artifact
-  // column, and toggle button stable through the redirect window.
-  const isArtifactPanelEnabled = mode === "library" || mode === "lab";
+  // The transient-URL case (`mode === null`, e.g. `/w/:wid` and the
+  // legacy `/w/:wid/t/:tid`) falls through to `false` so the chrome
+  // does not flash through the canonicalising redirect.
+  const isArtifactPanelEnabled = mode === "library" || (mode === "discuss" && capabilities.attachedRepository !== null);
 
   // Loaded for the redirect-to-most-recent-thread logic: scope by the
   // *intended* mode (URL-derived when settled, otherwise the workspace's
@@ -417,92 +412,78 @@ export function RepositoryShell({
   // Composer draft persists across thread switches and refreshes. Key shape:
   //   - thread set       → `systify.composer.draft.thread.{tid}` (per-thread)
   //   - no thread + ws   → `systify.composer.draft.workspace.{wid}.{mode}`
-  // The `mode` segment lets `/w/:wid/discuss` and `/w/:wid/lab`
+  // The `mode` segment lets `/w/:wid/discuss` and `/w/:wid/library`
   // keep independent drafts.
   const [chatInput, setChatInput, clearChatInput] = useComposerDraft({
     workspaceId: currentWorkspaceId,
     threadId: urlThreadId,
     mode,
   });
-  // The user's last explicit mode pick, scoped to the thread it was made for.
-  // When `urlThreadId` changes, the scope check fails and the effective mode
-  // collapses to the new thread's resolver-supplied default — no effect or
-  // setState required, so the per-thread default behaviour stays a pure
-  // derivation. We also drop the pick if it became unavailable for the same
-  // thread (e.g. the user picked `sandbox` and then the sandbox expired).
-  const [pickedChatMode, setPickedChatMode] = useState<{
+  // This shell only renders Discuss — Library has its own page
+  // (`pages/library.tsx`). The chat mode is therefore always
+  // `"discuss"`. Per-message grounding is the dimension the user
+  // controls; `groundLibrary` / `groundSandbox` below.
+  const chatMode: ChatMode = "discuss";
+
+  // Discuss-mode per-message grounding toggles. State is keyed by
+  // `threadId` so that opening a thread seeds the toggles with that
+  // thread's `defaultGround*` snapshot exactly once: subsequent ticks
+  // of the capabilities subscription (e.g. a sandbox flip from
+  // `provisioning` → `ready`) cannot stomp on the user's mid-session
+  // click, because the `threadId` key has not changed. A new thread
+  // (different `urlThreadId`, including `null` → some id) triggers
+  // re-seeding via the effect below.
+  const [groundingByThread, setGroundingByThread] = useState<{
     threadId: ThreadId | null;
-    mode: ChatMode;
-  } | null>(null);
-  // Sandbox is allowed as a picked mode while it's "activatable" so the
-  // user can sit in Sandbox mode (and see the SandboxActivityPill's
-  // progress) the instant they click the otherwise-disabled option — the
-  // resolver only re-adds sandbox to `availableModes` once activation
-  // completes, which would otherwise pop the user back to docs mid-
-  // provision.
-  const isSandboxPickedWhileActivating = pickedChatMode?.mode === "lab" && capabilities.sandboxIsActivatable;
-  // `chatMode` derivation depends on whether a thread exists:
-  //   - has-thread: the URL's mode-aware segment (`/discuss/:tid`,
-  //     `/lab/:tid`) is the source of truth for an existing thread's
-  //     mode — `modeAwareThreadPath` only builds those URLs for threads
-  //     whose persisted `thread.mode` matches the segment. `pickedChatMode`
-  //     overrides when the user explicitly chose a different mode for that
-  //     thread; capability defaults only apply as a last-resort fallback
-  //     for transient/legacy URLs (`mode === null`).
-  //   - no-thread:  capabilities collapse to "discuss" (NO_THREAD_CAPABILITIES),
-  //     so the URL's mode is the only signal — `/w/:wid/lab` must imply
-  //     sandbox mode for the lazy first send, even though the capabilities
-  //     resolver doesn't know about the URL.
-  //
-  // Why not `capabilities.defaultMode` for the has-thread fallback:
-  // `defaultMode` is `getDefaultThreadMode(hasAttachedRepo)` — i.e.
-  // "library" for any repo-attached workspace. Using it would silently
-  // promote a discuss-thread URL to library mode whenever a repo is
-  // attached, which then sends `mode: "library"` to `sendMessage` and
-  // trips the `askReadiness` gate ("Library Ask needs at least one
-  // artifact") even though the user never left the discuss surface.
-  const chatMode: ChatMode = useMemo(() => {
-    if (urlThreadId !== null) {
-      if (
-        pickedChatMode &&
-        pickedChatMode.threadId === urlThreadId &&
-        (capabilities.availableModes.includes(pickedChatMode.mode) || isSandboxPickedWhileActivating)
-      ) {
-        return pickedChatMode.mode;
-      }
-      // Canonical mode-aware thread URLs encode the thread's mode in the
-      // path segment. `library` is excluded because library threads render
-      // in `LibraryAskPanel`, not in this shell's `ChatPanel`.
-      if (mode === "discuss" || mode === "lab") {
-        return mode;
-      }
-      // Legacy `/w/:wid/t/:tid` (mode === null) — no URL signal, defer to
-      // the resolver's structural default.
-      return capabilities.defaultMode;
-    }
-    switch (mode) {
-      case "lab":
-        return "lab";
-      case "discuss":
-      case "library":
-      case null:
-      default:
-        return "discuss";
-    }
-  }, [urlThreadId, mode, pickedChatMode, capabilities, isSandboxPickedWhileActivating]);
-  // On a no-thread URL the mode selector must collapse to the single mode the
-  // lazy send will create the thread under — the resolver's broader default
-  // would mislead the user into thinking a different mode is reachable here.
-  const effectiveAvailableModes: readonly ChatMode[] = useMemo(
-    () => (urlThreadId === null ? [chatMode] : capabilities.availableModes),
-    [urlThreadId, chatMode, capabilities.availableModes],
+    library: boolean;
+    sandbox: boolean;
+  }>({ threadId: urlThreadId, library: false, sandbox: false });
+  useEffect(() => {
+    if (groundingByThread.threadId === urlThreadId) return;
+    // setState in an effect is the right tool here: the seeding decision
+    // depends on async query data (`capabilities.defaultGround*`) keyed
+    // by the URL thread id. Deriving it in render would re-seed on every
+    // capabilities tick, clobbering a user's mid-session toggle click.
+    // The `threadId` guard above ensures this fires at most once per
+    // genuine thread switch.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setGroundingByThread({
+      threadId: urlThreadId,
+      // `null` thread id means the bare `/w/:wid/discuss` landing; we
+      // have no per-thread defaults to seed from, so start both off.
+      library: urlThreadId === null ? false : capabilities.defaultGroundLibrary,
+      sandbox: urlThreadId === null ? false : capabilities.defaultGroundSandbox,
+    });
+  }, [urlThreadId, capabilities.defaultGroundLibrary, capabilities.defaultGroundSandbox, groundingByThread.threadId]);
+  const groundLibrary = groundingByThread.library;
+  const groundSandbox = groundingByThread.sandbox;
+  const setGroundLibrary = useCallback(
+    (next: boolean) => setGroundingByThread((prev) => ({ ...prev, library: next })),
+    [],
   );
-  const setChatMode = useCallback(
-    (mode: ChatMode) => {
-      setPickedChatMode({ threadId: urlThreadId, mode });
-    },
-    [urlThreadId],
+  const setGroundSandbox = useCallback(
+    (next: boolean) => setGroundingByThread((prev) => ({ ...prev, sandbox: next })),
+    [],
   );
+  const groundingState = availability?.grounding;
+  // Keep the Library toggle in lockstep with availability — flipping it
+  // back off when the artifact gate closes prevents a stale `true`
+  // sending a doomed `groundLibrary: true` mutation.
+  useEffect(() => {
+    if (groundingState && !groundingState.library.available && groundLibrary) {
+      // Verdict said the artifact gate just closed; flipping the toggle
+      // back off keeps a stale `true` from sending a doomed mutation.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setGroundLibrary(false);
+    }
+  }, [groundingState, groundLibrary, setGroundLibrary]);
+  useEffect(() => {
+    if (groundingState && !groundingState.sandbox.available && groundSandbox) {
+      // Same rationale as the library auto-flip-off above.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setGroundSandbox(false);
+    }
+  }, [groundingState, groundSandbox, setGroundSandbox]);
   const [actionError, setActionError] = useState<string | null>(null);
   /**
    * Transient info-level banner — used to confirm async background work was
@@ -519,6 +500,11 @@ export function RepositoryShell({
   }, [actionNotice]);
   const [isArtifactPanelOpen, setIsArtifactPanelOpen] = useLocalStorageBoolean("systify.artifactPanel.open", false);
   const [isArtifactSheetOpen, setIsArtifactSheetOpen] = useState(false);
+  // Generate System Design dialog state. Mounted at the bottom of the shell
+  // (gated on `effectiveSelectedRepositoryId`) so the GroundingToggleBar's
+  // `library_no_artifact` CTA can pop it open. Same pattern as
+  // `src/pages/library.tsx`.
+  const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false);
   // StatusPanel surfaces on demand from the top-bar pill: a Popover overlay on
   // desktop, a bottom Drawer (Vaul) on mobile. Both surfaces share a single
   // open state so toggling the pill behaves identically across breakpoints.
@@ -566,6 +552,13 @@ export function RepositoryShell({
    */
   const effectiveSelectedRepositoryId: RepositoryId | null = currentWorkspace?.repositoryId ?? null;
 
+  // Close dialog states when repository changes so they can't stay open
+  // for a different repository or after switching to no-repo.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsGenerateDialogOpen(false);
+  }, [effectiveSelectedRepositoryId]);
+
   const effectiveSelectedThreadId: ThreadId | null = urlThreadId;
 
   // Keep messages + active-stream subscriptions open for the most recently
@@ -602,8 +595,6 @@ export function RepositoryShell({
    *          `/w/:wid/discuss` when the workspace has no discuss thread
    *        - library → `/w/:wid/library` (with optional `?ask=:tid` for
    *          the most recent ask thread)
-   *        - lab     → `/w/:wid/lab/:mostRecent`, or the bare `/w/:wid/lab`
-   *          when the workspace has no lab thread
    *      Going straight to the mode-aware URL — instead of the legacy
    *      mode-agnostic `/w/:wid/t/:tid` — keeps `useChatMode`'s value
    *      stable across the redirect: it stays `null` while the URL is on
@@ -655,13 +646,13 @@ export function RepositoryShell({
     if (ownerThreads === undefined) return;
     // Every service mode redirects off the bare `/w/:wid` landing so the
     // user always settles on a canonical mode URL. Library lands on its
-    // artifact overview. Discuss / Lab land on their most recent thread
-    // when one exists; when the workspace has none, the bare `/w/:wid`
-    // landing still redirects onto the bare mode URL (`/w/:wid/discuss` or
-    // `/w/:wid/lab`) so a remembered discuss/lab `lastMode` settles
-    // the user *in that mode* (its empty state) instead of being stranded
-    // on the mode-less `/w/:wid`, which falls back to the structural
-    // default (library for a repo-attached workspace).
+    // artifact overview. Discuss lands on its most recent thread when
+    // one exists; when the workspace has none, the bare `/w/:wid`
+    // landing still redirects onto the bare mode URL (`/w/:wid/discuss`)
+    // so a remembered discuss `lastMode` settles the user *in that
+    // mode* (its empty state) instead of being stranded on the mode-less
+    // `/w/:wid`, which falls back to the structural default (library for
+    // a repo-attached workspace).
     if (intendedChatMode === "library") {
       const askThreadId = ownerThreads[0]?._id;
       const base = libraryPath(urlWorkspaceId);
@@ -671,16 +662,13 @@ export function RepositoryShell({
     }
     const tid = ownerThreads[0]?._id;
     if (tid) {
-      const target = intendedChatMode === "lab" ? labPath(urlWorkspaceId, tid) : discussPath(urlWorkspaceId, tid);
-      void navigate(target, { replace: true });
+      void navigate(discussPath(urlWorkspaceId, tid), { replace: true });
       return;
     }
-    // No thread of this mode. Only the bare `/w/:wid` landing redirects onto
-    // the mode URL; once already on `/w/:wid/discuss` (or `/lab`) we are in
-    // the right place — stay so the mode's empty state can render.
+    // No discuss thread yet — drop onto the bare `/w/:wid/discuss` so the
+    // empty state can render. Once already there, stay put.
     if (mode === null) {
-      const target = intendedChatMode === "lab" ? labPath(urlWorkspaceId) : discussPath(urlWorkspaceId);
-      void navigate(target, { replace: true });
+      void navigate(discussPath(urlWorkspaceId), { replace: true });
     }
   }, [
     navigate,
@@ -964,8 +952,8 @@ export function RepositoryShell({
 
   // Replace the URL with the canonical mode-aware path once the lazy first
   // send materialised a thread. `replace: true` is important: the user was on
-  // a no-thread URL (`/w/:wid/discuss` or `/w/:wid/lab`) which would otherwise
-  // sit in the history and bounce-redirect back here if they hit Back.
+  // a no-thread URL (`/w/:wid/discuss`) which would otherwise sit in the
+  // history and bounce-redirect back here if they hit Back.
   const onAfterCreateThread = useCallback(
     (threadId: ThreadId, threadMode: ChatMode) => {
       if (currentWorkspaceId === null) return;
@@ -979,12 +967,8 @@ export function RepositoryShell({
   // into a real thread the moment the user types and sends.
   const handleRequestNewThread = useCallback(() => {
     if (currentWorkspaceId === null) return;
-    if (mode === "lab") {
-      void navigate(labPath(currentWorkspaceId));
-    } else {
-      void navigate(discussPath(currentWorkspaceId));
-    }
-  }, [currentWorkspaceId, navigate, mode]);
+    void navigate(discussPath(currentWorkspaceId));
+  }, [currentWorkspaceId, navigate]);
 
   const {
     isSending,
@@ -999,6 +983,8 @@ export function RepositoryShell({
     threadToDelete,
     chatInput,
     chatMode,
+    groundLibrary,
+    groundSandbox,
     clearChatInput,
     setActionError,
     setThreadToDelete,
@@ -1014,12 +1000,10 @@ export function RepositoryShell({
       // navigation; the empty state for the mode renders if no threads of
       // that mode remain.
       if (currentWorkspaceId !== null) {
-        if (mode === "discuss") {
-          void navigate(discussPath(currentWorkspaceId));
-        } else if (mode === "lab") {
-          void navigate(labPath(currentWorkspaceId));
-        } else if (mode === "library") {
+        if (mode === "library") {
           void navigate(libraryPath(currentWorkspaceId));
+        } else if (mode === "discuss") {
+          void navigate(discussPath(currentWorkspaceId));
         } else {
           void navigate(workspacePath(currentWorkspaceId));
         }
@@ -1078,10 +1062,12 @@ export function RepositoryShell({
       chatInput={chatInput}
       setChatInput={setChatInput}
       chatMode={chatMode}
-      setChatMode={setChatMode}
-      availableModes={effectiveAvailableModes}
-      disabledModeReasons={capabilities.disabledReasons}
-      sandboxIsActivatable={capabilities.sandboxIsActivatable}
+      groundLibrary={groundLibrary}
+      groundSandbox={groundSandbox}
+      setGroundLibrary={setGroundLibrary}
+      setGroundSandbox={setGroundSandbox}
+      grounding={availability?.grounding}
+      onOpenGenerateSystemDesign={() => setIsGenerateDialogOpen(true)}
       isSending={isSending}
       onSendMessage={handleSendMessage}
       onCancelInFlightReply={handleCancelInFlightReply}
@@ -1331,6 +1317,14 @@ export function RepositoryShell({
         isPending={isPermanentDeletingRepo}
         onConfirm={() => void handlePermanentDeleteRepo()}
       />
+
+      {effectiveSelectedRepositoryId ? (
+        <GenerateSystemDesignDialog
+          open={isGenerateDialogOpen}
+          onOpenChange={setIsGenerateDialogOpen}
+          repositoryId={effectiveSelectedRepositoryId}
+        />
+      ) : null}
     </>
   );
 }

@@ -97,7 +97,7 @@ describe("chat history ordering", () => {
         lastMessageAt: Date.now(),
       });
 
-      // discuss-mode round followed by a sandbox-mode round.
+      // discuss-mode round followed by a library-mode round.
       await ctx.db.insert("messages", {
         threadId,
         ownerTokenIdentifier,
@@ -121,8 +121,8 @@ describe("chat history ordering", () => {
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "lab",
-        content: "sandbox-question",
+        mode: "library",
+        content: "library-question",
       });
       vi.advanceTimersByTime(1_000);
       await ctx.db.insert("messages", {
@@ -130,8 +130,8 @@ describe("chat history ordering", () => {
         ownerTokenIdentifier,
         role: "assistant",
         status: "completed",
-        mode: "lab",
-        content: "sandbox-answer",
+        mode: "library",
+        content: "library-answer",
       });
 
       return threadId;
@@ -145,8 +145,8 @@ describe("chat history ordering", () => {
     expect(messages.map((message) => ({ role: message.role, mode: message.mode, content: message.content }))).toEqual([
       { role: "user", mode: "discuss", content: "discuss-question" },
       { role: "assistant", mode: "discuss", content: "discuss-answer" },
-      { role: "user", mode: "lab", content: "sandbox-question" },
-      { role: "assistant", mode: "lab", content: "sandbox-answer" },
+      { role: "user", mode: "library", content: "library-question" },
+      { role: "assistant", mode: "library", content: "library-answer" },
     ]);
   });
 });

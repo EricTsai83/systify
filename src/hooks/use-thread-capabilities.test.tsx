@@ -35,7 +35,13 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.sandboxStatus).toBeNull();
     expect(result.current.availableModes).toEqual(["discuss"]);
     expect(result.current.defaultMode).toBe("discuss");
-    expect(Object.keys(result.current.disabledReasons).sort()).toEqual(["lab", "library"]);
+    // Post-Lab collapse: `lab` is gone as a top-level mode, so the only
+    // disabled key the no-thread fallback carries is `library`.
+    expect(Object.keys(result.current.disabledReasons).sort()).toEqual(["library"]);
+    // Default grounding flags start off so a click in the composer is
+    // always intentional.
+    expect(result.current.defaultGroundLibrary).toBe(false);
+    expect(result.current.defaultGroundSandbox).toBe(false);
     // The hook must pass the literal 'skip' sentinel so Convex does not run
     // the query for the non-thread case.
     expect(useQueryMock).toHaveBeenCalledWith(expect.anything(), "skip");
@@ -66,9 +72,9 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.attachedRepository).toBeNull();
   });
 
-  test("thread without a repository: forwards resolver output (discuss only) and exposes both unlock hints", () => {
+  test("thread without a repository: forwards resolver output (discuss only) and exposes library unlock hint", () => {
     useQueryMock.mockReturnValue({
-      thread: { _id: threadId },
+      thread: { _id: threadId, defaultGroundLibrary: false, defaultGroundSandbox: false },
       attachedRepository: null,
       sandboxStatus: null,
       sandboxModeStatus: null,
@@ -77,7 +83,6 @@ describe("useThreadCapabilities — bridging behavior", () => {
         defaultMode: "discuss",
         disabledReasons: {
           library: "Attach a repository to use Library mode.",
-          lab: "Attach a repository and provision a sandbox to use Lab mode.",
         },
       },
       sandboxIsActivatable: false,
@@ -89,13 +94,12 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.availableModes).toEqual(["discuss"]);
     expect(result.current.defaultMode).toBe("discuss");
     expect(result.current.disabledReasons.library).toBeTruthy();
-    expect(result.current.disabledReasons.lab).toBeTruthy();
     expect(result.current.sandboxIsActivatable).toBe(false);
   });
 
-  test("thread with a repository but no sandbox: bridges discuss+docs with a sandbox tooltip and flags activation", () => {
+  test("thread with a repository but no sandbox: bridges discuss+library and flags activation", () => {
     useQueryMock.mockReturnValue({
-      thread: { _id: threadId, repositoryId },
+      thread: { _id: threadId, repositoryId, defaultGroundLibrary: false, defaultGroundSandbox: false },
       attachedRepository: {
         _id: repositoryId,
         sourceRepoFullName: "acme/widget",
@@ -110,7 +114,10 @@ describe("useThreadCapabilities — bridging behavior", () => {
       chatModes: {
         availableModes: ["discuss", "library"],
         defaultMode: "library",
-        disabledReasons: { lab: "Provision a sandbox to use Lab mode." },
+        // Post-Lab collapse: `resolveChatModes` no longer surfaces a `lab`
+        // disabled-reason. The "no sandbox" hint travels via grounding /
+        // sandboxIsActivatable instead.
+        disabledReasons: {},
       },
       sandboxIsActivatable: true,
     });
@@ -125,17 +132,16 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.sandboxStatus).toBeNull();
     expect(result.current.availableModes).toEqual(["discuss", "library"]);
     expect(result.current.defaultMode).toBe("library");
-    expect(result.current.disabledReasons.lab).toMatch(/sandbox/i);
-    expect(result.current.disabledReasons.library).toBeUndefined();
+    expect(result.current.disabledReasons).toEqual({});
     // The missing-sandbox case is the headline activation surface — the
     // disabled Sandbox option should still accept a click and enqueue a
     // lazy provision.
     expect(result.current.sandboxIsActivatable).toBe(true);
   });
 
-  test("thread with a ready sandbox: bridges all three modes; default stays docs so sandbox is opt-in", () => {
+  test("thread with a ready sandbox: bridges discuss+library; sandbox surfaces via sandboxStatus", () => {
     useQueryMock.mockReturnValue({
-      thread: { _id: threadId, repositoryId },
+      thread: { _id: threadId, repositoryId, defaultGroundLibrary: false, defaultGroundSandbox: false },
       attachedRepository: {
         _id: repositoryId,
         sourceRepoFullName: "acme/widget",
@@ -147,7 +153,7 @@ describe("useThreadCapabilities — bridging behavior", () => {
         message: null,
       },
       chatModes: {
-        availableModes: ["discuss", "library", "lab"],
+        availableModes: ["discuss", "library"],
         defaultMode: "library",
         disabledReasons: {},
       },
@@ -156,7 +162,7 @@ describe("useThreadCapabilities — bridging behavior", () => {
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
 
-    expect(result.current.availableModes).toEqual(["discuss", "library", "lab"]);
+    expect(result.current.availableModes).toEqual(["discuss", "library"]);
     expect(result.current.defaultMode).toBe("library");
     expect(result.current.sandboxStatus).toBe("ready");
     expect(result.current.disabledReasons).toEqual({});
@@ -164,9 +170,9 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.sandboxIsActivatable).toBe(false);
   });
 
-  test("thread with a provisioning sandbox: bridges the provisioning hint into the sandbox tooltip", () => {
+  test("thread with a provisioning sandbox: bridges the provisioning state via sandboxStatus", () => {
     useQueryMock.mockReturnValue({
-      thread: { _id: threadId, repositoryId },
+      thread: { _id: threadId, repositoryId, defaultGroundLibrary: false, defaultGroundSandbox: false },
       attachedRepository: {
         _id: repositoryId,
         sourceRepoFullName: "acme/widget",
@@ -181,9 +187,7 @@ describe("useThreadCapabilities — bridging behavior", () => {
       chatModes: {
         availableModes: ["discuss", "library"],
         defaultMode: "library",
-        disabledReasons: {
-          lab: "Sandbox is provisioning — Lab mode will be available once it is ready.",
-        },
+        disabledReasons: {},
       },
       sandboxIsActivatable: false,
     });
@@ -191,24 +195,22 @@ describe("useThreadCapabilities — bridging behavior", () => {
     const { result } = renderHook(() => useThreadCapabilities(threadId));
 
     expect(result.current.sandboxStatus).toBe("provisioning");
-    expect(result.current.disabledReasons.lab).toMatch(/provisioning/i);
     // A second activation click during provisioning would just dedupe;
     // the UI surfaces that more cleanly by leaving the option in its
     // disabled state until the in-flight job finishes.
     expect(result.current.sandboxIsActivatable).toBe(false);
   });
 
-  test('thread with a stopped sandbox: forwards the resolver-side "expired" hint without re-deriving it', () => {
+  test("thread with a stopped sandbox: forwards schema status verbatim and flags activation", () => {
     useQueryMock.mockReturnValue({
-      thread: { _id: threadId, repositoryId },
+      thread: { _id: threadId, repositoryId, defaultGroundLibrary: false, defaultGroundSandbox: false },
       attachedRepository: {
         _id: repositoryId,
         sourceRepoFullName: "acme/widget",
         sourceRepoName: "widget",
       },
-      // The schema-level status is "stopped"; the resolver collapses it onto
-      // its own "expired" input. The hook must not duplicate that logic — it
-      // hands back the schema status verbatim and trusts disabledReasons to
+      // The schema-level status is "stopped"; the hook hands it back
+      // verbatim and trusts the sandboxModeStatus / grounding axis to
       // carry the user-visible explanation.
       sandboxStatus: "stopped",
       sandboxModeStatus: {
@@ -219,9 +221,7 @@ describe("useThreadCapabilities — bridging behavior", () => {
       chatModes: {
         availableModes: ["discuss", "library"],
         defaultMode: "library",
-        disabledReasons: {
-          lab: "Sandbox expired — provision a new sandbox to use Lab mode.",
-        },
+        disabledReasons: {},
       },
       sandboxIsActivatable: true,
     });
@@ -229,10 +229,36 @@ describe("useThreadCapabilities — bridging behavior", () => {
     const { result } = renderHook(() => useThreadCapabilities(threadId));
 
     expect(result.current.sandboxStatus).toBe("stopped");
-    expect(result.current.disabledReasons.lab).toMatch(/expired/i);
     // Expired sandboxes are re-activatable — same activation path as
     // the missing-sandbox case provisions a fresh one.
     expect(result.current.sandboxIsActivatable).toBe(true);
+  });
+
+  test("thread carries per-thread default-grounding snapshot for the composer", () => {
+    // Persisted defaults from `threads.defaultGroundLibrary` /
+    // `threads.defaultGroundSandbox` are forwarded so the shell can seed
+    // the Discuss composer toggles when a thread is opened.
+    useQueryMock.mockReturnValue({
+      thread: { _id: threadId, repositoryId, defaultGroundLibrary: true, defaultGroundSandbox: true },
+      attachedRepository: {
+        _id: repositoryId,
+        sourceRepoFullName: "acme/widget",
+        sourceRepoName: "widget",
+      },
+      sandboxStatus: "ready",
+      sandboxModeStatus: { reasonCode: "available", message: null },
+      chatModes: {
+        availableModes: ["discuss", "library"],
+        defaultMode: "library",
+        disabledReasons: {},
+      },
+      sandboxIsActivatable: false,
+    });
+
+    const { result } = renderHook(() => useThreadCapabilities(threadId));
+
+    expect(result.current.defaultGroundLibrary).toBe(true);
+    expect(result.current.defaultGroundSandbox).toBe(true);
   });
 });
 
@@ -248,7 +274,7 @@ describe("useThreadCapabilities — bridging behavior", () => {
 describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
   test("threads without budget data (no repo attached) report sandboxCostBudget: null", () => {
     useQueryMock.mockReturnValue({
-      thread: { _id: threadId },
+      thread: { _id: threadId, defaultGroundLibrary: false, defaultGroundSandbox: false },
       attachedRepository: null,
       sandboxStatus: null,
       sandboxModeStatus: null,
@@ -257,7 +283,6 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
         defaultMode: "discuss",
         disabledReasons: {
           library: "Attach a repository to use Library mode.",
-          lab: "Attach a repository and provision a sandbox to use Lab mode.",
         },
       },
       sandboxIsActivatable: false,
@@ -271,7 +296,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
 
   test("user-only budget (no workspace) is exposed verbatim in USD", () => {
     useQueryMock.mockReturnValue({
-      thread: { _id: threadId, repositoryId },
+      thread: { _id: threadId, repositoryId, defaultGroundLibrary: false, defaultGroundSandbox: false },
       attachedRepository: {
         _id: repositoryId,
         sourceRepoFullName: "acme/widget",
@@ -280,7 +305,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
       sandboxStatus: "ready",
       sandboxModeStatus: { reasonCode: "available", message: null },
       chatModes: {
-        availableModes: ["discuss", "library", "lab"],
+        availableModes: ["discuss", "library"],
         defaultMode: "library",
         disabledReasons: {},
       },
@@ -305,7 +330,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
 
   test("when both caps are present, the hook surfaces the more restrictive remaining (workspace)", () => {
     useQueryMock.mockReturnValue({
-      thread: { _id: threadId, repositoryId },
+      thread: { _id: threadId, repositoryId, defaultGroundLibrary: false, defaultGroundSandbox: false },
       attachedRepository: {
         _id: repositoryId,
         sourceRepoFullName: "acme/widget",
@@ -314,7 +339,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
       sandboxStatus: "ready",
       sandboxModeStatus: { reasonCode: "available", message: null },
       chatModes: {
-        availableModes: ["discuss", "library", "lab"],
+        availableModes: ["discuss", "library"],
         defaultMode: "library",
         disabledReasons: {},
       },
@@ -343,7 +368,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
   test("when both caps are present, the hook surfaces the more restrictive remaining (user)", () => {
     // Mirror of the above with the user cap binding instead.
     useQueryMock.mockReturnValue({
-      thread: { _id: threadId, repositoryId },
+      thread: { _id: threadId, repositoryId, defaultGroundLibrary: false, defaultGroundSandbox: false },
       attachedRepository: {
         _id: repositoryId,
         sourceRepoFullName: "acme/widget",
@@ -352,7 +377,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
       sandboxStatus: "ready",
       sandboxModeStatus: { reasonCode: "available", message: null },
       chatModes: {
-        availableModes: ["discuss", "library", "lab"],
+        availableModes: ["discuss", "library"],
         defaultMode: "library",
         disabledReasons: {},
       },

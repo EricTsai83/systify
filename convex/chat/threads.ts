@@ -217,7 +217,7 @@ export const createThread = mutation({
 
     const mode = args.mode ?? getDefaultThreadMode(!!repositoryId);
 
-    if ((mode === "library" || mode === "lab") && !repositoryId) {
+    if (mode === "library" && !repositoryId) {
       throw new Error(`'${mode}' mode requires an attached repository.`);
     }
 
@@ -363,13 +363,13 @@ export const setThreadRepository = mutation({
       // Two transitions land in this branch:
       //   1. no-repo  → has-repo:  the thread is in `discuss` (the only mode
       //      a repo-less thread can hold per createThread + the detach path
-      //      below). Spec says discuss is "no repo, no sandbox", so leaving
-      //      it in `discuss` after attaching a repo would create the exact
-      //      stale-mode state the resolver is supposed to forbid. Lift the
-      //      thread into the repo default (`library`) to mirror createThread.
+      //      below). Attaching a repo lifts the thread into the repo default
+      //      (`library`) so the user lands in the artifact reader by default.
+      //      The Discuss grounding toggles remain available for any future
+      //      Discuss turn in the same thread.
       //   2. repo-A   → repo-B:    the thread already has a repo and the user
-      //      may have explicitly chosen `library` or `lab`. Preserve their
-      //      choice; only `repositoryId`/`workspaceId` need to change.
+      //      may have explicitly chosen `library`. Preserve their choice;
+      //      only `repositoryId` / `workspaceId` need to change.
       const nextMode = thread.repositoryId ? thread.mode : getDefaultThreadMode(true);
       const previousRepositoryId = thread.repositoryId;
       const swappedFromRepositoryId =
@@ -387,16 +387,19 @@ export const setThreadRepository = mutation({
       };
     }
 
-    // Detach atomically: dropping the repository while resetting the persisted
-    // mode keeps the thread in the same repo-less default state as
-    // `createThread`, so a racing `sendMessage` call never sees a stale
-    // repo-dependent mode like `library` / `lab`.
+    // Detach atomically: dropping the repository while resetting the
+    // persisted mode keeps the thread in the same repo-less default state
+    // as `createThread`. Also clear the grounding defaults — a no-repo
+    // thread cannot satisfy Library or Sandbox grounding, so the
+    // composer should open with both toggles off on the next visit.
     const detachedMode = getDefaultThreadMode(false);
     const workspaceId = await findHomeWorkspaceId(ctx, identity.tokenIdentifier);
     await ctx.db.patch(args.threadId, {
       workspaceId: workspaceId ?? undefined,
       repositoryId: undefined,
       mode: detachedMode,
+      defaultGroundLibrary: false,
+      defaultGroundSandbox: false,
     });
     return { repositoryId: null as null, workspaceId, mode: detachedMode };
   },

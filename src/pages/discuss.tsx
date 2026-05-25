@@ -6,17 +6,8 @@ import type { ThreadId, WorkspaceId } from "@/lib/types";
  * Discuss service mode entry point.
  *
  * Mounted at:
- *   - `/w/:workspaceId/discuss`              → workspace landing for
- *                                               Discuss; the shell picks
- *                                               the most recent discuss
- *                                               thread or shows the
- *                                               empty state.
+ *   - `/w/:workspaceId/discuss`              → workspace landing.
  *   - `/w/:workspaceId/discuss/:threadId`    → canonical thread URL.
- *
- * Reuses {@link RepositoryShell} as-is. The shell already knows how to
- * resolve workspace + thread params and render the chat panel — the only
- * difference for Discuss is the URL prefix the workspace-mode-switcher
- * highlights.
  */
 export function DiscussPage() {
   const params = useParams<{ workspaceId?: string; threadId?: string }>();

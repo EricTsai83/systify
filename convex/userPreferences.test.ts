@@ -239,9 +239,9 @@ describe("userPreferences", () => {
     // A subsequent touch in a different mode overwrites the pick so the
     // workspace tracks the user's most recent choice, not the first one
     // they ever made.
-    await viewer.mutation(api.workspaces.touchWorkspace, { workspaceId: homeId, mode: "lab" });
-    const afterLab = await viewer.query(api.workspaces.listWorkspaces, {});
-    expect(afterLab[0].lastMode).toBe("lab");
+    await viewer.mutation(api.workspaces.touchWorkspace, { workspaceId: homeId, mode: "library" });
+    const afterLibrary = await viewer.query(api.workspaces.listWorkspaces, {});
+    expect(afterLibrary[0].lastMode).toBe("library");
   });
 
   test("touchWorkspace without mode preserves the existing lastMode", async () => {

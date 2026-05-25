@@ -51,8 +51,8 @@ export interface ThreadCapabilities {
   /**
    * True when the disabled Sandbox option should still accept a click
    * and trigger a lazy sandbox provision. The UI uses this to render
-   * the option as clickable (with an "activate" affordance) and to
-   * keep `chatMode === "lab"` selectable while activation runs.
+   * the option as clickable (with an "activate" affordance) while
+   * activation runs.
    */
   sandboxIsActivatable: boolean;
   /**
@@ -62,6 +62,19 @@ export interface ThreadCapabilities {
    * per-workspace caps so the user sees a single coherent number.
    */
   sandboxCostBudget: SandboxDailyCostBudget | null;
+  /**
+   * Per-thread composer-default snapshot for the Discuss grounding
+   * toggles. Sourced from `threads.defaultGroundLibrary` /
+   * `threads.defaultGroundSandbox`. The shell uses these to seed the
+   * `groundLibrary` / `groundSandbox` state when a new thread is
+   * opened so the composer "remembers" the user's last preference.
+   * Both default to `false` on threads that have never recorded a
+   * preference (legacy rows, freshly created threads, no-thread
+   * sentinel) — the resolver does not infer "should be on" from
+   * structural availability here so a click is always intentional.
+   */
+  defaultGroundLibrary: boolean;
+  defaultGroundSandbox: boolean;
 }
 
 /**
@@ -72,7 +85,6 @@ export interface ThreadCapabilities {
  */
 const NO_THREAD_DISABLED_REASONS: ChatModeResolution["disabledReasons"] = {
   library: "Start a thread and attach a repository to use Library mode.",
-  lab: "Start a thread, attach a repository, and provision a sandbox to use Lab mode.",
 };
 
 const NO_THREAD_CAPABILITIES: ThreadCapabilities = {
@@ -86,6 +98,8 @@ const NO_THREAD_CAPABILITIES: ThreadCapabilities = {
   disabledReasons: NO_THREAD_DISABLED_REASONS,
   sandboxCostBudget: null,
   sandboxIsActivatable: false,
+  defaultGroundLibrary: false,
+  defaultGroundSandbox: false,
 };
 
 const NO_THREAD_LOADING_CAPABILITIES: ThreadCapabilities = {
@@ -149,6 +163,8 @@ export function useThreadCapabilities(threadId: ThreadId | null): ThreadCapabili
     disabledReasons: ctx.chatModes.disabledReasons,
     sandboxCostBudget: deriveSandboxCostBudget(ctx.sandboxCostBudgets),
     sandboxIsActivatable: ctx.sandboxIsActivatable,
+    defaultGroundLibrary: ctx.thread.defaultGroundLibrary ?? false,
+    defaultGroundSandbox: ctx.thread.defaultGroundSandbox ?? false,
   };
 }
 
