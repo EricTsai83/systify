@@ -377,7 +377,7 @@ export function RepositoryShell({
   const intendedChatMode = useMemo<ChatMode>(() => {
     if (mode) return mode;
     const lastMode = currentWorkspace?.lastMode ?? null;
-    const lastModeAvailable = lastMode ? (availability?.availableModes.includes(lastMode) ?? false) : false;
+    const lastModeAvailable = lastMode ? (availability?.modes[lastMode].enabled ?? false) : false;
     if (lastModeAvailable && lastMode) return lastMode;
     return availability?.defaultMode ?? "discuss";
   }, [mode, currentWorkspace?.lastMode, availability]);
@@ -470,7 +470,7 @@ export function RepositoryShell({
   // back off when the artifact gate closes prevents a stale `true`
   // sending a doomed `groundLibrary: true` mutation.
   useEffect(() => {
-    if (groundingState && !groundingState.library.available && groundLibrary) {
+    if (groundingState && !groundingState.library.enabled && groundLibrary) {
       // Verdict said the artifact gate just closed; flipping the toggle
       // back off keeps a stale `true` from sending a doomed mutation.
       // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -478,7 +478,7 @@ export function RepositoryShell({
     }
   }, [groundingState, groundLibrary, setGroundLibrary]);
   useEffect(() => {
-    if (groundingState && !groundingState.sandbox.available && groundSandbox) {
+    if (groundingState && !groundingState.sandbox.enabled && groundSandbox) {
       // Same rationale as the library auto-flip-off above.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setGroundSandbox(false);

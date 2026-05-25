@@ -4,7 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { mutation, query, internalQuery, internalMutation, type MutationCtx } from "./_generated/server";
 import { drainMessageToolCallEvents } from "./chat/toolCallEventStore";
-import { getDefaultThreadMode } from "./chatModeResolver";
+import { getDefaultThreadMode } from "./lib/chatMode";
 import { requireViewerIdentity } from "./lib/auth";
 import { getRepositorySandboxStatus } from "./lib/repositorySandbox";
 import { makeRepositoryTitle, parseGitHubUrl } from "./lib/github";

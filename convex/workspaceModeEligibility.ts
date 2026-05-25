@@ -1,13 +1,15 @@
 /**
- * Workspace mode eligibility — runtime evaluator for the (Discuss / Library /
- * Lab) mode trio at workspace scope.
+ * Workspace mode eligibility — runtime evaluator for the (Discuss / Library)
+ * mode pair at workspace scope, with per-axis grounding-toggle availability
+ * for the Discuss composer.
  *
  * Owns the runtime composition for "can this viewer use mode X for this
- * workspace right now?" — load workspace + repository + sandbox doc + artifact
- * existence + sandbox cost cap (rate-limit peek), then run them through the
- * pure {@link resolveWorkspaceModes} resolver and augment the resolver's string
- * `disabledReasons` with structured `{ code, message, retryAfterMs? }` objects
- * so write-path callers can throw structured `ConvexError`s.
+ * workspace right now?" — load workspace + repository + sandbox doc +
+ * artifact existence + sandbox cost cap (rate-limit peek), then run them
+ * through the pure {@link resolveWorkspaceModes} resolver in
+ * `lib/chatEligibility.ts` and augment the resolver's string
+ * `disabledReasons` with structured `{ code, message }` objects so
+ * write-path callers can throw structured `ConvexError`s.
  *
  * Three exposed seams:
  *
@@ -17,12 +19,21 @@
  *      structured `ConvexError` when the caller-supplied mode is disabled.
  *   3. {@link throwIfDisabled} — pure assertion over a verdict + mode. Action
  *      callers compose `runQuery` + this when they need verdict-aware control
- *      flow before deciding to throw (e.g., Lab generation tolerating an
- *      emergency feature-flag flip mid-flight).
+ *      flow before deciding to throw.
  *
  * The pure {@link resolveWorkspaceModes} resolver is the internal seam — it
- * stays untouched and trivially testable; this module only adds the runtime
- * loading + structured-reason augmentation around it.
+ * stays in `lib/chatEligibility.ts` and trivially testable; this module only
+ * adds the runtime loading + structured-reason augmentation around it. The
+ * sandbox-status translation and cost-cap precedence rule also live in
+ * `lib/chatEligibility.ts` so the per-thread `threadContext.getThreadContext`
+ * read path and this per-workspace read path cannot drift.
+ *
+ * Verdicts deliberately carry no `retryAfterMs?` field. Reactive
+ * subscriptions update naturally when the underlying state flips (budget
+ * resets, sandbox readies, artifact appears); a parallel retry timer would
+ * just drift from the actual wall-clock event. Lifecycle-truth timing
+ * (e.g. "Daily cap resets at midnight UTC") lives on the cost-budget
+ * snapshot in `threadContext.ts`, not on the eligibility verdict.
  */
 
 import { ConvexError, v } from "convex/values";
@@ -30,98 +41,32 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { query } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import {
-  DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
-  DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED,
+  computeSandboxCostCapEvaluation,
   resolveWorkspaceModes,
-  type ChatModeSandboxStatus,
+  toChatModeSandboxStatus,
+  type AxisVerdict,
   type SandboxCostCapGate,
-  type ChatMode,
-  type WorkspaceModeResolution,
-} from "./chatModeResolver";
+  type SandboxGroundingVerdict,
+} from "./lib/chatEligibility";
+import type { ChatMode } from "./lib/chatMode";
 import { requireViewerIdentity } from "./lib/auth";
 import { getRepositorySandboxStatus, type SandboxModeStatus } from "./lib/repositorySandbox";
-import {
-  getSandboxReplyEstimateCents,
-  peekSandboxDailyCostForUser,
-  peekSandboxDailyCostForWorkspace,
-} from "./lib/rateLimit";
-
-/**
- * Internal helper — true when `code` is a sandbox-cost-cap gate code. Used
- * by the augment layer to drop the `retryAfterMs` field cleanly when the
- * reason is unrelated to cost caps.
- */
-function isCostCapCode(code: WorkspaceModeDisabledReasonCode): boolean {
-  return code === "sandbox_user_cap_exceeded" || code === "sandbox_workspace_cap_exceeded";
-}
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
-/**
- * Stable enum of *why* a mode is disabled at workspace scope. Exists so
- * write-path callers can branch on `code` (e.g. surface a "Resets at
- * midnight UTC" countdown for cost-cap codes) instead of regex-matching
- * tooltip strings.
- *
- * Codes are deliberately disjoint across the three modes — there is no
- * "library_provisioning" or "lab_no_artifact" because those combinations
- * cannot fire. The pure resolver in `chatModeResolver.ts` enumerates the
- * possible disabled states; this enum names each one.
- */
-export type WorkspaceModeDisabledReasonCode =
-  | "no_repository_attached"
-  | "library_no_artifact"
-  | "sandbox_missing"
-  | "sandbox_provisioning"
-  | "sandbox_expired"
-  | "sandbox_failed"
-  | "sandbox_user_cap_exceeded"
-  | "sandbox_workspace_cap_exceeded";
-
-export interface WorkspaceModeDisabled {
-  readonly code: WorkspaceModeDisabledReasonCode;
-  /** Tooltip-quality message taken verbatim from the pure resolver. */
-  readonly message: string;
-  /**
-   * Wall-clock ms remaining until the gate would re-open. Populated only for
-   * the cost-cap codes (`sandbox_user_cap_exceeded`,
-   * `sandbox_workspace_cap_exceeded`); UI uses it to render a midnight-UTC
-   * countdown.
-   */
-  readonly retryAfterMs?: number;
-}
-
-/**
- * Per-axis grounding availability for the Discuss composer. Each axis
- * collapses the underlying preconditions (repo attached, artifact exists,
- * sandbox lifecycle, cost cap) into a single yes/no plus reason, so the
- * composer can render the toggle bar without re-deriving the rules.
- */
-export interface GroundingAxisAvailability {
-  readonly available: boolean;
-  readonly reason: WorkspaceModeDisabled | null;
-  /**
-   * Sandbox-only: when `available` is false but the user can still click
-   * the toggle to lazily provision a sandbox. The composer renders an
-   * "Activate sandbox" CTA in that case.
-   */
-  readonly isActivatable?: boolean;
-}
+export type { WorkspaceModeDisabledReasonCode } from "./lib/chatEligibility";
 
 export interface WorkspaceModeEligibility {
-  readonly availableModes: ReadonlyArray<ChatMode>;
-  readonly defaultMode: ChatMode;
-  readonly disabledReasons: Partial<Record<ChatMode, WorkspaceModeDisabled>>;
-  /**
-   * Grounding-toggle availability for the Discuss composer. The two axes
-   * are independent: the user can enable either or both. Library Mode
-   * does not consult this — its grounding is implicit in the mode.
-   */
-  readonly grounding: {
-    readonly library: GroundingAxisAvailability;
-    readonly sandbox: GroundingAxisAvailability;
+  readonly modes: {
+    readonly discuss: AxisVerdict;
+    readonly library: AxisVerdict;
   };
-  readonly askReadiness: { canBind: boolean; reason: WorkspaceModeDisabled | null };
+  readonly defaultMode: ChatMode;
+  readonly grounding: {
+    readonly library: AxisVerdict;
+    readonly sandbox: SandboxGroundingVerdict;
+  };
+  readonly askReadiness: AxisVerdict;
   /** Convenience flag — frontend uses it to short-circuit "import a repo" CTAs. */
   readonly hasAttachedRepo: boolean;
   /** Convenience flag — frontend uses it to gate first-system-design UI. */
@@ -129,194 +74,6 @@ export interface WorkspaceModeEligibility {
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────
-
-/**
- * Maps the centralized sandbox availability result onto the resolver's
- * input domain. Mirrors the same translation used by `threadContext.ts`'s
- * chat-mode read path so both queries report the same lifecycle state for
- * the same sandbox doc.
- */
-function toChatModeSandboxStatus(status: SandboxModeStatus | null): ChatModeSandboxStatus {
-  switch (status?.reasonCode ?? "missing_sandbox") {
-    case "available":
-      return "ready";
-    case "sandbox_provisioning":
-      return "provisioning";
-    case "sandbox_expired":
-      return "expired";
-    case "sandbox_unavailable":
-      return "failed";
-    case "missing_sandbox":
-      return "none";
-  }
-}
-
-/**
- * Plan 10 — derive the cost-cap gate from a peek of both the per-user and
- * per-workspace daily buckets, plus return the budget snapshots for the UI.
- *
- * Both peeks happen inside the surrounding query's transaction so the gate
- * decision and the displayed budget agree even under concurrent settlement.
- *
- * Same precedence rule as `threadContext.computeSandboxCostBudgets`: user
- * cap blocks first (more user-actionable than the workspace cap, which
- * also gates every other workspace member). Kept identical so the
- * workspace-mode read path reports the same gate the per-thread chat-mode
- * read path reports for the same caller.
- */
-async function computeSandboxCostCapGate(
-  ctx: QueryCtx,
-  ownerTokenIdentifier: string,
-  workspaceId: Id<"workspaces"> | null,
-): Promise<SandboxCostCapGate> {
-  const estimateCents = getSandboxReplyEstimateCents();
-  const userBudget = await peekSandboxDailyCostForUser(ctx, ownerTokenIdentifier);
-
-  if (userBudget.remainingCents < estimateCents) {
-    return {
-      enabled: false,
-      reason: "user_daily_cap_exceeded",
-      tooltip: DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
-      resetAtMs: userBudget.resetAtMs,
-    };
-  }
-  if (workspaceId) {
-    const workspaceBudget = await peekSandboxDailyCostForWorkspace(ctx, workspaceId);
-    if (workspaceBudget.remainingCents < estimateCents) {
-      return {
-        enabled: false,
-        reason: "workspace_daily_cap_exceeded",
-        tooltip: DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED,
-        resetAtMs: workspaceBudget.resetAtMs,
-      };
-    }
-  }
-  return { enabled: true };
-}
-
-/**
- * Derive the structured `code` for a sandbox-grounding disabled state
- * from the same input matrix the resolver used. The resolver returns
- * string `reason` text; this helper extracts the matching code so write-
- * path callers and the composer can branch on it without regex-matching
- * the message.
- *
- * Precedence mirrors the resolver exactly (cost cap → lifecycle): the
- * cost-cap gate wins over lifecycle tooltips because the cap is the more
- * actionable signal for a viewer who already has a healthy sandbox.
- */
-function deriveSandboxGroundingCode(args: {
-  hasAttachedRepo: boolean;
-  sandboxStatus: ChatModeSandboxStatus;
-  sandboxCostCapGate: SandboxCostCapGate;
-}): WorkspaceModeDisabledReasonCode {
-  if (!args.sandboxCostCapGate.enabled) {
-    return args.sandboxCostCapGate.reason === "user_daily_cap_exceeded"
-      ? "sandbox_user_cap_exceeded"
-      : "sandbox_workspace_cap_exceeded";
-  }
-  if (!args.hasAttachedRepo) {
-    return "no_repository_attached";
-  }
-  switch (args.sandboxStatus) {
-    case "provisioning":
-      return "sandbox_provisioning";
-    case "expired":
-      return "sandbox_expired";
-    case "failed":
-      return "sandbox_failed";
-    case "none":
-      return "sandbox_missing";
-    case "ready":
-      throw new Error("deriveSandboxGroundingCode: sandboxStatus is `ready` but sandbox grounding is disabled");
-  }
-}
-
-function deriveSandboxRetryAfterMs(costCapGate: SandboxCostCapGate, now: number): number | undefined {
-  if (!costCapGate.enabled) {
-    return Math.max(1, costCapGate.resetAtMs - now);
-  }
-  return undefined;
-}
-
-/**
- * Augment the resolver's string `disabledReasons` and grounding axes
- * into structured `WorkspaceModeDisabled` objects. The resolver knows
- * the `message` (tooltip text); this layer adds the `code` (derived from
- * the same input matrix the resolver used) and the optional
- * `retryAfterMs` (only meaningful for cost-cap codes).
- */
-function augmentResolution(
-  resolution: WorkspaceModeResolution,
-  inputs: {
-    hasAttachedRepo: boolean;
-    hasAtLeastOneArtifact: boolean;
-    sandboxStatus: ChatModeSandboxStatus;
-    sandboxCostCapGate: SandboxCostCapGate;
-  },
-  now: number,
-): {
-  disabledReasons: Partial<Record<ChatMode, WorkspaceModeDisabled>>;
-  grounding: WorkspaceModeEligibility["grounding"];
-  askReadiness: WorkspaceModeEligibility["askReadiness"];
-} {
-  const disabledReasons: Partial<Record<ChatMode, WorkspaceModeDisabled>> = {};
-
-  if (resolution.disabledReasons.library !== undefined) {
-    disabledReasons.library = {
-      code: "no_repository_attached",
-      message: resolution.disabledReasons.library,
-    };
-  }
-
-  const libraryAxis = resolution.grounding.library;
-  const sandboxAxis = resolution.grounding.sandbox;
-
-  const libraryAvailability: WorkspaceModeEligibility["grounding"]["library"] = libraryAxis.available
-    ? { available: true, reason: null }
-    : {
-        available: false,
-        reason: {
-          code: !inputs.hasAttachedRepo ? "no_repository_attached" : "library_no_artifact",
-          message: libraryAxis.reason ?? "Library grounding is unavailable.",
-        },
-      };
-
-  let sandboxAvailability: WorkspaceModeEligibility["grounding"]["sandbox"];
-  if (sandboxAxis.available) {
-    sandboxAvailability = { available: true, reason: null, isActivatable: false };
-  } else {
-    const code = deriveSandboxGroundingCode(inputs);
-    const retryAfterMs = isCostCapCode(code) ? deriveSandboxRetryAfterMs(inputs.sandboxCostCapGate, now) : undefined;
-    sandboxAvailability = {
-      available: false,
-      reason: {
-        code,
-        message: sandboxAxis.reason ?? "Sandbox grounding is unavailable.",
-        ...(retryAfterMs !== undefined ? { retryAfterMs } : {}),
-      },
-      isActivatable: sandboxAxis.isActivatable,
-    };
-  }
-
-  // Ask readiness — same disabled codes as Library since Ask is the
-  // interactive surface inside Library mode.
-  const askReadiness: WorkspaceModeEligibility["askReadiness"] = resolution.askReadiness.canBind
-    ? { canBind: true, reason: null }
-    : {
-        canBind: false,
-        reason: {
-          code: !inputs.hasAttachedRepo ? "no_repository_attached" : "library_no_artifact",
-          message: resolution.askReadiness.reason ?? "Library Ask is unavailable.",
-        },
-      };
-
-  return {
-    disabledReasons,
-    grounding: { library: libraryAvailability, sandbox: sandboxAvailability },
-    askReadiness,
-  };
-}
 
 /**
  * Shared core: given an already-loaded repository (or `null`) plus optional
@@ -338,15 +95,12 @@ async function evaluateFromRepository(
     repository: Doc<"repositories"> | null;
     workspaceId: Id<"workspaces"> | null | undefined;
     tokenIdentifier: string;
-    now: number;
   },
 ): Promise<WorkspaceModeEligibility> {
   let sandboxModeStatus: SandboxModeStatus | null = null;
   let hasAtLeastOneArtifact = false;
 
   if (args.repository) {
-    // One-row probe via the repo index — cheaper than `.collect()` and
-    // still answers the binary "is there any artifact?" question.
     const probe = await ctx.db
       .query("artifacts")
       .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repository!._id))
@@ -357,7 +111,8 @@ async function evaluateFromRepository(
 
   let costGate: SandboxCostCapGate = { enabled: true };
   if (args.repository !== null) {
-    costGate = await computeSandboxCostCapGate(ctx, args.tokenIdentifier, args.workspaceId ?? null);
+    const evaluation = await computeSandboxCostCapEvaluation(ctx, args.tokenIdentifier, args.workspaceId ?? null);
+    costGate = evaluation.gate;
   }
 
   const sandboxStatus = toChatModeSandboxStatus(sandboxModeStatus);
@@ -365,23 +120,11 @@ async function evaluateFromRepository(
 
   const resolution = resolveWorkspaceModes(hasAttachedRepo, hasAtLeastOneArtifact, sandboxStatus, costGate);
 
-  const augmented = augmentResolution(
-    resolution,
-    {
-      hasAttachedRepo,
-      hasAtLeastOneArtifact,
-      sandboxStatus,
-      sandboxCostCapGate: costGate,
-    },
-    args.now,
-  );
-
   return {
-    availableModes: resolution.availableModes,
+    modes: resolution.modes,
     defaultMode: resolution.defaultMode,
-    disabledReasons: augmented.disabledReasons,
-    grounding: augmented.grounding,
-    askReadiness: augmented.askReadiness,
+    grounding: resolution.grounding,
+    askReadiness: resolution.askReadiness,
     hasAttachedRepo,
     hasAtLeastOneArtifact,
   };
@@ -391,8 +134,8 @@ async function evaluateFromRepository(
 
 /**
  * Public Convex query. The frontend workspace-mode switcher subscribes here;
- * action callers (e.g. Lab `chat.generation.generateAssistantReply`) fetch
- * via `ctx.runQuery(api.workspaceModeEligibility.evaluate, ...)` for an
+ * action callers fetch via
+ * `ctx.runQuery(api.workspaceModeEligibility.evaluate, ...)` for an
  * execute-time recheck against the same view the user sees.
  *
  * Returns `null` when the workspace doesn't exist or the viewer doesn't own
@@ -413,7 +156,6 @@ export const evaluate = query({
       repository,
       workspaceId: args.workspaceId,
       tokenIdentifier: identity.tokenIdentifier,
-      now: Date.now(),
     });
   },
 });
@@ -422,25 +164,17 @@ export const evaluate = query({
  * Pure assertion that throws a structured `ConvexError` when `verdict`
  * disables `mode`. Safe to call from any context; the resolver does not
  * touch `ctx`. Use from action callers after a `ctx.runQuery(evaluate, ...)`
- * when verdict-aware control flow is needed (e.g. tolerating an emergency
- * feature-flag flip mid-flight). Mutation callers should prefer
- * {@link assertWorkspaceModeEligible}, which bundles the load + assert.
+ * when verdict-aware control flow is needed. Mutation callers should
+ * prefer {@link assertWorkspaceModeEligible}, which bundles the load +
+ * assert.
  */
 export function throwIfDisabled(verdict: WorkspaceModeEligibility, mode: ChatMode): void {
-  if (verdict.availableModes.includes(mode)) return;
-  const reason = verdict.disabledReasons[mode];
-  if (!reason) {
-    throw new ConvexError({
-      code: "workspace_mode_unavailable",
-      mode,
-      message: `'${mode}' mode is unavailable.`,
-    });
-  }
+  const verdictForMode = verdict.modes[mode];
+  if (verdictForMode.enabled) return;
   throw new ConvexError({
-    code: reason.code,
+    code: verdictForMode.code,
     mode,
-    message: reason.message,
-    ...(reason.retryAfterMs !== undefined ? { retryAfterMs: reason.retryAfterMs } : {}),
+    message: verdictForMode.message,
   });
 }
 
@@ -479,13 +213,10 @@ export async function assertWorkspaceModeEligible(
     groundSandbox?: boolean;
   },
 ): Promise<void> {
-  // Identity check first so unsigned-in callers always get the same
-  // "must sign in" error regardless of the mode they tried to assert.
   const identity = await requireViewerIdentity(ctx);
   const groundLibrary = args.mode === "discuss" && args.groundLibrary === true;
   const groundSandbox = args.mode === "discuss" && args.groundSandbox === true;
 
-  // Discuss with no grounding flags has no preconditions beyond auth.
   if (args.mode === "discuss" && !groundLibrary && !groundSandbox) {
     return;
   }
@@ -510,38 +241,38 @@ export async function assertWorkspaceModeEligible(
     repository,
     workspaceId: args.workspaceId ?? null,
     tokenIdentifier: identity.tokenIdentifier,
-    now: Date.now(),
   });
 
-  // Library mode is read-mostly: navigation is available whenever a repo is
-  // attached (the empty Library page surfaces a Generate System Design CTA),
-  // but the write surface — Library Ask — still needs at least one indexed
-  // artifact to retrieve against. Defer to askReadiness so the write-path
-  // contract stays tied to the actual RAG precondition.
-  if (args.mode === "library" && !verdict.askReadiness.canBind && verdict.askReadiness.reason) {
-    throw new ConvexError({
-      code: verdict.askReadiness.reason.code,
-      mode: "library",
-      message: verdict.askReadiness.reason.message,
-    });
+  if (args.mode === "library") {
+    const askReadiness = verdict.askReadiness;
+    if (!askReadiness.enabled) {
+      throw new ConvexError({
+        code: askReadiness.code,
+        mode: "library",
+        message: askReadiness.message,
+      });
+    }
   }
 
-  if (groundLibrary && !verdict.grounding.library.available && verdict.grounding.library.reason) {
-    const reason = verdict.grounding.library.reason;
-    throw new ConvexError({
-      code: reason.code,
-      mode: "discuss",
-      message: reason.message,
-    });
+  if (groundLibrary) {
+    const libraryAxis = verdict.grounding.library;
+    if (!libraryAxis.enabled) {
+      throw new ConvexError({
+        code: libraryAxis.code,
+        mode: "discuss",
+        message: libraryAxis.message,
+      });
+    }
   }
-  if (groundSandbox && !verdict.grounding.sandbox.available && verdict.grounding.sandbox.reason) {
-    const reason = verdict.grounding.sandbox.reason;
-    throw new ConvexError({
-      code: reason.code,
-      mode: "discuss",
-      message: reason.message,
-      ...(reason.retryAfterMs !== undefined ? { retryAfterMs: reason.retryAfterMs } : {}),
-    });
+  if (groundSandbox) {
+    const sandboxAxis = verdict.grounding.sandbox;
+    if (!sandboxAxis.enabled) {
+      throw new ConvexError({
+        code: sandboxAxis.code,
+        mode: "discuss",
+        message: sandboxAxis.message,
+      });
+    }
   }
 
   throwIfDisabled(verdict, args.mode);

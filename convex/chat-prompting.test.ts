@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { buildCitationMap, buildDiscussSystemPrompt, buildSystemPrompt, buildUserPrompt } from "./chat/prompting";
-import type { ChatMode } from "./chatModeResolver";
+import type { ChatMode } from "./lib/chatMode";
 import type { Id } from "./_generated/dataModel";
 import type { ReplyContext } from "./chat/context";
 import { MAX_CONTEXT_ARTIFACTS } from "./lib/constants";

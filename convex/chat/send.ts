@@ -3,10 +3,9 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import type { MutationCtx } from "../_generated/server";
 import { mutation } from "../_generated/server";
-import type { ChatMode } from "../chatModeResolver";
 import { assertWorkspaceModeEligible } from "../workspaceModeEligibility";
 import { requireViewerIdentity } from "../lib/auth";
-import { chatModeValidator } from "../lib/chatMode";
+import { chatModeValidator, type ChatMode } from "../lib/chatMode";
 import { requireActiveRepositoryForOwner } from "../lib/repositoryAccess";
 import {
   CHAT_JOB_LEASE_MS,
@@ -173,23 +172,18 @@ export const sendMessageStartingNewThread = mutation({
 
     const repositoryId = workspace.repositoryId;
 
-    if (args.mode === "library" && !repositoryId) {
-      throw new Error(`'${args.mode}' mode requires an attached repository.`);
-    }
-    // Discuss-with-grounding must also have a repo: both axes are
-    // repository-scoped (artifacts come from the repo, sandbox is the
-    // repo's). Reject up front so we never persist a Discuss turn whose
-    // grounding flags can't be satisfied.
-    const requestsGrounding = args.groundLibrary === true || args.groundSandbox === true;
-    if (requestsGrounding && !repositoryId) {
-      throw new Error("Library / Sandbox grounding requires an attached repository.");
-    }
-
     const trimmedContent = args.content.trim();
     if (!trimmedContent) {
       throw new Error("Message content cannot be empty.");
     }
 
+    // `requireActiveRepositoryForOwner` is the archived-state check
+    // (`assertWorkspaceModeEligible` doesn't model archive status), so it
+    // still runs here before the eligibility assert. The no-repo and
+    // unsatisfiable-grounding cases that used to throw inline are now
+    // covered by `assertWorkspaceModeEligible` below — single structured-
+    // `ConvexError` contract for the frontend instead of a mix of plain
+    // `Error`s and structured ones.
     let repository: Doc<"repositories"> | null = null;
     if (repositoryId) {
       repository = await requireActiveRepositoryForOwner(ctx, {
@@ -310,10 +304,11 @@ export const sendMessage = mutation({
     // accidentally tag a Library reply with grounding metadata.
     const groundLibrary = mode === "discuss" && args.groundLibrary === true;
     const groundSandbox = mode === "discuss" && args.groundSandbox === true;
-    if ((groundLibrary || groundSandbox) && !thread.repositoryId) {
-      throw new Error("Library / Sandbox grounding requires an attached repository.");
-    }
 
+    // `assertWorkspaceModeEligible` covers the unsatisfiable-grounding case
+    // (`no_repository_attached`) with the same structured ConvexError it
+    // uses for the workspace read path, so we don't need a separate
+    // plain-Error pre-check here.
     await assertWorkspaceModeEligible(ctx, {
       repositoryId: thread.repositoryId,
       workspaceId: thread.workspaceId,

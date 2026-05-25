@@ -291,25 +291,33 @@ beforeEach(() => {
     mode: "library",
     availability: undefined,
     placeholderAvailability: {
-      availableModes: ["discuss", "library"],
+      modes: {
+        discuss: { enabled: true },
+        library: { enabled: true },
+      },
       defaultMode: "library",
-      disabledReasons: {},
       hasAttachedRepo: true,
       hasAtLeastOneArtifact: false,
-      askReadiness: { canBind: false, reason: null },
+      askReadiness: { enabled: false, code: "library_no_artifact", message: "loading" },
       grounding: {
-        library: { available: false, reason: null },
-        sandbox: { available: false, reason: null, isActivatable: false },
+        library: { enabled: false, code: "library_no_artifact", message: "loading" },
+        sandbox: { enabled: false, code: "sandbox_missing", message: "loading", isActivatable: false },
       },
     },
   });
   useThreadCapabilitiesMock.mockReset();
   useThreadCapabilitiesMock.mockReturnValue({
-    availableModes: ["discuss"],
+    modes: {
+      discuss: { enabled: true },
+      library: {
+        enabled: false,
+        code: "no_repository_attached",
+        message: "Attach a repository to use Library mode.",
+      },
+    },
     defaultMode: "discuss",
     attachedRepository: null,
     sandboxModeStatus: { reasonCode: "missing_sandbox", message: null },
-    disabledReasons: {},
     isMissingThread: false,
     isLoading: false,
     sandboxCostBudget: null,
@@ -372,12 +380,22 @@ beforeEach(() => {
         // is defensive: returning a placeholder keeps the underlying query
         // shape coherent for any code path that might subscribe directly.
         return {
-          availableModes: ["discuss"],
+          modes: {
+            discuss: { enabled: true },
+            library: {
+              enabled: false,
+              code: "no_repository_attached",
+              message: "Attach a repository to use Library mode.",
+            },
+          },
           defaultMode: "discuss",
-          disabledReasons: {},
           hasAttachedRepo: false,
           hasAtLeastOneArtifact: false,
-          askReadiness: { canBind: false, reason: null },
+          askReadiness: { enabled: false, code: "no_repository_attached", message: "loading" },
+          grounding: {
+            library: { enabled: false, code: "no_repository_attached", message: "loading" },
+            sandbox: { enabled: false, code: "no_repository_attached", message: "loading", isActivatable: false },
+          },
         };
       default:
         return undefined;
@@ -504,12 +522,18 @@ describe("RepositoryShell artifact toggle behavior", () => {
       mode: "discuss",
       availability: undefined,
       placeholderAvailability: {
-        availableModes: ["discuss"],
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: false, code: "no_repository_attached", message: "loading" },
+        },
         defaultMode: "discuss",
-        disabledReasons: {},
         hasAttachedRepo: true,
         hasAtLeastOneArtifact: false,
-        askReadiness: { canBind: false, reason: null },
+        askReadiness: { enabled: false, code: "library_no_artifact", message: "loading" },
+        grounding: {
+          library: { enabled: false, code: "library_no_artifact", message: "loading" },
+          sandbox: { enabled: false, code: "sandbox_missing", message: "loading", isActivatable: false },
+        },
       },
     });
     repositoriesResult = [makeRepository()];
@@ -537,28 +561,42 @@ describe("RepositoryShell artifact toggle behavior", () => {
     useChatModeMock.mockReturnValue({
       mode: "discuss",
       availability: {
-        availableModes: ["discuss", "library"] as const,
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: true },
+        },
         defaultMode: "library" as const,
-        disabledReasons: {},
         hasAttachedRepo: true,
         hasAtLeastOneArtifact: false,
-        askReadiness: { canBind: false, reason: null },
+        askReadiness: { enabled: false, code: "library_no_artifact", message: "loading" },
+        grounding: {
+          library: { enabled: false, code: "library_no_artifact", message: "loading" },
+          sandbox: { enabled: false, code: "sandbox_missing", message: "loading", isActivatable: false },
+        },
       },
       placeholderAvailability: {
-        availableModes: ["discuss"],
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: false, code: "no_repository_attached", message: "loading" },
+        },
         defaultMode: "discuss",
-        disabledReasons: {},
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
-        askReadiness: { canBind: false, reason: null },
+        askReadiness: { enabled: false, code: "no_repository_attached", message: "loading" },
+        grounding: {
+          library: { enabled: false, code: "no_repository_attached", message: "loading" },
+          sandbox: { enabled: false, code: "no_repository_attached", message: "loading", isActivatable: false },
+        },
       },
     });
     useThreadCapabilitiesMock.mockReturnValue({
-      availableModes: ["discuss", "library"],
+      modes: {
+        discuss: { enabled: true },
+        library: { enabled: true },
+      },
       defaultMode: "library",
       attachedRepository: { id: repoId, fullName: "octocat/hello-world", shortName: "hello-world" },
       sandboxModeStatus: { reasonCode: "missing_sandbox", message: null },
-      disabledReasons: {},
       isMissingThread: false,
       isLoading: false,
       sandboxCostBudget: null,
@@ -625,12 +663,18 @@ describe("RepositoryShell workspace reconciliation", () => {
       mode: null,
       availability: undefined,
       placeholderAvailability: {
-        availableModes: ["discuss"],
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: false, code: "no_repository_attached", message: "loading" },
+        },
         defaultMode: "discuss",
-        disabledReasons: {},
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
-        askReadiness: { canBind: false, reason: null },
+        askReadiness: { enabled: false, code: "no_repository_attached", message: "loading" },
+        grounding: {
+          library: { enabled: false, code: "no_repository_attached", message: "loading" },
+          sandbox: { enabled: false, code: "no_repository_attached", message: "loading", isActivatable: false },
+        },
       },
     });
     storedActiveWorkspaceId = "ws_cached";
@@ -747,20 +791,32 @@ describe("RepositoryShell workspace reconciliation", () => {
     useChatModeMock.mockReturnValue({
       mode: null,
       availability: {
-        availableModes: ["discuss", "library"] as const,
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: true },
+        },
         defaultMode: "library" as const,
-        disabledReasons: {},
         hasAttachedRepo: true,
         hasAtLeastOneArtifact: true,
-        askReadiness: { canBind: true, reason: null },
+        askReadiness: { enabled: true },
+        grounding: {
+          library: { enabled: true },
+          sandbox: { enabled: false, code: "sandbox_missing", message: "loading", isActivatable: false },
+        },
       },
       placeholderAvailability: {
-        availableModes: ["discuss"],
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: false, code: "no_repository_attached", message: "loading" },
+        },
         defaultMode: "discuss",
-        disabledReasons: {},
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
-        askReadiness: { canBind: false, reason: null },
+        askReadiness: { enabled: false, code: "no_repository_attached", message: "loading" },
+        grounding: {
+          library: { enabled: false, code: "no_repository_attached", message: "loading" },
+          sandbox: { enabled: false, code: "no_repository_attached", message: "loading", isActivatable: false },
+        },
       },
     });
     const urlWorkspaceId = "ws_discuss_memory" as WorkspaceId;
@@ -815,20 +871,32 @@ describe("RepositoryShell workspace reconciliation", () => {
     useChatModeMock.mockReturnValue({
       mode: "discuss",
       availability: {
-        availableModes: ["discuss", "library"] as const,
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: true },
+        },
         defaultMode: "library" as const,
-        disabledReasons: {},
         hasAttachedRepo: true,
         hasAtLeastOneArtifact: true,
-        askReadiness: { canBind: true, reason: null },
+        askReadiness: { enabled: true },
+        grounding: {
+          library: { enabled: true },
+          sandbox: { enabled: false, code: "sandbox_missing", message: "loading", isActivatable: false },
+        },
       },
       placeholderAvailability: {
-        availableModes: ["discuss"],
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: false, code: "no_repository_attached", message: "loading" },
+        },
         defaultMode: "discuss",
-        disabledReasons: {},
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
-        askReadiness: { canBind: false, reason: null },
+        askReadiness: { enabled: false, code: "no_repository_attached", message: "loading" },
+        grounding: {
+          library: { enabled: false, code: "no_repository_attached", message: "loading" },
+          sandbox: { enabled: false, code: "no_repository_attached", message: "loading", isActivatable: false },
+        },
       },
     });
     const urlWorkspaceId = "ws_canonical" as WorkspaceId;
@@ -850,20 +918,32 @@ describe("RepositoryShell workspace reconciliation", () => {
     useChatModeMock.mockReturnValue({
       mode: "discuss",
       availability: {
-        availableModes: ["discuss"] as const,
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: false, code: "no_repository_attached", message: "loading" },
+        },
         defaultMode: "discuss" as const,
-        disabledReasons: {},
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
-        askReadiness: { canBind: false, reason: null },
+        askReadiness: { enabled: false, code: "no_repository_attached", message: "loading" },
+        grounding: {
+          library: { enabled: false, code: "no_repository_attached", message: "loading" },
+          sandbox: { enabled: false, code: "no_repository_attached", message: "loading", isActivatable: false },
+        },
       },
       placeholderAvailability: {
-        availableModes: ["discuss"],
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: false, code: "no_repository_attached", message: "loading" },
+        },
         defaultMode: "discuss",
-        disabledReasons: {},
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
-        askReadiness: { canBind: false, reason: null },
+        askReadiness: { enabled: false, code: "no_repository_attached", message: "loading" },
+        grounding: {
+          library: { enabled: false, code: "no_repository_attached", message: "loading" },
+          sandbox: { enabled: false, code: "no_repository_attached", message: "loading", isActivatable: false },
+        },
       },
     });
     const urlWorkspaceId = "ws_steady" as WorkspaceId;

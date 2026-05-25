@@ -53,7 +53,7 @@
  *     model selection.
  */
 
-import type { ChatMode } from "../chatModeResolver";
+import type { ChatMode } from "../lib/chatMode";
 
 /**
  * Capability tiers the resolver routes replies through. Distinct from

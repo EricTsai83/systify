@@ -49,8 +49,10 @@ describe("WorkspaceModeSwitcher", () => {
         workspaceId={"workspace_1" as WorkspaceId}
         mode="discuss"
         availability={{
-          availableModes: ["discuss", "library"],
-          disabledReasons: {},
+          modes: {
+            discuss: { enabled: true },
+            library: { enabled: true },
+          },
         }}
       />,
     );
@@ -69,9 +71,9 @@ describe("WorkspaceModeSwitcher", () => {
         workspaceId={"workspace_1" as WorkspaceId}
         mode="discuss"
         availability={{
-          availableModes: ["discuss"],
-          disabledReasons: {
-            library: { message: "Attach a repo to unlock" },
+          modes: {
+            discuss: { enabled: true },
+            library: { enabled: false },
           },
         }}
       />,
@@ -89,9 +91,9 @@ describe("WorkspaceModeSwitcher", () => {
         workspaceId={"workspace_1" as WorkspaceId}
         mode="discuss"
         availability={{
-          availableModes: ["discuss"],
-          disabledReasons: {
-            library: { message: "Attach a repo to unlock" },
+          modes: {
+            discuss: { enabled: true },
+            library: { enabled: false },
           },
         }}
       />,
@@ -117,8 +119,10 @@ describe("WorkspaceModeSwitcher", () => {
         workspaceId={"workspace_1" as WorkspaceId}
         mode="discuss"
         availability={{
-          availableModes: ["discuss", "library"],
-          disabledReasons: {},
+          modes: {
+            discuss: { enabled: true },
+            library: { enabled: true },
+          },
         }}
       />,
     );
@@ -135,8 +139,10 @@ describe("WorkspaceModeSwitcher", () => {
         workspaceId={"workspace_1" as WorkspaceId}
         mode="discuss"
         availability={{
-          availableModes: ["discuss", "library"],
-          disabledReasons: {},
+          modes: {
+            discuss: { enabled: true },
+            library: { enabled: true },
+          },
         }}
       />,
     );

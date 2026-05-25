@@ -294,13 +294,16 @@ describe("sendMessageStartingNewThread", () => {
     const homeWorkspaceId = await insertHomeWorkspace(t, ownerTokenIdentifier);
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    // Surfaces via assertWorkspaceModeEligible's structured ConvexError
+    // (`{ code: "no_repository_attached", mode: "library", message }`) —
+    // the regex matches the message substring inside the serialized data.
     await expect(
       viewer.mutation(api.chat.send.sendMessageStartingNewThread, {
         workspaceId: homeWorkspaceId,
         content: "anything",
         mode: "library",
       }),
-    ).rejects.toThrow("'library' mode requires an attached repository.");
+    ).rejects.toThrow(/Library mode requires an attached repository/);
   });
 
   test("a different viewer cannot start a thread in someone else's workspace", async () => {

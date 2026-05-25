@@ -2,24 +2,42 @@ import { useMemo } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import type { WorkspaceModeDisabledReasonCode } from "../../convex/lib/chatEligibility";
 import type { ChatMode, WorkspaceId } from "@/lib/types";
 
+/**
+ * Per-axis verdict shape consumed by chrome that subscribes to
+ * `workspaceModeEligibility.evaluate`. `code` is the backend enum union
+ * plus a `"loading"` sentinel for the placeholder fallback, so a backend
+ * addition to `WorkspaceModeDisabledReasonCode` surfaces as a compile
+ * error here rather than slipping through under `string`.
+ */
 interface ChatModeDisabledLike {
-  code: string;
+  enabled: false;
+  code: WorkspaceModeDisabledReasonCode | "loading";
   message: string;
-  retryAfterMs?: number;
 }
+type AxisVerdictLike = { enabled: true } | ChatModeDisabledLike;
+type SandboxVerdictLike = { enabled: true } | (ChatModeDisabledLike & { isActivatable: boolean });
+
+const LOADING_AXIS: ChatModeDisabledLike = {
+  enabled: false,
+  code: "loading",
+  message: "Loading…",
+};
 
 const NULL_RESOLUTION = {
-  availableModes: ["discuss"] as ReadonlyArray<ChatMode>,
+  modes: {
+    discuss: { enabled: true } as AxisVerdictLike,
+    library: LOADING_AXIS as AxisVerdictLike,
+  },
   defaultMode: "discuss" as ChatMode,
-  disabledReasons: {} as Partial<Record<ChatMode, ChatModeDisabledLike>>,
   hasAttachedRepo: false,
   hasAtLeastOneArtifact: false,
-  askReadiness: { canBind: false, reason: null as ChatModeDisabledLike | null },
+  askReadiness: LOADING_AXIS as AxisVerdictLike,
   grounding: {
-    library: { available: false, reason: null as ChatModeDisabledLike | null },
-    sandbox: { available: false, reason: null as ChatModeDisabledLike | null, isActivatable: false },
+    library: LOADING_AXIS as AxisVerdictLike,
+    sandbox: { ...LOADING_AXIS, isActivatable: false } as SandboxVerdictLike,
   },
 };
 

@@ -1,8 +1,11 @@
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
-import { getDefaultThreadMode, type ChatMode, type ChatModeResolution } from "../../convex/chatModeResolver";
+import { getDefaultThreadMode, type ChatMode } from "../../convex/lib/chatMode";
+import type { ChatModeResolution } from "../../convex/lib/chatEligibility";
 import type { RepositoryId, SandboxModeStatus, ThreadId } from "@/lib/types";
+
+type ChatModeVerdicts = ChatModeResolution["modes"];
 
 export type SandboxLifecycleStatus = Doc<"sandboxes">["status"];
 
@@ -42,12 +45,13 @@ export interface ThreadCapabilities {
   sandboxStatus: SandboxLifecycleStatus | null;
   /** User-facing sandbox-mode status when a repository is attached. */
   sandboxModeStatus: SandboxModeStatus | null;
-  /** Modes the UI should render as enabled in the selector. */
-  availableModes: readonly ChatMode[];
+  /**
+   * Per-mode verdict from the resolver. Consumers narrow on `.enabled` to
+   * read `code` / `message` on the disabled branch.
+   */
+  modes: ChatModeVerdicts;
   /** Mode the UI should preselect when the thread first loads. */
   defaultMode: ChatMode;
-  /** Tooltip text keyed by mode for the greyed-out options. */
-  disabledReasons: ChatModeResolution["disabledReasons"];
   /**
    * True when the disabled Sandbox option should still accept a click
    * and trigger a lazy sandbox provision. The UI uses this to render
@@ -78,13 +82,18 @@ export interface ThreadCapabilities {
 }
 
 /**
- * Disabled-mode hints for the "no thread selected" state. Mirrors the no-repo
- * branch of {@link resolveChatModes} but tailored for the case where the user
- * has not even started a thread yet — the unlock instructions need to nudge
+ * Per-mode verdict for the "no thread selected" state. Mirrors the no-repo
+ * branch of {@link resolveChatModes} but tailored for the case where the
+ * user has not even started a thread yet — the unlock instructions nudge
  * them to start a conversation first, then attach a repo.
  */
-const NO_THREAD_DISABLED_REASONS: ChatModeResolution["disabledReasons"] = {
-  library: "Start a thread and attach a repository to use Library mode.",
+const NO_THREAD_MODE_VERDICTS: ChatModeVerdicts = {
+  discuss: { enabled: true },
+  library: {
+    enabled: false,
+    code: "no_repository_attached",
+    message: "Start a thread and attach a repository to use Library mode.",
+  },
 };
 
 const NO_THREAD_CAPABILITIES: ThreadCapabilities = {
@@ -93,9 +102,8 @@ const NO_THREAD_CAPABILITIES: ThreadCapabilities = {
   attachedRepository: null,
   sandboxStatus: null,
   sandboxModeStatus: null,
-  availableModes: ["discuss"],
+  modes: NO_THREAD_MODE_VERDICTS,
   defaultMode: getDefaultThreadMode(false),
-  disabledReasons: NO_THREAD_DISABLED_REASONS,
   sandboxCostBudget: null,
   sandboxIsActivatable: false,
   defaultGroundLibrary: false,
@@ -158,9 +166,8 @@ export function useThreadCapabilities(threadId: ThreadId | null): ThreadCapabili
     attachedRepository,
     sandboxStatus: ctx.sandboxStatus,
     sandboxModeStatus: ctx.sandboxModeStatus,
-    availableModes: ctx.chatModes.availableModes,
+    modes: ctx.chatModes.modes,
     defaultMode: ctx.chatModes.defaultMode,
-    disabledReasons: ctx.chatModes.disabledReasons,
     sandboxCostBudget: deriveSandboxCostBudget(ctx.sandboxCostBudgets),
     sandboxIsActivatable: ctx.sandboxIsActivatable,
     defaultGroundLibrary: ctx.thread.defaultGroundLibrary ?? false,

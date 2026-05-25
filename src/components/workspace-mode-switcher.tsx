@@ -6,13 +6,8 @@ import { discussPath, libraryPath } from "@/route-paths";
 import type { ChatMode, WorkspaceId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-interface ChatModeDisabledLike {
-  message: string;
-}
-
 interface ChatModeAvailability {
-  availableModes: ReadonlyArray<ChatMode>;
-  disabledReasons: Partial<Record<ChatMode, ChatModeDisabledLike>>;
+  modes: Readonly<Record<ChatMode, { readonly enabled: boolean }>>;
 }
 
 const CHAT_MODE_ENTRIES: ReadonlyArray<{
@@ -108,7 +103,7 @@ export function WorkspaceModeSwitcher({
       >
         {CHAT_MODE_ENTRIES.map((entry) => {
           const isActive = mode === entry.value;
-          const isAvailable = availability ? availability.availableModes.includes(entry.value) : true;
+          const isAvailable = availability ? availability.modes[entry.value].enabled : true;
           const isFromMode = entry.value === transitionFrom;
           const Icon = entry.icon;
 

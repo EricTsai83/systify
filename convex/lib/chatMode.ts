@@ -20,3 +20,16 @@ export const chatModeValidator = v.union(v.literal("discuss"), v.literal("librar
  * a compile error rather than a silent stale literal.
  */
 export type ChatMode = Infer<typeof chatModeValidator>;
+
+/**
+ * Default mode for a thread whose URL did not pin one. Lives alongside the
+ * `ChatMode` type so callers that just need the default-mode rule
+ * (`repositories.ts`, `chat/threads.ts`, frontend hooks) can import it
+ * without pulling in the full resolver. The eligibility resolvers in
+ * `lib/chatEligibility.ts` consume it too — they share the same source of
+ * truth for "what does the URL land on when the user opens this
+ * workspace?".
+ */
+export function getDefaultThreadMode(hasAttachedRepo: boolean): ChatMode {
+  return hasAttachedRepo ? "library" : "discuss";
+}

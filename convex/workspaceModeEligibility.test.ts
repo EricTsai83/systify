@@ -156,26 +156,19 @@ describe("workspaceModeEligibility.evaluate", () => {
     const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
     expect(result).not.toBeNull();
-    expect(result!.availableModes).toEqual(["discuss"]);
+    expect(result!.modes.discuss.enabled).toBe(true);
+    expect(result!.modes.library.enabled).toBe(false);
+    expect(result!.modes.library).toHaveProperty("code", "no_repository_attached");
+    expect(result!.modes.library).toHaveProperty("message");
     expect(result!.defaultMode).toBe("discuss");
     expect(result!.hasAttachedRepo).toBe(false);
     expect(result!.hasAtLeastOneArtifact).toBe(false);
 
-    expect(result!.disabledReasons.library?.code).toBe("no_repository_attached");
-    expect(result!.disabledReasons.library?.message).toBeTruthy();
-    // Post-collapse: sandbox is a grounding axis, not a mode. The
-    // sandbox grounding axis closes with `no_repository_attached` when
-    // no repo is attached.
-    expect(result!.grounding.sandbox.available).toBe(false);
-    expect(result!.grounding.sandbox.reason?.code).toBe("no_repository_attached");
+    expect(result!.grounding.sandbox.enabled).toBe(false);
+    expect(result!.grounding.sandbox).toHaveProperty("code", "no_repository_attached");
   });
 
   test("workspace + repo + no artifact: library is navigable, ask binding blocked, library grounding closed", async () => {
-    // Library navigation no longer gates on an existing artifact — the empty
-    // Library page now carries the Generate System Design CTA, so landing
-    // there is the intended starting surface for a fresh repo. Library Ask
-    // (the write surface) still needs at least one artifact to retrieve
-    // against, so `askReadiness.canBind` stays false with the legacy code.
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
       withRepository: true,
@@ -185,15 +178,13 @@ describe("workspaceModeEligibility.evaluate", () => {
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.availableModes.slice().sort()).toEqual(["discuss", "library"]);
-    expect(result!.disabledReasons.library).toBeUndefined();
-    expect(result!.askReadiness.canBind).toBe(false);
-    expect(result!.askReadiness.reason?.code).toBe("library_no_artifact");
-    // Library grounding requires at least one artifact; sandbox grounding
-    // requires a ready sandbox (which we have).
-    expect(result!.grounding.library.available).toBe(false);
-    expect(result!.grounding.library.reason?.code).toBe("library_no_artifact");
-    expect(result!.grounding.sandbox.available).toBe(true);
+    expect(result!.modes.discuss.enabled).toBe(true);
+    expect(result!.modes.library.enabled).toBe(true);
+    expect(result!.askReadiness.enabled).toBe(false);
+    expect(result!.askReadiness).toHaveProperty("code", "library_no_artifact");
+    expect(result!.grounding.library.enabled).toBe(false);
+    expect(result!.grounding.library).toHaveProperty("code", "library_no_artifact");
+    expect(result!.grounding.sandbox.enabled).toBe(true);
   });
 
   test("workspace + repo + artifact + ready sandbox: both grounding axes open, no disabled reasons", async () => {
@@ -206,11 +197,11 @@ describe("workspaceModeEligibility.evaluate", () => {
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.availableModes.slice().sort()).toEqual(["discuss", "library"]);
-    expect(result!.disabledReasons).toEqual({});
-    expect(result!.grounding.library.available).toBe(true);
-    expect(result!.grounding.sandbox.available).toBe(true);
-    expect(result!.askReadiness.canBind).toBe(true);
+    expect(result!.modes.discuss.enabled).toBe(true);
+    expect(result!.modes.library.enabled).toBe(true);
+    expect(result!.grounding.library.enabled).toBe(true);
+    expect(result!.grounding.sandbox.enabled).toBe(true);
+    expect(result!.askReadiness.enabled).toBe(true);
   });
 
   test("provisioning sandbox: sandbox grounding closes with sandbox_provisioning code", async () => {
@@ -224,12 +215,15 @@ describe("workspaceModeEligibility.evaluate", () => {
     const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
     // Discuss and library remain navigable; the sandbox state surfaces via
-    // the grounding axis instead of a disabledReasons entry.
-    expect(result!.availableModes).toContain("discuss");
-    expect(result!.availableModes).toContain("library");
-    expect(result!.grounding.sandbox.available).toBe(false);
-    expect(result!.grounding.sandbox.reason?.code).toBe("sandbox_provisioning");
-    expect(result!.grounding.sandbox.isActivatable).toBe(false);
+    // the grounding axis.
+    expect(result!.modes.discuss.enabled).toBe(true);
+    expect(result!.modes.library.enabled).toBe(true);
+    const sandbox = result!.grounding.sandbox;
+    expect(sandbox.enabled).toBe(false);
+    if (!sandbox.enabled) {
+      expect(sandbox.code).toBe("sandbox_provisioning");
+      expect(sandbox.isActivatable).toBe(false);
+    }
   });
 
   test("expired sandbox: sandbox grounding closes with sandbox_expired code and is activatable", async () => {
@@ -242,9 +236,12 @@ describe("workspaceModeEligibility.evaluate", () => {
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.grounding.sandbox.available).toBe(false);
-    expect(result!.grounding.sandbox.reason?.code).toBe("sandbox_expired");
-    expect(result!.grounding.sandbox.isActivatable).toBe(true);
+    const sandbox = result!.grounding.sandbox;
+    expect(sandbox.enabled).toBe(false);
+    if (!sandbox.enabled) {
+      expect(sandbox.code).toBe("sandbox_expired");
+      expect(sandbox.isActivatable).toBe(true);
+    }
   });
 
   test("failed sandbox: sandbox grounding closes with sandbox_failed code and is activatable", async () => {
@@ -257,9 +254,12 @@ describe("workspaceModeEligibility.evaluate", () => {
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.grounding.sandbox.available).toBe(false);
-    expect(result!.grounding.sandbox.reason?.code).toBe("sandbox_failed");
-    expect(result!.grounding.sandbox.isActivatable).toBe(true);
+    const sandbox = result!.grounding.sandbox;
+    expect(sandbox.enabled).toBe(false);
+    if (!sandbox.enabled) {
+      expect(sandbox.code).toBe("sandbox_failed");
+      expect(sandbox.isActivatable).toBe(true);
+    }
   });
 
   test("repo without a sandbox: sandbox grounding closes with sandbox_missing and is activatable", async () => {
@@ -275,9 +275,12 @@ describe("workspaceModeEligibility.evaluate", () => {
     // The most common real case: a freshly-imported repo with no sandbox yet.
     // The composer must still let the user click the Sandbox toggle so the
     // shell can enqueue `requestSandboxActivation`.
-    expect(result!.grounding.sandbox.available).toBe(false);
-    expect(result!.grounding.sandbox.reason?.code).toBe("sandbox_missing");
-    expect(result!.grounding.sandbox.isActivatable).toBe(true);
+    const sandbox = result!.grounding.sandbox;
+    expect(sandbox.enabled).toBe(false);
+    if (!sandbox.enabled) {
+      expect(sandbox.code).toBe("sandbox_missing");
+      expect(sandbox.isActivatable).toBe(true);
+    }
   });
 });
 
@@ -303,7 +306,7 @@ describe("workspaceModeEligibility.evaluate (cost cap closed)", () => {
     }
   });
 
-  test("user cap exhausted: sandbox grounding closes with sandbox_user_cap_exceeded + retryAfterMs", async () => {
+  test("user cap exhausted: sandbox grounding closes with sandbox_user_cap_exceeded", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
       withRepository: true,
@@ -324,12 +327,18 @@ describe("workspaceModeEligibility.evaluate (cost cap closed)", () => {
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.grounding.sandbox.available).toBe(false);
-    expect(result!.grounding.sandbox.reason?.code).toBe("sandbox_user_cap_exceeded");
-    expect(result!.grounding.sandbox.reason?.retryAfterMs).toBeGreaterThan(0);
+    const sandbox = result!.grounding.sandbox;
+    expect(sandbox.enabled).toBe(false);
+    if (!sandbox.enabled) {
+      expect(sandbox.code).toBe("sandbox_user_cap_exceeded");
+    }
+    // Verdicts deliberately carry no `retryAfterMs?`: reactive subscriptions
+    // update naturally when the bucket flips, so a parallel retry timer
+    // would just drift from the wall-clock event. Timing data lives on the
+    // cost-budget snapshot in `threadContext.sandboxCostBudgets`.
   });
 
-  test("workspace cap exhausted: sandbox grounding closes with sandbox_workspace_cap_exceeded + retryAfterMs", async () => {
+  test("workspace cap exhausted: sandbox grounding closes with sandbox_workspace_cap_exceeded", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
       withRepository: true,
@@ -357,9 +366,13 @@ describe("workspaceModeEligibility.evaluate (cost cap closed)", () => {
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
 
-    expect(result!.grounding.sandbox.available).toBe(false);
-    expect(result!.grounding.sandbox.reason?.code).toBe("sandbox_workspace_cap_exceeded");
-    expect(result!.grounding.sandbox.reason?.retryAfterMs).toBeGreaterThan(0);
+    const sandbox = result!.grounding.sandbox;
+    expect(sandbox.enabled).toBe(false);
+    if (!sandbox.enabled) {
+      expect(sandbox.code).toBe("sandbox_workspace_cap_exceeded");
+    }
+    // See test above: verdicts carry no retry timing; reactive subscriptions
+    // handle the recovery push.
   });
 });
 
@@ -548,19 +561,21 @@ describe("assertWorkspaceModeEligible", () => {
 // ─── throwIfDisabled (pure) ──────────────────────────────────────────────
 
 describe("throwIfDisabled (pure)", () => {
-  test("available mode: no throw", async () => {
+  test("enabled mode: no throw", async () => {
     const { throwIfDisabled } = await import("./workspaceModeEligibility");
     expect(() =>
       throwIfDisabled(
         {
-          availableModes: ["discuss", "library"],
-          defaultMode: "library",
-          disabledReasons: {},
-          grounding: {
-            library: { available: true, reason: null },
-            sandbox: { available: true, reason: null, isActivatable: false },
+          modes: {
+            discuss: { enabled: true },
+            library: { enabled: true },
           },
-          askReadiness: { canBind: true, reason: null },
+          defaultMode: "library",
+          grounding: {
+            library: { enabled: true },
+            sandbox: { enabled: true },
+          },
+          askReadiness: { enabled: true },
           hasAttachedRepo: true,
           hasAtLeastOneArtifact: true,
         },
@@ -569,60 +584,39 @@ describe("throwIfDisabled (pure)", () => {
     ).not.toThrow();
   });
 
-  test("disabled with structured reason: throws ConvexError carrying code", async () => {
+  test("disabled mode: throws ConvexError carrying the verdict's code and message", async () => {
     const { throwIfDisabled } = await import("./workspaceModeEligibility");
     let caught: unknown;
     try {
       throwIfDisabled(
         {
-          availableModes: ["discuss"],
-          defaultMode: "discuss",
-          disabledReasons: {
+          modes: {
+            discuss: { enabled: true },
             library: {
+              enabled: false,
               code: "no_repository_attached",
               message: "Attach a repository to use Library mode.",
             },
           },
+          defaultMode: "discuss",
           grounding: {
             library: {
-              available: false,
-              reason: { code: "no_repository_attached", message: "Library grounding needs a repo." },
+              enabled: false,
+              code: "no_repository_attached",
+              message: "Library grounding needs a repo.",
             },
             sandbox: {
-              available: false,
-              reason: { code: "no_repository_attached", message: "Sandbox grounding needs a repo." },
+              enabled: false,
+              code: "no_repository_attached",
+              message: "Sandbox grounding needs a repo.",
               isActivatable: false,
             },
           },
-          askReadiness: { canBind: false, reason: null },
-          hasAttachedRepo: false,
-          hasAtLeastOneArtifact: false,
-        },
-        "library",
-      );
-    } catch (err) {
-      caught = err;
-    }
-    expect(caught).toBeInstanceOf(ConvexError);
-    expect((caught as ConvexError<{ code: string }>).data).toMatchObject({
-      code: "no_repository_attached",
-    });
-  });
-
-  test("disabled without a structured reason (defensive): throws generic workspace_mode_unavailable", async () => {
-    const { throwIfDisabled } = await import("./workspaceModeEligibility");
-    let caught: unknown;
-    try {
-      throwIfDisabled(
-        {
-          availableModes: ["discuss"],
-          defaultMode: "discuss",
-          disabledReasons: {},
-          grounding: {
-            library: { available: false, reason: null },
-            sandbox: { available: false, reason: null, isActivatable: false },
+          askReadiness: {
+            enabled: false,
+            code: "no_repository_attached",
+            message: "Library Ask needs a repo.",
           },
-          askReadiness: { canBind: false, reason: null },
           hasAttachedRepo: false,
           hasAtLeastOneArtifact: false,
         },
@@ -632,6 +626,9 @@ describe("throwIfDisabled (pure)", () => {
       caught = err;
     }
     expect(caught).toBeInstanceOf(ConvexError);
-    expect((caught as ConvexError<{ code: string }>).data.code).toBe("workspace_mode_unavailable");
+    expect((caught as ConvexError<{ code: string; message: string }>).data).toMatchObject({
+      code: "no_repository_attached",
+      message: "Attach a repository to use Library mode.",
+    });
   });
 });
