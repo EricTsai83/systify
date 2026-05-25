@@ -4,21 +4,22 @@ import { cn } from "@/lib/utils";
 
 /**
  * Per-message grounding availability for the Discuss composer. Mirrors the
- * `WorkspaceModeEligibility.grounding` shape from `workspaceModeEligibility.ts`
- * but with the structured-reason `code` left as a free string — the bar
- * itself only branches on `available` and rounds the tooltip text through;
- * specific disabled-code handling (e.g. "Generate System Design" CTA on
+ * discriminated `AxisVerdict` / `SandboxGroundingVerdict` shape exposed by
+ * `workspaceModeEligibility.evaluate`, but typed loosely (`code: string`) so
+ * the bar can render before the verdict narrows and any future codes don't
+ * require a component change. The bar only branches on `enabled`; specific
+ * disabled-code handling (e.g. "Generate System Design" CTA on
  * `library_no_artifact`) lives in the wiring layer that supplies the
  * `onOpenGenerateSystemDesign` callback.
  */
-export interface GroundingAxisLike {
-  available: boolean;
-  reason: {
-    code: string;
-    message: string;
-  } | null;
-  isActivatable?: boolean;
-}
+export type GroundingAxisLike =
+  | { readonly enabled: true }
+  | {
+      readonly enabled: false;
+      readonly code: string;
+      readonly message: string;
+      readonly isActivatable?: boolean;
+    };
 
 export interface GroundingToggleBarProps {
   groundLibrary: boolean;
@@ -86,18 +87,25 @@ export function GroundingToggleBar({
   }
 
   const libraryAxis: GroundingAxisLike = grounding?.library ?? {
-    available: false,
-    reason: { code: "loading", message: "Loading grounding availability…" },
+    enabled: false,
+    code: "loading",
+    message: "Loading grounding availability…",
   };
   const sandboxAxis: GroundingAxisLike = grounding?.sandbox ?? {
-    available: false,
-    reason: { code: "loading", message: "Loading grounding availability…" },
+    enabled: false,
+    code: "loading",
+    message: "Loading grounding availability…",
   };
 
-  const libraryDisabledReason = !libraryAxis.available ? libraryAxis.reason : null;
-  const sandboxDisabledReason = !sandboxAxis.available ? sandboxAxis.reason : null;
+  const libraryEnabled = libraryAxis.enabled;
+  const sandboxEnabled = sandboxAxis.enabled;
+  const sandboxIsActivatable = !sandboxAxis.enabled && sandboxAxis.isActivatable === true;
+  const libraryDisabledMessage = !libraryAxis.enabled ? libraryAxis.message : undefined;
+  const sandboxDisabledMessage = !sandboxAxis.enabled ? sandboxAxis.message : undefined;
   const showGenerateCta =
-    libraryDisabledReason?.code === "library_no_artifact" && typeof onOpenGenerateSystemDesign === "function";
+    !libraryAxis.enabled &&
+    libraryAxis.code === "library_no_artifact" &&
+    typeof onOpenGenerateSystemDesign === "function";
 
   return (
     <div
@@ -107,35 +115,29 @@ export function GroundingToggleBar({
     >
       <GroundingPill
         label="Library"
-        icon={<BookOpenIcon size={14} weight={groundLibrary && libraryAxis.available ? "fill" : "regular"} />}
+        icon={<BookOpenIcon size={14} weight={groundLibrary && libraryEnabled ? "fill" : "regular"} />}
         active={groundLibrary}
-        available={libraryAxis.available}
-        reason={libraryDisabledReason?.message}
+        available={libraryEnabled}
+        reason={libraryDisabledMessage}
         onToggle={() => {
-          if (!libraryAxis.available) return;
+          if (!libraryEnabled) return;
           setGroundLibrary(!groundLibrary);
         }}
         testId="grounding-toggle-library"
       />
       <GroundingPill
         label="Sandbox"
-        icon={<FlaskIcon size={14} weight={groundSandbox && sandboxAxis.available ? "fill" : "regular"} />}
+        icon={<FlaskIcon size={14} weight={groundSandbox && sandboxEnabled ? "fill" : "regular"} />}
         active={groundSandbox}
-        available={sandboxAxis.available || sandboxAxis.isActivatable === true}
-        reason={sandboxDisabledReason?.message}
-        suffix={
-          sandboxAxis.isActivatable === true && !sandboxAxis.available
-            ? "click to activate"
-            : !sandboxAxis.available
-              ? undefined
-              : "live source"
-        }
+        available={sandboxEnabled || sandboxIsActivatable}
+        reason={sandboxDisabledMessage}
+        suffix={sandboxIsActivatable ? "click to activate" : !sandboxEnabled ? undefined : "live source"}
         onToggle={() => {
-          if (sandboxAxis.available) {
+          if (sandboxEnabled) {
             setGroundSandbox(!groundSandbox);
             return;
           }
-          if (sandboxAxis.isActivatable === true && onActivateSandbox) {
+          if (sandboxIsActivatable && onActivateSandbox) {
             onActivateSandbox();
           }
         }}

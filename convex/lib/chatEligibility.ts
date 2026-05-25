@@ -36,6 +36,47 @@ import {
 export type ChatModeSandboxStatus = "none" | "provisioning" | "ready" | "expired" | "failed";
 
 /**
+ * Stable enum of *why* a mode (or grounding axis) is disabled. Codes are
+ * deliberately disjoint — the resolvers enumerate the possible disabled
+ * states; this enum names each one.
+ */
+export type WorkspaceModeDisabledReasonCode =
+  | "no_repository_attached"
+  | "library_no_artifact"
+  | "sandbox_missing"
+  | "sandbox_provisioning"
+  | "sandbox_expired"
+  | "sandbox_failed"
+  | "sandbox_user_cap_exceeded"
+  | "sandbox_workspace_cap_exceeded";
+
+/**
+ * Discriminated union: every axis verdict is either enabled or disabled
+ * with a structured reason. Type-level enforcement — TS forces callers
+ * through `.enabled` narrowing before reading `.code`/`.message`.
+ */
+export type AxisVerdict =
+  | { readonly enabled: true }
+  | {
+      readonly enabled: false;
+      readonly code: WorkspaceModeDisabledReasonCode;
+      readonly message: string;
+    };
+
+/**
+ * Sandbox grounding carries an extra `isActivatable` flag so the composer
+ * can render an Activate CTA on a closed-but-recoverable gate.
+ */
+export type SandboxGroundingVerdict =
+  | { readonly enabled: true }
+  | {
+      readonly enabled: false;
+      readonly code: WorkspaceModeDisabledReasonCode;
+      readonly message: string;
+      readonly isActivatable: boolean;
+    };
+
+/**
  * Sandbox daily-cost-cap gate. Closed when the per-user OR per-workspace
  * daily spend cap is reached; the resolver closes the Sandbox grounding
  * axis and surfaces the cost-cap tooltip so the user understands why the
@@ -68,9 +109,8 @@ export type SandboxCostCapGate =
 export const OPEN_SANDBOX_COST_CAP_GATE: SandboxCostCapGate = { enabled: true };
 
 export interface ChatModeResolution {
-  availableModes: ChatMode[];
-  defaultMode: ChatMode;
-  disabledReasons: Partial<Record<ChatMode, string>>;
+  readonly modes: { readonly discuss: AxisVerdict; readonly library: AxisVerdict };
+  readonly defaultMode: ChatMode;
 }
 
 /**
@@ -79,26 +119,13 @@ export interface ChatModeResolution {
  * Discuss composer need.
  */
 export interface WorkspaceModeResolution {
-  availableModes: ReadonlyArray<ChatMode>;
-  defaultMode: ChatMode;
-  /**
-   * Per-mode reason a user can read in a tooltip when the mode is greyed
-   * out. The mode is, by construction, NOT in `availableModes` when a
-   * string is present.
-   */
-  disabledReasons: Partial<Record<ChatMode, string>>;
-  askReadiness: { canBind: boolean; reason: string | null };
-  /**
-   * Discuss-composer grounding-toggle availability. Each axis carries a
-   * tooltip-quality reason when closed; the sandbox axis also reports
-   * `isActivatable` so the composer can render an Activate CTA on a
-   * closed-but-recoverable gate. Library Mode ignores these — its
-   * grounding is implicit in the mode.
-   */
-  grounding: {
-    library: { available: boolean; reason: string | null };
-    sandbox: { available: boolean; reason: string | null; isActivatable: boolean };
+  readonly modes: { readonly discuss: AxisVerdict; readonly library: AxisVerdict };
+  readonly defaultMode: ChatMode;
+  readonly grounding: {
+    readonly library: AxisVerdict;
+    readonly sandbox: SandboxGroundingVerdict;
   };
+  readonly askReadiness: AxisVerdict;
 }
 
 // ─── Tooltip constants ────────────────────────────────────────────────────
@@ -142,26 +169,25 @@ export const DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED =
  * decision.
  */
 export function resolveChatModes(hasAttachedRepo: boolean): ChatModeResolution {
-  if (!hasAttachedRepo) {
-    return {
-      availableModes: ["discuss"],
-      defaultMode: getDefaultThreadMode(false),
-      disabledReasons: {
-        library: DISABLED_REASON_LIBRARY_NO_REPO,
-      },
-    };
-  }
+  const discuss: AxisVerdict = { enabled: true };
+  const library: AxisVerdict = hasAttachedRepo
+    ? { enabled: true }
+    : {
+        enabled: false,
+        code: "no_repository_attached",
+        message: DISABLED_REASON_LIBRARY_NO_REPO,
+      };
+
   return {
-    availableModes: ["discuss", "library"],
-    defaultMode: getDefaultThreadMode(true),
-    disabledReasons: {},
+    modes: { discuss, library },
+    defaultMode: getDefaultThreadMode(hasAttachedRepo),
   };
 }
 
 /**
  * Compute the Sandbox grounding axis from the (sandbox lifecycle, cost cap)
  * matrix. The composer renders the `Sandbox` toggle as disabled when this
- * returns `available: false`, with `reason` as the tooltip and
+ * returns `enabled: false`, with `message` as the tooltip and
  * `isActivatable: true` flagging the "no sandbox provisioned yet — click
  * to start one" sub-state.
  *
@@ -172,24 +198,58 @@ function resolveSandboxGroundingAxis(
   hasAttachedRepo: boolean,
   sandboxStatus: ChatModeSandboxStatus,
   sandboxCostCapGate: SandboxCostCapGate,
-): { available: boolean; reason: string | null; isActivatable: boolean } {
+): SandboxGroundingVerdict {
   if (!hasAttachedRepo) {
-    return { available: false, reason: GROUNDING_SANDBOX_REASON_NO_REPO, isActivatable: false };
+    return {
+      enabled: false,
+      code: "no_repository_attached",
+      message: GROUNDING_SANDBOX_REASON_NO_REPO,
+      isActivatable: false,
+    };
   }
   if (!sandboxCostCapGate.enabled) {
-    return { available: false, reason: sandboxCostCapGate.tooltip, isActivatable: false };
+    const code: WorkspaceModeDisabledReasonCode =
+      sandboxCostCapGate.reason === "user_daily_cap_exceeded"
+        ? "sandbox_user_cap_exceeded"
+        : "sandbox_workspace_cap_exceeded";
+    return {
+      enabled: false,
+      code,
+      message: sandboxCostCapGate.tooltip,
+      isActivatable: false,
+    };
   }
   switch (sandboxStatus) {
     case "ready":
-      return { available: true, reason: null, isActivatable: false };
+      return { enabled: true };
     case "provisioning":
-      return { available: false, reason: GROUNDING_SANDBOX_REASON_PROVISIONING, isActivatable: false };
+      return {
+        enabled: false,
+        code: "sandbox_provisioning",
+        message: GROUNDING_SANDBOX_REASON_PROVISIONING,
+        isActivatable: false,
+      };
     case "expired":
-      return { available: false, reason: GROUNDING_SANDBOX_REASON_EXPIRED, isActivatable: true };
+      return {
+        enabled: false,
+        code: "sandbox_expired",
+        message: GROUNDING_SANDBOX_REASON_EXPIRED,
+        isActivatable: true,
+      };
     case "failed":
-      return { available: false, reason: GROUNDING_SANDBOX_REASON_FAILED, isActivatable: true };
+      return {
+        enabled: false,
+        code: "sandbox_failed",
+        message: GROUNDING_SANDBOX_REASON_FAILED,
+        isActivatable: true,
+      };
     case "none":
-      return { available: false, reason: GROUNDING_SANDBOX_REASON_NO_SANDBOX, isActivatable: true };
+      return {
+        enabled: false,
+        code: "sandbox_missing",
+        message: GROUNDING_SANDBOX_REASON_NO_SANDBOX,
+        isActivatable: true,
+      };
   }
 }
 
@@ -198,23 +258,27 @@ function resolveSandboxGroundingAxis(
  * attached repository (to scope retrieval) AND at least one artifact (so
  * the RAG retriever has something to fetch).
  */
-function resolveLibraryGroundingAxis(
-  hasAttachedRepo: boolean,
-  hasAtLeastOneArtifact: boolean,
-): { available: boolean; reason: string | null } {
+function resolveLibraryGroundingAxis(hasAttachedRepo: boolean, hasAtLeastOneArtifact: boolean): AxisVerdict {
   if (!hasAttachedRepo) {
-    return { available: false, reason: GROUNDING_LIBRARY_REASON_NO_REPO };
+    return {
+      enabled: false,
+      code: "no_repository_attached",
+      message: GROUNDING_LIBRARY_REASON_NO_REPO,
+    };
   }
   if (!hasAtLeastOneArtifact) {
-    return { available: false, reason: GROUNDING_LIBRARY_REASON_NO_ARTIFACT };
+    return {
+      enabled: false,
+      code: "library_no_artifact",
+      message: GROUNDING_LIBRARY_REASON_NO_ARTIFACT,
+    };
   }
-  return { available: true, reason: null };
+  return { enabled: true };
 }
 
 /**
  * Translate the (repo, artifact, sandbox, gates) tuple into the
- * `(availableModes, defaultMode, disabledReasons, askReadiness, grounding)`
- * quintuple the workspace shell consumes.
+ * structured verdict the workspace shell consumes.
  *
  * Independent of {@link resolveChatModes}: the chat-mode resolver answers
  * the per-thread mode-selector question; this one answers "which top-level
@@ -228,35 +292,37 @@ export function resolveWorkspaceModes(
   sandboxStatus: ChatModeSandboxStatus,
   sandboxCostCapGate: SandboxCostCapGate = OPEN_SANDBOX_COST_CAP_GATE,
 ): WorkspaceModeResolution {
-  const available = new Set<ChatMode>(["discuss"]);
-  const disabledReasons: Partial<Record<ChatMode, string>> = {};
+  const discuss: AxisVerdict = { enabled: true };
+  const library: AxisVerdict = hasAttachedRepo
+    ? { enabled: true }
+    : {
+        enabled: false,
+        code: "no_repository_attached",
+        message: DISABLED_REASON_LIBRARY_NO_REPO,
+      };
 
-  // Library availability — needs an attached repo. The empty Library page
-  // surfaces a "Generate System Design" CTA so a repo with zero artifacts is
-  // still a valid landing surface.
-  if (!hasAttachedRepo) {
-    disabledReasons.library = DISABLED_REASON_LIBRARY_NO_REPO;
-  } else {
-    available.add("library");
-  }
-
-  const askReadiness: WorkspaceModeResolution["askReadiness"] = !hasAttachedRepo
-    ? { canBind: false, reason: ASK_REASON_NO_REPO }
+  const askReadiness: AxisVerdict = !hasAttachedRepo
+    ? {
+        enabled: false,
+        code: "no_repository_attached",
+        message: ASK_REASON_NO_REPO,
+      }
     : !hasAtLeastOneArtifact
-      ? { canBind: false, reason: ASK_REASON_NO_ARTIFACT }
-      : { canBind: true, reason: null };
-
-  const grounding: WorkspaceModeResolution["grounding"] = {
-    library: resolveLibraryGroundingAxis(hasAttachedRepo, hasAtLeastOneArtifact),
-    sandbox: resolveSandboxGroundingAxis(hasAttachedRepo, sandboxStatus, sandboxCostCapGate),
-  };
+      ? {
+          enabled: false,
+          code: "library_no_artifact",
+          message: ASK_REASON_NO_ARTIFACT,
+        }
+      : { enabled: true };
 
   return {
-    availableModes: Array.from(available) as ReadonlyArray<ChatMode>,
+    modes: { discuss, library },
     defaultMode: getDefaultThreadMode(hasAttachedRepo),
-    disabledReasons,
+    grounding: {
+      library: resolveLibraryGroundingAxis(hasAttachedRepo, hasAtLeastOneArtifact),
+      sandbox: resolveSandboxGroundingAxis(hasAttachedRepo, sandboxStatus, sandboxCostCapGate),
+    },
     askReadiness,
-    grounding,
   };
 }
 

@@ -33,11 +33,9 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.isMissingThread).toBe(false);
     expect(result.current.attachedRepository).toBeNull();
     expect(result.current.sandboxStatus).toBeNull();
-    expect(result.current.availableModes).toEqual(["discuss"]);
+    expect(result.current.modes.discuss.enabled).toBe(true);
+    expect(result.current.modes.library.enabled).toBe(false);
     expect(result.current.defaultMode).toBe("discuss");
-    // Post-Lab collapse: `lab` is gone as a top-level mode, so the only
-    // disabled key the no-thread fallback carries is `library`.
-    expect(Object.keys(result.current.disabledReasons).sort()).toEqual(["library"]);
     // Default grounding flags start off so a click in the composer is
     // always intentional.
     expect(result.current.defaultGroundLibrary).toBe(false);
@@ -56,7 +54,8 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.isMissingThread).toBe(false);
     // Even while loading, the selector still has a sensible shape so the UI
     // does not blink between "no modes" and "modes" within a few hundred ms.
-    expect(result.current.availableModes).toEqual(["discuss"]);
+    expect(result.current.modes.discuss.enabled).toBe(true);
+    expect(result.current.modes.library.enabled).toBe(false);
     expect(result.current.defaultMode).toBe("discuss");
     expect(useQueryMock).toHaveBeenCalledWith(expect.anything(), { threadId });
   });
@@ -68,7 +67,8 @@ describe("useThreadCapabilities — bridging behavior", () => {
 
     expect(result.current.isLoading).toBe(false);
     expect(result.current.isMissingThread).toBe(true);
-    expect(result.current.availableModes).toEqual(["discuss"]);
+    expect(result.current.modes.discuss.enabled).toBe(true);
+    expect(result.current.modes.library.enabled).toBe(false);
     expect(result.current.attachedRepository).toBeNull();
   });
 
@@ -79,11 +79,15 @@ describe("useThreadCapabilities — bridging behavior", () => {
       sandboxStatus: null,
       sandboxModeStatus: null,
       chatModes: {
-        availableModes: ["discuss"],
-        defaultMode: "discuss",
-        disabledReasons: {
-          library: "Attach a repository to use Library mode.",
+        modes: {
+          discuss: { enabled: true },
+          library: {
+            enabled: false,
+            code: "no_repository_attached",
+            message: "Attach a repository to use Library mode.",
+          },
         },
+        defaultMode: "discuss",
       },
       sandboxIsActivatable: false,
     });
@@ -91,9 +95,12 @@ describe("useThreadCapabilities — bridging behavior", () => {
     const { result } = renderHook(() => useThreadCapabilities(threadId));
 
     expect(result.current.attachedRepository).toBeNull();
-    expect(result.current.availableModes).toEqual(["discuss"]);
+    expect(result.current.modes.discuss.enabled).toBe(true);
+    expect(result.current.modes.library.enabled).toBe(false);
     expect(result.current.defaultMode).toBe("discuss");
-    expect(result.current.disabledReasons.library).toBeTruthy();
+    if (!result.current.modes.library.enabled) {
+      expect(result.current.modes.library.message).toBeTruthy();
+    }
     expect(result.current.sandboxIsActivatable).toBe(false);
   });
 
@@ -112,12 +119,14 @@ describe("useThreadCapabilities — bridging behavior", () => {
           "A live sandbox is unavailable because no sandbox is ready for this repository yet. Sync the repository to provision one.",
       },
       chatModes: {
-        availableModes: ["discuss", "library"],
-        defaultMode: "library",
         // Post-Lab collapse: `resolveChatModes` no longer surfaces a `lab`
         // disabled-reason. The "no sandbox" hint travels via grounding /
         // sandboxIsActivatable instead.
-        disabledReasons: {},
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: true },
+        },
+        defaultMode: "library",
       },
       sandboxIsActivatable: true,
     });
@@ -130,9 +139,9 @@ describe("useThreadCapabilities — bridging behavior", () => {
       shortName: "widget",
     });
     expect(result.current.sandboxStatus).toBeNull();
-    expect(result.current.availableModes).toEqual(["discuss", "library"]);
+    expect(result.current.modes.discuss.enabled).toBe(true);
+    expect(result.current.modes.library.enabled).toBe(true);
     expect(result.current.defaultMode).toBe("library");
-    expect(result.current.disabledReasons).toEqual({});
     // The missing-sandbox case is the headline activation surface — the
     // disabled Sandbox option should still accept a click and enqueue a
     // lazy provision.
@@ -153,19 +162,21 @@ describe("useThreadCapabilities — bridging behavior", () => {
         message: null,
       },
       chatModes: {
-        availableModes: ["discuss", "library"],
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: true },
+        },
         defaultMode: "library",
-        disabledReasons: {},
       },
       sandboxIsActivatable: false,
     });
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
 
-    expect(result.current.availableModes).toEqual(["discuss", "library"]);
+    expect(result.current.modes.discuss.enabled).toBe(true);
+    expect(result.current.modes.library.enabled).toBe(true);
     expect(result.current.defaultMode).toBe("library");
     expect(result.current.sandboxStatus).toBe("ready");
-    expect(result.current.disabledReasons).toEqual({});
     // Already-ready sandboxes don't need to be activated again.
     expect(result.current.sandboxIsActivatable).toBe(false);
   });
@@ -185,9 +196,11 @@ describe("useThreadCapabilities — bridging behavior", () => {
           "A live sandbox is unavailable because the sandbox is still provisioning. Wait for the import to finish or sync the repository again.",
       },
       chatModes: {
-        availableModes: ["discuss", "library"],
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: true },
+        },
         defaultMode: "library",
-        disabledReasons: {},
       },
       sandboxIsActivatable: false,
     });
@@ -219,9 +232,11 @@ describe("useThreadCapabilities — bridging behavior", () => {
           "A live sandbox is unavailable because the sandbox expired. Sync the repository to provision a fresh sandbox.",
       },
       chatModes: {
-        availableModes: ["discuss", "library"],
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: true },
+        },
         defaultMode: "library",
-        disabledReasons: {},
       },
       sandboxIsActivatable: true,
     });
@@ -248,9 +263,11 @@ describe("useThreadCapabilities — bridging behavior", () => {
       sandboxStatus: "ready",
       sandboxModeStatus: { reasonCode: "available", message: null },
       chatModes: {
-        availableModes: ["discuss", "library"],
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: true },
+        },
         defaultMode: "library",
-        disabledReasons: {},
       },
       sandboxIsActivatable: false,
     });
@@ -279,11 +296,15 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
       sandboxStatus: null,
       sandboxModeStatus: null,
       chatModes: {
-        availableModes: ["discuss"],
-        defaultMode: "discuss",
-        disabledReasons: {
-          library: "Attach a repository to use Library mode.",
+        modes: {
+          discuss: { enabled: true },
+          library: {
+            enabled: false,
+            code: "no_repository_attached",
+            message: "Attach a repository to use Library mode.",
+          },
         },
+        defaultMode: "discuss",
       },
       sandboxIsActivatable: false,
       sandboxCostBudgets: null,
@@ -305,9 +326,11 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
       sandboxStatus: "ready",
       sandboxModeStatus: { reasonCode: "available", message: null },
       chatModes: {
-        availableModes: ["discuss", "library"],
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: true },
+        },
         defaultMode: "library",
-        disabledReasons: {},
       },
       sandboxIsActivatable: false,
       sandboxCostBudgets: {
@@ -339,9 +362,11 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
       sandboxStatus: "ready",
       sandboxModeStatus: { reasonCode: "available", message: null },
       chatModes: {
-        availableModes: ["discuss", "library"],
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: true },
+        },
         defaultMode: "library",
-        disabledReasons: {},
       },
       sandboxIsActivatable: false,
       sandboxCostBudgets: {
@@ -377,9 +402,11 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
       sandboxStatus: "ready",
       sandboxModeStatus: { reasonCode: "available", message: null },
       chatModes: {
-        availableModes: ["discuss", "library"],
+        modes: {
+          discuss: { enabled: true },
+          library: { enabled: true },
+        },
         defaultMode: "library",
-        disabledReasons: {},
       },
       sandboxIsActivatable: false,
       sandboxCostBudgets: {

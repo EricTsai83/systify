@@ -44,13 +44,12 @@ export interface ThreadContext {
    */
   sandboxCostBudgets: ThreadContextSandboxCostBudgets | null;
   /**
-   * True when clicking the (otherwise-disabled) Sandbox mode option
-   * should trigger a lazy sandbox provision via
-   * `repositories.requestSandboxActivation`. Sandbox stays out of
-   * `chatModes.availableModes` until the activation completes; this
-   * flag is the UI's signal that the disabled option is actionable
-   * (vs permanently locked out by cost cap / no repo / already
-   * provisioning).
+   * True when clicking the (otherwise-disabled) Sandbox grounding
+   * toggle should trigger a lazy sandbox provision via
+   * `repositories.requestSandboxActivation`. The Sandbox grounding
+   * axis stays disabled until activation completes; this flag is the
+   * UI's signal that the disabled toggle is actionable (vs permanently
+   * locked out by cost cap / no repo / already provisioning).
    *
    * Activatable iff: a repository is attached, the cost-cap gate is
    * open, and the sandbox lifecycle is in one of the "needs provision

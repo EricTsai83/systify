@@ -4,21 +4,38 @@ import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { ChatMode, WorkspaceId } from "@/lib/types";
 
+/**
+ * Per-axis verdict shape consumed by chrome that subscribes to
+ * `workspaceModeEligibility.evaluate`. Loosely typed (`code: string`) so the
+ * placeholder fallback can use a sentinel without growing the resolver's
+ * `WorkspaceModeDisabledReasonCode` enum.
+ */
 interface ChatModeDisabledLike {
+  enabled: false;
   code: string;
   message: string;
 }
+type AxisVerdictLike = { enabled: true } | ChatModeDisabledLike;
+type SandboxVerdictLike = { enabled: true } | (ChatModeDisabledLike & { isActivatable: boolean });
+
+const LOADING_AXIS: ChatModeDisabledLike = {
+  enabled: false,
+  code: "loading",
+  message: "Loading…",
+};
 
 const NULL_RESOLUTION = {
-  availableModes: ["discuss"] as ReadonlyArray<ChatMode>,
+  modes: {
+    discuss: { enabled: true } as AxisVerdictLike,
+    library: LOADING_AXIS as AxisVerdictLike,
+  },
   defaultMode: "discuss" as ChatMode,
-  disabledReasons: {} as Partial<Record<ChatMode, ChatModeDisabledLike>>,
   hasAttachedRepo: false,
   hasAtLeastOneArtifact: false,
-  askReadiness: { canBind: false, reason: null as ChatModeDisabledLike | null },
+  askReadiness: LOADING_AXIS as AxisVerdictLike,
   grounding: {
-    library: { available: false, reason: null as ChatModeDisabledLike | null },
-    sandbox: { available: false, reason: null as ChatModeDisabledLike | null, isActivatable: false },
+    library: LOADING_AXIS as AxisVerdictLike,
+    sandbox: { ...LOADING_AXIS, isActivatable: false } as SandboxVerdictLike,
   },
 };
 

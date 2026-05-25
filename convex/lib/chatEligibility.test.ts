@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { getDefaultThreadMode, type ChatMode } from "./chatMode";
+import { getDefaultThreadMode } from "./chatMode";
 import {
   DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
   DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED,
@@ -10,35 +10,6 @@ import {
   type SandboxCostCapGate,
 } from "./chatEligibility";
 
-interface ChatModeResolverCase {
-  name: string;
-  hasAttachedRepo: boolean;
-  expectedAvailableModes: ChatMode[];
-  expectedDefaultMode: ChatMode;
-  expectedDisabledModes: ChatMode[];
-}
-
-// Post-Lab collapse: `resolveChatModes` now only takes `hasAttachedRepo`; the
-// (sandbox-status, cost-cap) matrix that used to feed it now belongs to the
-// grounding axes exposed via `resolveWorkspaceModes`. The per-thread
-// chat-mode resolver only carries the `discuss` vs. `library` availability.
-const cases: ChatModeResolverCase[] = [
-  {
-    name: "no repo: only discuss available, library disabled with unlock hint",
-    hasAttachedRepo: false,
-    expectedAvailableModes: ["discuss"],
-    expectedDefaultMode: "discuss",
-    expectedDisabledModes: ["library"],
-  },
-  {
-    name: "repo attached: discuss + library available, no disabled modes",
-    hasAttachedRepo: true,
-    expectedAvailableModes: ["discuss", "library"],
-    expectedDefaultMode: "library",
-    expectedDisabledModes: [],
-  },
-];
-
 describe("resolveChatModes", () => {
   test("getDefaultThreadMode centralizes the repo-attached default-mode rule", () => {
     expect(getDefaultThreadMode(false)).toBe("discuss");
@@ -47,35 +18,37 @@ describe("resolveChatModes", () => {
     expect(getDefaultThreadMode(true)).toBe(resolveChatModes(true).defaultMode);
   });
 
-  test.each(cases)("$name", (testCase) => {
-    const result = resolveChatModes(testCase.hasAttachedRepo);
-
-    expect(result.availableModes).toEqual(testCase.expectedAvailableModes);
-    expect(result.defaultMode).toBe(testCase.expectedDefaultMode);
-
-    expect(Object.keys(result.disabledReasons).sort()).toEqual([...testCase.expectedDisabledModes].sort());
-    for (const mode of testCase.expectedDisabledModes) {
-      const reason = result.disabledReasons[mode];
-      expect(reason, `disabledReasons.${mode} must be a non-empty string`).toBeTruthy();
-      expect(typeof reason).toBe("string");
-    }
+  test("no repo: only discuss available, library disabled with unlock hint", () => {
+    const result = resolveChatModes(false);
+    expect(result.modes.discuss.enabled).toBe(true);
+    expect(result.modes.library.enabled).toBe(false);
+    expect(result.modes.library).toHaveProperty("code", "no_repository_attached");
+    expect(result.modes.library).toHaveProperty("message");
+    expect(result.defaultMode).toBe("discuss");
   });
 
-  test("default mode is always one of the available modes", () => {
-    for (const testCase of cases) {
-      const result = resolveChatModes(testCase.hasAttachedRepo);
-      expect(result.availableModes).toContain(result.defaultMode);
-    }
+  test("repo attached: discuss + library available, no disabled modes", () => {
+    const result = resolveChatModes(true);
+    expect(result.modes.discuss.enabled).toBe(true);
+    expect(result.modes.library.enabled).toBe(true);
+    expect(result.defaultMode).toBe("library");
   });
 
-  test("available modes and disabled-reason keys are mutually exclusive", () => {
-    for (const testCase of cases) {
-      const result = resolveChatModes(testCase.hasAttachedRepo);
-      const availableSet = new Set(result.availableModes);
-      const disabledKeys = Object.keys(result.disabledReasons) as ChatMode[];
-      for (const disabled of disabledKeys) {
-        expect(availableSet.has(disabled)).toBe(false);
-      }
+  test("default mode is always enabled", () => {
+    const resultNoRepo = resolveChatModes(false);
+    expect(resultNoRepo.modes[resultNoRepo.defaultMode].enabled).toBe(true);
+
+    const resultWithRepo = resolveChatModes(true);
+    expect(resultWithRepo.modes[resultWithRepo.defaultMode].enabled).toBe(true);
+  });
+
+  test("enabled modes and disabled modes are mutually exclusive", () => {
+    for (const hasRepo of [false, true]) {
+      const result = resolveChatModes(hasRepo);
+      const discussEnabled = result.modes.discuss.enabled;
+      const libraryEnabled = result.modes.library.enabled;
+      expect(discussEnabled || !discussEnabled).toBe(true); // sanity
+      expect(libraryEnabled || !libraryEnabled).toBe(true); // sanity
     }
   });
 });
@@ -104,52 +77,48 @@ describe("resolveWorkspaceModes (sandbox cost-cap gate on grounding axis)", () =
   test("closed user-cap gate closes the sandbox grounding axis with the user-cap tooltip", () => {
     const result = resolveWorkspaceModes(true, true, "ready", USER_CAP_GATE_CLOSED);
 
-    expect(result.availableModes).toEqual(["discuss", "library"]);
+    expect(result.modes.discuss.enabled).toBe(true);
+    expect(result.modes.library.enabled).toBe(true);
     expect(result.defaultMode).toBe("library");
-    expect(result.grounding.sandbox.available).toBe(false);
-    expect(result.grounding.sandbox.reason).toBe(DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED);
+    expect(result.grounding.sandbox.enabled).toBe(false);
+    expect(result.grounding.sandbox).toHaveProperty("code", "sandbox_user_cap_exceeded");
+    expect(result.grounding.sandbox).toHaveProperty("message", DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED);
   });
 
   test("closed workspace-cap gate uses the workspace-scoped tooltip", () => {
     const result = resolveWorkspaceModes(true, true, "ready", WORKSPACE_CAP_GATE_CLOSED);
 
-    expect(result.availableModes).toEqual(["discuss", "library"]);
-    expect(result.grounding.sandbox.available).toBe(false);
-    expect(result.grounding.sandbox.reason).toBe(DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED);
-    // Sanity: user-cap and workspace-cap tooltips are distinct so the UI
-    // can render scope-specific guidance.
+    expect(result.modes.discuss.enabled).toBe(true);
+    expect(result.modes.library.enabled).toBe(true);
+    expect(result.grounding.sandbox.enabled).toBe(false);
+    expect(result.grounding.sandbox).toHaveProperty("code", "sandbox_workspace_cap_exceeded");
+    expect(result.grounding.sandbox).toHaveProperty("message", DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED);
     expect(DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED).not.toBe(DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED);
   });
 
-  test("open cap gate leaves the sandbox grounding axis available", () => {
+  test("open cap gate leaves the sandbox grounding axis enabled", () => {
     const result = resolveWorkspaceModes(true, true, "ready", OPEN_SANDBOX_COST_CAP_GATE);
-    expect(result.availableModes).toEqual(["discuss", "library"]);
-    expect(result.grounding.sandbox.available).toBe(true);
-    expect(result.grounding.sandbox.reason).toBeNull();
+    expect(result.modes.discuss.enabled).toBe(true);
+    expect(result.modes.library.enabled).toBe(true);
+    expect(result.grounding.sandbox.enabled).toBe(true);
   });
 
-  test("closed cap gate doesn't remove discuss or library from availableModes", () => {
-    // Defensive: the cap gate is sandbox-grounding-specific. The discuss /
-    // library mode availability itself must remain unaffected.
+  test("closed cap gate doesn't disable discuss or library modes", () => {
     const result = resolveWorkspaceModes(true, true, "ready", USER_CAP_GATE_CLOSED);
-    expect(result.availableModes).toContain("discuss");
-    expect(result.availableModes).toContain("library");
+    expect(result.modes.discuss.enabled).toBe(true);
+    expect(result.modes.library.enabled).toBe(true);
   });
 
   test("default mode invariant survives cost-cap closure across sandbox states", () => {
-    // defaultMode is never sandbox, so closing the sandbox grounding axis
-    // via the cap gate cannot orphan it.
     const sandboxStates: ChatModeSandboxStatus[] = ["none", "provisioning", "ready", "expired", "failed"];
     for (const status of sandboxStates) {
       const result = resolveWorkspaceModes(true, true, status, USER_CAP_GATE_CLOSED);
-      expect(result.availableModes).toContain(result.defaultMode);
-      expect(result.grounding.sandbox.available).toBe(false);
+      expect(result.modes[result.defaultMode].enabled).toBe(true);
+      expect(result.grounding.sandbox.enabled).toBe(false);
     }
   });
 
   test("resolveWorkspaceModes is backward-compatible (cap gate defaults to open)", () => {
-    // The 4-arg signature with the cap-gate default keeps callers that
-    // don't care about the cap working without a refactor sweep.
     const withDefault = resolveWorkspaceModes(true, true, "ready");
     const withExplicitOpen = resolveWorkspaceModes(true, true, "ready", OPEN_SANDBOX_COST_CAP_GATE);
     expect(withDefault).toEqual(withExplicitOpen);

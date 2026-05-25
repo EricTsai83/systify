@@ -125,12 +125,15 @@ describe("getThreadContext (internal)", () => {
     expect(result).not.toBeNull();
     expect(result!.attachedRepository).toBeNull();
     expect(result!.sandboxStatus).toBeNull();
-    expect(result!.chatModes.availableModes).toEqual(["discuss"]);
+    expect(result!.chatModes.modes.discuss.enabled).toBe(true);
+    expect(result!.chatModes.modes.library.enabled).toBe(false);
     expect(result!.chatModes.defaultMode).toBe("discuss");
-    // Post-Lab collapse: lab is gone as a top-level mode, so the only
-    // disabled mode key here is `library`. Sandbox state is now surfaced
-    // via `sandboxIsActivatable` + grounding axes, not as a mode.
-    expect(Object.keys(result!.chatModes.disabledReasons).sort()).toEqual(["library"]);
+    // Post-Lab collapse: library is the only mode that can be disabled
+    // here. Sandbox state is now surfaced via `sandboxIsActivatable` +
+    // grounding axes, not as a mode.
+    if (!result!.chatModes.modes.library.enabled) {
+      expect(result!.chatModes.modes.library.code).toBe("no_repository_attached");
+    }
     // Without a repository there is nothing to provision against, so the
     // disabled Sandbox option must not pretend it's actionable.
     expect(result!.sandboxIsActivatable).toBe(false);
@@ -146,9 +149,9 @@ describe("getThreadContext (internal)", () => {
 
     expect(result!.attachedRepository?._id).toBe(repositoryId);
     expect(result!.sandboxStatus).toBeNull();
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
+    expect(result!.chatModes.modes.discuss.enabled).toBe(true);
+    expect(result!.chatModes.modes.library.enabled).toBe(true);
     expect(result!.chatModes.defaultMode).toBe("library");
-    expect(result!.chatModes.disabledReasons).toEqual({});
     // Lazy provisioning: the disabled Sandbox grounding option must still
     // be clickable so the UI can enqueue `requestSandboxActivation`.
     expect(result!.sandboxIsActivatable).toBe(true);
@@ -166,9 +169,9 @@ describe("getThreadContext (internal)", () => {
     });
 
     expect(result!.sandboxStatus).toBe("ready");
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
+    expect(result!.chatModes.modes.discuss.enabled).toBe(true);
+    expect(result!.chatModes.modes.library.enabled).toBe(true);
     expect(result!.chatModes.defaultMode).toBe("library");
-    expect(result!.chatModes.disabledReasons).toEqual({});
     // Already-ready sandboxes don't need re-activation.
     expect(result!.sandboxIsActivatable).toBe(false);
   });
@@ -185,7 +188,8 @@ describe("getThreadContext (internal)", () => {
     });
 
     expect(result!.sandboxStatus).toBe("stopped");
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
+    expect(result!.chatModes.modes.discuss.enabled).toBe(true);
+    expect(result!.chatModes.modes.library.enabled).toBe(true);
     expect(result!.sandboxIsActivatable).toBe(true);
   });
 
@@ -201,7 +205,8 @@ describe("getThreadContext (internal)", () => {
     });
 
     expect(result!.sandboxStatus).toBe("archived");
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
+    expect(result!.chatModes.modes.discuss.enabled).toBe(true);
+    expect(result!.chatModes.modes.library.enabled).toBe(true);
     expect(result!.sandboxIsActivatable).toBe(true);
   });
 
@@ -217,7 +222,8 @@ describe("getThreadContext (internal)", () => {
     });
 
     expect(result!.sandboxStatus).toBe("provisioning");
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
+    expect(result!.chatModes.modes.discuss.enabled).toBe(true);
+    expect(result!.chatModes.modes.library.enabled).toBe(true);
     // A second click during provisioning would just dedupe; the option
     // stays not-activatable to avoid suggesting otherwise.
     expect(result!.sandboxIsActivatable).toBe(false);
@@ -281,8 +287,8 @@ describe("getThreadContext (public, owner-scoped)", () => {
  *      the reactive query's read set).
  *   2. With a repo attached, `sandboxCostBudgets.userBudget` is
  *      populated with capacity / remaining / resetAtMs.
- *   3. When the user cap is exhausted, the resolver removes sandbox
- *      from `availableModes` and surfaces the cost-cap tooltip.
+ *   3. When the user cap is exhausted, the sandbox grounding axis
+ *      closes and `sandboxIsActivatable` flips to `false`.
  */
 describe("getThreadContext sandbox cost-cap gate (Plan 10)", () => {
   let priorUserCapEnv: string | undefined;
@@ -363,8 +369,8 @@ describe("getThreadContext sandbox cost-cap gate (Plan 10)", () => {
     // by the sandbox cost cap. The cap closes the sandbox grounding axis
     // (consumed by the Discuss composer) and gates lazy activation via
     // `sandboxIsActivatable: false`.
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
-    expect(result!.chatModes.disabledReasons).toEqual({});
+    expect(result!.chatModes.modes.discuss.enabled).toBe(true);
+    expect(result!.chatModes.modes.library.enabled).toBe(true);
     expect(result!.sandboxIsActivatable).toBe(false);
     // Bucket peek reflects the exhaustion in the exposed snapshot too.
     expect(result!.sandboxCostBudgets!.userBudget.remainingCents).toBe(0);
@@ -408,8 +414,8 @@ describe("getThreadContext sandbox cost-cap gate (Plan 10)", () => {
 
     const result = await t.query(internal.threadContext.getThreadContextInternal, { threadId });
 
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
-    expect(result!.chatModes.disabledReasons).toEqual({});
+    expect(result!.chatModes.modes.discuss.enabled).toBe(true);
+    expect(result!.chatModes.modes.library.enabled).toBe(true);
     expect(result!.sandboxIsActivatable).toBe(false);
     expect(result!.sandboxCostBudgets!.workspaceBudget!.remainingCents).toBe(0);
   });
@@ -462,8 +468,8 @@ describe("getThreadContext — no env-driven feature gate is consulted", () => {
       threadId,
     });
 
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
-    expect(result!.chatModes.disabledReasons).toEqual({});
+    expect(result!.chatModes.modes.discuss.enabled).toBe(true);
+    expect(result!.chatModes.modes.library.enabled).toBe(true);
     // Sandbox is in `ready` state and the cost cap is open, so it does not
     // need re-activation.
     expect(result!.sandboxIsActivatable).toBe(false);
