@@ -472,11 +472,12 @@ describe("citation lint integration (Plan 11)", () => {
       "lint-finalize-sandbox",
     );
 
-    // Promote the fixture's assistant message to sandbox mode — the
-    // fixture defaults to `discuss` for the existing tests, but the
-    // citation lint only fires for sandbox replies. The mode is the
-    // gating field, so patching it post-fixture is the minimal
-    // mutation that exercises the lint path.
+    // Promote the fixture's assistant message by enabling sandbox
+    // grounding — the fixture defaults to `discuss` for the existing
+    // tests, but the citation lint only fires for sandbox replies and
+    // is gated by `groundSandbox`. Patching `assistantMessageId` to set
+    // `groundSandbox: true` post-fixture is the minimal mutation that
+    // exercises the lint path.
     await t.run(async (ctx) => {
       await ctx.db.patch(assistantMessageId, { groundSandbox: true });
     });

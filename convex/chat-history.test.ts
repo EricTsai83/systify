@@ -97,7 +97,7 @@ describe("chat history ordering", () => {
         lastMessageAt: Date.now(),
       });
 
-      // discuss-mode round followed by a sandbox-mode round.
+      // discuss-mode round followed by a library-mode round.
       await ctx.db.insert("messages", {
         threadId,
         ownerTokenIdentifier,

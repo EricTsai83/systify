@@ -36,8 +36,8 @@ This repository is standardized on Bun for package management and script executi
 2. The user connects a GitHub App installation.
 3. Systify verifies repository access and creates an import workflow.
 4. The import pipeline scans the repository via the GitHub API and writes files, chunks, summaries, and artifacts into Convex.
-5. The user explores the repository through chat (`discuss` / `docs` / `sandbox` modes) or by running `Generate System Design` from the Library.
-6. When entering `sandbox` mode or triggering `Generate System Design`, a Daytona sandbox is provisioned on-demand and the repository is cloned.
+5. The user explores the repository through chat (top-level `discuss` and `library` modes; `discuss` exposes per-message **Library** and **Sandbox** grounding toggles in the composer) or by running `Generate System Design` from the Library.
+6. When the user enables the **Sandbox** grounding toggle in `discuss` or triggers `Generate System Design`, a Daytona sandbox is provisioned on-demand and the repository is cloned.
 7. Later syncs refresh the active snapshot without mixing old and new import data.
 
 ## Stack
@@ -219,8 +219,8 @@ Recommended setup:
 - Repository access is enforced through GitHub App installation state, not personal access tokens.
 - Most backend flows derive the current owner from authenticated identity and verify ownership server-side.
 - Every import creates a new snapshot-oriented workflow instead of mutating repository knowledge in place.
-- Chat reads from indexed repository knowledge stored in Convex; the per-mode contract is: `discuss` uses no repo context, `docs` uses design artifacts only, and `sandbox` is wired (Plan 04 onward) to live sandbox file tools.
-- `Generate System Design` depends on a usable Daytona sandbox and stores its outputs as System Design artifacts in the Library, which `docs`/`sandbox` chat modes can then cite.
+- Chat reads from indexed repository knowledge stored in Convex; the per-mode contract is: `discuss` defaults to training-only and only consults repo knowledge when a grounding toggle is on — **Library** adds artifact context with `[A#]` citations, **Sandbox** adds live source context with `[path:line]` citations through read-only sandbox tools — while `library` is an artifact reader with an always-visible Ask panel grounded in artifacts.
+- `Generate System Design` depends on a usable Daytona sandbox and stores its outputs as System Design artifacts in the Library, which later chat replies (Library grounding in `discuss`, or the Ask panel in `library`) can then cite.
 - Cleanup and reconciliation rely on cron jobs plus webhook-driven convergence so external Daytona resources do not drift too far from Convex state.
 
 ## Recommended reading

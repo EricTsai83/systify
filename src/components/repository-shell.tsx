@@ -552,6 +552,13 @@ export function RepositoryShell({
    */
   const effectiveSelectedRepositoryId: RepositoryId | null = currentWorkspace?.repositoryId ?? null;
 
+  // Close dialog states when repository changes so they can't stay open
+  // for a different repository or after switching to no-repo.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setIsGenerateDialogOpen(false);
+  }, [effectiveSelectedRepositoryId]);
+
   const effectiveSelectedThreadId: ThreadId | null = urlThreadId;
 
   // Keep messages + active-stream subscriptions open for the most recently

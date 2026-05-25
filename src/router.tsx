@@ -3,6 +3,7 @@ import {
   AppLayout,
   AuthCallbackRoute,
   LandingRoute,
+  LabLegacyRedirect,
   LegacyThreadRedirect,
   LibraryAskLegacyRedirect,
   NotFoundRoute,
@@ -81,6 +82,12 @@ const protectedRoutes: RouteObject[] = [
   // `PROTECTED_ROUTE_SEGMENTS` entry) so it stays out of the post-login
   // return-to allowlist — see `LibraryAskLegacyRedirect`.
   { path: "w/:workspaceId/library/ask/:threadId", Component: LibraryAskLegacyRedirect },
+  // Legacy Lab-mode URLs — "lab" was the original name for "discuss" mode.
+  // Redirect old bookmarks/links so they don't 404. Kept as literals (not
+  // `PROTECTED_ROUTE_SEGMENTS` entries) so they stay out of the post-login
+  // return-to allowlist — see `LabLegacyRedirect`.
+  { path: "w/:workspaceId/lab", Component: LabLegacyRedirect },
+  { path: "w/:workspaceId/lab/:threadId", Component: LabLegacyRedirect },
   { path: PROTECTED_ROUTE_SEGMENTS.archive, lazy: loadArchiveRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.resources, lazy: loadResourcesRoute },
 ];

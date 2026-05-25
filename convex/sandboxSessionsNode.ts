@@ -50,15 +50,17 @@ export const autoPauseIdleSandboxSessions = internalAction({
       now,
       limit: AUTO_PAUSE_BATCH_SIZE,
     });
+    let pausedCount = 0;
     for (const session of sessions) {
       const pauseResult = await ctx.runMutation(internal.sandboxSessions.markSessionPausedByIdle, {
         sessionId: session._id,
         now,
       });
       if (pauseResult.paused) {
+        pausedCount++;
         await ctx.runAction(internal.sandboxSessionsNode.stopRemoteSandboxForSession, { sessionId: session._id });
       }
     }
-    return { paused: sessions.length };
+    return { paused: pausedCount };
   },
 });
