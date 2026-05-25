@@ -1,22 +1,25 @@
 import { BookOpenIcon, FlaskIcon } from "@phosphor-icons/react";
+import type { WorkspaceModeDisabledReasonCode } from "../../convex/lib/chatEligibility";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
  * Per-message grounding availability for the Discuss composer. Mirrors the
  * discriminated `AxisVerdict` / `SandboxGroundingVerdict` shape exposed by
- * `workspaceModeEligibility.evaluate`, but typed loosely (`code: string`) so
- * the bar can render before the verdict narrows and any future codes don't
- * require a component change. The bar only branches on `enabled`; specific
- * disabled-code handling (e.g. "Generate System Design" CTA on
- * `library_no_artifact`) lives in the wiring layer that supplies the
- * `onOpenGenerateSystemDesign` callback.
+ * `workspaceModeEligibility.evaluate`. The code field is constrained to
+ * `WorkspaceModeDisabledReasonCode | "loading"` so backend additions to
+ * the disabled-reason enum surface as compile errors here (the `"loading"`
+ * sentinel covers the placeholder verdict the bar renders while the
+ * eligibility query is still in flight). The bar only branches on
+ * `enabled`; specific disabled-code handling (e.g. "Generate System Design"
+ * CTA on `library_no_artifact`) lives in the wiring layer that supplies
+ * the `onOpenGenerateSystemDesign` callback.
  */
 export type GroundingAxisLike =
   | { readonly enabled: true }
   | {
       readonly enabled: false;
-      readonly code: string;
+      readonly code: WorkspaceModeDisabledReasonCode | "loading";
       readonly message: string;
       readonly isActivatable?: boolean;
     };

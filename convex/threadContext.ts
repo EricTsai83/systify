@@ -7,6 +7,7 @@ import { getRepositorySandboxStatus, type SandboxModeStatus } from "./lib/reposi
 import {
   computeSandboxCostCapEvaluation,
   resolveChatModes,
+  resolveSandboxGroundingAxis,
   toChatModeSandboxStatus,
   type ChatModeResolution,
   type SandboxCostCapGate,
@@ -65,20 +66,26 @@ async function loadThread(ctx: QueryCtx, threadId: Id<"threads">): Promise<Doc<"
 
 async function enrichThreadContext(
   ctx: QueryCtx,
-  thread: Doc<"threads">,
-  viewerTokenIdentifier: string,
+  args: {
+    thread: Doc<"threads">;
+    /**
+     * Pre-loaded by the public/internal query so {@link enrichThreadContext}
+     * never re-fetches the same row. The public query also uses the doc
+     * for ownership validation; threading it through here keeps the
+     * total `ctx.db.get(repositoryId)` count at one per request.
+     */
+    attachedRepository: Doc<"repositories"> | null;
+    viewerTokenIdentifier: string;
+  },
 ): Promise<ThreadContext> {
-  let attachedRepository: Doc<"repositories"> | null = null;
+  const { thread, attachedRepository, viewerTokenIdentifier } = args;
   let sandboxStatus: SandboxTableStatus | null = null;
   let sandboxModeStatus: SandboxModeStatus | null = null;
 
-  if (thread.repositoryId) {
-    attachedRepository = await ctx.db.get(thread.repositoryId);
-    if (attachedRepository) {
-      const result = await getRepositorySandboxStatus(ctx, attachedRepository);
-      sandboxStatus = result.sandbox?.status ?? null;
-      sandboxModeStatus = result.sandboxModeStatus;
-    }
+  if (attachedRepository) {
+    const result = await getRepositorySandboxStatus(ctx, attachedRepository);
+    sandboxStatus = result.sandbox?.status ?? null;
+    sandboxModeStatus = result.sandboxModeStatus;
   }
 
   // Only consult the cost-cap gate when sandbox mode is at all relevant
@@ -105,10 +112,17 @@ async function enrichThreadContext(
   // `chatModes` get a stable shape.
   const chatModes = resolveChatModes(attachedRepository !== null);
 
-  const sandboxIsActivatable =
-    attachedRepository !== null &&
-    costGate.enabled &&
-    (chatModeSandboxStatus === "none" || chatModeSandboxStatus === "expired" || chatModeSandboxStatus === "failed");
+  // Derive `sandboxIsActivatable` from the same grounding-axis resolver the
+  // workspace read path uses so the activation rule lives in exactly one
+  // place. The verdict is "activatable" iff disabled with `isActivatable:
+  // true` — covers (no sandbox / expired / failed) while a healthy ready
+  // sandbox or a cost-capped one stays not-activatable.
+  const sandboxGroundingVerdict = resolveSandboxGroundingAxis(
+    attachedRepository !== null,
+    chatModeSandboxStatus,
+    costGate,
+  );
+  const sandboxIsActivatable = !sandboxGroundingVerdict.enabled && sandboxGroundingVerdict.isActivatable;
 
   return {
     thread,
@@ -135,14 +149,19 @@ export const getThreadContext = query({
       throw new Error("Thread not found.");
     }
 
+    let attachedRepository: Doc<"repositories"> | null = null;
     if (thread.repositoryId) {
-      const repository = await ctx.db.get(thread.repositoryId);
-      if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      attachedRepository = await ctx.db.get(thread.repositoryId);
+      if (!attachedRepository || attachedRepository.ownerTokenIdentifier !== identity.tokenIdentifier) {
         throw new Error("Thread not found.");
       }
     }
 
-    return enrichThreadContext(ctx, thread, identity.tokenIdentifier);
+    return enrichThreadContext(ctx, {
+      thread,
+      attachedRepository,
+      viewerTokenIdentifier: identity.tokenIdentifier,
+    });
   },
 });
 
@@ -156,6 +175,11 @@ export const getThreadContextInternal = internalQuery({
     if (!thread) {
       return null;
     }
-    return enrichThreadContext(ctx, thread, thread.ownerTokenIdentifier);
+    const attachedRepository = thread.repositoryId ? await ctx.db.get(thread.repositoryId) : null;
+    return enrichThreadContext(ctx, {
+      thread,
+      attachedRepository,
+      viewerTokenIdentifier: thread.ownerTokenIdentifier,
+    });
   },
 });

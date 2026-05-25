@@ -193,8 +193,13 @@ export function resolveChatModes(hasAttachedRepo: boolean): ChatModeResolution {
  *
  * Precedence: cost cap → lifecycle. The cost cap is the more actionable
  * signal for a viewer who already has a healthy sandbox.
+ *
+ * Exported so the per-thread read path (`threadContext.enrichThreadContext`)
+ * can derive `sandboxIsActivatable` from this verdict instead of
+ * recomputing the (repo + cost-gate + status) tuple in parallel —
+ * keeping the activation rule a single source of truth.
  */
-function resolveSandboxGroundingAxis(
+export function resolveSandboxGroundingAxis(
   hasAttachedRepo: boolean,
   sandboxStatus: ChatModeSandboxStatus,
   sandboxCostCapGate: SandboxCostCapGate,
@@ -292,14 +297,7 @@ export function resolveWorkspaceModes(
   sandboxStatus: ChatModeSandboxStatus,
   sandboxCostCapGate: SandboxCostCapGate = OPEN_SANDBOX_COST_CAP_GATE,
 ): WorkspaceModeResolution {
-  const discuss: AxisVerdict = { enabled: true };
-  const library: AxisVerdict = hasAttachedRepo
-    ? { enabled: true }
-    : {
-        enabled: false,
-        code: "no_repository_attached",
-        message: DISABLED_REASON_LIBRARY_NO_REPO,
-      };
+  const { modes, defaultMode } = resolveChatModes(hasAttachedRepo);
 
   const askReadiness: AxisVerdict = !hasAttachedRepo
     ? {
@@ -316,8 +314,8 @@ export function resolveWorkspaceModes(
       : { enabled: true };
 
   return {
-    modes: { discuss, library },
-    defaultMode: getDefaultThreadMode(hasAttachedRepo),
+    modes,
+    defaultMode,
     grounding: {
       library: resolveLibraryGroundingAxis(hasAttachedRepo, hasAtLeastOneArtifact),
       sandbox: resolveSandboxGroundingAxis(hasAttachedRepo, sandboxStatus, sandboxCostCapGate),

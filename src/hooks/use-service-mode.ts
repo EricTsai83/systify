@@ -2,17 +2,19 @@ import { useMemo } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import type { WorkspaceModeDisabledReasonCode } from "../../convex/lib/chatEligibility";
 import type { ChatMode, WorkspaceId } from "@/lib/types";
 
 /**
  * Per-axis verdict shape consumed by chrome that subscribes to
- * `workspaceModeEligibility.evaluate`. Loosely typed (`code: string`) so the
- * placeholder fallback can use a sentinel without growing the resolver's
- * `WorkspaceModeDisabledReasonCode` enum.
+ * `workspaceModeEligibility.evaluate`. `code` is the backend enum union
+ * plus a `"loading"` sentinel for the placeholder fallback, so a backend
+ * addition to `WorkspaceModeDisabledReasonCode` surfaces as a compile
+ * error here rather than slipping through under `string`.
  */
 interface ChatModeDisabledLike {
   enabled: false;
-  code: string;
+  code: WorkspaceModeDisabledReasonCode | "loading";
   message: string;
 }
 type AxisVerdictLike = { enabled: true } | ChatModeDisabledLike;

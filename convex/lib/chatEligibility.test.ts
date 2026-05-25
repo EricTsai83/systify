@@ -41,16 +41,6 @@ describe("resolveChatModes", () => {
     const resultWithRepo = resolveChatModes(true);
     expect(resultWithRepo.modes[resultWithRepo.defaultMode].enabled).toBe(true);
   });
-
-  test("enabled modes and disabled modes are mutually exclusive", () => {
-    for (const hasRepo of [false, true]) {
-      const result = resolveChatModes(hasRepo);
-      const discussEnabled = result.modes.discuss.enabled;
-      const libraryEnabled = result.modes.library.enabled;
-      expect(discussEnabled || !discussEnabled).toBe(true); // sanity
-      expect(libraryEnabled || !libraryEnabled).toBe(true); // sanity
-    }
-  });
 });
 
 /**
