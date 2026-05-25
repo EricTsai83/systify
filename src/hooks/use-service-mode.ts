@@ -7,7 +7,6 @@ import type { ChatMode, WorkspaceId } from "@/lib/types";
 interface ChatModeDisabledLike {
   code: string;
   message: string;
-  retryAfterMs?: number;
 }
 
 const NULL_RESOLUTION = {

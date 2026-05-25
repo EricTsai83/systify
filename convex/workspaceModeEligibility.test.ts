@@ -303,7 +303,7 @@ describe("workspaceModeEligibility.evaluate (cost cap closed)", () => {
     }
   });
 
-  test("user cap exhausted: sandbox grounding closes with sandbox_user_cap_exceeded + retryAfterMs", async () => {
+  test("user cap exhausted: sandbox grounding closes with sandbox_user_cap_exceeded", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
       withRepository: true,
@@ -326,10 +326,13 @@ describe("workspaceModeEligibility.evaluate (cost cap closed)", () => {
 
     expect(result!.grounding.sandbox.available).toBe(false);
     expect(result!.grounding.sandbox.reason?.code).toBe("sandbox_user_cap_exceeded");
-    expect(result!.grounding.sandbox.reason?.retryAfterMs).toBeGreaterThan(0);
+    // Verdicts deliberately carry no `retryAfterMs?`: reactive subscriptions
+    // update naturally when the bucket flips, so a parallel retry timer
+    // would just drift from the wall-clock event. Timing data lives on the
+    // cost-budget snapshot in `threadContext.sandboxCostBudgets`.
   });
 
-  test("workspace cap exhausted: sandbox grounding closes with sandbox_workspace_cap_exceeded + retryAfterMs", async () => {
+  test("workspace cap exhausted: sandbox grounding closes with sandbox_workspace_cap_exceeded", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
       withRepository: true,
@@ -359,7 +362,8 @@ describe("workspaceModeEligibility.evaluate (cost cap closed)", () => {
 
     expect(result!.grounding.sandbox.available).toBe(false);
     expect(result!.grounding.sandbox.reason?.code).toBe("sandbox_workspace_cap_exceeded");
-    expect(result!.grounding.sandbox.reason?.retryAfterMs).toBeGreaterThan(0);
+    // See test above: verdicts carry no retry timing; reactive subscriptions
+    // handle the recovery push.
   });
 });
 

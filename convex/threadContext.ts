@@ -5,19 +5,13 @@ import type { QueryCtx } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
 import { getRepositorySandboxStatus, type SandboxModeStatus } from "./lib/repositorySandbox";
 import {
-  DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
-  DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED,
+  computeSandboxCostCapEvaluation,
   resolveChatModes,
+  toChatModeSandboxStatus,
   type ChatModeResolution,
-  type ChatModeSandboxStatus,
   type SandboxCostCapGate,
-} from "./chatModeResolver";
-import {
-  getSandboxReplyEstimateCents,
-  peekSandboxDailyCostForUser,
-  peekSandboxDailyCostForWorkspace,
-  type SandboxDailyCostBudget,
-} from "./lib/rateLimit";
+} from "./lib/chatEligibility";
+import { type SandboxDailyCostBudget } from "./lib/rateLimit";
 
 export type SandboxTableStatus = Doc<"sandboxes">["status"];
 
@@ -66,100 +60,8 @@ export interface ThreadContext {
   sandboxIsActivatable: boolean;
 }
 
-/**
- * Maps the centralized sandbox availability result onto the legacy
- * ChatModeResolver input domain. This keeps TTL, missing remote id/path, and
- * provider status semantics in `lib/repositorySandbox` instead of duplicating
- * them across UI capability queries.
- */
-function toChatModeSandboxStatus(status: SandboxModeStatus | null): ChatModeSandboxStatus {
-  switch (status?.reasonCode ?? "missing_sandbox") {
-    case "available":
-      return "ready";
-    case "sandbox_provisioning":
-      return "provisioning";
-    case "sandbox_expired":
-      return "expired";
-    case "sandbox_unavailable":
-      return "failed";
-    case "missing_sandbox":
-      return "none";
-  }
-}
-
 async function loadThread(ctx: QueryCtx, threadId: Id<"threads">): Promise<Doc<"threads"> | null> {
   return await ctx.db.get(threadId);
-}
-
-/**
- * Build the resolver inputs for a thread.
- *
- * `viewerTokenIdentifier` is the *authenticated* viewer's identifier from
- * `requireViewerIdentity` — never a function argument or stored doc field.
- * It identifies whose daily cost-cap to peek (per-user buckets are scoped
- * by this).
- *
- * The internal variant of the query trusts its callers (other Convex
- * functions) and uses the thread's owner as the viewer — there is no
- * authenticated context inside an internal query, and the contract is "give
- * me the same view the owner would see" so they share one code path.
- */
-/**
- * Plan 10 — derive the cost-cap gate from a peek of both the per-user
- * and per-workspace daily buckets. Returns:
- *
- *   - the gate (closed iff either bucket would refuse the projected
- *     estimate cost);
- *   - the bucket snapshots (always, for UI rendering);
- *
- * Both peeks happen inside the query's transaction so the gate decision
- * and the displayed budget agree even under concurrent settlement: a
- * rate-limit settle that lands between the user-peek and the workspace-
- * peek would update both buckets atomically from the user's POV.
- *
- * Why we peek even when the gate ends up open: the UI's cost-ticker
- * tooltip ("$X.XX of $Y.YY remaining today") is shown regardless of
- * whether the cap blocked the send. Doing both peeks once keeps the
- * query a single source of truth.
- */
-async function computeSandboxCostBudgets(
-  ctx: QueryCtx,
-  ownerTokenIdentifier: string,
-  workspaceId: Id<"workspaces"> | null,
-): Promise<{ gate: SandboxCostCapGate; budgets: ThreadContextSandboxCostBudgets }> {
-  const estimateCents = getSandboxReplyEstimateCents();
-  const userBudget = await peekSandboxDailyCostForUser(ctx, ownerTokenIdentifier);
-  const workspaceBudget = workspaceId ? await peekSandboxDailyCostForWorkspace(ctx, workspaceId) : null;
-
-  // User cap is checked first to match `assertSandboxDailyCostBudget`'s
-  // ordering on the write path (`convex/lib/rateLimit.ts`). When both
-  // would block the gate surfaces the user-cap tooltip — the more
-  // user-actionable signal because the user can switch to docs/discuss
-  // immediately, whereas the workspace-cap reset would also gate every
-  // other workspace member.
-  if (userBudget.remainingCents < estimateCents) {
-    return {
-      gate: {
-        enabled: false,
-        reason: "user_daily_cap_exceeded",
-        tooltip: DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
-        resetAtMs: userBudget.resetAtMs,
-      },
-      budgets: { userBudget, workspaceBudget },
-    };
-  }
-  if (workspaceBudget && workspaceBudget.remainingCents < estimateCents) {
-    return {
-      gate: {
-        enabled: false,
-        reason: "workspace_daily_cap_exceeded",
-        tooltip: DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED,
-        resetAtMs: workspaceBudget.resetAtMs,
-      },
-      budgets: { userBudget, workspaceBudget },
-    };
-  }
-  return { gate: { enabled: true }, budgets: { userBudget, workspaceBudget } };
 }
 
 async function enrichThreadContext(
@@ -180,20 +82,20 @@ async function enrichThreadContext(
     }
   }
 
-  // Plan 10 — only consult the cost-cap gate when sandbox mode is at
-  // all relevant (a repository is attached). Without a repo, sandbox
-  // mode is already gated by the no-repo branch of the resolver, and
-  // an extra rate-limiter peek would be wasted query work that also
-  // pollutes the reactive query's read set with rate-limiter docs that
-  // change as ANY user settles cost. Skipping the peek for no-repo
-  // threads keeps those subscriptions stable and bounds re-renders to
-  // threads where sandbox mode is at least theoretically usable.
+  // Only consult the cost-cap gate when sandbox mode is at all relevant
+  // (a repository is attached). Without a repo, sandbox mode is already
+  // gated by the no-repo branch of the resolver, and an extra rate-limiter
+  // peek would be wasted query work that also pollutes the reactive query's
+  // read set with rate-limiter docs that change as ANY user settles cost.
+  // Skipping the peek for no-repo threads keeps those subscriptions stable
+  // and bounds re-renders to threads where sandbox mode is at least
+  // theoretically usable.
   let costGate: SandboxCostCapGate = { enabled: true };
   let sandboxCostBudgets: ThreadContextSandboxCostBudgets | null = null;
   if (attachedRepository !== null) {
-    const { gate, budgets } = await computeSandboxCostBudgets(ctx, viewerTokenIdentifier, thread.workspaceId ?? null);
-    costGate = gate;
-    sandboxCostBudgets = budgets;
+    const evaluation = await computeSandboxCostCapEvaluation(ctx, viewerTokenIdentifier, thread.workspaceId ?? null);
+    costGate = evaluation.gate;
+    sandboxCostBudgets = { userBudget: evaluation.userBudget, workspaceBudget: evaluation.workspaceBudget };
   }
 
   const chatModeSandboxStatus = toChatModeSandboxStatus(sandboxModeStatus);

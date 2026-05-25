@@ -16,7 +16,6 @@ export interface GroundingAxisLike {
   reason: {
     code: string;
     message: string;
-    retryAfterMs?: number;
   } | null;
   isActivatable?: boolean;
 }

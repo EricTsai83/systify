@@ -1,5 +1,5 @@
 import type { Id } from "../_generated/dataModel";
-import type { ChatMode } from "../chatModeResolver";
+import type { ChatMode } from "../lib/chatMode";
 import { MAX_CONTEXT_ARTIFACTS } from "../lib/constants";
 import type { ReplyContext } from "./context";
 

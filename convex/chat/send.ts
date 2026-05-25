@@ -3,10 +3,9 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import type { MutationCtx } from "../_generated/server";
 import { mutation } from "../_generated/server";
-import type { ChatMode } from "../chatModeResolver";
 import { assertWorkspaceModeEligible } from "../workspaceModeEligibility";
 import { requireViewerIdentity } from "../lib/auth";
-import { chatModeValidator } from "../lib/chatMode";
+import { chatModeValidator, type ChatMode } from "../lib/chatMode";
 import { requireActiveRepositoryForOwner } from "../lib/repositoryAccess";
 import {
   CHAT_JOB_LEASE_MS,

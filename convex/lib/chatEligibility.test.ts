@@ -1,15 +1,14 @@
 import { describe, expect, test } from "vitest";
+import { getDefaultThreadMode, type ChatMode } from "./chatMode";
 import {
   DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
   DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED,
   OPEN_SANDBOX_COST_CAP_GATE,
-  getDefaultThreadMode,
   resolveChatModes,
   resolveWorkspaceModes,
-  type ChatMode,
   type ChatModeSandboxStatus,
   type SandboxCostCapGate,
-} from "./chatModeResolver";
+} from "./chatEligibility";
 
 interface ChatModeResolverCase {
   name: string;
@@ -88,7 +87,7 @@ describe("resolveChatModes", () => {
  * closes and surfaces the cost-cap tooltip. Discuss / Library mode
  * availability itself is no longer touched by the cap.
  */
-describe("resolveWorkspaceModes (Plan-10 sandbox cost-cap gate on grounding axis)", () => {
+describe("resolveWorkspaceModes (sandbox cost-cap gate on grounding axis)", () => {
   const USER_CAP_GATE_CLOSED: SandboxCostCapGate = {
     enabled: false,
     reason: "user_daily_cap_exceeded",

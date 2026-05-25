@@ -1,7 +1,8 @@
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
-import { getDefaultThreadMode, type ChatMode, type ChatModeResolution } from "../../convex/chatModeResolver";
+import { getDefaultThreadMode, type ChatMode } from "../../convex/lib/chatMode";
+import type { ChatModeResolution } from "../../convex/lib/chatEligibility";
 import type { RepositoryId, SandboxModeStatus, ThreadId } from "@/lib/types";
 
 export type SandboxLifecycleStatus = Doc<"sandboxes">["status"];

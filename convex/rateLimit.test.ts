@@ -461,12 +461,13 @@ describe("rate limits and interactive job guards", () => {
 
       // chat.sendMessage throws via assertWorkspaceModeEligible → throwIfDisabled.
       // Structured shape: { code: "sandbox_user_cap_exceeded", mode: "discuss",
-      // message, retryAfterMs }. The bucket / capUsd fields stay on
-      // assertSandboxDailyCostBudget's own throws (still tested below) but
-      // are not part of the eligibility module's contract.
+      // message }. The bucket / capUsd / retryAfterMs fields stay on
+      // assertSandboxDailyCostBudget's own throws (still tested via
+      // expectStructuredError below) but are not part of the eligibility
+      // module's contract — verdicts carry no retry timing because
+      // reactive subscriptions handle recovery push.
       const data = typeof error?.data === "string" ? JSON.parse(error.data) : error?.data;
       expect(data).toMatchObject({ code: "sandbox_user_cap_exceeded", mode: "discuss" });
-      expect(data.retryAfterMs).toEqual(expect.any(Number));
       // No job, message, or stream rows should be created when the
       // pre-check rejects — the failure must happen *before* any
       // side-effecting writes.
@@ -531,7 +532,8 @@ describe("rate limits and interactive job guards", () => {
 
       const data = typeof error?.data === "string" ? JSON.parse(error.data) : error?.data;
       expect(data).toMatchObject({ code: "sandbox_workspace_cap_exceeded", mode: "discuss" });
-      expect(data.retryAfterMs).toEqual(expect.any(Number));
+      // Same as above: eligibility-path errors carry no retry timing;
+      // reactive subscriptions handle recovery.
     });
 
     test("finalizeAssistantReply settles real costUsd into the daily-cap bucket (sandbox mode)", async () => {

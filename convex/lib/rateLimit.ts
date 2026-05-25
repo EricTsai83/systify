@@ -366,8 +366,9 @@ export interface SandboxDailyCostBudget {
  * Plan 10 — peek the current sandbox-cost budget for a single bucket key
  * without consuming any tokens. Used by:
  *
- *   1. `chatModeResolver`'s cost-cap gate (via `threadContext`) so the UI
- *      can disable the sandbox option before the user hits Send.
+ *   1. `lib/chatEligibility`'s cost-cap gate (via `threadContext` and
+ *      `workspaceModeEligibility`) so the UI can disable the sandbox
+ *      option before the user hits Send.
  *   2. The frontend cost-ticker tooltip ("$X.XX of $Y.YY remaining today").
  *
  * Computing `resetAtMs` from the snapshot's window timestamp keeps the
