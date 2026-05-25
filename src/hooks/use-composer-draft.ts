@@ -2,14 +2,6 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { readString, removeKey, writeString } from "@/lib/storage";
 import type { ChatMode, ThreadId, WorkspaceId } from "@/lib/types";
 
-/**
- * URL service mode the composer is rendered for when no thread exists yet.
- * `library` opens a different panel (LibraryAskPanel) that does not use
- * this hook, so the no-thread-key derivation only covers the two service
- * modes the main composer is ever mounted under.
- */
-type ComposerChatMode = Extract<ChatMode, "discuss" | "lab">;
-
 const THREAD_KEY_PREFIX = "systify.composer.draft.thread.";
 const WORKSPACE_KEY_PREFIX = "systify.composer.draft.workspace.";
 
@@ -24,11 +16,12 @@ function deriveKey(args: {
   if (args.workspaceId === null || args.mode === null) {
     return null;
   }
-  if (args.mode !== "discuss" && args.mode !== "lab") {
+  // `library` opens a different panel (LibraryAskPanel) that doesn't use
+  // this hook, so the no-thread-key derivation only covers Discuss.
+  if (args.mode !== "discuss") {
     return null;
   }
-  const mode: ComposerChatMode = args.mode;
-  return `${WORKSPACE_KEY_PREFIX}${args.workspaceId}.${mode}`;
+  return `${WORKSPACE_KEY_PREFIX}${args.workspaceId}.${args.mode}`;
 }
 
 /**
@@ -40,9 +33,10 @@ function deriveKey(args: {
  *   - `systify.composer.draft.thread.{threadId}` — once a thread exists, the
  *     draft is per-thread (mode-agnostic; the chat-mode dropdown at send time
  *     determines the message mode).
- *   - `systify.composer.draft.workspace.{workspaceId}.{mode}` — before
+ *   - `systify.composer.draft.workspace.{workspaceId}.discuss` — before
  *     a thread exists, the draft is scoped to (workspace, mode) so
- *     `/w/:wid/discuss` and `/w/:wid/lab` keep independent drafts.
+ *     `/w/:wid/discuss` and other future composer surfaces keep
+ *     independent drafts.
  *
  * Writes are synchronous (no debounce):
  *   - `localStorage.setItem` on a few-KB value is microsecond-cost; even at

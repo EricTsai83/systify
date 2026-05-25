@@ -4,36 +4,37 @@ export type { ChatMode };
 
 /**
  * ChatModeResolver — pure resolver mapping (hasAttachedRepo, sandboxStatus,
- * sandboxCostCapGate) to (availableModes, defaultMode, disabledReasons).
+ * sandboxCostCapGate) to (availableModes, defaultMode, disabledReasons,
+ * grounding axis availability).
  *
  * Single source of truth for chat-mode availability used by both the UI mode
- * selector and the `chat.sendMessage` / `chat.createThread` validators on the
+ * switcher and the `chat.sendMessage` / `chat.createThread` validators on the
  * backend. The `ChatMode` literals are the canonical vocabulary persisted on
  * `threads.mode` and `messages.mode`, surfaced in URL segments
- * (`/w/:wid/discuss | library | lab`), and rendered verbatim in the UI labels.
+ * (`/w/:wid/discuss | library`), and rendered verbatim in the UI labels.
  *
- * Mode semantics:
- *   - `discuss`  — LLM training only; no repo, no sandbox. Pre-design talk.
- *   - `library`  — RAG over user-produced artifacts (ADRs, diagrams, analyses)
- *                  for the attached repository. No sandbox required.
- *   - `lab`      — live filesystem + execution in a Daytona sandbox; the
- *                  canonical source of truth for current code state.
+ * Mode semantics (post-Lab collapse):
+ *   - `discuss`  — free-form chat with two independent grounding axes
+ *                  (Library / Sandbox) the composer surfaces as toggles.
+ *   - `library`  — RAG over user-produced artifacts for the attached
+ *                  repository; the home of the always-visible Ask panel.
  *
  * Design choices:
- *   - `defaultMode` never auto-selects `'lab'` even when a sandbox is ready.
- *     Lab is the most expensive (sandbox compute + slower end-to-end) so it
- *     is opt-in; defaulting to it would auto-spend sandbox quota on every
- *     new thread.
- *   - When the repository is not attached, `disabledReasons` still carries an
- *     unlock hint for `library` and `lab` so the UI can render the tooltip
- *     ("disabled modes show a tooltip explaining how to unlock them"). A
- *     mode that is in `disabledReasons` is, by construction, not in
- *     `availableModes`.
+ *   - `defaultMode` is `library` when a repo is attached, `discuss`
+ *     otherwise.
+ *   - When the repository is not attached, `disabledReasons` still carries
+ *     an unlock hint for `library` so the UI can render the tooltip.
+ *   - The Discuss Sandbox grounding axis is the heaviest path (Daytona
+ *     compute + tool steps) so its availability is gated by the same
+ *     (sandbox-lifecycle, cost-cap) matrix the legacy Lab mode used.
+ *     Library grounding adds an artifact existence gate on top of the
+ *     repo gate. The pure resolver names the gates; the runtime layer
+ *     (`workspaceModeEligibility.ts`) loads the inputs.
  *   - The cost-cap gate (`sandboxCostCapGate`) is layered *on top* of the
  *     (repo, sandbox-status) resolution: when the per-user or per-workspace
- *     daily cap is exhausted the resolver removes `lab` from `availableModes`
- *     and surfaces the cap-specific tooltip. Env / rate-limit reads stay at
- *     the *call site*; the resolver only consumes the precomputed gate so it
+ *     daily cap is exhausted the Sandbox grounding axis is closed and the
+ *     cap-specific tooltip is surfaced. Env / rate-limit reads stay at the
+ *     *call site*; the resolver only consumes the precomputed gate so it
  *     remains a pure function (trivially testable, no `process.env` or
  *     Convex ctx coupling).
  */
@@ -47,21 +48,17 @@ export interface ChatModeResolution {
 
 /**
  * Workspace-shell variant of {@link ChatModeResolution}: same vocabulary,
- * but carries the readiness gates the top-level mode switcher needs to
- * decide whether the Library Ask composer can bind to an artifact and
- * whether a Lab session can actually start (vs merely navigate to /lab
- * and provision a sandbox from inside).
+ * but carries the readiness gates the top-level mode switcher and the
+ * Discuss composer need.
  */
 export interface WorkspaceModeResolution {
   /**
    * Modes the user is currently allowed to enter. A mode is in this list
-   * iff the underlying preconditions (repo attached, an artifact exists,
-   * sandbox lifecycle ready, daily cost cap not exceeded) are all satisfied.
+   * iff the underlying preconditions (repo attached) are satisfied.
    */
   availableModes: ReadonlyArray<ChatMode>;
   /**
-   * Mode the URL should land on when the user opens the workspace. Never
-   * `lab` — Lab mode is opt-in to keep cost transparent.
+   * Mode the URL should land on when the user opens the workspace.
    */
   defaultMode: ChatMode;
   /**
@@ -70,22 +67,36 @@ export interface WorkspaceModeResolution {
    * string is present.
    */
   disabledReasons: Partial<Record<ChatMode, string>>;
-  /** Gate Lab session start / Ask thread bind on these. */
-  labReadiness: { canStart: boolean; reason: string | null };
   askReadiness: { canBind: boolean; reason: string | null };
+  /**
+   * Discuss-composer grounding-toggle availability. Each axis carries a
+   * tooltip-quality reason when closed; the sandbox axis also reports
+   * `isActivatable` so the composer can render an Activate CTA on a
+   * closed-but-recoverable gate. Library Mode ignores these — its
+   * grounding is implicit in the mode.
+   */
+  grounding: {
+    library: { available: boolean; reason: string | null };
+    sandbox: { available: boolean; reason: string | null; isActivatable: boolean };
+  };
 }
 
 const DISABLED_REASON_LIBRARY_NO_REPO = "Attach a repository to use Library mode.";
 
-const DISABLED_REASON_LAB_NO_REPO = "Attach a repository and provision a sandbox to use Lab mode.";
-const DISABLED_REASON_LAB_NO_SANDBOX = "Provision a sandbox to use Lab mode.";
-const DISABLED_REASON_LAB_PROVISIONING = "Sandbox is provisioning — Lab mode will be available once it is ready.";
-const DISABLED_REASON_LAB_EXPIRED = "Sandbox expired — provision a new sandbox to use Lab mode.";
-const DISABLED_REASON_LAB_FAILED = "Sandbox provisioning failed — provision a new sandbox to use Lab mode.";
+const GROUNDING_LIBRARY_REASON_NO_REPO = "Attach a repository to ground replies in your design artifacts.";
+const GROUNDING_LIBRARY_REASON_NO_ARTIFACT =
+  "Generate at least one system design artifact to enable Library grounding.";
+
+const GROUNDING_SANDBOX_REASON_NO_REPO = "Attach a repository to ground replies in live source.";
+const GROUNDING_SANDBOX_REASON_NO_SANDBOX = "Provision a sandbox to ground replies in live source.";
+const GROUNDING_SANDBOX_REASON_PROVISIONING =
+  "Sandbox is provisioning — live-source grounding will be available once it is ready.";
+const GROUNDING_SANDBOX_REASON_EXPIRED = "Sandbox expired — provision a new sandbox to use live-source grounding.";
+const GROUNDING_SANDBOX_REASON_FAILED =
+  "Sandbox provisioning failed — provision a new sandbox to use live-source grounding.";
 
 const ASK_REASON_NO_REPO = "Attach a repository and produce at least one artifact before asking a question.";
 const ASK_REASON_NO_ARTIFACT = "Library Ask needs at least one artifact in this workspace.";
-const LAB_READY_REASON_NO_REPO = "Lab requires an attached repository.";
 
 /**
  * Sandbox daily-cost-cap gate. Closed when the per-user OR per-workspace
@@ -143,99 +154,92 @@ export function getDefaultThreadMode(hasAttachedRepo: boolean): ChatMode {
 }
 
 /**
- * Apply the daily-cost-cap gate to an already-resolved
- * `ChatModeResolution`. Idempotent on open gate; on closed gate, removes
- * `lab` from `availableModes` and writes the cap-specific tooltip
- * (overriding any lifecycle-derived tooltip because the cap is the more
- * actionable signal — provisioning a sandbox would not unlock the mode
- * for a viewer who has hit their daily spend ceiling).
- *
- * The `defaultMode` invariant ("default is always one of `availableModes`")
- * is preserved by the upstream resolver: `defaultMode` is never `lab`
- * (lab is opt-in), so removing `lab` from `availableModes` cannot orphan
- * the default.
+ * Per-thread chat-mode resolution. Post-Lab collapse this is a much
+ * simpler shape — Lab is gone as a top-level mode, so only the
+ * `(hasAttachedRepo)` axis matters for which modes are visible. Sandbox
+ * status + cost cap now feed the Sandbox *grounding* axis (see
+ * {@link resolveSandboxGroundingAxis}) rather than a mode availability
+ * decision; this function is kept thin so legacy callers / tests can
+ * still read `(availableModes, defaultMode, disabledReasons)` without
+ * threading the grounding domain through.
  */
-function applySandboxCostCapGate(resolution: ChatModeResolution, gate: SandboxCostCapGate): ChatModeResolution {
-  if (gate.enabled) {
-    return resolution;
-  }
-  return {
-    availableModes: resolution.availableModes.filter((mode) => mode !== "lab"),
-    defaultMode: resolution.defaultMode,
-    disabledReasons: {
-      ...resolution.disabledReasons,
-      lab: gate.tooltip,
-    },
-  };
-}
-
-export function resolveChatModes(
-  hasAttachedRepo: boolean,
-  sandboxStatus: ChatModeSandboxStatus,
-  sandboxCostCapGate: SandboxCostCapGate = OPEN_SANDBOX_COST_CAP_GATE,
-): ChatModeResolution {
-  const baseline = resolveChatModesIgnoringCostCap(hasAttachedRepo, sandboxStatus);
-  return applySandboxCostCapGate(baseline, sandboxCostCapGate);
-}
-
-function resolveChatModesIgnoringCostCap(
-  hasAttachedRepo: boolean,
-  sandboxStatus: ChatModeSandboxStatus,
-): ChatModeResolution {
+export function resolveChatModes(hasAttachedRepo: boolean): ChatModeResolution {
   if (!hasAttachedRepo) {
     return {
       availableModes: ["discuss"],
       defaultMode: getDefaultThreadMode(false),
       disabledReasons: {
         library: DISABLED_REASON_LIBRARY_NO_REPO,
-        lab: DISABLED_REASON_LAB_NO_REPO,
       },
     };
   }
+  return {
+    availableModes: ["discuss", "library"],
+    defaultMode: getDefaultThreadMode(true),
+    disabledReasons: {},
+  };
+}
 
+/**
+ * Compute the Sandbox grounding axis from the same (sandbox lifecycle,
+ * cost cap) matrix the legacy `lab` mode used. The composer renders the
+ * `Sandbox` toggle as disabled when this returns `available: false`,
+ * with `reason` as the tooltip and `isActivatable: true` flagging the
+ * "no sandbox provisioned yet — click to start one" sub-state.
+ */
+function resolveSandboxGroundingAxis(
+  hasAttachedRepo: boolean,
+  sandboxStatus: ChatModeSandboxStatus,
+  sandboxCostCapGate: SandboxCostCapGate,
+): { available: boolean; reason: string | null; isActivatable: boolean } {
+  if (!hasAttachedRepo) {
+    return { available: false, reason: GROUNDING_SANDBOX_REASON_NO_REPO, isActivatable: false };
+  }
+  if (!sandboxCostCapGate.enabled) {
+    return { available: false, reason: sandboxCostCapGate.tooltip, isActivatable: false };
+  }
   switch (sandboxStatus) {
     case "ready":
-      return {
-        availableModes: ["discuss", "library", "lab"],
-        defaultMode: getDefaultThreadMode(true),
-        disabledReasons: {},
-      };
+      return { available: true, reason: null, isActivatable: false };
     case "provisioning":
-      return {
-        availableModes: ["discuss", "library"],
-        defaultMode: getDefaultThreadMode(true),
-        disabledReasons: { lab: DISABLED_REASON_LAB_PROVISIONING },
-      };
+      return { available: false, reason: GROUNDING_SANDBOX_REASON_PROVISIONING, isActivatable: false };
     case "expired":
-      return {
-        availableModes: ["discuss", "library"],
-        defaultMode: getDefaultThreadMode(true),
-        disabledReasons: { lab: DISABLED_REASON_LAB_EXPIRED },
-      };
+      return { available: false, reason: GROUNDING_SANDBOX_REASON_EXPIRED, isActivatable: true };
     case "failed":
-      return {
-        availableModes: ["discuss", "library"],
-        defaultMode: getDefaultThreadMode(true),
-        disabledReasons: { lab: DISABLED_REASON_LAB_FAILED },
-      };
+      return { available: false, reason: GROUNDING_SANDBOX_REASON_FAILED, isActivatable: true };
     case "none":
-      return {
-        availableModes: ["discuss", "library"],
-        defaultMode: getDefaultThreadMode(true),
-        disabledReasons: { lab: DISABLED_REASON_LAB_NO_SANDBOX },
-      };
+      return { available: false, reason: GROUNDING_SANDBOX_REASON_NO_SANDBOX, isActivatable: true };
   }
 }
 
 /**
+ * Compute the Library grounding axis. Library grounding requires both an
+ * attached repository (to scope retrieval) AND at least one artifact (so
+ * the RAG retriever has something to fetch).
+ */
+function resolveLibraryGroundingAxis(
+  hasAttachedRepo: boolean,
+  hasAtLeastOneArtifact: boolean,
+): { available: boolean; reason: string | null } {
+  if (!hasAttachedRepo) {
+    return { available: false, reason: GROUNDING_LIBRARY_REASON_NO_REPO };
+  }
+  if (!hasAtLeastOneArtifact) {
+    return { available: false, reason: GROUNDING_LIBRARY_REASON_NO_ARTIFACT };
+  }
+  return { available: true, reason: null };
+}
+
+/**
  * Translate the (repo, artifact, sandbox, gates) tuple into the
- * `(availableModes, defaultMode, disabledReasons, askReadiness, labReadiness)`
+ * `(availableModes, defaultMode, disabledReasons, askReadiness, grounding)`
  * quintuple the workspace shell consumes.
  *
  * Independent of {@link resolveChatModes}: the chat-mode resolver answers
  * the per-thread mode-selector question; this one answers "which top-level
- * mode can the user enter from the workspace shell". Both stay pure —
- * no `process.env`, no Convex `ctx`.
+ * mode can the user enter from the workspace shell AND what does the
+ * Discuss composer's grounding toggle bar look like right now". Both
+ * stay pure — no `process.env`, no Convex `ctx`.
  */
 export function resolveWorkspaceModes(
   hasAttachedRepo: boolean,
@@ -255,39 +259,17 @@ export function resolveWorkspaceModes(
     available.add("library");
   }
 
-  // Lab *navigation* only needs an attached repository — the sidebar Lab
-  // button must stay clickable so the user can open Lab and provision a
-  // sandbox from inside it (the sandbox may not exist yet at click time).
-  // Whether a lab session can actually *run* — sandbox `ready`, cost cap
-  // open — is the separate `labReadiness` axis below; the write path
-  // (`assertWorkspaceModeEligible`) gates on that. This mirrors how Library
-  // navigation is decoupled from `askReadiness`.
-  if (hasAttachedRepo) {
-    available.add("lab");
-  } else {
-    disabledReasons.lab = DISABLED_REASON_LAB_NO_REPO;
-  }
-
   const askReadiness: WorkspaceModeResolution["askReadiness"] = !hasAttachedRepo
     ? { canBind: false, reason: ASK_REASON_NO_REPO }
     : !hasAtLeastOneArtifact
       ? { canBind: false, reason: ASK_REASON_NO_ARTIFACT }
       : { canBind: true, reason: null };
 
-  // Defer the (cost-cap + sandbox-lifecycle) gate to `resolveChatModes` so
-  // the per-thread chat-mode resolver and this workspace-mode resolver
-  // agree on whether Lab is actually runnable right now. Computed at the
-  // point of use so the dependency is obvious.
-  const chatResolution = resolveChatModes(hasAttachedRepo, sandboxStatus, sandboxCostCapGate);
-  const labReadiness: WorkspaceModeResolution["labReadiness"] = !hasAttachedRepo
-    ? { canStart: false, reason: LAB_READY_REASON_NO_REPO }
-    : sandboxStatus === "ready" && chatResolution.availableModes.includes("lab")
-      ? { canStart: true, reason: null }
-      : { canStart: false, reason: chatResolution.disabledReasons.lab ?? DISABLED_REASON_LAB_NO_SANDBOX };
+  const grounding: WorkspaceModeResolution["grounding"] = {
+    library: resolveLibraryGroundingAxis(hasAttachedRepo, hasAtLeastOneArtifact),
+    sandbox: resolveSandboxGroundingAxis(hasAttachedRepo, sandboxStatus, sandboxCostCapGate),
+  };
 
-  // Pick the URL-landing default. The function is intentionally
-  // independent of `available` so it never lands the user on a disabled
-  // mode (Lab is opt-in).
   const defaultMode = getDefaultThreadMode(hasAttachedRepo);
 
   return {
@@ -295,15 +277,17 @@ export function resolveWorkspaceModes(
     defaultMode,
     disabledReasons,
     askReadiness,
-    labReadiness,
+    grounding,
   };
 }
 
 export {
   DISABLED_REASON_LIBRARY_NO_REPO,
-  DISABLED_REASON_LAB_NO_REPO,
-  DISABLED_REASON_LAB_NO_SANDBOX,
-  DISABLED_REASON_LAB_PROVISIONING,
-  DISABLED_REASON_LAB_EXPIRED,
-  DISABLED_REASON_LAB_FAILED,
+  GROUNDING_LIBRARY_REASON_NO_REPO,
+  GROUNDING_LIBRARY_REASON_NO_ARTIFACT,
+  GROUNDING_SANDBOX_REASON_NO_REPO,
+  GROUNDING_SANDBOX_REASON_NO_SANDBOX,
+  GROUNDING_SANDBOX_REASON_PROVISIONING,
+  GROUNDING_SANDBOX_REASON_EXPIRED,
+  GROUNDING_SANDBOX_REASON_FAILED,
 };

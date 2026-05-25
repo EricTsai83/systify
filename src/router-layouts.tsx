@@ -115,8 +115,8 @@ export function ProtectedLayout() {
 
   // SidebarProvider lives here, above the route Outlet, so it stays mounted
   // across protected-route navigation. With it inside each page, navigating
-  // from a page that renders Sidebar (/chat, /discuss, /library, /lab) into
-  // one that doesn't (/archive, /resources) unmounted the provider mid-open
+  // from a page that renders Sidebar (/chat, /discuss, /library) into one
+  // that doesn't (/archive, /resources) unmounted the provider mid-open
   // and stranded Radix's mobile-Sheet overlay + scroll lock on the
   // destination page. Hoisting it lets the pathname effect inside the
   // provider observe the route change and close the Sheet cleanly.

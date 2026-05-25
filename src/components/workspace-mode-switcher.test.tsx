@@ -23,12 +23,14 @@ afterEach(() => {
 });
 
 describe("WorkspaceModeSwitcher", () => {
-  test("renders all three service modes", () => {
+  test("renders both surviving service modes", () => {
+    // Post-Lab collapse: Lab is no longer a top-level mode. The switcher
+    // surfaces only the two surviving modes.
     render(<WorkspaceModeSwitcher workspaceId={"workspace_1" as WorkspaceId} mode="discuss" availability={null} />);
 
     expect(screen.getByRole("button", { name: "Discuss" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Library" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Lab" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Lab" })).not.toBeInTheDocument();
   });
 
   test("marks active mode with aria-pressed=true", () => {
@@ -47,7 +49,7 @@ describe("WorkspaceModeSwitcher", () => {
         workspaceId={"workspace_1" as WorkspaceId}
         mode="discuss"
         availability={{
-          availableModes: ["discuss", "library", "lab"],
+          availableModes: ["discuss", "library"],
           disabledReasons: {},
         }}
       />,
@@ -70,7 +72,6 @@ describe("WorkspaceModeSwitcher", () => {
           availableModes: ["discuss"],
           disabledReasons: {
             library: { message: "Attach a repo to unlock" },
-            lab: { message: "Attach a repo to unlock" },
           },
         }}
       />,

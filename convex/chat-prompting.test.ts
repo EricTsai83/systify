@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { buildCitationMap, buildSystemPrompt, buildUserPrompt } from "./chat/prompting";
+import { buildCitationMap, buildDiscussSystemPrompt, buildSystemPrompt, buildUserPrompt } from "./chat/prompting";
 import type { ChatMode } from "./chatModeResolver";
 import type { Id } from "./_generated/dataModel";
 import type { ReplyContext } from "./chat/context";
@@ -19,6 +19,8 @@ function makeContext(overrides: Partial<ReplyContext> & { artifacts?: ReplyConte
   return {
     ownerTokenIdentifier: "owner|test",
     mode: "library",
+    groundLibrary: false,
+    groundSandbox: false,
     artifacts: [],
     chunks: [],
     messages: [],
@@ -31,34 +33,27 @@ function makeContext(overrides: Partial<ReplyContext> & { artifacts?: ReplyConte
 }
 
 /**
- * Per-mode system-prompt invariants.
+ * Per-mode + per-grounding-flag system-prompt invariants.
  *
  * The point of these tests is *not* to pin down the exact wording — future
- * iterations of these prompts will keep adding sections (a citation contract,
- * a step budget, a tool-usage section once tools are wired). The wording
- * will drift; what must not drift are the mode-distinguishing properties
- * that make the three prompts a useful design contract:
+ * iterations of these prompts will keep adding sections. The wording will
+ * drift; what must not drift are the mode-distinguishing properties that
+ * make the prompts a useful design contract:
  *
- *   - `discuss` is training-only — it should not present itself as an
+ *   - Ungrounded Discuss is training-only — it should not present itself as an
  *     analyst that has access to "the repository", and it should bounce
- *     code-specific questions to the other two modes.
- *   - `docs` is artifact-grounded — it must tell the model that artifacts
+ *     code-specific questions to the grounding toggles.
+ *   - Library is artifact-grounded — it must tell the model that artifacts
  *     are the single source of truth.
- *   - `sandbox` is "no tools in this version" — it must tell the model it
- *     cannot literally inspect the source tree, without promising specific
- *     future capability.
- *
- * Two cross-cutting style invariants are also enforced:
- *
- *   - Prompts must not embed UI display labels (drift safety).
- *   - The sandbox prompt must not promise future product capability (no
- *     roadmap leak via the model).
- *
- * Each prompt must also be a non-empty string and the three must be
- * distinct, otherwise `buildSystemPrompt` is effectively a no-op.
+ *   - Discuss with `groundSandbox: true` must wire the read_file / list_dir /
+ *     run_shell tools and the `[path:line]` citation contract.
+ *   - Discuss with `groundLibrary: true` shares the `[A#]` artifact citation
+ *     contract with Library mode (via the shared ARTIFACT_CITATION_CONTRACT
+ *     constant), and when both grounding axes are on a combined-citation
+ *     rule disambiguates the two citation forms.
  */
 describe("buildSystemPrompt", () => {
-  test("discuss prompt does not pretend to have access to a repository", () => {
+  test("ungrounded discuss prompt does not pretend to have access to a repository", () => {
     const prompt = buildSystemPrompt("discuss");
 
     // Done criterion: the discuss prompt must not assume a repository
@@ -74,133 +69,85 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toMatch(/(?:never|do not|do not refer|do not mention).*your codebase/i);
   });
 
-  test("docs prompt makes design artifacts the sole source of truth", () => {
+  test("library prompt makes design artifacts the sole source of truth", () => {
     const prompt = buildSystemPrompt("library");
 
     expect(prompt.toLowerCase()).toContain("artifact");
     // "Sole source of truth" framing is what stops the model from mixing
-    // in training-data guesses; this is the contract docs mode promises
+    // in training-data guesses; this is the contract library mode promises
     // the user.
     expect(prompt.toLowerCase()).toMatch(/sole source of truth|only source/);
   });
 
-  test("sandbox prompt names the read_file, list_dir, and run_shell tools (Plan 04 + Plan 08)", () => {
-    const prompt = buildSystemPrompt("lab");
+  test("sandbox-grounded discuss prompt names the read_file, list_dir, and run_shell tools", () => {
+    const prompt = buildSystemPrompt("discuss", { groundSandbox: true });
 
-    // Plan 04 wired `read_file` / `list_dir`; Plan 08 added `run_shell`.
-    // The system prompt must name all three so the model picks them up —
-    // the AI SDK exposes the tool descriptions but the prompt's "USE THE
-    // TOOLS" framing is what actually gets the model to *prefer* tool
-    // calls over guessing from the artifact summaries.
     expect(prompt).toContain("read_file");
     expect(prompt).toContain("list_dir");
     expect(prompt).toContain("run_shell");
   });
 
-  test("sandbox prompt frames run_shell as read-only inspection (Plan 08)", () => {
-    const prompt = buildSystemPrompt("lab");
+  test("sandbox-grounded discuss prompt frames run_shell as read-only inspection", () => {
+    const prompt = buildSystemPrompt("discuss", { groundSandbox: true });
 
-    // Plan 08's success criterion: "stdout 走 redaction" + "LLM 不會試圖
-    // 跑外網（透過 system prompt 強調 + workdir 鎖在 repoPath 內)". The
-    // prompt is the first line of defense — the deny list catches what
-    // the LLM tries anyway, but if the LLM internalises "read-only
-    // inspection only" we save Daytona round trips on guaranteed-bad
-    // calls.
     expect(prompt.toLowerCase()).toMatch(/read-only/);
-    // At least one of the canonical inspection tools must be exemplified
-    // so the model has concrete patterns to compose. We pin `grep` /
-    // `find` / `git log` since they're the plan's documented examples;
-    // failing on the *whole set* would over-couple to wording, but at
-    // least one of them is the floor.
     expect(prompt).toMatch(/grep|find|git log/i);
   });
 
-  test("sandbox prompt forbids network egress so the LLM does not even attempt curl (Plan 08)", () => {
-    const prompt = buildSystemPrompt("lab");
-
-    // The post-clone `networkBlockAll: true` iptables rule
-    // (`DAYTONA_POST_CLONE_BLOCK_NETWORK`) is the network-layer
-    // enforcement; the prompt is the cooperative guard. Without an
-    // explicit "no network egress" instruction, the LLM cheerfully
-    // tries `curl example.com` and burns a step on a guaranteed
-    // failure. Pinning the prompt-layer wording here keeps the
-    // contract auditable.
+  test("sandbox-grounded discuss prompt forbids network egress so the LLM does not even attempt curl", () => {
+    const prompt = buildSystemPrompt("discuss", { groundSandbox: true });
     expect(prompt.toLowerCase()).toMatch(/network|egress|do not.*curl|outbound/);
   });
 
-  test("sandbox prompt teaches the command_blocked / command_timeout error codes (Plan 08)", () => {
-    const prompt = buildSystemPrompt("lab");
-
-    // Layered with the existing `path_outside_repo` / `invalid_path`
-    // assertion: the model must learn that the deny list and the
-    // timeout produce specific, named envelopes so it can adapt
-    // (rephrase, narrow input) instead of looping on the same shape.
+  test("sandbox-grounded discuss prompt teaches the command_blocked / command_timeout error codes", () => {
+    const prompt = buildSystemPrompt("discuss", { groundSandbox: true });
     expect(prompt).toContain("command_blocked");
     expect(prompt).toContain("command_timeout");
   });
 
-  test("sandbox prompt teaches the structured error envelope shape", () => {
-    const prompt = buildSystemPrompt("lab");
+  test("sandbox-grounded discuss prompt teaches the structured error envelope shape", () => {
+    const prompt = buildSystemPrompt("discuss", { groundSandbox: true });
 
-    // Tool errors are *values*, not throws (see `sandboxTools.ts`). The
-    // model needs to know an `{ ok: false, errorCode, message }` envelope
-    // is signal — not a fatal failure to retry blindly. Without this hint
-    // the model often loops on the same bad path or surrenders.
     expect(prompt).toContain("errorCode");
-    // Specific error codes the validator emits should appear so the
-    // model can react with named handling.
     expect(prompt).toMatch(/path_outside_repo|invalid_path/);
   });
 
-  test("sandbox prompt enforces a per-reply citation contract pointing at file:line", () => {
-    const prompt = buildSystemPrompt("lab");
+  test("sandbox-grounded discuss prompt enforces a per-reply citation contract pointing at file:line", () => {
+    const prompt = buildSystemPrompt("discuss", { groundSandbox: true });
 
-    // The model now knows exact line numbers (it can `read_file` to find
-    // them), so the citation contract is stricter than docs mode's
-    // artifact-level `[A#]` — every claim must point at `[path:line-line]`.
     expect(prompt).toMatch(/\[path[^\]]*line[^\]]*\]/i);
-    // The "Unverified:" prefix is the bargain we make with the model when
-    // a claim cannot be backed by a tool result; tested separately so
-    // the contract isn't accidentally dropped.
     expect(prompt).toContain("Unverified:");
   });
 
-  test("sandbox prompt mentions the per-reply tool-call budget so the model knows when to stop", () => {
-    const prompt = buildSystemPrompt("lab");
+  test("sandbox-grounded discuss prompt mentions the per-reply tool-call budget so the model knows when to stop", () => {
+    const prompt = buildSystemPrompt("discuss", { groundSandbox: true });
 
     // The literal `8` mirrors `SANDBOX_STEP_BUDGET` in `generation.ts`.
     // The two values must agree — if the budget changes, this assertion
     // will catch the prompt drift that would otherwise silently mislead
-    // the model. (Plan 11 turns this into a per-step injected counter.)
+    // the model.
     expect(prompt).toMatch(/at most 8/);
   });
 
-  test("sandbox prompt does not promise future product capability (no roadmap leak)", () => {
-    const prompt = buildSystemPrompt("lab");
+  test("sandbox-grounded discuss prompt does not promise future product capability (no roadmap leak)", () => {
+    const prompt = buildSystemPrompt("discuss", { groundSandbox: true });
 
     // System prompts ship to users today via the model's responses; they
-    // are not the place to promise future product capability. Names and
-    // timelines for upcoming tools belong in the plan that wires them,
-    // not in a v1 prompt — promised tools that get renamed or delayed
-    // would silently mislead the user via the model.
+    // are not the place to promise future product capability.
     expect(prompt).not.toMatch(/upcoming|future|will be given|will have|next version|coming soon/i);
   });
 
   test("prompts do not embed UI display labels (drift safety)", () => {
-    // The chat-panel `MODE_CATALOG` is the single source of truth for the
-    // mode display labels users see. Embedding those labels in system
-    // prompts would couple LLM behavior to UI copy: renaming "Design
-    // Docs" → e.g. "Source Docs" in `MODE_CATALOG` would silently change
-    // what the model recommends without a code review on this file.
-    // Prompts must refer to other modes by their *capability* (e.g. "an
-    // artifact-grounded mode") rather than by UI label.
+    // Embedding UI labels in system prompts would couple LLM behavior to UI
+    // copy: renaming a mode label in the UI would silently change what the
+    // model recommends without a code review on this file.
     //
     // We exclude "Sandbox" because it is both a UI label and standard
     // engineering vocabulary; banning the substring would forbid
     // legitimate descriptive uses ("a live-sandbox mode") that are not
     // UI-coupled.
     const uiOnlyLabels = ["General Chat", "Design Docs"];
-    const modes: ChatMode[] = ["discuss", "library", "lab"];
+    const modes: ChatMode[] = ["discuss", "library"];
     for (const mode of modes) {
       const prompt = buildSystemPrompt(mode);
       for (const label of uiOnlyLabels) {
@@ -210,7 +157,7 @@ describe("buildSystemPrompt", () => {
   });
 
   test("each mode receives a distinct, non-empty prompt", () => {
-    const modes: ChatMode[] = ["discuss", "library", "lab"];
+    const modes: ChatMode[] = ["discuss", "library"];
     const prompts = modes.map((mode) => buildSystemPrompt(mode));
 
     for (const prompt of prompts) {
@@ -218,19 +165,13 @@ describe("buildSystemPrompt", () => {
       expect(prompt.length).toBeGreaterThan(0);
     }
 
-    // If two modes ever return the same prompt the entire mode-aware
-    // refactor is silently broken — the user sees three pills but the
-    // model sees one prompt. This guard keeps that regression visible.
+    // If two modes return the same prompt the mode-aware refactor is
+    // silently broken — the user sees distinct pills but the model sees
+    // one prompt. This guard keeps that regression visible.
     expect(new Set(prompts).size).toBe(modes.length);
   });
 
-  /**
-   * Plan 02 docs-mode citation contract. The system prompt must now
-   * actively instruct the model to cite each claim with `[A#]`. Without
-   * this contract the model has no incentive to emit the tokens that
-   * Plan 02's frontend rewrites into clickable links.
-   */
-  test("docs prompt teaches the [A#] citation contract", () => {
+  test("library prompt teaches the [A#] citation contract", () => {
     const prompt = buildSystemPrompt("library");
 
     // The literal `[A#]` (or an `[A1]` / `[A2]` example) must appear
@@ -243,6 +184,100 @@ describe("buildSystemPrompt", () => {
     // mentioning the artifacts), otherwise the model can ramble about
     // the artifacts without ever attaching a token.
     expect(prompt.toLowerCase()).toMatch(/cite/);
+  });
+});
+
+/**
+ * Post-Lab-collapse: `buildDiscussSystemPrompt` composes the prompt from
+ * grounding flags. All four (groundLibrary, groundSandbox) combinations
+ * must produce a coherent prompt; the combined-citation rule only appears
+ * when *both* axes are on.
+ */
+describe("buildDiscussSystemPrompt composability", () => {
+  test("both flags off: ungrounded discuss baseline (no citation contracts)", () => {
+    const prompt = buildDiscussSystemPrompt({ groundLibrary: false, groundSandbox: false });
+
+    // Should match what `buildSystemPrompt("discuss")` returns (the default
+    // composes both flags as false).
+    expect(prompt).toBe(buildSystemPrompt("discuss"));
+
+    // No artifact contract, no sandbox tool contract, no combined citation rule.
+    expect(prompt).not.toMatch(/\[A#\]/);
+    expect(prompt).not.toContain("read_file");
+    expect(prompt).not.toMatch(/\[path[^\]]*line[^\]]*\]/i);
+  });
+
+  test("library only: composes the artifact citation contract without the sandbox tool block", () => {
+    const prompt = buildDiscussSystemPrompt({ groundLibrary: true, groundSandbox: false });
+
+    // The artifact citation contract appears.
+    expect(prompt).toMatch(/\[A#\]|\[A1\]/);
+    expect(prompt.toLowerCase()).toContain("artifact");
+
+    // The sandbox tool contract does NOT appear.
+    expect(prompt).not.toContain("read_file");
+    expect(prompt).not.toContain("list_dir");
+    expect(prompt).not.toContain("run_shell");
+  });
+
+  test("sandbox only: composes the sandbox tool contract without the artifact citation contract", () => {
+    const prompt = buildDiscussSystemPrompt({ groundLibrary: false, groundSandbox: true });
+
+    // The sandbox tool contract appears.
+    expect(prompt).toContain("read_file");
+    expect(prompt).toContain("list_dir");
+    expect(prompt).toContain("run_shell");
+    expect(prompt).toMatch(/\[path[^\]]*line[^\]]*\]/i);
+
+    // No artifact citation contract.
+    expect(prompt).not.toMatch(/\[A#\]/);
+  });
+
+  test("both flags on: composes both contracts plus a combined-citation rule", () => {
+    const prompt = buildDiscussSystemPrompt({ groundLibrary: true, groundSandbox: true });
+
+    // Both contracts appear.
+    expect(prompt).toMatch(/\[A#\]|\[A1\]/);
+    expect(prompt).toContain("read_file");
+    expect(prompt).toMatch(/\[path[^\]]*line[^\]]*\]/i);
+
+    // The combined-citation rule is the only block that fires only when
+    // both grounding axes are on — it disambiguates the two citation forms
+    // and tells the model how to handle artifact-vs-live disagreement.
+    expect(prompt.toLowerCase()).toMatch(/live|source of truth|disagree|divergence/);
+  });
+
+  test("the combined-citation rule appears only when both axes are on", () => {
+    const both = buildDiscussSystemPrompt({ groundLibrary: true, groundSandbox: true });
+    const libraryOnly = buildDiscussSystemPrompt({ groundLibrary: true, groundSandbox: false });
+    const sandboxOnly = buildDiscussSystemPrompt({ groundLibrary: false, groundSandbox: true });
+
+    // Cheap test: the combined prompt should be strictly longer than either
+    // single-axis prompt because it appends the combined-citation rule on
+    // top of both single-axis contracts.
+    expect(both.length).toBeGreaterThan(libraryOnly.length);
+    expect(both.length).toBeGreaterThan(sandboxOnly.length);
+
+    // Composition contract: the both-on prompt is the union of both
+    // contracts plus a divergence rule. The single-axis prompts should
+    // NOT mention "disagree" / "divergence" / live-vs-artifact wording.
+    expect(libraryOnly.toLowerCase()).not.toMatch(/disagree|divergence/);
+    expect(sandboxOnly.toLowerCase()).not.toMatch(/disagree|divergence/);
+  });
+
+  test("buildSystemPrompt('discuss', flags) is a thin wrapper around buildDiscussSystemPrompt(flags)", () => {
+    // Two calling conventions, one underlying composition. Anyone updating
+    // the dispatch in `buildSystemPrompt` must not silently break the
+    // per-flag composition.
+    const flagsCases: Array<{ groundLibrary: boolean; groundSandbox: boolean }> = [
+      { groundLibrary: false, groundSandbox: false },
+      { groundLibrary: true, groundSandbox: false },
+      { groundLibrary: false, groundSandbox: true },
+      { groundLibrary: true, groundSandbox: true },
+    ];
+    for (const flags of flagsCases) {
+      expect(buildSystemPrompt("discuss", flags)).toBe(buildDiscussSystemPrompt(flags));
+    }
   });
 });
 

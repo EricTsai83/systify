@@ -2,13 +2,15 @@
 
 Every answer points to its source.
 
-Systify is an open source repository analysis app for understanding unfamiliar codebases through grounded, repository-specific context. A user signs in with WorkOS, connects a GitHub App installation, imports a repository's metadata, README, and key files directly through the GitHub API into Convex, and then explores it through two AI surfaces. Daytona sandboxes are provisioned lazily — only when the user enters `sandbox` chat mode or kicks off `Generate System Design` — so Discuss and Library work without ever paying sandbox cost:
+Systify is an open source repository analysis app for understanding unfamiliar codebases through grounded, repository-specific context. A user signs in with WorkOS, connects a GitHub App installation, imports a repository's metadata, README, and key files directly through the GitHub API into Convex, and then explores it through two AI surfaces. Daytona sandboxes are provisioned lazily — only when the user enables the Discuss-mode Sandbox grounding toggle or kicks off `Generate System Design` — so the rest of the app works without ever paying sandbox cost:
 
-- **Chat** with three selectable modes that scale from cheap to grounded:
-  - `discuss` (UI label "General Chat") — training-only, no repo context; for shaping a question before grounding
-  - `docs` (UI label "Design Docs") — answers grounded in design artifacts (ADRs, diagrams, deep analyses)
-  - `sandbox` (UI label "Sandbox") — answers grounded in the live sandbox source tree
-- `Generate System Design`: a sandbox-backed background job that produces a starter set of System Design artifacts (manifest, README summary, architecture / data model / API / deployment / security / operations overviews) in the Library, which later chat replies in `docs` and `sandbox` modes can cite
+- **Chat** with two top-level modes:
+  - `discuss` (UI label "Discuss") — free-form chat with two independent per-message grounding toggles the composer surfaces:
+    - **Library** grounds the reply in your design artifacts (ADRs, diagrams, deep analyses) with `[A#]` citations.
+    - **Sandbox** grounds the reply in the live sandbox source tree with `[path:line]` citations and read-only tool calls.
+    - Both off → training-only chat; both on → combined citation contract.
+  - `library` (UI label "Library") — artifact reader with the always-visible Ask panel for artifact-grounded questions.
+- `Generate System Design`: a sandbox-backed background job that produces a starter set of System Design artifacts (README summary, architecture / data model / API / deployment / security / operations overviews) in the Library, which later chat replies can cite
 
 The app uses a React frontend and a Convex backend. Convex owns the database, backend functions, background jobs, cron work, and HTTP endpoints, so there is no separate Express or Nest server in this repo.
 

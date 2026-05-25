@@ -1,7 +1,6 @@
 import { isValidElement, memo, useMemo, type ReactNode } from "react";
 import type { AllowedTags, Components } from "streamdown";
 import type { Doc } from "../../convex/_generated/dataModel";
-import { MODE_LABELS } from "@/components/chat-modes";
 import { ToolCallTrace } from "@/components/tool-call-trace";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -9,6 +8,41 @@ import { Markdown } from "@/components/markdown";
 import { cn } from "@/lib/utils";
 import { CITATION_TOKEN_REGEX, prepareAssistantMarkdown } from "@/lib/assistant-markdown";
 import type { ActiveMessageStream, ArtifactId } from "@/lib/types";
+
+/**
+ * Derive the grounding chip label from a persisted assistant message.
+ *
+ * Returns one of:
+ *   - `"Library + Sandbox"` — both grounding flags on
+ *   - `"Library"` — only library grounding
+ *   - `"Sandbox"` — only sandbox grounding
+ *   - `"Library"` — Library-mode messages (mode === "library")
+ *   - `null` — ungrounded Discuss replies and user messages
+ *
+ * Library-mode rows are tagged simply as "Library" — the legacy
+ * `MODE_LABELS` lookup is folded in here so the message bubble does not
+ * need to know about the mode/grounding split.
+ */
+function deriveGroundingChip(message: Doc<"messages">): string | null {
+  if (message.role !== "assistant") {
+    return null;
+  }
+  if (message.mode === "library") {
+    return "Library";
+  }
+  const groundLibrary = message.groundLibrary === true;
+  const groundSandbox = message.groundSandbox === true;
+  if (groundLibrary && groundSandbox) {
+    return "Library + Sandbox";
+  }
+  if (groundLibrary) {
+    return "Library";
+  }
+  if (groundSandbox) {
+    return "Sandbox";
+  }
+  return null;
+}
 
 /**
  * Custom tags the assistant markdown pass keeps through streamdown's
@@ -47,12 +81,13 @@ export const MessageBubble = memo(function MessageBubble({
     isAssistant && activeMessageStream?.assistantMessageId === message._id
       ? activeMessageStream.content || message.content
       : message.content;
-  // Plan 02: assistant messages show a small mode chip so the user can tell
-  // which mode produced the answer (and trace surprising replies back to a
-  // mode mismatch). User messages still carry `mode` in the schema, but the
-  // sender already knows what mode they were in — the chip would just be
-  // visual noise on their own bubble.
-  const modeLabel = isAssistant ? MODE_LABELS[message.mode] : null;
+  // Assistant messages show a small grounding chip so the user can tell
+  // which grounding axes produced the answer (and trace surprising
+  // replies back to a wrong toggle). User messages still carry the
+  // grounding flags in the schema, but the sender already knows what
+  // they asked for — the chip would just be visual noise on their own
+  // bubble.
+  const groundingChip = deriveGroundingChip(message);
   // `[A#]` rewrite: only assistant content is rewritten because user input
   // never contains real citation tokens (and rewriting it would let a user
   // accidentally render a "fake" citation by typing `[A1]`).
@@ -118,13 +153,13 @@ export const MessageBubble = memo(function MessageBubble({
       <div className="mb-1 flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{message.role}</p>
-          {modeLabel ? (
+          {groundingChip ? (
             <Badge
               variant="muted"
               className="border-transparent px-1.5 py-0 text-[10px] font-medium uppercase tracking-wider"
-              data-testid="message-mode-badge"
+              data-testid="message-grounding-badge"
             >
-              {modeLabel}
+              {groundingChip}
             </Badge>
           ) : null}
         </div>

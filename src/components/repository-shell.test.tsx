@@ -43,10 +43,11 @@ vi.mock("react-router-dom", () => ({
 }));
 
 // `useChatMode` is mocked at the hook level so tests can dictate the
-// active service mode without depending on URL-shape mocks. The shell now
-// gates the artifact panel surface on `mode !== "discuss"`, so the
-// suite defaults to `lab` to keep the legacy "ready state" artifact-toggle
-// assertions intact; the dedicated discuss test below overrides it.
+// active service mode without depending on URL-shape mocks. Post-Lab
+// collapse: the shell gates the artifact panel surface on `mode === "library"`
+// (or Discuss with an attached repo). The suite defaults to `library` to
+// keep the legacy "ready state" artifact-toggle assertions intact; the
+// dedicated discuss test below overrides it.
 vi.mock("@/hooks/use-service-mode", () => ({
   useChatMode: useChatModeMock,
 }));
@@ -169,6 +170,7 @@ vi.mock("@/components/ui/dialog", () => ({
   DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DialogFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }));
 
 vi.mock("@/components/ui/skeleton", () => ({
@@ -286,16 +288,19 @@ beforeEach(() => {
   useQueryMock.mockReset();
   useChatModeMock.mockReset();
   useChatModeMock.mockReturnValue({
-    mode: "lab",
+    mode: "library",
     availability: undefined,
     placeholderAvailability: {
-      availableModes: ["discuss", "lab"],
-      defaultMode: "lab",
+      availableModes: ["discuss", "library"],
+      defaultMode: "library",
       disabledReasons: {},
       hasAttachedRepo: true,
       hasAtLeastOneArtifact: false,
       askReadiness: { canBind: false, reason: null },
-      labReadiness: { canStart: true, reason: null },
+      grounding: {
+        library: { available: false, reason: null },
+        sandbox: { available: false, reason: null, isActivatable: false },
+      },
     },
   });
   useThreadCapabilitiesMock.mockReset();
@@ -373,7 +378,6 @@ beforeEach(() => {
           hasAttachedRepo: false,
           hasAtLeastOneArtifact: false,
           askReadiness: { canBind: false, reason: null },
-          labReadiness: { canStart: false, reason: null },
         };
       default:
         return undefined;
@@ -506,7 +510,6 @@ describe("RepositoryShell artifact toggle behavior", () => {
         hasAttachedRepo: true,
         hasAtLeastOneArtifact: false,
         askReadiness: { canBind: false, reason: null },
-        labReadiness: { canStart: false, reason: null },
       },
     });
     repositoriesResult = [makeRepository()];
@@ -540,7 +543,6 @@ describe("RepositoryShell artifact toggle behavior", () => {
         hasAttachedRepo: true,
         hasAtLeastOneArtifact: false,
         askReadiness: { canBind: false, reason: null },
-        labReadiness: { canStart: false, reason: null },
       },
       placeholderAvailability: {
         availableModes: ["discuss"],
@@ -549,7 +551,6 @@ describe("RepositoryShell artifact toggle behavior", () => {
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
         askReadiness: { canBind: false, reason: null },
-        labReadiness: { canStart: false, reason: null },
       },
     });
     useThreadCapabilitiesMock.mockReturnValue({
@@ -570,51 +571,6 @@ describe("RepositoryShell artifact toggle behavior", () => {
     render(<RepositoryShell urlWorkspaceId={workspaceId} urlThreadId={"thread_discuss" as ThreadId} />);
 
     expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-chat-mode", "discuss");
-  });
-
-  test("derives chatMode from the URL segment for a lab thread URL", () => {
-    // Symmetric to the discuss case above: `/w/:wid/lab/:tid` must
-    // resolve chatMode to "lab" even though `capabilities.defaultMode`
-    // is "library" for any repo-attached workspace.
-    useChatModeMock.mockReturnValue({
-      mode: "lab",
-      availability: {
-        availableModes: ["discuss", "library", "lab"] as const,
-        defaultMode: "library" as const,
-        disabledReasons: {},
-        hasAttachedRepo: true,
-        hasAtLeastOneArtifact: true,
-        askReadiness: { canBind: true, reason: null },
-        labReadiness: { canStart: true, reason: null },
-      },
-      placeholderAvailability: {
-        availableModes: ["discuss"],
-        defaultMode: "discuss",
-        disabledReasons: {},
-        hasAttachedRepo: false,
-        hasAtLeastOneArtifact: false,
-        askReadiness: { canBind: false, reason: null },
-        labReadiness: { canStart: false, reason: null },
-      },
-    });
-    useThreadCapabilitiesMock.mockReturnValue({
-      availableModes: ["discuss", "library", "lab"],
-      defaultMode: "library",
-      attachedRepository: { id: repoId, fullName: "octocat/hello-world", shortName: "hello-world" },
-      sandboxModeStatus: { reasonCode: "available", message: null },
-      disabledReasons: {},
-      isMissingThread: false,
-      isLoading: false,
-      sandboxCostBudget: null,
-      sandboxIsActivatable: false,
-    });
-    repositoriesResult = [makeRepository()];
-    const { workspaceId, workspace } = makeRepoWorkspace();
-    workspacesResult = [workspace];
-
-    render(<RepositoryShell urlWorkspaceId={workspaceId} urlThreadId={"thread_lab" as ThreadId} />);
-
-    expect(screen.getByTestId("chat-panel")).toHaveAttribute("data-chat-mode", "lab");
   });
 });
 
@@ -660,11 +616,11 @@ describe("RepositoryShell workspace reconciliation", () => {
     // DB already holds the right value).
     //
     // `mode: null` mirrors what `useChatMode` would return on a
-    // transient URL like `/chat` (URL has no `/w/:wid/{discuss,library,lab}`
-    // prefix). Without this override, the suite-wide mock's hard-coded
-    // "lab" would fire the mode-record effect against `ws_cached` during
-    // the brief window before DB-wins reconciliation lands — irrelevant
-    // noise for what this test is actually asserting.
+    // transient URL like `/chat` (URL has no `/w/:wid/{discuss,library}`
+    // prefix). Without this override, the suite-wide mock would fire
+    // the mode-record effect against `ws_cached` during the brief
+    // window before DB-wins reconciliation lands — irrelevant noise
+    // for what this test is actually asserting.
     useChatModeMock.mockReturnValue({
       mode: null,
       availability: undefined,
@@ -675,7 +631,6 @@ describe("RepositoryShell workspace reconciliation", () => {
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
         askReadiness: { canBind: false, reason: null },
-        labReadiness: { canStart: false, reason: null },
       },
     });
     storedActiveWorkspaceId = "ws_cached";
@@ -798,7 +753,6 @@ describe("RepositoryShell workspace reconciliation", () => {
         hasAttachedRepo: true,
         hasAtLeastOneArtifact: true,
         askReadiness: { canBind: true, reason: null },
-        labReadiness: { canStart: false, reason: null },
       },
       placeholderAvailability: {
         availableModes: ["discuss"],
@@ -807,7 +761,6 @@ describe("RepositoryShell workspace reconciliation", () => {
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
         askReadiness: { canBind: false, reason: null },
-        labReadiness: { canStart: false, reason: null },
       },
     });
     const urlWorkspaceId = "ws_discuss_memory" as WorkspaceId;
@@ -860,15 +813,14 @@ describe("RepositoryShell workspace reconciliation", () => {
     // default — the "Archive → back" round-trip this whole code path
     // exists to make sticky.
     useChatModeMock.mockReturnValue({
-      mode: "lab",
+      mode: "discuss",
       availability: {
-        availableModes: ["discuss", "library", "lab"] as const,
+        availableModes: ["discuss", "library"] as const,
         defaultMode: "library" as const,
         disabledReasons: {},
         hasAttachedRepo: true,
         hasAtLeastOneArtifact: true,
         askReadiness: { canBind: true, reason: null },
-        labReadiness: { canStart: true, reason: null },
       },
       placeholderAvailability: {
         availableModes: ["discuss"],
@@ -877,7 +829,6 @@ describe("RepositoryShell workspace reconciliation", () => {
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
         askReadiness: { canBind: false, reason: null },
-        labReadiness: { canStart: false, reason: null },
       },
     });
     const urlWorkspaceId = "ws_canonical" as WorkspaceId;
@@ -887,7 +838,7 @@ describe("RepositoryShell workspace reconciliation", () => {
     render(<RepositoryShell urlWorkspaceId={urlWorkspaceId} urlThreadId={"thread_canonical" as ThreadId} />);
 
     await waitFor(() => {
-      expect(touchWorkspaceMock).toHaveBeenCalledWith({ workspaceId: "ws_canonical", mode: "lab" });
+      expect(touchWorkspaceMock).toHaveBeenCalledWith({ workspaceId: "ws_canonical", mode: "discuss" });
     });
   });
 
@@ -905,7 +856,6 @@ describe("RepositoryShell workspace reconciliation", () => {
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
         askReadiness: { canBind: false, reason: null },
-        labReadiness: { canStart: false, reason: null },
       },
       placeholderAvailability: {
         availableModes: ["discuss"],
@@ -914,7 +864,6 @@ describe("RepositoryShell workspace reconciliation", () => {
         hasAttachedRepo: false,
         hasAtLeastOneArtifact: false,
         askReadiness: { canBind: false, reason: null },
-        labReadiness: { canStart: false, reason: null },
       },
     });
     const urlWorkspaceId = "ws_steady" as WorkspaceId;

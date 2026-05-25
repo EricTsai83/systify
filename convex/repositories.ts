@@ -430,9 +430,9 @@ export const createRepositoryImport = mutation({
       defaultThread.ownerTokenIdentifier !== identity.tokenIdentifier ||
       defaultThread.repositoryId !== repositoryId
     ) {
-      // Matches `resolveChatModes(true, 'none' | 'provisioning' | …).defaultMode`
-      // for any repo-attached thread, so the auto-created default thread
-      // and a manually-created one start on the same mode.
+      // Matches `resolveChatModes(true).defaultMode` for any repo-attached
+      // thread, so the auto-created default thread and a manually-created
+      // one start on the same mode.
       defaultThreadMode = getDefaultThreadMode(true);
       defaultThreadId = await ctx.db.insert("threads", {
         workspaceId,

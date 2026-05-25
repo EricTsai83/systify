@@ -8,7 +8,7 @@ import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
 
-const OWNER = "user|lab-session-test";
+const OWNER = "user|sandbox-session-test";
 
 async function seedRepository(t: ReturnType<typeof convexTest>): Promise<Id<"repositories">> {
   return await t.run(async (ctx) =>
@@ -45,13 +45,13 @@ async function seedWorkspace(
   );
 }
 
-describe("recordLabActivity", () => {
+describe("recordSandboxSessionActivity", () => {
   test("rejects negative spentCentsDelta", async () => {
     const t = convexTest(schema, modules);
     const repositoryId = await seedRepository(t);
     const workspaceId = await seedWorkspace(t, repositoryId);
     const sessionId = await t.run(async (ctx) =>
-      ctx.db.insert("labSessions", {
+      ctx.db.insert("sandboxSessions", {
         ownerTokenIdentifier: OWNER,
         workspaceId,
         repositoryId,
@@ -65,7 +65,7 @@ describe("recordLabActivity", () => {
     );
 
     await expect(
-      t.mutation(internal.labSessions.recordLabActivity, {
+      t.mutation(internal.sandboxSessions.recordSandboxSessionActivity, {
         sessionId,
         spentCentsDelta: -5,
       }),

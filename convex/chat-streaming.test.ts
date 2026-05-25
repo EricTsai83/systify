@@ -478,7 +478,7 @@ describe("citation lint integration (Plan 11)", () => {
     // gating field, so patching it post-fixture is the minimal
     // mutation that exercises the lint path.
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "lab" });
+      await ctx.db.patch(assistantMessageId, { groundSandbox: true });
     });
 
     // Mix one cited sentence and one unverified sentence so the lint has
@@ -524,7 +524,7 @@ describe("citation lint integration (Plan 11)", () => {
     );
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "lab" });
+      await ctx.db.patch(assistantMessageId, { groundSandbox: true });
     });
 
     await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
@@ -539,12 +539,13 @@ describe("citation lint integration (Plan 11)", () => {
     expect(finalized?.unverifiedClaims).toBeUndefined();
   });
 
-  test("finalizeAssistantReply does not lint discuss/docs replies even when content is flag-able", async () => {
-    // Non-sandbox replies must skip the lint entirely. The lint's
+  test("finalizeAssistantReply does not lint replies without sandbox grounding even when content is flag-able", async () => {
+    // Non-sandbox-grounded replies must skip the lint entirely. The lint's
     // contract (`[path:line]` + `Unverified:`) is taught only by the
-    // sandbox prompt, so applying it to docs / discuss would generate
-    // false positives on every artifact-grounded sentence (the docs
-    // prompt teaches `[A#]`, which is not a `[path:line]` shape).
+    // sandbox-grounded prompt, so applying it to library / discuss-without-
+    // sandbox-grounding would generate false positives on every
+    // artifact-grounded sentence (the library prompt teaches `[A#]`, which
+    // is not a `[path:line]` shape).
     for (const mode of ["discuss", "library"] as const) {
       const ownerTokenIdentifier = `user|lint-finalize-${mode}`;
       const t = convexTest(schema, modules);
@@ -555,11 +556,12 @@ describe("citation lint integration (Plan 11)", () => {
       );
 
       await t.run(async (ctx) => {
-        await ctx.db.patch(assistantMessageId, { mode });
+        await ctx.db.patch(assistantMessageId, { mode, groundSandbox: false });
       });
 
       // Same flag-able prose as the sandbox-positive test — the lint
-      // would happily flag it, but the gate must skip on `mode !== "lab"`.
+      // would happily flag it, but the gate must skip on
+      // `groundSandbox !== true`.
       await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
         threadId,
         assistantMessageId,
@@ -583,7 +585,7 @@ describe("citation lint integration (Plan 11)", () => {
     const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "lint-fail-sandbox");
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "lab" });
+      await ctx.db.patch(assistantMessageId, { groundSandbox: true });
     });
 
     // Stream partial content first so the lint sees a non-empty
@@ -619,7 +621,7 @@ describe("citation lint integration (Plan 11)", () => {
     const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "lint-cancel-sandbox");
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "lab" });
+      await ctx.db.patch(assistantMessageId, { groundSandbox: true });
     });
 
     await t.mutation(internal.chat.streaming.appendAssistantStreamChunk, {
@@ -653,7 +655,7 @@ describe("citation lint integration (Plan 11)", () => {
     const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "lint-cancel-empty");
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "lab" });
+      await ctx.db.patch(assistantMessageId, { groundSandbox: true });
     });
 
     await t.mutation(internal.chat.streaming.markAssistantReplyCancelled, {
@@ -680,7 +682,7 @@ describe("citation lint integration (Plan 11)", () => {
     const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "lint-recover-sandbox");
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "lab" });
+      await ctx.db.patch(assistantMessageId, { groundSandbox: true });
     });
 
     // Stream partial content first so `streamSnapshot.content` is
@@ -1008,7 +1010,7 @@ describe("chat tool-call event lifecycle (Plan 06)", () => {
     );
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(assistantMessageId, { mode: "lab" });
+      await ctx.db.patch(assistantMessageId, { groundSandbox: true });
     });
 
     // Stream partial content before the job stalls, so the lint sees a

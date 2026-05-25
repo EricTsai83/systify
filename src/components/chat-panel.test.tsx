@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 
 import type React from "react";
-import { useState } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useQuery } from "convex/react";
 import { getFunctionName } from "convex/server";
@@ -168,9 +167,11 @@ describe("ChatPanel streaming rendering", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -206,12 +207,11 @@ describe("ChatPanel streaming rendering", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss"]}
-        disabledModeReasons={{
-          library: "Attach a repository to use Library mode.",
-          lab: "Attach a repository with a ready sandbox to use Lab mode.",
-        }}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -246,9 +246,11 @@ describe("ChatPanel streaming rendering", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="library"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library"]}
-        disabledModeReasons={{ lab: "Provision a sandbox to use Lab mode." }}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -276,9 +278,11 @@ describe("ChatPanel streaming rendering", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="library"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library"]}
-        disabledModeReasons={{ lab: "Provision a sandbox to use Lab mode." }}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -289,29 +293,6 @@ describe("ChatPanel streaming rendering", () => {
 
     expect(screen.getAllByText("final streamed reply")).toHaveLength(1);
   });
-
-  test("renders mode selector trigger for desktop controls", () => {
-    render(
-      <ChatPanel
-        selectedThreadId={threadId}
-        messages={[]}
-        activeMessageStream={null}
-        isChatLoading={false}
-        chatInput=""
-        setChatInput={vi.fn()}
-        chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library", "lab"]}
-        disabledModeReasons={{}}
-        isSending={false}
-        onSendMessage={vi.fn()}
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
-        isSyncing={false}
-        onSync={vi.fn()}
-      />,
-    );
-    expect(screen.getByRole("combobox", { name: /^answer mode selector$/i })).toBeInTheDocument();
-  });
 });
 
 /**
@@ -321,44 +302,6 @@ describe("ChatPanel streaming rendering", () => {
  * trace any factual claim back to a specific artifact.
  */
 describe("ChatPanel mode badge and inline citations", () => {
-  test("renders a mode chip for each assistant message using the mode's display label", () => {
-    render(
-      <ChatPanel
-        selectedThreadId={threadId}
-        messages={[
-          {
-            _id: assistantMessageId,
-            role: "assistant",
-            status: "completed",
-            mode: "library",
-            content: "Answer body.",
-            errorMessage: undefined,
-          } as unknown as Doc<"messages">,
-        ]}
-        activeMessageStream={null}
-        isChatLoading={false}
-        chatInput=""
-        setChatInput={vi.fn()}
-        chatMode="library"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library"]}
-        disabledModeReasons={{}}
-        isSending={false}
-        onSendMessage={vi.fn()}
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
-        isSyncing={false}
-        onSync={vi.fn()}
-      />,
-    );
-
-    // The badge label must come from the mode catalog ("Library"),
-    // not the raw DB literal ("library"). Anchoring the assertion on the
-    // user-facing label catches any future drift between the badge and
-    // the mode-selector pill.
-    const badge = screen.getByTestId("message-mode-badge");
-    expect(badge).toHaveTextContent("Library");
-  });
-
   test("does not render a mode chip on user messages", () => {
     // The sender already knows which mode they were in when they hit
     // Send, so a chip on the user bubble would be visual noise.
@@ -380,9 +323,11 @@ describe("ChatPanel mode badge and inline citations", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="library"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -421,9 +366,11 @@ describe("ChatPanel mode badge and inline citations", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="library"
-        setChatMode={vi.fn()}
-        availableModes={["library"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -472,9 +419,11 @@ describe("ChatPanel mode badge and inline citations", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="library"
-        setChatMode={vi.fn()}
-        availableModes={["library"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -533,7 +482,7 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "lab",
+            mode: "discuss",
             content,
             unverifiedClaims: [{ start, end }],
             errorMessage: undefined,
@@ -543,10 +492,12 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="lab"
-        setChatMode={vi.fn()}
-        availableModes={["lab"]}
-        disabledModeReasons={{}}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -585,7 +536,7 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "lab",
+            mode: "discuss",
             content,
             citationMap: [{ index: 1, artifactId }],
             unverifiedClaims: [{ start, end }],
@@ -596,10 +547,12 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="lab"
-        setChatMode={vi.fn()}
-        availableModes={["lab"]}
-        disabledModeReasons={{}}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -635,7 +588,7 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "streaming",
-            mode: "lab",
+            mode: "discuss",
             content: "",
             unverifiedClaims: [{ start: 0, end: 10 }],
             errorMessage: undefined,
@@ -650,10 +603,12 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="lab"
-        setChatMode={vi.fn()}
-        availableModes={["lab"]}
-        disabledModeReasons={{}}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -681,7 +636,7 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
               _id: assistantMessageId,
               role: "assistant",
               status: "completed",
-              mode: "lab",
+              mode: "discuss",
               content: "All claims cite the source [convex/api/foo.ts:1-10].",
               unverifiedClaims: claims,
               errorMessage: undefined,
@@ -691,10 +646,12 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
           isChatLoading={false}
           chatInput=""
           setChatInput={vi.fn()}
-          chatMode="lab"
-          setChatMode={vi.fn()}
-          availableModes={["lab"]}
-          disabledModeReasons={{}}
+          chatMode="discuss"
+          groundLibrary={false}
+          groundSandbox={false}
+          setGroundLibrary={vi.fn()}
+          setGroundSandbox={vi.fn()}
+          grounding={undefined}
           isSending={false}
           onSendMessage={vi.fn()}
           sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -728,7 +685,7 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "lab",
+            mode: "discuss",
             content,
             unverifiedClaims: [
               { start: secondStart, end: secondEnd },
@@ -741,10 +698,12 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="lab"
-        setChatMode={vi.fn()}
-        availableModes={["lab"]}
-        disabledModeReasons={{}}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -793,9 +752,11 @@ describe("ChatPanel cancel-in-flight reply (Plan 07)", () => {
         chatInput="more"
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         onCancelInFlightReply={vi.fn()}
@@ -833,9 +794,11 @@ describe("ChatPanel cancel-in-flight reply (Plan 07)", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         onCancelInFlightReply={vi.fn()}
@@ -874,9 +837,11 @@ describe("ChatPanel cancel-in-flight reply (Plan 07)", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         onCancelInFlightReply={vi.fn()}
@@ -911,9 +876,11 @@ describe("ChatPanel cancel-in-flight reply (Plan 07)", () => {
         chatInput="next"
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -945,9 +912,11 @@ describe("ChatPanel cancel-in-flight reply (Plan 07)", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         onCancelInFlightReply={onCancel}
@@ -981,9 +950,11 @@ describe("ChatPanel cancel-in-flight reply (Plan 07)", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         onCancelInFlightReply={onCancel}
@@ -1027,9 +998,11 @@ describe("ChatPanel cancel-in-flight reply (Plan 07)", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         onCancelInFlightReply={vi.fn()}
@@ -1063,9 +1036,11 @@ describe("ChatPanel cancel-in-flight reply (Plan 07)", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         onCancelInFlightReply={vi.fn()}
@@ -1107,7 +1082,7 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "lab",
+            mode: "discuss",
             content: "Done.",
             estimatedInputTokens: 800,
             estimatedOutputTokens: 400,
@@ -1119,10 +1094,12 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="lab"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library", "lab"]}
-        disabledModeReasons={{}}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -1146,7 +1123,7 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "lab",
+            mode: "discuss",
             content: "Done.",
             estimatedInputTokens: 1200,
             estimatedOutputTokens: 800,
@@ -1176,10 +1153,12 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="lab"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library", "lab"]}
-        disabledModeReasons={{}}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -1201,7 +1180,7 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "completed",
-            mode: "lab",
+            mode: "discuss",
             content: "Done.",
             estimatedInputTokens: 50,
             estimatedOutputTokens: 30,
@@ -1213,10 +1192,12 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="lab"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library", "lab"]}
-        disabledModeReasons={{}}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -1240,7 +1221,7 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
             _id: assistantMessageId,
             role: "assistant",
             status: "streaming",
-            mode: "lab",
+            mode: "discuss",
             content: "partial",
             estimatedInputTokens: 200,
             estimatedOutputTokens: 100,
@@ -1251,10 +1232,12 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="lab"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library", "lab"]}
-        disabledModeReasons={{}}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -1288,9 +1271,11 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -1324,9 +1309,11 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -1367,9 +1354,11 @@ describe("ChatPanel mode examples (Plan 14)", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library", "lab"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -1381,7 +1370,7 @@ describe("ChatPanel mode examples (Plan 14)", () => {
     const grid = screen.getByTestId("mode-examples");
     // The `data-mode` attribute pins the grid to the active mode so the
     // test fails loudly if the catalog wiring drifts (e.g. someone hard-
-    // codes "lab" prompts in the discuss branch).
+    // codes library prompts in the discuss branch).
     expect(grid).toHaveAttribute("data-mode", "discuss");
     // discuss-mode catalog has 3 entries; we anchor on data-testid prefix
     // so adding a 4th in the future doesn't silently flip this assertion.
@@ -1400,9 +1389,11 @@ describe("ChatPanel mode examples (Plan 14)", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="library"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library", "lab"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -1422,10 +1413,12 @@ describe("ChatPanel mode examples (Plan 14)", () => {
         isChatLoading={false}
         chatInput=""
         setChatInput={vi.fn()}
-        chatMode="lab"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library", "lab"]}
-        disabledModeReasons={{}}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -1434,8 +1427,8 @@ describe("ChatPanel mode examples (Plan 14)", () => {
       />,
     );
 
-    expect(screen.getByTestId("mode-examples")).toHaveAttribute("data-mode", "lab");
-    expect(screen.getByTestId("mode-example-lab-0")).toBeInTheDocument();
+    expect(screen.getByTestId("mode-examples")).toHaveAttribute("data-mode", "discuss");
+    expect(screen.getByTestId("mode-example-discuss-0")).toBeInTheDocument();
     // The previous mode's cards must be gone — no duplicate test ids
     // hanging around from the prior render tree.
     expect(screen.queryByTestId("mode-example-library-0")).not.toBeInTheDocument();
@@ -1453,9 +1446,11 @@ describe("ChatPanel mode examples (Plan 14)", () => {
         chatInput=""
         setChatInput={setChatInput}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library", "lab"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={onSendMessage}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -1493,9 +1488,11 @@ describe("ChatPanel mode examples (Plan 14)", () => {
         chatInput=""
         setChatInput={vi.fn()}
         chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss"]}
-        disabledModeReasons={{}}
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
         isSending={false}
         onSendMessage={vi.fn()}
         sandboxModeStatus={{ reasonCode: "available", message: null }}
@@ -1505,251 +1502,5 @@ describe("ChatPanel mode examples (Plan 14)", () => {
     );
 
     expect(screen.queryByTestId("mode-examples")).not.toBeInTheDocument();
-  });
-});
-
-/**
- * Plan 14 — `(i)` info popover next to the mode selector. The trigger
- * is user-initiated (no auto-pop) and exposes one short caption + one
- * example prompt per mode. Tests verify:
- *
- *   - The trigger renders next to the selector regardless of breakpoint
- *     (we render two instances — one per layout — for clean co-location;
- *     `getAllBy*` is the right query so a future single-instance design
- *     doesn't silently regress this contract).
- *   - All three modes appear in the popover content with their captions
- *     and the first example prompt from `MODE_CATALOG`.
- */
-describe("ChatPanel mode info popover (Plan 14)", () => {
-  test("renders the (i) info trigger and the mode descriptor list", () => {
-    render(
-      <ChatPanel
-        selectedThreadId={threadId}
-        messages={[]}
-        activeMessageStream={null}
-        isChatLoading={false}
-        chatInput=""
-        setChatInput={vi.fn()}
-        chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library", "lab"]}
-        disabledModeReasons={{}}
-        isSending={false}
-        onSendMessage={vi.fn()}
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
-        isSyncing={false}
-        onSync={vi.fn()}
-      />,
-    );
-
-    // Two triggers (compact + desktop) is the intended shape — only one
-    // is visible per breakpoint via responsive utilities, but both
-    // render in jsdom. Asserting on the count guards against a regression
-    // where one breakpoint loses its trigger.
-    const triggers = screen.getAllByTestId("mode-info-trigger");
-    expect(triggers).toHaveLength(2);
-
-    // Each popover instance carries one entry per mode. We assert on the
-    // entry test ids rather than the visible labels so a future copy
-    // change to "Sandbox (beta)" does not flap this test.
-    const discussEntries = screen.getAllByTestId("mode-info-entry-discuss");
-    const docsEntries = screen.getAllByTestId("mode-info-entry-library");
-    const sandboxEntries = screen.getAllByTestId("mode-info-entry-lab");
-    expect(discussEntries).toHaveLength(2);
-    expect(docsEntries).toHaveLength(2);
-    expect(sandboxEntries).toHaveLength(2);
-
-    // The popover surfaces the *first* example prompt per mode so users
-    // who don't read the empty-state cards still see one good question
-    // shape per mode. Anchor on a unique substring from each catalog
-    // example to catch any drift in the wiring.
-    expect(discussEntries[0]).toHaveTextContent(/optimistic vs pessimistic locking/i);
-    expect(docsEntries[0]).toHaveTextContent(/architecture decisions/i);
-    expect(sandboxEntries[0]).toHaveTextContent(/in-flight reply lease/i);
-  });
-});
-
-/**
- * Plan 14 — passive mode-suggestion hint above the toolbar. Coverage
- * targets:
- *
- *   - File-path heuristic surfaces a Switch-to-Sandbox CTA when the
- *     user is in discuss/docs and types a recognized source path.
- *   - Open-ended-prefix heuristic surfaces a Switch-to-General-Chat CTA
- *     when the user is in docs/sandbox and starts with one of the two
- *     phrasings.
- *   - Clicking [Switch to {mode}] forwards the suggested mode to
- *     `setChatMode` exactly once.
- *   - Clicking the dismiss × hides the hint immediately and keeps it
- *     hidden for that heuristic key for the rest of the session, even
- *     if the same input shape recurs (the dismiss memory is keyed on
- *     the heuristic, not the literal input).
- *   - The hint disappears when the suggested mode is gated out of
- *     `availableModes` so the [Switch] button never bounces off a
- *     disabled selector item.
- */
-describe("ChatPanel mode-suggestion hint (Plan 14)", () => {
-  test("shows a Switch-to-Sandbox hint when a docs-mode user mentions a source path", () => {
-    render(
-      <ChatPanel
-        selectedThreadId={threadId}
-        messages={[]}
-        activeMessageStream={null}
-        isChatLoading={false}
-        chatInput="Explain convex/chat/send.ts line 80"
-        setChatInput={vi.fn()}
-        chatMode="library"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library", "lab"]}
-        disabledModeReasons={{}}
-        isSending={false}
-        onSendMessage={vi.fn()}
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
-        isSyncing={false}
-        onSync={vi.fn()}
-      />,
-    );
-
-    expect(
-      screen.getByText("This question references a specific file. Lab mode would give a more accurate answer."),
-    ).toBeInTheDocument();
-    // The CTA names the destination explicitly so the user knows what
-    // the click will change before they click.
-    expect(screen.getByRole("button", { name: "Switch to Lab" })).toBeInTheDocument();
-  });
-
-  test("shows a Switch-to-General-Chat hint for an open-ended sandbox-mode question", () => {
-    render(
-      <ChatPanel
-        selectedThreadId={threadId}
-        messages={[]}
-        activeMessageStream={null}
-        isChatLoading={false}
-        chatInput="How should I structure auth in this codebase?"
-        setChatInput={vi.fn()}
-        chatMode="lab"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library", "lab"]}
-        disabledModeReasons={{}}
-        isSending={false}
-        onSendMessage={vi.fn()}
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
-        isSyncing={false}
-        onSync={vi.fn()}
-      />,
-    );
-
-    expect(screen.getByText("This sounds open-ended; Discuss might be better.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Switch to Discuss" })).toBeInTheDocument();
-  });
-
-  test("clicking the Switch CTA invokes setChatMode with the suggested mode", () => {
-    const setChatMode = vi.fn();
-    render(
-      <ChatPanel
-        selectedThreadId={threadId}
-        messages={[]}
-        activeMessageStream={null}
-        isChatLoading={false}
-        chatInput="Look at src/components/chat-panel.tsx"
-        setChatInput={vi.fn()}
-        chatMode="discuss"
-        setChatMode={setChatMode}
-        availableModes={["discuss", "library", "lab"]}
-        disabledModeReasons={{}}
-        isSending={false}
-        onSendMessage={vi.fn()}
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
-        isSyncing={false}
-        onSync={vi.fn()}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Switch to Lab" }));
-    expect(setChatMode).toHaveBeenCalledTimes(1);
-    expect(setChatMode).toHaveBeenCalledWith("lab");
-  });
-
-  test("dismiss button hides the hint and keeps it hidden for the same heuristic key", () => {
-    // The dismiss memory is keyed on the *heuristic* ("specific-file:lab"),
-    // not the literal input. So dismissing once for `convex/chat/send.ts`
-    // must also silence a later message about `convex/chat/context.ts` that
-    // would otherwise re-fire the same rule. This is the "session-local
-    // preference" model called out in the plan.
-
-    function Harness() {
-      // Local state mirrors the real shell wiring: `chatInput` is hoisted
-      // to the parent, so the dismiss set inside ChatPanel must persist
-      // across input changes within the same panel mount.
-      const [chatInput, setChatInput] = useState("Look at src/components/chat-panel.tsx");
-      return (
-        <ChatPanel
-          selectedThreadId={threadId}
-          messages={[]}
-          activeMessageStream={null}
-          isChatLoading={false}
-          chatInput={chatInput}
-          setChatInput={setChatInput}
-          chatMode="discuss"
-          setChatMode={vi.fn()}
-          availableModes={["discuss", "library", "lab"]}
-          disabledModeReasons={{}}
-          isSending={false}
-          onSendMessage={vi.fn()}
-          sandboxModeStatus={{ reasonCode: "available", message: null }}
-          isSyncing={false}
-          onSync={vi.fn()}
-        />
-      );
-    }
-
-    render(<Harness />);
-
-    // Hint visible for the first file-path mention.
-    expect(screen.getByText(/Lab mode would give a more accurate answer\./)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByLabelText("Dismiss suggestion"));
-
-    // Hint disappears immediately on dismiss.
-    expect(screen.queryByText(/Lab mode would give a more accurate answer\./)).not.toBeInTheDocument();
-
-    // Drive the same panel mount to a *different* file-path input. The
-    // heuristic would otherwise re-fire because `convex/chat/context.ts`
-    // matches the same regex; the dismiss is keyed on the heuristic
-    // ("specific-file:lab") rather than the literal input, so the
-    // hint must stay hidden.
-    fireEvent.change(screen.getByPlaceholderText(/Ask about architecture/i), {
-      target: { value: "Now check convex/chat/context.ts instead" },
-    });
-    expect(screen.queryByText(/Lab mode would give a more accurate answer\./)).not.toBeInTheDocument();
-  });
-
-  test("does not render a hint when the suggested mode is not in availableModes", () => {
-    // If sandbox is gated by rollout / quotas / repo state, the hint
-    // would advertise a mode the [Switch] button cannot actually
-    // select. Suppression is the only correct behavior.
-    render(
-      <ChatPanel
-        selectedThreadId={threadId}
-        messages={[]}
-        activeMessageStream={null}
-        isChatLoading={false}
-        chatInput="Look at convex/chat/send.ts"
-        setChatInput={vi.fn()}
-        chatMode="discuss"
-        setChatMode={vi.fn()}
-        availableModes={["discuss", "library"]}
-        disabledModeReasons={{ lab: "Provision a sandbox to use Lab mode." }}
-        isSending={false}
-        onSendMessage={vi.fn()}
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
-        isSyncing={false}
-        onSync={vi.fn()}
-      />,
-    );
-
-    expect(
-      screen.queryByText("This question references a specific file. Lab mode would give a more accurate answer."),
-    ).not.toBeInTheDocument();
   });
 });

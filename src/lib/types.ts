@@ -29,7 +29,7 @@ export type OnImportedCallback = (
 export type MessageId = Id<"messages">;
 export type ArtifactId = Id<"artifacts">;
 export type FolderId = Id<"artifactFolders">;
-export type LabSessionId = Id<"labSessions">;
+export type SandboxSessionId = Id<"sandboxSessions">;
 export type ArtifactChunkId = Id<"artifactChunks">;
 
 export type ArtifactFreshness = "fresh" | "aging" | "stale" | "unverified";

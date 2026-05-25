@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion, type Transition } from "framer-motion";
-import { BookOpenIcon, ChatCircleIcon, FlaskIcon } from "@phosphor-icons/react";
-import { discussPath, labPath, libraryPath } from "@/route-paths";
+import { BookOpenIcon, ChatCircleIcon } from "@phosphor-icons/react";
+import { discussPath, libraryPath } from "@/route-paths";
 import type { ChatMode, WorkspaceId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -22,7 +22,6 @@ const CHAT_MODE_ENTRIES: ReadonlyArray<{
 }> = [
   { value: "discuss", label: "Discuss", icon: ChatCircleIcon },
   { value: "library", label: "Library", icon: BookOpenIcon },
-  { value: "lab", label: "Lab", icon: FlaskIcon },
 ];
 
 const MORPH: Transition = { duration: 0.3, ease: [0.77, 0, 0.175, 1] };
@@ -97,8 +96,6 @@ export function WorkspaceModeSwitcher({
       void navigate(discussPath(workspaceId));
     } else if (value === "library") {
       void navigate(libraryPath(workspaceId));
-    } else if (value === "lab") {
-      void navigate(labPath(workspaceId));
     }
   };
 

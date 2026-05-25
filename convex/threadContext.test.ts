@@ -127,13 +127,16 @@ describe("getThreadContext (internal)", () => {
     expect(result!.sandboxStatus).toBeNull();
     expect(result!.chatModes.availableModes).toEqual(["discuss"]);
     expect(result!.chatModes.defaultMode).toBe("discuss");
-    expect(Object.keys(result!.chatModes.disabledReasons).sort()).toEqual(["lab", "library"]);
+    // Post-Lab collapse: lab is gone as a top-level mode, so the only
+    // disabled mode key here is `library`. Sandbox state is now surfaced
+    // via `sandboxIsActivatable` + grounding axes, not as a mode.
+    expect(Object.keys(result!.chatModes.disabledReasons).sort()).toEqual(["library"]);
     // Without a repository there is nothing to provision against, so the
     // disabled Sandbox option must not pretend it's actionable.
     expect(result!.sandboxIsActivatable).toBe(false);
   });
 
-  test("thread with repository but no sandbox: discuss + docs available, sandbox is activatable", async () => {
+  test("thread with repository but no sandbox: discuss + library available, sandbox is activatable", async () => {
     const t = createTestConvex();
     const { threadId, repositoryId } = await seedThread(t, { withRepository: true });
 
@@ -145,13 +148,13 @@ describe("getThreadContext (internal)", () => {
     expect(result!.sandboxStatus).toBeNull();
     expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
     expect(result!.chatModes.defaultMode).toBe("library");
-    expect(Object.keys(result!.chatModes.disabledReasons)).toEqual(["lab"]);
-    // Lazy provisioning: the disabled Sandbox option must still be
-    // clickable so the UI can enqueue `requestSandboxActivation`.
+    expect(result!.chatModes.disabledReasons).toEqual({});
+    // Lazy provisioning: the disabled Sandbox grounding option must still
+    // be clickable so the UI can enqueue `requestSandboxActivation`.
     expect(result!.sandboxIsActivatable).toBe(true);
   });
 
-  test("thread with repository and ready sandbox: all three modes available, default docs", async () => {
+  test("thread with repository and ready sandbox: discuss + library available, sandbox not activatable", async () => {
     const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
@@ -163,14 +166,14 @@ describe("getThreadContext (internal)", () => {
     });
 
     expect(result!.sandboxStatus).toBe("ready");
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "library", "lab"]);
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
     expect(result!.chatModes.defaultMode).toBe("library");
     expect(result!.chatModes.disabledReasons).toEqual({});
     // Already-ready sandboxes don't need re-activation.
     expect(result!.sandboxIsActivatable).toBe(false);
   });
 
-  test("thread with stopped sandbox maps to expired in resolver input", async () => {
+  test("thread with stopped sandbox: sandboxStatus surfaces as stopped; activatable for re-provision", async () => {
     const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
@@ -183,11 +186,10 @@ describe("getThreadContext (internal)", () => {
 
     expect(result!.sandboxStatus).toBe("stopped");
     expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
-    expect(result!.chatModes.disabledReasons.lab).toMatch(/expired|provision a new sandbox/i);
     expect(result!.sandboxIsActivatable).toBe(true);
   });
 
-  test("thread with archived sandbox maps to expired in resolver input", async () => {
+  test("thread with archived sandbox: sandboxStatus surfaces as archived; activatable for re-provision", async () => {
     const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
@@ -200,11 +202,10 @@ describe("getThreadContext (internal)", () => {
 
     expect(result!.sandboxStatus).toBe("archived");
     expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
-    expect(result!.chatModes.disabledReasons.lab).toMatch(/expired|provision a new sandbox/i);
     expect(result!.sandboxIsActivatable).toBe(true);
   });
 
-  test("thread with provisioning sandbox surfaces a provisioning hint for sandbox mode", async () => {
+  test("thread with provisioning sandbox: sandboxStatus surfaces as provisioning; not activatable", async () => {
     const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
@@ -217,13 +218,12 @@ describe("getThreadContext (internal)", () => {
 
     expect(result!.sandboxStatus).toBe("provisioning");
     expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
-    expect(result!.chatModes.disabledReasons.lab).toMatch(/provisioning/i);
-    // A second click during provisioning would just dedupe; we keep the
-    // option in its disabled state to avoid suggesting otherwise.
+    // A second click during provisioning would just dedupe; the option
+    // stays not-activatable to avoid suggesting otherwise.
     expect(result!.sandboxIsActivatable).toBe(false);
   });
 
-  test("thread with failed sandbox surfaces a failed hint for sandbox mode", async () => {
+  test("thread with failed sandbox: sandboxStatus surfaces as failed; activatable for re-provision", async () => {
     const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
@@ -235,7 +235,6 @@ describe("getThreadContext (internal)", () => {
     });
 
     expect(result!.sandboxStatus).toBe("failed");
-    expect(result!.chatModes.disabledReasons.lab).toMatch(/failed|provision a new sandbox/i);
     // Failed sandboxes are re-activatable — same path provisions a fresh one.
     expect(result!.sandboxIsActivatable).toBe(true);
   });
@@ -339,7 +338,7 @@ describe("getThreadContext sandbox cost-cap gate (Plan 10)", () => {
     expect(result!.sandboxCostBudgets!.workspaceBudget).toBeNull();
   });
 
-  test("when the user cap is exhausted, sandbox is removed from availableModes and the cap tooltip surfaces", async () => {
+  test("when the user cap is exhausted, sandbox grounding closes (sandboxIsActivatable is false) and the bucket peek reflects exhaustion", async () => {
     const t = createTestConvex();
     const { threadId } = await seedThread(t, {
       withRepository: true,
@@ -360,13 +359,18 @@ describe("getThreadContext sandbox cost-cap gate (Plan 10)", () => {
 
     const result = await t.query(internal.threadContext.getThreadContextInternal, { threadId });
 
+    // Post-Lab collapse: discuss/library availability is no longer touched
+    // by the sandbox cost cap. The cap closes the sandbox grounding axis
+    // (consumed by the Discuss composer) and gates lazy activation via
+    // `sandboxIsActivatable: false`.
     expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
-    expect(result!.chatModes.disabledReasons.lab).toMatch(/daily.*spend.*account/i);
+    expect(result!.chatModes.disabledReasons).toEqual({});
+    expect(result!.sandboxIsActivatable).toBe(false);
     // Bucket peek reflects the exhaustion in the exposed snapshot too.
     expect(result!.sandboxCostBudgets!.userBudget.remainingCents).toBe(0);
   });
 
-  test("when the workspace cap is exhausted, the workspace-cap tooltip surfaces", async () => {
+  test("when the workspace cap is exhausted, sandboxIsActivatable closes and the workspace budget reports 0 remaining", async () => {
     const t = createTestConvex();
     const ownerTokenIdentifier = OWNER;
     const workspaceId = await t.run(async (ctx) => {
@@ -405,7 +409,8 @@ describe("getThreadContext sandbox cost-cap gate (Plan 10)", () => {
     const result = await t.query(internal.threadContext.getThreadContextInternal, { threadId });
 
     expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
-    expect(result!.chatModes.disabledReasons.lab).toMatch(/daily.*spend.*workspace/i);
+    expect(result!.chatModes.disabledReasons).toEqual({});
+    expect(result!.sandboxIsActivatable).toBe(false);
     expect(result!.sandboxCostBudgets!.workspaceBudget!.remainingCents).toBe(0);
   });
 });
@@ -457,7 +462,10 @@ describe("getThreadContext — no env-driven feature gate is consulted", () => {
       threadId,
     });
 
-    expect(result!.chatModes.availableModes).toEqual(["discuss", "library", "lab"]);
+    expect(result!.chatModes.availableModes).toEqual(["discuss", "library"]);
     expect(result!.chatModes.disabledReasons).toEqual({});
+    // Sandbox is in `ready` state and the cost cap is open, so it does not
+    // need re-activation.
+    expect(result!.sandboxIsActivatable).toBe(false);
   });
 });

@@ -1,23 +1,18 @@
-import { ChatCircleIcon, CubeIcon, FileTextIcon } from "@phosphor-icons/react";
+import { ChatCircleIcon, FileTextIcon } from "@phosphor-icons/react";
 import type { ModeInfoEntry } from "@/components/mode-info-popover";
 import type { ChatMode } from "@/lib/types";
 
 /**
- * Static catalogue of every mode the selector can render. Order is stable
- * and doubles as the visual order of the pill bar so the user's eye learns
- * the capability ladder left-to-right: discuss → library → lab,
- * lowest-context to highest-context (and lowest-cost to highest-cost).
+ * Static catalogue of the surviving top-level modes (Discuss / Library)
+ * post-Lab collapse. The sandbox-grounded surface is no longer a separate
+ * mode — it is a per-message grounding toggle the Discuss composer
+ * surfaces (see {@link GROUNDING_CATALOG}).
  *
  * `value` is the persisted DB literal (`messages.mode` / `threads.mode`)
  * AND the URL segment AND the user-facing label — one vocabulary across
- * the whole stack, by design. Adding a new mode means a single edit to
- * `chatModeValidator`; this catalogue is the UI side of the same coin.
+ * the whole stack, by design.
  *
- * Each caption is the short user-facing answer to "what does this mode
- * read from?". The disabled-mode tooltip (rendered by the resolver via
- * `disabledModeReasons`) takes over when the option isn't usable.
- *
- * Lives in its own module so every consumer (mode selector, per-message
+ * Lives in its own module so every consumer (mode switcher, per-message
  * badge, info popover, empty-state examples, suggestion display) can
  * import the catalog directly without forming sibling-import edges
  * through `chat-panel.tsx`.
@@ -31,21 +26,14 @@ export const MODE_CATALOG: ReadonlyArray<{
    * Example prompts shown in `<ModeExamples>` above the composer when
    * the thread is empty, and re-used (first entry only) by
    * `<ModeInfoPopover>` so the popover doubles as a quick "what should
-   * I ask in this mode?" reference. Two-to-three entries per mode keeps
-   * the empty-state grid balanced (two columns on tablet, three on
-   * desktop) and avoids overwhelming a fresh user.
-   *
-   * Wording targets engineering users who already know what each mode
-   * does (the badge and caption tell them); the prompts are meant to be
-   * *good* questions in that mode, not introductions to the modes
-   * themselves.
+   * I ask in this mode?" reference.
    */
   examplePrompts: ReadonlyArray<string>;
 }> = [
   {
     value: "discuss",
     label: "Discuss",
-    caption: "training-only · no repo context",
+    caption: "free-form chat · optional Library / Sandbox grounding",
     icon: ChatCircleIcon,
     examplePrompts: [
       "What are the trade-offs of optimistic vs pessimistic locking?",
@@ -56,7 +44,7 @@ export const MODE_CATALOG: ReadonlyArray<{
   {
     value: "library",
     label: "Library",
-    caption: "grounded in your design artifacts",
+    caption: "artifact reader + Ask",
     icon: FileTextIcon,
     examplePrompts: [
       "Summarize the architecture decisions captured in the design artifacts.",
@@ -64,18 +52,34 @@ export const MODE_CATALOG: ReadonlyArray<{
       "What data-flow boundaries did the analysis call out?",
     ],
   },
+];
+
+/**
+ * Per-axis grounding metadata for the Discuss composer's toggle bar. The
+ * toggle bar itself imports the icons and labels; this object exists so
+ * the user-facing wording lives next to {@link MODE_CATALOG} and
+ * {@link MODE_LABELS} — one vocabulary, one file.
+ */
+export const GROUNDING_CATALOG = [
   {
-    value: "lab",
-    label: "Lab",
-    caption: "grounded in the live sandbox source tree",
-    icon: CubeIcon,
+    key: "library",
+    label: "Library",
+    caption: "ground in your design artifacts",
+    examplePrompts: [
+      "Summarize what the artifacts say about our authentication boundary.",
+      "Which ADR justified the choice of Postgres over DynamoDB?",
+    ],
+  },
+  {
+    key: "sandbox",
+    label: "Sandbox",
+    caption: "ground in the live source tree",
     examplePrompts: [
       "Walk me through how the in-flight reply lease is held and renewed.",
       "Find every place we read OPENAI_API_KEY and explain the precedence.",
-      "Show me the error paths in the import pipeline that lack tests.",
     ],
   },
-];
+] as const;
 
 /**
  * Plan 14 — descriptors consumed by `<ModeInfoPopover>` for the user-

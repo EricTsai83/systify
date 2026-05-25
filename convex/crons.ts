@@ -10,7 +10,12 @@ crons.interval("sweep expired sandboxes", { hours: 1 }, internal.opsNode.sweepEx
 
 crons.interval("reconcile stale interactive jobs", { minutes: 5 }, internal.opsNode.reconcileStaleInteractiveJobs, {});
 
-crons.interval("auto pause idle lab sessions", { minutes: 1 }, internal.labSessionsNode.autoPauseIdleLabSessions, {});
+crons.interval(
+  "auto pause idle sandbox sessions",
+  { minutes: 1 },
+  internal.sandboxSessionsNode.autoPauseIdleSandboxSessions,
+  {},
+);
 
 crons.interval(
   "retry failed artifact indexing",

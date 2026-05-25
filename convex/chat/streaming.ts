@@ -115,12 +115,12 @@ async function settleSandboxReplyCost(
     costUsd: number | undefined;
   },
 ): Promise<void> {
-  // Only lab-mode replies bill against the daily cap. The check on
-  // `assistantMessage.mode` is the source of truth — using the job's
-  // `costCategory` would also work today (lab ↔ system_design), but
-  // the message-level mode keeps this code resilient if the costCategory
-  // mapping ever changes.
-  if (!args.assistantMessage || args.assistantMessage.mode !== "lab") {
+  // Only sandbox-grounded replies bill against the daily cap. The check on
+  // `assistantMessage.groundSandbox` is the source of truth — using the job's
+  // `costCategory` would also work today (sandbox ↔ system_design), but
+  // the message-level groundSandbox flag keeps this code resilient if the
+  // costCategory mapping ever changes.
+  if (!args.assistantMessage || args.assistantMessage.groundSandbox !== true) {
     return;
   }
   const cents = costUsdToCents(args.costUsd);
@@ -157,21 +157,21 @@ async function settleSandboxReplyCost(
   });
 }
 
-async function recordLabSessionActivityForReply(
+async function recordSandboxSessionActivityForReply(
   ctx: MutationCtx,
   args: {
     assistantMessage: Doc<"messages"> | null;
     costUsd: number | undefined;
   },
 ): Promise<void> {
-  if (!args.assistantMessage || args.assistantMessage.mode !== "lab") {
+  if (!args.assistantMessage || args.assistantMessage.groundSandbox !== true) {
     return;
   }
   const thread = await ctx.db.get(args.assistantMessage.threadId);
-  if (!thread?.labSessionId) {
+  if (!thread?.sandboxSessionId) {
     return;
   }
-  const session = await ctx.db.get(thread.labSessionId);
+  const session = await ctx.db.get(thread.sandboxSessionId);
   if (!session || session.status === "stopped" || session.status === "ended") {
     return;
   }
@@ -185,11 +185,11 @@ async function recordLabSessionActivityForReply(
  * Plan 11 — run the citation lint against a finalized assistant reply
  * and return the persisted shape (or `undefined` to clear the field).
  *
- * Gated on `mode === "lab"`: the lint contract exists *only* for the
- * lab prompt (which teaches `[path:line]` + `Unverified:`). Discuss and
- * library replies have their own citation conventions (`[A#]` for
- * library; nothing for discuss) so applying this lint there would
- * generate a wall of false positives.
+ * Gated on `groundSandbox === true`: the lint contract exists *only* for
+ * sandbox-grounded replies (the prompt teaches `[path:line]` +
+ * `Unverified:`). Ungrounded Discuss and Library replies have their own
+ * citation conventions (`[A#]` for library; nothing for plain Discuss),
+ * so applying this lint there would generate a wall of false positives.
  *
  * Empty content is also a `undefined` return — the lint produces no
  * ranges on an empty string, but spelling out the early-return keeps
@@ -207,10 +207,10 @@ async function recordLabSessionActivityForReply(
  * between the module's documented contract and this caller.
  */
 function lintSandboxClaims(
-  message: Pick<Doc<"messages">, "mode">,
+  message: Pick<Doc<"messages">, "groundSandbox">,
   finalContent: string,
 ): UnverifiedClaimRange[] | undefined {
-  if (message.mode !== "lab") {
+  if (message.groundSandbox !== true) {
     return undefined;
   }
   if (finalContent.length === 0) {
@@ -645,7 +645,7 @@ export const finalizeAssistantReply = internalMutation({
         assistantMessage: message ?? null,
         costUsd: args.costUsd,
       });
-      await recordLabSessionActivityForReply(ctx, {
+      await recordSandboxSessionActivityForReply(ctx, {
         assistantMessage: message ?? null,
         costUsd: args.costUsd,
       });
@@ -753,7 +753,7 @@ export const failAssistantReply = internalMutation({
         assistantMessage: message ?? null,
         costUsd: args.costUsd,
       });
-      await recordLabSessionActivityForReply(ctx, {
+      await recordSandboxSessionActivityForReply(ctx, {
         assistantMessage: message ?? null,
         costUsd: args.costUsd,
       });
@@ -939,7 +939,7 @@ export const markAssistantReplyCancelled = internalMutation({
         assistantMessage: message ?? null,
         costUsd: args.costUsd,
       });
-      await recordLabSessionActivityForReply(ctx, {
+      await recordSandboxSessionActivityForReply(ctx, {
         assistantMessage: message ?? null,
         costUsd: args.costUsd,
       });
@@ -1030,7 +1030,7 @@ export const recoverStaleChatJob = internalMutation({
       // as a known shortfall: the daily cap may be slightly under-
       // recorded for stalled replies. Logged so ops can correlate
       // billing reconciliation findings with stale-recovery events.
-      if (assistantMessage && assistantMessage.mode === "lab") {
+      if (assistantMessage && assistantMessage.groundSandbox === true) {
         logWarn("chat", "sandbox_cost_settlement_skipped_on_stale_recovery", {
           jobId: args.jobId,
           assistantMessageId: assistantMessage._id,
