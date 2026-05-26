@@ -133,10 +133,14 @@ export function WorkspacelessChatShell({ urlThreadId }: { urlThreadId: ThreadId 
       }
       // Rail rows render workspaceless threads (no `workspaceId`) and any
       // repo-bound threads the user surfaces from another sidebar section.
-      // The rail forwards the persisted mode so we can route to the
-      // canonical mode-aware URL when the click crosses into a repo
-      // workspace.
+      // Workspaceless threads are structurally Discuss-only (threadMode
+      // is passed but cannot change routing for workspaceless surface).
+      // Repo-bound threads would require fetching to determine their
+      // workspace, so route to workspaceless path and let the fallback
+      // redirect handle cross-workspace navigation if needed.
       void navigate(workspacelessThreadPath(threadId));
+      // threadMode reflects the thread's last visited mode, but workspaceless
+      // surface is Discuss-only so the mode cannot be applied here.
       void threadMode;
     },
     [navigate],

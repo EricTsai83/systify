@@ -117,7 +117,9 @@ export function useWorkspacePersistence({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setActiveWorkspaceId(fallback);
     if (viewerPreferences?.lastActiveWorkspaceId !== fallback) {
-      void touchWorkspace({ workspaceId: fallback }).catch(() => {});
+      void touchWorkspace({ workspaceId: fallback }).catch((err) => {
+        console.error(`touchWorkspace failed for fallback workspaceId=${fallback}`, err);
+      });
     }
   }, [workspaces, viewerPreferences, activeWorkspaceId, touchWorkspace]);
 
@@ -136,7 +138,9 @@ export function useWorkspacePersistence({
     if (urlWorkspaceId === activeWorkspaceId) return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setActiveWorkspaceId(urlWorkspaceId);
-    void touchWorkspace({ workspaceId: urlWorkspaceId }).catch(() => {});
+    void touchWorkspace({ workspaceId: urlWorkspaceId }).catch((err) => {
+      console.error(`touchWorkspace failed for urlWorkspaceId=${urlWorkspaceId}`, err);
+    });
   }, [urlWorkspaceId, activeWorkspaceId, touchWorkspace, workspaces, navigate]);
 
   const handleSwitchWorkspace = useCallback(

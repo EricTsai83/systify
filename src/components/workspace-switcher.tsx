@@ -58,24 +58,27 @@ export const WorkspaceSelector = memo(function WorkspaceSelector({
         </DropdownMenuTrigger>
 
         <DropdownMenuContent side="top" align="start" className="w-56">
-          {/* Workspace list */}
-          {workspaces.map((ws) => {
-            const isActive = ws._id === activeWorkspaceId;
-            return (
-              <DropdownMenuItem
-                key={ws._id}
-                onClick={() => {
-                  if (!isActive) onSwitchWorkspace(ws._id);
-                }}
-                className="gap-2"
-              >
-                <span className="min-w-0 flex-1 truncate">{ws.name}</span>
-                {isActive && <CheckIcon size={14} weight="bold" className="shrink-0 text-primary" />}
-              </DropdownMenuItem>
-            );
-          })}
+          {workspaces.length > 0 && (
+            <>
+              {workspaces.map((ws) => {
+                const isActive = ws._id === activeWorkspaceId;
+                return (
+                  <DropdownMenuItem
+                    key={ws._id}
+                    onClick={() => {
+                      if (!isActive) onSwitchWorkspace(ws._id);
+                    }}
+                    className="gap-2"
+                  >
+                    <span className="min-w-0 flex-1 truncate">{ws.name}</span>
+                    {isActive && <CheckIcon size={14} weight="bold" className="shrink-0 text-primary" />}
+                  </DropdownMenuItem>
+                );
+              })}
 
-          <DropdownMenuSeparator />
+              <DropdownMenuSeparator />
+            </>
+          )}
 
           <ImportRepoDialog
             onImported={onImported}

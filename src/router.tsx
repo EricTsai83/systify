@@ -13,12 +13,18 @@ import {
 import { AUTH_CALLBACK_ROUTE_SEGMENT, PROTECTED_ROUTE_SEGMENTS } from "@/route-paths";
 import type { ThreadId } from "@/lib/types";
 
+// Validate that a URL param looks like a valid Convex ID (non-empty string with
+// alphanumeric + common separators; prevents injection of obviously malformed values).
+function isValidConvexId(value: string | undefined): boolean {
+  return !!value && /^[a-z0-9_|.-]+$/i.test(value);
+}
+
 async function loadWorkspacelessChatRoute() {
   const module = await import("@/components/workspaceless-chat-shell");
   return {
     Component: function WorkspacelessChatRoute() {
       const params = useParams<{ threadId?: string }>();
-      const urlThreadId = (params.threadId ?? null) as ThreadId | null;
+      const urlThreadId = isValidConvexId(params.threadId) ? (params.threadId as ThreadId) : null;
       return <module.WorkspacelessChatShell urlThreadId={urlThreadId} />;
     },
   };
