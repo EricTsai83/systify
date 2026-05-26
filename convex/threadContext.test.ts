@@ -379,17 +379,19 @@ describe("getThreadContext sandbox cost-cap gate (Plan 10)", () => {
   test("when the workspace cap is exhausted, sandboxIsActivatable closes and the workspace budget reports 0 remaining", async () => {
     const t = createTestConvex();
     const ownerTokenIdentifier = OWNER;
+    const { threadId, repositoryId } = await seedThread(t, {
+      withRepository: true,
+      sandboxStatus: "ready",
+    });
+    if (!repositoryId) throw new Error("expected repository fixture");
     const workspaceId = await t.run(async (ctx) => {
       return await ctx.db.insert("workspaces", {
         ownerTokenIdentifier,
+        repositoryId,
         name: "Cap Workspace",
         color: "blue",
         lastAccessedAt: Date.now(),
       });
-    });
-    const { threadId } = await seedThread(t, {
-      withRepository: true,
-      sandboxStatus: "ready",
     });
     await t.run(async (ctx) => {
       await ctx.db.patch(threadId, { workspaceId });

@@ -37,7 +37,6 @@ function unwrapErrorData(error: unknown): unknown {
 }
 
 interface WorkspaceSeedOptions {
-  withRepository?: boolean;
   withArtifact?: boolean;
   sandboxStatus?: "provisioning" | "ready" | "stopped" | "archived" | "failed" | null;
   ownerTokenIdentifier?: string;
@@ -48,70 +47,67 @@ async function seedWorkspace(
   options: WorkspaceSeedOptions = {},
 ): Promise<{
   workspaceId: Id<"workspaces">;
-  repositoryId: Id<"repositories"> | null;
+  repositoryId: Id<"repositories">;
   sandboxId: Id<"sandboxes"> | null;
 }> {
   const owner = options.ownerTokenIdentifier ?? OWNER;
   return await t.run(async (ctx) => {
-    let repositoryId: Id<"repositories"> | null = null;
     let sandboxId: Id<"sandboxes"> | null = null;
 
-    if (options.withRepository) {
-      repositoryId = await ctx.db.insert("repositories", {
+    const repositoryId = await ctx.db.insert("repositories", {
+      ownerTokenIdentifier: owner,
+      sourceHost: "github",
+      sourceUrl: "https://github.com/acme/widget",
+      sourceRepoFullName: "acme/widget",
+      sourceRepoOwner: "acme",
+      sourceRepoName: "widget",
+      visibility: "unknown",
+      accessMode: "private",
+      importStatus: "idle",
+      detectedLanguages: [],
+      packageManagers: [],
+      entrypoints: [],
+      fileCount: 0,
+    });
+
+    if (options.sandboxStatus) {
+      sandboxId = await ctx.db.insert("sandboxes", {
+        repositoryId,
         ownerTokenIdentifier: owner,
-        sourceHost: "github",
-        sourceUrl: "https://github.com/acme/widget",
-        sourceRepoFullName: "acme/widget",
-        sourceRepoOwner: "acme",
-        sourceRepoName: "widget",
-        visibility: "unknown",
-        accessMode: "private",
-        importStatus: "idle",
-        detectedLanguages: [],
-        packageManagers: [],
-        entrypoints: [],
-        fileCount: 0,
+        provider: "daytona",
+        sourceAdapter: "git_clone",
+        remoteId: "remote-1",
+        status: options.sandboxStatus,
+        workDir: "/work",
+        repoPath: "/work/repo",
+        cpuLimit: 1,
+        memoryLimitGiB: 1,
+        diskLimitGiB: 5,
+        ttlExpiresAt: Date.now() + 60_000,
+        autoStopIntervalMinutes: 10,
+        autoArchiveIntervalMinutes: 30,
+        autoDeleteIntervalMinutes: 60,
+        networkBlockAll: false,
       });
+      await ctx.db.patch(repositoryId, { latestSandboxId: sandboxId });
+    }
 
-      if (options.sandboxStatus) {
-        sandboxId = await ctx.db.insert("sandboxes", {
-          repositoryId,
-          ownerTokenIdentifier: owner,
-          provider: "daytona",
-          sourceAdapter: "git_clone",
-          remoteId: "remote-1",
-          status: options.sandboxStatus,
-          workDir: "/work",
-          repoPath: "/work/repo",
-          cpuLimit: 1,
-          memoryLimitGiB: 1,
-          diskLimitGiB: 5,
-          ttlExpiresAt: Date.now() + 60_000,
-          autoStopIntervalMinutes: 10,
-          autoArchiveIntervalMinutes: 30,
-          autoDeleteIntervalMinutes: 60,
-          networkBlockAll: false,
-        });
-        await ctx.db.patch(repositoryId, { latestSandboxId: sandboxId });
-      }
-
-      if (options.withArtifact) {
-        await ctx.db.insert("artifacts", {
-          repositoryId,
-          ownerTokenIdentifier: owner,
-          kind: "manifest",
-          title: "manifest",
-          summary: "Seeded for tests",
-          contentMarkdown: "## Manifest",
-          source: "heuristic",
-          version: 1,
-        });
-      }
+    if (options.withArtifact) {
+      await ctx.db.insert("artifacts", {
+        repositoryId,
+        ownerTokenIdentifier: owner,
+        kind: "manifest",
+        title: "manifest",
+        summary: "Seeded for tests",
+        contentMarkdown: "## Manifest",
+        source: "heuristic",
+        version: 1,
+      });
     }
 
     const workspaceId = await ctx.db.insert("workspaces", {
       ownerTokenIdentifier: owner,
-      repositoryId: repositoryId ?? undefined,
+      repositoryId,
       name: "Test Workspace",
       color: "blue",
       lastAccessedAt: Date.now(),
@@ -126,18 +122,12 @@ async function seedWorkspace(
 describe("workspaceModeEligibility.evaluate", () => {
   test("returns null when the workspace does not exist", async () => {
     const t = createTestConvex();
-    const fakeId = await t.run(async (ctx) => {
-      const id = await ctx.db.insert("workspaces", {
-        ownerTokenIdentifier: OWNER,
-        name: "tmp",
-        color: "blue",
-        lastAccessedAt: Date.now(),
-      });
-      await ctx.db.delete(id);
-      return id;
+    const { workspaceId } = await seedWorkspace(t);
+    await t.run(async (ctx) => {
+      await ctx.db.delete(workspaceId);
     });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId: fakeId });
+    const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
     expect(result).toBeNull();
   });
 
@@ -149,21 +139,21 @@ describe("workspaceModeEligibility.evaluate", () => {
     expect(result).toBeNull();
   });
 
-  test("workspace without a repository: only discuss available, library disabled, sandbox grounding closed", async () => {
+  test("undefined workspaceId returns the workspaceless verdict (discuss-only)", async () => {
+    // Workspaceless threads structurally cannot satisfy Library mode (no
+    // repo to anchor artifacts). The eligibility query must accept an
+    // omitted workspaceId so the workspaceless shell can subscribe (or
+    // skip) uniformly with workspace-bound consumers.
     const t = createTestConvex();
-    const { workspaceId } = await seedWorkspace(t, { withRepository: false });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
-    const result = await viewer.query(api.workspaceModeEligibility.evaluate, { workspaceId });
+    const result = await viewer.query(api.workspaceModeEligibility.evaluate, {});
 
     expect(result).not.toBeNull();
     expect(result!.modes.discuss.enabled).toBe(true);
     expect(result!.modes.library.enabled).toBe(false);
     expect(result!.modes.library).toHaveProperty("code", "no_repository_attached");
-    expect(result!.modes.library).toHaveProperty("message");
     expect(result!.defaultMode).toBe("discuss");
     expect(result!.hasAttachedRepo).toBe(false);
-    expect(result!.hasAtLeastOneArtifact).toBe(false);
-
     expect(result!.grounding.sandbox.enabled).toBe(false);
     expect(result!.grounding.sandbox).toHaveProperty("code", "no_repository_attached");
   });
@@ -171,7 +161,6 @@ describe("workspaceModeEligibility.evaluate", () => {
   test("workspace + repo + no artifact: library is navigable, ask binding blocked, library grounding closed", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: false,
       sandboxStatus: "ready",
     });
@@ -190,7 +179,6 @@ describe("workspaceModeEligibility.evaluate", () => {
   test("workspace + repo + artifact + ready sandbox: both grounding axes open, no disabled reasons", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: true,
       sandboxStatus: "ready",
     });
@@ -207,7 +195,6 @@ describe("workspaceModeEligibility.evaluate", () => {
   test("provisioning sandbox: sandbox grounding closes with sandbox_provisioning code", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: true,
       sandboxStatus: "provisioning",
     });
@@ -229,7 +216,6 @@ describe("workspaceModeEligibility.evaluate", () => {
   test("expired sandbox: sandbox grounding closes with sandbox_expired code and is activatable", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: true,
       sandboxStatus: "stopped",
     });
@@ -247,7 +233,6 @@ describe("workspaceModeEligibility.evaluate", () => {
   test("failed sandbox: sandbox grounding closes with sandbox_failed code and is activatable", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: true,
       sandboxStatus: "failed",
     });
@@ -265,7 +250,6 @@ describe("workspaceModeEligibility.evaluate", () => {
   test("repo without a sandbox: sandbox grounding closes with sandbox_missing and is activatable", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: true,
       sandboxStatus: null,
     });
@@ -309,7 +293,6 @@ describe("workspaceModeEligibility.evaluate (cost cap closed)", () => {
   test("user cap exhausted: sandbox grounding closes with sandbox_user_cap_exceeded", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: true,
       sandboxStatus: "ready",
     });
@@ -341,7 +324,6 @@ describe("workspaceModeEligibility.evaluate (cost cap closed)", () => {
   test("workspace cap exhausted: sandbox grounding closes with sandbox_workspace_cap_exceeded", async () => {
     const t = createTestConvex();
     const { workspaceId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: true,
       sandboxStatus: "ready",
     });
@@ -432,7 +414,6 @@ describe("assertWorkspaceModeEligible", () => {
   test("discuss with groundSandbox=true and repository owned by another user: throws RepositoryNotFound (opaque)", async () => {
     const t = createTestConvex();
     const { workspaceId, repositoryId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: true,
       sandboxStatus: "ready",
       ownerTokenIdentifier: OTHER_OWNER,
@@ -458,7 +439,6 @@ describe("assertWorkspaceModeEligible", () => {
   test("discuss with groundSandbox=true and provisioning sandbox: throws sandbox_provisioning", async () => {
     const t = createTestConvex();
     const { workspaceId, repositoryId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: true,
       sandboxStatus: "provisioning",
     });
@@ -483,7 +463,6 @@ describe("assertWorkspaceModeEligible", () => {
   test("discuss with groundSandbox=true and ready sandbox: passes", async () => {
     const t = createTestConvex();
     const { workspaceId, repositoryId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: true,
       sandboxStatus: "ready",
     });
@@ -505,7 +484,6 @@ describe("assertWorkspaceModeEligible", () => {
     // workspace just because the read-path query happens to be keyed by one.
     const t = createTestConvex();
     const { repositoryId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: true,
       sandboxStatus: "ready",
     });
@@ -527,7 +505,6 @@ describe("assertWorkspaceModeEligible", () => {
     // read-path UI greyed out Library. Deepening closes that gap.
     const t = createTestConvex();
     const { workspaceId, repositoryId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: false,
       sandboxStatus: "ready",
     });
@@ -547,7 +524,6 @@ describe("assertWorkspaceModeEligible", () => {
   test("library with at least one artifact: passes", async () => {
     const t = createTestConvex();
     const { workspaceId, repositoryId } = await seedWorkspace(t, {
-      withRepository: true,
       withArtifact: true,
     });
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });

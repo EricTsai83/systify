@@ -35,19 +35,20 @@ async function loadArtifactWorkspace(
   ctx: QueryCtx | MutationCtx,
   artifact: Doc<"artifacts">,
 ): Promise<{ workspaceId: Id<"workspaces">; repositoryId: Id<"repositories"> } | null> {
-  if (!artifact.repositoryId) {
+  const repositoryId = artifact.repositoryId;
+  if (!repositoryId) {
     return null;
   }
   const workspace = await ctx.db
     .query("workspaces")
     .withIndex("by_ownerTokenIdentifier_and_repositoryId", (q) =>
-      q.eq("ownerTokenIdentifier", artifact.ownerTokenIdentifier).eq("repositoryId", artifact.repositoryId),
+      q.eq("ownerTokenIdentifier", artifact.ownerTokenIdentifier).eq("repositoryId", repositoryId),
     )
     .first();
   if (!workspace) {
     return null;
   }
-  return { workspaceId: workspace._id, repositoryId: artifact.repositoryId };
+  return { workspaceId: workspace._id, repositoryId };
 }
 
 async function buildChunkRecord(

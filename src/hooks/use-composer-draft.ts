@@ -4,6 +4,13 @@ import type { ChatMode, ThreadId, WorkspaceId } from "@/lib/types";
 
 const THREAD_KEY_PREFIX = "systify.composer.draft.thread.";
 const WORKSPACE_KEY_PREFIX = "systify.composer.draft.workspace.";
+/**
+ * Dedicated bucket for the workspaceless `/chat` landing (no workspace, no
+ * thread yet). Carries any text the user types before the lazy first send
+ * materialises a thread — at which point the draft key flips to the
+ * thread-scoped form below.
+ */
+const WORKSPACELESS_KEY = "systify.composer.draft.chat";
 
 function deriveKey(args: {
   workspaceId: WorkspaceId | null;
@@ -13,7 +20,13 @@ function deriveKey(args: {
   if (args.threadId !== null) {
     return `${THREAD_KEY_PREFIX}${args.threadId}`;
   }
-  if (args.workspaceId === null || args.mode === null) {
+  if (args.workspaceId === null) {
+    // Workspaceless `/chat` landing — single shared draft bucket for the
+    // "no workspace, no thread" surface. Once the first send materialises
+    // a thread, the next render swaps to the thread-scoped key above.
+    return WORKSPACELESS_KEY;
+  }
+  if (args.mode === null) {
     return null;
   }
   // `library` opens a different panel (LibraryAskPanel) that doesn't use

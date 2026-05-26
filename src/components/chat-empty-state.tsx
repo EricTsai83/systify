@@ -119,7 +119,7 @@ function OwlAsciiArt() {
 /**
  * Shared hero block for chatroom empty states — visual, title, optional
  * description. The same structural primitive backs Library Ask, Discuss,
- * and the no-repo Lab/Docs hint so the framework stays consistent even
+ * and the no-repo hint so the framework stays consistent even
  * when the visual (icon vs. ASCII owl) and copy differ per context.
  */
 export function EmptyStateHero({
@@ -310,8 +310,7 @@ export function EmptyNoRepoHint({
         </DropdownMenu>
 
         <p className="max-w-xs text-xs text-muted-foreground">
-          Move this thread into a repository workspace to unlock Docs and Sandbox modes, or keep typing here for a
-          free-form discussion.
+          Attach a repository to enable Library and Sandbox grounding, or keep typing here for a free-form discussion.
         </p>
       </div>
     </div>

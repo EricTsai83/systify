@@ -155,13 +155,13 @@ const workspaceColor = v.union(
 export default defineSchema({
   workspaces: defineTable({
     ownerTokenIdentifier: v.string(),
-    repositoryId: v.optional(v.id("repositories")),
+    repositoryId: v.id("repositories"),
     name: v.string(),
     color: workspaceColor,
     lastAccessedAt: v.number(),
     /**
      * Last mode the user landed on inside this workspace
-     * (discuss / library / lab). The workspace-landing redirect
+     * (discuss / library). The workspace-landing redirect
      * (`/chat` → `/w/:wid` → canonical mode URL) consults this so the
      * user comes back to the mode they were last in, instead of the
      * workspace's structural default. Optional because pre-existing
@@ -398,9 +398,9 @@ export default defineSchema({
      */
     folderId: v.optional(v.id("artifactFolders")),
     /**
-     * Wall-clock ms epoch of the most recent Lab-session verification.
-     * Stamped by the Lab session when the LLM reads / re-reads the live
-     * tree to confirm the artifact is still accurate. The Library tree
+     * Wall-clock ms epoch of the most recent sandbox-grounded verification.
+     * Stamped by a sandbox-grounded reply when the LLM reads / re-reads the
+     * live tree to confirm the artifact is still accurate. The Library tree
      * pills derive freshness purely from this column — an artifact is
      * "verified" iff this field is set.
      */
@@ -512,7 +512,7 @@ export default defineSchema({
    *   - `repositoryId` is required: folders don't make sense outside a
    *     repository workspace. The `optional` validator is only there so the
    *     same query helpers can short-circuit when callers pass `null` for
-   *     no-repo workspaces (Home).
+   *     workspaceless threads.
    *   - `parentFolderId` is optional; root folders have it unset. The
    *     `by_repositoryId_and_parentFolderId` index lets the navigator pull a
    *     single level on demand and build the tree client-side.
@@ -642,6 +642,19 @@ export default defineSchema({
   })
     .index("by_repositoryId_and_lastMessageAt", ["repositoryId", "lastMessageAt"])
     .index("by_ownerTokenIdentifier_and_lastMessageAt", ["ownerTokenIdentifier", "lastMessageAt"])
+    /**
+     * Workspaceless-thread range read. Convex treats `undefined` as a distinct
+     * index key, so an `.eq("workspaceId", undefined)` range over this index
+     * scans only the workspaceless slice (O(workspaceless-count)) rather than
+     * filtering the whole owner table. Powers
+     * `chat.threads.listWorkspacelessThreads` and the workspaceless-shell
+     * "Chats" sidebar section.
+     */
+    .index("by_ownerTokenIdentifier_workspaceless_and_lastMessageAt", [
+      "ownerTokenIdentifier",
+      "workspaceId",
+      "lastMessageAt",
+    ])
     .index("by_workspaceId_and_lastMessageAt", ["workspaceId", "lastMessageAt"])
     .index("by_workspaceId_and_pinnedAt", ["workspaceId", "pinnedAt"])
     .index("by_workspaceId_and_mode", ["workspaceId", "mode"])

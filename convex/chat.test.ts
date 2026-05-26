@@ -55,20 +55,6 @@ async function insertWorkspaceWithRepository(
   });
 }
 
-async function insertHomeWorkspace(
-  t: ReturnType<typeof convexTest>,
-  ownerTokenIdentifier: string,
-): Promise<Id<"workspaces">> {
-  return await t.run(async (ctx) => {
-    return await ctx.db.insert("workspaces", {
-      ownerTokenIdentifier,
-      name: "Home",
-      color: "blue",
-      lastAccessedAt: Date.now(),
-    });
-  });
-}
-
 describe("chat thread defaults", () => {
   test("repo-less createThread and detach converge on the same persisted default mode", async () => {
     const ownerTokenIdentifier = "user|chat-default-mode";
@@ -86,7 +72,7 @@ describe("chat thread defaults", () => {
     });
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
-    await viewer.mutation(api.chat.threads.setThreadRepository, {
+    const detachResult = await viewer.mutation(api.chat.threads.setThreadRepository, {
       threadId,
       repositoryId: null,
     });
@@ -98,7 +84,9 @@ describe("chat thread defaults", () => {
     }));
 
     expect(detachedThread?.repositoryId).toBeUndefined();
+    expect(detachedThread?.workspaceId).toBeUndefined();
     expect(detachedThread?.mode).toBe("discuss");
+    expect(detachResult.workspaceId).toBeNull();
     expect(empty.mode).toBe("discuss");
     expect(emptyThread?.mode).toBe("discuss");
     expect(detachedThread?.mode).toBe(emptyThread?.mode);
@@ -241,14 +229,12 @@ describe("chat thread defaults", () => {
 });
 
 describe("sendMessageStartingNewThread", () => {
-  test("happy path: creates a thread, user + assistant messages, job, and stream in one transaction", async () => {
+  test("happy path: workspaceless thread inserts user + assistant messages, job, and stream in one transaction", async () => {
     const ownerTokenIdentifier = "user|lazy-first-send-happy";
     const t = createTestConvex();
-    const homeWorkspaceId = await insertHomeWorkspace(t, ownerTokenIdentifier);
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
     const result = await viewer.mutation(api.chat.send.sendMessageStartingNewThread, {
-      workspaceId: homeWorkspaceId,
       content: "hello world",
       mode: "discuss",
     });
@@ -261,7 +247,8 @@ describe("sendMessageStartingNewThread", () => {
 
     await t.run(async (ctx) => {
       const thread = await ctx.db.get(result.threadId);
-      expect(thread?.workspaceId).toBe(homeWorkspaceId);
+      expect(thread?.workspaceId).toBeUndefined();
+      expect(thread?.repositoryId).toBeUndefined();
       expect(thread?.mode).toBe("discuss");
       expect(thread?.title).toBe("New design conversation");
 
@@ -291,7 +278,6 @@ describe("sendMessageStartingNewThread", () => {
   test("library mode without an attached repository throws", async () => {
     const ownerTokenIdentifier = "user|lazy-library-no-repo";
     const t = createTestConvex();
-    const homeWorkspaceId = await insertHomeWorkspace(t, ownerTokenIdentifier);
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
     // Surfaces via assertWorkspaceModeEligible's structured ConvexError
@@ -299,7 +285,6 @@ describe("sendMessageStartingNewThread", () => {
     // the regex matches the message substring inside the serialized data.
     await expect(
       viewer.mutation(api.chat.send.sendMessageStartingNewThread, {
-        workspaceId: homeWorkspaceId,
         content: "anything",
         mode: "library",
       }),
@@ -310,27 +295,26 @@ describe("sendMessageStartingNewThread", () => {
     const ownerTokenIdentifier = "user|lazy-owner";
     const intruderIdentifier = "user|lazy-intruder";
     const t = createTestConvex();
-    const homeWorkspaceId = await insertHomeWorkspace(t, ownerTokenIdentifier);
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const ownerWorkspaceId = await insertWorkspaceWithRepository(t, ownerTokenIdentifier, repositoryId);
 
     const intruder = t.withIdentity({ tokenIdentifier: intruderIdentifier });
     await expect(
       intruder.mutation(api.chat.send.sendMessageStartingNewThread, {
-        workspaceId: homeWorkspaceId,
+        workspaceId: ownerWorkspaceId,
         content: "trying",
         mode: "discuss",
       }),
     ).rejects.toThrow("Workspace not found.");
   });
 
-  test("empty content is rejected without inserting a thread", async () => {
+  test("empty content is rejected without inserting a workspaceless thread", async () => {
     const ownerTokenIdentifier = "user|lazy-empty-content";
     const t = createTestConvex();
-    const homeWorkspaceId = await insertHomeWorkspace(t, ownerTokenIdentifier);
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
     await expect(
       viewer.mutation(api.chat.send.sendMessageStartingNewThread, {
-        workspaceId: homeWorkspaceId,
         content: "   ",
         mode: "discuss",
       }),
@@ -340,7 +324,9 @@ describe("sendMessageStartingNewThread", () => {
       async (ctx) =>
         await ctx.db
           .query("threads")
-          .withIndex("by_workspaceId_and_lastMessageAt", (q) => q.eq("workspaceId", homeWorkspaceId))
+          .withIndex("by_ownerTokenIdentifier_and_lastMessageAt", (q) =>
+            q.eq("ownerTokenIdentifier", ownerTokenIdentifier),
+          )
           .collect(),
     );
     expect(threads).toHaveLength(0);
@@ -353,12 +339,10 @@ describe("sendMessageStartingNewThread", () => {
     // can't be satisfied).
     const ownerTokenIdentifier = "user|lazy-sandbox-no-repo";
     const t = createTestConvex();
-    const homeWorkspaceId = await insertHomeWorkspace(t, ownerTokenIdentifier);
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
     await expect(
       viewer.mutation(api.chat.send.sendMessageStartingNewThread, {
-        workspaceId: homeWorkspaceId,
         content: "sandbox attempt",
         mode: "discuss",
         groundSandbox: true,
@@ -369,7 +353,9 @@ describe("sendMessageStartingNewThread", () => {
       async (ctx) =>
         await ctx.db
           .query("threads")
-          .withIndex("by_workspaceId_and_lastMessageAt", (q) => q.eq("workspaceId", homeWorkspaceId))
+          .withIndex("by_ownerTokenIdentifier_and_lastMessageAt", (q) =>
+            q.eq("ownerTokenIdentifier", ownerTokenIdentifier),
+          )
           .collect(),
     );
     expect(threads).toHaveLength(0);
@@ -409,5 +395,57 @@ describe("sendMessageStartingNewThread", () => {
       expect(thread?.repositoryId).toBe(repositoryId);
       expect(thread?.title).toBe("widget chat");
     });
+  });
+});
+
+describe("listWorkspacelessThreads", () => {
+  test("returns only threads with workspaceId === undefined for the viewer", async () => {
+    const ownerTokenIdentifier = "user|list-workspaceless";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const repoWorkspaceId = await insertWorkspaceWithRepository(t, ownerTokenIdentifier, repositoryId);
+
+    const { workspacelessThreadId, repoThreadId } = await t.run(async (ctx) => {
+      const workspacelessThreadId = await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Workspaceless",
+        mode: "discuss",
+        lastMessageAt: 1,
+      });
+      const repoThreadId = await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        workspaceId: repoWorkspaceId,
+        repositoryId,
+        title: "Repo thread",
+        mode: "library",
+        lastMessageAt: 2,
+      });
+      return { workspacelessThreadId, repoThreadId };
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const threads = await viewer.query(api.chat.threads.listWorkspacelessThreads, {});
+    const ids = threads.map((thread) => thread._id);
+    expect(ids).toContain(workspacelessThreadId);
+    expect(ids).not.toContain(repoThreadId);
+  });
+
+  test("does not leak another viewer's workspaceless threads", async () => {
+    const ownerTokenIdentifier = "user|list-workspaceless-owner";
+    const intruderTokenIdentifier = "user|list-workspaceless-intruder";
+    const t = createTestConvex();
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Owner private chat",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+    });
+
+    const intruder = t.withIdentity({ tokenIdentifier: intruderTokenIdentifier });
+    const threads = await intruder.query(api.chat.threads.listWorkspacelessThreads, {});
+    expect(threads).toEqual([]);
   });
 });

@@ -60,7 +60,7 @@ export type ArtifactListItem = Pick<
 /**
  * Canonical chat mode. The frontend type and the schema-level
  * `threads.mode` / `messages.mode` enum share the exact same string
- * literals (`discuss | library | lab`) — no mapping layer, by design.
+ * literals (`discuss | library`) — no mapping layer, by design.
  * Re-exported here so frontend imports do not have to reach into `convex/`
  * for the type.
  */

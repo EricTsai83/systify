@@ -481,26 +481,25 @@ describe("rate limits and interactive job guards", () => {
       const ownerTokenIdentifier = "user|cap-workspace-blocked";
       const t = createTestConvex();
 
-      const workspaceId = await t.run(async (ctx) => {
-        return await ctx.db.insert("workspaces", {
-          ownerTokenIdentifier,
-          name: "Capped Workspace",
-          color: "blue",
-          lastAccessedAt: Date.now(),
-        });
-      });
-
       const { repositoryId, threadId } = await createRepositoryFixture(
         t,
         ownerTokenIdentifier,
         "cap-workspace-blocked",
         { withSandbox: true },
       );
+      const workspaceId = await t.run(async (ctx) => {
+        return await ctx.db.insert("workspaces", {
+          ownerTokenIdentifier,
+          repositoryId,
+          name: "Capped Workspace",
+          color: "blue",
+          lastAccessedAt: Date.now(),
+        });
+      });
       // Attach the thread to the workspace so the pre-check runs the
       // workspace branch.
       await t.run(async (ctx) => {
         await ctx.db.patch(threadId, { workspaceId });
-        await ctx.db.patch(repositoryId, {});
       });
       const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
 
@@ -696,9 +695,11 @@ describe("rate limits and interactive job guards", () => {
       const ownerTokenIdentifier = "user|cap-settle-direct";
       const t = createTestConvex();
 
+      const { repositoryId } = await createRepositoryFixture(t, ownerTokenIdentifier, "cap-settle-direct");
       const workspaceId = await t.run(async (ctx) => {
         return await ctx.db.insert("workspaces", {
           ownerTokenIdentifier,
+          repositoryId,
           name: "Settle Workspace",
           color: "blue",
           lastAccessedAt: Date.now(),

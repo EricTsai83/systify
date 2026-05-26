@@ -142,11 +142,29 @@ async function evaluateFromRepository(
  * it. Read set is bounded to the workspace's repo / sandbox / artifact
  * existence + per-user + per-workspace cost-cap peeks so the reactive
  * subscription only invalidates when something user-visible changes.
+ *
+ * The `args.workspaceId === undefined` branch is a forward-compat surface
+ * for future workspaceless consumers that want to subscribe (or skip)
+ * uniformly with workspace-bound callers. No frontend currently routes
+ * through it; it stays because the cost is purely additive and keeps the
+ * disabled-reason codes consistent with the workspace-bound branch.
  */
 export const evaluate = query({
-  args: { workspaceId: v.id("workspaces") },
+  args: { workspaceId: v.optional(v.id("workspaces")) },
   handler: async (ctx, args): Promise<WorkspaceModeEligibility | null> => {
     const identity = await requireViewerIdentity(ctx);
+    // Workspaceless eligibility: a thread without a workspace structurally
+    // cannot satisfy Library mode (no repo to anchor artifacts). Return
+    // the no-repo verdict via the shared `evaluateFromRepository` path so
+    // the disabled-reason codes stay consistent with the workspace-bound
+    // branches below.
+    if (!args.workspaceId) {
+      return await evaluateFromRepository(ctx, {
+        repository: null,
+        workspaceId: null,
+        tokenIdentifier: identity.tokenIdentifier,
+      });
+    }
     const workspace = await ctx.db.get(args.workspaceId);
     if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
       return null;

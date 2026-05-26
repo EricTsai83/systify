@@ -42,8 +42,8 @@ function clampSidebarWidth(value: number, maxWidth: number): number {
   return Math.max(SIDEBAR_MIN_WIDTH, Math.min(maxWidth, Math.round(value)));
 }
 
-// Width is keyed so each surface can keep its own memory: Discuss/Lab share
-// the slim default; Library Ask carries a full chat panel and passes a
+// Width is keyed so each surface can keep its own memory: Discuss
+// uses the slim default; Library Ask carries a full chat panel and passes a
 // roomier key + default. Both still clamp to the configured min/max bounds.
 function readStoredSidebarWidth(storageKey: string, fallback: number, maxWidth: number): number {
   const stored = readString(storageKey);

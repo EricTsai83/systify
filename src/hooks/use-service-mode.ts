@@ -50,7 +50,7 @@ const NULL_RESOLUTION = {
  *     `/w/:wid/t/:tid`). Callers that gate chrome on the user's "current
  *     mode" should treat `null` as "no mode chrome yet" — never paint
  *     mode-dependent surfaces (StatusPill, ArtifactPanel) before the URL
- *     settles on a canonical `/w/:wid/{discuss,library,lab}/...` path.
+ *     settles on a canonical `/w/:wid/{discuss,library}/...` path.
  *     This eliminates the flash that used to happen when transient URLs
  *     briefly resolved to the workspace's default mode (e.g. "library"
  *     for a repo-attached workspace) before the canonicalising redirect

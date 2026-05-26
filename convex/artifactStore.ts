@@ -72,8 +72,8 @@ export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArt
     version: 1,
     folderId: args.folderId,
     alignedImportCommitSha: args.alignedImportCommitSha,
-    // Lab-sourced artifacts are "verified at creation"; everything else
-    // starts unverified until a Lab session stamps it. The presence of
+    // Sandbox-grounded artifacts are "verified at creation"; everything else
+    // starts unverified until a sandbox-grounded reply stamps it. The presence of
     // `lastVerifiedAt` is the single signal the Library freshness UI reads.
     lastVerifiedAt: args.source === "sandbox" ? now : undefined,
     chunkingStatus: args.repositoryId ? "pending" : undefined,

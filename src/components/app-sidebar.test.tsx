@@ -228,11 +228,16 @@ function createLeftSidebarElement({
 }: {
   onError?: (message: string | null) => void;
 } = {}) {
+  // Tests target the workspace-bound thread rail (createThread mutation
+  // surfaces, mode-filtered new-thread, live-region announcements). Pass a
+  // non-null workspace id so the rail mounts; the `null` case is exercised
+  // via the dedicated WorkspacelessChatsRail tests in workspace-threads-rail.
+  const workspaceId = "ws_test" as WorkspaceId;
   return (
     <AppSidebarLeft
       repositories={[] as Doc<"repositories">[]}
-      workspaces={[] as Doc<"workspaces">[]}
-      activeWorkspaceId={null as WorkspaceId | null}
+      workspaces={[{ _id: workspaceId, repositoryId: "repo_1" } as unknown as Doc<"workspaces">]}
+      activeWorkspaceId={workspaceId}
       onSwitchWorkspace={vi.fn()}
       selectedThreadId={null as ThreadId | null}
       onSelectThread={vi.fn()}

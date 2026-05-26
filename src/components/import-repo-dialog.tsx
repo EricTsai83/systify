@@ -205,9 +205,10 @@ export function ImportRepoDialog({
     threadMode: ThreadMode | null,
   ) => void;
   /**
-   * Optional custom trigger element. Used by the EmptyState's dual-CTA layout
-   * (PRD US 9) where the "Import repository" button needs to read as a primary
-   * action rather than the compact "+" icon used in the sidebar.
+   * Optional custom trigger element. Lets callers swap the default "+" sidebar
+   * button for a contextual affordance — e.g. the no-repo chat surface mounts
+   * the dialog inside a DropdownMenuItem so import sits next to "Attach
+   * repository" actions.
    */
   trigger?: ReactElement;
 }) {

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { ArchiveIcon, ArrowCounterClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
@@ -11,20 +11,18 @@ import { AppSidebarLeft } from "@/components/app-sidebar";
 import { ArtifactPanel } from "@/components/artifact-panel";
 import { TopBar } from "@/components/top-bar";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { EmptyState } from "@/components/empty-state";
 import { AppNotice } from "@/components/app-notice";
 import { ChatContainer } from "@/components/chat-panel";
 import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
 import { StatusPanel } from "@/components/status-panel";
-import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { useChatShellLifecycle } from "@/components/chat-shell-shared/use-chat-shell-lifecycle";
+import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-thread-deletion-recovery";
+import { useWorkspacePersistence } from "@/components/chat-shell-shared/use-workspace-persistence";
 import { useCheckForUpdates } from "@/hooks/use-check-for-updates";
-import { useComposerDraft } from "@/hooks/use-composer-draft";
 import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
 import { useRecentThreads } from "@/hooks/use-recent-threads";
-import { useChatLifecycle } from "@/hooks/use-chat-lifecycle";
 import { useRepositoryLifecycle } from "@/hooks/use-repository-lifecycle";
 import { useChatMode } from "@/hooks/use-service-mode";
-import { useStorageGC } from "@/hooks/use-storage-gc";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
 import type {
@@ -36,10 +34,7 @@ import type {
   ThreadMode,
   WorkspaceId,
 } from "@/lib/types";
-import { toUserErrorMessage } from "@/lib/errors";
-import { readString, removeKey, writeString } from "@/lib/storage";
 import { cn } from "@/lib/utils";
-import { applyTouchWorkspaceOptimistic } from "@/lib/workspace-mutations";
 import {
   DEFAULT_AUTHENTICATED_PATH,
   discussPath,
@@ -50,7 +45,7 @@ import {
   workspacePath,
 } from "@/route-paths";
 
-type RepositoryWorkspaceStatus = "initializing" | "no-repo" | "ready";
+type RepositoryWorkspaceStatus = "initializing" | "ready";
 const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
 
 /**
@@ -65,8 +60,6 @@ const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
  * panel would have no parent to scroll within.
  */
 const MOBILE_DRAWER_HEIGHT_CLASS = "h-[95dvh] data-[vaul-drawer-direction=bottom]:max-h-[95dvh]";
-
-const ACTIVE_WORKSPACE_STORAGE_KEY = "systify.activeWorkspaceId";
 
 /**
  * URL ↔ workspace-state bridge. The route layer (`/chat`, `/w/:workspaceId`,
@@ -109,65 +102,17 @@ export function RepositoryShell({
   const navigate = useNavigate();
   const repositories = useQuery(api.repositories.listRepositories);
 
-  // -------------------------------------------------------------------------
   // Workspace state — DB is the source of truth, localStorage is a
-  // first-paint cache.
-  //
-  // Resolution order (see docs/workspace-persistence-system-design.md):
-  //   1. Render immediately with whatever localStorage has so we avoid a
-  //      blank-shell flash while Convex hydrates.
-  //   2. When `getViewerPreferences` resolves with a stored
-  //      `lastActiveWorkspaceId`, reconcile to the DB value — that is the
-  //      canonical "current workspace" and the only thing that survives a
-  //      different device or a cleared cache.
-  //   3. If the active id is missing or no longer valid (workspace deleted),
-  //      fall back to the most-recently-touched workspace, then promote that
-  //      pick into the DB so future loads converge instantly.
-  // -------------------------------------------------------------------------
-  const workspaces = useQuery(api.workspaces.listWorkspaces);
-  const viewerPreferences = useQuery(api.userPreferences.getViewerPreferences);
-  const initializeWorkspaces = useMutation(api.workspaces.initializeWorkspaces);
-  // `touchWorkspace` carries `applyTouchWorkspaceOptimistic` so the local
-  // query cache reflects the user's switch the same render they click.
-  // Without it, the reconciliation effect below would briefly observe a stale
-  // `viewerPreferences` (still pointing at the previous workspace) and bounce
-  // the user back. With it, the local query cache and the local React state
-  // agree on the new workspace within the same render, which both eliminates
-  // the in-flight race and lets us drop the one-shot reconciliation guard so
-  // genuine cross-tab pushes propagate live.
-  const baseTouchWorkspace = useMutation(api.workspaces.touchWorkspace);
-  const touchWorkspace = useMemo(
-    () => baseTouchWorkspace.withOptimisticUpdate(applyTouchWorkspaceOptimistic),
-    [baseTouchWorkspace],
-  );
-  const initializationAttemptedRef = useRef(false);
+  // first-paint cache. See `useWorkspacePersistence` and
+  // `docs/workspace-persistence-system-design.md` for the full reasoning.
+  const { workspaces, touchWorkspace, activeWorkspaceId, currentWorkspaceId, currentWorkspace, handleSwitchWorkspace } =
+    useWorkspacePersistence({ urlWorkspaceId, navigate });
 
-  // First-paint cache. Rendering with this avoids a one-frame flicker before
-  // `viewerPreferences` arrives. The cache is *only* trusted until the DB
-  // value lands; after that, the DB wins on conflict.
-  const [activeWorkspaceId, setActiveWorkspaceId] = useState<WorkspaceId | null>(() => {
-    const stored = readString(ACTIVE_WORKSPACE_STORAGE_KEY);
-    return stored ? (stored as WorkspaceId) : null;
-  });
-
-  // Mirror every active-workspace change back into localStorage so the
-  // first-paint cache stays warm for the next load. This is best-effort: if
-  // the write fails (private mode quota, storage disabled, …), the DB still
-  // carries the canonical value.
-  useEffect(() => {
-    if (activeWorkspaceId) {
-      writeString(ACTIVE_WORKSPACE_STORAGE_KEY, activeWorkspaceId);
-    } else {
-      removeKey(ACTIVE_WORKSPACE_STORAGE_KEY);
-    }
-  }, [activeWorkspaceId]);
-
-  // Sweep orphan per-workspace / per-repository localStorage keys whenever
-  // the live id sets change. Pass `null` while the upstream query is still
-  // loading so we don't treat the initial undefined as "everything is an
-  // orphan." Cross-tab/device deletions propagate here via the same Convex
-  // subscriptions, so a workspace deleted in another tab gets its tab-strip
-  // cache reaped here without an extra handshake.
+  // Live id sets for the `useStorageGC` sweep (passed through the bundle).
+  // Composer drafts are thread-scoped; the GC sweep needs the full owner set
+  // (capped at 1000 by the query) so a thread deleted in another tab gets
+  // its draft localStorage reaped on the next subscription tick.
+  const ownerThreadIds = useQuery(api.chat.threads.listAllOwnerThreadIds, {});
   const liveWorkspaceIds = useMemo(
     () => (workspaces ? new Set(workspaces.map((w) => w._id as string)) : null),
     [workspaces],
@@ -176,167 +121,9 @@ export function RepositoryShell({
     () => (repositories ? new Set(repositories.map((r) => r._id as string)) : null),
     [repositories],
   );
-  // Composer drafts are thread-scoped; the GC sweep needs the full owner set
-  // (capped at 1000 by the query) so a thread deleted in another tab gets
-  // its draft localStorage reaped on the next subscription tick.
-  const ownerThreadIds = useQuery(api.chat.threads.listAllOwnerThreadIds, {});
   const liveThreadIds = useMemo(
     () => (ownerThreadIds ? new Set(ownerThreadIds.map((id) => id as string)) : null),
     [ownerThreadIds],
-  );
-  useStorageGC({ liveWorkspaceIds, liveRepositoryIds, liveThreadIds });
-
-  // Auto-initialize or repair the default Home workspace once per load. The
-  // mutation is idempotent, so existing users with legacy General workspaces
-  // get normalized without a separate migration step.
-  useEffect(() => {
-    if (workspaces === undefined || initializationAttemptedRef.current) return;
-    initializationAttemptedRef.current = true;
-    void initializeWorkspaces({});
-  }, [workspaces, initializeWorkspaces]);
-
-  // DB-wins reconciliation. Re-runs whenever the DB-side selection changes,
-  // which is also the cross-tab live-sync path: a switch in another tab pushes
-  // the new `viewerPreferences` row through Convex's subscription, this effect
-  // observes the diff, and adopts the new value here. The race that used to
-  // need a one-shot ref (a stale `viewerPreferences` arriving after the user's
-  // local switch and bouncing them back) is now neutralised by the optimistic
-  // update on `touchWorkspace`, which keeps the local query cache aligned with
-  // the user's intent during the in-flight window.
-  useEffect(() => {
-    if (workspaces === undefined || viewerPreferences === undefined) return;
-    const dbWorkspaceId = viewerPreferences?.lastActiveWorkspaceId ?? null;
-    if (!dbWorkspaceId) return;
-    const dbWorkspaceExists = workspaces.some((ws) => ws._id === dbWorkspaceId);
-    if (!dbWorkspaceExists) return;
-    if (dbWorkspaceId !== activeWorkspaceId) {
-      // setState in an effect, but the only practical alternative is to
-      // derive `activeWorkspaceId` purely during render, which would require
-      // dropping the localStorage-cached first-paint state and re-introducing
-      // a flash on every load. The guard above ensures this only fires when
-      // the DB and local state actually disagree, so it's a one-shot per
-      // genuine cross-tab/cross-device push, not a render loop.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setActiveWorkspaceId(dbWorkspaceId);
-    }
-  }, [workspaces, viewerPreferences, activeWorkspaceId]);
-
-  // Auto-select the most recent workspace if none is active or the active
-  // one no longer exists (e.g. deleted on another device). We also seed the
-  // DB preference here so cross-device convergence works even for users who
-  // never explicitly switch — without this, a brand-new browser would pick
-  // its own fallback and never publish it as the canonical selection.
-  useEffect(() => {
-    if (!workspaces || workspaces.length === 0) return;
-    // Wait for the reconciliation pass before considering fallback so we
-    // don't briefly select the wrong workspace and then bounce to the DB
-    // value once `viewerPreferences` resolves.
-    if (viewerPreferences === undefined) return;
-    const activeExists = workspaces.some((ws) => ws._id === activeWorkspaceId);
-    if (activeExists) return;
-    const fallback = workspaces[0]._id;
-    // setState in an effect is normally a smell, but here it's the right tool:
-    // the fallback choice depends on async query data (`workspaces`) and on a
-    // sibling DB query (`viewerPreferences`), which can't be derived purely
-    // during render without re-introducing the original race. The early
-    // returns above guarantee at most one setState per workspaces snapshot,
-    // and after this fires `activeExists` becomes true on the next run so the
-    // effect short-circuits.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setActiveWorkspaceId(fallback);
-    if (viewerPreferences?.lastActiveWorkspaceId !== fallback) {
-      void touchWorkspace({ workspaceId: fallback }).catch(() => {});
-    }
-  }, [workspaces, viewerPreferences, activeWorkspaceId, touchWorkspace]);
-
-  const handleSwitchWorkspace = useCallback(
-    (workspaceId: WorkspaceId) => {
-      // Navigate to the workspace landing — the URL-driven sync effect below
-      // mirrors the new id into `activeWorkspaceId` (and the DB preference
-      // via `touchWorkspace`), and the workspace-landing redirect drops the
-      // user onto its most recent thread. Going through the URL here is what
-      // makes workspace switches flicker-free: the TopBar resolves the new
-      // repo synchronously from `urlWorkspaceId` instead of waiting for
-      // `getThreadContext` to tell us which repo we're now in.
-      void navigate(workspacePath(workspaceId));
-    },
-    [navigate],
-  );
-
-  /*
-   * URL → state sync. When the URL carries a workspace id, treat it as the
-   * canonical "current workspace" and pull `activeWorkspaceId` (plus its
-   * localStorage mirror via the existing effect, and the DB preference via
-   * `touchWorkspace`) into agreement. This is what lets workspace switches
-   * be a single `navigate(workspacePath(id))` call: the URL change drives
-   * the rest of the system here, instead of every callsite needing to
-   * remember to update three places at once.
-   *
-   * The DB-wins reconciliation effect above still runs — it handles the
-   * cross-tab path (a switch on another device pushes a new
-   * `lastActiveWorkspaceId` through the subscription) — but the common case
-   * (user clicks a workspace in this tab) flows through here.
-   */
-  useEffect(() => {
-    if (urlWorkspaceId === null) return;
-    // Wait for `listWorkspaces` to hydrate before deciding — without this
-    // guard, `workspaces?.some(...)` returns `undefined` while the query is
-    // loading, the negation flips to `true`, and we redirect away from a
-    // perfectly valid URL on first paint.
-    if (workspaces === undefined) return;
-    // Validate the URL before adopting it. A stale id (deleted workspace,
-    // copy/paste from another device) would otherwise oscillate with the
-    // fallback effect: this effect would write the stale id into
-    // `activeWorkspaceId`, the fallback effect would observe `activeExists ===
-    // false` and re-pick a surviving workspace, and we'd bounce back here on
-    // the next render forever. The validation must run *before* the
-    // `urlWorkspaceId === activeWorkspaceId` short-circuit so that a
-    // localStorage-cached stale id pinned in `activeWorkspaceId` still gets
-    // recovered.
-    const urlWorkspaceExists = workspaces.some((ws) => ws._id === urlWorkspaceId);
-    if (!urlWorkspaceExists) {
-      void navigate(DEFAULT_AUTHENTICATED_PATH, { replace: true });
-      return;
-    }
-    if (urlWorkspaceId === activeWorkspaceId) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setActiveWorkspaceId(urlWorkspaceId);
-    void touchWorkspace({ workspaceId: urlWorkspaceId }).catch(() => {});
-  }, [urlWorkspaceId, activeWorkspaceId, touchWorkspace, workspaces, navigate]);
-
-  // useThreadCapabilities is the canonical bridge between the resolver-side
-  // ChatModeResolver / ThreadContextResolver and the UI's mode selector.
-  // It also forwards the attached repository summary, so we do not need a
-  // second `getThreadContext` subscription here.
-  const capabilities = useThreadCapabilities(urlThreadId);
-
-  /*
-   * `currentWorkspaceId` resolves "which workspace is the user in?" without
-   * forcing every consumer to remember the URL/state precedence. The URL
-   * wins whenever it has a workspace id (including during the brief render
-   * window before the sync effect mirrors it into `activeWorkspaceId`); the
-   * state value is the fallback for `/chat` (where the URL carries no
-   * workspace) and for first-paint before Convex hydrates.
-   */
-  const currentWorkspaceId: WorkspaceId | null = urlWorkspaceId ?? activeWorkspaceId;
-
-  /*
-   * Resolved workspace row for `currentWorkspaceId`. Defined here (rather
-   * than alongside the repo-id derivation lower in the component) because
-   * the Tier 2 redirect just below needs `lastMode` off this row to
-   * decide where to send the user. `workspaces` is `undefined` until the
-   * query hydrates; treat that as "no row yet" so consumers fall through
-   * to their fallbacks rather than failing closed.
-   *
-   * Memoised so the object identity is stable across renders where
-   * `workspaces` ticks but the relevant row didn't change — the mode-record
-   * effect's dependency list watches this value, and re-running it on every
-   * subscription push (only to short-circuit on the identity guard) burns
-   * CPU and obscures the dep graph.
-   */
-  const currentWorkspace = useMemo(
-    () => (currentWorkspaceId ? (workspaces?.find((ws) => ws._id === currentWorkspaceId) ?? null) : null),
-    [workspaces, currentWorkspaceId],
   );
 
   // RepositoryShell is mounted by Chat and Discuss. The redirect must
@@ -382,6 +169,12 @@ export function RepositoryShell({
     return availability?.defaultMode ?? "discuss";
   }, [mode, currentWorkspace?.lastMode, availability]);
 
+  // `useThreadCapabilities` bridges the resolver-side ChatModeResolver /
+  // ThreadContextResolver into the UI's mode/capability shape. Lives here
+  // (not inside the shared lifecycle bundle) so consumers further down can
+  // reference `capabilities` without forcing a giant render-order reshuffle.
+  const capabilities = useThreadCapabilities(urlThreadId);
+
   // The right-rail ArtifactPanel — repo-scoped folder tree plus
   // sandbox-backed launchers — surfaces in Library Mode and in Discuss
   // Mode when a repository is attached (so the user can browse artifacts
@@ -409,16 +202,6 @@ export function RepositoryShell({
   const [threadToDelete, setThreadToDelete] = useState<ThreadId | null>(null);
   const [showArchiveDialog, setShowArchiveDialog] = useState(false);
   const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] = useState(false);
-  // Composer draft persists across thread switches and refreshes. Key shape:
-  //   - thread set       → `systify.composer.draft.thread.{tid}` (per-thread)
-  //   - no thread + ws   → `systify.composer.draft.workspace.{wid}.{mode}`
-  // The `mode` segment lets `/w/:wid/discuss` and `/w/:wid/library`
-  // keep independent drafts.
-  const [chatInput, setChatInput, clearChatInput] = useComposerDraft({
-    workspaceId: currentWorkspaceId,
-    threadId: urlThreadId,
-    mode,
-  });
   // This shell only renders Discuss — Library has its own page
   // (`pages/library.tsx`). The chat mode is therefore always
   // `"discuss"`. Per-message grounding is the dimension the user
@@ -430,31 +213,14 @@ export function RepositoryShell({
   // thread's `defaultGround*` snapshot exactly once: subsequent ticks
   // of the capabilities subscription (e.g. a sandbox flip from
   // `provisioning` → `ready`) cannot stomp on the user's mid-session
-  // click, because the `threadId` key has not changed. A new thread
-  // (different `urlThreadId`, including `null` → some id) triggers
-  // re-seeding via the effect below.
+  // click, because the `threadId` key has not changed. The seeding
+  // effect below the chat-shell lifecycle bundle re-seeds on genuine
+  // thread switches (different `urlThreadId`, including `null` → id).
   const [groundingByThread, setGroundingByThread] = useState<{
     threadId: ThreadId | null;
     library: boolean;
     sandbox: boolean;
   }>({ threadId: urlThreadId, library: false, sandbox: false });
-  useEffect(() => {
-    if (groundingByThread.threadId === urlThreadId) return;
-    // setState in an effect is the right tool here: the seeding decision
-    // depends on async query data (`capabilities.defaultGround*`) keyed
-    // by the URL thread id. Deriving it in render would re-seed on every
-    // capabilities tick, clobbering a user's mid-session toggle click.
-    // The `threadId` guard above ensures this fires at most once per
-    // genuine thread switch.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setGroundingByThread({
-      threadId: urlThreadId,
-      // `null` thread id means the bare `/w/:wid/discuss` landing; we
-      // have no per-thread defaults to seed from, so start both off.
-      library: urlThreadId === null ? false : capabilities.defaultGroundLibrary,
-      sandbox: urlThreadId === null ? false : capabilities.defaultGroundSandbox,
-    });
-  }, [urlThreadId, capabilities.defaultGroundLibrary, capabilities.defaultGroundSandbox, groundingByThread.threadId]);
   const groundLibrary = groundingByThread.library;
   const groundSandbox = groundingByThread.sandbox;
   const setGroundLibrary = useCallback(
@@ -465,25 +231,6 @@ export function RepositoryShell({
     (next: boolean) => setGroundingByThread((prev) => ({ ...prev, sandbox: next })),
     [],
   );
-  const groundingState = availability?.grounding;
-  // Keep the Library toggle in lockstep with availability — flipping it
-  // back off when the artifact gate closes prevents a stale `true`
-  // sending a doomed `groundLibrary: true` mutation.
-  useEffect(() => {
-    if (groundingState && !groundingState.library.enabled && groundLibrary) {
-      // Verdict said the artifact gate just closed; flipping the toggle
-      // back off keeps a stale `true` from sending a doomed mutation.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setGroundLibrary(false);
-    }
-  }, [groundingState, groundLibrary, setGroundLibrary]);
-  useEffect(() => {
-    if (groundingState && !groundingState.sandbox.enabled && groundSandbox) {
-      // Same rationale as the library auto-flip-off above.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setGroundSandbox(false);
-    }
-  }, [groundingState, groundSandbox, setGroundSandbox]);
   const [actionError, setActionError] = useState<string | null>(null);
   /**
    * Transient info-level banner — used to confirm async background work was
@@ -540,20 +287,19 @@ export function RepositoryShell({
   /*
    * Repo id is derived synchronously from the cached `listWorkspaces` query
    * by looking up the workspace named in the URL. Workspaces are 1:1 with
-   * their bound repository (the no-repo "Home" workspace simply has no
-   * `repositoryId`), so this lookup is unambiguous. Doing it from the
-   * already-cached query — instead of waiting on `getThreadContext` to
+   * their bound repository, so this lookup is unambiguous. Doing it from
+   * the already-cached query — instead of waiting on `getThreadContext` to
    * forward `attachedRepository.id` — is what lets the TopBar paint the
    * right title from the very first render after a workspace transition.
    *
    * `currentWorkspace` itself is resolved up near `currentWorkspaceId` so
-   * the redirect logic above can read its `lastMode`; we only
-   * derive the repo id from it here, where the chrome consumers expect.
+   * the redirect logic above can read its `lastMode`; we only derive the
+   * repo id from it here, where the chrome consumers expect.
    */
   const effectiveSelectedRepositoryId: RepositoryId | null = currentWorkspace?.repositoryId ?? null;
 
   // Close dialog states when repository changes so they can't stay open
-  // for a different repository or after switching to no-repo.
+  // for a different repository.
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsGenerateDialogOpen(false);
@@ -615,14 +361,13 @@ export function RepositoryShell({
       return;
     }
     if (urlWorkspaceId === null) {
-      // Tier 1 — `/chat` to a workspace URL. Wait for `activeWorkspaceId` to
-      // hydrate before redirecting; the fallback effect above will
-      // populate it from the DB preference / first available workspace.
-      if (activeWorkspaceId === null) return;
-      void navigate(workspacePath(activeWorkspaceId), { replace: true });
+      // Workspaceless URLs (`/chat`, `/chat/:threadId`) don't mount this
+      // shell — the workspaceless route group lives on `WorkspacelessChatShell`.
+      // A null URL here only happens in tests that exercise the persistence
+      // hook in isolation; nothing to canonicalise.
       return;
     }
-    // Tier 2 — workspace landing to canonical mode URL. Wait for both
+    // Workspace landing to canonical mode URL. Wait for both
     // inputs the mode decision depends on:
     //   - `availability` — `intendedChatMode` falls back to "discuss"
     //     while this is undefined, which would land repo-attached
@@ -703,50 +448,44 @@ export function RepositoryShell({
   }, [currentWorkspaceId, currentWorkspace, mode, touchWorkspace]);
 
   // Fall back gracefully when a thread URL points at an entity the viewer no
-  // longer owns or that has been deleted. We bounce back to the workspace
-  // landing (which then forwards to the most recent surviving thread, or
-  // renders the empty state). Going via the workspace URL — instead of
-  // `/chat` — keeps the user inside the workspace they were just in
-  // instead of bouncing them through a workspaceless detour.
-  useEffect(() => {
-    if (urlThreadId === null) {
-      return;
-    }
-    if (!capabilities.isMissingThread) {
-      return;
-    }
+  // longer owns or that has been deleted. Bounce to the workspace landing
+  // (which then forwards to the most recent surviving thread, or renders the
+  // empty state). Going via the workspace URL — instead of `/chat` — keeps
+  // the user inside the workspace they were just in instead of bouncing them
+  // through a workspaceless detour.
+  const onMissingThread = useCallback(() => {
     if (urlWorkspaceId !== null) {
       void navigate(workspacePath(urlWorkspaceId), { replace: true });
     } else {
       void navigate(DEFAULT_AUTHENTICATED_PATH, { replace: true });
     }
-  }, [capabilities.isMissingThread, navigate, urlThreadId, urlWorkspaceId]);
+  }, [navigate, urlWorkspaceId]);
+  useThreadDeletionRecovery({
+    urlThreadId,
+    isMissingThread: capabilities.isMissingThread,
+    onMissingThread,
+  });
 
   // Check GitHub for new remote commits on tab-focus and repo-switch.
   useCheckForUpdates(effectiveSelectedRepositoryId);
 
   /*
    * `isAboutToRedirect` signals that the URL is on a transient stop along
-   * the canonicalisation chain — `/chat` waiting for `activeWorkspaceId` to
-   * promote into `/w/:wsId`, or a workspace URL waiting for the Tier 2
-   * redirect to settle on a canonical mode URL. The bare `/w/:wsId` landing
-   * (`mode === null`) is always transient — Tier 2 sends it onward to
-   * a mode URL regardless of thread count. A mode URL with no thread
+   * the canonicalisation chain — a workspace URL waiting for the redirect
+   * to settle on a canonical mode URL. The bare `/w/:wsId` landing
+   * (`mode === null`) is always transient — the redirect sends it onward
+   * to a mode URL regardless of thread count. A mode URL with no thread
    * (`/w/:wsId/discuss`) is only transient while it still has a thread to
    * promote onto; once `ownerThreads` resolves empty it is a settled surface
    * (the mode's empty state), not a redirect stop.
    */
   const isAboutToRedirect =
     urlThreadId === null &&
-    ((urlWorkspaceId === null && activeWorkspaceId !== null) ||
-      (urlWorkspaceId !== null && (mode === null || ownerThreads === undefined || ownerThreads.length > 0)));
+    urlWorkspaceId !== null &&
+    (mode === null || ownerThreads === undefined || ownerThreads.length > 0);
 
   const workspaceStatus: RepositoryWorkspaceStatus =
-    isRepositoriesLoading || workspaces === undefined || isAboutToRedirect
-      ? "initializing"
-      : effectiveSelectedRepositoryId === null && effectiveSelectedThreadId === null
-        ? "no-repo"
-        : "ready";
+    isRepositoriesLoading || workspaces === undefined || isAboutToRedirect ? "initializing" : "ready";
 
   const isChatShellLoading =
     workspaceStatus === "initializing" || (effectiveSelectedThreadId !== null && capabilities.isLoading);
@@ -789,7 +528,7 @@ export function RepositoryShell({
   );
 
   const handleToggleArtifactPanel = useCallback(() => {
-    if (workspaceStatus === "no-repo" || !isArtifactPanelEnabled) {
+    if (!isArtifactPanelEnabled) {
       return;
     }
     if (isDesktopLayout) {
@@ -807,7 +546,7 @@ export function RepositoryShell({
       }
       return next;
     });
-  }, [isArtifactPanelEnabled, isDesktopLayout, setIsArtifactPanelOpen, workspaceStatus]);
+  }, [isArtifactPanelEnabled, isDesktopLayout, setIsArtifactPanelOpen]);
 
   /**
    * Setter for the StatusPanel open state, shared by Radix Popover (desktop)
@@ -819,10 +558,10 @@ export function RepositoryShell({
    */
   const handleSetStatusOpen = useCallback(
     (open: boolean) => {
-      if (workspaceStatus === "no-repo" || !isArtifactPanelEnabled) {
-        // Force-closed in no-repo state and discuss mode — never opens, but
-        // allow `false` so a controlled popover/drawer can collapse cleanly
-        // during the transition back to the empty state.
+      if (!isArtifactPanelEnabled) {
+        // Force-closed when the artifact panel surface is hidden — never
+        // opens, but allow `false` so a controlled popover/drawer can
+        // collapse cleanly during the transition back to the empty state.
         if (open) return;
         setIsStatusOpen(false);
         return;
@@ -832,7 +571,7 @@ export function RepositoryShell({
       }
       setIsStatusOpen(open);
     },
-    [isDesktopLayout, workspaceStatus, isArtifactPanelEnabled],
+    [isDesktopLayout, isArtifactPanelEnabled],
   );
 
   /**
@@ -841,16 +580,16 @@ export function RepositoryShell({
    */
   const handleSelectArtifact = useCallback(
     (artifactId: ArtifactId) => {
-      if (workspaceStatus === "no-repo" || currentWorkspaceId === null) {
+      if (currentWorkspaceId === null) {
         return;
       }
       void navigate(libraryArtifactPath(currentWorkspaceId, artifactId));
     },
-    [navigate, currentWorkspaceId, workspaceStatus],
+    [navigate, currentWorkspaceId],
   );
 
   useEffect(() => {
-    if (workspaceStatus === "no-repo" || !isArtifactPanelEnabled) {
+    if (!isArtifactPanelEnabled) {
       return;
     }
     const onKeyDown = (event: KeyboardEvent) => {
@@ -877,7 +616,7 @@ export function RepositoryShell({
 
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleToggleArtifactPanel, isArtifactPanelEnabled, workspaceStatus]);
+  }, [handleToggleArtifactPanel, isArtifactPanelEnabled]);
 
   const handleImported = useCallback(
     (_repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId, threadMode: ThreadMode | null) => {
@@ -930,26 +669,6 @@ export function RepositoryShell({
     [navigate, urlThreadId],
   );
 
-  // Empty-state CTA: navigate to the workspace's discuss landing without
-  // creating a thread up front. The composer's lazy first send creates the
-  // thread atomically the moment the user types and hits Send — keeping the
-  // CTA navigate-only means clicking "Start conversation" and then leaving
-  // never leaves an empty orphan thread behind.
-  const [isStartingConversation, handleStartConversation] = useAsyncCallback(
-    useCallback(async () => {
-      setActionError(null);
-      try {
-        if (currentWorkspaceId !== null) {
-          void navigate(discussPath(currentWorkspaceId));
-        } else {
-          void navigate(DEFAULT_AUTHENTICATED_PATH);
-        }
-      } catch (error) {
-        setActionError(toUserErrorMessage(error, "Failed to start a conversation."));
-      }
-    }, [navigate, currentWorkspaceId]),
-  );
-
   // Replace the URL with the canonical mode-aware path once the lazy first
   // send materialised a thread. `replace: true` is important: the user was on
   // a no-thread URL (`/w/:wid/discuss`) which would otherwise sit in the
@@ -970,48 +689,88 @@ export function RepositoryShell({
     void navigate(discussPath(currentWorkspaceId));
   }, [currentWorkspaceId, navigate]);
 
+  // Stay inside the current workspace AND the current service mode so the
+  // user keeps their context after a thread delete. Routing through `/w/:wid`
+  // would land on a transient (mode-less) URL where `intendedChatMode`
+  // falls back to `lastMode` or `availability.defaultMode` — the latter
+  // is "library" for repo-attached workspaces, so deleting the last Discuss
+  // thread would yank the user into Library. Going straight to the
+  // mode-specific landing keeps `mode !== null` across the navigation; the
+  // empty state for the mode renders if no threads of that mode remain.
+  const onAfterDeleteThread = useCallback(() => {
+    if (currentWorkspaceId !== null) {
+      if (mode === "library") {
+        void navigate(libraryPath(currentWorkspaceId));
+      } else if (mode === "discuss") {
+        void navigate(discussPath(currentWorkspaceId));
+      } else {
+        void navigate(workspacePath(currentWorkspaceId));
+      }
+    } else {
+      void navigate(DEFAULT_AUTHENTICATED_PATH);
+    }
+  }, [currentWorkspaceId, mode, navigate]);
+
   const {
+    chatInput,
+    setChatInput,
     isSending,
     handleSendMessage,
     isCancellingReply,
     handleCancelInFlightReply,
     isDeletingThread,
     handleDeleteThread,
-  } = useChatLifecycle({
-    selectedThreadId: effectiveSelectedThreadId,
+  } = useChatShellLifecycle({
+    urlThreadId,
     workspaceId: currentWorkspaceId,
-    threadToDelete,
-    chatInput,
     chatMode,
     groundLibrary,
     groundSandbox,
-    clearChatInput,
+    liveWorkspaceIds,
+    liveRepositoryIds,
+    liveThreadIds,
+    threadToDelete,
     setActionError,
     setThreadToDelete,
     onAfterCreateThread,
-    onAfterDeleteThread: () => {
-      // Stay inside the current workspace AND the current service mode so the
-      // user keeps their context. Routing through `/w/:wid` would land on a
-      // transient (mode-less) URL where `intendedChatMode` falls back to
-      // `lastMode` or `availability.defaultMode` — the latter
-      // is "library" for repo-attached workspaces, so deleting the last
-      // Discuss thread would yank the user into Library. Going straight to
-      // the mode-specific landing keeps `mode !== null` across the
-      // navigation; the empty state for the mode renders if no threads of
-      // that mode remain.
-      if (currentWorkspaceId !== null) {
-        if (mode === "library") {
-          void navigate(libraryPath(currentWorkspaceId));
-        } else if (mode === "discuss") {
-          void navigate(discussPath(currentWorkspaceId));
-        } else {
-          void navigate(workspacePath(currentWorkspaceId));
-        }
-      } else {
-        void navigate(DEFAULT_AUTHENTICATED_PATH);
-      }
-    },
+    onAfterDeleteThread,
   });
+
+  // Re-seed Discuss grounding toggles when the URL thread changes. Depends on
+  // `capabilities.defaultGround*` so the effect lives below the lifecycle
+  // bundle. The `groundingByThread.threadId === urlThreadId` guard limits
+  // re-seeds to one per thread switch — capability ticks (e.g. a sandbox
+  // flip from `provisioning` → `ready`) within the same thread don't stomp
+  // on the user's mid-session toggle clicks.
+  useEffect(() => {
+    if (groundingByThread.threadId === urlThreadId) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setGroundingByThread({
+      threadId: urlThreadId,
+      // `null` thread id means the bare `/w/:wid/discuss` landing; we
+      // have no per-thread defaults to seed from, so start both off.
+      library: urlThreadId === null ? false : capabilities.defaultGroundLibrary,
+      sandbox: urlThreadId === null ? false : capabilities.defaultGroundSandbox,
+    });
+  }, [urlThreadId, capabilities.defaultGroundLibrary, capabilities.defaultGroundSandbox, groundingByThread.threadId]);
+
+  const groundingState = availability?.grounding;
+  // Keep the Library toggle in lockstep with availability — flipping it
+  // back off when the artifact gate closes prevents a stale `true`
+  // sending a doomed `groundLibrary: true` mutation.
+  useEffect(() => {
+    if (groundingState && !groundingState.library.enabled && groundLibrary) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setGroundLibrary(false);
+    }
+  }, [groundingState, groundLibrary, setGroundLibrary]);
+  useEffect(() => {
+    if (groundingState && !groundingState.sandbox.enabled && groundSandbox) {
+      // Same rationale as the library auto-flip-off above.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setGroundSandbox(false);
+    }
+  }, [groundingState, groundSandbox, setGroundSandbox]);
 
   const {
     isSyncing,
@@ -1185,12 +944,6 @@ export function RepositoryShell({
         <div className="flex min-h-0 min-w-0 flex-1">
           {isRepoMissing ? (
             <RepositoryMissingState onBack={() => void navigate(DEFAULT_AUTHENTICATED_PATH)} />
-          ) : workspaceStatus === "no-repo" ? (
-            <EmptyState
-              onStartConversation={() => void handleStartConversation()}
-              onImported={handleImported}
-              isStartingConversation={isStartingConversation}
-            />
           ) : (
             <>
               {chatContainerNode}
@@ -1228,7 +981,7 @@ export function RepositoryShell({
         </div>
       </SidebarInset>
 
-      {workspaceStatus !== "no-repo" && !isDesktopLayout && isArtifactPanelEnabled ? (
+      {!isDesktopLayout && isArtifactPanelEnabled ? (
         <Drawer open={isArtifactSheetOpen} onOpenChange={setIsArtifactSheetOpen} aria-label="artifact-drawer">
           {/*
            * Fixed height (rather than Vaul snap points) so the inner flex
@@ -1260,7 +1013,7 @@ export function RepositoryShell({
         </Drawer>
       ) : null}
 
-      {workspaceStatus !== "no-repo" && !isDesktopLayout && repoDetail && isArtifactPanelEnabled ? (
+      {!isDesktopLayout && repoDetail && isArtifactPanelEnabled ? (
         <Drawer open={isStatusOpen} onOpenChange={handleSetStatusOpen} aria-label="status-drawer">
           <DrawerContent className={cn(MOBILE_DRAWER_HEIGHT_CLASS, "rounded-t-2xl")}>
             <DrawerTitle className="sr-only">Repository status</DrawerTitle>

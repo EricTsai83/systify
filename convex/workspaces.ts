@@ -3,7 +3,7 @@ import { mutation, query } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
 import { chatModeValidator, type ChatMode } from "./lib/chatMode";
 import { clearLastActiveWorkspaceIfMatches, upsertLastActiveWorkspace } from "./lib/userPreferences";
-import { ensureHomeWorkspace, ensureRepositoryWorkspace } from "./lib/workspaces";
+import { ensureRepositoryWorkspace } from "./lib/workspaces";
 
 export const listWorkspaces = query({
   args: {},
@@ -50,11 +50,6 @@ export const deleteWorkspace = mutation({
       throw new Error("Workspace not found.");
     }
 
-    // The default workspace (no bound repository) cannot be deleted.
-    if (!workspace.repositoryId) {
-      throw new Error("The default workspace cannot be deleted.");
-    }
-
     const threads = await ctx.db
       .query("threads")
       .withIndex("by_workspaceId_and_lastMessageAt", (q) => q.eq("workspaceId", args.workspaceId))
@@ -73,18 +68,18 @@ export const deleteWorkspace = mutation({
 
 /**
  * Mark `workspaceId` as the viewer's currently active workspace, optionally
- * recording which mode (discuss / library / lab) the user just landed in
- * inside that workspace.
+ * recording which mode (discuss / library) the user just landed in inside
+ * that workspace.
  *
  * This single mutation owns three writes that must move together:
  *
  * - bump `workspaces.lastAccessedAt` so the sidebar's recency ordering and
  *   the "most recent workspace" fallback both reflect the latest touch
  * - when `mode` is supplied, persist it as `workspaces.lastMode` so the
- *   next `/chat` → `/w/:wid` → mode-canonical-URL redirect lands the user
- *   back in the mode they were last using inside this workspace (instead
- *   of the workspace's structural default — the cross-session "I was in
- *   discuss, why am I in library?" surprise this argument fixes)
+ *   next workspace-landing redirect lands the user back in the mode they
+ *   were last using inside this workspace (instead of the workspace's
+ *   structural default — the cross-session "I was in discuss, why am I in
+ *   library?" surprise this argument fixes)
  * - upsert `userPreferences.lastActiveWorkspaceId` so a fresh browser /
  *   device converges to the same selection on next load
  *
@@ -92,8 +87,7 @@ export const deleteWorkspace = mutation({
  * changed (URL → state sync on first paint) omit it so the stored mode is
  * not clobbered with whatever the *previous* workspace was showing;
  * callers that observe a settled mode URL (`/w/:wid/discuss`,
- * `/w/:wid/library`, `/w/:wid/lab`) pass it so the workspace remembers
- * the user's pick.
+ * `/w/:wid/library`) pass it so the workspace remembers the user's pick.
  *
  * Atomicity matters: keeping all writes inside one Convex transaction is
  * what makes the DB the canonical source of truth instead of a best-effort
@@ -130,21 +124,5 @@ export const touchWorkspace = mutation({
       ownerTokenIdentifier: identity.tokenIdentifier,
       workspaceId: args.workspaceId,
     });
-  },
-});
-
-/**
- * Bootstrap a default workspace for new users. Creates a single "Home"
- * workspace that is not tied to any repository — the standard landing
- * workspace every user starts with after onboarding.
- *
- * Idempotent: also repairs legacy "General" or duplicate no-repo workspaces
- * so Home stays the one repo-free workspace.
- */
-export const initializeWorkspaces = mutation({
-  args: {},
-  handler: async (ctx) => {
-    const identity = await requireViewerIdentity(ctx);
-    return await ensureHomeWorkspace(ctx, identity.tokenIdentifier);
   },
 });

@@ -40,8 +40,12 @@ vi.mock("@/pages/home", () => ({
   HomePage: () => <div>home page</div>,
 }));
 
-vi.mock("@/pages/chat", () => ({
-  ChatPage: () => <div>chat page</div>,
+vi.mock("@/components/workspaceless-chat-shell", () => ({
+  WorkspacelessChatShell: () => <div>chat page</div>,
+}));
+
+vi.mock("@/pages/discuss", () => ({
+  DiscussPage: () => <div>chat page</div>,
 }));
 
 vi.mock("@/pages/library", () => ({

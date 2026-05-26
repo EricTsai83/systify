@@ -15,22 +15,30 @@ export const AUTH_CALLBACK_ROUTE_SEGMENT = "callback";
 export const AUTH_CALLBACK_PATH = `/${AUTH_CALLBACK_ROUTE_SEGMENT}` as const;
 
 /**
- * Authenticated route segments. The shape is intentionally workspace-rooted:
+ * Authenticated route segments.
  *
- *   /chat                              — auth landing, redirects into the most
- *                                        recently used workspace
- *   /w/:workspaceId                    — workspace landing, redirects into
- *                                        that workspace's most recent thread
- *                                        (or empty state if there are none)
- *   /w/:workspaceId/t/:threadId        — canonical thread URL
- *   /archive                           — archived repos listing
+ *   /chat                              — workspaceless landing (composer +
+ *                                        recent workspaceless threads).
+ *   /chat/:threadId                    — specific workspaceless thread
+ *                                        (structurally Discuss-only).
+ *   /w/:workspaceId                    — repo workspace landing, redirects
+ *                                        into that workspace's most recent
+ *                                        thread (or empty state).
+ *   /w/:workspaceId/t/:threadId        — legacy mode-agnostic thread URL.
+ *   /archive                           — archived repos listing.
  *
- * Workspace is the schema's primary container: every thread either lives in a
- * repo-bound workspace (1:1 with the repository) or in the user's single
- * no-repo "Home" workspace.
+ * Workspaces are 1:1 with repositories: no-repo threads no longer live
+ * inside a singleton "Home" workspace — they're workspaceless and surface
+ * under `/chat/:threadId`.
  */
 export const PROTECTED_ROUTE_SEGMENTS = {
   chat: "chat",
+  /**
+   * Workspaceless thread URL. Structurally Discuss-only (Library requires
+   * an attached repository), so the URL deliberately has no mode segment —
+   * adding one would create a dead branch.
+   */
+  workspacelessChat: "chat/:threadId",
   workspace: "w/:workspaceId",
   workspaceThread: "w/:workspaceId/t/:threadId",
   archive: "archive",
@@ -64,6 +72,15 @@ export const DEFAULT_AUTHENTICATED_PATH = `/${PROTECTED_ROUTE_SEGMENTS.chat}` as
  */
 export function workspacePath(workspaceId: WorkspaceId): string {
   return `/w/${workspaceId}`;
+}
+
+/**
+ * Build a `/chat/:threadId` URL for a workspaceless thread. The workspaceless
+ * shell is structurally Discuss-only — Library requires a repo binding —
+ * so the URL has no mode segment.
+ */
+export function workspacelessThreadPath(threadId: ThreadId): string {
+  return `/chat/${threadId}`;
 }
 
 /**

@@ -80,9 +80,12 @@ export function useChatLifecycle({
             clearChatInput();
             return;
           }
-          if (!workspaceId) return;
+          // Lazy first send. Workspaceless threads (no `workspaceId`) are
+          // legal — the backend creates the thread with `workspaceId:
+          // undefined` and the workspaceless shell navigates to the
+          // matching `/chat/:threadId` URL inside `onAfterCreateThread`.
           const result = await sendMessageStartingNewThreadMutation({
-            workspaceId,
+            ...(workspaceId ? { workspaceId } : {}),
             content: chatInput,
             mode: chatMode,
             ...groundingArgs,

@@ -6,7 +6,7 @@ import type { ChatMode } from "@/lib/types";
 /**
  * Optimistic mirror for `api.workspaces.touchWorkspace`.
  *
- * Shared between the Discuss/Lab shell (`repository-shell.tsx`) and the
+ * Shared between the workspace shell (`repository-shell.tsx`) and the
  * Library page (`library.tsx`) so both navigation surfaces converge on the
  * same client cache shape the moment the user picks a workspace or settles
  * on a service mode — without the Library page needing to import the

@@ -186,8 +186,8 @@ export const listByRepository = query({
 /**
  * Repository artifact listing with freshness metadata.
  *
- * Freshness is derived from Lab verification only: artifacts produced
- * outside a Lab session are deliberately `unverified` even when they were
+ * Freshness is derived from sandbox-grounded verification only: artifacts produced
+ * outside a sandbox-grounded reply are deliberately `unverified` even when they were
  * recently created, because Library must not imply that snapshots match
  * live code.
  */

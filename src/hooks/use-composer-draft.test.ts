@@ -105,13 +105,22 @@ describe("useComposerDraft", () => {
     expect(result.current[0]).toBe("ws-B");
   });
 
-  test("when the workspace+mode lookup is not derivable, the hook reads/writes nothing", () => {
+  test("workspaceless + no thread derives the dedicated `/chat` draft bucket", () => {
+    // The workspaceless shell at `/chat` (no workspace, no thread yet)
+    // gets a single shared draft key so text typed in the empty state
+    // survives the lazy first send / refresh round-trip until the new
+    // thread id takes over.
     const { result } = renderHook(() => useComposerDraft({ workspaceId: null, threadId: null, mode: null }));
 
     expect(result.current[0]).toBe("");
     act(() => result.current[1]("typed"));
-    // No key derivable → no storage write.
-    expect(window.localStorage.length).toBe(0);
+    expect(window.localStorage.getItem("systify.composer.draft.chat")).toBe("typed");
+  });
+
+  test("workspaceless draft survives the lazy thread switch by reading the existing chat bucket", () => {
+    window.localStorage.setItem("systify.composer.draft.chat", "hello workspaceless");
+    const { result } = renderHook(() => useComposerDraft({ workspaceId: null, threadId: null, mode: null }));
+    expect(result.current[0]).toBe("hello workspaceless");
   });
 
   test("library mode does not derive a draft key (LibraryAskPanel owns its own state)", () => {

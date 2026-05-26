@@ -114,25 +114,6 @@ vi.mock("@/components/artifact-panel", () => ({
   ArtifactPanel: () => <div data-testid="artifact-panel" />,
 }));
 
-vi.mock("@/components/empty-state", () => ({
-  EmptyState: ({ onImported }: { onImported: OnImportedCallback }) => (
-    <button
-      type="button"
-      data-testid="empty-state"
-      onClick={() =>
-        onImported(
-          "repo_empty" as RepositoryId,
-          "thread_empty" as ThreadId,
-          "workspace_empty" as WorkspaceId,
-          "discuss",
-        )
-      }
-    >
-      Empty import
-    </button>
-  ),
-}));
-
 vi.mock("@/components/confirm-dialog", () => ({
   ConfirmDialog: () => null,
 }));
@@ -247,7 +228,6 @@ function resetCallableMock(fn: CallableMockWithOptimistic) {
 }
 
 const touchWorkspaceMock = makeCallableMock();
-const initializeWorkspacesMock = makeCallableMock();
 const createThreadMock = makeCallableMock();
 
 beforeEach(() => {
@@ -281,7 +261,6 @@ beforeEach(() => {
   mediaListener = null;
 
   resetCallableMock(touchWorkspaceMock);
-  resetCallableMock(initializeWorkspacesMock);
   resetCallableMock(createThreadMock);
 
   useMutationMock.mockReset();
@@ -329,8 +308,6 @@ beforeEach(() => {
     switch (queryName(mutation)) {
       case "workspaces:touchWorkspace":
         return touchWorkspaceMock;
-      case "workspaces:initializeWorkspaces":
-        return initializeWorkspacesMock;
       case "chat/threads:createThread":
         return createThreadMock;
       default:
@@ -466,29 +443,6 @@ describe("RepositoryShell artifact toggle behavior", () => {
     const subscribedQueries = useQueryMock.mock.calls.map(([query]) => queryName(query));
     expect(subscribedQueries).not.toContain("chat/threads:listMessages");
     expect(subscribedQueries).not.toContain("chat/streaming:getActiveMessageStream");
-  });
-
-  test("hides the artifact toggle while workspace is in no-repo state", () => {
-    // The no-repo guard is structural — the ChatPanel-level toggle does not
-    // render — instead of a disabled-but-present button. The "no-repo" state
-    // is now the user sitting in the Home workspace (or any workspace whose
-    // `repositoryId` is unset) with no thread selected. Switching to a repo
-    // workspace flips the shell into "ready" without leaking the prior click
-    // intent into shared state.
-    const homeWorkspaceId = "ws_home" as WorkspaceId;
-    workspacesResult = [makeWorkspace({ _id: homeWorkspaceId, name: "Home" })];
-
-    const { rerender } = render(<RepositoryShell urlWorkspaceId={homeWorkspaceId} urlThreadId={null} />);
-
-    expect(screen.getByTestId("empty-state")).toBeInTheDocument();
-    expect(screen.queryByTestId("artifact-panel-toggle")).not.toBeInTheDocument();
-
-    repositoriesResult = [makeRepository()];
-    const { workspaceId: repoWorkspaceId, workspace: repoWorkspace } = makeRepoWorkspace();
-    workspacesResult = [makeWorkspace({ _id: homeWorkspaceId, name: "Home" }), repoWorkspace];
-    rerender(<RepositoryShell urlWorkspaceId={repoWorkspaceId} urlThreadId={null} />);
-
-    expect(screen.getByLabelText("artifact-drawer")).toHaveAttribute("data-open", "false");
   });
 
   test("opens mobile drawer in ready state and closes it on desktop breakpoint", () => {
@@ -629,14 +583,6 @@ describe("RepositoryShell import workspace routing", () => {
     fireEvent.click(screen.getByTestId("sidebar-import"));
 
     expect(navigateMock).toHaveBeenCalledWith("/w/workspace_imported/discuss/thread_imported");
-  });
-
-  test("empty-state import navigates to the canonical mode-aware thread URL", () => {
-    render(<RepositoryShell urlWorkspaceId={null} urlThreadId={null} />);
-
-    fireEvent.click(screen.getByTestId("empty-state"));
-
-    expect(navigateMock).toHaveBeenCalledWith("/w/workspace_empty/discuss/thread_empty");
   });
 });
 

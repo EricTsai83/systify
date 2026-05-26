@@ -3,53 +3,31 @@
 import { describe, expect, test } from "vitest";
 import { convexTest } from "convex-test";
 import { api } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
 
-describe("workspace initialization", () => {
-  test("initializeWorkspaces creates exactly one Home workspace without a repository", async () => {
-    const ownerTokenIdentifier = "user|home-workspace";
+describe("workspace management", () => {
+  test("listWorkspaces returns an empty list for a fresh viewer", async () => {
+    const ownerTokenIdentifier = "user|empty-list";
     const t = convexTest(schema, modules);
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
 
-    await viewer.mutation(api.workspaces.initializeWorkspaces, {});
-    await viewer.mutation(api.workspaces.initializeWorkspaces, {});
-
     const workspaces = await viewer.query(api.workspaces.listWorkspaces, {});
-    const homeWorkspaces = workspaces.filter((workspace) => !workspace.repositoryId);
-
-    expect(workspaces).toHaveLength(1);
-    expect(homeWorkspaces).toHaveLength(1);
-    expect(homeWorkspaces[0].name).toBe("Home");
+    expect(workspaces).toEqual([]);
   });
 
-  test("public createWorkspace cannot create another no-repo workspace", async () => {
-    const ownerTokenIdentifier = "user|no-empty-workspace";
+  test("createWorkspace creates a repo-bound workspace and is idempotent on the repository", async () => {
+    const ownerTokenIdentifier = "user|create-repo-workspace";
     const t = convexTest(schema, modules);
-    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
-
-    await viewer.mutation(api.workspaces.initializeWorkspaces, {});
-    await expect(
-      viewer.mutation(api.workspaces.createWorkspace, {} as { repositoryId: Id<"repositories"> }),
-    ).rejects.toThrow();
-
-    const workspaces = await viewer.query(api.workspaces.listWorkspaces, {});
-    expect(workspaces.filter((workspace) => !workspace.repositoryId)).toHaveLength(1);
-  });
-
-  test("initializeWorkspaces normalizes legacy no-repo workspaces and moves repo threads out of Home", async () => {
-    const ownerTokenIdentifier = "user|legacy-home-repair";
-    const t = convexTest(schema, modules);
-    const { legacyHomeId, duplicateHomeId, repositoryId, repoThreadId, homeThreadId } = await t.run(async (ctx) => {
-      const repositoryId = await ctx.db.insert("repositories", {
+    const repositoryId = await t.run(async (ctx) =>
+      ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
-        sourceUrl: "https://github.com/acme/legacy-repair",
-        sourceRepoFullName: "acme/legacy-repair",
+        sourceUrl: "https://github.com/acme/widget",
+        sourceRepoFullName: "acme/widget",
         sourceRepoOwner: "acme",
-        sourceRepoName: "legacy-repair",
+        sourceRepoName: "widget",
         defaultBranch: "main",
         visibility: "private",
         accessMode: "private",
@@ -58,67 +36,17 @@ describe("workspace initialization", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
-      });
-      const legacyHomeId = await ctx.db.insert("workspaces", {
-        ownerTokenIdentifier,
-        name: "General",
-        color: "blue",
-        lastAccessedAt: 1,
-      });
-      const duplicateHomeId = await ctx.db.insert("workspaces", {
-        ownerTokenIdentifier,
-        name: "Scratch",
-        color: "emerald",
-        lastAccessedAt: 2,
-      });
-      const repoThreadId = await ctx.db.insert("threads", {
-        workspaceId: legacyHomeId,
-        repositoryId,
-        ownerTokenIdentifier,
-        title: "Repo thread in legacy home",
-        mode: "library",
-        lastMessageAt: Date.now(),
-      });
-      const homeThreadId = await ctx.db.insert("threads", {
-        workspaceId: duplicateHomeId,
-        ownerTokenIdentifier,
-        title: "Design note",
-        mode: "discuss",
-        lastMessageAt: Date.now(),
-      });
-
-      return { legacyHomeId, duplicateHomeId, repositoryId, repoThreadId, homeThreadId };
-    });
+      }),
+    );
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
-    await viewer.mutation(api.workspaces.initializeWorkspaces, {});
+    const firstId = await viewer.mutation(api.workspaces.createWorkspace, { repositoryId });
+    const secondId = await viewer.mutation(api.workspaces.createWorkspace, { repositoryId });
+    expect(secondId).toBe(firstId);
 
-    const state = await t.run(async (ctx) => {
-      const workspaces = await ctx.db
-        .query("workspaces")
-        .withIndex("by_ownerTokenIdentifier_and_lastAccessedAt", (q) =>
-          q.eq("ownerTokenIdentifier", ownerTokenIdentifier),
-        )
-        .take(10);
-      return {
-        workspaces,
-        legacyHome: await ctx.db.get(legacyHomeId),
-        duplicateHome: await ctx.db.get(duplicateHomeId),
-        repoThread: await ctx.db.get(repoThreadId),
-        homeThread: await ctx.db.get(homeThreadId),
-      };
-    });
-
-    const noRepoWorkspaces = state.workspaces.filter((workspace) => !workspace.repositoryId);
-    const repoWorkspace = state.workspaces.find((workspace) => workspace.repositoryId === repositoryId);
-
-    expect(noRepoWorkspaces).toHaveLength(1);
-    expect(noRepoWorkspaces[0].name).toBe("Home");
-    expect(state.legacyHome?.name).toBe("Home");
-    expect(state.duplicateHome).toBeNull();
-    expect(repoWorkspace).toBeDefined();
-    expect(state.repoThread?.workspaceId).toBe(repoWorkspace?._id);
-    expect(state.homeThread?.workspaceId).toBe(noRepoWorkspaces[0]._id);
+    const workspaces = await viewer.query(api.workspaces.listWorkspaces, {});
+    expect(workspaces).toHaveLength(1);
+    expect(workspaces[0].repositoryId).toBe(repositoryId);
   });
 
   test("deleteWorkspace rejects repository workspaces that still have conversations", async () => {
@@ -163,5 +91,41 @@ describe("workspace initialization", () => {
     await expect(viewer.mutation(api.workspaces.deleteWorkspace, { workspaceId })).rejects.toThrow(
       "Repository workspaces with conversations cannot be deleted.",
     );
+  });
+
+  test("deleteWorkspace removes empty repository workspaces", async () => {
+    const ownerTokenIdentifier = "user|delete-empty-workspace";
+    const t = convexTest(schema, modules);
+    const workspaceId = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/empty-ws",
+        sourceRepoFullName: "acme/empty-ws",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "empty-ws",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 0,
+      });
+      return await ctx.db.insert("workspaces", {
+        ownerTokenIdentifier,
+        repositoryId,
+        name: "acme/empty-ws",
+        color: "blue",
+        lastAccessedAt: Date.now(),
+      });
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    await viewer.mutation(api.workspaces.deleteWorkspace, { workspaceId });
+
+    const workspaces = await viewer.query(api.workspaces.listWorkspaces, {});
+    expect(workspaces).toHaveLength(0);
   });
 });

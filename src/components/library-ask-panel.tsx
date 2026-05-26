@@ -298,7 +298,7 @@ export function LibraryAskPanel({
               description={
                 activeArtifactId
                   ? "Answers cite this artifact and other indexed chunks."
-                  : "Answers cite retrieved artifact chunks. For live code state, use Lab."
+                  : "Answers cite retrieved artifact chunks. For live code state, enable Sandbox grounding in Discuss."
               }
             />
           </div>

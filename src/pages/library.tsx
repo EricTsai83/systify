@@ -103,7 +103,7 @@ function LibraryWorkspace({
   // `/chat → /w/:wid → canonical mode URL` redirect returns the user to
   // Library instead of bouncing them to the workspace's structural
   // default (the "Archive → back" round-trip the `lastMode` field
-  // exists to make sticky for *every* mode, not just Discuss/Lab whose
+  // exists to make sticky for *every* mode, not just Discuss whose
   // shell happens to live in `repository-shell.tsx`). The mutation
   // short-circuits when the stored value already matches, so this is a
   // no-op write on subsequent renders within Library.

@@ -1,10 +1,9 @@
-import { useMemo } from "react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { LibraryAskPanel } from "@/components/library-ask-panel";
 import { LibraryTree } from "@/components/library-tree";
 import { ProfileCard } from "@/components/profile-card";
 import { WorkspaceModeSwitcher } from "@/components/workspace-mode-switcher";
-import { WorkspaceThreadsRail } from "@/components/workspace-threads-rail";
+import { WorkspaceThreadsRail, WorkspacelessChatsRail } from "@/components/workspace-threads-rail";
 import { WorkspaceSelector } from "@/components/workspace-switcher";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
@@ -72,7 +71,7 @@ type AppSidebarLeftProps = {
  * Layout, top to bottom:
  *
  *   1. Header — logo + product name.
- *   2. Service-mode switcher — Discuss / Library / Lab.
+ *   2. Service-mode switcher — Discuss / Library.
  *   3. Content — `LibraryTree` in Library mode (System Design folder tree
  *      with Generate CTA), `WorkspaceThreadsRail` everywhere else.
  *   4. Footer — profile card + workspace switcher dropdown.
@@ -106,11 +105,6 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
   // highlight while the canonicalising redirect resolves.
   const effectiveChatMode: ChatMode = mode ?? availability?.defaultMode ?? "discuss";
 
-  const activeWorkspace = useMemo(
-    () => workspaces?.find((ws) => ws._id === activeWorkspaceId) ?? null,
-    [workspaces, activeWorkspaceId],
-  );
-
   const isLibraryMode = effectiveChatMode === "library";
 
   return (
@@ -127,7 +121,9 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
         </div>
       </SidebarHeader>
 
-      <WorkspaceModeSwitcher workspaceId={activeWorkspaceId} mode={effectiveChatMode} availability={availability} />
+      {activeWorkspaceId !== null ? (
+        <WorkspaceModeSwitcher workspaceId={activeWorkspaceId} mode={effectiveChatMode} availability={availability} />
+      ) : null}
 
       {isLibraryMode && libraryRepositoryId && onSelectLibraryArtifact && onGenerate ? (
         <SidebarContent className="min-h-0 flex-1 overflow-hidden">
@@ -141,6 +137,15 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
             className="min-h-0 flex-1"
           />
         </SidebarContent>
+      ) : activeWorkspaceId === null ? (
+        <SidebarContent className="flex min-h-0 flex-1 flex-col">
+          <WorkspacelessChatsRail
+            selectedThreadId={selectedThreadId}
+            onSelectThread={onSelectThread}
+            onDeleteThread={onDeleteThread}
+            onRequestNewThread={onRequestNewThread}
+          />
+        </SidebarContent>
       ) : (
         <SidebarContent className="flex min-h-0 flex-1 flex-col">
           <WorkspaceThreadsRail
@@ -152,7 +157,6 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
             onDeleteThread={onDeleteThread}
             onError={onError}
             onRequestNewThread={onRequestNewThread}
-            showRepoBadge={!activeWorkspace?.repositoryId}
           />
         </SidebarContent>
       )}

@@ -113,7 +113,7 @@ export function TopBar({
    * `mode !== "discuss"` derivation — the same gate
    * `isArtifactPanelEnabled` uses, so all repo-aware chrome (artifact panel,
    * sandbox pill, sandbox badge) appears and disappears together when the
-   * user toggles between Discuss and Library / Lab. Discuss is captioned "no
+   * user toggles between Discuss and Library. Discuss is captioned "no
    * repo context"; surfacing sync or sandbox state there would be a constant
    * nag for signals the mode does not touch. Errors are not lost — the moment
    * the user enters a repo-bound mode the pill repaints with whatever was

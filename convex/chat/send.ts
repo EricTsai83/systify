@@ -150,7 +150,13 @@ async function insertChatTurn(
 
 export const sendMessageStartingNewThread = mutation({
   args: {
-    workspaceId: v.id("workspaces"),
+    /**
+     * Workspace this thread belongs to, or `undefined` for a workspaceless
+     * thread (no repo attached, lives at `/chat/:threadId`). Library mode
+     * requires a workspace with an attached repository; Discuss is the only
+     * mode legal for a workspaceless thread.
+     */
+    workspaceId: v.optional(v.id("workspaces")),
     content: v.string(),
     mode: chatModeValidator,
     title: v.optional(v.string()),
@@ -165,12 +171,14 @@ export const sendMessageStartingNewThread = mutation({
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
 
-    const workspace = await ctx.db.get(args.workspaceId);
-    if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Workspace not found.");
+    let repositoryId: Id<"repositories"> | undefined;
+    if (args.workspaceId) {
+      const workspace = await ctx.db.get(args.workspaceId);
+      if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
+        throw new Error("Workspace not found.");
+      }
+      repositoryId = workspace.repositoryId;
     }
-
-    const repositoryId = workspace.repositoryId;
 
     const trimmedContent = args.content.trim();
     if (!trimmedContent) {
