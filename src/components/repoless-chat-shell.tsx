@@ -8,7 +8,6 @@ import { AppSidebarLeft } from "@/components/app-sidebar";
 import { AttachRepoMenu } from "@/components/attach-repo-menu";
 import { ChatContainer } from "@/components/chat-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { Logo } from "@/components/logo";
 import { useChatShellLifecycle } from "@/components/chat-shell-shared/use-chat-shell-lifecycle";
 import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-thread-deletion-recovery";
 import { useRecentThreads } from "@/hooks/use-recent-threads";
@@ -149,6 +148,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
         repositories={repositories}
         activeRepositoryId={null}
         onSwitchRepository={handleSwitchRepository}
+        onSelectNoRepository={() => void navigate(DEFAULT_AUTHENTICATED_PATH)}
         selectedThreadId={urlThreadId}
         onSelectThread={handleSelectThread}
         onDeleteThread={setThreadToDelete}
@@ -158,19 +158,19 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       />
 
       <SidebarInset>
-        <div className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-4">
-          <div className="flex items-center gap-2 text-sm">
-            <Logo size={20} />
-            <span className="font-medium text-foreground">Chat</span>
-          </div>
-          {urlThreadId !== null ? (
+        {urlThreadId !== null ? (
+          // Top bar only renders on `/chat/:threadId` to host the
+          // attach-repo affordance. The landing surface (`/chat`) skips it
+          // entirely — the sidebar header already carries Systify identity
+          // and a blank bar above the empty state would just be noise.
+          <div className="flex h-12 shrink-0 items-center justify-end gap-3 border-b border-border px-4">
             <AttachRepoMenu
               threadId={urlThreadId}
               availableRepositories={repositories ?? []}
               onMovedToRepository={handleThreadMovedToRepository}
             />
-          ) : null}
-        </div>
+          </div>
+        ) : null}
 
         {actionError ? (
           <div className="border-b border-border px-6 py-3">

@@ -500,6 +500,7 @@ export function RepositoryShell({
         repositories={repositories}
         activeRepositoryId={activeRepositoryId}
         onSwitchRepository={handleSwitchRepository}
+        onSelectNoRepository={() => void navigate(DEFAULT_AUTHENTICATED_PATH)}
         selectedThreadId={effectiveSelectedThreadId}
         onSelectThread={handleSelectThread}
         onDeleteThread={setThreadToDelete}

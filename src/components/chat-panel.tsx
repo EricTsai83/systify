@@ -462,9 +462,6 @@ export function ChatPanel({
                   isSending ||
                   isSyncing ||
                   !chatInput.trim() ||
-                  // Lazy first send needs at least one anchor: an existing
-                  // thread or the repository we'd create the thread in.
-                  (selectedThreadId === null && !repositoryId) ||
                   // Sandbox grounding requires a ready live source. Disable
                   // send until the sandbox lifecycle is `available` so an
                   // optimistically-flipped toggle does not produce a
