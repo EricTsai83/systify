@@ -283,7 +283,7 @@ describe("useThreadCapabilities — bridging behavior", () => {
  * Plan 10 — sandbox cost-budget bridging from the threadContext query
  * into the hook's flat shape.
  *
- * The hook consolidates the (per-user, per-workspace) budget pair into
+ * The hook consolidates the (per-user, per-repository) budget pair into
  * a single user-facing budget so the UI doesn't have to make the
  * "which cap binds first?" decision in JSX. Tests anchor that
  * consolidation logic.
@@ -315,7 +315,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
     expect(result.current.sandboxCostBudget).toBeNull();
   });
 
-  test("user-only budget (no workspace) is exposed verbatim in USD", () => {
+  test("user-only budget (no repository) is exposed verbatim in USD", () => {
     useQueryMock.mockReturnValue({
       thread: { _id: threadId, repositoryId, defaultGroundLibrary: false, defaultGroundSandbox: false },
       attachedRepository: {
@@ -351,7 +351,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
     });
   });
 
-  test("when both caps are present, the hook surfaces the more restrictive remaining (workspace)", () => {
+  test("when both caps are present, the hook surfaces the more restrictive remaining (repository)", () => {
     useQueryMock.mockReturnValue({
       thread: { _id: threadId, repositoryId, defaultGroundLibrary: false, defaultGroundSandbox: false },
       attachedRepository: {
@@ -371,8 +371,8 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
       sandboxIsActivatable: false,
       sandboxCostBudgets: {
         userBudget: { remainingCents: 480, capacityCents: 500, resetAtMs: 1_700_000_010_000 },
-        // Workspace cap has only $0.10 left — far less than the user's
-        // $4.80, so the workspace cap is the binding constraint.
+        // Repository cap has only $0.10 left — far less than the user's
+        // $4.80, so the repository cap is the binding constraint.
         repositoryBudget: { remainingCents: 10, capacityCents: 5000, resetAtMs: 1_700_000_005_000 },
       },
     });
@@ -381,12 +381,12 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
 
     expect(result.current.sandboxCostBudget).not.toBeNull();
     expect(result.current.sandboxCostBudget!.remainingUsd).toBeCloseTo(0.1);
-    // Capacity tracks the binding cap (workspace = $50) — keeps the
+    // Capacity tracks the binding cap (repository = $50) — keeps the
     // ratio "10¢ of $50.00 remaining" coherent rather than the cross-
     // axis "10¢ of $5.00".
     expect(result.current.sandboxCostBudget!.capacityUsd).toBe(50);
     // Reset is the *earlier* of the two so the countdown reflects when
-    // the binding constraint releases (workspace's earlier reset wins).
+    // the binding constraint releases (repository's earlier reset wins).
     expect(result.current.sandboxCostBudget!.resetAtMs).toBe(1_700_000_005_000);
   });
 
@@ -419,7 +419,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
 
     expect(result.current.sandboxCostBudget!.remainingUsd).toBeCloseTo(0.05);
     expect(result.current.sandboxCostBudget!.capacityUsd).toBe(5);
-    // Workspace reset is later, but user cap binds first (and resets
+    // Repository reset is later, but user cap binds first (and resets
     // earlier in this fixture too).
     expect(result.current.sandboxCostBudget!.resetAtMs).toBe(1_700_000_010_000);
   });

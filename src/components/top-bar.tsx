@@ -109,7 +109,7 @@ export function TopBar({
   onViewArtifact: (artifactId: ArtifactId) => void;
   /**
    * Whether the system-status chrome (StatusPill + sandbox badge next to the
-   * title) is allowed to render. Driven from the workspace shell's
+   * title) is allowed to render. Driven from the repository shell's
    * `mode !== "discuss"` derivation — the same gate
    * `isArtifactPanelEnabled` uses, so all repo-aware chrome (artifact panel,
    * sandbox pill, sandbox badge) appears and disappears together when the
@@ -120,9 +120,9 @@ export function TopBar({
    * suppressed.
    *
    * Driven by URL (`useChatMode`), not by the per-thread `chatMode`, so
-   * the gate survives the Tier 2 redirect from `/w/:wid/discuss` to
-   * `/w/:wid/t/:tid` — once redirected, `chatMode` falls back to the
-   * workspace default ("library" when a repo is attached) and would no longer
+   * the gate survives the Tier 2 redirect from `/r/:rid/discuss` to
+   * `/r/:rid/discuss/:tid` — once redirected, `chatMode` falls back to the
+   * repository default ("library" when a repo is attached) and would no longer
    * read as "discuss", but the user's intent is still Discuss.
    */
   showSystemStatus: boolean;
@@ -151,7 +151,7 @@ export function TopBar({
        * element stays on the same render layer throughout.
        *
        * Keyed on the repository `_id` so the entry animation fires on
-       * workspace transitions (different repo → new key → React unmounts the
+       * repository transitions (different repo → new key → React unmounts the
        * old node and mounts a new one) but stays put on thread switches
        * within the same repo (same key → same DOM node → CSS animation
        * doesn't replay). The shell caches `repoDetail` across the brief
@@ -167,7 +167,7 @@ export function TopBar({
 
       {threadId !== null && !isAttachedRepositoryLoading && attachedRepository === null ? (
         // PRD US 2: one-shot affordance for promoting a no-repo thread into a
-        // repository workspace. Hidden once a repo is attached because the
+        // repository binding. Hidden once a repo is attached because the
         // binding is permanent — to work against another repo, start a new thread.
         //
         // Wrapping fade-in mirrors the title block above so both surfaces

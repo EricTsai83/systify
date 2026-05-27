@@ -207,7 +207,7 @@ export function EmptyChatHint() {
  * Empty-state guidance for threads that have no attached repository yet.
  * Surfaces two clear paths:
  *
- * 1. Move to a repository workspace — a dropdown listing the user's imported
+ * 1. Move to a repository — a dropdown listing the user's imported
  *    repos plus an "Import new repository" option that opens the ImportRepoDialog.
  * 2. Free-form discussion — the user can just start typing.
  */

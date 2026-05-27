@@ -11,7 +11,7 @@ import { cn } from "@/lib/utils";
 /**
  * Cmd/Ctrl-P quick-open dialog for Library artifacts.
  *
- * Pure-frontend fuzzy filter: the dialog receives the workspace's full
+ * Pure-frontend fuzzy filter: the dialog receives the repository's full
  * artifact list (already loaded by the Library shell for the tree, so
  * no extra subscription) and filters in memory by title / summary /
  * kind. Sorted hits scroll into view; arrow keys + Enter activate the

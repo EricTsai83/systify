@@ -19,7 +19,7 @@ const COMPOSER_LAST_AUTH_USER_KEY = "systify.composer.lastAuthUser";
  * `systify.composer.lastAuthUser`); when it transitions from a non-null id
  * to a different id (or to `null`), every key under
  * `systify.composer.draft.*` is removed. The prefix sweep is the right
- * granularity: thread- and workspace-scoped draft keys both live under it,
+ * granularity: thread- and repository-scoped draft keys both live under it,
  * so both forms get drained on the same transition.
  *
  * `isLoading: true` windows are ignored. AuthKit briefly sets `isLoading`
@@ -27,8 +27,8 @@ const COMPOSER_LAST_AUTH_USER_KEY = "systify.composer.lastAuthUser";
  * same render — wiping drafts on that window would surprise the user.
  *
  * The composer-draft prefix is the only sweep target today. Other forms of
- * per-user-tied localStorage (e.g. library tabs) are keyed by workspace id
- * and are reaped by `useStorageGC` once the workspace ids change for the
+ * per-user-tied localStorage (e.g. library tabs) are keyed by repository id
+ * and are reaped by `useStorageGC` once the repository ids change for the
  * new viewer.
  */
 export function useAuthBoundCleanup(): void {

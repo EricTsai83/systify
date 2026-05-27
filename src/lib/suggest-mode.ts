@@ -29,7 +29,7 @@ import type { ChatMode } from "./types";
  *
  *   4. **Stable `key` per heuristic.** The chat panel keeps a session
  *      `Set<string>` of dismissed keys; matching keys must collapse so
- *      dismissing "specific-file:lab" once silences every future
+ *      dismissing "specific-file:sandbox" once silences every future
  *      file-path suggestion this session.
  *
  * The two heuristics intentionally cover only the highest-precision

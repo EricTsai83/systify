@@ -10,7 +10,7 @@ import { readJSON, writeJSON } from "@/lib/storage";
  * The URL is the canonical source of truth — the active tab lives in the
  * path (`/library/a/:artifactId`) and the rest of the open set in
  * `?open=id1,id2` — with localStorage as a first-paint cache so re-entering
- * the workspace restores the user's tab strip without waiting for the URL
+ * the repository restores the user's tab strip without waiting for the URL
  * to read in. This hook owns only `?open=`; it coexists with the page-owned
  * `?ask=:threadId` param (the active Library Ask thread) and preserves it
  * on every write.
@@ -23,7 +23,7 @@ import { readJSON, writeJSON } from "@/lib/storage";
  *     least-recently-active tab gets evicted when the cap is hit.
  *   - `closeTab(artifactId)` — removes the artifact from the open list.
  *     If it was active, promotes the most-recently-active surviving tab
- *     (or the workspace's library landing if the strip emptied).
+ *     (or the repository's library landing if the strip emptied).
  *   - `activateTab(artifactId)` — same as `openTab` but skips the
  *     "evict on cap" branch; only valid when the tab is already open.
  *   - `reorderTabs(nextOrder)` — replace the open list with a permutation.
@@ -240,7 +240,7 @@ export function useLibraryTabs(repositoryId: RepositoryId | null, activeFromRout
       // `replace: true` because tab management is not a navigation event
       // the user wants in their back history — back should jump to the
       // previous URL they actually navigated to (an artifact pick from
-      // the tree, the workspace landing, etc.).
+      // the tree, the repository landing, etc.).
       void navigate(target, { replace: true });
     }, URL_WRITE_DEBOUNCE_MS);
     return () => {

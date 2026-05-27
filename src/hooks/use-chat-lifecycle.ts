@@ -8,7 +8,7 @@ import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
 /**
  * Owns the in-flight reply lifecycle (send, cancel) plus thread teardown.
  * Selection-aware but selection-state-agnostic: callers pass the current
- * thread / workspace and the thread queued for deletion, and the hook hands
+ * thread / repository and the thread queued for deletion, and the hook hands
  * back navigation hooks via `onAfterCreateThread` / `onAfterDeleteThread` so
  * the parent can update the URL once a mutation succeeds.
  *

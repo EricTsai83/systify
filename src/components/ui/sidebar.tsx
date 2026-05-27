@@ -28,7 +28,7 @@ const SIDEBAR_DOCKED_QUERY = "(min-width: 1280px)";
 
 // Desktop sidebar is user-resizable from the right edge. The minimum is the
 // designed content width — chrome (logo, switcher, thread rows) is laid out to
-// stay legible at this size; below it the workspace switcher and thread titles
+// stay legible at this size; below it the repository switcher and thread titles
 // start clipping. The shared maximum keeps the sidebar from eating more than a
 // reasonable share of the viewport at 1280px (the smallest docked breakpoint);
 // Library Ask carries a full chat surface and can override `maxWidth` to a
@@ -372,7 +372,7 @@ export function SidebarSection({ children, className }: { children: React.ReactN
 export function SidebarTrigger({ className, side = "left" }: { className?: string; side?: "left" | "right" }) {
   const { toggle } = useSidebar(side);
   // Distinct glyphs per side so the two triggers in the Library header read as
-  // separate controls at a glance. Left carries the workspace nav (threads /
+  // separate controls at a glance. Left carries the repository nav (threads /
   // tree) — the hamburger is the universal "menu" affordance. Right carries
   // the Library Ask chat surface, so the chat bubble points the user at what
   // the toggle reveals.

@@ -15,7 +15,7 @@ import { ARCHIVE_PATH, RESOURCES_PATH } from "@/route-paths";
 
 /**
  * Compact profile avatar with dropdown menu. Shows only the avatar circle —
- * no name or email. Designed to sit alongside the workspace selector in a
+ * no name or email. Designed to sit alongside the repository selector in a
  * single footer row.
  */
 export function ProfileCard() {

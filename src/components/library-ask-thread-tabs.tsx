@@ -32,7 +32,7 @@ export interface LibraryAskThreadTabsProps {
   onNewThread: () => void;
   /** Disables the "+" while a thread create is in flight. */
   isCreating: boolean;
-  /** All Ask threads for this workspace, fed to the history popover. */
+  /** All Ask threads for this repository, fed to the history popover. */
   threads: Doc<"threads">[] | undefined;
   /** History row click — the panel must `ensureOpen` the picked thread. */
   onSelectFromHistory: (thread: Doc<"threads">) => void;

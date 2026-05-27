@@ -391,7 +391,7 @@ const LIBRARY_SUGGESTIONS = [
 ];
 
 /**
- * Empty-state shown when the workspace has no artifacts yet. The Ask panel
+ * Empty-state shown when the repository has no artifacts yet. The Ask panel
  * is the single home for the Generate System Design CTA — the Library
  * main canvas only narrates the missing-document state and points users
  * here. Centering the hero + button together keeps the action immediately

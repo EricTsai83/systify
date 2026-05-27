@@ -25,7 +25,7 @@ export interface AttachedRepositorySummary {
  *
  * Always non-null when sandbox mode is at least theoretically usable
  * (thread has a repo). The frontend takes `min(user.remaining,
- * workspace.remaining)` as the visible budget so the ticker reflects
+ * repository.remaining)` as the visible budget so the ticker reflects
  * whichever cap will fire first.
  */
 export interface SandboxDailyCostBudget {
@@ -63,7 +63,7 @@ export interface ThreadCapabilities {
    * Plan 10 — visible sandbox cost budget for the ticker. `null` when
    * sandbox mode isn't currently relevant (no repo attached). When
    * non-null, this reflects the *more restrictive* of the per-user and
-   * per-workspace caps so the user sees a single coherent number.
+   * per-repository caps so the user sees a single coherent number.
    */
   sandboxCostBudget: SandboxDailyCostBudget | null;
   /**
@@ -176,7 +176,7 @@ export function useThreadCapabilities(threadId: ThreadId | null): ThreadCapabili
 }
 
 /**
- * Plan 10 — collapse the (per-user, per-workspace) budget pair into a
+ * Plan 10 — collapse the (per-user, per-repository) budget pair into a
  * single user-facing budget. Returns the *more restrictive* of the two
  * remaining values so the ticker shows the budget that will actually
  * block the next send.
