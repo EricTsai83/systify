@@ -60,7 +60,7 @@ If `io_error` rate dominates `command_blocked` / `path_outside_repo`, the cause 
 1. **Page the Daytona owner** — sandbox is hard-blocked without it.
 2. **Drop the cost cap to zero** to gate out new sandbox sessions while you investigate: `SANDBOX_DAILY_CAP_PER_USER_USD=0`. The cap re-reads on every send and surfaces the cap tooltip in the UI immediately.
 3. If Daytona stays out for >30 min and the cap-gate workaround is not enough (e.g. need to communicate maintenance copy specifically), push a temporary patch that returns a maintenance-mode error from `chat/send.ts` for sandbox-grounded replies.
-4. **Don't** clear sandbox rows from the database. Plan 09 (the dedicated Daytona-error-path doc) handles graceful sandbox lifecycle recovery once Daytona is back.
+4. **Don't** clear sandbox rows from the database. Sandbox lifecycle recovery happens automatically once Daytona is back.
 
 ### Resolve
 
@@ -86,7 +86,7 @@ window: 24h
 If a single viewer accounts for >50% of spend in 24h, treat as a cost-cap evasion attempt or a malformed integration / agent loop.
 
 ```text
-# Plan 10's per-user / per-repository caps:
+# Per-user / per-repository sandbox cost caps:
 peekSandboxDailyCostForUser / peekSandboxDailyCostForRepository
 ```
 
@@ -100,7 +100,7 @@ These rate-limit peeks are exposed via `convex/threadContext.ts` and reflect the
    - **API key revocation**: If the offender is using a public API key, rotate or revoke it to prevent further usage.
    - **Request throttling**: Apply stricter rate limits or request throttling to the specific account.
    - **Per-account hotfix for new accounts**: Add a temporary per-account cap for accounts under N days old.
-3. Watch for runaway tool loops — Plan 11's step budget (`SANDBOX_STEP_BUDGET = 8`) caps tool calls per reply, so a single reply cannot exceed ~8 × per-tool-cost. If you see >8 invocations in one `sandbox_session_finished` event, that's a bug worth filing.
+3. Watch for runaway tool loops — the step budget (`SANDBOX_STEP_BUDGET = 8`) caps tool calls per reply, so a single reply cannot exceed ~8 × per-tool-cost. If you see >8 invocations in one `sandbox_session_finished` event, that's a bug worth filing.
 
 ### Resolve
 
@@ -125,7 +125,7 @@ window: 1h
 
 The `error_code` distribution is the diagnostic signal:
 
-- **`path_outside_repo` / `invalid_path` dominant** → either the system prompt drifted (Plan 11 / 14 changes) or a recent repo-import path-resolution bug. Check `convex/chat/prompting.ts` history and the `repoPath` field on `ReplyContext`.
+- **`path_outside_repo` / `invalid_path` dominant** → either the system prompt drifted or a recent repo-import path-resolution bug. Check `convex/chat/prompting.ts` history and the `repoPath` field on `ReplyContext`.
 - **`command_blocked` dominant** → a recent deny-list change is over-rejecting legitimate commands. Check `COMMAND_DENY_LIST` in `convex/chat/sandboxTools.ts`.
 - **`command_timeout` dominant** → either the model is generating runaway pipelines or Daytona is under load. Cross-check Incident 1's `io_error` rate.
 - **`tool_error` dominant** (note: this is the synthetic code for `tool-error` AI SDK events, distinct from envelope errors) → the AI SDK is throwing inside our `execute` callbacks. Most often a regression in `convex/chat/sandboxTools.ts`'s argument validation or a Daytona client breaking change.
@@ -206,7 +206,7 @@ group_by: tags.model
 When you need to correlate a session with the durable audit log:
 
 ```ts
-// Plan 12's audit log table, keyed on owner + time:
+// Audit log table, keyed on owner + time:
 ctx.db
   .query("sandboxToolCallLog")
   .withIndex("by_owner_and_time", (q) => q.eq("ownerTokenIdentifier", "user|alice"))
@@ -219,6 +219,6 @@ The table carries pre-redaction byte counts, durations, error codes, and which r
 ## When to wake the deploy owner
 
 - Daytona outage > 30 min with no mitigation in sight.
-- A cost spike that the per-user / per-repository caps fail to contain (the caps are a Plan 10 invariant; if they're not working that is a P0).
+- A cost spike that the per-user / per-repository caps fail to contain (the caps are a load-bearing invariant; if they're not working that is a P0).
 - Any incident that requires Sandbox grounding to be globally cost-gated to zero for >2h.
-- Suspected secret leakage in `messages.toolCalls` or `sandboxToolCallLog` (cross-reference Plan 05's redaction module).
+- Suspected secret leakage in `messages.toolCalls` or `sandboxToolCallLog` (cross-reference the redaction module in `convex/chat/redaction.ts`).

@@ -1,5 +1,5 @@
 /**
- * Plan 05 — Output redaction for sandbox tool results.
+ * Output redaction for sandbox tool results.
  *
  * The threat: anything an LLM reads through `read_file` / `list_dir` /
  * `run_shell` flows into the assistant message and is persisted in the
@@ -27,7 +27,7 @@
 /**
  * Closed set of redaction pattern slugs. Surfacing as a literal union
  * (rather than `string`) lets the type system catch typos in audit-log
- * consumers (Plan 12 `sandboxToolCallLog.redactedFields`) and in tests.
+ * consumers (`sandboxToolCallLog.redactedFields`) and in tests.
  * Adding a pattern means widening this union *and* adding a registry
  * entry — the compiler enforces the pairing.
  */
@@ -59,7 +59,7 @@ const PATTERN_REGISTRY: readonly RedactionPattern[] = [
 
   // JWT compact serialization. Both header and payload begin with `eyJ`
   // (base64url of `{"…`); requiring it on both segments is the strictest
-  // anchor and matches the Plan 05 spec.
+  // anchor.
   { type: "jwt", pattern: /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g },
 
   // AWS access key IDs: `AKIA` + 16 uppercase alphanumerics.

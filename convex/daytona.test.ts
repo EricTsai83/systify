@@ -285,13 +285,13 @@ describe("deleteSandbox", () => {
 });
 
 /**
- * Plan 05 — Clone-time token scrub.
+ * Clone-time token scrub.
  *
  * The threat: `sandbox.git.clone(url, ..., username, token)` writes the
  * password into `.git/config` as part of the remote URL
  * (`https://x-access-token:<TOKEN>@github.com/...`), where it sits for the
- * lifetime of the sandbox. Once Plan 08's `run_shell` is enabled, the LLM
- * can read that file and the token enters the durable `messages` table.
+ * lifetime of the sandbox. The LLM can read that file via `run_shell` and
+ * the token would enter the durable `messages` table.
  *
  * The fix: immediately after `git.clone` succeeds, run
  * `git remote set-url origin <canonical-url>` to overwrite the remote URL
@@ -352,7 +352,7 @@ function makeSandboxMock(
   return { sandbox, cloneCalls, executeCalls, networkSettingsCalls };
 }
 
-describe("cloneRepositoryInSandbox — Plan 05 token scrub", () => {
+describe("cloneRepositoryInSandbox — token scrub", () => {
   const SANDBOX_REMOTE_ID = "sandbox-clone-1";
 
   beforeEach(() => {

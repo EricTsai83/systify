@@ -1,5 +1,5 @@
 /**
- * Plan 11 — Citation lint behavior tests.
+ * Citation lint behavior tests.
  *
  * These exercise `lintCitations` as a pure function, no Convex runtime
  * required. The contract under test is:

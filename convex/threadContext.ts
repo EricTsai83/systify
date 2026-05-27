@@ -17,7 +17,7 @@ import { type SandboxDailyCostBudget } from "./lib/rateLimit";
 export type SandboxTableStatus = Doc<"sandboxes">["status"];
 
 /**
- * Plan 10 — daily-cost-cap signals piped through the thread-context query
+ * Daily-cost-cap signals piped through the thread-context query
  * so the UI can render a "spent today" indicator + a "resets at" countdown
  * without re-querying the rate-limiter component on the frontend.
  *
@@ -37,7 +37,7 @@ export interface ThreadContext {
   sandboxModeStatus: SandboxModeStatus | null;
   chatModes: ChatModeResolution;
   /**
-   * Plan 10 — daily-cost-cap budgets for the viewer (always) and the
+   * Daily-cost-cap budgets for the viewer (always) and the
    * thread's repository (when one is attached). `null` when sandbox mode
    * isn't currently relevant to this thread (no attached repo); avoids
    * the cost of a rate-limiter peek in the no-repo case where the UI

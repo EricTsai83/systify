@@ -318,5 +318,5 @@ This split allows the UI, background workflows, and analysis features to share t
 - `jobs` provides a unified tracking layer that simplifies the UI, but the details of each job kind still require reading the implementation.
 - `jobs.kind = 'index'` is currently a reserved enum value; the codebase does not insert jobs with `kind: 'index'`, and indexing still happens inside the import pipeline.
 - `artifacts.version` is currently always inserted as `1`, so artifact version management is not implemented yet.
-- Import-drift indicators need `artifacts.alignedImportCommitSha`; legacy rows without it stay silent until a writer backfills the field.
+- Import-drift indicators need `artifacts.alignedImportCommitSha`; rows without it stay silent until a writer fills the field.
 

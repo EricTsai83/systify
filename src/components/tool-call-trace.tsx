@@ -9,8 +9,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/utils";
 
 /**
- * Plan 06 — live + persisted tool-call trace for a single assistant
- * message.
+ * Live + persisted tool-call trace for a single assistant message.
  *
  * Two states one component:
  *
@@ -139,8 +138,8 @@ function tickerLabel(tool: NormalizedToolCall): string {
     case "list_dir":
       return path ? `Listing ${path}` : "Listing directory";
     case "run_shell": {
-      // Plan 08 lands `run_shell` whose `inputSummary` is the redacted
-      // JSON-stringified args (e.g. `{"command":"grep -r foo convex/"}`).
+      // `run_shell`'s `inputSummary` is the redacted JSON-stringified
+      // args (e.g. `{"command":"grep -r foo convex/"}`).
       // Pull `command` out so the ticker reads `Running grep -r foo …`
       // instead of leaking the JSON braces. If the JSON parse fails
       // (e.g. unit-test fixture passing a raw string, or a truncated

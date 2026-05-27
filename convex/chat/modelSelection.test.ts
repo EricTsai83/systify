@@ -1,11 +1,11 @@
 /**
- * Plan 11 — model resolver behavior tests.
+ * Model resolver behavior tests.
  *
- * Pin the three resolution layers (capability-specific override → legacy
+ * Pin the three resolution layers (capability-specific override →
  * `OPENAI_MODEL` → hard-coded default) plus a contract guard that the
  * defaults stay paired with the pricing table — without that guard a
- * default that drifts off the pricing table silently bypasses Plan 10's
- * daily cap.
+ * default that drifts off the pricing table silently bypasses the daily
+ * cost cap.
  *
  * Env handling follows the existing convention (e.g. `daytona.test.ts`,
  * `rateLimit.test.ts`): explicit save / restore around each test. Vitest's
@@ -86,9 +86,9 @@ describe("resolveModelForReply", () => {
     expect(resolveModelForReply({ mode: "discuss", groundSandbox: false })).toBe("gpt-4.1-mini");
   });
 
-  test("falls back to legacy OPENAI_MODEL when capability-specific override is unset", () => {
-    // Backward-compat path for operators who pinned `OPENAI_MODEL`
-    // during the Plan 04-10 window. The resolver must use that value
+  test("falls back to OPENAI_MODEL when capability-specific override is unset", () => {
+    // Global pin path for operators who set `OPENAI_MODEL` instead of the
+    // capability-specific variables. The resolver must use that value
     // for every capability (the operator's intent was a global pin, not
     // a per-capability choice).
     process.env.OPENAI_MODEL = "gpt-4.1";
@@ -124,7 +124,7 @@ describe("resolveModelForReply", () => {
     expect(resolveModelForReply({ mode: "discuss", groundSandbox: true })).toBe("gpt-5-nano");
   });
 
-  test("each capability default exists in the pricing table (Plan 10 cap accuracy)", () => {
+  test("each capability default exists in the pricing table (cost cap accuracy)", () => {
     // `estimateCostUsd` returns `undefined` for unknown models, which
     // `settleSandboxReplyCost` treats as "no cost recorded". A default
     // that drifts off the pricing table would silently let users

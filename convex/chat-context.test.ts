@@ -10,16 +10,16 @@ import schema from "./schema";
 const modules = import.meta.glob("./**/*.ts");
 
 describe("chat reply context", () => {
-  test("sandbox mode (Plan 04) returns no chunks and no pre-loaded artifacts", async () => {
-    // Plan 04 contract: sandbox mode is LLM-driven retrieval — the model
-    // runs `read_file` / `list_dir` against the live sandbox via tools.
-    // Pre-loading indexed `repoChunks` would waste work and silently
-    // outvote tool results when the index is stale. All artifact kinds
-    // (including system-design artifacts) are excluded from
-    // context.artifacts in sandbox mode — the model retrieves live source
-    // state via tools rather than cached summaries to avoid divergence
-    // when the index is stale.
-    const ownerTokenIdentifier = "user|sandbox-plan-04-context";
+  test("sandbox mode returns no chunks and no pre-loaded artifacts", async () => {
+    // Sandbox mode is LLM-driven retrieval — the model runs `read_file`
+    // / `list_dir` against the live sandbox via tools. Pre-loading
+    // indexed `repoChunks` would waste work and silently outvote tool
+    // results when the index is stale. All artifact kinds (including
+    // system-design artifacts) are excluded from context.artifacts in
+    // sandbox mode — the model retrieves live source state via tools
+    // rather than cached summaries to avoid divergence when the index is
+    // stale.
+    const ownerTokenIdentifier = "user|sandbox-context";
     const t = convexTest(schema, modules);
 
     const { threadId, userMessageId } = await t.run(async (ctx) => {
@@ -134,7 +134,7 @@ describe("chat reply context", () => {
 
     const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
-    // Plan 04 contract — chunks always [] in sandbox mode.
+    // Chunks always [] in sandbox mode.
     expect(context.chunks).toEqual([]);
     // Sandbox mode no longer pre-loads artifacts; design context is read on
     // demand through sandbox tools instead.
@@ -146,7 +146,7 @@ describe("chat reply context", () => {
   test("sandbox mode exposes sandboxTooling when the repository has a ready sandbox", async () => {
     // Generation.ts builds the SandboxFsClient from this surfaced metadata.
     // Failing to expose it would silently fall back to the no-tool path even
-    // when a healthy sandbox exists. Plan 12 also keys the audit log against
+    // when a healthy sandbox exists. The audit log also keys against
     // `sandboxTooling.sandboxId`, so this test pins all three exposed fields.
     const ownerTokenIdentifier = "user|sandbox-tooling-ready";
     const t = convexTest(schema, modules);
@@ -746,15 +746,15 @@ describe("chat reply context", () => {
     expect(context.mode).toBe("library");
   });
 
-  // NOTE: Plan 04 retired the per-mode chunk-search code path entirely
-  // (sandbox is tool-driven, docs is artifact-only, discuss returns early).
-  // The race-condition guard against "search query anchored to the wrong
-  // user message" therefore no longer has a code path to defend; the
-  // companion mode-anchoring test above (`anchors effective mode to the
-  // queued user message`) still covers the queue-anchor invariant for the
-  // surviving mode/system-prompt derivation. If a future plan re-introduces
-  // per-mode chunk pre-selection, this guard should be reinstated against
-  // that code path rather than the retired one.
+  // NOTE: there is no per-mode chunk-search code path (sandbox is
+  // tool-driven, docs is artifact-only, discuss returns early). The
+  // race-condition guard against "search query anchored to the wrong
+  // user message" therefore has no code path to defend; the companion
+  // mode-anchoring test above (`anchors effective mode to the queued
+  // user message`) still covers the queue-anchor invariant for the
+  // surviving mode/system-prompt derivation. If a future change adds
+  // per-mode chunk pre-selection, this guard should be reinstated
+  // against that code path.
 
   test("rejects a userMessageId that does not belong to the requested thread", async () => {
     // Cross-thread protection: even if a caller somehow constructs a
@@ -796,7 +796,7 @@ describe("chat reply context", () => {
   });
 
   test("exposes artifact ids on the reply context for docs-mode citation maps", async () => {
-    // Plan 02: the prompt builder needs each artifact's `_id` so it can
+    // The prompt builder needs each artifact's `_id` so it can
     // assemble a numbered `[A#] → artifactId` map and persist it on
     // `messages.citationMap`. Without `id` on the context entry, the
     // frontend would only see `[A1]` tokens with no way to resolve them
@@ -898,7 +898,7 @@ describe("chat reply context", () => {
   });
 
   test("hides cross-mode assistant replies from the LLM context while keeping every user turn", async () => {
-    // Plan 03: when the user switches modes mid-thread, the previous mode's
+    // When the user switches modes mid-thread, the previous mode's
     // assistant answer (e.g. an unattached `discuss` hypothetical) must not
     // bleed into the new mode's prompt — the model would otherwise treat
     // that hypothetical as ground truth for the new mode's reply.

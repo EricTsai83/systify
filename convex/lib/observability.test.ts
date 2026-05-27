@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { METRIC_SCOPE, emitMetric, logErrorWithId } from "./observability";
 
 /**
- * Plan 13 — emitMetric contract tests.
+ * emitMetric contract tests.
  *
  * The function is purely a structured wrapper around `console.log`,
  * so the tests assert the *shape* of what landed on the console. A

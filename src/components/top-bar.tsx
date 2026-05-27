@@ -49,7 +49,7 @@ export type TopBarRepoDetail = {
  * TopBar — minimal command surface above the chat. After the Surface 1
  * redesign (`background-operations-ux-redesign.md`) the bar holds only:
  *   - sidebar toggle + repo title chip (with detail popover)
- *   - attach-repo affordance for unattached threads (PRD US 2)
+ *   - attach-repo affordance for unattached threads
  *   - the StatusPill, which doubles as the trigger for an inline Popover
  *     (desktop) or a bottom Sheet (mobile) carrying the on-demand
  *     {@link StatusPanel} — sync, run analysis, activity history all live
@@ -166,7 +166,7 @@ export function TopBar({
       ) : null}
 
       {threadId !== null && !isAttachedRepositoryLoading && attachedRepository === null ? (
-        // PRD US 2: one-shot affordance for promoting a no-repo thread into a
+        // One-shot affordance for promoting a no-repo thread into a
         // repository binding. Hidden once a repo is attached because the
         // binding is permanent — to work against another repo, start a new thread.
         //

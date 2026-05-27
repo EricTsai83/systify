@@ -1,20 +1,20 @@
 /**
- * Plan 12 — Sandbox tool-call audit log.
+ * Sandbox tool-call audit log.
  *
  * Records one row per *completed* sandbox tool execution to the
  * `sandboxToolCallLog` table for compliance and internal-debugging
- * queries. Distinct from Plan 06's `messageToolCallEvents` (UI ticker)
- * and `messages.toolCalls` (per-message frozen trace) — see the design
+ * queries. Distinct from `messageToolCallEvents` (UI ticker) and
+ * `messages.toolCalls` (per-message frozen trace) — see the design
  * boundaries below.
  *
  * Lifecycle:
  *
  *   1. **Append** — `recordSandboxToolCallLogEntry` is invoked from
  *      `chat/generation.ts` once per `tool-result` / `tool-error` event,
- *      after the matching Plan 06 event row is appended. The two writes
- *      are independent transactions; an audit-log failure logs a warning
- *      but does not fail the user-visible reply (best-effort recording —
- *      see {@link tryRecordSandboxToolCallLogEntry}).
+ *      after the matching `messageToolCallEvents` row is appended. The
+ *      two writes are independent transactions; an audit-log failure
+ *      logs a warning but does not fail the user-visible reply
+ *      (best-effort recording — see {@link tryRecordSandboxToolCallLogEntry}).
  *   2. **Query** — the `by_owner_and_time` index supports the canonical
  *      audit query "what did user X do between time A and B" via
  *      `.withIndex("by_owner_and_time", q => q.eq("ownerTokenIdentifier", X))
@@ -38,8 +38,8 @@
  *     of accessed files.
  *   - **Schema mismatch**: The audit log stores `outputBytes`, not the
  *     output itself — full output already lives on the message via
- *     Plan 06. Audit answers "did this happen + with what input + how
- *     big was the response", not "what was the response".
+ *     `messages.toolCalls`. Audit answers "did this happen + with what
+ *     input + how big was the response", not "what was the response".
  *   - **Index mismatch**: The audit query is owner-scoped + time-range,
  *     and would otherwise force a third index onto `messages` purely
  *     for forensics.
@@ -51,8 +51,8 @@
  *     denies the user the answer they were already going to receive.
  *   - A persistent audit-log infrastructure failure surfaces in
  *     `logWarn("chat", "sandbox_tool_audit_log_write_failed", ...)`
- *     calls, which Plan 13's telemetry will pick up. Compliance teams
- *     correlate gaps via the warn signals.
+ *     calls, which telemetry picks up. Compliance teams correlate gaps
+ *     via the warn signals.
  *   - Storing the failed-write event in some other channel would just
  *     reopen the recursive failure-mode question. The pragmatic answer
  *     is "make the audit-log write the primary path and log warnings
@@ -74,9 +74,9 @@ import { logInfo, logWarn } from "../lib/observability";
 /**
  * Retention window for audit log entries (90 days, in milliseconds).
  *
- * 90 days is the spec from Plan 12. It is short enough to keep the
- * table size predictable as usage scales, long enough for a typical
- * compliance review or post-incident forensic dig.
+ * 90 days is short enough to keep the table size predictable as usage
+ * scales, long enough for a typical compliance review or post-incident
+ * forensic dig.
  */
 export const SANDBOX_TOOL_CALL_LOG_RETENTION_MS = 90 * 24 * 60 * 60_000;
 
@@ -95,21 +95,21 @@ export const SANDBOX_TOOL_CALL_LOG_CLEANUP_BATCH_SIZE = 100;
 /**
  * UTF-16 code-unit cap for the persisted `inputJson` field.
  *
- * Distinct from Plan 06's `TOOL_CALL_EVENT_SUMMARY_MAX_CHARS` (600,
- * UI-visible) because audit recording wants more of the original
- * input intact: a long `run_shell` command — exactly the kind of
- * tool input compliance audits care about — would lose investigative
- * value at the UI cap. 2000 chars covers any realistic tool input
- * (longest `run_shell` chains in the wild are ~1 KB) while keeping
- * the row well under Convex's 1 MB document limit even when paired
- * with the other audit fields.
+ * Distinct from `TOOL_CALL_EVENT_SUMMARY_MAX_CHARS` (600, UI-visible)
+ * because audit recording wants more of the original input intact: a
+ * long `run_shell` command — exactly the kind of tool input compliance
+ * audits care about — would lose investigative value at the UI cap.
+ * 2000 chars covers any realistic tool input (longest `run_shell`
+ * chains in the wild are ~1 KB) while keeping the row well under
+ * Convex's 1 MB document limit even when paired with the other audit
+ * fields.
  */
 export const SANDBOX_TOOL_CALL_LOG_INPUT_MAX_CHARS = 2000;
 
 /**
  * Marker appended to truncated `inputJson` so audit consumers can tell
- * a value was shortened from the source. Mirrors the shape Plan 06's
- * UI-summary truncation uses for symmetry.
+ * a value was shortened from the source. Mirrors the shape the UI-summary
+ * truncation uses for symmetry.
  */
 const SANDBOX_TOOL_CALL_LOG_INPUT_TRUNCATION_MARKER = "…[truncated]";
 
@@ -124,7 +124,7 @@ const SANDBOX_TOOL_CALL_LOG_INPUT_TRUNCATION_MARKER = "…[truncated]";
  * Operates on UTF-16 code units (matching `String.slice`'s indexing) so
  * the resulting string never exceeds the cap by a fraction of a code
  * point. A surrogate pair is either entirely kept or entirely dropped,
- * never split — same invariant Plan 06's UI-summary cap maintains. When
+ * never split — same invariant the UI-summary cap maintains. When
  * truncating would split a surrogate pair, the cut index is decremented
  * to keep both units or drop both.
  */
@@ -237,9 +237,9 @@ export function extractAuditMetadataFromToolOutput(output: unknown): {
  *     that would confuse audit aggregations.
  *
  * The schema's `redactedFields: v.array(v.string())` is kept loose
- * (not a closed-union literal) on purpose — Plan 05's
- * {@link import("./redaction").RedactionType} can grow without forcing
- * a migration here.
+ * (not a closed-union literal) on purpose — the
+ * {@link import("./redaction").RedactionType} set can grow without
+ * forcing a migration here.
  */
 export const recordSandboxToolCallLogEntry = internalMutation({
   args: {

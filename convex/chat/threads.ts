@@ -386,10 +386,10 @@ async function deleteThreadImpl(ctx: MutationCtx, args: { threadId: Id<"threads"
     .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
     .take(500);
   for (const message of messages) {
-    // Plan 06 — drain orphan tool-call events ahead of deleting the
-    // message, otherwise the live `getMessageToolCallEvents` subscription
-    // would hold rows referencing a now-missing parent. Bounded
-    // per-message (≤ MAX_TOOL_CALL_EVENTS_PER_MESSAGE by construction).
+    // Drain orphan tool-call events ahead of deleting the message,
+    // otherwise the live `getMessageToolCallEvents` subscription would
+    // hold rows referencing a now-missing parent. Bounded per-message
+    // (≤ MAX_TOOL_CALL_EVENTS_PER_MESSAGE by construction).
     await drainMessageToolCallEvents(ctx, message._id);
     await ctx.db.delete(message._id);
   }
@@ -452,7 +452,7 @@ export const cleanupOrphanedMessages = internalMutation({
       .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
       .take(500);
     for (const message of messages) {
-      // Plan 06 — same drain-then-delete order as `deleteThread` so the
+      // Same drain-then-delete order as `deleteThread` so the
       // re-scheduled cleanup pass doesn't outlive the events table. Reversing
       // this would leave orphaned `messageToolCallEvents` rows once the
       // parent message is gone, which then can't be reached by the

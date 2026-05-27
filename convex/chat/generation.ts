@@ -3,11 +3,11 @@
 /**
  * Chat-reply action.
  *
- * Plan 04 adds a Node runtime requirement here — sandbox-mode replies need
- * Daytona SDK access (which depends on Node built-ins like `axios`) to wire
- * up the `read_file` / `list_dir` tools. Discuss / docs replies still go
- * through the same code path; the only "cost" of moving from V8 is bundle
- * size, which is dominated by the AI SDK and OpenAI provider regardless.
+ * Runs in the Node runtime because sandbox-mode replies need Daytona SDK
+ * access (which depends on Node built-ins like `axios`) to wire up the
+ * `read_file` / `list_dir` tools. Discuss / docs replies go through the
+ * same code path; the only "cost" of running in Node is bundle size,
+ * which is dominated by the AI SDK and OpenAI provider regardless.
  *
  * The action splits into two stream paths:
  *
@@ -16,8 +16,8 @@
  *      `ToolSet` from `createSandboxTools(...)` and a `stopWhen` step
  *      budget. We iterate `response.fullStream` so we can react to both
  *      `text-delta` (append to the streaming buffer) and the various
- *      tool events (logged for telemetry — Plan 06 turns these into a
- *      persisted trace and a live ticker).
+ *      tool events (logged for telemetry, turned into a persisted trace
+ *      and a live ticker).
  *
  *   2. **Text-only path.** Library replies and ungrounded Discuss replies
  *      use the same shape: a plain `streamText` over `textStream`, no
@@ -70,7 +70,7 @@ import { redact } from "./redaction";
 const SANDBOX_STEP_BUDGET = 8;
 
 /**
- * Plan 07 — interval for the background poll that watches for owner-initiated
+ * Interval for the background poll that watches for owner-initiated
  * cancellation while the reply streams.
  *
  * 1 s gives the user a sub-second to ~2 s perceived latency between Stop
@@ -87,12 +87,12 @@ const SANDBOX_STEP_BUDGET = 8;
 const CANCELLATION_POLL_INTERVAL_MS = 1_000;
 
 /**
- * Plan 13 — terminal-state taxonomy used as the `status` tag on the
- * session metric. Distinct from the Convex schema's `messages.status`
- * because the metric also covers paths where no message row was
- * patched (e.g. an aborted generation that bailed out before any
- * write). Keeping the tag set small and stable lets dashboards pivot
- * by status without parsing free-form strings.
+ * Terminal-state taxonomy used as the `status` tag on the session
+ * metric. Distinct from the Convex schema's `messages.status` because
+ * the metric also covers paths where no message row was patched (e.g.
+ * an aborted generation that bailed out before any write). Keeping the
+ * tag set small and stable lets dashboards pivot by status without
+ * parsing free-form strings.
  *
  *   - `completed`        — finalize wrote `messages.status = "completed"`
  *   - `failed`           — fail wrote `messages.status = "failed"`
@@ -106,7 +106,7 @@ const CANCELLATION_POLL_INTERVAL_MS = 1_000;
 type SessionTerminalStatus = "completed" | "failed" | "cancelled" | "aborted_orphan";
 
 /**
- * Plan 13 — accumulated session-level telemetry.
+ * Accumulated session-level telemetry.
  *
  * The action doesn't know everything about its session up front: the
  * mode is unknown until `getReplyContext` returns, the model is
@@ -219,9 +219,9 @@ export const generateAssistantReply = internalAction({
       return;
     }
 
-    // Plan 13 — start the session timer at action entry. The window
-    // measured is "action start → terminal-state finalize", so dashboards
-    // alerting on `value` are tracking the work the deploy owner can
+    // Start the session timer at action entry. The window measured is
+    // "action start → terminal-state finalize", so dashboards alerting
+    // on `value` are tracking the work the deploy owner can
     // affect. Upstream send-mutation, queue lag, and scheduler wake are
     // intentionally excluded — user-perceived end-to-end latency is a
     // separate frontend metric. Anything that updates the telemetry below
@@ -234,8 +234,8 @@ export const generateAssistantReply = internalAction({
       toolErrors: 0,
     };
 
-    // Plan 13 — single emit helper with an idempotency guard. Every
-    // terminal exit path (success finalize, cancel finalize, failure
+    // Single emit helper with an idempotency guard. Every terminal exit
+    // path (success finalize, cancel finalize, failure
     // finalize, the various `aborted_orphan` fast-exits) routes through
     // here so we cannot accidentally double-fire the
     // `sandbox_session_finished` metric if a future refactor introduces
@@ -262,7 +262,7 @@ export const generateAssistantReply = internalAction({
     // Anything still buffered in pendingDelta below STREAM_FLUSH_THRESHOLD can be lost on a crash; recoverStaleChatJob only sees persisted messageStreamChunks flushed via appendAssistantStreamChunk before compactMessageStreamTail/finalizeAssistantReply/failAssistantReply run.
     let pendingDelta = "";
 
-    // Plan 10 — `streamText` response is hoisted so every exit path (success
+    // `streamText` response is hoisted so every exit path (success
     // / cancel / fail / aborted) can read `response.totalUsage` to harvest
     // the partial token usage and cost. Cancelled and failed replies still
     // incur cost from OpenAI (provider-side billing happens on each token
@@ -274,7 +274,7 @@ export const generateAssistantReply = internalAction({
     // extract usage from a non-existent stream.
     let streamResponse: ReturnType<typeof streamText> | undefined;
 
-    // Plan 11 — model name is hoisted for the same reason as `streamResponse`:
+    // Model name is hoisted for the same reason as `streamResponse`:
     // the catch block needs to feed the post-throw cost extractor the same
     // model the stream actually ran on, otherwise a typo in the per-mode env
     // var (resolved on the success path) would diverge from the global
@@ -284,7 +284,7 @@ export const generateAssistantReply = internalAction({
     // case.
     let modelName: string | undefined;
 
-    // Plan 07 — cancellation control plane.
+    // Cancellation control plane.
     //
     // The AI SDK's `streamText` accepts an `abortSignal`. When the signal
     // fires the underlying HTTP/SSE request is torn down and `fullStream`
@@ -547,8 +547,8 @@ export const generateAssistantReply = internalAction({
         }
       };
 
-      // Plan 06 — local correlation map from `toolCallId` to its `start`
-      // metadata. The events table also keys by `toolCallId`, but reading
+      // Local correlation map from `toolCallId` to its `start` metadata.
+      // The events table also keys by `toolCallId`, but reading
       // the matching `start` row from inside the `tool-result` /
       // `tool-error` handlers would cost an extra mutation round-trip per
       // tool. Keeping the map in process is correct because:
@@ -559,7 +559,7 @@ export const generateAssistantReply = internalAction({
       //     in-process state is the source of truth for the run.
       const toolCallMap = new Map<string, { toolName: string; inputSummary: string; startedAt: number }>();
 
-      // Plan 07 — cancel-before-streamText fast path. The polling task can
+      // Cancel-before-streamText fast path. The polling task can
       // flip `wasCancelled` any time after `markAssistantReplyRunning`
       // committed; if it already did, skip the upstream fetch entirely
       // (no point hitting OpenAI just to immediately abort) and route to
@@ -603,8 +603,8 @@ export const generateAssistantReply = internalAction({
         // call shape uniform across paths.
         tools: sandboxTools,
         stopWhen: stepCountIs(SANDBOX_STEP_BUDGET),
-        // Plan 11 — surface the per-step budget consumption to the model
-        // so it can self-pace mid-flight ("3 of 8 tool steps remain;
+        // Surface the per-step budget consumption to the model so it can
+        // self-pace mid-flight ("3 of 8 tool steps remain;
         // wrap up if your evidence is sufficient"). Only attached on the
         // tool-driven path: discuss / library replies are single-step
         // text-only and would never reach `prepareStep`'s second
@@ -635,7 +635,7 @@ export const generateAssistantReply = internalAction({
               };
             }
           : undefined,
-        // Plan 07 — wire the cancellation controller into the SDK so a
+        // Wire the cancellation controller into the SDK so a
         // poll-detected cancel actively tears down the underlying HTTP
         // request. Without this we'd still observe `wasCancelled === true`
         // post-loop, but the SSE connection would keep streaming bytes
@@ -647,10 +647,10 @@ export const generateAssistantReply = internalAction({
       // We always iterate `fullStream` — it is a strict superset of
       // `textStream` (every text chunk shows up as a `text-delta` event).
       // Sandbox-mode replies additionally surface `tool-call` /
-      // `tool-result` / `tool-error` events here; Plan 06 persists them
+      // `tool-result` / `tool-error` events here; these are persisted
       // into messageToolCallEvents for the live ticker and trace UI.
       for await (const part of response.fullStream) {
-        // Plan 07 — short-circuit before processing any further events.
+        // Short-circuit before processing any further events.
         // Two reasons we still need this even though we passed
         // `abortSignal` to streamText:
         //   1. The SDK / underlying provider may keep emitting buffered
@@ -684,7 +684,7 @@ export const generateAssistantReply = internalAction({
             // Convert the model's tool-call args to JSON, then redact; the
             // mutation re-caps to `TOOL_CALL_EVENT_SUMMARY_MAX_CHARS` if
             // somehow the JSON is still long after redaction (e.g. a tool
-            // input that legitimately needs more bytes — `run_shell` Plan 08).
+            // input that legitimately needs more bytes — `run_shell`).
             const occurredAt = Date.now();
             const inputJson = JSON.stringify(part.input ?? {});
             const { redacted: inputSummary } = redact(inputJson);
@@ -694,7 +694,7 @@ export const generateAssistantReply = internalAction({
               inputSummary,
               startedAt: occurredAt,
             });
-            // Plan 13 — count *invocations* on `tool-call`, not on
+            // Count *invocations* on `tool-call`, not on
             // `tool-result`. A tool-call without a matching result
             // (e.g. mid-stream cancel before the tool returns) is
             // still a real LLM-driven invocation we want reflected in
@@ -742,8 +742,8 @@ export const generateAssistantReply = internalAction({
               occurredAt,
             });
 
-            // Plan 13 — per-tool metric. We extract the envelope-reported
-            // error code so dashboards can pivot by `path_outside_repo`
+            // Per-tool metric. We extract the envelope-reported error
+            // code so dashboards can pivot by `path_outside_repo`
             // / `command_blocked` / `tool_timeout` / etc. and the
             // post-rollout abort condition (`error_code='io_error'` rate
             // > X%) can be expressed in one query. `auditMetadata.errorCode`
@@ -765,7 +765,7 @@ export const generateAssistantReply = internalAction({
               details: buildToolMetricDetails(args.assistantMessageId, args.jobId, part.toolCallId),
             });
 
-            // Plan 12 — append an audit-log row alongside the live event.
+            // Append an audit-log row alongside the live event.
             // Two independent transactions (best-effort wrapper catches
             // any failure as a warning) so a transient audit-log outage
             // cannot tear down a reply that already produced its tool
@@ -775,11 +775,11 @@ export const generateAssistantReply = internalAction({
             // `sandboxTooling` because that is the only context where the
             // sandboxId we key against is actually known; a stray
             // tool-result on a non-sandbox reply is malformed and is
-            // logged for Plan 06's trace but not the audit log.
+            // logged for the trace but not the audit log.
             //
-            // Plan 13 — `auditMetadata` was already extracted above for
-            // the per-tool metric; reuse it here so we don't pay the
-            // JSON traversal cost twice per result.
+            // `auditMetadata` was already extracted above for the
+            // per-tool metric; reuse it here so we don't pay the JSON
+            // traversal cost twice per result.
             if (replyContext.sandboxTooling) {
               await tryRecordSandboxToolCallLogEntry(ctx, {
                 ownerTokenIdentifier: replyContext.ownerTokenIdentifier,
@@ -829,9 +829,9 @@ export const generateAssistantReply = internalAction({
               occurredAt,
             });
 
-            // Plan 13 — per-tool error metric. `tool-error` always
-            // means the tool's `execute` threw (as opposed to a
-            // structured `ok: false` envelope); the error_code tag is
+            // Per-tool error metric. `tool-error` always means the
+            // tool's `execute` threw (as opposed to a structured `ok:
+            // false` envelope); the error_code tag is
             // the synthetic `tool_error` literal so the metric stream
             // is uniform with the envelope-error case (which uses the
             // tool's own structured `errorCode`).
@@ -847,7 +847,7 @@ export const generateAssistantReply = internalAction({
               details: buildToolMetricDetails(args.assistantMessageId, args.jobId, part.toolCallId),
             });
 
-            // Plan 12 — audit log entry on the AI SDK error path. The
+            // Audit log entry on the AI SDK error path. The
             // error already happened (the tool's `execute` threw), so
             // `outputBytes` is 0 and `redactedFields` is empty; the
             // useful audit signal is "this tool call was attempted and
@@ -891,18 +891,16 @@ export const generateAssistantReply = internalAction({
             // `file` / `tool-output-denied` / `tool-approval-request` /
             // `abort` / `raw` — none of these affect the text we persist.
             //
-            // Plan 07: an `abort` event surfaces here when the SDK observes
-            // our `abortSignal` firing. The next loop iteration's
-            // `wasCancelled` check breaks out before any persistence runs
-            // (since the poll that fired the abort already flipped the
-            // flag), so we don't need to special-case `abort` here. Plan 11
-            // will hook `start-step` / `finish-step` for the step-budget
-            // feedback prompt.
+            // An `abort` event surfaces here when the SDK observes our
+            // `abortSignal` firing. The next loop iteration's
+            // `wasCancelled` check breaks out before any persistence
+            // runs (since the poll that fired the abort already flipped
+            // the flag), so we don't need to special-case `abort` here.
             break;
         }
       }
 
-      // Plan 10 — extract usage *before* branching on cancel/success so
+      // Extract usage *before* branching on cancel/success so
       // the partial-cost telemetry is available to both the cancel
       // finalize variant and the success finalize. A cancelled stream
       // can still produce a `totalUsage` resolution if the upstream sent
@@ -916,7 +914,7 @@ export const generateAssistantReply = internalAction({
         jobId: args.jobId,
       });
 
-      // Plan 07 — if the loop exited because cancellation fired (either
+      // If the loop exited because cancellation fired (either
       // through the in-loop `break` or because the abortSignal made
       // fullStream end early), route to the cancel finalize variant
       // instead of the normal one. Persisting whatever was already
@@ -960,14 +958,14 @@ export const generateAssistantReply = internalAction({
       });
       emitSessionExit("completed", usage);
     } catch (error) {
-      // Plan 10 — even on the error path, try to extract whatever usage
-      // the SDK already accumulated before the throw. Some errors fire
+      // Even on the error path, try to extract whatever usage the SDK
+      // already accumulated before the throw. Some errors fire
       // mid-stream (e.g. provider rate-limit kicking in after the model
       // produced 200 tokens) and the partial cost is real spend that
       // should count against the daily cap.
       //
-      // Plan 11 — `modelName` is the same per-mode pick the success
-      // path used. The fallback only fires when the catch lands before
+      // `modelName` is the same per-mode pick the success path used.
+      // The fallback only fires when the catch lands before
       // `resolveModelForReply` ever ran (e.g. `getReplyContext` threw),
       // in which case `streamResponse` is also `undefined` and
       // `extractStreamUsage` short-circuits to `{}` — so the fallback
@@ -979,7 +977,7 @@ export const generateAssistantReply = internalAction({
         jobId: args.jobId,
       });
 
-      // Plan 07 — abort-induced exceptions land here too: streamText
+      // Abort-induced exceptions land here too: streamText
       // surfaces a `DOMException`/`AbortError` once the SSE tear-down
       // bubbles back through `fullStream`. Distinguishing them via the
       // `wasCancelled` flag (rather than sniffing `error.name`) keeps the
@@ -1020,7 +1018,7 @@ export const generateAssistantReply = internalAction({
       });
       emitSessionExit("failed", usage);
     } finally {
-      // Plan 07 — always tear down the cancellation poll, regardless of
+      // Always tear down the cancellation poll, regardless of
       // which exit path the action took. Setting `pollingStopped` first
       // disarms a tick that might already be queued when we hit
       // `clearTimeout`; without that, a fast queryPaused → resumed cycle
@@ -1039,12 +1037,10 @@ export const generateAssistantReply = internalAction({
  *
  * Failures here (Daytona unreachable, sandbox archived between context
  * load and tool wiring, missing API key) bubble out and abort the entire
- * generation. That is the right behavior for Plan 04: if we cannot give
- * the model tools after telling it (via the system prompt) it has tools,
- * it will hallucinate file contents. The action's outer catch surfaces
- * the error to the user as a normal failure. Plan 09 introduces a richer
- * fallback (degrade to library mode mid-session) once we have a redaction
- * layer to safely persist partial tool results.
+ * generation. That is the right behavior: if we cannot give the model
+ * tools after telling it (via the system prompt) it has tools, it will
+ * hallucinate file contents. The action's outer catch surfaces the
+ * error to the user as a normal failure.
  */
 async function buildSandboxTools(sandboxTooling: NonNullable<ReplyContext["sandboxTooling"]>): Promise<ToolSet> {
   const fsClient = await getSandboxFsClient(sandboxTooling.remoteId);
@@ -1052,7 +1048,7 @@ async function buildSandboxTools(sandboxTooling: NonNullable<ReplyContext["sandb
 }
 
 /**
- * Plan 10 — extract `inputTokens` / `outputTokens` / `costUsd` from a
+ * Extract `inputTokens` / `outputTokens` / `costUsd` from a
  * (possibly aborted, possibly partial) `streamText` response.
  *
  * Returns all three as `undefined` when:

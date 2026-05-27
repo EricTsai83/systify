@@ -1,7 +1,7 @@
 import type { ChatMode } from "./types";
 
 /**
- * Plan 14 — passive mode-suggestion heuristic. Runs on every keystroke from
+ * Passive mode-suggestion heuristic. Runs on every keystroke from
  * the composer and, when the input shape unambiguously fits a different
  * mode than the one the user is in, returns a one-line nudge with a stable
  * `key` so the composer can show / dismiss the same suggestion across

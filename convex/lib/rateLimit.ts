@@ -55,9 +55,9 @@ const DEFAULT_GLOBAL_CHAT_BURST_CAPACITY = 60;
 const DEFAULT_DAYTONA_GLOBAL_PER_HOUR = 30;
 
 /**
- * Plan 10 — daily spend caps for sandbox-mode replies, denominated in
- * **cents** so the underlying token-bucket arithmetic stays integer
- * (the `@convex-dev/rate-limiter` component requires integer counts and
+ * Daily spend caps for sandbox-mode replies, denominated in **cents** so
+ * the underlying token-bucket arithmetic stays integer (the
+ * `@convex-dev/rate-limiter` component requires integer counts and
  * float `count` values produce drift across shards).
  *
  * `$5 / day` per user is the design default sized so a typical sandbox
@@ -71,8 +71,8 @@ const DEFAULT_SANDBOX_DAILY_CAP_PER_USER_USD = 5;
 const DEFAULT_SANDBOX_DAILY_CAP_PER_REPOSITORY_USD = 50;
 
 /**
- * Plan 10 — fixed estimate the pre-check on `sendMessage` consults before
- * letting a sandbox reply queue. We don't know the actual cost yet (the
+ * Fixed estimate the pre-check on `sendMessage` consults before letting
+ * a sandbox reply queue. We don't know the actual cost yet (the
  * model hasn't run), so we project against a reasonable upper-mid case
  * for a sandbox reply that exercises a couple of `read_file` calls and
  * a final answer. The estimate need not be exact — its only role is to
@@ -184,7 +184,7 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
     period: HOUR,
     shards: 10,
   },
-  // Plan 10 — sandbox cost buckets (`sandboxCostUsdPerUserDaily`,
+  // Sandbox cost buckets (`sandboxCostUsdPerUserDaily`,
   // `sandboxCostUsdPerRepositoryDaily`) are deliberately *not* registered
   // here. They use the inline-config pattern (config supplied per
   // call site) so env vars like `SANDBOX_DAILY_CAP_PER_USER_USD` can be
@@ -197,7 +197,7 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
 });
 
 /**
- * Plan 10 — bucket name constants. Used as the `name` argument to
+ * Bucket name constants. Used as the `name` argument to
  * `rateLimiter.limit / check / getValue`. Kept as `as const` so the
  * `RateLimitBucket` type and the structured-error `bucket` field stay
  * a single source of truth.
@@ -206,7 +206,7 @@ const SANDBOX_USER_COST_BUCKET = "sandboxCostUsdPerUserDaily" as const;
 const SANDBOX_REPOSITORY_COST_BUCKET = "sandboxCostUsdPerRepositoryDaily" as const;
 
 /**
- * Plan 10 — per-user daily sandbox cost cap configuration.
+ * Per-user daily sandbox cost cap configuration.
  *
  * Fixed window with `start: 0` so the window aligns to UTC midnight —
  * matches the user-facing "resets at midnight UTC" tooltip exactly.
@@ -242,7 +242,7 @@ function getSandboxUserCapConfig() {
 }
 
 /**
- * Plan 10 — per-repository daily sandbox cost cap configuration. Same
+ * Per-repository daily sandbox cost cap configuration. Same
  * shape as the per-user variant; capacity defaults higher ($50 vs $5)
  * so a user driving several sandbox-grounded threads against the same
  * repository doesn't bottleneck on the repo cap before any one of them
@@ -326,7 +326,7 @@ export async function consumeDaytonaGlobalRateLimit(ctx: MutationCtx) {
 }
 
 /**
- * Plan 10 — structured error thrown by the sandbox-cap pre-check on
+ * Structured error thrown by the sandbox-cap pre-check on
  * `sendMessage`. Distinct from `RATE_LIMIT_EXCEEDED` so the frontend's
  * `toUserErrorMessage` can render a quota-specific UI surface (countdown
  * to midnight UTC, link to docs about the cap) without sniffing
@@ -364,8 +364,8 @@ export interface SandboxDailyCostBudget {
 }
 
 /**
- * Plan 10 — peek the current sandbox-cost budget for a single bucket key
- * without consuming any tokens. Used by:
+ * Peek the current sandbox-cost budget for a single bucket key without
+ * consuming any tokens. Used by:
  *
  *   1. `lib/chatEligibility`'s cost-cap gate (via `threadContext` and
  *      `repositoryModeEligibility`) so the UI can disable the sandbox
@@ -391,7 +391,7 @@ async function peekSandboxBucket(
   // user; "0 cents remaining (cap reached)" is the right thing to show.
   const remainingCents = Math.max(0, Math.floor(snapshot.value));
   const periodMs = snapshot.config.period;
-  // `start` defaults to 0 in our Plan-10 buckets (UTC midnight alignment).
+  // `start` defaults to 0 in our sandbox cost buckets (UTC midnight alignment).
   // For other configurations the rate-limiter randomizes `start` so we
   // fall back to "snapshot.ts + period" which is the actual end of the
   // current window from the snapshot's perspective.
@@ -404,7 +404,7 @@ async function peekSandboxBucket(
   } else {
     // Token bucket — the bucket refills continuously, so "reset at" is
     // when the bucket would be full again, given the current value. Not
-    // used by Plan 10 today but kept for forward compatibility.
+    // used by the sandbox cost buckets today but kept for forward compatibility.
     const refillRatePerMs = snapshot.config.rate / snapshot.config.period;
     const missingCents = capacity - remainingCents;
     resetAtMs = Date.now() + Math.ceil(missingCents / refillRatePerMs);
@@ -417,7 +417,7 @@ async function peekSandboxBucket(
 }
 
 /**
- * Plan 10 — peek the user-level daily budget. Pure read; no consumption.
+ * Peek the user-level daily budget. Pure read; no consumption.
  */
 export async function peekSandboxDailyCostForUser(
   ctx: QueryCtx | MutationCtx,
@@ -427,7 +427,7 @@ export async function peekSandboxDailyCostForUser(
 }
 
 /**
- * Plan 10 — peek the repository-level daily budget. Pure read; no consumption.
+ * Peek the repository-level daily budget. Pure read; no consumption.
  */
 export async function peekSandboxDailyCostForRepository(
   ctx: QueryCtx | MutationCtx,
@@ -437,7 +437,7 @@ export async function peekSandboxDailyCostForRepository(
 }
 
 /**
- * Plan 10 — pre-check both daily caps relevant to a sandbox-mode send and
+ * Pre-check both daily caps relevant to a sandbox-mode send and
  * throw a structured `SANDBOX_DAILY_CAP_EXCEEDED` /
  * `SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED` error if either would not have
  * room for `estimateCents`.
@@ -509,7 +509,7 @@ export async function assertSandboxDailyCostBudget(
 }
 
 /**
- * Plan 10 — settle the actual sandbox cost on `finalizeAssistantReply`,
+ * Settle the actual sandbox cost on `finalizeAssistantReply`,
  * `failAssistantReply`, and `markAssistantReplyCancelled`. The cost has
  * already been incurred (the OpenAI call ran), so we record the spend
  * even if it lands the bucket below zero (`reserve: true` allows the
@@ -546,7 +546,7 @@ async function consumeSandboxBucket(
 }
 
 /**
- * Plan 10 — record actual sandbox cost against per-user and (if attached)
+ * Record actual sandbox cost against per-user and (if attached)
  * per-repository daily buckets. Idempotent on `cents <= 0` (heuristic
  * replies, missing model pricing) so the call site can pass through the
  * `costUsd` from `estimateCostUsd` without checking it first.

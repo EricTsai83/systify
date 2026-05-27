@@ -16,11 +16,11 @@ export const MAX_CONTEXT_MESSAGES = 20;
 /**
  * Maximum number of relevant code chunks selected for a chat reply.
  *
- * Plan 04 retired the chunk-pre-loading path for both `docs` (artifact-only)
- * and `sandbox` (LLM-driven via tools). The relevance selector is still
- * imported by `chat/generation.ts` and exercised by direct unit tests in
+ * `docs` (artifact-only) and `sandbox` (LLM-driven via tools) replies
+ * don't pre-load chunks; the relevance selector is still imported by
+ * `chat/generation.ts` and exercised by direct unit tests in
  * `chat-context.test.ts`, so the cap stays here as the contract for any
- * future caller that re-introduces chunk pre-selection.
+ * future caller that introduces chunk pre-selection.
  */
 export const MAX_RELEVANT_CHUNKS = 6;
 
@@ -59,7 +59,7 @@ export const DEFAULT_AUTO_ARCHIVE_MINUTES = 60 * 24;
 export const DEFAULT_AUTO_DELETE_MINUTES = 60 * 24;
 
 /**
- * Plan 06 — defensive upper bound on the number of `messageToolCallEvents`
+ * Defensive upper bound on the number of `messageToolCallEvents`
  * rows pulled in a single read.
  *
  * In practice the count is bounded by `SANDBOX_STEP_BUDGET * 2` (one `start`
@@ -73,7 +73,7 @@ export const DEFAULT_AUTO_DELETE_MINUTES = 60 * 24;
 export const MAX_TOOL_CALL_EVENTS_PER_MESSAGE = 64;
 
 /**
- * Plan 06 — character cap applied to each tool-call event's `inputSummary`
+ * Character cap applied to each tool-call event's `inputSummary`
  * and `outputSummary` *before* it lands in the events table.
  *
  * Rationale:

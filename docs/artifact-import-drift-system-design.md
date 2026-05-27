@@ -143,7 +143,7 @@ accuracy to sandbox verification and to the user's judgement.
 
 - the signal is coarse: unrelated commits still flag an artifact as drifted
 - a repository that is never re-imported never shows drift, even if its remote moved
-- artifacts predating `alignedImportCommitSha` are permanently silent until a writer backfills them
+- artifacts without `alignedImportCommitSha` are permanently silent until a writer fills it
 
 ### What this design avoids
 

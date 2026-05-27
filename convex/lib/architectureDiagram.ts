@@ -20,7 +20,7 @@
  *
  * External dependencies are rendered as dotted-edge nodes off the repo root so
  * the user can spot the boundary between in-repo modules and third-party
- * surfaces (PRD US 17: "show modules, data flow, and external dependencies").
+ * surfaces (the diagram shows modules, data flow, and external dependencies).
  */
 
 export type DiagramDepth = "service" | "module" | "file";

@@ -34,7 +34,7 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
 
 vi.mock("@/components/app-notice", () => ({
   // Mock surfaces title / message and forwards `onAction` and `onDismiss` so
-  // tests can exercise the Plan 14 mode-suggestion hint (Switch + Dismiss)
+  // tests can exercise the mode-suggestion hint (Switch + Dismiss)
   // and the existing sandbox-warning "Sync now" CTA without depending on the
   // shadcn Alert primitive's internal layout.
   AppNotice: ({
@@ -76,7 +76,7 @@ vi.mock("@/components/app-notice", () => ({
   ),
 }));
 
-// Plan 14 — Radix Popover renders into a portal that complicates "did the
+// Radix Popover renders into a portal that complicates "did the
 // trigger render the right entries?" assertions. Stubbing both Popover and
 // the trigger to plain divs lets the popover's content live alongside the
 // trigger in the DOM, which is enough for the unit-level coverage in this
@@ -296,7 +296,7 @@ describe("ChatPanel streaming rendering", () => {
 });
 
 /**
- * Plan 02: assistant messages must surface (a) which mode produced them via
+ * Assistant messages must surface (a) which mode produced them via
  * a small chip, and (b) a clickable inline citation for every `[A#]` that
  * resolves against `messages.citationMap`. Together these let the user
  * trace any factual claim back to a specific artifact.
@@ -442,7 +442,7 @@ describe("ChatPanel mode badge and inline citations", () => {
 });
 
 /**
- * Plan 11 — sandbox-mode citation lint highlights. The renderer reads
+ * Sandbox-mode citation lint highlights. The renderer reads
  * `messages.unverifiedClaims` and wraps the flagged offset ranges in a
  * `<mark>` so the user can scan unverified prose with extra skepticism.
  * Coverage targets:
@@ -456,12 +456,12 @@ describe("ChatPanel mode badge and inline citations", () => {
  *     run yet on the live content; applying stale ranges would
  *     mismark arbitrary character positions in the live delta).
  *   - `undefined` / empty `unverifiedClaims` produce no `<mark>` (so
- *     pre-Plan-11 messages and clean replies render unchanged).
+ *     messages without lint output and clean replies render unchanged).
  *   - Out-of-order ranges are handled defensively without crashing —
  *     the renderer sorts a copy before walking, so a hypothetical
  *     future schema relaxation cannot brick the bubble.
  */
-describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
+describe("ChatPanel unverified-claim highlights", () => {
   test("wraps each unverified range in a <mark> covering exactly the flagged sentence", () => {
     // The lint emits offsets that round-trip with `content.slice(start, end)`.
     // The renderer slices with the same offsets, so the marked text must
@@ -722,7 +722,7 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
 });
 
 /**
- * Plan 07 — Stop button toggles in for Send while the latest assistant
+ * Stop button toggles in for Send while the latest assistant
  * message is still streaming / pending. Coverage targets:
  *
  *   - Stop button renders only when (a) `onCancelInFlightReply` is wired AND
@@ -733,7 +733,7 @@ describe("ChatPanel unverified-claim highlights (Plan 11)", () => {
  *     chip rather than fall through to the raw enum.
  *   - Send is restored once the assistant message reaches a terminal state.
  */
-describe("ChatPanel cancel-in-flight reply (Plan 07)", () => {
+describe("ChatPanel cancel-in-flight reply", () => {
   test("renders Send when no assistant reply is in flight", () => {
     render(
       <ChatPanel
@@ -1061,7 +1061,7 @@ describe("ChatPanel cancel-in-flight reply (Plan 07)", () => {
 });
 
 /**
- * Plan 10 — per-message cost ticker. The ticker:
+ * Per-message cost ticker. The ticker:
  *
  *   1. Renders only on terminal-state assistant messages (completed /
  *      failed / cancelled) — streaming partial usage would tick
@@ -1072,7 +1072,7 @@ describe("ChatPanel cancel-in-flight reply (Plan 07)", () => {
  *   3. Renders sub-cent costs as `<$0.01` so "cheap" stays visually
  *      distinct from "free".
  */
-describe("ChatPanel per-message cost ticker (Plan 10)", () => {
+describe("ChatPanel per-message cost ticker", () => {
   test("renders cost + tokens for a fully-priced sandbox reply", () => {
     render(
       <ChatPanel
@@ -1330,7 +1330,7 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
 });
 
 /**
- * Plan 14 — example-prompt cards rendered above the composer when the
+ * Example-prompt cards rendered above the composer when the
  * thread is empty. Coverage targets:
  *
  *   - Empty thread shows a card grid for the *current* mode's prompts.
@@ -1343,7 +1343,7 @@ describe("ChatPanel per-message cost ticker (Plan 10)", () => {
  *   - Cards disappear once the thread has at least one message — the
  *     empty-state container is the only render site.
  */
-describe("ChatPanel mode examples (Plan 14)", () => {
+describe("ChatPanel mode examples", () => {
   test("renders the active mode's example cards in the empty state", () => {
     render(
       <ChatPanel

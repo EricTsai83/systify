@@ -279,15 +279,15 @@ describe("useThreadCapabilities — bridging behavior", () => {
 });
 
 /**
- * Plan 10 — sandbox cost-budget bridging from the threadContext query
- * into the hook's flat shape.
+ * Sandbox cost-budget bridging from the threadContext query into the
+ * hook's flat shape.
  *
  * The hook consolidates the (per-user, per-repository) budget pair into
  * a single user-facing budget so the UI doesn't have to make the
  * "which cap binds first?" decision in JSX. Tests anchor that
  * consolidation logic.
  */
-describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
+describe("useThreadCapabilities — sandbox cost budget", () => {
   test("threads without budget data (no repo attached) report sandboxCostBudget: null", () => {
     useQueryMock.mockReturnValue({
       thread: { _id: threadId, defaultGroundLibrary: false, defaultGroundSandbox: false },

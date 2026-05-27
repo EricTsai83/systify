@@ -6,7 +6,7 @@ This document describes the system-level isolation guarantees that Systify's san
 
 The companion `sandbox-mode-security-system-design.md` covers the *content* boundary — how secrets that flow through the LLM are kept out of durable storage. This document covers the *runtime* boundary — what the LLM can and cannot do inside a sandbox once it has the `read_file`, `list_dir`, and `run_shell` tools.
 
-The primary motivation for this document is Plan 08, which introduces the `run_shell` tool. `run_shell` is a meaningful capability widening compared to `read_file` / `list_dir`: composition of `grep` / `find` / `git log` lets the LLM ask questions about the repository that the read tools alone cannot answer, but it also means the LLM can attempt arbitrary shell pipelines. The defenses below are layered so a regression in any single layer (a deny-list bypass, a buggy timeout, a removed truncation cap) does not unilaterally widen what the LLM can achieve.
+The primary motivation for this document is the `run_shell` tool. `run_shell` is a meaningful capability widening compared to `read_file` / `list_dir`: composition of `grep` / `find` / `git log` lets the LLM ask questions about the repository that the read tools alone cannot answer, but it also means the LLM can attempt arbitrary shell pipelines. The defenses below are layered so a regression in any single layer (a deny-list bypass, a buggy timeout, a removed truncation cap) does not unilaterally widen what the LLM can achieve.
 
 ## Scope
 
@@ -17,8 +17,8 @@ The primary motivation for this document is Plan 08, which introduces the `run_s
 Out of scope:
 
 - The Convex backend's own sandboxing (covered by `convex/_generated/ai/guidelines.md` and the chat job lifecycle).
-- Per-user / per-repository cost caps (Plan 10).
-- Audit log retention (Plan 12 — see `sandbox-tool-call-audit-log-system-design.md`).
+- Per-user / per-repository cost caps (see `convex/lib/rateLimit.ts`).
+- Audit log retention (see `sandbox-tool-call-audit-log-system-design.md`).
 - Network-layer attack mitigation (covered by Daytona's container runtime).
 
 ## Architecture
@@ -126,7 +126,7 @@ The pure-entry function `executeRunShell` in `convex/chat/sandboxTools.ts` enfor
 
    - The primary destructive isolation is Layer 4 (Daytona).
    - The deny list's purpose is to short-circuit the textbook patterns so we don't spend a Daytona round trip and a chat-job step on a guaranteed-bad call.
-   - Bypasses are observable: the upstream Daytona call still fails (the sandbox is unprivileged), and Plan 12's `sandboxToolCallLog` will still record the attempt.
+   - Bypasses are observable: the upstream Daytona call still fails (the sandbox is unprivileged), and `sandboxToolCallLog` will still record the attempt.
 
    **Known regex gaps that delegate to Layer 4** (catalogued so they do not look like silent failures during incident review):
 
@@ -143,9 +143,9 @@ The pure-entry function `executeRunShell` in `convex/chat/sandboxTools.ts` enfor
 
 4. **Timeout clamp.** The model-supplied `timeout_seconds` (or the default 30) is clamped into `[1, SANDBOX_RUN_SHELL_MAX_TIMEOUT_SECONDS]` *inside* the pure entry. Schema rejection (Layer 2) is the first guard; the clamp is the defense-in-depth pin so a future schema relaxation cannot unilaterally widen the window. The clamped value is what the adapter actually receives.
 
-5. **Output cap (`SANDBOX_RUN_SHELL_MAX_OUTPUT_BYTES`).** Daytona returns merged stdout/stderr as a single decoded string. The tool truncates at 32 KiB on a UTF-8 character boundary (no half-character corruption) and appends `[…truncated by Systify after 32 KB…]` so the LLM knows the visible payload is partial. `bytesReturned` reports the post-truncation length; `totalBytes` reports the full pre-truncation length so Plan 06's tool-call ticker can show the true cost.
+5. **Output cap (`SANDBOX_RUN_SHELL_MAX_OUTPUT_BYTES`).** Daytona returns merged stdout/stderr as a single decoded string. The tool truncates at 32 KiB on a UTF-8 character boundary (no half-character corruption) and appends `[…truncated by Systify after 32 KB…]` so the LLM knows the visible payload is partial. `bytesReturned` reports the post-truncation length; `totalBytes` reports the full pre-truncation length so the tool-call ticker can show the true cost.
 
-6. **Redaction (`redact()` from Plan 05).** The merged output is scanned for credential patterns (`gh[pousr]_…`, `eyJ…\.eyJ…\.…`, `AKIA…`, `xox[baprs]-…`, `Bearer …{20,}`) and matches are replaced with `[REDACTED:<type>]` sentinels before the result reaches the LLM or any persistence layer. The matched-pattern slugs are surfaced as `redactedTypes` in the success envelope so audit consumers (Plan 12) can record *that* something was filtered without learning *what*.
+6. **Redaction (`redact()` from `convex/chat/redaction.ts`).** The merged output is scanned for credential patterns (`gh[pousr]_…`, `eyJ…\.eyJ…\.…`, `AKIA…`, `xox[baprs]-…`, `Bearer …{20,}`) and matches are replaced with `[REDACTED:<type>]` sentinels before the result reaches the LLM or any persistence layer. The matched-pattern slugs are surfaced as `redactedTypes` in the success envelope so audit consumers can record *that* something was filtered without learning *what*.
 
 7. **Adapter dispatch.** The pure entry hands the resolved command, absolute workdir, and clamped timeout to `SandboxFsClient.executeCommand`. The adapter (`getSandboxFsClient` in `convex/daytona.ts`) translates `DaytonaTimeoutError` into a `kind: "timeout"` outcome so the tool layer can build a `command_timeout` envelope without importing the Daytona SDK error class. Other Daytona errors (auth, 404, network) keep throwing and are rolled up into `errorCode: "io_error"` by the tool's generic catch.
 
@@ -205,7 +205,7 @@ The layered design assumes:
 | LLM tries `cd /tmp && curl github.com` (no shell to pipe to)      | Layer 4 (network policy)                       |
 | `run_shell` deny list missed a destructive pattern (catalogued gaps in Layer 3) | Layer 4 (Daytona refuses or contains)          |
 | LLM wires up an infinite `find /`                                 | Layer 3 (timeout clamp) → Layer 4 (auto-stop)  |
-| LLM dumps `cat .git/config` after a clone                         | Layer 3 (Plan 05 redaction) — token replaced by `[REDACTED:github_token]` before reaching `messages` |
+| LLM dumps `cat .git/config` after a clone                         | Layer 3 (redaction) — token replaced by `[REDACTED:github_token]` before reaching `messages` |
 | Daytona returns a 5xx mid-call                                    | Layer 3 (`io_error` envelope)                  |
 | Daytona times out the call                                        | Adapter (`DaytonaTimeoutError` → `kind:'timeout'`) → Layer 3 (`command_timeout` envelope) |
 | Output exceeds 32 KiB                                             | Layer 3 (truncation marker)                    |
@@ -215,10 +215,10 @@ The layered design assumes:
 Each `run_shell` call surfaces three observability signals at the **success** envelope:
 
 - `exitCode`: the process's exit status, which is data, not error. The model uses it to interpret outcomes (e.g. `grep` exit 1 = no matches).
-- `durationMs`: wall-clock time from tool dispatch to adapter return. Plan 06's tool-call ticker shows this in the live UI; Plan 13 will aggregate it as a per-command latency metric. **Carried only on the success envelope** — `command_timeout` and `io_error` envelopes do not carry a measured duration. The timeout envelope's duration is implicit (`~timeoutSeconds`); the io-error envelope's "duration" is undefined because the upstream call may have failed before reaching Daytona at all. Plan 06's ticker reconstructs the timeout duration from `timeoutSeconds` rather than relying on a measurement.
+- `durationMs`: wall-clock time from tool dispatch to adapter return. The tool-call ticker shows this in the live UI and per-command latency is aggregated as a metric. **Carried only on the success envelope** — `command_timeout` and `io_error` envelopes do not carry a measured duration. The timeout envelope's duration is implicit (`~timeoutSeconds`); the io-error envelope's "duration" is undefined because the upstream call may have failed before reaching Daytona at all. The ticker reconstructs the timeout duration from `timeoutSeconds` rather than relying on a measurement.
 - `redactedTypes`: sorted, de-duplicated slug array for any pattern hits.
 
-`logInfo("chat", "sandbox_tool_call", ...)` and `logWarn("chat", "sandbox_tool_error", ...)` are emitted by `convex/chat/generation.ts` for every tool call, with input / output already redacted. Plan 12 lifts the same data into `sandboxToolCallLog` for compliance retention; see `sandbox-tool-call-audit-log-system-design.md` for the full append / retention design.
+`logInfo("chat", "sandbox_tool_call", ...)` and `logWarn("chat", "sandbox_tool_error", ...)` are emitted by `convex/chat/generation.ts` for every tool call, with input / output already redacted. The same data is lifted into `sandboxToolCallLog` for compliance retention; see `sandbox-tool-call-audit-log-system-design.md` for the full append / retention design.
 
 ### `redactedTypes` Persistence Status
 
@@ -226,20 +226,19 @@ Each `run_shell` call surfaces three observability signals at the **success** en
 
 This is acceptable because no consumer of `messageToolCallEvents` reads the slug array off the persisted record: the LLM sees `redactedTypes` in the live tool result, and the redacted text retains the `[REDACTED:<type>]` markers that an audit reader can grep.
 
-Plan 12 (`sandboxToolCallLog`) does need the slug array, but it reads it from a different source — the AI SDK's `part.output` payload directly inside the `tool-result` handler in `convex/chat/generation.ts`, via `extractAuditMetadataFromToolOutput`. This keeps the slug array out of the live-ticker table entirely (which has no use for it) while still giving the audit log access to the canonical signal. The redaction runs once (inside the tool's `executeXxx`) and the slugs flow on the in-memory `part.output` reference; `messageToolCallEvents` is left unchanged.
+`sandboxToolCallLog` does need the slug array, but it reads it from a different source — the AI SDK's `part.output` payload directly inside the `tool-result` handler in `convex/chat/generation.ts`, via `extractAuditMetadataFromToolOutput`. This keeps the slug array out of the live-ticker table entirely (which has no use for it) while still giving the audit log access to the canonical signal. The redaction runs once (inside the tool's `executeXxx`) and the slugs flow on the in-memory `part.output` reference; `messageToolCallEvents` is left unchanged.
 
 ## Open Questions / Future Work
 
 - **Empirical Daytona limits.** The defaults table above documents what Systify configures, but the underlying container (kernel, cgroups, seccomp, capability set) is not directly measured from within Systify. A focused validation pass against a live sandbox — running `cat /proc/self/status`, `cat /proc/self/limits`, and a controlled fork-bomb / `rm -rf` against a non-existent path — would let us replace the "we rely on Daytona's documented isolation" qualifier with concrete observed limits.
 - **Per-tool deny lists.** The current deny list is one set of patterns applied uniformly to `run_shell`. If a future tool (e.g. a degraded `library`-mode fallback path or a hypothetical `git_diff`) is added, this design accommodates a per-tool list without restructuring — each tool's `executeXxx` calls its own deny check.
 - **Streaming tool output.** Daytona's `executeCommand` returns the entire result at once. For very long-running inspection tools (e.g. a multi-GB `git log -p`) the LLM cannot react until the call returns. A future enhancement could expose Daytona's PTY surface for streaming, but that materially complicates the truncation and redaction story (we cannot redact a stream we have not finished receiving) and is deferred until there is a concrete need.
-- **Cancellation × in-flight `run_shell`.** Plan 07's `cancelInFlightReply` aborts the surrounding `streamText` via `AbortController`, but `SandboxFsClient.executeCommand` does not currently accept an `AbortSignal` — the Daytona SDK's `Process.executeCommand(command, cwd, env, timeout)` has no abort plumbing. Concretely: if a user cancels mid-`run_shell`, the in-flight shell continues running on the Daytona side until its `timeoutSeconds` elapses (worst case 60 s). The downstream effects:
-  - The cancelled assistant message is finalised correctly (Plan 07's path runs to completion); the eventual tool-result is dropped by the `if (wasCancelled) break` guard in `convex/chat/generation.ts`.
+- **Cancellation × in-flight `run_shell`.** `cancelInFlightReply` aborts the surrounding `streamText` via `AbortController`, but `SandboxFsClient.executeCommand` does not currently accept an `AbortSignal` — the Daytona SDK's `Process.executeCommand(command, cwd, env, timeout)` has no abort plumbing. Concretely: if a user cancels mid-`run_shell`, the in-flight shell continues running on the Daytona side until its `timeoutSeconds` elapses (worst case 60 s). The downstream effects:
+  - The cancelled assistant message is finalised correctly (cancellation path runs to completion); the eventual tool-result is dropped by the `if (wasCancelled) break` guard in `convex/chat/generation.ts`.
   - The Daytona compute / token cost for the in-flight call is paid in full.
-  - Plan 06's live ticker may briefly show a "running" entry that then disappears without an "end" event, depending on which side wins the race.
+  - The live ticker may briefly show a "running" entry that then disappears without an "end" event, depending on which side wins the race.
 
   The forward fix is twofold: (1) extend `SandboxShellExecuteOptions` with an optional `signal?: AbortSignal` and thread it through the adapter; (2) when Daytona's SDK exposes an abort hook, wire it to `cancellationController.signal` from `generation.ts` so cancel actually interrupts the underlying shell. Until then, the 60 s cap on `SANDBOX_RUN_SHELL_MAX_TIMEOUT_SECONDS` is the bound on the wasted compute window.
-- **`redactedTypes` persistence.** Resolved by Plan 12, but via a different path than originally proposed: the slug array is read directly from `part.output` inside `convex/chat/generation.ts`'s `tool-result` handler (see `extractAuditMetadataFromToolOutput`) rather than persisted on `messageToolCallEvents`. The events table stays focused on the live-ticker contract; the audit log gets the slugs without re-redaction. Documented in `sandbox-tool-call-audit-log-system-design.md`.
 
 ## Implementation Pointers
 

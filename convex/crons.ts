@@ -40,7 +40,7 @@ crons.interval(
 // this sweep they accumulate indefinitely.
 crons.interval("cleanup expired github oauth states", { hours: 12 }, internal.github.cleanupExpiredOAuthStates, {});
 
-// Plan 12 — Sandbox tool-call audit log retention sweep. Walks oldest-first
+// Sandbox tool-call audit log retention sweep. Walks oldest-first
 // and deletes rows past the 90-day retention window. Self-reschedules when a
 // batch is full so a backlog drains across multiple ticks rather than
 // breaching the per-mutation write budget. See

@@ -78,7 +78,7 @@ describe("chat history ordering", () => {
   });
 
   test("listMessages returns assistant replies from every mode the thread has been in", async () => {
-    // Plan 03 contract divergence: the cross-mode assistant filter only
+    // Contract divergence: the cross-mode assistant filter only
     // applies to the LLM reply context (`getReplyContext`). The chat panel
     // still has to render every message the user can see in their thread,
     // including replies generated under a previous mode — otherwise

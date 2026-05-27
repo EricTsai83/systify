@@ -17,7 +17,7 @@ import schema from "./schema";
 const modules = import.meta.glob("./**/*.ts");
 
 /**
- * Plan 12 — Pure-helper coverage.
+ * Pure-helper coverage.
  *
  * Boundary tests for the helpers that {@link recordSandboxToolCallLogEntry}
  * composes; pinned independently of any DB wiring so a regression in the
@@ -150,7 +150,7 @@ describe("extractAuditMetadataFromToolOutput", () => {
 });
 
 /**
- * Plan 12 — Mutation + retention coverage.
+ * Mutation + retention coverage.
  *
  * Sets up a fixture that satisfies all the foreign-key references
  * (`threadId`, `messageId`, `sandboxId`) so the audit row has a
@@ -573,7 +573,7 @@ describe("sandboxToolCallLog mutation + retention", () => {
  * Build a minimal fixture so the audit-log row's foreign-key references
  * (`threadId`, `messageId`, `sandboxId`) point at real rows. Mirrors the
  * shape used by `chat-streaming.test.ts:createStreamingFixture` but
- * trimmed to the columns Plan 12 actually needs.
+ * trimmed to the columns the audit log actually needs.
  */
 async function createAuditLogFixture(t: ReturnType<typeof convexTest>, ownerTokenIdentifier: string, slug: string) {
   return await t.run(async (ctx) => {

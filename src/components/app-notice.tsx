@@ -14,7 +14,7 @@ const toneClasses: Record<NoticeTone, string> = {
 /**
  * Reusable notice surface used everywhere a one-line system message
  * needs a tone (info / warning / error), an optional primary CTA, and
- * — since Plan 14 — an optional dismiss control. The dismiss affordance
+ * an optional dismiss control. The dismiss affordance
  * lives on `AppNotice` rather than each call site so notices remain
  * visually consistent across the app: a `×` in the corner means
  * "session-local dismiss" no matter which feature surfaces it.

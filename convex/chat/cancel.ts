@@ -1,5 +1,5 @@
 /**
- * Plan 07 — owner-initiated cancellation of an in-flight chat reply.
+ * Owner-initiated cancellation of an in-flight chat reply.
  *
  * The user-facing contract:
  *
@@ -95,10 +95,10 @@ export const cancelInFlightReply = mutation({
     }
 
     // Find the assistant message that belongs to this job. We use the
-    // `by_jobId` index (defined for cleanup paths in Plan 06) and filter
-    // role=assistant in memory — there is at most one assistant message per
-    // chat job by construction (`chat/send.ts` inserts exactly one), so the
-    // list is bounded at 2 (one user + one assistant message share `jobId`).
+    // `by_jobId` index and filter role=assistant in memory — there is at
+    // most one assistant message per chat job by construction
+    // (`chat/send.ts` inserts exactly one), so the list is bounded at 2
+    // (one user + one assistant message share `jobId`).
     const jobMessages = await ctx.db
       .query("messages")
       .withIndex("by_jobId", (q) => q.eq("jobId", activeJob._id))
