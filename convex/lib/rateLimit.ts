@@ -12,7 +12,7 @@ export type RateLimitBucket =
   | "chatRequestsGlobal"
   | "daytonaRequestsGlobal"
   | "sandboxCostUsdPerUserDaily"
-  | "sandboxCostUsdPerWorkspaceDaily";
+  | "sandboxCostUsdPerRepositoryDaily";
 
 export type InFlightBucket = "repositoryImportInFlight" | "repositorySystemDesignInFlight" | "threadChatInFlight";
 
@@ -20,7 +20,7 @@ type AppErrorCode =
   | "RATE_LIMIT_EXCEEDED"
   | "OPERATION_ALREADY_IN_PROGRESS"
   | "SANDBOX_DAILY_CAP_EXCEEDED"
-  | "SANDBOX_WORKSPACE_DAILY_CAP_EXCEEDED";
+  | "SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED";
 
 function readPositiveIntEnv(name: string, fallback: number) {
   const raw = process.env[name];
@@ -43,7 +43,7 @@ const RATE_LIMIT_MESSAGES: Record<RateLimitBucket, string> = {
   chatRequestsGlobal: "Chat capacity is temporarily full. Please retry later.",
   daytonaRequestsGlobal: "Analysis capacity is temporarily full. Please retry later.",
   sandboxCostUsdPerUserDaily: "Daily sandbox spend cap reached. Resets at midnight UTC.",
-  sandboxCostUsdPerWorkspaceDaily: "Workspace daily sandbox spend cap reached. Resets at midnight UTC.",
+  sandboxCostUsdPerRepositoryDaily: "Repository daily sandbox spend cap reached. Resets at midnight UTC.",
 };
 
 const DEFAULT_IMPORTS_PER_HOUR = 5;
@@ -63,12 +63,12 @@ const DEFAULT_DAYTONA_GLOBAL_PER_HOUR = 30;
  * `$5 / day` per user is the design default sized so a typical sandbox
  * reply (~$0.05–$0.20) yields ~25–100 replies before the cap fires —
  * enough headroom for a normal workday of investigation but tight enough
- * to bound a runaway loop. Workspace cap is 10× higher because it caps
- * the aggregate across all members of a workspace (today only the owner;
- * the structure is forward-compatible with collaborative workspaces).
+ * to bound a runaway loop. Repository cap is 10× higher so a user driving
+ * multiple grounded threads against one repository doesn't bottleneck on
+ * the repo cap before they hit their personal cap.
  */
 const DEFAULT_SANDBOX_DAILY_CAP_PER_USER_USD = 5;
-const DEFAULT_SANDBOX_DAILY_CAP_PER_WORKSPACE_USD = 50;
+const DEFAULT_SANDBOX_DAILY_CAP_PER_REPOSITORY_USD = 50;
 
 /**
  * Plan 10 — fixed estimate the pre-check on `sendMessage` consults before
@@ -112,11 +112,11 @@ function getSandboxDailyCapCentsPerUser() {
   );
 }
 
-function getSandboxDailyCapCentsPerWorkspace() {
+function getSandboxDailyCapCentsPerRepository() {
   return Math.max(
     1,
     Math.round(
-      readPositiveFloatEnv("SANDBOX_DAILY_CAP_PER_WORKSPACE_USD", DEFAULT_SANDBOX_DAILY_CAP_PER_WORKSPACE_USD) * 100,
+      readPositiveFloatEnv("SANDBOX_DAILY_CAP_PER_REPOSITORY_USD", DEFAULT_SANDBOX_DAILY_CAP_PER_REPOSITORY_USD) * 100,
     ),
   );
 }
@@ -134,10 +134,12 @@ export function getSandboxReplyEstimateCents() {
  * namespace. Today this looks like `"repository:abc123"` — explicit so
  * a search for `key.startsWith("repository:")` will match every entry.
  *
- * Replaced the previous workspace-scoped key (`"workspace:..."`) when the
- * workspace abstraction was collapsed into repositories. Any in-flight
- * rate-limit state keyed on the old prefix is intentionally orphaned; the
- * narrowing happens in early-access so the bucket reset is acceptable.
+ * History note: the bucket and its keys were previously workspace-scoped
+ * (`sandboxCostUsdPerWorkspaceDaily` with `"workspace:..."` keys). They
+ * were renamed when the workspace abstraction collapsed into repositories;
+ * any in-flight rate-limit state keyed on the old prefix is intentionally
+ * orphaned. The narrowing happens in early-access so the resulting bucket
+ * reset is acceptable.
  */
 export function repositoryCostKey(repositoryId: Id<"repositories">) {
   return `repository:${repositoryId}`;
@@ -190,12 +192,12 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
     shards: 10,
   },
   // Plan 10 — sandbox cost buckets (`sandboxCostUsdPerUserDaily`,
-  // `sandboxCostUsdPerWorkspaceDaily`) are deliberately *not* registered
+  // `sandboxCostUsdPerRepositoryDaily`) are deliberately *not* registered
   // here. They use the inline-config pattern (config supplied per
   // call site) so env vars like `SANDBOX_DAILY_CAP_PER_USER_USD` can be
   // changed at deploy time (or in tests) without bouncing the runtime —
   // the static-config form captures values at module load and is then
-  // immutable. See `getSandboxUserCapConfig` / `getSandboxWorkspaceCapConfig`
+  // immutable. See `getSandboxUserCapConfig` / `getSandboxRepositoryCapConfig`
   // and the `assertSandboxDailyCostBudget` / `consumeSandboxDailyCost`
   // call sites below. The bucket name strings are stable across calls
   // so the underlying rate-limit table keys consistently.
@@ -208,7 +210,7 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
  * a single source of truth.
  */
 const SANDBOX_USER_COST_BUCKET = "sandboxCostUsdPerUserDaily" as const;
-const SANDBOX_WORKSPACE_COST_BUCKET = "sandboxCostUsdPerWorkspaceDaily" as const;
+const SANDBOX_REPOSITORY_COST_BUCKET = "sandboxCostUsdPerRepositoryDaily" as const;
 
 /**
  * Plan 10 — per-user daily sandbox cost cap configuration.
@@ -247,13 +249,14 @@ function getSandboxUserCapConfig() {
 }
 
 /**
- * Plan 10 — per-workspace daily sandbox cost cap configuration. Same
+ * Plan 10 — per-repository daily sandbox cost cap configuration. Same
  * shape as the per-user variant; capacity defaults higher ($50 vs $5)
- * so a workspace with multiple eligible users doesn't bottleneck on
- * the workspace cap before any individual user hits theirs.
+ * so a user driving several sandbox-grounded threads against the same
+ * repository doesn't bottleneck on the repo cap before any one of them
+ * hits the per-user cap.
  */
-function getSandboxWorkspaceCapConfig() {
-  const cap = getSandboxDailyCapCentsPerWorkspace();
+function getSandboxRepositoryCapConfig() {
+  const cap = getSandboxDailyCapCentsPerRepository();
   return {
     kind: "fixed window" as const,
     rate: cap,
@@ -340,9 +343,9 @@ export async function consumeDaytonaGlobalRateLimit(ctx: MutationCtx) {
  * the same value can drive both the toast and any "Try again at HH:MM"
  * countdown the UI may render.
  */
-function throwSandboxDailyCapExceeded(scope: "user" | "workspace", retryAfterMs: number, capUsd: number): never {
-  const code: AppErrorCode = scope === "user" ? "SANDBOX_DAILY_CAP_EXCEEDED" : "SANDBOX_WORKSPACE_DAILY_CAP_EXCEEDED";
-  const bucket: RateLimitBucket = scope === "user" ? "sandboxCostUsdPerUserDaily" : "sandboxCostUsdPerWorkspaceDaily";
+function throwSandboxDailyCapExceeded(scope: "user" | "repository", retryAfterMs: number, capUsd: number): never {
+  const code: AppErrorCode = scope === "user" ? "SANDBOX_DAILY_CAP_EXCEEDED" : "SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED";
+  const bucket: RateLimitBucket = scope === "user" ? "sandboxCostUsdPerUserDaily" : "sandboxCostUsdPerRepositoryDaily";
   throw new ConvexError({
     code,
     bucket,
@@ -351,7 +354,7 @@ function throwSandboxDailyCapExceeded(scope: "user" | "workspace", retryAfterMs:
     message:
       scope === "user"
         ? `Daily sandbox spend cap of $${capUsd.toFixed(2)} reached. Resets at midnight UTC.`
-        : `Workspace daily sandbox spend cap of $${capUsd.toFixed(2)} reached. Resets at midnight UTC.`,
+        : `Repository daily sandbox spend cap of $${capUsd.toFixed(2)} reached. Resets at midnight UTC.`,
   });
 }
 
@@ -372,7 +375,7 @@ export interface SandboxDailyCostBudget {
  * without consuming any tokens. Used by:
  *
  *   1. `lib/chatEligibility`'s cost-cap gate (via `threadContext` and
- *      `workspaceModeEligibility`) so the UI can disable the sandbox
+ *      `repositoryModeEligibility`) so the UI can disable the sandbox
  *      option before the user hits Send.
  *   2. The frontend cost-ticker tooltip ("$X.XX of $Y.YY remaining today").
  *
@@ -383,10 +386,10 @@ export interface SandboxDailyCostBudget {
  */
 async function peekSandboxBucket(
   ctx: QueryCtx | MutationCtx,
-  bucket: "sandboxCostUsdPerUserDaily" | "sandboxCostUsdPerWorkspaceDaily",
+  bucket: "sandboxCostUsdPerUserDaily" | "sandboxCostUsdPerRepositoryDaily",
   key: string,
 ): Promise<SandboxDailyCostBudget> {
-  const config = bucket === SANDBOX_USER_COST_BUCKET ? getSandboxUserCapConfig() : getSandboxWorkspaceCapConfig();
+  const config = bucket === SANDBOX_USER_COST_BUCKET ? getSandboxUserCapConfig() : getSandboxRepositoryCapConfig();
   const snapshot = await rateLimiter.getValue(ctx, bucket, { key, config });
   const capacity = snapshot.config.capacity ?? snapshot.config.rate;
   // The component's `value` field represents tokens *remaining*, including
@@ -437,18 +440,18 @@ export async function peekSandboxDailyCostForRepository(
   ctx: QueryCtx | MutationCtx,
   repositoryId: Id<"repositories">,
 ): Promise<SandboxDailyCostBudget> {
-  return await peekSandboxBucket(ctx, "sandboxCostUsdPerWorkspaceDaily", repositoryCostKey(repositoryId));
+  return await peekSandboxBucket(ctx, "sandboxCostUsdPerRepositoryDaily", repositoryCostKey(repositoryId));
 }
 
 /**
  * Plan 10 — pre-check both daily caps relevant to a sandbox-mode send and
  * throw a structured `SANDBOX_DAILY_CAP_EXCEEDED` /
- * `SANDBOX_WORKSPACE_DAILY_CAP_EXCEEDED` error if either would not have
+ * `SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED` error if either would not have
  * room for `estimateCents`.
  *
- * Order of checks: user cap first, workspace cap second. The user cap
+ * Order of checks: user cap first, repository cap second. The user cap
  * is the more restrictive default ($5 vs $50) so the more common
- * blocking case surfaces a user-scoped tooltip; the workspace cap fires
+ * blocking case surfaces a user-scoped tooltip; the repository cap fires
  * only when the user's own budget would have allowed the send.
  *
  * Important: pre-check uses `rateLimiter.check` (peek-only). This is
@@ -493,10 +496,10 @@ export async function assertSandboxDailyCostBudget(
   }
 
   if (args.repositoryId) {
-    const repositoryStatus = await rateLimiter.check(ctx, SANDBOX_WORKSPACE_COST_BUCKET, {
+    const repositoryStatus = await rateLimiter.check(ctx, SANDBOX_REPOSITORY_COST_BUCKET, {
       key: repositoryCostKey(args.repositoryId),
       count: args.estimateCents,
-      config: getSandboxWorkspaceCapConfig(),
+      config: getSandboxRepositoryCapConfig(),
     });
     if (!repositoryStatus.ok) {
       const repositoryBudget = await peekSandboxDailyCostForRepository(ctx, args.repositoryId);
@@ -507,7 +510,7 @@ export async function assertSandboxDailyCostBudget(
         capacityCents: repositoryBudget.capacityCents,
         estimateCents: args.estimateCents,
       });
-      throwSandboxDailyCapExceeded("workspace", repositoryStatus.retryAfter, repositoryBudget.capacityCents / 100);
+      throwSandboxDailyCapExceeded("repository", repositoryStatus.retryAfter, repositoryBudget.capacityCents / 100);
     }
   }
 }
@@ -527,11 +530,11 @@ export async function assertSandboxDailyCostBudget(
  */
 async function consumeSandboxBucket(
   ctx: MutationCtx,
-  bucket: "sandboxCostUsdPerUserDaily" | "sandboxCostUsdPerWorkspaceDaily",
+  bucket: "sandboxCostUsdPerUserDaily" | "sandboxCostUsdPerRepositoryDaily",
   key: string,
   cents: number,
 ): Promise<void> {
-  const config = bucket === SANDBOX_USER_COST_BUCKET ? getSandboxUserCapConfig() : getSandboxWorkspaceCapConfig();
+  const config = bucket === SANDBOX_USER_COST_BUCKET ? getSandboxUserCapConfig() : getSandboxRepositoryCapConfig();
   const status = await rateLimiter.limit(ctx, bucket, {
     key,
     count: cents,
@@ -551,7 +554,7 @@ async function consumeSandboxBucket(
 
 /**
  * Plan 10 — record actual sandbox cost against per-user and (if attached)
- * per-workspace daily buckets. Idempotent on `cents <= 0` (heuristic
+ * per-repository daily buckets. Idempotent on `cents <= 0` (heuristic
  * replies, missing model pricing) so the call site can pass through the
  * `costUsd` from `estimateCostUsd` without checking it first.
  */
@@ -568,6 +571,6 @@ export async function consumeSandboxDailyCost(
   }
   await consumeSandboxBucket(ctx, SANDBOX_USER_COST_BUCKET, args.ownerTokenIdentifier, args.cents);
   if (args.repositoryId) {
-    await consumeSandboxBucket(ctx, SANDBOX_WORKSPACE_COST_BUCKET, repositoryCostKey(args.repositoryId), args.cents);
+    await consumeSandboxBucket(ctx, SANDBOX_REPOSITORY_COST_BUCKET, repositoryCostKey(args.repositoryId), args.cents);
   }
 }
