@@ -2,7 +2,7 @@
 
 ## Audience
 
-You're on call for Systify chat. Sandbox-grounded Discuss replies (`messages.groundSandbox === true`, persisted with `mode: "discuss"`) are the only chat path that drives Daytona compute, executes live tools (`read_file`, `list_dir`, `run_shell`) inside per-repository sandboxes, and bills against the `system_design` cost category. This document gives you the queries, thresholds, and remediation playbook you need to handle the four most common incidents:
+You're on call for Systify chat. Sandbox-grounded Discuss replies (`messages.groundSandbox === true`, persisted with `mode: "discuss"`) are the only chat path that drives Daytona compute, executes live tools (`read_file`, `list_dir`, `run_shell`) inside per-repository sandboxes, and bills against the chat cost category. This document gives you the queries, thresholds, and remediation playbook you need to handle the four most common incidents:
 
 1. **Daytona is unavailable** — sandbox provisioning or tool execution fails for every viewer.
 2. **Cost spike** — a viewer or repository burns through their daily cap unusually fast.
