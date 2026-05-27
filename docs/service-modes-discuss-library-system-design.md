@@ -5,10 +5,10 @@
 Systify exposes two top-level chat modes plus a background generator:
 
 - **`discuss`** — free-form chat with two independent per-message grounding toggles:
-  - **Library grounding** retrieves the workspace's design artifacts and produces `[A#]` citations.
+  - **Library grounding** retrieves the repository's design artifacts and produces `[A#]` citations.
   - **Sandbox grounding** reads the live source tree through Daytona-hosted tools and produces `[path:line-line]` citations.
   - Both off → the reply is unbound LLM training-only chat.
-- **`library`** — read-mostly artifact reader with an always-visible **Ask** panel running chunked-RAG over the workspace's artifacts.
+- **`library`** — read-mostly artifact reader with an always-visible **Ask** panel running chunked-RAG over the repository's artifacts.
 - **System Design generation** — background sandbox-backed job that writes the starter set of System Design artifacts (`readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`) into the Library for later citation.
 
 `discuss` is the canonical default mode; `library` requires an attached repository.
@@ -17,13 +17,13 @@ Systify exposes two top-level chat modes plus a background generator:
 
 ```mermaid
 flowchart TD
-  Workspace["/w/:workspaceId"]
-  Discuss["/w/:workspaceId/discuss/:threadId?"]
-  Library["/w/:workspaceId/library"]
-  LibraryArtifact["/w/:workspaceId/library/a/:artifactId"]
+  Repository["/r/:repositoryId"]
+  Discuss["/r/:repositoryId/discuss/:threadId?"]
+  Library["/r/:repositoryId/library"]
+  LibraryArtifact["/r/:repositoryId/library/a/:artifactId"]
 
-  Workspace --> Discuss
-  Workspace --> Library
+  Repository --> Discuss
+  Repository --> Library
   Library --> LibraryArtifact
 ```
 
@@ -31,7 +31,7 @@ flowchart TD
 
 ## Library Shell Composition
 
-The Library page does not reuse the global chat shell. It mounts `AppSidebar` in its `libraryAsk` variant — the sidebar's content slot renders the full **Library Ask** panel in place of the workspace thread rail. The page itself reconstructs only the remaining chrome (header, workspace switcher) plus the Library shell.
+The Library page does not reuse the global chat shell. It mounts `AppSidebar` in its `libraryAsk` variant — the sidebar's content slot renders the full **Library Ask** panel in place of the repository thread rail. The page itself reconstructs only the remaining chrome (header, repository switcher) plus the Library shell.
 
 In the `libraryAsk` variant the sidebar carries a complete chat surface: an IDE-style thread tab strip on top (`LibraryAskThreadTabs`) — one tab per *open* thread, not the full list — over the conversation and the input. The `+` button starts a thread; the clock button opens `LibraryAskHistoryPopover` as a popup beneath itself. Because the panel lives in the resizable sidebar, it gets its own stored width and a roomier default than the slim Discuss thread rail.
 
@@ -42,15 +42,15 @@ The Library shell is then a two-column desktop layout:
 
 On narrow viewports the document column is the base layer and the folder tree moves into a Sheet; Library Ask rides inside the sidebar's own Sheet, opened by the header's sidebar trigger. The Library tab-strip state (`useLibraryTabs`) is owned by the page and handed to both the document column and the sidebar's Ask panel, so the artifact context stays in sync across the two. `Sidebar` mounts its children in exactly one place (docked `<aside>` *or* mobile Sheet, never both), so the Ask panel's cross-render local state (`useLibraryAskTabs`) is never split across two mounts.
 
-The Ask thread strip is an *open set*, mirroring how the document column works: tabs are threads the user has explicitly opened (persisted per-workspace in localStorage by `useLibraryAskTabs`, caching `{ id, title }` since `listThreads` is capped), the X closes a tab without deleting the thread, and the full searchable history — recall a past thread, pin it, or delete it — lives in `LibraryAskHistoryPopover` (anchored beneath the clock button rather than as a full-screen dialog). The *active* thread is the page-owned `?ask=` URL param. Thread deletion is intentionally confined to the history popover so it is never a stray click beside a close button; `LibraryAskPanel` owns the confirm-dialog flow so the deleted thread is dropped from the open set in one place.
+The Ask thread strip is an *open set*, mirroring how the document column works: tabs are threads the user has explicitly opened (persisted per-repository in localStorage by `useLibraryAskTabs`, caching `{ id, title }` since `listThreads` is capped), the X closes a tab without deleting the thread, and the full searchable history — recall a past thread, pin it, or delete it — lives in `LibraryAskHistoryPopover` (anchored beneath the clock button rather than as a full-screen dialog). The *active* thread is the page-owned `?ask=` URL param. Thread deletion is intentionally confined to the history popover so it is never a stray click beside a close button; `LibraryAskPanel` owns the confirm-dialog flow so the deleted thread is dropped from the open set in one place.
 
-`WorkspaceThreadsRail` is the single *vertical* thread-list implementation, used by the sidebar's default `threads` variant for Discuss. Both thread surfaces scope their query to one mode (`listThreads({ mode })`): a Library Ask thread surfacing in the Discuss sidebar would be a mode leak.
+`RepositoryThreadsRail` is the single *vertical* thread-list implementation, used by the sidebar's default `threads` variant for Discuss. Both thread surfaces scope their query to one mode (`listThreads({ mode })`): a Library Ask thread surfacing in the Discuss sidebar would be a mode leak.
 
 `AppSidebar`'s props are a discriminated union on `variant` (`threads` vs `libraryAsk`), so each variant only accepts the callbacks it actually uses — the type system enforces the composition boundary rather than callers passing no-op handlers.
 
 ## Library Access and the Empty State
 
-Library is reachable whenever the workspace has an attached repository. It is **not** gated on the repository having at least one artifact: a freshly imported repository can open Library immediately. When no artifact bodies exist yet, the page renders a **Generate System Design** CTA button. Clicking it confirms and then calls `requestSystemDesignGeneration`, which queues a sandbox-backed job that writes the starter set of System Design artifacts into the default folders seeded at import time.
+Library is reachable whenever a repository is attached to the thread. It is **not** gated on the repository having at least one artifact: a freshly imported repository can open Library immediately. When no artifact bodies exist yet, the page renders a **Generate System Design** CTA button. Clicking it confirms and then calls `requestSystemDesignGeneration`, which queues a sandbox-backed job that writes the starter set of System Design artifacts into the default folders seeded at import time.
 
 The Discuss composer surfaces the same CTA in its grounding toggle bar: when Library grounding is closed because the repository has zero artifacts (`library_no_artifact`), the toggle bar renders the dialog opener directly.
 
@@ -58,7 +58,7 @@ The Discuss composer surfaces the same CTA in its grounding toggle bar: when Lib
 
 The Discuss composer exposes a two-axis toggle bar (`grounding-toggle-bar.tsx`) above the input. Per-message flags `messages.groundLibrary` and `messages.groundSandbox` are persisted on both the user message (as a record of what the user asked for) and the assistant placeholder (so the generation action can read them off the queued message). Library Mode messages do not consult these flags — Library's grounding is implicit in the mode.
 
-Per-thread defaults live on `threads.defaultGroundLibrary` and `threads.defaultGroundSandbox`. Each send updates these so reopening the thread restores the toggle state the user last sent with. The composer's `setGroundLibrary` / `setGroundSandbox` state is keyed by `threadId`, so a verdict refresh from `workspaceModeEligibility.evaluate` does not stomp on a user's mid-session click.
+Per-thread defaults live on `threads.defaultGroundLibrary` and `threads.defaultGroundSandbox`. Each send updates these so reopening the thread restores the toggle state the user last sent with. The composer's `setGroundLibrary` / `setGroundSandbox` state is keyed by `threadId`, so a verdict refresh from `repositoryModeEligibility.evaluate` does not stomp on a user's mid-session click.
 
 Capability-based model selection routes the reply based on the (mode, groundSandbox) pair:
 
@@ -76,7 +76,7 @@ Artifact organization is represented by `artifactFolders`; the frontend computes
 
 Library Ask retrieves from `artifactChunks`, which are separate rows so chunking and embedding churn does not rewrite the parent artifact document. Missing embeddings degrade to lexical retrieval instead of blocking Ask.
 
-Sandbox sessions are stored in `sandboxSessions`, scoped to a workspace, and linked to a repository sandbox when active. A workspace has one reusable sandbox session shared across every Discuss thread that uses sandbox grounding, so thread switching never reprovisions compute. The `threads.sandboxSessionId` pointer is written lazily — only when a Discuss thread actually flips the Sandbox toggle on for the first time.
+Sandbox sessions are stored in `sandboxSessions`, scoped to a repository, and linked to a repository sandbox when active. A repository has one reusable sandbox session shared across every Discuss thread that uses sandbox grounding, so thread switching never reprovisions compute. The `threads.sandboxSessionId` pointer is written lazily — only when a Discuss thread actually flips the Sandbox toggle on for the first time.
 
 ## Availability
 
@@ -96,13 +96,13 @@ flowchart TD
   Availability --> SystemDesignJob
 ```
 
-`workspaceModeEligibility.evaluate` is the canonical "can the user use this mode / grounding axis right now?" surface. It exposes:
+`repositoryModeEligibility.evaluate` is the canonical "can the user use this mode / grounding axis right now?" surface. It exposes:
 
 - `availableModes` — the modes the top-level switcher should enable.
 - `grounding.library` / `grounding.sandbox` — the per-axis verdict the Discuss composer's toggle bar consumes. Each axis carries a structured `reason.code` (e.g. `library_no_artifact`, `sandbox_provisioning`, `sandbox_user_cap_exceeded`) so the UI can branch on it without regex-matching tooltip strings.
 - `grounding.sandbox.isActivatable` — true when the sandbox is recoverable by a click (`missing` / `expired` / `failed`) and the cost-cap gate is open.
 
-The pure resolver lives in `convex/chatModeResolver.ts`; `workspaceModeEligibility.ts` augments the resolver's string reasons with structured `{ code, message, retryAfterMs? }` objects so write-path callers can throw structured `ConvexError`s.
+The pure resolver lives in `convex/lib/chatEligibility.ts`; `repositoryModeEligibility.ts` augments the resolver's string reasons with structured `{ code, message, retryAfterMs? }` objects so write-path callers can throw structured `ConvexError`s.
 
 ## Job Lifecycle
 

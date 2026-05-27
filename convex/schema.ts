@@ -486,16 +486,14 @@ export default defineSchema({
   }).index("by_ownerTokenIdentifier_and_repositoryId", ["ownerTokenIdentifier", "repositoryId"]),
 
   /**
-   * Phase A folder model. Folders are workspace-scoped (one tree per
+   * Folder model: folders are repository-scoped (one tree per
    * `repositoryId`), nestable through `parentFolderId`, and hold zero or
    * more artifacts via `artifacts.folderId`. The owner token enforces
    * per-viewer access in queries.
    *
    * Design notes:
    *   - `repositoryId` is required: folders don't make sense outside a
-   *     repository workspace. The `optional` validator is only there so the
-   *     same query helpers can short-circuit when callers pass `null` for
-   *     workspaceless threads.
+   *     repository.
    *   - `parentFolderId` is optional; root folders have it unset. The
    *     `by_repositoryId_and_parentFolderId` index lets the navigator pull a
    *     single level on demand and build the tree client-side.
@@ -678,7 +676,7 @@ export default defineSchema({
      * training-only chat; the flags compose independently:
      *
      *   - `groundLibrary: true` — artifact-grounded reply with `[A#]`
-     *     citations against the workspace's design artifacts.
+     *     citations against the repository's design artifacts.
      *   - `groundSandbox: true` — live-source-grounded reply with
      *     `[path:line]` citations and read-only sandbox tool calls.
      *

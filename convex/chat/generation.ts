@@ -487,7 +487,7 @@ export const generateAssistantReply = internalAction({
       //      a mid-stream 404 from `getSandboxFsClient` and syncs the
       //      cache so the next reply skips the sandbox tooling cleanly.
       //
-      // `assertWorkspaceModeEligible` (chat/send.ts) already blocks the
+      // `assertRepositoryModeEligible` (chat/send.ts) already blocks the
       // common case where the sandbox is not ready at mutation time, so
       // this verification only covers the edge case where the sandbox
       // disappears between mutation and action (e.g. manual deletion in
