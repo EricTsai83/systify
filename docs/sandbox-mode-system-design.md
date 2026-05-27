@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document describes the system-level isolation guarantees that the Systify Lab chat mode (DB literal `lab`) runs inside, and the responsibilities split between Daytona (the sandbox provider), Systify's backend (the chat tooling layer), and the LLM itself.
+This document describes the system-level isolation guarantees that Systify's sandbox-grounded Discuss replies (`messages.groundSandbox === true`) run inside, and the responsibilities split between Daytona (the sandbox provider), Systify's backend (the chat tooling layer), and the LLM itself.
 
 The companion `sandbox-mode-security-system-design.md` covers the *content* boundary — how secrets that flow through the LLM are kept out of durable storage. This document covers the *runtime* boundary — what the LLM can and cannot do inside a sandbox once it has the `read_file`, `list_dir`, and `run_shell` tools.
 
@@ -17,7 +17,7 @@ The primary motivation for this document is Plan 08, which introduces the `run_s
 Out of scope:
 
 - The Convex backend's own sandboxing (covered by `convex/_generated/ai/guidelines.md` and the chat job lifecycle).
-- Per-user / per-workspace cost caps (Plan 10).
+- Per-user / per-repository cost caps (Plan 10).
 - Audit log retention (Plan 12 — see `sandbox-tool-call-audit-log-system-design.md`).
 - Network-layer attack mitigation (covered by Daytona's container runtime).
 

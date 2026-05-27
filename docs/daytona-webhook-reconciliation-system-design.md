@@ -69,7 +69,7 @@ Systify's Daytona integration uses one API key (`DAYTONA_API_KEY`) and requires
 capabilities that match the operations in `convex/daytona.ts`:
 
 - sandbox lifecycle management: create, get, list, stop, delete
-- sandbox workspace access: clone repository, list files, download files
+- sandbox file access: clone repository, list files, download files
 - sandbox command execution for focused inspection
 
 The key should be scoped to the minimum Daytona permissions that satisfy these

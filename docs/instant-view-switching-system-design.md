@@ -215,7 +215,7 @@ Convex does not expose a `keepPreviousData` flag on `useQuery`. Implementing one
 
 1. **Adaptive MRU size.** Track switch frequency and grow the MRU window for users who churn between many threads.
 2. **Idle-time warming.** When the user is idle on the active thread, opportunistically prewarm the next few threads in `lastMessageAt` order.
-3. **Cross-tab MRU sharing.** Use `BroadcastChannel` to share MRU state across tabs of the same workspace, so opening a thread in tab A warms it for tab B.
+3. **Cross-tab MRU sharing.** Use `BroadcastChannel` to share MRU state across tabs of the same repository, so opening a thread in tab A warms it for tab B.
 
 These are explicitly out of scope for the initial design — the three-layer architecture is the foundation they would build on, and none is required for the "feels instant" UX bar.
 

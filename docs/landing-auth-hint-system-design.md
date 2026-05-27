@@ -79,7 +79,7 @@ The helper is pure DOM + regex; no React, no env reads, no I/O. That keeps it ch
 
 `LandingRoute` consults the helper only inside the loading branch. The existing comment about rendering `HomePage` immediately for unauthenticated visitors is preserved; the new branch sits between the resolved-authenticated check and the unconditional `HomePage` fallthrough so the original anonymous-fast-path is untouched.
 
-`AuthLoadingScreen` is reused from the existing protected-route loading flow — same copy, same component — so returning users see consistent "Reconnecting your session and loading your workspace." messaging across `/` and `/chat`.
+`AuthLoadingScreen` is reused from the existing protected-route loading flow — same copy, same component — so returning users see consistent "Reconnecting your session and loading your account." messaging across `/` and `/chat`.
 
 ## Render State Matrix
 

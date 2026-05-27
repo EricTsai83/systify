@@ -109,14 +109,14 @@ The webhook first verifies the payload with HMAC-SHA256 using `GITHUB_APP_WEBHOO
 
 ## Daytona
 
-Daytona provides the executable sandbox for repositories and is the core infrastructure behind **Lab** and **System Design generation**. Repository import is intentionally sandbox-free — it runs against the GitHub API only.
+Daytona provides the executable sandbox for repositories and is the core infrastructure behind **sandbox-grounded Discuss** and **System Design generation**. Repository import is intentionally sandbox-free — it runs against the GitHub API only.
 
 ### Daytona's role in the system
 
-- provision sandboxes on demand (Lab activation, LLM-backed System Design)
+- provision sandboxes on demand (Sandbox grounding activation, LLM-backed System Design)
 - clone repositories at provisioning time
 - list file trees and download files for LLM tool calls (`read_file`, `list_dir`)
-- run shell commands for Lab and focused inspection
+- run shell commands for sandbox-grounded replies and focused inspection
 - stop and delete sandboxes
 
 ### Sandbox resource model
@@ -130,7 +130,7 @@ Each sandbox is created with:
 
 The Convex `sandboxes` table stores the local projection of the Daytona runtime so the system can:
 
-- determine Lab and System Design generation availability
+- determine sandbox-grounded Discuss and System Design generation availability
 - display sandbox summaries
 - execute later cleanup flows
 
@@ -140,12 +140,12 @@ When a user clicks **Generate System Design**, the request path now also extends
 
 `ensureSandboxReady` (in `convex/lib/sandboxLiveness.ts`) is the single orchestrator for "make a sandbox usable for this repository right now". It is called from:
 
-- `sandboxActivationNode.runSandboxActivation` — first Lab activation on a repository (or any subsequent reactivation after archive)
+- `sandboxActivationNode.runSandboxActivation` — first Sandbox grounding activation on a repository (or any subsequent reactivation after archive)
 - `systemDesignNode.runSystemDesignGeneration` — System Design generation whenever the user-selected kinds include at least one LLM-backed kind
 
 The helper probes Daytona for the current sandbox state, wakes a stopped sandbox where possible, or provisions a fresh one — and patches `repositories.latestSandboxId` to the result. The Convex-side sandbox row is written before Daytona's `create` call (via `reserveOnDemandSandboxRow`) so cleanup can still find the resource if provisioning fails mid-flight.
 
-Repository import never reserves a sandbox row, never calls `provisionSandbox`, and never patches `latestSandboxId`. Users on Discuss or Library who never enter Lab and never run System Design generation incur zero Daytona cost.
+Repository import never reserves a sandbox row, never calls `provisionSandbox`, and never patches `latestSandboxId`. Users on ungrounded Discuss or Library who never activate Sandbox grounding and never run System Design generation incur zero Daytona cost.
 
 ### Why Daytona webhook exists
 
@@ -203,8 +203,8 @@ operations. The key must be limited to the minimum capabilities required by the
 backend integration:
 
 - sandbox lifecycle operations (create/get/list/stop/delete)
-- sandbox filesystem reads used by Lab tools and the System Design generation flow
-- sandbox command execution used by Lab tools and the System Design generation flow
+- sandbox filesystem reads used by sandbox-grounded tools and the System Design generation flow
+- sandbox command execution used by sandbox-grounded tools and the System Design generation flow
 
 Webhook trust is separate from API-key trust:
 
@@ -241,7 +241,7 @@ When a repository is deleted, or when the system proactively needs to clean up a
 - in both cases, mark the local sandbox record as `archived`
 - finally complete the cleanup job
 
-This matters because a failed on-demand provision (from Lab activation or System Design generation) can leave behind a Convex-owned placeholder sandbox row even if Daytona provisioning never fully completed.
+This matters because a failed on-demand provision (from Sandbox grounding activation or System Design generation) can leave behind a Convex-owned placeholder sandbox row even if Daytona provisioning never fully completed.
 
 ### Hourly sweep of expired sandboxes
 
@@ -283,7 +283,7 @@ These jobs make the webhook path durable instead of best-effort.
 
 ### Role
 
-OpenAI is currently used mainly for chat response generation across all current modes (`discuss` / `library` / `lab`). If `OPENAI_API_KEY` is absent, the system falls back to a heuristic answer.
+OpenAI is currently used mainly for chat response generation across the two chat modes (`discuss` / `library`). If `OPENAI_API_KEY` is absent, the system falls back to a heuristic answer.
 
 ### Design implications
 

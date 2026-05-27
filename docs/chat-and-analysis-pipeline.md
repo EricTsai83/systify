@@ -4,24 +4,25 @@
 
 This document describes the two AI interaction paths currently available in Systify:
 
-- Chat — interactive Q&A through the current product modes:
-  - `discuss` — no repository context
-  - `library` — Library Ask, grounded in artifact chunks
-  - `lab` — sandbox-backed answers grounded in the live source tree
+- Chat — interactive Q&A across the two product modes plus per-message grounding toggles in Discuss:
+  - `discuss` (ungrounded) — no repository context; LLM training-only chat
+  - `discuss` with **Library grounding** (`messages.groundLibrary`) — artifact-grounded reply with `[A#]` citations against the repository's design artifacts
+  - `discuss` with **Sandbox grounding** (`messages.groundSandbox`) — sandbox-backed answers grounded in the live source tree via guarded tools
+  - `library` — Library Ask, an artifact-reader thread with chunked-RAG retrieval
 - System Design generation — a sandbox-backed background job, triggered by the user clicking **Generate System Design** from the empty Library page, that writes a starter set of System Design artifacts (`manifest`, `readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`).
 
-Both are repository-centered, but they depend on different data sources and execution models. Chat and System Design generation are also complementary: System Design generation writes artifacts that later Library and Lab replies can cite.
+Both are repository-centered, but they depend on different data sources and execution models. Chat and System Design generation are also complementary: System Design generation writes artifacts that later Library Ask and sandbox-grounded Discuss replies can cite.
 
 ## Differences Between the Two Paths
 
 
-| Capability               | Chat (per mode)                                                                                                                                | System Design generation                                              |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
-| Main entry point         | `chat.sendMessage`                                                                                                                             | `systemDesign.requestSystemDesignGeneration`                          |
-| Primary data source      | `discuss`: none · `library`: `artifactChunks` + artifact metadata · `lab`: live sandbox tools plus durable artifacts                           | live sandbox                                                          |
-| Execution location       | Convex action                                                                                                                                  | Convex Node action + Daytona                                          |
-| UI presentation          | stable history + active stream merge                                                                                                           | a starter set of System Design artifacts plus job state               |
-| Availability requirement | `discuss`: always · `library`: repository has artifacts and indexed chunks · `lab`: repository has a usable sandbox                            | repository has a usable sandbox                                       |
+| Capability               | Chat (per mode + grounding)                                                                                                                                                              | System Design generation                                              |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| Main entry point         | `chat.sendMessage`                                                                                                                                                                       | `systemDesign.requestSystemDesignGeneration`                          |
+| Primary data source      | `discuss` ungrounded: none · `discuss` + Library grounding: `artifactChunks` + artifact metadata · `discuss` + Sandbox grounding: live sandbox tools plus durable artifacts · `library`: `artifactChunks` + artifact metadata | live sandbox                                                          |
+| Execution location       | Convex action                                                                                                                                                                            | Convex Node action + Daytona                                          |
+| UI presentation          | stable history + active stream merge                                                                                                                                                     | a starter set of System Design artifacts plus job state               |
+| Availability requirement | `discuss` ungrounded: always · Library grounding: repository has artifacts and indexed chunks · Sandbox grounding: repository has a usable sandbox · `library`: repository has artifacts | repository has a usable sandbox                                       |
 
 
 ## Chat Flow
@@ -94,17 +95,18 @@ This allows the UI to immediately show a reply that is waiting to be generated.
 
 ### 3. Build the reply context
 
-`getReplyContext` assembles the reply context based on the effective mode for the reply (`latestUserMessage.mode ?? thread.mode`, exposed on `ReplyContext.mode`):
+`getReplyContext` assembles the reply context based on the effective mode for the reply (`latestUserMessage.mode ?? thread.mode`, exposed on `ReplyContext.mode`) plus the per-message `groundLibrary` / `groundSandbox` flags:
 
-- `discuss`: skips every repo-scoped lookup — returns empty `artifacts`, empty `chunks`, and no repo summaries. The early return is what makes `discuss` training-only by design even when the thread has a `repositoryId` attached.
-- `library`: Library retrieval over `artifactChunks`, scoped to the active workspace and optional artifact context.
-- `lab`: sandbox-backed execution through guarded tools, with durable artifacts available as reusable context.
+- ungrounded `discuss`: skips every repo-scoped lookup — returns empty `artifacts`, empty `chunks`, and no repo summaries. The early return is what makes ungrounded `discuss` training-only by design even when the thread has a `repositoryId` attached.
+- `discuss` with Library grounding (`groundLibrary: true`): adds artifact chunks from `artifactChunks` for `[A#]` citations alongside the conversation history.
+- `discuss` with Sandbox grounding (`groundSandbox: true`): adds guarded sandbox tools (`read_file`, `list_dir`, `run_shell`) so the LLM can read the live tree and emit `[path:line]` citations.
+- `library`: Library retrieval over `artifactChunks`, scoped to the active repository and optional artifact context.
 
-In every mode, the context also includes recent conversation messages bounded by `MAX_CONTEXT_MESSAGES`. Discuss skips repository data, Library reads the processed artifact knowledge layer, and Lab can use the live sandbox via `read_file`, `list_dir`, and `run_shell`. Tool output is scrubbed for credential-shaped patterns before reaching the LLM. Tool response payloads also carry an audit signal in their `redactedTypes` field so integrators can see what kinds of content were redacted without learning the secret value.
+In every mode, the context also includes recent conversation messages bounded by `MAX_CONTEXT_MESSAGES`. Ungrounded Discuss skips repository data; Library Ask and Library-grounded Discuss read the processed artifact knowledge layer; Sandbox-grounded Discuss uses the live sandbox via `read_file`, `list_dir`, and `run_shell`. Tool output is scrubbed for credential-shaped patterns before reaching the LLM. Tool response payloads also carry an audit signal in their `redactedTypes` field so integrators can see what kinds of content were redacted without learning the secret value.
 
 ### 4. Retrieve grounding context
 
-Chunk retrieval for Library Ask runs over `artifactChunks`. `discuss` returns no chunks because it skips repo context entirely; `lab` relies on sandbox tools for current-source claims and can cite durable artifacts when useful.
+Chunk retrieval for Library Ask runs over `artifactChunks`. Ungrounded `discuss` returns no chunks because it skips repo context entirely; sandbox-grounded `discuss` relies on sandbox tools for current-source claims and can cite durable artifacts when useful.
 
 Library Ask uses a two-step retrieval flow:
 
@@ -117,7 +119,7 @@ The candidate pool is assembled from:
 - summary hits from `artifactChunks.search_summary`
 - vector hits from `artifactChunks.by_embedding` when embeddings are available
 
-This matters because Ask must stay scoped to the current workspace, repository, and optional artifact context. Old artifact chunk versions are replaced by the indexing pipeline rather than mixed into retrieval.
+This matters because Ask must stay scoped to the current repository and optional artifact context. Old artifact chunk versions are replaced by the indexing pipeline rather than mixed into retrieval.
 
 This is a bounded retrieval layer whose main goals are:
 
@@ -164,9 +166,9 @@ When the flow completes, it updates:
 
 If an error occurs midstream, both the assistant message and the job are marked failed.
 
-### 7. Tool-call trace (Lab only)
+### 7. Tool-call trace (sandbox-grounded only)
 
-When the reply runs in Lab and the AI SDK's `fullStream` surfaces `tool-call` / `tool-result` / `tool-error` events, the pipeline persists each event into a separate `messageToolCallEvents` table. This is the same hot/durable split that `messageStreamChunks` uses for text deltas (see `streaming-reply-optimization-system-design.md`):
+When the reply runs with Sandbox grounding and the AI SDK's `fullStream` surfaces `tool-call` / `tool-result` / `tool-error` events, the pipeline persists each event into a separate `messageToolCallEvents` table. This is the same hot/durable split that `messageStreamChunks` uses for text deltas (see `streaming-reply-optimization-system-design.md`):
 
 1. `tool-call` arrives → `appendAssistantToolCallEvent` writes a `start` row keyed by the AI SDK's `toolCallId`
 2. matching `tool-result` or `tool-error` arrives → a paired `end` row is written with the redacted `outputSummary`
@@ -240,7 +242,7 @@ System Design generation is **user-initiated, not import-driven**. Imports no lo
 Library System Design produces up to eight artifact kinds, split by generator type:
 
 - **Heuristic** (no LLM, no sandbox) — `manifest`, `architecture_overview`. Derived from imported `repoFiles` rows. The `isEntryPoint` / `isConfig` / `isImportant` / `language` fields are computed at import time (`createRepoFileRecords` in `convex/lib/repoAnalysis.ts`) and cached on each row, so changes to those heuristic rules only affect newly imported or **re-synced** repos. To pick up updated rules on an existing repo, trigger Re-sync from the repository detail page.
-- **LLM-backed** (uses sandbox tools) — `readme_summary`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`. Each spins a `generateText` call against the sandbox-backed model with the same `read_file` / `list_dir` / `run_shell` tool factory the Lab chat path uses.
+- **LLM-backed** (uses sandbox tools) — `readme_summary`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`. Each spins a `generateText` call against the sandbox-backed model with the same `read_file` / `list_dir` / `run_shell` tool factory the sandbox-grounded chat path uses.
 
 The dialog flags each kind with a **Free** or **~1 LLM call** badge driven by `SYSTEM_DESIGN_KIND_GENERATOR` in `convex/lib/systemDesign.ts`.
 
@@ -289,19 +291,19 @@ If the action dies (process restart, panic) before `completeGeneration`, the dai
 
 ## Sandbox Availability
 
-Two distinct surfaces depend on a live Daytona sandbox: Lab mode and the LLM-backed kinds of the System Design generation background job. Both gate themselves through `convex/lib/repositorySandbox.ts`. If the sandbox:
+Two distinct surfaces depend on a live Daytona sandbox: sandbox-grounded Discuss replies and the LLM-backed kinds of the System Design generation background job. Both gate themselves through `convex/lib/repositorySandbox.ts`. If the sandbox:
 
 - has passed its TTL
 - is archived
 - has failed
 - is missing required remote path information
 
-then Lab is unavailable and `requestSystemDesignGeneration` rejects requests *that include at least one LLM-backed kind*. A request that selects only heuristic kinds (`manifest`, `architecture_overview`) skips the sandbox preflight and runs even when no sandbox exists, so a freshly imported repo can publish the starter heuristic set immediately.
+then Sandbox grounding is unavailable and `requestSystemDesignGeneration` rejects requests *that include at least one LLM-backed kind*. A request that selects only heuristic kinds (`manifest`, `architecture_overview`) skips the sandbox preflight and runs even when no sandbox exists, so a freshly imported repo can publish the starter heuristic set immediately.
 
 The frontend uses this state to tell the user to:
 
 - sync the repository to provision a new sandbox, or
-- switch to Discuss or Library for degraded but still useful work
+- turn off Sandbox grounding and continue with ungrounded Discuss or Library for degraded but still useful work
 
 Library mode is **not** gated on having artifacts. Any repository with a valid attached repo can open Library; if no artifacts exist yet, the page shows the **Generate System Design** CTA.
 
@@ -309,14 +311,14 @@ Library mode is **not** gated on having artifacts. Any repository with a valid a
 
 Chat and System Design generation are not mutually exclusive. They form layered capabilities:
 
-- Chat (`discuss` / `library` / `lab`): fast, interactive, with cost and grounding scaling per mode
+- Chat (`discuss` / `library`, with optional per-message Library / Sandbox grounding on Discuss): fast, interactive, with cost and grounding scaling per toggle
 - System Design generation: slower and sandbox-dependent, but produces durable, repository-grounded prose covering the main system surfaces in one pass
 
-Artifacts produced by System Design generation flow back into later Library Ask and Lab context, so the overall system forms a cumulative knowledge loop.
+Artifacts produced by System Design generation flow back into later Library Ask and sandbox-grounded Discuss context, so the overall system forms a cumulative knowledge loop.
 
 ## Known Limitations
 
-- Lab tooling (`read_file`, `list_dir`, `run_shell`) is gated only by daily cost cap (per-user and per-workspace) and the repo / sandbox lifecycle. `run_shell` is gated by a deny list of obviously destructive patterns, a 32 KiB output cap, a 60 s timeout ceiling, and a workdir pinned inside the repository.
+- Sandbox tooling (`read_file`, `list_dir`, `run_shell`) is gated only by daily cost cap (per-user and per-repository) and the repo / sandbox lifecycle. `run_shell` is gated by a deny list of obviously destructive patterns, a 32 KiB output cap, a 60 s timeout ceiling, and a workdir pinned inside the repository.
 - Chat and System Design generation are both AI features, but their outputs and tracking models are still split between thread replies and artifacts.
 - The current System Design generation pass is a fixed starter set of overviews. Per-folder regeneration, additional artifact kinds, and partial re-runs are future work.
 

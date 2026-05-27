@@ -106,10 +106,7 @@ export function EntityPicker<T>({
     }
   }, [open, shouldShowSearch]);
 
-  const filtered = useMemo(
-    () => filterByQuery(items, query, getSearchText),
-    [items, query, getSearchText],
-  );
+  const filtered = useMemo(() => filterByQuery(items, query, getSearchText), [items, query, getSearchText]);
 
   // Clamp activeIndex when the filter shrinks the list so the keyboard
   // cursor never points past the end. Deriving this purely during render
@@ -124,10 +121,15 @@ export function EntityPicker<T>({
   const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "ArrowDown") {
       event.preventDefault();
-      setActiveIndex((c) => Math.min(filtered.length - 1, c + 1));
+      if (filtered.length > 0) {
+        const maxIndex = filtered.length - 1;
+        setActiveIndex((c) => Math.min(maxIndex, c + 1));
+      }
     } else if (event.key === "ArrowUp") {
       event.preventDefault();
-      setActiveIndex((c) => Math.max(0, c - 1));
+      if (filtered.length > 0) {
+        setActiveIndex((c) => Math.max(0, c - 1));
+      }
     } else if (event.key === "Enter") {
       event.preventDefault();
       const target = filtered[activeIndex];
@@ -189,12 +191,7 @@ export function EntityPicker<T>({
                   const key = getItemKey(item);
                   const active = isItemActive?.(item) ?? false;
                   return (
-                    <li
-                      key={key}
-                      id={`entity-picker-row-${key}`}
-                      role="option"
-                      aria-selected={index === activeIndex}
-                    >
+                    <li key={key} id={`entity-picker-row-${key}`} role="option" aria-selected={index === activeIndex}>
                       <button
                         type="button"
                         onClick={() => {

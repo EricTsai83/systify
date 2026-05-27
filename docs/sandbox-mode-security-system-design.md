@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document explains the security model for Systify's `lab` chat mode, in which an LLM is given shell-like tools (`read_file`, `list_dir`, `run_shell`) over a Daytona-hosted clone of the user's repository.
+This document explains the security model for Systify's sandbox-grounded Discuss replies (`messages.groundSandbox === true`), in which an LLM is given shell-like tools (`read_file`, `list_dir`, `run_shell`) over a Daytona-hosted clone of the user's repository.
 
 The scope is the boundary between sandbox tool output and persisted message content. Network isolation, sandbox lifecycle, and Daytona's own isolation properties are out of scope here.
 
@@ -226,8 +226,8 @@ Daytona gates `sandbox.updateNetworkSettings(...)` by organization tier, so the 
 
 Three properties make the Tier 1/2 fallback meaningfully safer than "permissive egress with nothing else":
 
-1. **Throwaway lifecycle**: sandboxes are provisioned on demand by Lab activation or LLM-backed System Design generation, auto-stop within minutes of idleness, and auto-delete within 48 hours. Even a successful exfiltration attempt has a small window of compounding access — there is no long-lived sandbox to reuse.
+1. **Throwaway lifecycle**: sandboxes are provisioned on demand by Sandbox grounding activation or LLM-backed System Design generation, auto-stop within minutes of idleness, and auto-delete within 48 hours. Even a successful exfiltration attempt has a small window of compounding access — there is no long-lived sandbox to reuse.
 2. **Token scrub stays unconditional**: the GitHub installation token in `.git/config` is overwritten the moment `git clone` returns, so a successful curl-out from inside the sandbox cannot exfiltrate the token (which would have given the attacker access to *every* repo in the App installation, not just the one being analysed).
 3. **`redact()` runs on every tool envelope**: even if the LLM successfully reads `.env` via `read_file`, the secret is replaced with a `[REDACTED:…]` sentinel before the LLM sees it. The closed-set `RedactionType` union prevents an attacker from suppressing a redaction by widening the type union.
 
-The Tier 1/2 posture is **not safe for accepting third-party private repositories without disclosure**. Operators using Systify as a hosted service for unknown customers must upgrade to Tier 3+ and set `DAYTONA_POST_CLONE_BLOCK_NETWORK=true`. The structured `post_clone_network_block_skipped` warn emitted on every Tier 1/2 sandbox clone (Lab activation or LLM-backed System Design generation) exists precisely so that a future operator running a deployment audit can detect the degraded posture in logs without re-reading code.
+The Tier 1/2 posture is **not safe for accepting third-party private repositories without disclosure**. Operators using Systify as a hosted service for unknown customers must upgrade to Tier 3+ and set `DAYTONA_POST_CLONE_BLOCK_NETWORK=true`. The structured `post_clone_network_block_skipped` warn emitted on every Tier 1/2 sandbox clone (Sandbox grounding activation or LLM-backed System Design generation) exists precisely so that a future operator running a deployment audit can detect the degraded posture in logs without re-reading code.
