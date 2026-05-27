@@ -6,6 +6,7 @@ import { mutation, query, internalQuery, internalMutation, type MutationCtx } fr
 import { drainMessageToolCallEvents } from "./chat/toolCallEventStore";
 import { getDefaultThreadMode } from "./lib/chatMode";
 import { requireViewerIdentity } from "./lib/auth";
+import { isOwnedBy, loadOwnedDoc, requireOwnedDoc } from "./lib/ownedDocs";
 import { getRepositorySandboxStatus } from "./lib/repositorySandbox";
 import { makeRepositoryTitle, parseGitHubUrl } from "./lib/github";
 import { CASCADE_BATCH_SIZE } from "./lib/constants";
@@ -24,7 +25,14 @@ import {
   SANDBOX_ACTIVATION_JOB_LEASE_MS,
   throwOperationAlreadyInProgress,
 } from "./lib/rateLimit";
-import { failRunningJob, completeRunningJob, markQueuedJobRunning, failStaleActiveJob } from "./jobLifecycle";
+import {
+  enqueueJob,
+  failRunningJob,
+  completeRunningJob,
+  findActiveJob,
+  markQueuedJobRunning,
+  failStaleActiveJob,
+} from "./lib/jobs";
 
 const FILE_COUNT_DISPLAY_LIMIT = 400;
 const REPOSITORY_DETAIL_IMPORT_ARTIFACT_LIMIT = 10;
@@ -42,13 +50,10 @@ async function queueImportWorkflow(
     clearLatestRemoteSha?: boolean;
   },
 ) {
-  const jobId = await ctx.db.insert("jobs", {
+  const jobId = await enqueueJob(ctx, {
+    kind: "import",
     repositoryId: args.repositoryId,
     ownerTokenIdentifier: args.ownerTokenIdentifier,
-    kind: "import",
-    status: "queued",
-    stage: "queued",
-    progress: 0,
     costCategory: "indexing",
     triggerSource: "user",
   });
@@ -402,11 +407,7 @@ export const createRepositoryImport = mutation({
 
     const defaultThread = defaultThreadId ? await ctx.db.get(defaultThreadId) : null;
     let defaultThreadMode: Doc<"threads">["mode"];
-    if (
-      !defaultThread ||
-      defaultThread.ownerTokenIdentifier !== identity.tokenIdentifier ||
-      defaultThread.repositoryId !== repositoryId
-    ) {
+    if (!isOwnedBy(defaultThread, identity.tokenIdentifier) || defaultThread.repositoryId !== repositoryId) {
       // Matches `resolveChatModes(true).defaultMode` for any repo-attached
       // thread, so the auto-created default thread and a manually-created
       // one start on the same mode.
@@ -489,11 +490,9 @@ export const archiveRepository = mutation({
     repositoryId: v.id("repositories"),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Repository not found.");
-    }
+    const { doc: repository } = await requireOwnedDoc(ctx, args.repositoryId, {
+      notFoundMessage: "Repository not found.",
+    });
 
     if (isRepositoryDeleting(repository)) {
       throw new Error("Repository is being deleted and cannot be archived.");
@@ -521,11 +520,9 @@ export const restoreRepository = mutation({
     repositoryId: v.id("repositories"),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Repository not found.");
-    }
+    const { doc: repository } = await requireOwnedDoc(ctx, args.repositoryId, {
+      notFoundMessage: "Repository not found.",
+    });
 
     if (isRepositoryDeleting(repository)) {
       throw new Error("Repository is being deleted and cannot be restored.");
@@ -546,11 +543,9 @@ export const deleteRepository = mutation({
     repositoryId: v.id("repositories"),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Repository not found.");
-    }
+    const { doc: repository } = await requireOwnedDoc(ctx, args.repositoryId, {
+      notFoundMessage: "Repository not found.",
+    });
 
     if (isRepositoryDeleting(repository)) {
       return;
@@ -863,7 +858,7 @@ export const getRepositorySandboxForPreparation = internalQuery({
   },
   handler: async (ctx, args) => {
     const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== args.ownerTokenIdentifier) {
+    if (!isOwnedBy(repository, args.ownerTokenIdentifier)) {
       return null;
     }
     if (repository.deletionRequestedAt || repository.archivedAt) {
@@ -906,35 +901,16 @@ export const getRepositoryForProcessing = internalQuery({
 });
 
 const SANDBOX_EXPIRING_SOON_MS = 5 * 60_000;
-const SANDBOX_ACTIVATION_ACTIVE_SCAN_LIMIT = 4;
 
 async function findActiveSandboxActivationJob(
   ctx: MutationCtx,
   args: { repositoryId: Id<"repositories">; now: number },
 ) {
-  const [queued, running] = await Promise.all([
-    ctx.db
-      .query("jobs")
-      .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-        q
-          .eq("repositoryId", args.repositoryId)
-          .eq("kind", "sandbox_activation")
-          .eq("status", "queued")
-          .gte("leaseExpiresAt", args.now),
-      )
-      .take(SANDBOX_ACTIVATION_ACTIVE_SCAN_LIMIT),
-    ctx.db
-      .query("jobs")
-      .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-        q
-          .eq("repositoryId", args.repositoryId)
-          .eq("kind", "sandbox_activation")
-          .eq("status", "running")
-          .gte("leaseExpiresAt", args.now),
-      )
-      .take(SANDBOX_ACTIVATION_ACTIVE_SCAN_LIMIT),
-  ]);
-  return running[0] ?? queued[0] ?? null;
+  return await findActiveJob(ctx, {
+    kind: "sandbox_activation",
+    scope: { type: "repository", id: args.repositoryId },
+    now: args.now,
+  });
 }
 
 /**
@@ -963,17 +939,14 @@ export const requestSandboxActivation = mutation({
 
     await consumeDaytonaGlobalRateLimit(ctx);
 
-    const jobId = await ctx.db.insert("jobs", {
+    const jobId = await enqueueJob(ctx, {
+      kind: "sandbox_activation",
       repositoryId: repository._id,
       ownerTokenIdentifier: identity.tokenIdentifier,
       sandboxId: repository.latestSandboxId,
-      kind: "sandbox_activation",
-      status: "queued",
-      stage: "queued",
-      progress: 0,
       costCategory: "ops",
       triggerSource: "user",
-      leaseExpiresAt: now + SANDBOX_ACTIVATION_JOB_LEASE_MS,
+      leaseMs: SANDBOX_ACTIVATION_JOB_LEASE_MS,
     });
 
     await ctx.scheduler.runAfter(0, internal.sandboxActivationNode.runSandboxActivation, {
@@ -1103,36 +1076,17 @@ export const getSandboxActivityStatus = query({
     activeJob: Doc<"jobs"> | null;
     sandbox: Doc<"sandboxes"> | null;
   }> => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    if (!repository) {
       return { kind: "idle", activeJob: null, sandbox: null };
     }
 
     const now = Date.now();
-    const [queuedJobs, runningJobs] = await Promise.all([
-      ctx.db
-        .query("jobs")
-        .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-          q
-            .eq("repositoryId", args.repositoryId)
-            .eq("kind", "sandbox_activation")
-            .eq("status", "queued")
-            .gte("leaseExpiresAt", now),
-        )
-        .take(SANDBOX_ACTIVATION_ACTIVE_SCAN_LIMIT),
-      ctx.db
-        .query("jobs")
-        .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-          q
-            .eq("repositoryId", args.repositoryId)
-            .eq("kind", "sandbox_activation")
-            .eq("status", "running")
-            .gte("leaseExpiresAt", now),
-        )
-        .take(SANDBOX_ACTIVATION_ACTIVE_SCAN_LIMIT),
-    ]);
-    const activeJob = runningJobs[0] ?? queuedJobs[0] ?? null;
+    const activeJob = await findActiveJob(ctx, {
+      kind: "sandbox_activation",
+      scope: { type: "repository", id: args.repositoryId },
+      now,
+    });
     const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
 
     if (activeJob) {

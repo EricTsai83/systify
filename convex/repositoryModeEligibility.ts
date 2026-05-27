@@ -34,6 +34,7 @@ import {
 } from "./lib/chatEligibility";
 import type { ChatMode } from "./lib/chatMode";
 import { requireViewerIdentity } from "./lib/auth";
+import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
 import { getRepositorySandboxStatus, type SandboxModeStatus } from "./lib/repositorySandbox";
 
 // ─── Types ────────────────────────────────────────────────────────────────
@@ -119,15 +120,15 @@ async function evaluateFromRepository(
 export const evaluate = query({
   args: { repositoryId: v.optional(v.id("repositories")) },
   handler: async (ctx, args): Promise<RepositoryModeEligibility | null> => {
-    const identity = await requireViewerIdentity(ctx);
     if (!args.repositoryId) {
+      const identity = await requireViewerIdentity(ctx);
       return await evaluateFromRepository(ctx, {
         repository: null,
         tokenIdentifier: identity.tokenIdentifier,
       });
     }
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { identity, doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    if (!repository) {
       return null;
     }
     return await evaluateFromRepository(ctx, {
@@ -194,7 +195,7 @@ export async function assertRepositoryModeEligible(
     });
   }
   const repository = await ctx.db.get(args.repositoryId);
-  if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+  if (!isOwnedBy(repository, identity.tokenIdentifier)) {
     throw new ConvexError({
       code: "RepositoryNotFound",
       message: "Repository not found.",

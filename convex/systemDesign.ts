@@ -2,8 +2,9 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
-import { requireViewerIdentity } from "./lib/auth";
-import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
+import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
+import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
+import { enqueueJob, findActiveJob } from "./lib/jobs";
 import {
   ensureSystemDesignFolders,
   isSystemDesignKind,
@@ -20,7 +21,7 @@ import {
   markQueuedJobRunning,
   refreshRunningJobLease,
   updateRunningJobProgress,
-} from "./jobLifecycle";
+} from "./lib/jobs";
 import {
   consumeDaytonaGlobalRateLimit,
   consumeSystemDesignRateLimit,
@@ -54,10 +55,8 @@ export const requestSystemDesignGeneration = mutation({
     selections: v.array(systemDesignKindValidator),
   },
   handler: async (ctx, args): Promise<{ jobId: Id<"jobs"> }> => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await requireActiveRepositoryForOwner(ctx, {
+    const { identity, repository } = await requireActiveRepositoryForViewer(ctx, {
       repositoryId: args.repositoryId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
     });
 
     // Drop any non-generatable kind (e.g. the retired `manifest`) a stale
@@ -96,23 +95,20 @@ export const requestSystemDesignGeneration = mutation({
       ownerTokenIdentifier: identity.tokenIdentifier,
     });
 
-    const jobId = await ctx.db.insert("jobs", {
+    // The lease is set at insert time so the stale-job sweep
+    // (`by_status_and_kind_and_leaseExpiresAt` + `lt(leaseExpiresAt, now)`)
+    // can pick this row up if the Node action never runs or dies before
+    // `markGenerationStarted` patches the lease.
+    const jobId = await enqueueJob(ctx, {
+      kind: "system_design",
       repositoryId: repository._id,
       ownerTokenIdentifier: identity.tokenIdentifier,
       sandboxId,
-      kind: "system_design",
-      status: "queued",
-      stage: "queued",
-      progress: 0,
       costCategory: "system_design",
       triggerSource: "user",
       outputSummary: buildJobSummary(uniqueSelections, "queued"),
       selections: uniqueSelections,
-      // Set the lease at insert time so the stale-job sweep
-      // (`by_status_and_kind_and_leaseExpiresAt` + `lt(leaseExpiresAt, now)`)
-      // can pick this row up if the Node action never runs or dies before
-      // `markGenerationStarted` patches the lease.
-      leaseExpiresAt: now + SYSTEM_DESIGN_JOB_LEASE_MS,
+      leaseMs: SYSTEM_DESIGN_JOB_LEASE_MS,
     });
 
     await ctx.scheduler.runAfter(0, internal.systemDesignNode.runSystemDesignGeneration, {
@@ -128,45 +124,28 @@ export const requestSystemDesignGeneration = mutation({
 
 const LIBRARY_SYSTEM_DESIGN_ACTIVE_SCAN_LIMIT = 8;
 
+/**
+ * Library System Design generation and Failure Mode Analysis share the
+ * `system_design` job kind; FMA rows are tagged via the
+ * `failure_mode_analysis:` `requestedCommand` prefix. The predicate
+ * excludes those so an in-flight FMA does not appear as the active
+ * Library System Design job (and vice versa via the FMA-side scanner).
+ * We overfetch up to {@link LIBRARY_SYSTEM_DESIGN_ACTIVE_SCAN_LIMIT}
+ * rows per status so the predicate has headroom to skip several
+ * FMA rows before giving up.
+ */
 async function findActiveLibrarySystemDesignJob(
   ctx: QueryCtx,
   repositoryId: Id<"repositories">,
   now: number,
 ): Promise<Doc<"jobs"> | null> {
-  // Bounded scan via the existing `(repositoryId, kind, status, leaseExpiresAt)`
-  // index. We page a few rows per (queued, running) bucket and exclude FMA
-  // jobs in JS — FMA volume per repo is small, so a couple of `.take(8)`s
-  // beats `.collect()` + JS filter on the unindexed status/kind pair. We
-  // prefer `running` over `queued` so the dialog shows the most-advanced
-  // active job when both states coexist.
-  const [queuedCandidates, runningCandidates] = await Promise.all([
-    ctx.db
-      .query("jobs")
-      .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-        q
-          .eq("repositoryId", repositoryId)
-          .eq("kind", "system_design")
-          .eq("status", "queued")
-          .gte("leaseExpiresAt", now),
-      )
-      .take(LIBRARY_SYSTEM_DESIGN_ACTIVE_SCAN_LIMIT),
-    ctx.db
-      .query("jobs")
-      .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-        q
-          .eq("repositoryId", repositoryId)
-          .eq("kind", "system_design")
-          .eq("status", "running")
-          .gte("leaseExpiresAt", now),
-      )
-      .take(LIBRARY_SYSTEM_DESIGN_ACTIVE_SCAN_LIMIT),
-  ]);
-  for (const job of [...runningCandidates, ...queuedCandidates]) {
-    if (!isFailureModeJob(job)) {
-      return job;
-    }
-  }
-  return null;
+  return await findActiveJob(ctx, {
+    kind: "system_design",
+    scope: { type: "repository", id: repositoryId },
+    now,
+    predicate: (job) => !isFailureModeJob(job),
+    limit: LIBRARY_SYSTEM_DESIGN_ACTIVE_SCAN_LIMIT,
+  });
 }
 
 /**
@@ -177,9 +156,8 @@ async function findActiveLibrarySystemDesignJob(
 export const getActiveSystemDesignJob = query({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args): Promise<Doc<"jobs"> | null> => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    if (!repository) {
       return null;
     }
     return await findActiveLibrarySystemDesignJob(ctx, args.repositoryId, Date.now());
@@ -208,9 +186,8 @@ const LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT = 16;
 export const getLatestSystemDesignJob = query({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args): Promise<Doc<"jobs"> | null> => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    if (!repository) {
       return null;
     }
 
@@ -431,7 +408,7 @@ export const getGenerationContext = internalQuery({
     activeSandbox: Doc<"sandboxes"> | null;
   } | null> => {
     const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== args.ownerTokenIdentifier) return null;
+    if (!isOwnedBy(repository, args.ownerTokenIdentifier)) return null;
 
     const folders = await ctx.db
       .query("artifactFolders")

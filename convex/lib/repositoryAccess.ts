@@ -1,6 +1,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import { requireViewerIdentity } from "./auth";
+import { loadOwnedDoc, requireOwnedDoc } from "./ownedDocs";
 
 type RepositoryReadCtx = QueryCtx | MutationCtx;
 
@@ -37,42 +38,17 @@ export function hasRemoteUpdates(repository: RepositoryFreshnessFields | null | 
   );
 }
 
-export async function requireActiveRepository(
-  ctx: RepositoryReadCtx,
-  args: {
-    repositoryId: Id<"repositories">;
-    notFoundMessage?: string;
-    archivedMessage?: string;
-  },
-): Promise<Doc<"repositories">> {
-  const repository = await ctx.db.get(args.repositoryId);
-  if (!repository || isRepositoryDeleting(repository)) {
-    throw new Error(args.notFoundMessage ?? DEFAULT_REPOSITORY_NOT_FOUND_MESSAGE);
-  }
-  if (isRepositoryArchived(repository)) {
-    throw new Error(args.archivedMessage ?? DEFAULT_REPOSITORY_ARCHIVED_MESSAGE);
-  }
+type ViewerIdentity = Awaited<ReturnType<typeof requireViewerIdentity>>;
 
-  return repository;
-}
-
-export async function requireActiveRepositoryForOwner(
-  ctx: RepositoryReadCtx,
-  args: {
-    repositoryId: Id<"repositories">;
-    ownerTokenIdentifier: string;
-    notFoundMessage?: string;
-    archivedMessage?: string;
-  },
-): Promise<Doc<"repositories">> {
-  const repository = await requireActiveRepository(ctx, args);
-  if (repository.ownerTokenIdentifier !== args.ownerTokenIdentifier) {
-    throw new Error(args.notFoundMessage ?? DEFAULT_REPOSITORY_NOT_FOUND_MESSAGE);
-  }
-
-  return repository;
-}
-
+/**
+ * Strict, viewer-driven gate for repository-backed entry points. Resolves
+ * ownership through {@link requireOwnedDoc} and then layers the
+ * repository-specific state invariants (`deletionRequestedAt`,
+ * `archivedAt`) on top. Throws `notFoundMessage` for a missing /
+ * non-owned / tombstoned row and `archivedMessage` for an archived one —
+ * the missing/non-owned cases share an error shape so the existence of a
+ * stranger's repository is not leaked.
+ */
 export async function requireActiveRepositoryForViewer(
   ctx: RepositoryReadCtx,
   args: {
@@ -80,37 +56,34 @@ export async function requireActiveRepositoryForViewer(
     notFoundMessage?: string;
     archivedMessage?: string;
   },
-): Promise<{
-  identity: Awaited<ReturnType<typeof requireViewerIdentity>>;
-  repository: Doc<"repositories">;
-}> {
-  const identity = await requireViewerIdentity(ctx);
-  const repository = await requireActiveRepositoryForOwner(ctx, {
-    repositoryId: args.repositoryId,
-    ownerTokenIdentifier: identity.tokenIdentifier,
-    notFoundMessage: args.notFoundMessage,
-    archivedMessage: args.archivedMessage,
-  });
-
+): Promise<{ identity: ViewerIdentity; repository: Doc<"repositories"> }> {
+  const notFoundMessage = args.notFoundMessage ?? DEFAULT_REPOSITORY_NOT_FOUND_MESSAGE;
+  const { identity, doc: repository } = await requireOwnedDoc(ctx, args.repositoryId, { notFoundMessage });
+  if (isRepositoryDeleting(repository)) {
+    throw new Error(notFoundMessage);
+  }
+  if (isRepositoryArchived(repository)) {
+    throw new Error(args.archivedMessage ?? DEFAULT_REPOSITORY_ARCHIVED_MESSAGE);
+  }
   return { identity, repository };
 }
 
 /**
- * Returns the repository if accessible to the viewer, allowing archived rows
- * through. Returns `null` for missing, permanent-delete-pending, or
- * non-owner repositories so the UI can render an inline empty state instead
- * of crashing on a thrown error.
+ * Soft, viewer-driven repository read. Returns `{ identity, repository: null }`
+ * for missing, permanent-delete-pending, or non-owner repositories so the
+ * UI can render an inline empty state instead of crashing on a thrown
+ * error. Archived rows are returned so the UI can render the archived
+ * state — the strict variant is the one that rejects archived.
  */
 export async function loadAccessibleRepositoryForViewer(
   ctx: RepositoryReadCtx,
   args: { repositoryId: Id<"repositories"> },
 ): Promise<{
-  identity: Awaited<ReturnType<typeof requireViewerIdentity>>;
+  identity: ViewerIdentity;
   repository: Doc<"repositories"> | null;
 }> {
-  const identity = await requireViewerIdentity(ctx);
-  const repository = await ctx.db.get(args.repositoryId);
-  if (!repository || isRepositoryDeleting(repository) || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+  const { identity, doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+  if (!repository || isRepositoryDeleting(repository)) {
     return { identity, repository: null };
   }
   return { identity, repository };

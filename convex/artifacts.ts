@@ -1,101 +1,13 @@
 import { v } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
-import { mutation, query, type QueryCtx } from "./_generated/server";
-import { requireViewerIdentity } from "./lib/auth";
+import type { Id } from "./_generated/dataModel";
+import { mutation, query } from "./_generated/server";
+import { loadOwnedDoc, requireOwnedDoc } from "./lib/ownedDocs";
 import { replaceArtifactFolder } from "./lib/artifactWrites";
+import { resolveLatestImportSha, toArtifactMetadataView, toArtifactView } from "./lib/artifactView";
 
 const ARTIFACTS_PER_THREAD_LIMIT = 40;
 const ARTIFACTS_PER_FOLDER_LIMIT = 200;
 const ARTIFACTS_PER_REPOSITORY_LIMIT = 200;
-
-type Freshness = "fresh" | "aging" | "stale" | "unverified";
-
-const DEFAULT_FRESHNESS_AGING_DAYS = 7;
-const DEFAULT_FRESHNESS_STALE_DAYS = 30;
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-function readPositiveNumberEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const parsed = Number.parseFloat(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function computeFreshness(args: { lastVerifiedAt?: number; now: number }): Freshness {
-  if (args.lastVerifiedAt === undefined) {
-    return "unverified";
-  }
-
-  const ageDays = Math.max(0, (args.now - args.lastVerifiedAt) / MS_PER_DAY);
-  const agingDays = readPositiveNumberEnv("ARTIFACT_FRESHNESS_AGING_DAYS", DEFAULT_FRESHNESS_AGING_DAYS);
-  const staleDays = readPositiveNumberEnv("ARTIFACT_FRESHNESS_STALE_DAYS", DEFAULT_FRESHNESS_STALE_DAYS);
-
-  if (ageDays <= agingDays) return "fresh";
-  if (ageDays <= staleDays) return "aging";
-  return "stale";
-}
-
-/**
- * Resolves the commit SHA of a repository's most recent import. Returns
- * `undefined` when the repo has never completed an import, or the import
- * row predates commit-SHA tracking — callers treat that as "no drift
- * signal available" rather than "drifted".
- *
- * The latest import is a per-query constant, so this is resolved once per
- * repository-scoped listing. Resolving it per artifact would re-read the
- * same import row for every row in the list (up to
- * `ARTIFACTS_PER_REPOSITORY_LIMIT` redundant reads).
- */
-async function resolveLatestImportSha(ctx: QueryCtx, repository: Doc<"repositories">): Promise<string | undefined> {
-  if (!repository.latestImportId) {
-    return undefined;
-  }
-  const latestImport = await ctx.db.get(repository.latestImportId);
-  return latestImport?.commitSha;
-}
-
-/**
- * Coarse drift signal: true when the artifact was anchored to a specific
- * import revision (`alignedImportCommitSha`) and that revision differs from
- * the repository's latest import SHA. Pure — the latest SHA is resolved once
- * by the caller via {@link resolveLatestImportSha}.
- */
-function hasImportSnapshotDrift(artifact: Doc<"artifacts">, latestImportSha: string | undefined): boolean {
-  if (!artifact.alignedImportCommitSha || !latestImportSha) {
-    return false;
-  }
-  return artifact.alignedImportCommitSha !== latestImportSha;
-}
-
-function toArtifactMetadata(
-  artifact: Doc<"artifacts">,
-  opts?: {
-    freshness?: Freshness;
-    /** True when anchored import SHA differs from the repository latest import SHA. */
-    importDriftFromLatestSync?: true;
-  },
-) {
-  return {
-    _id: artifact._id,
-    _creationTime: artifact._creationTime,
-    repositoryId: artifact.repositoryId,
-    threadId: artifact.threadId,
-    jobId: artifact.jobId,
-    kind: artifact.kind,
-    title: artifact.title,
-    summary: artifact.summary,
-    source: artifact.source,
-    version: artifact.version,
-    folderId: artifact.folderId,
-    lastVerifiedAt: artifact.lastVerifiedAt,
-    chunkingStatus: artifact.chunkingStatus,
-    lastChunkedAt: artifact.lastChunkedAt,
-    lastChunkedVersion: artifact.lastChunkedVersion,
-    updatedAt: artifact.updatedAt,
-    ...(opts?.freshness ? { freshness: opts.freshness } : {}),
-    ...(opts?.importDriftFromLatestSync ? { importDriftFromLatestSync: true as const } : {}),
-  };
-}
 
 /**
  * Public, owner-scoped list of artifacts attached to a thread.
@@ -113,11 +25,7 @@ export const listByThread = query({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread || thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Thread not found.");
-    }
+    await requireOwnedDoc(ctx, args.threadId, { notFoundMessage: "Thread not found." });
 
     return await ctx.db
       .query("artifacts")
@@ -144,18 +52,11 @@ export const listByThread = query({
 export const getById = query({
   args: { artifactId: v.id("artifacts") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const artifact = await ctx.db.get(args.artifactId);
-    if (!artifact || artifact.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { doc: artifact } = await loadOwnedDoc(ctx, args.artifactId);
+    if (!artifact) {
       return null;
     }
-    return {
-      ...artifact,
-      freshness: computeFreshness({
-        lastVerifiedAt: artifact.lastVerifiedAt,
-        now: Date.now(),
-      }),
-    };
+    return toArtifactView(artifact, { now: Date.now() });
   },
 });
 
@@ -170,9 +71,8 @@ export const getById = query({
 export const listByRepository = query({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    if (!repository) {
       return [];
     }
     return await ctx.db
@@ -194,9 +94,8 @@ export const listByRepository = query({
 export const listByRepositoryWithFreshness = query({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    if (!repository) {
       return [];
     }
 
@@ -208,14 +107,7 @@ export const listByRepositoryWithFreshness = query({
       .order("desc")
       .take(ARTIFACTS_PER_REPOSITORY_LIMIT);
 
-    return artifacts.map((artifact) => ({
-      ...artifact,
-      freshness: computeFreshness({
-        lastVerifiedAt: artifact.lastVerifiedAt,
-        now,
-      }),
-      ...(hasImportSnapshotDrift(artifact, latestImportSha) ? { importDriftFromLatestSync: true as const } : {}),
-    }));
+    return artifacts.map((artifact) => toArtifactView(artifact, { now, latestImportSha }));
   },
 });
 
@@ -227,9 +119,8 @@ export const listByRepositoryWithFreshness = query({
 export const listMetadataByRepositoryWithFreshness = query({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    if (!repository) {
       return [];
     }
 
@@ -241,15 +132,7 @@ export const listMetadataByRepositoryWithFreshness = query({
       .order("desc")
       .take(ARTIFACTS_PER_REPOSITORY_LIMIT);
 
-    return artifacts.map((artifact) =>
-      toArtifactMetadata(artifact, {
-        freshness: computeFreshness({
-          lastVerifiedAt: artifact.lastVerifiedAt,
-          now,
-        }),
-        ...(hasImportSnapshotDrift(artifact, latestImportSha) ? { importDriftFromLatestSync: true } : {}),
-      }),
-    );
+    return artifacts.map((artifact) => toArtifactMetadataView(artifact, { now, latestImportSha }));
   },
 });
 
@@ -262,9 +145,8 @@ export const listMetadataByRepositoryWithFreshness = query({
 export const listByFolder = query({
   args: { folderId: v.id("artifactFolders") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const folder = await ctx.db.get(args.folderId);
-    if (!folder || folder.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { doc: folder } = await loadOwnedDoc(ctx, args.folderId);
+    if (!folder) {
       return [];
     }
     return await ctx.db
@@ -289,9 +171,8 @@ export const listByFolder = query({
 export const listUncategorizedByRepository = query({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    if (!repository) {
       return [];
     }
     return await ctx.db
@@ -315,18 +196,15 @@ export const moveToFolder = mutation({
     folderId: v.union(v.id("artifactFolders"), v.null()),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const artifact = await ctx.db.get(args.artifactId);
-    if (!artifact || artifact.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Artifact not found.");
-    }
+    const { doc: artifact } = await requireOwnedDoc(ctx, args.artifactId, {
+      notFoundMessage: "Artifact not found.",
+    });
 
     let nextFolderId: Id<"artifactFolders"> | undefined;
     if (args.folderId !== null) {
-      const folder = await ctx.db.get(args.folderId);
-      if (!folder || folder.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Folder not found.");
-      }
+      const { doc: folder } = await requireOwnedDoc(ctx, args.folderId, {
+        notFoundMessage: "Folder not found.",
+      });
       if (!artifact.repositoryId && folder.repositoryId) {
         throw new Error("Cannot move a repo-less artifact into a repository-scoped folder.");
       }

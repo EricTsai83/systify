@@ -2,8 +2,8 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { mutation, query } from "./_generated/server";
-import { requireViewerIdentity } from "./lib/auth";
-import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
+import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
+import { assertOwnedBy, loadOwnedDoc, requireOwnedDoc } from "./lib/ownedDocs";
 import { replaceArtifactFolder } from "./lib/artifactWrites";
 
 const FOLDERS_PER_REPO_LIMIT = 200;
@@ -37,9 +37,7 @@ async function loadFolderForOwner(
   args: { folderId: Id<"artifactFolders">; ownerTokenIdentifier: string },
 ): Promise<Doc<"artifactFolders">> {
   const folder = await ctx.db.get(args.folderId);
-  if (!folder || folder.ownerTokenIdentifier !== args.ownerTokenIdentifier) {
-    throw new Error("Folder not found.");
-  }
+  assertOwnedBy(folder, args.ownerTokenIdentifier, "Folder not found.");
   return folder;
 }
 
@@ -82,8 +80,8 @@ async function ensureNoCycle(
 export const listByRepository = query({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
-    const { identity } = await requireActiveRepositoryForOwnerOrNull(ctx, args.repositoryId);
-    if (!identity) return [];
+    const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    if (!repository) return [];
 
     const folders = await ctx.db
       .query("artifactFolders")
@@ -110,11 +108,7 @@ export const listByRepository = query({
 export const getById = query({
   args: { folderId: v.id("artifactFolders") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const folder = await ctx.db.get(args.folderId);
-    if (!folder || folder.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      return null;
-    }
+    const { doc: folder } = await loadOwnedDoc(ctx, args.folderId);
     return folder;
   },
 });
@@ -127,10 +121,8 @@ export const create = mutation({
     description: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    await requireActiveRepositoryForOwner(ctx, {
+    const { identity } = await requireActiveRepositoryForViewer(ctx, {
       repositoryId: args.repositoryId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
     });
 
     if (args.parentFolderId) {
@@ -162,10 +154,8 @@ export const rename = mutation({
     description: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const folder = await loadFolderForOwner(ctx, {
-      folderId: args.folderId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
+    const { doc: folder } = await requireOwnedDoc(ctx, args.folderId, {
+      notFoundMessage: "Folder not found.",
     });
 
     const patch: { name?: string; description?: string | undefined } = {};
@@ -187,10 +177,8 @@ export const move = mutation({
     parentFolderId: v.optional(v.id("artifactFolders")),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const folder = await loadFolderForOwner(ctx, {
-      folderId: args.folderId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
+    const { identity, doc: folder } = await requireOwnedDoc(ctx, args.folderId, {
+      notFoundMessage: "Folder not found.",
     });
 
     if (args.parentFolderId) {
@@ -229,10 +217,8 @@ export const setPinned = mutation({
     pinned: v.boolean(),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const folder = await loadFolderForOwner(ctx, {
-      folderId: args.folderId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
+    const { doc: folder } = await requireOwnedDoc(ctx, args.folderId, {
+      notFoundMessage: "Folder not found.",
     });
     await ctx.db.patch(folder._id, {
       pinnedAt: args.pinned ? Date.now() : undefined,
@@ -263,10 +249,8 @@ export const remove = mutation({
     strategy: deleteStrategy,
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const folder = await loadFolderForOwner(ctx, {
-      folderId: args.folderId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
+    const { doc: folder } = await requireOwnedDoc(ctx, args.folderId, {
+      notFoundMessage: "Folder not found.",
     });
 
     if (args.strategy === "moveContentsToParent") {
@@ -337,21 +321,3 @@ export const remove = mutation({
     return null;
   },
 });
-
-/**
- * Internal helper: returns the viewer's identity *if* they own the
- * repository, else `null`. Avoids throwing on the read path so the
- * navigator's first paint can soft-fail to "no folders" instead of an
- * error boundary when the repo id in the URL went stale.
- */
-async function requireActiveRepositoryForOwnerOrNull(
-  ctx: QueryCtx,
-  repositoryId: Id<"repositories">,
-): Promise<{ identity: Awaited<ReturnType<typeof requireViewerIdentity>> | null }> {
-  const identity = await requireViewerIdentity(ctx);
-  const repository = await ctx.db.get(repositoryId);
-  if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-    return { identity: null };
-  }
-  return { identity };
-}

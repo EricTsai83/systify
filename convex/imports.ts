@@ -14,8 +14,9 @@ import {
   failRunningJob,
   markQueuedJobRunning,
   updateRunningJobProgress,
-} from "./jobLifecycle";
+} from "./lib/jobs";
 import { ensureSystemDesignFolders } from "./lib/systemDesign";
+import { isOwnedBy } from "./lib/ownedDocs";
 
 const REPOSITORY_DELETION_CANCEL_REASON =
   "Repository deletion is in progress. The import was cancelled before it could finish.";
@@ -377,7 +378,7 @@ export const reserveOnDemandSandboxRow = internalMutation({
     if (!repository) {
       throw new Error("Repository not found.");
     }
-    if (repository.ownerTokenIdentifier !== args.ownerTokenIdentifier) {
+    if (!isOwnedBy(repository, args.ownerTokenIdentifier)) {
       throw new Error("Repository does not belong to owner.");
     }
     if (repository.deletionRequestedAt || repository.archivedAt) {

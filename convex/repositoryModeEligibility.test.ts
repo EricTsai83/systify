@@ -16,11 +16,7 @@ function createTestConvex() {
   return t;
 }
 
-async function insertRepository(
-  t: ReturnType<typeof createTestConvex>,
-  ownerTokenIdentifier: string,
-  slug: string,
-) {
+async function insertRepository(t: ReturnType<typeof createTestConvex>, ownerTokenIdentifier: string, slug: string) {
   return await t.run(async (ctx) => {
     return await ctx.db.insert("repositories", {
       ownerTokenIdentifier,

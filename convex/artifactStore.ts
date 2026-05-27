@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { assertOwnedBy } from "./lib/ownedDocs";
 
 type ArtifactKind = Doc<"artifacts">["kind"];
 type ArtifactSource = Doc<"artifacts">["source"];
@@ -47,9 +48,7 @@ export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArt
 
   if (args.folderId) {
     const folder = await ctx.db.get(args.folderId);
-    if (!folder || folder.ownerTokenIdentifier !== args.ownerTokenIdentifier) {
-      throw new Error("Folder not found.");
-    }
+    assertOwnedBy(folder, args.ownerTokenIdentifier, "Folder not found.");
     if (!args.repositoryId) {
       throw new Error("Cannot place a repo-less artifact in a repository folder.");
     }

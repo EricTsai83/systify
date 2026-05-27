@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalQuery, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
-import { requireViewerIdentity } from "./lib/auth";
+import { requireOwnedDoc } from "./lib/ownedDocs";
 import { getRepositorySandboxStatus, type SandboxModeStatus } from "./lib/repositorySandbox";
 import {
   computeSandboxCostCapEvaluation,
@@ -138,23 +138,23 @@ async function enrichThreadContext(
 export const getThreadContext = query({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const thread = await loadThread(ctx, args.threadId);
-
-    if (!thread) {
+    // Probe for existence first so a stale thread id returns `null` (lets the
+    // client clear the URL) instead of "Thread not found." — keeping the
+    // non-owner path on the throw branch so we don't disclose existence.
+    const probe = await loadThread(ctx, args.threadId);
+    if (!probe) {
       return null;
     }
-
-    if (thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Thread not found.");
-    }
+    const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
 
     let attachedRepository: Doc<"repositories"> | null = null;
     if (thread.repositoryId) {
-      attachedRepository = await ctx.db.get(thread.repositoryId);
-      if (!attachedRepository || attachedRepository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Thread not found.");
-      }
+      const { doc } = await requireOwnedDoc(ctx, thread.repositoryId, {
+        notFoundMessage: "Thread not found.",
+      });
+      attachedRepository = doc;
     }
 
     return enrichThreadContext(ctx, {

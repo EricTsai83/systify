@@ -2,8 +2,8 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
-import { requireViewerIdentity } from "./lib/auth";
-import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
+import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
+import { requireOwnedDoc } from "./lib/ownedDocs";
 
 const DEFAULT_IDLE_AUTO_PAUSE_MINUTES = 10;
 
@@ -32,10 +32,8 @@ async function findReusableSession(
 export const startSandboxSession = mutation({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await requireActiveRepositoryForOwner(ctx, {
+    const { identity, repository } = await requireActiveRepositoryForViewer(ctx, {
       repositoryId: args.repositoryId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
       notFoundMessage: "Repository not found.",
       archivedMessage: "This repository is archived. Restore it to start a sandbox session.",
     });
@@ -71,11 +69,9 @@ export const startSandboxSession = mutation({
 export const pauseSandboxSession = mutation({
   args: { sessionId: v.id("sandboxSessions") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const session = await ctx.db.get(args.sessionId);
-    if (!session || session.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Sandbox session not found.");
-    }
+    const { doc: session } = await requireOwnedDoc(ctx, args.sessionId, {
+      notFoundMessage: "Sandbox session not found.",
+    });
     if (session.status !== "active") {
       return { paused: false, status: session.status };
     }
@@ -94,11 +90,9 @@ export const pauseSandboxSession = mutation({
 export const stopSandboxSession = mutation({
   args: { sessionId: v.id("sandboxSessions") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const session = await ctx.db.get(args.sessionId);
-    if (!session || session.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Sandbox session not found.");
-    }
+    const { doc: session } = await requireOwnedDoc(ctx, args.sessionId, {
+      notFoundMessage: "Sandbox session not found.",
+    });
     if (session.status === "stopped" || session.status === "ended") {
       return { stopped: false, status: session.status };
     }
@@ -117,11 +111,9 @@ export const stopSandboxSession = mutation({
 export const getSandboxSessionCostSummary = query({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Repository not found.");
-    }
+    const { identity } = await requireOwnedDoc(ctx, args.repositoryId, {
+      notFoundMessage: "Repository not found.",
+    });
     const sessions = await ctx.db
       .query("sandboxSessions")
       .withIndex("by_ownerTokenIdentifier_and_startedAt", (q) => q.eq("ownerTokenIdentifier", identity.tokenIdentifier))

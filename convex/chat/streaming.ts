@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { type MutationCtx, internalMutation, internalQuery, query } from "../_generated/server";
-import { requireViewerIdentity } from "../lib/auth";
+import { loadOwnedDoc, requireOwnedDoc } from "../lib/ownedDocs";
 import { CHAT_JOB_LEASE_MS, consumeSandboxDailyCost } from "../lib/rateLimit";
 import { costUsdToCents } from "../lib/openaiPricing";
 import { logInfo, logWarn } from "../lib/observability";
@@ -13,7 +13,7 @@ import {
   failStaleActiveJob,
   markQueuedJobRunning,
   refreshRunningJobLease,
-} from "../jobLifecycle";
+} from "../lib/jobs";
 import { lintCitations, type UnverifiedClaimRange } from "./citationLint";
 import {
   compactMessageStreamTail,
@@ -241,21 +241,14 @@ export const getActiveMessageStream = query({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread) {
-      throw new Error("Thread not found.");
-    }
-
-    if (thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Thread not found.");
-    }
+    const { doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
 
     if (thread.repositoryId) {
-      const repository = await ctx.db.get(thread.repositoryId);
-      if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Thread not found.");
-      }
+      await requireOwnedDoc(ctx, thread.repositoryId, {
+        notFoundMessage: "Thread not found.",
+      });
     }
 
     const stream = await getMessageStreamByThread(ctx, args.threadId);
@@ -307,12 +300,8 @@ export const getMessageToolCallEvents = query({
     ctx,
     args,
   ): Promise<Array<ToolCallTraceEntry & { state: "running" | "completed" | "errored" }> | null> => {
-    const identity = await requireViewerIdentity(ctx);
-    const message = await ctx.db.get(args.assistantMessageId);
+    const { doc: message } = await loadOwnedDoc(ctx, args.assistantMessageId);
     if (!message) {
-      return null;
-    }
-    if (message.ownerTokenIdentifier !== identity.tokenIdentifier) {
       return null;
     }
 

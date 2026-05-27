@@ -19,11 +19,7 @@ function createTestConvex() {
   return t;
 }
 
-async function insertRepository(
-  t: ReturnType<typeof createTestConvex>,
-  ownerTokenIdentifier: string,
-  slug: string,
-) {
+async function insertRepository(t: ReturnType<typeof createTestConvex>, ownerTokenIdentifier: string, slug: string) {
   return await t.run(async (ctx) => {
     return await ctx.db.insert("repositories", {
       ownerTokenIdentifier,
@@ -171,9 +167,9 @@ describe("setThreadRepository", () => {
 
     const { _id: threadId } = await owner.mutation(api.chat.threads.createThread, {});
 
-    await expect(
-      intruder.mutation(api.chat.threads.setThreadRepository, { threadId, repositoryId }),
-    ).rejects.toThrow(/thread not found/i);
+    await expect(intruder.mutation(api.chat.threads.setThreadRepository, { threadId, repositoryId })).rejects.toThrow(
+      /thread not found/i,
+    );
   });
 
   test("attaching a repository the viewer doesn't own surfaces as Repository not found", async () => {

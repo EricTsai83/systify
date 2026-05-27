@@ -4,6 +4,7 @@ import type { Id } from "../_generated/dataModel";
 import { internalMutation, mutation, query, type MutationCtx } from "../_generated/server";
 import { requireViewerIdentity } from "../lib/auth";
 import { chatModeValidator, getDefaultThreadMode } from "../lib/chatMode";
+import { loadOwnedDoc, requireOwnedDoc } from "../lib/ownedDocs";
 import { MAX_STREAM_CHUNKS_PER_PASS, MAX_VISIBLE_MESSAGES } from "../lib/constants";
 import { touchRepositoryLastAccessed } from "../lib/repositoryPalette";
 import { loadRecentMessages } from "./context";
@@ -34,10 +35,8 @@ export const listThreads = query({
     mode: v.optional(chatModeValidator),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    if (!repository) {
       return [];
     }
     const repositoryId = args.repositoryId;
@@ -93,21 +92,14 @@ export const listMessages = query({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread) {
-      throw new Error("Thread not found.");
-    }
-
-    if (thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Thread not found.");
-    }
+    const { doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
 
     if (thread.repositoryId) {
-      const repository = await ctx.db.get(thread.repositoryId);
-      if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Thread not found.");
-      }
+      await requireOwnedDoc(ctx, thread.repositoryId, {
+        notFoundMessage: "Thread not found.",
+      });
     }
 
     return await loadRecentMessages(ctx, args.threadId, MAX_VISIBLE_MESSAGES);
@@ -156,11 +148,7 @@ export const getThreadSummary = query({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread || thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      return null;
-    }
+    const { doc: thread } = await loadOwnedDoc(ctx, args.threadId);
     return thread;
   },
 });
@@ -183,10 +171,9 @@ export const createThread = mutation({
 
     let title = args.title;
     if (repositoryId) {
-      const repository = await ctx.db.get(repositoryId);
-      if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Repository not found.");
-      }
+      const { doc: repository } = await requireOwnedDoc(ctx, repositoryId, {
+        notFoundMessage: "Repository not found.",
+      });
       title ??= `${repository.sourceRepoName} chat`;
     } else {
       title ??= "New design conversation";
@@ -217,11 +204,9 @@ export const createLibraryAskThread = mutation({
     title: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Repository not found.");
-    }
+    const { identity } = await requireOwnedDoc(ctx, args.repositoryId, {
+      notFoundMessage: "Repository not found.",
+    });
 
     const artifactContext = args.artifactContext ?? [];
     if (artifactContext.length > ASK_THREAD_MAX_ARTIFACT_CONTEXT) {
@@ -231,10 +216,9 @@ export const createLibraryAskThread = mutation({
     }
 
     for (const artifactId of artifactContext) {
-      const artifact = await ctx.db.get(artifactId);
-      if (!artifact || artifact.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Artifact not found.");
-      }
+      const { doc: artifact } = await requireOwnedDoc(ctx, artifactId, {
+        notFoundMessage: "Artifact not found.",
+      });
       if (artifact.repositoryId !== args.repositoryId) {
         throw new Error("Artifact is not in this repository.");
       }
@@ -282,17 +266,14 @@ export const setThreadRepository = mutation({
     repositoryId: v.union(v.id("repositories"), v.null()),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread || thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Thread not found.");
-    }
+    const { doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
 
     if (args.repositoryId !== null) {
-      const repository = await ctx.db.get(args.repositoryId);
-      if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Repository not found.");
-      }
+      await requireOwnedDoc(ctx, args.repositoryId, {
+        notFoundMessage: "Repository not found.",
+      });
       await touchRepositoryLastAccessed(ctx, { repositoryId: args.repositoryId });
       // Two transitions land in this branch:
       //   1. no-repo  → has-repo: the thread is in `discuss`. Attaching a
@@ -343,11 +324,9 @@ export const setThreadPinned = mutation({
     pinned: v.boolean(),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread || thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Thread not found.");
-    }
+    await requireOwnedDoc(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
     await ctx.db.patch(args.threadId, {
       pinnedAt: args.pinned ? Date.now() : undefined,
     });
@@ -359,11 +338,9 @@ export const deleteThread = mutation({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread || thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Thread not found.");
-    }
+    await requireOwnedDoc(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
     // Delegate the heavy lifting to the shared helper. The same helper
     // backs `deleteThreadContinuation` (an internal mutation) so we can
     // reschedule across mutations when a single transaction can't fit

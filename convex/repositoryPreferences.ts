@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
 import { chatModeValidator, type ChatMode } from "./lib/chatMode";
+import { requireOwnedDoc } from "./lib/ownedDocs";
 import { upsertLastActiveRepository } from "./lib/userPreferences";
 
 /**
@@ -61,11 +62,9 @@ export const touchRepository = mutation({
     mode: v.optional(chatModeValidator),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Repository not found.");
-    }
+    const { identity, doc: repository } = await requireOwnedDoc(ctx, args.repositoryId, {
+      notFoundMessage: "Repository not found.",
+    });
     const patch: { lastAccessedAt: number; lastMode?: ChatMode } = {
       lastAccessedAt: Date.now(),
     };

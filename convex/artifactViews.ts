@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { requireViewerIdentity } from "./lib/auth";
+import { loadOwnedDoc } from "./lib/ownedDocs";
 
 /**
  * Per-viewer "I have seen this artifact" state.
@@ -27,9 +27,8 @@ export const markViewed = mutation({
     repositoryId: v.id("repositories"),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const artifact = await ctx.db.get(args.artifactId);
-    if (!artifact || artifact.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { identity, doc: artifact } = await loadOwnedDoc(ctx, args.artifactId);
+    if (!artifact) {
       // Silent no-op for unknown / unowned artifacts — the navigator can
       // race a delete and we'd rather skip than surface a user-visible
       // error for a state-only write.
@@ -75,9 +74,8 @@ export const markViewed = mutation({
 export const ensureRepositoryBootstrap = mutation({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { identity, doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    if (!repository) {
       return null;
     }
     const existing = await ctx.db
@@ -120,9 +118,8 @@ export const ensureRepositoryBootstrap = mutation({
 export const listViewStateByRepository = query({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const { identity, doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    if (!repository) {
       return { bootstrap: 0, views: {} as Record<string, number>, bootstrapPending: false };
     }
 

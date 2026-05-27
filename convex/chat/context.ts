@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { internalQuery } from "../_generated/server";
+import { resolveDiscussGrounding } from "../lib/chatMode";
 import { MAX_CONTEXT_MESSAGES } from "../lib/constants";
 import type { ExtendedChatMode } from "./prompting";
 
@@ -263,12 +264,11 @@ export const getReplyContext = internalQuery({
     const effectiveMode = userMessage.mode ?? thread.mode;
     // Per-message grounding flags only carry meaning on `discuss` replies.
     // Library mode ignores them — its grounding contract is implicit in
-    // the mode — and Lab-era persisted rows (post-migration) shouldn't
-    // exist, but if they do they map to {library: false, sandbox: true}
-    // via the migration patch, so reading directly from the row is correct
-    // either way.
-    const groundLibrary = effectiveMode === "discuss" && userMessage.groundLibrary === true;
-    const groundSandbox = effectiveMode === "discuss" && userMessage.groundSandbox === true;
+    // the mode. The resolver applies the same coercion as the queue-time
+    // `chat.send.sendMessage` mutation, so a Library-mode row that
+    // somehow carries a stale `groundLibrary: true` (legacy data) reads
+    // back as `false` here without a one-off branch.
+    const { groundLibrary, groundSandbox } = resolveDiscussGrounding(effectiveMode, userMessage);
 
     // Plan 03: cross-mode filtering + empty-content filtering happen inside
     // `loadReplyContextMessages` so the helper can over-fetch a bounded
