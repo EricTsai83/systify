@@ -15,24 +15,24 @@ describe("estimateCostUsd", () => {
     expect(estimateCostUsd("gpt-4o-mini", 1_000, undefined)).toBeUndefined();
   });
 
-  // Plan 10 — adding gpt-5 family pricing so the daily-cap accounting
-  // doesn't silently drop new model variants. The numbers should match
-  // the snapshot in `lib/openaiPricing.ts`; the test exists to catch
-  // accidental zeroing of either tier (e.g. a refactor that wipes the
-  // table to {} would break here, not silently flow into "$0.00 cost"
-  // recordings on every reply).
-  test("calculates cost for the gpt-5 sandbox tier (Plan 10/11 default)", () => {
+  // GPT-5 family pricing ensures the daily-cap accounting doesn't
+  // silently drop model variants. The numbers should match the snapshot
+  // in `lib/openaiPricing.ts`; the test exists to catch accidental
+  // zeroing of either tier (e.g. a refactor that wipes the table to {}
+  // would break here, not silently flow into "$0.00 cost" recordings on
+  // every reply).
+  test("calculates cost for the gpt-5 sandbox tier", () => {
     // 1M input @ $1.25 + 1M output @ $10 = $11.25
     expect(estimateCostUsd("gpt-5", 1_000_000, 1_000_000)).toBeCloseTo(11.25);
   });
 
-  test("calculates cost for the gpt-5-mini docs/discuss tier (Plan 11 default)", () => {
+  test("calculates cost for the gpt-5-mini docs/discuss tier", () => {
     // 1M input @ $0.25 + 1M output @ $2 = $2.25
     expect(estimateCostUsd("gpt-5-mini", 1_000_000, 1_000_000)).toBeCloseTo(2.25);
   });
 });
 
-describe("costUsdToCents (Plan 10)", () => {
+describe("costUsdToCents", () => {
   test("ceiling-rounds positive costs so daily-cap settlement never under-charges", () => {
     // $0.001 → 1 cent (not 0). Without ceiling, ~100 sub-cent replies
     // could stack to a free dollar of sandbox spend per user.

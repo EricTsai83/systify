@@ -2,8 +2,8 @@ import type { ChatMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
- * Plan 14 — example-prompt picker shown above the composer when the
- * thread is empty. Clicking a card seeds the composer with the prompt
+ * Example-prompt picker shown above the composer when the thread is
+ * empty. Clicking a card seeds the composer with the prompt
  * text but **does not** auto-submit; the user can refine the wording
  * before sending. Auto-submit was rejected because the curated prompts
  * are scaffolds, not finished questions — sending verbatim teaches the

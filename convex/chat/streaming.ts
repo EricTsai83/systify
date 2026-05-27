@@ -35,15 +35,15 @@ import {
 const STALE_CHAT_JOB_ERROR_MESSAGE = "The assistant reply stalled and was automatically marked as failed.";
 
 /**
- * Plan 06 — soft truncation marker appended to over-long tool-call summaries
- * before they reach the events table. Visible to both the LLM (the AI SDK
- * feeds tool results back as next-step inputs) and to the trace UI, so the
+ * Soft truncation marker appended to over-long tool-call summaries before
+ * they reach the events table. Visible to both the LLM (the AI SDK feeds
+ * tool results back as next-step inputs) and to the trace UI, so the
  * truncation is never silent.
  */
 const TOOL_CALL_SUMMARY_TRUNCATION_MARKER = "…[truncated]";
 
 /**
- * Plan 06 — fold + drain helper shared by `finalizeAssistantReply`,
+ * Fold + drain helper shared by `finalizeAssistantReply`,
  * `failAssistantReply`, and `recoverStaleChatJob`.
  *
  * All three mutations need to: (1) read up to `MAX_TOOL_CALL_EVENTS_PER_MESSAGE`
@@ -88,8 +88,8 @@ async function foldAndDrainToolCallEvents(
 }
 
 /**
- * Plan 10 — settle the actual reply cost against the per-user and
- * (when applicable) per-workspace daily caps.
+ * Settle the actual reply cost against the per-user and (when applicable)
+ * per-repository daily caps.
  *
  * Called from every terminal-state path:
  *   - `finalizeAssistantReply` (success)
@@ -182,8 +182,8 @@ async function recordSandboxSessionActivityForReply(
 }
 
 /**
- * Plan 11 — run the citation lint against a finalized assistant reply
- * and return the persisted shape (or `undefined` to clear the field).
+ * Run the citation lint against a finalized assistant reply and return
+ * the persisted shape (or `undefined` to clear the field).
  *
  * Gated on `groundSandbox === true`: the lint contract exists *only* for
  * sandbox-grounded replies (the prompt teaches `[path:line]` +
@@ -195,11 +195,10 @@ async function recordSandboxSessionActivityForReply(
  * ranges on an empty string, but spelling out the early-return keeps
  * the call sites obviously correct in the cancellation / failure
  * paths where partial content can be the empty string. `undefined`
- * rather than `[]` matches the schema-level convention (Plan 06's
- * `toolCalls`, Plan 02's `citationMap`): callers that read the field
- * treat both as "no highlights", but storing `undefined` keeps the
- * row free of empty array bookkeeping for messages that genuinely
- * had no flagged claims.
+ * rather than `[]` matches the schema-level convention (`toolCalls`,
+ * `citationMap`): callers that read the field treat both as "no
+ * highlights", but storing `undefined` keeps the row free of empty
+ * array bookkeeping for messages that genuinely had no flagged claims.
  *
  * `lintCitations` already enforces {@link MAX_UNVERIFIED_CLAIMS_PER_MESSAGE}
  * internally via early return, so no re-cap is needed here. Re-slicing
@@ -273,7 +272,7 @@ export const getActiveMessageStream = query({
 });
 
 /**
- * Plan 06 — subscribable view of the running tool-call trace for a single
+ * Subscribable view of the running tool-call trace for a single
  * assistant message.
  *
  * Returns one entry per `toolCallId` (folded from the ephemeral
@@ -409,7 +408,7 @@ export const appendAssistantStreamChunk = internalMutation({
 });
 
 /**
- * Plan 06 — append one `start` or `end` row to `messageToolCallEvents`.
+ * Append one `start` or `end` row to `messageToolCallEvents`.
  *
  * Called from the AI SDK `fullStream` loop in `generation.ts` once per
  * `tool-call` (start) and once per `tool-result` / `tool-error` (end).
@@ -514,10 +513,9 @@ export const finalizeAssistantReply = internalMutation({
     costUsd: v.optional(v.number()),
     /**
      * Citation map: numbered `[A#] → artifactId` entries for the artifacts
-     * that ended up in the prompt. Optional so non-library replies (and
-     * messages predating citationMap) keep the field unset rather than
-     * written as an empty array — the frontend treats both as "no
-     * resolvable citations".
+     * that ended up in the prompt. Optional so non-library replies keep
+     * the field unset rather than written as an empty array — the frontend
+     * treats both as "no resolvable citations".
      */
     citationMap: v.optional(
       v.array(
@@ -535,7 +533,7 @@ export const finalizeAssistantReply = internalMutation({
     const message = await ctx.db.get(args.assistantMessageId);
     const streamSnapshot = await loadMessageStreamSnapshot(ctx, args.assistantMessageId);
 
-    // Plan 06 — fold the ephemeral tool-call event log into the durable
+    // Fold the ephemeral tool-call event log into the durable
     // `messages.toolCalls` field, then drain the events. Doing both inside
     // the same transaction means the frontend never sees a half-state where
     // events still exist but the message is already `completed`; the
@@ -564,13 +562,13 @@ export const finalizeAssistantReply = internalMutation({
         }
 
         const finalContent = `${streamSnapshot?.content ?? message.content}${args.finalDelta}`;
-        // Plan 11 — citation lint runs against the finalized content
-        // *before* the patch so `messages.unverifiedClaims` is committed
-        // in the same transaction that flips status to `completed`. The
-        // chat bubble derives "is this reply linted?" from the message
-        // status (it only renders highlights for terminal states), so
-        // a transactional write means a refresh-after-finalize never
-        // sees the message as completed-but-unlinted. Sandbox-only via
+        // Citation lint runs against the finalized content *before* the
+        // patch so `messages.unverifiedClaims` is committed in the same
+        // transaction that flips status to `completed`. The chat bubble
+        // derives "is this reply linted?" from the message status (it
+        // only renders highlights for terminal states), so a
+        // transactional write means a refresh-after-finalize never sees
+        // the message as completed-but-unlinted. Sandbox-only via
         // `lintSandboxClaims`; discuss / library return `undefined` and
         // the optional schema field stays unset.
         const unverifiedClaims = lintSandboxClaims(message, finalContent);
@@ -580,11 +578,11 @@ export const finalizeAssistantReply = internalMutation({
           errorMessage: undefined,
           estimatedInputTokens: args.inputTokens,
           estimatedOutputTokens: args.outputTokens,
-          // Plan 10 — persist the per-message cost so the chat bubble's
-          // cost ticker can render an exact value rather than re-deriving
-          // it from tokens + model on every render. Stays `undefined`
-          // when usage was unavailable or the model wasn't priced (the
-          // ticker degrades gracefully to "—" in that case).
+          // Persist the per-message cost so the chat bubble's cost
+          // ticker can render an exact value rather than re-deriving it
+          // from tokens + model on every render. Stays `undefined` when
+          // usage was unavailable or the model wasn't priced (the ticker
+          // degrades gracefully to "—" in that case).
           estimatedCostUsd: args.costUsd,
           citationMap: args.citationMap,
           toolCalls: persistedToolCalls,
@@ -624,8 +622,8 @@ export const finalizeAssistantReply = internalMutation({
         });
       }
 
-      // Plan 10 — settle the cost AFTER the message + job patches commit
-      // their statuses. Doing it last means a hypothetical settle failure
+      // Settle the cost AFTER the message + job patches commit their
+      // statuses. Doing it last means a hypothetical settle failure
       // never blocks the message's terminal-state write, which is the
       // user-visible part of finalize. Settle is a no-op for non-sandbox
       // replies, so this is also free for discuss / library.
@@ -662,10 +660,10 @@ export const failAssistantReply = internalMutation({
     errorMessage: v.string(),
     finalDelta: v.optional(v.string()),
     /**
-     * Plan 10 — partial cost (USD) accrued before the failure. Optional
-     * because pre-Plan-10 callers (and pre-stream failures, where no
-     * cost has been incurred) leave it unset; the settle helper treats
-     * `undefined` as "no cost recorded" and skips the cap consumption.
+     * Partial cost (USD) accrued before the failure. Optional because
+     * pre-stream failures (where no cost has been incurred) leave it
+     * unset; the settle helper treats `undefined` as "no cost recorded"
+     * and skips the cap consumption.
      */
     inputTokens: v.optional(v.number()),
     outputTokens: v.optional(v.number()),
@@ -676,7 +674,7 @@ export const failAssistantReply = internalMutation({
     const streamSnapshot = await loadMessageStreamSnapshot(ctx, args.assistantMessageId);
     const message = await ctx.db.get(args.assistantMessageId);
 
-    // Plan 06 — surface partial tool-call traces on failures so the user can
+    // Surface partial tool-call traces on failures so the user can
     // see which tool the reply was running when it died. Unfinished entries
     // (only `start` events) fold to `endedAt === startedAt` and the trace
     // UI renders them as "interrupted". The helper also drains beyond the
@@ -702,7 +700,7 @@ export const failAssistantReply = internalMutation({
 
       if (message) {
         const streamedContent = `${streamSnapshot?.content ?? message.content}${args.finalDelta ?? ""}`;
-        // Plan 11 — lint the *streamed* content (not the error fallback).
+        // Lint the *streamed* content (not the error fallback).
         // A failed reply that produced 200 tokens of partial prose
         // before throwing should still surface unverified-claim
         // highlights so the user can read the partial answer with
@@ -719,9 +717,9 @@ export const failAssistantReply = internalMutation({
           content: streamedContent || args.errorMessage,
           toolCalls: persistedToolCalls,
           unverifiedClaims,
-          // Plan 10 — partial cost is still real spend; persist it so
-          // the failed bubble can show "Failed at $0.04 (800 tokens)"
-          // in the cost ticker, and the daily cap can settle accurately.
+          // Partial cost is still real spend; persist it so the failed
+          // bubble can show "Failed at $0.04 (800 tokens)" in the cost
+          // ticker, and the daily cap can settle accurately.
           estimatedInputTokens: args.inputTokens ?? message.estimatedInputTokens,
           estimatedOutputTokens: args.outputTokens ?? message.estimatedOutputTokens,
           estimatedCostUsd: args.costUsd ?? message.estimatedCostUsd,
@@ -733,10 +731,10 @@ export const failAssistantReply = internalMutation({
         });
       }
 
-      // Plan 10 — even on failure, the cost has been incurred upstream
-      // (OpenAI charges for streamed tokens regardless of whether the
-      // stream completed). Settling on this path prevents users from
-      // bypassing the daily cap by repeatedly triggering errors.
+      // Even on failure, the cost has been incurred upstream (OpenAI
+      // charges for streamed tokens regardless of whether the stream
+      // completed). Settling on this path prevents users from bypassing
+      // the daily cap by repeatedly triggering errors.
       await settleSandboxReplyCost(ctx, {
         jobId: args.jobId,
         assistantMessage: message ?? null,
@@ -757,7 +755,7 @@ export const failAssistantReply = internalMutation({
 });
 
 /**
- * Plan 07 — minimal, hot-path query the generation action polls to discover
+ * Minimal, hot-path query the generation action polls to discover
  * whether the user has requested cancellation of the in-flight reply.
  *
  * Kept as a tiny `internalQuery` (a single `ctx.db.get` and three field reads)
@@ -793,8 +791,8 @@ export const getJobCancellationStatus = internalQuery({
 });
 
 /**
- * Plan 07 — terminal-state mutation invoked when the action confirms the
- * owner cancelled the reply mid-stream.
+ * Terminal-state mutation invoked when the action confirms the owner
+ * cancelled the reply mid-stream.
  *
  * Mirrors `failAssistantReply` in shape (preserves partial content, drains
  * the tool-call event log, releases the job lease) but uses the dedicated
@@ -835,12 +833,11 @@ export const markAssistantReplyCancelled = internalMutation({
      */
     reason: v.optional(v.string()),
     /**
-     * Plan 10 — partial cost accrued before the user clicked Stop. Same
-     * shape as the failure path: cost has already been incurred
-     * upstream, so we settle it against the daily cap. Optional so
-     * pre-Plan-10 cancellations (or stops fired before any token was
-     * generated) leave the field unset — the settle helper treats that
-     * as "no cost".
+     * Partial cost accrued before the user clicked Stop. Same shape as
+     * the failure path: cost has already been incurred upstream, so we
+     * settle it against the daily cap. Optional so stops fired before
+     * any token was generated leave the field unset — the settle helper
+     * treats that as "no cost".
      */
     inputTokens: v.optional(v.number()),
     outputTokens: v.optional(v.number()),
@@ -885,13 +882,13 @@ export const markAssistantReplyCancelled = internalMutation({
 
       if (message) {
         const streamedContent = `${streamSnapshot?.content ?? message.content}${args.finalDelta ?? ""}`;
-        // Plan 11 — same rationale as the fail path: a cancelled reply
-        // that produced partial prose before the user clicked Stop
-        // benefits from the same unverified-claim highlights so the
-        // user can scan what they got with the same skepticism the
-        // completed-state bubble would offer. Empty `streamedContent`
-        // (stop arrived before any token was streamed) returns
-        // `undefined` so the bubble just shows the cancellation reason.
+        // Same rationale as the fail path: a cancelled reply that
+        // produced partial prose before the user clicked Stop benefits
+        // from the same unverified-claim highlights so the user can scan
+        // what they got with the same skepticism the completed-state
+        // bubble would offer. Empty `streamedContent` (stop arrived
+        // before any token was streamed) returns `undefined` so the
+        // bubble just shows the cancellation reason.
         const unverifiedClaims = lintSandboxClaims(message, streamedContent);
         await ctx.db.patch(args.assistantMessageId, {
           status: "cancelled",
@@ -902,11 +899,11 @@ export const markAssistantReplyCancelled = internalMutation({
           content: streamedContent || reason,
           toolCalls: persistedToolCalls,
           unverifiedClaims,
-          // Plan 10 — preserve partial-cost telemetry on cancellation
-          // for both UI display and audit. Falling back to the existing
-          // values (rather than overwriting with `undefined`) handles
-          // the "stop arrived before generation produced any tokens"
-          // case where the action passes `costUsd: undefined`.
+          // Preserve partial-cost telemetry on cancellation for both
+          // UI display and audit. Falling back to the existing values
+          // (rather than overwriting with `undefined`) handles the
+          // "stop arrived before generation produced any tokens" case
+          // where the action passes `costUsd: undefined`.
           estimatedInputTokens: args.inputTokens ?? message.estimatedInputTokens,
           estimatedOutputTokens: args.outputTokens ?? message.estimatedOutputTokens,
           estimatedCostUsd: args.costUsd ?? message.estimatedCostUsd,
@@ -918,11 +915,11 @@ export const markAssistantReplyCancelled = internalMutation({
         });
       }
 
-      // Plan 10 — settle the partial cost. Cancellation is a common
-      // path (user clicked Stop because the reply was taking too long
-      // or going off the rails) so charging the actual spend prevents
-      // the cap from being a no-op for power users. Settle is a no-op
-      // for non-sandbox replies and for `costUsd === undefined`.
+      // Settle the partial cost. Cancellation is a common path (user
+      // clicked Stop because the reply was taking too long or going off
+      // the rails) so charging the actual spend prevents the cap from
+      // being a no-op for power users. Settle is a no-op for non-sandbox
+      // replies and for `costUsd === undefined`.
       await settleSandboxReplyCost(ctx, {
         jobId: args.jobId,
         assistantMessage: message ?? null,
@@ -976,7 +973,7 @@ export const recoverStaleChatJob = internalMutation({
     const streamSnapshot =
       assistantMessage && stream ? await loadMessageStreamSnapshot(ctx, assistantMessage._id) : null;
 
-    // Plan 06 — same partial-trace fold as `failAssistantReply` so the user
+    // Same partial-trace fold as `failAssistantReply` so the user
     // can tell what was running when the job stalled. Drained in the same
     // mutation; orphan events from a stalled-then-recovered reply must not
     // outlive the message (they'd leak via the live subscription forever).
@@ -991,9 +988,9 @@ export const recoverStaleChatJob = internalMutation({
 
     try {
       if (assistantMessage) {
-        // Plan 11 — lint only the *streamed* portion (not the system
-        // error message that takes over when the stream produced
-        // nothing). When the stale-recovery rescues a reply that had
+        // Lint only the *streamed* portion (not the system error
+        // message that takes over when the stream produced nothing).
+        // When the stale-recovery rescues a reply that had
         // already streamed partial prose the user can still benefit
         // from unverified-claim highlights; when the action stalled
         // before producing anything, `streamSnapshot?.content` is
@@ -1009,7 +1006,7 @@ export const recoverStaleChatJob = internalMutation({
         });
       }
 
-      // Plan 10 — note: stale-recovery deliberately does NOT settle cost
+      // Note: stale-recovery deliberately does NOT settle cost
       // against the daily cap. The action that crashed/stalled never
       // reached the finalize / fail mutation, so we have no reliable
       // usage data — recording an arbitrary fixed cost here would either

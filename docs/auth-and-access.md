@@ -151,7 +151,7 @@ Even if the user has already connected GitHub, the import flow still calls the G
 - whether the installation can access the target repository
 - whether the repository is actually public or private
 
-This check fails fast (one API round trip) when the repository is not actually accessible, so an unreachable repo never gets as far as the tree / blob fetches. The same probe is reused by the on-demand sandbox path (`ensureSandboxReady`) before any Lab or System Design generation provisions a Daytona sandbox, so a user who lost access to a repository between import and Lab activation gets the same actionable error without burning sandbox cost.
+This check fails fast (one API round trip) when the repository is not actually accessible, so an unreachable repo never gets as far as the tree / blob fetches. The same probe is reused by the on-demand sandbox path (`ensureSandboxReady`) before any sandbox-grounded reply or System Design generation provisions a Daytona sandbox, so a user who lost access to a repository between import and sandbox activation gets the same actionable error without burning sandbox cost.
 
 ## Deep Mode And Permissions
 
@@ -199,6 +199,6 @@ This separation matters because the GitHub App private key, webhook secret, and 
 ## Known Limitations
 
 - Auth errors are currently handled mostly through a UI banner plus a refresh prompt, so recovery behavior is still basic.
-- The relationship between users and GitHub installations is currently a single-layer owner-scoped model and has not yet expanded to a team or workspace level.
+- The relationship between users and GitHub installations is currently a single-layer owner-scoped model and has not yet expanded to a team or organization level.
 - GitHub authorization depends heavily on correct installation-state synchronization, so webhook issues can temporarily leave local data behind the real GitHub state.
 

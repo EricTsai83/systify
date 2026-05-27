@@ -167,8 +167,8 @@ export function buildSystemPrompt(mode: ChatMode, flags: GroundingFlags = {}): s
 }
 
 /**
- * Citation entry persisted on `messages.citationMap`. Plan 02: each entry maps
- * the `[A#]` token the model sees in the prompt back to the specific artifact
+ * Citation entry persisted on `messages.citationMap`. Each entry maps the
+ * `[A#]` token the model sees in the prompt back to the specific artifact
  * id, so the frontend can turn `[A1]` in the assistant's reply into a link
  * that scrolls to / highlights that artifact in the side panel.
  */
@@ -346,9 +346,9 @@ export function buildHeuristicAnswer(
   const language = getUILanguage(context);
 
   // Sandbox-grounded Discuss reply with no API key: the model can't run
-  // the live tools, so surface the same dead-end message Lab mode used to
-  // emit (just without naming the mode literal — the user knows they
-  // asked for sandbox grounding via the composer toggle).
+  // the live tools, so surface a dead-end message rather than letting the
+  // heuristic fallback produce text that pretends to have inspected the
+  // sandbox.
   if (context.groundSandbox === true) {
     return HEURISTIC_MESSAGES[language].sandbox(question).join("\n");
   }

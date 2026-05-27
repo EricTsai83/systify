@@ -137,9 +137,9 @@ export const runImportPipeline = internalAction({
         visibility: detectedVisibility,
       });
 
-      // Tier 1 snapshot — single API-driven fetch produces the same
-      // `RepositorySnapshot` shape the legacy sandbox-clone path used to build,
-      // so `buildRepositoryManifest` / `createChunkRecords` stay unchanged.
+      // Tier 1 snapshot — single API-driven fetch produces the
+      // `RepositorySnapshot` shape `buildRepositoryManifest` /
+      // `createChunkRecords` consume.
       const fetched = await fetchRepositorySnapshot({
         installationId,
         owner: repoOwner,

@@ -33,7 +33,7 @@ const EMPTY_ARTIFACTS: Doc<"artifacts">[] = [];
  *   2. **Folder navigator** — tree view replacing the original "Repository
  *      intelligence + Thread outputs" flat sections. Drives every artifact
  *      navigation in the panel: clicking a folder expands it; clicking
- *      an artifact opens the standalone Reader (`/w/:wid/a/:aid`) via
+ *      an artifact opens the standalone Reader (`/r/:rid/library/a/:aid`) via
  *      `onOpenInReader`, which is where the long-form reading experience
  *      lives.
  *

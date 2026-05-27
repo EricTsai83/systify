@@ -44,9 +44,9 @@ const NUL = String.fromCharCode(0);
  * Each test pre-seeds expected responses or substitutes its own
  * implementation. The default implementations throw loudly — forgetting to
  * seed becomes a hard failure rather than a silent undefined-return crash
- * deep in the tool execute. Plan 08 added `executeCommand`; the default
- * implementation throws so any `run_shell` test that forgets to stub it
- * fails clearly instead of returning `undefined`.
+ * deep in the tool execute. The `executeCommand` default throws so any
+ * `run_shell` test that forgets to stub it fails clearly instead of
+ * returning `undefined`.
  */
 function makeFakeFsClient(overrides: Partial<SandboxFsClient> = {}): SandboxFsClient {
   return {
@@ -64,7 +64,7 @@ function makeFakeFsClient(overrides: Partial<SandboxFsClient> = {}): SandboxFsCl
 }
 
 /**
- * Plan 08 — convenience builder for an `executeCommand` mock that returns
+ * Convenience builder for an `executeCommand` mock that returns
  * the specified `kind: "ok"` outcome. Keeps the per-test wiring short and
  * lets readers focus on the *interesting* parameter (command, exit code,
  * raw output) rather than the SandboxShellOutcome boilerplate.
@@ -375,28 +375,27 @@ describe("executeListDir", () => {
 });
 
 /**
- * Plan 05 — Output redaction integration.
+ * Output redaction integration.
  *
  * The unit-level behaviour of `redact()` is covered exhaustively in
  * `redaction.test.ts`. The cases below pin the *integration* contract:
  *
  *   1. Tool success envelopes always carry a `redactedTypes` field
- *      (empty when nothing matched) — Plan 06 / Plan 12 persistence
- *      reads it directly, so changing it from "always present" to
- *      "optional" would silently drop redaction signals from audit
- *      logs.
+ *      (empty when nothing matched) — persistence reads it directly, so
+ *      changing it from "always present" to "optional" would silently
+ *      drop redaction signals from audit logs.
  *   2. Secrets in `read_file` content are scrubbed before the result
  *      reaches the LLM. The raw token string never appears in any
  *      observable field.
  *   3. Secrets in `list_dir` entry *names* are likewise scrubbed and
  *      reported at the result level (entry shape stays `{name, type,
- *      sizeBytes}` — Plan 06's ticker depends on that being stable).
+ *      sizeBytes}` — the ticker depends on that being stable).
  *   4. `bytesReturned` / `totalBytes` continue to refer to the
  *      *original* file size even when redaction shortens the string —
  *      they are size signals for the LLM, not lengths of the
  *      redacted payload.
  */
-describe("Plan 05 — output redaction integration", () => {
+describe("output redaction integration", () => {
   // Synthetic credentials with the exact pattern shape — never real.
   const FAKE_INSTALLATION_TOKEN = `ghs_${"x".repeat(40)}`;
   const FAKE_AWS_ACCESS_KEY = `AKIA${"Z".repeat(16)}`;
@@ -428,9 +427,9 @@ describe("Plan 05 — output redaction integration", () => {
     const result = await executeReadFile(client, REPO_PATH, "src/index.ts");
     const ok = expectOk(result);
 
-    // The empty-array contract matters: callers (Plan 06 trace, Plan 12
-    // audit log) destructure `redactedTypes` directly, so making it
-    // optional / undefined-when-empty would shift work to every consumer.
+    // The empty-array contract matters: callers (trace + audit log)
+    // destructure `redactedTypes` directly, so making it optional /
+    // undefined-when-empty would shift work to every consumer.
     expect(ok.redactedTypes).toEqual([]);
     expect(ok.content).toBe("export const HELLO = 1;\n");
   });
@@ -438,8 +437,8 @@ describe("Plan 05 — output redaction integration", () => {
   test("read_file: bytesReturned / totalBytes still refer to the ORIGINAL file size after redaction shortens the string", async () => {
     // Pin the size-signal contract: a file whose contents redact down to
     // a much shorter string still reports its original byte size, so
-    // the LLM (and Plan 06's "Reading X.ts (12.4 KB)" ticker) sees the
-    // true cost of the read, not the post-redaction string length.
+    // the LLM (and the "Reading X.ts (12.4 KB)" ticker) sees the true
+    // cost of the read, not the post-redaction string length.
     const sensitive = `secret=${FAKE_INSTALLATION_TOKEN}\n`;
     const encoded = TEXT_ENCODER.encode(sensitive);
     const downloadFile = vi.fn<SandboxFsClient["downloadFile"]>().mockResolvedValue(encoded);
@@ -478,7 +477,7 @@ describe("Plan 05 — output redaction integration", () => {
   test("read_file: error envelopes are unaffected by redaction wiring (no redactedTypes field on errors)", async () => {
     // Defensive: a regression that put `redactedTypes` on every
     // envelope (including errors) would expand the error surface area
-    // and confuse Plan 06's trace summariser. Errors are pure
+    // and confuse the trace summariser. Errors are pure
     // `{ ok: false, errorCode, message }` and stay that way.
     const client = makeFakeFsClient();
     const result = await executeReadFile(client, REPO_PATH, "../escape");
@@ -532,7 +531,7 @@ describe("Plan 05 — output redaction integration", () => {
   });
 
   test("list_dir: keeps the entry shape stable (no per-entry redaction annotations)", async () => {
-    // Plan 06's tool-call ticker depends on the `{name, type, sizeBytes}`
+    // The tool-call ticker depends on the `{name, type, sizeBytes}`
     // shape. If a future change moved redaction signals onto each
     // entry (e.g. `entry.redactedTypes`), the ticker would silently
     // drop fields it doesn't know how to render. This regression test
@@ -555,7 +554,7 @@ describe("createSandboxTools (AI SDK wrapper)", () => {
     const listFiles = vi
       .fn<SandboxFsClient["listFiles"]>()
       .mockResolvedValue([{ name: "x.ts", isDir: false, size: 2 }]);
-    // Plan 08 — run_shell adapter mock. Returns a deterministic
+    // run_shell adapter mock. Returns a deterministic
     // `kind: "ok"` outcome so we can assert the result envelope shape.
     const executeCommand = vi
       .fn<SandboxFsClient["executeCommand"]>()
@@ -677,7 +676,7 @@ describe("createSandboxTools (AI SDK wrapper)", () => {
 });
 
 /**
- * Plan 08 — `executeRunShell` direct-coverage suite.
+ * `executeRunShell` direct-coverage suite.
  *
  * The cases here exercise the pure entry point (no AI SDK) so each error
  * branch and each invariant is locked down independently. The integration
@@ -687,8 +686,8 @@ describe("createSandboxTools (AI SDK wrapper)", () => {
  */
 describe("executeRunShell", () => {
   // Shared test fixtures: synthetic credentials matching documented patterns,
-  // never live secrets. Identical to the Plan 05 fixtures so failures across
-  // suites are easier to recognise.
+  // never live secrets. Identical to the redaction-suite fixtures so failures
+  // across suites are easier to recognise.
   const FAKE_INSTALLATION_TOKEN = `ghs_${"x".repeat(40)}`;
 
   test("returns combined stdout/stderr verbatim when below the size cap, with the resolved workdir and exit code", async () => {
@@ -760,7 +759,7 @@ describe("executeRunShell", () => {
   });
 
   /**
-   * Plan 08 — deny list end-to-end.
+   * Deny list end-to-end.
    *
    * Each case exercises one entry of `COMMAND_DENY_LIST`. The blocked
    * command must:
@@ -830,9 +829,9 @@ describe("executeRunShell", () => {
     });
 
     test("COMMAND_DENY_LIST is exposed and non-empty (audit surface)", () => {
-      // Plan 12 / Plan 13 may want to surface the deny list size in
-      // metrics or runbook. Pinning the public export here documents
-      // the contract.
+      // Audit + metrics consumers may want to surface the deny list size
+      // in metrics or the runbook. Pinning the public export here
+      // documents the contract.
       expect(Array.isArray(COMMAND_DENY_LIST)).toBe(true);
       expect(COMMAND_DENY_LIST.length).toBeGreaterThan(0);
       for (const entry of COMMAND_DENY_LIST) {
@@ -980,7 +979,7 @@ describe("executeRunShell", () => {
       const result = await executeRunShell(client, REPO_PATH, "grep -r foo /", undefined, undefined);
       const ok = expectOk(result);
       expect(ok.truncated).toBe(true);
-      // Total bytes equals the *original* size, so the LLM (and Plan 06's
+      // Total bytes equals the *original* size, so the LLM (and the
       // ticker) sees the true cost.
       expect(ok.totalBytes).toBe(SANDBOX_RUN_SHELL_MAX_OUTPUT_BYTES + 5_000);
       // Output ends with the marker so the LLM knows the visible payload
@@ -1030,7 +1029,7 @@ describe("executeRunShell", () => {
   });
 
   describe("redaction integration", () => {
-    test("scrubs a GitHub token from stdout (the dominant Plan 05 leak path)", async () => {
+    test("scrubs a GitHub token from stdout (the dominant leak path)", async () => {
       const sensitiveOutput = `[remote "origin"]\nurl = https://x-access-token:${FAKE_INSTALLATION_TOKEN}@github.com/acme/repo.git\n`;
       const executeCommand = vi
         .fn<SandboxFsClient["executeCommand"]>()
@@ -1045,7 +1044,7 @@ describe("executeRunShell", () => {
       expect(ok.redactedTypes).toEqual(["github_token"]);
     });
 
-    test("returns an empty redactedTypes array for innocuous output (stable shape for Plan 12 audit)", async () => {
+    test("returns an empty redactedTypes array for innocuous output (stable shape for audit)", async () => {
       const executeCommand = vi
         .fn<SandboxFsClient["executeCommand"]>()
         .mockResolvedValue(makeOkShellOutcome(0, "convex/\nsrc/\n"));

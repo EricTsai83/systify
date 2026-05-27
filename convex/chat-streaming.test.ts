@@ -431,7 +431,7 @@ describe("chat streaming lifecycle", () => {
 });
 
 /**
- * Plan 11 — citation lint runs at terminal-state mutations and persists
+ * Citation lint runs at terminal-state mutations and persists
  * the flagged-sentence ranges on `messages.unverifiedClaims`. The lint
  * is sandbox-only (the contract `[path:line]` + `Unverified:` is
  * teaching exclusive to the sandbox prompt) so non-sandbox replies must
@@ -453,7 +453,7 @@ describe("chat streaming lifecycle", () => {
  *      mutation so a future refactor can't silently break the renderer
  *      contract.
  */
-describe("citation lint integration (Plan 11)", () => {
+describe("citation lint integration", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-23T00:00:00.000Z"));
@@ -716,7 +716,7 @@ describe("citation lint integration (Plan 11)", () => {
 });
 
 /**
- * Plan 06 — tool-call ticker / persisted trace.
+ * Tool-call ticker / persisted trace.
  *
  * The flow under test:
  *   1. `appendAssistantToolCallEvent` writes `start` and `end` rows keyed
@@ -730,7 +730,7 @@ describe("citation lint integration (Plan 11)", () => {
  *   4. `failAssistantReply` and the cascade deletes drain orphan events
  *      so the live subscription never points at a missing parent.
  */
-describe("chat tool-call event lifecycle (Plan 06)", () => {
+describe("chat tool-call event lifecycle", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-23T00:00:00.000Z"));

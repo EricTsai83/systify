@@ -51,14 +51,12 @@ export interface DiscussGrounding {
 /**
  * Coerce the Discuss-mode grounding contract — "Library / Sandbox grounding
  * toggles are only meaningful when `mode === 'discuss'`; both default to
- * `false` for any other mode, undefined inputs, or legacy rows".
+ * `false` for any other mode, undefined inputs, or rows missing the flags".
  *
- * The rule used to live inlined at every read/write site: the queue-time
- * `chat/send.sendMessage` mutation, the queue-time `getReplyContext` query,
- * and the persistence helpers that drop `false` to keep DB rows sparse.
- * Centralising it here lets the chat send mutation, the reply-context
- * loader, and any future Discuss-grounded surface stay in lockstep when
- * the rule evolves (e.g. a third grounding axis is added).
+ * Shared by the queue-time `chat/send.sendMessage` mutation, the queue-time
+ * `getReplyContext` query, and the persistence helpers that drop `false`
+ * to keep DB rows sparse, so every Discuss-grounded surface stays in
+ * lockstep when the rule evolves (e.g. a third grounding axis is added).
  */
 export function resolveDiscussGrounding(
   mode: ChatMode | undefined,

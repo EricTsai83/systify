@@ -31,8 +31,8 @@ const jobKind = v.union(
 /**
  * Structured failure categorisation for per-kind System Design failures.
  * Drives banner copy in `system-design-status-banner.tsx` without
- * regex-matching the raw `message`. Optional so legacy rows without a
- * reason category fall through to the `other` branch in the UI.
+ * regex-matching the raw `message`. Optional so rows without a reason
+ * category fall through to the `other` branch in the UI.
  */
 const kindFailureReason = v.union(
   v.literal("live_source_unavailable"),
@@ -373,11 +373,10 @@ export default defineSchema({
      * Optional: artifacts with no `folderId` surface in the navigator's
      * "Uncategorized" virtual node.
      *
-     * System Design model: every artifact kind — including the previously
-     * repo-pinned `manifest`, `readme_summary`, and `architecture_overview` —
-     * lives inside the default System Design folder tree that is seeded on
-     * repository import. The folders themselves are user-editable (rename,
-     * move, delete) via `artifactFolders.systemKey` for stable lookup.
+     * System Design model: every artifact kind lives inside the default
+     * System Design folder tree that is seeded on repository import. The
+     * folders themselves are user-editable (rename, move, delete) via
+     * `artifactFolders.systemKey` for stable lookup.
      */
     folderId: v.optional(v.id("artifactFolders")),
     /**
@@ -423,8 +422,7 @@ export default defineSchema({
      * (title / summary / contentMarkdown). Distinct from `_creationTime`
      * so the navigator's "recently changed" pulse can light up for edits
      * to existing artifacts, not just new rows. Optional because rows
-     * predating this column have no recorded edit timestamp; consumers
-     * fall back to `_creationTime` in that case.
+     * without a recorded edit timestamp fall back to `_creationTime`.
      */
     updatedAt: v.optional(v.number()),
   })
@@ -651,9 +649,9 @@ export default defineSchema({
     estimatedInputTokens: v.optional(v.number()),
     estimatedOutputTokens: v.optional(v.number()),
     /**
-     * Plan 10 — per-message cost estimate in USD, computed from the
-     * model's reported usage and a snapshot pricing table at finalize
-     * time (`convex/lib/openaiPricing.ts`). Used by:
+     * Per-message cost estimate in USD, computed from the model's reported
+     * usage and a snapshot pricing table at finalize time
+     * (`convex/lib/openaiPricing.ts`). Used by:
      *
      *   1. The chat bubble cost-ticker ("~$0.03 (1.2k tokens, 5 tools)")
      *      so the user can correlate spend to specific replies.
@@ -662,11 +660,10 @@ export default defineSchema({
      *      cost against the per-job total when an investigation needs
      *      a finer breakdown than the job-level rollup.
      *
-     * Optional + only written for assistant replies whose model is in the
-     * pricing table; messages predating Plan 10 (and discuss / library
-     * heuristic replies) keep the field unset rather than stored as 0,
-     * so the frontend can render "—" instead of "$0.00" when cost is
-     * genuinely unknown vs. genuinely zero.
+     * Optional and only written for assistant replies whose model is in the
+     * pricing table (discuss / library heuristic replies keep the field
+     * unset rather than stored as 0), so the frontend can render "—" when
+     * cost is genuinely unknown vs. "$0.00" when it is genuinely zero.
      */
     estimatedCostUsd: v.optional(v.number()),
     /**
@@ -693,9 +690,8 @@ export default defineSchema({
      * the array is the artifact the prompt rendered as `## [A1] …`, index 2
      * the `[A2]` artifact, and so on. The frontend uses this to turn `[A#]`
      * tokens in the assistant's content into links that jump to the right
-     * artifact in the side panel. Optional + only written when the reply
-     * actually had artifacts in scope (library mode), so messages predating
-     * citationMap stay valid without backfill (widen-migrate-narrow).
+     * artifact in the side panel. Optional and only written when the reply
+     * actually had artifacts in scope (library mode).
      */
     citationMap: v.optional(
       v.array(
@@ -720,14 +716,13 @@ export default defineSchema({
       ),
     ),
     /**
-     * Plan 06 — frozen tool-call trace for finalized assistant replies.
+     * Frozen tool-call trace for finalized assistant replies.
      *
      * Folded from the ephemeral `messageToolCallEvents` table at finalize
      * time so the durable `messages` row carries the full, post-streaming
-     * trace without joining a second table. Optional + only written when the
-     * reply actually ran tools, so messages predating Plan 06 (and any non-
-     * sandbox reply) keep the field unset rather than `[]` — the frontend
-     * treats both as "no trace".
+     * trace without joining a second table. Optional and only written when
+     * the reply actually ran tools (non-sandbox replies keep the field unset
+     * rather than `[]` — the frontend treats both as "no trace").
      *
      * Each entry corresponds to *one* tool invocation, correlated by the AI
      * SDK's `toolCallId` during folding. Multiple calls of the same tool
@@ -756,7 +751,7 @@ export default defineSchema({
       ),
     ),
     /**
-     * Plan 11 — sandbox-grounded citation lint output.
+     * Sandbox-grounded citation lint output.
      *
      * Half-open `[start, end)` offsets into `messages.content` marking
      * sentences the model emitted without either (a) a `[path:line]`
@@ -767,11 +762,10 @@ export default defineSchema({
      * design (we never reject the model's output).
      *
      * Computed by `convex/chat/citationLint.ts:lintCitations` at finalize
-     * / fail / cancel time. Optional + only written for sandbox-grounded
+     * / fail / cancel time. Optional and only written for sandbox-grounded
      * replies (`groundSandbox === true`) that produced at least one
-     * flagged sentence; messages predating Plan 11 (and ungrounded
-     * Discuss / Library replies) keep the field unset rather than `[]`
-     * — the renderer treats both as "no highlights".
+     * flagged sentence (ungrounded Discuss / Library replies keep the field
+     * unset rather than `[]` — the renderer treats both as "no highlights").
      *
      * Capped at `MAX_UNVERIFIED_CLAIMS_PER_MESSAGE` (50) inside the lint
      * function so a runaway pathological reply cannot push the message
@@ -825,7 +819,7 @@ export default defineSchema({
   }).index("by_streamId_and_sequence", ["streamId", "sequence"]),
 
   /**
-   * Plan 06 — ephemeral tool-call event log used to drive the live ticker
+   * Ephemeral tool-call event log used to drive the live ticker
    * and to fold a durable `messages.toolCalls` trace at finalize time.
    *
    * Lifecycle (per assistant reply):
@@ -861,10 +855,9 @@ export default defineSchema({
    *     reuse `_creationTime` for this because the row may have been
    *     written long after the underlying tool started (e.g. `end` event
    *     after a slow shell command).
-   *   - `inputSummary` / `outputSummary` are pre-redacted (Plan 05) and
-   *     length-capped in `chat/streaming.ts` so a runaway tool result
-   *     can't exceed Convex's 1 MB document size when folded into
-   *     `messages.toolCalls`.
+   *   - `inputSummary` / `outputSummary` are pre-redacted and length-capped
+   *     in `chat/streaming.ts` so a runaway tool result can't exceed
+   *     Convex's 1 MB document size when folded into `messages.toolCalls`.
    */
   messageToolCallEvents: defineTable({
     messageId: v.id("messages"),
@@ -879,20 +872,20 @@ export default defineSchema({
   }).index("by_messageId_and_sequence", ["messageId", "sequence"]),
 
   /**
-   * Plan 12 — Sandbox tool-call audit log.
+   * Sandbox tool-call audit log.
    *
    * One row per *completed* sandbox tool execution (success or tool-reported
-   * error). Distinct from `messageToolCallEvents` (Plan 06's ephemeral
-   * ticker feed, drained at finalize) and `messages.toolCalls` (Plan 06's
-   * frozen per-message trace, lives as long as the parent message): this
-   * table is the long-lived compliance / internal-debugging trail. It
-   * outlives individual messages so a thread deletion does not erase the
-   * record of which files were read or which commands were run.
+   * error). Distinct from `messageToolCallEvents` (the ephemeral ticker
+   * feed, drained at finalize) and `messages.toolCalls` (the frozen
+   * per-message trace, lives as long as the parent message): this table is
+   * the long-lived compliance / internal-debugging trail. It outlives
+   * individual messages so a thread deletion does not erase the record of
+   * which files were read or which commands were run.
    *
    * Lifecycle:
    *   - **Append**: written from `convex/chat/generation.ts` once per
    *     `tool-result` / `tool-error` event the AI SDK surfaces, *after*
-   *     the matching Plan 06 event row, via
+   *     the matching `messageToolCallEvents` row, via
    *     `convex/chat/sandboxToolCallLog.ts:recordSandboxToolCallLogEntry`.
    *   - **Query**: `by_owner_and_time` answers "what user X did between
    *     time A and B"; the implicit `_creationTime` secondary sort
@@ -909,9 +902,9 @@ export default defineSchema({
    * Field notes:
    *   - `inputJson` is the redacted, JSON-stringified tool input (`part.input`
    *     from the AI SDK). The mutation re-caps via
-   *     `SANDBOX_TOOL_CALL_LOG_INPUT_MAX_CHARS` (2000) — distinct from
-   *     Plan 06's UI-visible 600-char cap so audit recording preserves
-   *     more of long `run_shell` invocations.
+   *     `SANDBOX_TOOL_CALL_LOG_INPUT_MAX_CHARS` (2000) — distinct from the
+   *     UI-visible 600-char cap so audit recording preserves more of long
+   *     `run_shell` invocations.
    *   - `outputBytes` is the byte length of the JSON-stringified tool
    *     output (`part.output`), pre-redaction. The audit log deliberately
    *     does *not* duplicate the output payload — `messages.toolCalls`

@@ -1,16 +1,16 @@
 /**
- * Plan 04 + 08 — Sandbox tool factory.
+ * Sandbox tool factory.
  *
  * Three tools the LLM can call during a sandbox-mode chat reply:
  *
- *   - `read_file` (Plan 04): UTF-8 file contents capped at 64 KiB.
- *   - `list_dir`  (Plan 04): directory entries capped at 200 names.
- *   - `run_shell` (Plan 08): arbitrary shell command, output capped at
- *     32 KiB, gated by a deny list of obviously-destructive patterns,
- *     bounded by a per-call timeout, working directory pinned inside the
- *     repo subtree.
+ *   - `read_file`: UTF-8 file contents capped at 64 KiB.
+ *   - `list_dir`: directory entries capped at 200 names.
+ *   - `run_shell`: arbitrary shell command, output capped at 32 KiB,
+ *     gated by a deny list of obviously-destructive patterns, bounded
+ *     by a per-call timeout, working directory pinned inside the repo
+ *     subtree.
  *
- * Design boundaries that the surrounding plans depend on:
+ * Design boundaries the rest of the chat pipeline depends on:
  *
  *   1. **Pure factory.** `createSandboxTools(client, repoPath)` is a pure
  *      function over a small `SandboxFsClient` interface. Tests pass a fake
@@ -47,26 +47,26 @@
  *      cost has already been paid; truncating earlier would force a re-encode
  *      round-trip with no benefit.
  *
- *   5. **Result shape is forward-compatible with Plan 06's persisted trace.**
- *      Each success envelope carries `truncated`, `bytesReturned`, and (where
- *      useful) `totalBytes` / `totalEntries` / `durationMs` / `exitCode` so
- *      the upcoming tool-call ticker can summarise a call as `Reading
+ *   5. **Result shape carries trace-friendly metadata.** Each success
+ *      envelope carries `truncated`, `bytesReturned`, and (where useful)
+ *      `totalBytes` / `totalEntries` / `durationMs` / `exitCode` so the
+ *      tool-call ticker can summarise a call as `Reading
  *      convex/chat/send.ts (12.4 KB, truncated)` or `Ran grep (exit 0,
  *      842 ms)` without re-running the tool.
  *
- *   6. **Plan 05 — every return path runs through `redact()`.** Tool output
- *      flows two places: into the LLM's next-step input *and* into durable
- *      storage (Plan 06's `messages.toolCalls`, Plan 12's
- *      `sandboxToolCallLog`). A `.git/config` token or hard-coded API key
- *      that escapes here lands in the `messages` table and survives sandbox
- *      deletion. So `read_file` content, `list_dir` entry names, *and*
- *      `run_shell` combined output are all scrubbed before the success
- *      envelope is built; matched pattern types bubble up via `redactedTypes`
- *      so the LLM (and any downstream audit reader) knows that something
- *      was filtered without learning what. See
+ *   6. **Every return path runs through `redact()`.** Tool output flows
+ *      two places: into the LLM's next-step input *and* into durable
+ *      storage (`messages.toolCalls`, `sandboxToolCallLog`). A
+ *      `.git/config` token or hard-coded API key that escapes here lands
+ *      in the `messages` table and survives sandbox deletion. So
+ *      `read_file` content, `list_dir` entry names, *and* `run_shell`
+ *      combined output are all scrubbed before the success envelope is
+ *      built; matched pattern types bubble up via `redactedTypes` so the
+ *      LLM (and any downstream audit reader) knows that something was
+ *      filtered without learning what. See
  *      `docs/sandbox-mode-security-system-design.md` for the threat model.
  *
- *   7. **Plan 08 — `run_shell` deny list is last-mile, not the boundary.**
+ *   7. **`run_shell` deny list is last-mile, not the boundary.**
  *      The primary defense against destructive operations is Daytona's
  *      sandbox isolation (process limits, network policy, and the fact that
  *      the sandbox is throwaway). The deny list is a defense-in-depth filter
@@ -125,7 +125,7 @@ export const SANDBOX_READ_FILE_TIMEOUT_SECONDS = 15;
 export const SANDBOX_TRUNCATION_MARKER = "\n\n[…truncated by Systify after 64 KB…]";
 
 /* ---------------------------------------------------------------------- *
- * Plan 08 — `run_shell` limits.                                          *
+ * `run_shell` limits.                                                     *
  * ---------------------------------------------------------------------- */
 
 /**
@@ -150,17 +150,16 @@ export const SANDBOX_RUN_SHELL_MAX_TIMEOUT_SECONDS = 60;
 /**
  * Output cap for `run_shell`. Daytona's `executeCommand` returns merged
  * stdout/stderr in a single `result` string (the SDK does *not* split the
- * two streams), so the cap is enforced on the combined buffer. 32 KiB is
- * twice the per-stream "16 KB stdout / 16 KB stderr" budget the plan calls
- * out and matches Plan 08's documented quota — it gives the LLM enough
- * room to reason over a reasonable `grep` / `git log` result without
- * pushing the message document past Convex's 1 MB row limit.
+ * two streams), so the cap is enforced on the combined buffer. 32 KiB
+ * gives the LLM enough room to reason over a reasonable `grep` / `git log`
+ * result without pushing the message document past Convex's 1 MB row
+ * limit.
  */
 export const SANDBOX_RUN_SHELL_MAX_OUTPUT_BYTES = 32 * 1024;
 
 /**
  * Marker appended to truncated run_shell outputs. Mirrors the read_file
- * marker so the LLM (and Plan 06's tool-call ticker) can pattern-match the
+ * marker so the LLM (and the tool-call ticker) can pattern-match the
  * `[…truncated by Systify after N KB…]` shape uniformly across tools.
  */
 export const SANDBOX_RUN_SHELL_TRUNCATION_MARKER = "\n\n[…truncated by Systify after 32 KB…]";
@@ -177,13 +176,13 @@ export interface SandboxListedFile {
 }
 
 /**
- * Plan 08 — options bag for `executeCommand`. The shape is option-bag
- * (rather than positional like `downloadFile(path, timeoutSeconds)`) because
- * Daytona's underlying call has four orthogonal arguments
- * (`command, cwd, env, timeout`) and a positional bridge would be ambiguous
- * to read at call sites. `timeoutSeconds` is required at the type level —
- * the tool layer always picks a value (default or model-supplied), so an
- * "implicit Daytona default" mode would be a footgun.
+ * Options bag for `executeCommand`. The shape is option-bag (rather than
+ * positional like `downloadFile(path, timeoutSeconds)`) because Daytona's
+ * underlying call has four orthogonal arguments (`command, cwd, env,
+ * timeout`) and a positional bridge would be ambiguous to read at call
+ * sites. `timeoutSeconds` is required at the type level — the tool layer
+ * always picks a value (default or model-supplied), so an "implicit
+ * Daytona default" mode would be a footgun.
  */
 export interface SandboxShellExecuteOptions {
   readonly cwd?: string;
@@ -192,7 +191,7 @@ export interface SandboxShellExecuteOptions {
 }
 
 /**
- * Plan 08 — outcome of `executeCommand`.
+ * Outcome of `executeCommand`.
  *
  * Daytona surfaces *timeouts* as a typed exception (`DaytonaTimeoutError`).
  * The adapter (`getSandboxFsClient` in `daytona.ts`) translates that into a
@@ -216,19 +215,18 @@ export type SandboxShellOutcome =
  * contract; broader access stays off the menu so adding a tool is a
  * deliberate API change here, not an accidental capability widening.
  *
- * Plan 04 introduced `downloadFile` and `listFiles`. Plan 08 added
- * `executeCommand` for the shell tool. The interface name retains the
- * historical `Fs` suffix because the shell access happens to share the
- * same Daytona handle and lifecycle; renaming would touch a wider blast
- * radius (`getSandboxFsClient` in `daytona.ts`, all generation call sites)
- * with no semantic gain.
+ * The interface name retains the `Fs` suffix even though `executeCommand`
+ * is a shell call rather than a filesystem operation — the shell access
+ * shares the same Daytona handle and lifecycle, so renaming would touch
+ * a wider blast radius (`getSandboxFsClient` in `daytona.ts`, all
+ * generation call sites) with no semantic gain.
  */
 export interface SandboxFsClient {
   /** Returns the entire file as raw bytes. Caller is responsible for size guards. */
   readonly downloadFile: (path: string, timeoutSeconds?: number) => Promise<Uint8Array>;
   readonly listFiles: (path: string) => Promise<readonly SandboxListedFile[]>;
   /**
-   * Plan 08 — execute a shell command inside the sandbox.
+   * Execute a shell command inside the sandbox.
    *
    * The contract is intentionally narrower than Daytona's raw
    * `executeCommand(command, cwd?, env?, timeout?)`:
@@ -243,17 +241,17 @@ export interface SandboxFsClient {
 }
 
 /* ---------------------------------------------------------------------- *
- * Result shapes (also exported so callers persisting tool traces in     *
- * Plan 06 / Plan 12 import the same types).                              *
+ * Result shapes (also exported so callers persisting tool traces import  *
+ * the same types).                                                       *
  * ---------------------------------------------------------------------- */
 
 /**
- * Plan 08 widens this union with shell-specific codes. The tool factory's
- * deny list emits `command_blocked`; an exceeded server-side timeout maps
- * to `command_timeout`; an empty / whitespace-only command emits
- * `invalid_command`. `io_error` continues to catch any other infrastructural
- * Daytona failure (auth, 404, network) so the model sees a single,
- * predictable envelope shape across the entire surface.
+ * Structured error codes the tool factory emits. The deny list emits
+ * `command_blocked`; an exceeded server-side timeout maps to
+ * `command_timeout`; an empty / whitespace-only command emits
+ * `invalid_command`. `io_error` catches any other infrastructural Daytona
+ * failure (auth, 404, network) so the model sees a single, predictable
+ * envelope shape across the entire surface.
  */
 export type SandboxToolErrorCode =
   | "invalid_path"
@@ -279,11 +277,11 @@ export type ReadFileToolResult =
       readonly truncated: boolean;
       readonly content: string;
       /**
-       * Plan 05 — sorted, de-duplicated redaction slugs that fired
-       * against the decoded content. Empty when nothing was scrubbed.
-       * Plan 12's `sandboxToolCallLog.redactedFields` lifts this field
-       * directly, so the typed union (rather than `string[]`) ensures
-       * audit consumers stay in sync with the registry.
+       * Sorted, de-duplicated redaction slugs that fired against the
+       * decoded content. Empty when nothing was scrubbed.
+       * `sandboxToolCallLog.redactedFields` lifts this field directly,
+       * so the typed union (rather than `string[]`) ensures audit
+       * consumers stay in sync with the registry.
        */
       readonly redactedTypes: readonly RedactionType[];
     }
@@ -303,17 +301,17 @@ export type ListDirToolResult =
       readonly totalEntries: number;
       readonly truncated: boolean;
       /**
-       * Plan 05 — like `ReadFileToolResult.redactedTypes` but aggregated
-       * across every entry name. Forecloses an obscure leak path where
-       * an attacker plants a file whose *name* is the secret and the
-       * LLM exfiltrates it through a directory listing alone.
+       * Like `ReadFileToolResult.redactedTypes` but aggregated across
+       * every entry name. Forecloses an obscure leak path where an
+       * attacker plants a file whose *name* is the secret and the LLM
+       * exfiltrates it through a directory listing alone.
        */
       readonly redactedTypes: readonly RedactionType[];
     }
   | SandboxToolErrorEnvelope;
 
 /**
- * Plan 08 — `run_shell` result envelope.
+ * `run_shell` result envelope.
  *
  * Success path carries:
  *   - `command` / `workdir`: echo of the *resolved* values so the LLM
@@ -324,11 +322,11 @@ export type ListDirToolResult =
  *   - `output`: combined stdout/stderr (Daytona does not split the two),
  *     post-redaction, post-truncation. The byte counts (`bytesReturned`,
  *     `totalBytes`) refer to the *pre-redaction* bytes — they are size
- *     signals for Plan 06's "Ran grep (32.0 KB)" ticker, not lengths of
- *     the redacted display string.
+ *     signals for the "Ran grep (32.0 KB)" ticker, not lengths of the
+ *     redacted display string.
  *   - `durationMs`: wall-clock time from the moment the tool layer dispatched
  *     to the adapter to the moment it returned. Useful for the live ticker
- *     and for Plan 13's per-command latency metrics.
+ *     and for per-command latency metrics.
  *   - `redactedTypes`: same closed-set slug array as the other tools.
  */
 export type RunShellToolResult =
@@ -480,13 +478,13 @@ function explainIoError(error: unknown): string {
 }
 
 /* ---------------------------------------------------------------------- *
- * Plan 08 — `run_shell` deny list.                                       *
+ * `run_shell` deny list.                                                  *
  * ---------------------------------------------------------------------- */
 
 /**
  * Deny-list entries are deliberately *narrow* regex patterns over the raw
- * command string. The plan's design boundary is "block obvious
- * destructive patterns; rely on Daytona for the real isolation":
+ * command string. The design boundary is "block obvious destructive
+ * patterns; rely on Daytona for the real isolation":
  *
  *   - Daytona's container is the primary enforcement layer (process limits,
  *     network policy, throwaway sandbox lifecycle). The deny list cannot —
@@ -648,8 +646,8 @@ function findCommandDenyReason(command: string): string | null {
  *   - Total byte count and the truncation cutoff are computed in the same
  *     pass: we record the cutoff as soon as the running byte count would
  *     exceed the cap, but keep iterating to finish counting `totalBytes`.
- *     `totalBytes` reports the *true* pre-truncation cost so Plan 06's
- *     ticker can show "32.0 KB out of 580 KB" rather than just the visible
+ *     `totalBytes` reports the *true* pre-truncation cost so the ticker
+ *     can show "32.0 KB out of 580 KB" rather than just the visible
  *     payload size.
  *
  * Daytona's `executeCommand` returns the merged output as an already-decoded
@@ -703,7 +701,7 @@ function truncateShellOutput(rawOutput: string): {
 }
 
 /**
- * Plan 08 — clamp the model-supplied timeout into the allowed range.
+ * Clamp the model-supplied timeout into the allowed range.
  *
  * The Zod schema already constrains the input to `[1, MAX]`, but a missing
  * value or an upstream validator change should not be able to widen that
@@ -767,9 +765,9 @@ export async function executeReadFile(
   }
 
   const { content, bytesReturned, truncated } = decodeFileBytes(bytes);
-  // Plan 05 — `bytesReturned` / `totalBytes` keep their pre-redaction
-  // values: they are cost signals for Plan 06's "Reading X.ts (12.4 KB)"
-  // ticker, not lengths of the post-redaction string.
+  // `bytesReturned` / `totalBytes` keep their pre-redaction values: they
+  // are cost signals for the "Reading X.ts (12.4 KB)" ticker, not lengths
+  // of the post-redaction string.
   const { redacted, matchedTypes } = redact(content);
 
   return {
@@ -823,9 +821,9 @@ export async function executeListDir(
   const truncated = sortedEntries.length > SANDBOX_LIST_DIR_MAX_ENTRIES;
   const sliced = truncated ? sortedEntries.slice(0, SANDBOX_LIST_DIR_MAX_ENTRIES) : sortedEntries;
 
-  // Plan 05 — redaction signals are aggregated to the result level (not
-  // annotated per-entry) so the entry shape stays `{name, type, sizeBytes}`,
-  // which Plan 06's tool-call ticker depends on.
+  // Redaction signals are aggregated to the result level (not annotated
+  // per-entry) so the entry shape stays `{name, type, sizeBytes}`, which
+  // the tool-call ticker depends on.
   const aggregatedRedactionTypes = new Set<RedactionType>();
   const redactedEntries: ListDirToolEntry[] = sliced.map((entry) => {
     const { redacted, matchedTypes } = redact(entry.name);
@@ -850,7 +848,7 @@ export async function executeListDir(
 }
 
 /**
- * Plan 08 — execute a shell command inside the sandbox.
+ * Execute a shell command inside the sandbox.
  *
  * Steps, in order:
  *   1. Trim and validate the command. An empty / whitespace-only command
@@ -924,7 +922,7 @@ export async function executeRunShell(
   // carry an implicit duration:
   //
   //   - `command_timeout`: the duration is by construction
-  //     `~timeoutSeconds`. Plan 06's ticker formats this as "Ran for 30s,
+  //     `~timeoutSeconds`. The ticker formats this as "Ran for 30s,
   //     timed out" using `timeoutSeconds`, so we do not need to surface a
   //     measured `durationMs` on the error envelope to render that string.
   //   - `io_error`: an upstream Daytona failure (auth, 404, network drop)
@@ -933,7 +931,7 @@ export async function executeRunShell(
   //     12 ms" when the call did not in fact ever reach Daytona is worse
   //     than no number at all.
   //
-  // If a future plan needs the wall-clock measurement on either error
+  // If a future change needs the wall-clock measurement on either error
   // envelope, the cleanest extension is to add an optional `durationMs`
   // to `SandboxToolErrorEnvelope` (and its persisted counterpart in
   // `messageToolCallEvents`), not to silently overload the success-only
@@ -1015,7 +1013,7 @@ const LIST_DIR_INPUT_SCHEMA = z.object({
 });
 
 /**
- * Plan 08 — `run_shell` input schema.
+ * `run_shell` input schema.
  *
  * The schema is deliberately loose on `command`: the LLM may submit any
  * non-empty string, and the tool layer enforces deny list / safety. We do
@@ -1063,7 +1061,7 @@ const RUN_SHELL_INPUT_SCHEMA = z.object({
  * The factory captures `client` and `repoPath` in the closures — a fresh
  * call per chat reply means each reply binds to its own sandbox handle,
  * with no cross-thread sharing. The returned tools are otherwise plain AI
- * SDK `tool({...})` instances; nothing prevents downstream code (Plan 06's
+ * SDK `tool({...})` instances; nothing prevents downstream code (the
  * tool-call ticker) from wrapping them or peeking at their inputs.
  */
 export function createSandboxTools(client: SandboxFsClient, repoPath: string) {

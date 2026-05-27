@@ -212,8 +212,12 @@ subscription:
 ### Prefix registry
 
 ```ts
-const WORKSPACE_SCOPED_PREFIXES = ["systify.library.tabs.", "systify.library.askTabs."];
-const REPOSITORY_SCOPED_PREFIX = "systify.folderNav.open.";
+const REPOSITORY_SCOPED_PREFIXES = [
+  "systify.library.tabs.",
+  "systify.library.askTabs.",
+  "systify.composer.draft.repository.",
+  "systify.folderNav.open.",
+] as const;
 ```
 
 Adding a new id-scoped key means adding its prefix here and **not**
@@ -295,9 +299,9 @@ the other.
    `window.localStorage` / `window.sessionStorage` directly. Use
    `readJSON` / `writeJSON` for non-string values; write a type guard.
 4. **If the key is id-scoped** (`prefix.{repoId}.…`), add
-   its prefix to `WORKSPACE_SCOPED_PREFIXES` or
-   `REPOSITORY_SCOPED_PREFIX` in `use-storage-gc.ts`. Do not write a
-   manual cleanup callback in the delete mutation.
+   its prefix to `REPOSITORY_SCOPED_PREFIXES` in
+   `use-storage-gc.ts`. Do not write a manual cleanup callback in the
+   delete mutation.
 5. **If the value is a boolean preference**, use
    `useLocalStorageBoolean` rather than rolling your own; you get
    conservative writes, cross-tab sync, and the "follows changing

@@ -1,5 +1,5 @@
 /**
- * Plan 11 — Sandbox-mode citation lint.
+ * Sandbox-mode citation lint.
  *
  * The sandbox prompt teaches the model two rules:
  *   1. Every factual claim about the codebase is followed by a

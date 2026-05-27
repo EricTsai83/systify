@@ -26,7 +26,7 @@ The freshness check optimizes for five properties:
 2. the badge appears soon after the user looks at the repository
 3. the badge disappears immediately after the user starts a sync
 4. derived "is stale" cannot drift from the underlying SHAs
-5. multiple tabs and workspaces cannot multiply API calls
+5. multiple tabs or devices cannot multiply API calls
 
 ## Chosen Design
 
@@ -132,7 +132,6 @@ Tightening the interval still does not match webhook latency, and loosening it p
 Client-side debouncing inside `useCheckForUpdates` would only deduplicate within one browser context. The same repository can be open in:
 
 - multiple browser tabs of the same user
-- multiple workspaces showing overlapping repository lists
 - different devices for the same user
 
 Putting the throttle in the action gives one authoritative gate for all of those cases. The hook stays simple ("fire on these two events") and the server alone decides whether the call is cheap.

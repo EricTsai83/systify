@@ -1,7 +1,7 @@
 import type { ChatMode } from "./types";
 
 /**
- * Plan 14 — passive mode-suggestion heuristic. Runs on every keystroke from
+ * Passive mode-suggestion heuristic. Runs on every keystroke from
  * the composer and, when the input shape unambiguously fits a different
  * mode than the one the user is in, returns a one-line nudge with a stable
  * `key` so the composer can show / dismiss the same suggestion across
@@ -29,7 +29,7 @@ import type { ChatMode } from "./types";
  *
  *   4. **Stable `key` per heuristic.** The chat panel keeps a session
  *      `Set<string>` of dismissed keys; matching keys must collapse so
- *      dismissing "specific-file:lab" once silences every future
+ *      dismissing "specific-file:sandbox" once silences every future
  *      file-path suggestion this session.
  *
  * The two heuristics intentionally cover only the highest-precision

@@ -8,7 +8,7 @@ type SerializableValue =
   | { [key: string]: SerializableValue };
 
 /**
- * Plan 13 — metrics scope. Distinct from the per-feature `chat` /
+ * Metrics scope. Distinct from the per-feature `chat` /
  * `daytona` / etc. scopes so a downstream telemetry pipeline can
  * subscribe to "everything that's a metric" by filtering log lines
  * starting with `[metrics]` without parsing the body.
@@ -21,7 +21,7 @@ type SerializableValue =
 export const METRIC_SCOPE = "metrics";
 
 /**
- * Plan 13 — metric tag value type. Tighter than the ambient log-detail
+ * Metric tag value type. Tighter than the ambient log-detail
  * type because tags drive dashboards: a serialized object inside a tag
  * would be treated as one giant high-cardinality string by most
  * aggregation backends. Numbers / strings / booleans / `undefined`
@@ -136,7 +136,7 @@ export function logErrorWithId(
 }
 
 /**
- * Plan 13 — emit a structured metric line.
+ * Emit a structured metric line.
  *
  * **Format contract**:
  * ```

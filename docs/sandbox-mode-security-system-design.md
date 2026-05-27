@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document explains the security model for Systify's `lab` chat mode, in which an LLM is given shell-like tools (`read_file`, `list_dir`, `run_shell`) over a Daytona-hosted clone of the user's repository.
+This document explains the security model for Systify's sandbox-grounded Discuss replies (`messages.groundSandbox === true`), in which an LLM is given shell-like tools (`read_file`, `list_dir`, `run_shell`) over a Daytona-hosted clone of the user's repository.
 
 The scope is the boundary between sandbox tool output and persisted message content. Network isolation, sandbox lifecycle, and Daytona's own isolation properties are out of scope here.
 
@@ -82,7 +82,7 @@ The Daytona SDK forwards the username/password pair to `git clone` over HTTPS. G
 
 The token is a GitHub App installation access token (`convex/githubAppNode.ts:110-129`). It is valid for one hour and scoped to whatever repositories the installation has been granted. That scope is small relative to a personal access token, but it is not negligible — for a multi-repo installation it covers every repo the customer has granted Systify.
 
-Git writes the token into `.git/config` during the clone, where it would sit for the lifetime of the sandbox. An LLM running `run_shell` (Plan 08) could then issue `cat .git/config` or `git remote -v`, see the token in the result, and emit it as part of its answer — at which point the answer would be persisted to `messages`.
+Git writes the token into `.git/config` during the clone, where it would sit for the lifetime of the sandbox. An LLM running `run_shell` could then issue `cat .git/config` or `git remote -v`, see the token in the result, and emit it as part of its answer — at which point the answer would be persisted to `messages`.
 
 This is the dominant near-term threat. It is independent of customer behavior — the customer cannot avoid it by keeping their repo clean. Layer 1 below removes the token by overwriting the remote URL immediately after the clone returns; the mitigation is implemented inside `cloneRepositoryInSandbox` in `convex/daytona.ts`.
 
@@ -146,8 +146,8 @@ The `redact(text)` function in `convex/chat/redaction.ts` scans tool output for 
 
 Redaction is applied at two points:
 
-1. Before the tool result is returned to the LLM. This prevents the LLM from reasoning over or quoting the secret. Implemented inside `executeReadFile` (file content) and `executeListDir` (entry names, aggregated to the result level so the entry shape stays stable for Plan 06's tool-call ticker).
-2. Before any tool input or output is written to `messages.toolCalls`, `messageToolCallEvents`, or `sandboxToolCallLog`. The persistence path is delivered by Plan 06 (live ticker + `messages.toolCalls`) and Plan 12 (`sandboxToolCallLog`); both plans lift the existing `redactedTypes` field directly rather than re-running redaction.
+1. Before the tool result is returned to the LLM. This prevents the LLM from reasoning over or quoting the secret. Implemented inside `executeReadFile` (file content) and `executeListDir` (entry names, aggregated to the result level so the entry shape stays stable for the tool-call ticker).
+2. Before any tool input or output is written to `messages.toolCalls`, `messageToolCallEvents`, or `sandboxToolCallLog`. The persistence path (`messages.toolCalls` + `messageToolCallEvents`, and `sandboxToolCallLog`) lifts the existing `redactedTypes` field directly rather than re-running redaction.
 
 `redact()` returns both the scrubbed text and a sorted, de-duplicated list of matched pattern types. The matched-types list is informational — it lets the LLM and audit consumers know that something was filtered without exposing what. The returned slugs are typed as a closed `RedactionType` union so adding a pattern requires widening the union *and* the registry, which the compiler enforces.
 
@@ -213,7 +213,7 @@ Test coverage:
 - `convex/chat/redaction.test.ts` covers each pattern, the "specific before general" ordering, large-input behavior up to the 64 KiB `read_file` cap, and the no-self-match invariant on the `[REDACTED:type]` sentinel.
 - `convex/chat/sandboxTools.test.ts` covers the integration: `read_file` and `list_dir` results carry `redactedTypes`; `bytesReturned` / `totalBytes` keep their pre-redaction values; `list_dir` aggregates redaction signals to the result level so entry shape stays stable; error envelopes do not carry `redactedTypes`.
 
-Future plans extend Layer 2 by lifting `redactedTypes` directly into durable persistence: Plan 06 records it on `messages.toolCalls`, and Plan 12 lifts it into `sandboxToolCallLog.redactedFields`. The closed-set `RedactionType` union ensures those consumers stay in sync with the registry at the type-system level.
+Layer 2 extends into durable persistence: `messages.toolCalls` carries the redacted summaries and `sandboxToolCallLog.redactedFields` carries the matched-type slugs. The closed-set `RedactionType` union ensures both consumers stay in sync with the registry at the type-system level.
 
 ## Per-tier posture (Daytona)
 
@@ -226,8 +226,8 @@ Daytona gates `sandbox.updateNetworkSettings(...)` by organization tier, so the 
 
 Three properties make the Tier 1/2 fallback meaningfully safer than "permissive egress with nothing else":
 
-1. **Throwaway lifecycle**: sandboxes are provisioned on demand by Lab activation or LLM-backed System Design generation, auto-stop within minutes of idleness, and auto-delete within 48 hours. Even a successful exfiltration attempt has a small window of compounding access — there is no long-lived sandbox to reuse.
+1. **Throwaway lifecycle**: sandboxes are provisioned on demand by Sandbox grounding activation or LLM-backed System Design generation, auto-stop within minutes of idleness, and auto-delete within 48 hours. Even a successful exfiltration attempt has a small window of compounding access — there is no long-lived sandbox to reuse.
 2. **Token scrub stays unconditional**: the GitHub installation token in `.git/config` is overwritten the moment `git clone` returns, so a successful curl-out from inside the sandbox cannot exfiltrate the token (which would have given the attacker access to *every* repo in the App installation, not just the one being analysed).
 3. **`redact()` runs on every tool envelope**: even if the LLM successfully reads `.env` via `read_file`, the secret is replaced with a `[REDACTED:…]` sentinel before the LLM sees it. The closed-set `RedactionType` union prevents an attacker from suppressing a redaction by widening the type union.
 
-The Tier 1/2 posture is **not safe for accepting third-party private repositories without disclosure**. Operators using Systify as a hosted service for unknown customers must upgrade to Tier 3+ and set `DAYTONA_POST_CLONE_BLOCK_NETWORK=true`. The structured `post_clone_network_block_skipped` warn emitted on every Tier 1/2 sandbox clone (Lab activation or LLM-backed System Design generation) exists precisely so that a future operator running a deployment audit can detect the degraded posture in logs without re-reading code.
+The Tier 1/2 posture is **not safe for accepting third-party private repositories without disclosure**. Operators using Systify as a hosted service for unknown customers must upgrade to Tier 3+ and set `DAYTONA_POST_CLONE_BLOCK_NETWORK=true`. The structured `post_clone_network_block_skipped` warn emitted on every Tier 1/2 sandbox clone (Sandbox grounding activation or LLM-backed System Design generation) exists precisely so that a future operator running a deployment audit can detect the degraded posture in logs without re-reading code.

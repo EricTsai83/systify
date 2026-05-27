@@ -224,7 +224,7 @@ export function FolderOverview({ folderId, onSelectArtifact, onAfterDelete, clas
         title="Delete folder"
         description={
           confirmStrategy === "deleteContents"
-            ? "This deletes the folder and every sub-folder inside it. The artifacts themselves stay in the workspace under Uncategorized."
+            ? "This deletes the folder and every sub-folder inside it. The artifacts themselves stay in the repository under Uncategorized."
             : "Move the artifacts and sub-folders inside this folder one level up, then delete the folder. Artifacts are preserved."
         }
         actionLabel="Delete"

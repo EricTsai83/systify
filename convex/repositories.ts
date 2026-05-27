@@ -686,8 +686,8 @@ export const cascadeDeleteRepository = internalMutation({
         .withIndex("by_threadId", (q) => q.eq("threadId", thread._id))
         .take(CASCADE_BATCH_SIZE);
       for (const msg of msgs) {
-        // Plan 06 — drain orphan tool-call events before deleting the
-        // message. Events are bounded per message (≤ step budget × 2) and
+        // Drain orphan tool-call events before deleting the message.
+        // Events are bounded per message (≤ step budget × 2) and
         // are normally cleaned up at finalize / fail; this is the
         // belt-and-braces path that catches any row that survived a
         // mid-stream crash. Order matters: delete child events first so a

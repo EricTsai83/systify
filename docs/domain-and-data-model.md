@@ -8,9 +8,9 @@ This document explains Systify's core domain entities, data responsibility bound
 
 The current data model has three clear centers:
 
-- **Code facts** — imports pin concrete trees (`imports.commitSha`), then `repoFiles` / `repoChunks` indexed from that snapshot. This is what Lab tools and Sandbox execution ultimately reason about.
+- **Code facts** — imports pin concrete trees (`imports.commitSha`), then `repoFiles` / `repoChunks` indexed from that snapshot. This is what sandbox-grounded tools ultimately reason about.
 - **Narratives** — `artifacts` hold longer-lived prose (System Design overviews, ADRs, notes). They link to repos (and optionally threads) via `repositoryId` / `threadId` and citations in chat—not a substitute for chunk-level grounding.
-- **Workspace shell** — `workspaces` are the UX container; attaching a repo means `workspaces.repositoryId` is populated so Sandbox/Lab/import share the **same workspace binding**.
+- **Repository aggregate** — `repositories` is the long-lived aggregate root and the binding point for sandbox sessions, threads, artifacts, and the import pipeline. Threads may also exist repository-less (`threads.repositoryId` unset) for ungrounded Discuss before an attach.
 - **Tenant isolation** — `ownerTokenIdentifier` scopes every viewer-owned row.
 - **Workflow progress** — `imports`, `jobs`, `sandboxes`, `messages`, `sandboxSessions` carry lifecycle fields.
 
@@ -38,7 +38,6 @@ flowchart TD
   Artifact[artifacts]
   RepoFile[repoFiles]
   RepoChunk[repoChunks]
-  Workspace[workspaces]
   ArtifactFolder[artifactFolders]
   ArtifactChunk[artifactChunks]
   SandboxSession[sandboxSessions]
@@ -53,11 +52,10 @@ flowchart TD
   Repository --> Artifact
   Repository --> RepoFile
   Repository --> RepoChunk
-  Repository --> Workspace
   Repository --> ArtifactFolder
-  Artifact --> ArtifactChunk
-  Workspace --> SandboxSession
+  Repository --> SandboxSession
   Repository --> Thread
+  Artifact --> ArtifactChunk
   Thread --> Message
   Import --> RepoFile
   Import --> RepoChunk
@@ -112,7 +110,7 @@ In other words, `repositories` is the long-lived entity, while `imports` is a on
 - `ttlExpiresAt`
 - auto-stop, auto-archive, and auto-delete intervals
 
-Its existence lets the system distinguish between a live sandbox that can support System Design generation or Lab and a repository that has only been indexed into static data.
+Its existence lets the system distinguish between a live sandbox that can support System Design generation or sandbox-grounded Discuss and a repository that has only been indexed into static data.
 
 ### `jobs`
 
@@ -162,13 +160,13 @@ This table plays two roles:
 1. Reusable knowledge produced by **System Design generation**: the user opts into this from the empty Library page, and the sandbox-backed job writes user-selected artifact kinds (defaults: `manifest`, `readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`). Import itself no longer seeds artifact bodies — it only seeds the default folder tree so the Library has a place to put them.
 2. Additional prose authored later by the user as Library notes, or produced by future per-folder generation jobs.
 
-Artifacts may optionally carry **`alignedImportCommitSha`**: best-effort record of which import revision the prose was authored against—used alongside Lab verification timestamps to distinguish “checked against sandbox” freshness from **import snapshot drift**.
+Artifacts may optionally carry **`alignedImportCommitSha`**: best-effort record of which import revision the prose was authored against—used alongside sandbox verification timestamps to distinguish "checked against sandbox" freshness from **import snapshot drift**.
 
 Library navigators consume metadata-only subscriptions; the markdown body loads when an editor tab is active.
 
-### `workspaces` and `userPreferences`
+### `userPreferences`
 
-`workspaces` is the URL and shell container. A workspace either binds **exactly one** `repositories` id (`workspace.repositoryId`) or represents the **Home** workspace with no repo. **Attach Repository** UX calls `setThreadRepository`: it invokes `ensureRepositoryWorkspace` so the canonical binding is **`workspaces.repositoryId`**, updates the thread’s `workspaceId`, and aligns Sandbox/Lab/import with that workspace—product copy should emphasize **workspace/repo binding**, not “repo metadata on a lone thread”. `userPreferences.lastActiveWorkspaceId` stores the viewer's current workspace for cross-device continuity, while localStorage is only a first-paint cache.
+`userPreferences` carries per-viewer key-value preferences. `lastActiveRepositoryId` is the canonical "current repository" pointer used by the repository shell to restore the viewer's last attached repository across devices; the frontend keeps a localStorage cache for first-paint, but on conflict the DB row wins. Threads can also exist repository-less — those live under the `/chat/:threadId` shell with `threads.repositoryId` undefined, and an **Attach Repository** action later sets the field in place without rewriting earlier messages.
 
 ### `artifactFolders` and `artifactChunks`
 
@@ -189,13 +187,13 @@ Together, these tables form the indexing layer:
 
 Chat data follows a standard thread/message model:
 
-- `threads` stores the title, mode, and last interaction timestamps. Current product modes are `discuss`, `library`, and `lab` — the same vocabulary appears in the persisted DB literal, the URL segment, and the UI label.
+- `threads` stores the title, mode, and last interaction timestamps. Current product modes are `discuss` and `library` — the same vocabulary appears in the persisted DB literal, the URL segment, and the UI label. Sandbox grounding is per-message inside Discuss (`messages.groundSandbox`), not a separate mode.
 - `messages` stores role, status, content, mode, and error information
 
 Beyond the basics, `messages` carries a few optional fields that are only populated when the corresponding feature applies:
 
 - `citationMap`: numbered `[A#] -> artifactId` entries, written for artifact-grounded replies
-- `toolCalls`: frozen tool-call trace for Lab replies (folded from `messageToolCallEvents` at terminalization: finalize or any terminal failure/recovery path; see `chat-and-analysis-pipeline.md` for the lifecycle)
+- `toolCalls`: frozen tool-call trace for sandbox-grounded replies (folded from `messageToolCallEvents` at terminalization: finalize or any terminal failure/recovery path; see `chat-and-analysis-pipeline.md` for the lifecycle)
 - `estimatedInputTokens` / `estimatedOutputTokens`: usage data from the model provider, when available
 
 All three stay unset on messages that do not need them, so older rows continue to validate without backfill.
@@ -214,7 +212,7 @@ See `streaming-reply-optimization-system-design.md` for the design reasoning beh
 
 ### `sandboxSessions`
 
-`sandboxSessions` tracks workspace-level sandbox execution state: `starting`, `active`, `paused`, `stopped`, or `ended`. The session owns cost transparency (`spentCents`) and idle auto-pause state so sandbox compute is explicit and observable. A workspace has at most one reusable sandbox session shared across every Discuss thread that flips the Sandbox grounding toggle on, so thread switching never reprovisions compute.
+`sandboxSessions` tracks repository-level sandbox execution state: `starting`, `active`, `paused`, `stopped`, or `ended`. The session owns cost transparency (`spentCents`) and idle auto-pause state so sandbox compute is explicit and observable. A repository has at most one reusable sandbox session shared across every Discuss thread that flips the Sandbox grounding toggle on, so thread switching never reprovisions compute.
 
 ### `githubInstallations` and `githubOAuthStates`
 
@@ -320,5 +318,5 @@ This split allows the UI, background workflows, and analysis features to share t
 - `jobs` provides a unified tracking layer that simplifies the UI, but the details of each job kind still require reading the implementation.
 - `jobs.kind = 'index'` is currently a reserved enum value; the codebase does not insert jobs with `kind: 'index'`, and indexing still happens inside the import pipeline.
 - `artifacts.version` is currently always inserted as `1`, so artifact version management is not implemented yet.
-- Import-drift indicators need `artifacts.alignedImportCommitSha`; legacy rows without it stay silent until a writer backfills the field.
+- Import-drift indicators need `artifacts.alignedImportCommitSha`; rows without it stay silent until a writer fills the field.
 

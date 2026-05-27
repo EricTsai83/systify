@@ -92,7 +92,7 @@ export function SwapThreadRepositoryControl({
           <DialogHeader className="text-left">
             <DialogTitle>Switch repository?</DialogTitle>
             <DialogDescription className="text-left text-muted-foreground">
-              The thread stays the same — only the workspace binding changes. Older messages remain as written; newer
+              The thread stays the same — only the repository binding changes. Older messages remain as written; newer
               answers use snippets and tools from{" "}
               <span className="font-medium text-foreground">
                 {pendingRepo?.sourceRepoFullName ?? "the target repo"}

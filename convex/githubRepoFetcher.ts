@@ -44,23 +44,20 @@ type RawTreeEntry = {
 /**
  * Builds a `RepositorySnapshot` for an import without provisioning a sandbox.
  *
- * The pipeline replaces the legacy "clone into Daytona + walk the tree on
- * disk" path with three GitHub API calls (repo metadata, branch head, full
- * recursive tree) plus a bounded fan-out of blob reads for README, package
- * manifests, and the heuristic "important" files. The returned snapshot is
- * structurally identical to what `collectRepositorySnapshot` used to produce,
- * so every downstream consumer (`buildRepositoryManifest`,
- * `createChunkRecords`, the System Design heuristics) keeps working without
- * modification.
+ * The pipeline issues three GitHub API calls (repo metadata, branch head,
+ * full recursive tree) plus a bounded fan-out of blob reads for README,
+ * package manifests, and the heuristic "important" files. Returns the
+ * `RepositorySnapshot` shape that every downstream consumer
+ * (`buildRepositoryManifest`, `createChunkRecords`, the System Design
+ * heuristics) reads from.
  *
  * Failure semantics:
  *   - Metadata / branch head / tree fetches throw on error — these are the
  *     load-bearing reads, and a partial snapshot here is worse than a clean
  *     failure with a Reference ID.
  *   - Per-blob content fetches are best-effort; a transient 404/500 on one
- *     file just drops that file's content from the snapshot, mirroring the
- *     sandbox path which silently degraded oversized or missing files via
- *     `fetchManifest`.
+ *     file just drops that file's content from the snapshot so the rest of
+ *     the import can still publish.
  */
 export async function fetchRepositorySnapshot(args: {
   installationId: number;
@@ -215,8 +212,7 @@ async function fetchTree(token: string, owner: string, repo: string, treeSha: st
     // GitHub returns truncated:true when the tree has >100k entries or the
     // response would exceed 7MB. We surface the warning so operators can spot
     // it in logs, but proceed with the partial tree — the import is best-
-    // effort for very large monorepos, same as the sandbox-side MAX_LISTED_FILES
-    // cap used to be.
+    // effort for very large monorepos.
     logWarn("github_repo_fetcher", "tree_truncated", {
       owner,
       repo,

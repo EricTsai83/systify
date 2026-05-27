@@ -384,9 +384,9 @@ export async function cloneRepositoryInSandbox(args: {
     });
   }
 
-  // Plan 05 — Token scrub. `sandbox.git.clone` with credentials embeds
-  // the token into `.git/config` (`https://x-access-token:<token>@…`).
-  // Without this overwrite, Plan 08's `run_shell` would let the LLM
+  // Token scrub. `sandbox.git.clone` with credentials embeds the token
+  // into `.git/config` (`https://x-access-token:<token>@…`).
+  // Without this overwrite, `run_shell` would let the LLM
   // `cat .git/config` and exfiltrate the token into `messages`, which
   // sandbox deletion does NOT scrub. See
   // `docs/sandbox-mode-security-system-design.md`.
@@ -694,8 +694,8 @@ function resolvePostCloneBlockNetwork(): boolean {
  *   - All Daytona-specific code (Node-only imports, error types, SDK quirks)
  *     stays here. `sandboxTools.ts` remains runtime-agnostic and trivially
  *     unit-testable with a fake client.
- *   - The shell tool (`run_shell`, Plan 08) reuses the same handle and
- *     adapter rather than re-querying Daytona inside `chat/sandboxTools.ts`.
+ *   - The shell tool (`run_shell`) reuses the same handle and adapter
+ *     rather than re-querying Daytona inside `chat/sandboxTools.ts`.
  *   - Type fidelity: Daytona's `downloadFile` is overloaded — one form
  *     returns `Buffer`, the other returns `void` (writes to a local path).
  *     Selecting the buffer overload here means `sandboxTools.ts` sees the
@@ -739,7 +739,7 @@ export async function getSandboxFsClient(remoteId: string): Promise<SandboxFsCli
         size: entry.size,
       }));
     },
-    // Plan 08 — `run_shell` adapter. Daytona's `executeCommand` returns
+    // `run_shell` adapter. Daytona's `executeCommand` returns
     // `{ exitCode, result }` for normal completion (including non-zero
     // exits — `grep` finding nothing exits 1 without throwing). Timeouts
     // surface as `DaytonaTimeoutError`; we translate that into a

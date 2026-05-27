@@ -180,7 +180,7 @@ read; the cascade keeps the table internally consistent and avoids relying
 on the read-time defense under steady-state operation.
 
 The read-time defense in `loadViewerPreferences` is still kept as
-defense-in-depth for legacy rows or any code path that bypasses the public
+defense-in-depth for any code path that bypasses the public
 `deleteRepository` mutation.
 
 ### Orphan cleanup

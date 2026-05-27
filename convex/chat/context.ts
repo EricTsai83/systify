@@ -17,7 +17,7 @@ export type ReplyContext = {
    * reply would answer message A's content with message B's mode prompt.
    * The user message's own mode is the canonical choice for "what the user
    * meant when they sent this" — falling back to `thread.mode` only when the
-   * row predates the per-message `mode` field.
+   * row has no per-message `mode` set.
    *
    * Exposed on the context so `generation.ts` can hand it to
    * `buildSystemPrompt` without re-deriving the rule.
@@ -27,9 +27,8 @@ export type ReplyContext = {
    * Per-message grounding flags anchored to the queued user message.
    * Meaningful only on `mode === "discuss"` — Library mode leaves both
    * unset and uses the implicit artifact-grounded contract. Both default
-   * to `false` for legacy rows. `generation.ts` reads these to decide
-   * which system prompt block to compose and whether to wire sandbox
-   * tools.
+   * to `false` when unset. `generation.ts` reads these to decide which
+   * system prompt block to compose and whether to wire sandbox tools.
    */
   groundLibrary: boolean;
   groundSandbox: boolean;
@@ -70,7 +69,7 @@ export type ReplyContext = {
    * `SandboxFsClient`, pass it to `createSandboxTools`, and record audit
    * log entries for every tool execution:
    *
-   *   - `sandboxId` — Convex-side sandbox row id. Plan 12's audit log
+   *   - `sandboxId` — Convex-side sandbox row id. The audit log
    *     (`sandboxToolCallLog.sandboxId`) keys against this so a future
    *     forensic query can correlate "user X's tool calls" with a
    *     specific sandbox lifecycle. Surfacing it from the context query
@@ -158,7 +157,7 @@ export async function loadRecentMessages(ctx: Pick<QueryCtx, "db">, threadId: Id
 }
 
 /**
- * Plan 03: how aggressively `loadReplyContextMessages` over-fetches the
+ * How aggressively `loadReplyContextMessages` over-fetches the
  * `by_threadId` index before applying the cross-mode + empty-content
  * filters. With `MAX_CONTEXT_MESSAGES = 20` this caps the index read at
  * 80 rows per reply — small enough to keep transaction read budget tight,
@@ -178,7 +177,7 @@ const REPLY_CONTEXT_OVERFETCH_FACTOR = 4;
 /**
  * Load up to `limit` recent messages eligible for the LLM reply context.
  *
- * Plan 03 contract — applied while iterating from newest-first:
+ * Filters applied while iterating from newest-first:
  *   1. **Cross-mode assistant filter.** A previous mode's hypothetical
  *      answer must not contaminate the new mode's reply, so assistant rows
  *      whose `mode` differs from the queued reply's `effectiveMode` are
@@ -240,10 +239,10 @@ export const getReplyContext = internalQuery({
      * Anchor for mode and search-query derivation. Required so the same
      * message id that `generation.ts` is paired to determines both the
      * system prompt (via `userMessage.mode`) and the chunk-search query
-     * (via `userMessage.content`). Anchoring to "the latest user message
-     * in the window" used to be the rule here, but that derivation is
-     * unsafe under concurrent send — a newer message landing between
-     * queueing and generation would silently take over both fields.
+     * (via `userMessage.content`). Deriving these from "the latest user
+     * message in the window" is unsafe under concurrent send — a newer
+     * message landing between queueing and generation would silently
+     * take over both fields.
      */
     userMessageId: v.id("messages"),
   },
@@ -266,11 +265,11 @@ export const getReplyContext = internalQuery({
     // Library mode ignores them — its grounding contract is implicit in
     // the mode. The resolver applies the same coercion as the queue-time
     // `chat.send.sendMessage` mutation, so a Library-mode row that
-    // somehow carries a stale `groundLibrary: true` (legacy data) reads
-    // back as `false` here without a one-off branch.
+    // somehow carries a stray `groundLibrary: true` reads back as `false`
+    // here without a one-off branch.
     const { groundLibrary, groundSandbox } = resolveDiscussGrounding(effectiveMode, userMessage);
 
-    // Plan 03: cross-mode filtering + empty-content filtering happen inside
+    // Cross-mode filtering + empty-content filtering happen inside
     // `loadReplyContextMessages` so the helper can over-fetch a bounded
     // multiple of the cap and only then trim to MAX_CONTEXT_MESSAGES. Doing
     // both filters here in the caller would require re-applying

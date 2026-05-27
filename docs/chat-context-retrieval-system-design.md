@@ -6,7 +6,7 @@ This document explains why chat context retrieval now uses filtered Convex searc
 
 ## The Problem
 
-Chat (specifically the `lab` mode, which is the only mode that loads code chunks; `discuss` skips repo lookups and `library` is artifact-only) previously loaded the first 80 `repoChunks` from:
+Chat (specifically sandbox-grounded Discuss replies — the only chat path that loads code chunks; ungrounded `discuss` skips repo lookups entirely and `library` retrieves from `artifactChunks`) previously loaded the first 80 `repoChunks` from:
 
 - `repoChunks.by_importId_and_path_and_chunkIndex`
 
@@ -145,7 +145,7 @@ That is a deliberate trade for:
 
 ## Result
 
-The new retrieval path gives `lab`-mode chat a better fit for the current Systify architecture:
+The new retrieval path gives sandbox-grounded chat a better fit for the current Systify architecture:
 
 - candidate pools change with the user's question
 - all retrieval stays inside `latestImportId`

@@ -4,8 +4,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import type { ChatMode } from "@/lib/types";
 
 /**
- * Plan 14 — single descriptor passed to `<ModeInfoPopover>`. The chat
- * panel computes this once from `MODE_CATALOG` so the same display
+ * Single descriptor passed to `<ModeInfoPopover>`. The chat panel
+ * computes this once from `MODE_CATALOG` so the same display
  * vocabulary (label / icon) used by the selector, the badge, and the
  * empty-state example cards drives the popover too.
  *
@@ -26,10 +26,10 @@ export type ModeInfoEntry = {
 };
 
 /**
- * Plan 14 — `(i)` info trigger next to the mode selector that opens a
+ * `(i)` info trigger next to the mode selector that opens a
  * popover with a side-by-side comparison of all three modes. This is
- * deliberately **user-initiated** — the plan rejects modal popovers on
- * mode switch (Linear / Cursor / ChatGPT all use passive disclosure for
+ * deliberately **user-initiated** — modal popovers on mode switch are
+ * rejected (Linear / Cursor / ChatGPT all use passive disclosure for
  * the same reason: mode switch is a high-frequency action). Putting
  * the explanation behind a click means the user can always find it
  * without it constantly fighting for their attention.

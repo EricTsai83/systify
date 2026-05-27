@@ -16,10 +16,10 @@ import { useAuthBoundCleanup } from "./use-auth-bound-cleanup";
 
 function seedDrafts() {
   window.localStorage.setItem("systify.composer.draft.thread.tid_a", "draft-A");
-  window.localStorage.setItem("systify.composer.draft.workspace.ws_a.discuss", "ws-draft");
-  window.localStorage.setItem("systify.composer.draft.workspace.ws_a.lab", "lab-draft");
+  window.localStorage.setItem("systify.composer.draft.repository.repo_a.discuss", "discuss-draft");
+  window.localStorage.setItem("systify.composer.draft.repository.repo_a.library", "library-draft");
   // Unrelated key — must survive the sweep.
-  window.localStorage.setItem("systify.library.tabs.ws_a", "{}");
+  window.localStorage.setItem("systify.library.tabs.repo_a", "{}");
 }
 
 function draftKeysRemain(): boolean {
@@ -55,7 +55,7 @@ describe("useAuthBoundCleanup", () => {
     rerender();
 
     expect(draftKeysRemain()).toBe(false);
-    expect(window.localStorage.getItem("systify.library.tabs.ws_a")).toBe("{}");
+    expect(window.localStorage.getItem("systify.library.tabs.repo_a")).toBe("{}");
   });
 
   test("clears all composer drafts when the user id changes (account switch)", () => {

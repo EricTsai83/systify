@@ -8,7 +8,7 @@ The companion `sandbox-mode-security-system-design.md` covers the *content* boun
 
 ## Why A Separate Table
 
-Plan 06 already persists each tool call in two places:
+The chat pipeline already persists each tool call in two places:
 
 - `messageToolCallEvents` — ephemeral `start` / `end` events that drive the live ticker. Drained at finalize / fail / stale-recovery.
 - `messages.toolCalls` — frozen, length-capped trace folded from the events at finalize time. Lives as long as the parent message.
@@ -37,7 +37,7 @@ The threat model the audit log is *not* designed for:
 
 - It does not store full tool output. `messages.toolCalls` already does, with stronger redaction caps. Replicating it here would double the per-call storage cost without adding investigative power — the questions above all answer by metadata, not by re-reading what the tool returned.
 - It does not protect against an attacker with Convex DB access. That is out of scope for this layer; Convex deployment isolation handles it.
-- It does not double as a billing or rate-limit ledger. Plan 10's `rateLimit` + cost-cap module owns those.
+- It does not double as a billing or rate-limit ledger. The `rateLimit` + cost-cap module in `convex/lib/rateLimit.ts` owns those.
 
 ## Design Goals
 
@@ -47,7 +47,7 @@ The audit log is optimized for five properties:
 2. **Bounded growth.** A single fixed retention (90 days) plus a daily cleanup cron keeps table size predictable as usage scales.
 3. **Best-effort writes.** A persistent audit-log infrastructure failure must not cascade into user-visible reply failures. The tool effect already happened by the time the audit row is being written; failing the reply post-hoc cannot un-do it.
 4. **Cheap queries on the canonical question.** "What did user X do between A and B" must be an indexed lookup, not a table scan.
-5. **Closed-set redaction signals.** The audit row records *that* a secret category was redacted (e.g. `github_token`), not the secret itself. This is enough for "did Plan 05's redaction layer fire on this call?" without re-introducing the leak vector.
+5. **Closed-set redaction signals.** The audit row records *that* a secret category was redacted (e.g. `github_token`), not the secret itself. This is enough for "did the redaction layer fire on this call?" without re-introducing the leak vector.
 
 ## Chosen Design
 
@@ -79,19 +79,19 @@ The three tables have non-overlapping responsibilities:
 
 ### Append point
 
-The audit write happens in `convex/chat/generation.ts` inside the `tool-result` and `tool-error` handlers, immediately *after* the matching Plan 06 event row is appended. This ordering is deliberate:
+The audit write happens in `convex/chat/generation.ts` inside the `tool-result` and `tool-error` handlers, immediately *after* the matching `messageToolCallEvents` row is appended. This ordering is deliberate:
 
-- The Plan 06 write is required for the live ticker; failing the reply on its failure is correct.
-- The Plan 12 write is best-effort; failing the reply on its failure would defeat the "tool effect already happened" rationale.
+- The event write is required for the live ticker; failing the reply on its failure is correct.
+- The audit-log write is best-effort; failing the reply on its failure would defeat the "tool effect already happened" rationale.
 
-By placing the audit write *after* the event write, a Plan 06 failure aborts before any audit work runs (no half-state); a Plan 12 failure logs a warning and the reply continues.
+By placing the audit write *after* the event write, an event-write failure aborts before any audit work runs (no half-state); an audit-log-write failure logs a warning and the reply continues.
 
 ```ts
 case "tool-result": {
-  // 1. Plan 06 — durable for the message lifetime, required for finalize
+  // 1. Event row — durable for the message lifetime, required for finalize
   await ctx.runMutation(internal.chat.streaming.appendAssistantToolCallEvent, { ... });
 
-  // 2. Plan 12 — durable for 90 days, independent transaction, best-effort
+  // 2. Audit row — durable for 90 days, independent transaction, best-effort
   if (replyContext.sandboxTooling) {
     await tryRecordSandboxToolCallLogEntry(ctx, { ... });
   }
@@ -106,11 +106,11 @@ The audit log records what *did* happen, not what *should* happen. By the time w
 
 1. The LLM has already consumed the tool result.
 2. The Daytona compute has already been spent.
-3. The Plan 06 event row has already been written and is visible to the live ticker.
+3. The event row has already been written and is visible to the live ticker.
 
 A persistent audit-log infrastructure failure at this point cannot un-do any of those. It can only deny the user the eventual assistant reply — without compensating value, since the audit record they would have generated is already lost.
 
-Best-effort recording therefore degrades to "the reply succeeds and ops sees a `sandbox_tool_audit_log_write_failed` warning" rather than "the reply fails and the user sees a generic error." Plan 13's metrics will surface a sustained warning rate, which is the operational signal compliance teams need.
+Best-effort recording therefore degrades to "the reply succeeds and ops sees a `sandbox_tool_audit_log_write_failed` warning" rather than "the reply fails and the user sees a generic error." Metrics surface a sustained warning rate, which is the operational signal compliance teams need.
 
 This is the same posture taken by `daytonaWebhooks.cleanupOldWebhookEvents` and other bookkeeping mutations: log warnings, do not fail the user-facing path.
 
@@ -147,8 +147,8 @@ Field-by-field rationale:
 
 - **`ownerTokenIdentifier`** — owner-scoping is the canonical query dimension; combined with the implicit `_creationTime` secondary sort on the `by_owner_and_time` index, it answers "what did user X do, newest first" without an extra field.
 - **`threadId` / `messageId` / `sandboxId`** — foreign keys into the parent rows. They may dangle after parent deletion (intentional, see "Why no cascade-delete"). `sandboxId` is surfaced via `ReplyContext.sandboxTooling.sandboxId` so the audit row is keyed against a specific sandbox lifecycle, not a remote Daytona id that may be reassigned.
-- **`toolName`** — `read_file` / `list_dir` / `run_shell`. Free-form `v.string()` (rather than a closed union) so future tools (Plan 14+) do not require a schema migration here.
-- **`inputJson`** — the redacted, JSON-stringified tool input. Capped server-side at `SANDBOX_TOOL_CALL_LOG_INPUT_MAX_CHARS = 2000`. Distinct from Plan 06's UI-summary cap (600) because audit recording wants more of long `run_shell` invocations preserved — those are exactly the inputs compliance audits care about.
+- **`toolName`** — `read_file` / `list_dir` / `run_shell`. Free-form `v.string()` (rather than a closed union) so future tools do not require a schema migration here.
+- **`inputJson`** — the redacted, JSON-stringified tool input. Capped server-side at `SANDBOX_TOOL_CALL_LOG_INPUT_MAX_CHARS = 2000`. Distinct from the UI-summary cap (600) because audit recording wants more of long `run_shell` invocations preserved — those are exactly the inputs compliance audits care about.
 - **`outputBytes`** — UTF-8 byte length of the JSON-stringified envelope (pre-redaction). The audit log deliberately does not duplicate the output payload; `messages.toolCalls.outputSummary` already stores a 600-char redacted summary. This field records the volume signal (e.g. for "this `read_file` was unusually large").
 - **`durationMs`** — wall-clock time between the AI SDK's `tool-call` event and its matching `tool-result` / `tool-error`, measured by the action.
 - **`errorCode`** — optional. Three populated forms:
@@ -215,32 +215,32 @@ If a future plan needs per-row retention (e.g. errored calls retained longer for
 sequenceDiagram
   participant LLM as Model<br/>(streamText)
   participant Action as generation.ts<br/>(action)
-  participant Plan06 as appendAssistantToolCallEvent<br/>(internalMutation)
-  participant Plan12 as recordSandboxToolCallLogEntry<br/>(internalMutation)
+  participant EventMut as appendAssistantToolCallEvent<br/>(internalMutation)
+  participant AuditMut as recordSandboxToolCallLogEntry<br/>(internalMutation)
 
   LLM->>Action: tool-result event
-  Action->>Plan06: append "end" event<br/>(redacted summary, capped 600c)
-  Plan06-->>Action: ok
-  Action->>Plan12: record audit entry<br/>(redacted input ≤2000c, byte signal,<br/>redactedFields slugs)
+  Action->>EventMut: append "end" event<br/>(redacted summary, capped 600c)
+  EventMut-->>Action: ok
+  Action->>AuditMut: record audit entry<br/>(redacted input ≤2000c, byte signal,<br/>redactedFields slugs)
   alt audit write succeeds
-    Plan12-->>Action: ok
+    AuditMut-->>Action: ok
   else audit write fails
-    Plan12-->>Action: throws
+    AuditMut-->>Action: throws
     Action->>Action: catch, logWarn("sandbox_tool_audit_log_write_failed")
   end
   Action->>Action: continue stream loop
 ```
 
-Two independent transactions, sequenced so a Plan 06 failure aborts cleanly and a Plan 12 failure does not abort at all.
+Two independent transactions, sequenced so an event-row failure aborts cleanly and an audit-row failure does not abort at all.
 
 ## Trust Contract Between Layers
 
 The recording boundary assumes:
 
-- **Plan 05 (`redact()`) is the single chokepoint for content redaction.** The audit log records *which* slug categories matched (`redactedFields`), but not the redacted payload — `messages.toolCalls.outputSummary` does that. A failure of Plan 05 to scrub a secret would surface as a leaked-token-in-`messages` incident, not a leaked-token-in-`sandboxToolCallLog` incident, because we deliberately do not store the output here.
-- **Plan 06's tool-call correlation is authoritative for `durationMs`.** The audit entry uses `occurredAt - toolCallMap.startedAt` from the same in-process map Plan 06 builds. No DB round-trip per tool result.
+- **`redact()` is the single chokepoint for content redaction.** The audit log records *which* slug categories matched (`redactedFields`), but not the redacted payload — `messages.toolCalls.outputSummary` does that. A failure of `redact()` to scrub a secret would surface as a leaked-token-in-`messages` incident, not a leaked-token-in-`sandboxToolCallLog` incident, because we deliberately do not store the output here.
+- **The tool-call event correlation is authoritative for `durationMs`.** The audit entry uses `occurredAt - toolCallMap.startedAt` from the same in-process map the event writer builds. No DB round-trip per tool result.
 - **The schema's `v.array(v.string())` for `redactedFields` is loose by design.** The closed-set `RedactionType` union (`convex/chat/redaction.ts`) is the source of truth for which slugs *can* appear; a future redaction pattern is added by widening that union plus a registry entry — no audit-log schema change. Defensive filtering in `extractAuditMetadataFromToolOutput` drops non-string entries so a buggy upstream cannot inject malformed values into the audit row.
-- **Best-effort means observable, not silent.** Every audit-write failure must produce a `sandbox_tool_audit_log_write_failed` warning carrying enough context (`threadId`, `messageId`, `sandboxId`, `toolName`, error message) for compliance correlation. Plan 13's metrics will aggregate this into a SLO-trackable signal.
+- **Best-effort means observable, not silent.** Every audit-write failure must produce a `sandbox_tool_audit_log_write_failed` warning carrying enough context (`threadId`, `messageId`, `sandboxId`, `toolName`, error message) for compliance correlation. Metrics aggregate this into a SLO-trackable signal.
 
 ## Failure Modes And Their Mitigations
 
@@ -254,7 +254,7 @@ The recording boundary assumes:
 | Cleanup cron runs while Convex write capacity is constrained              | `take(BATCH)` keeps each invocation bounded; self-reschedule drains the rest     |
 | Cron missed for several days (backlog of expired rows)                    | First post-outage run hits the batch cap → reschedules → drains across ticks    |
 | User deletes thread mid-window (audit row references missing parent)     | Intentional — audit row survives, dangling fk is documented behaviour            |
-| Tool result lands after `cancelInFlightReply` aborted the stream          | Outer `if (wasCancelled \|\| generationAborted) break` skips both Plan 06 and Plan 12 writes |
+| Tool result lands after `cancelInFlightReply` aborted the stream          | Outer `if (wasCancelled \|\| generationAborted) break` skips both the event and audit writes |
 
 ## Observability
 
@@ -262,15 +262,15 @@ The audit log produces three observability signals:
 
 - **`recordSandboxToolCallLogEntry` writes (success path)** — implicit; the row's existence is the signal.
 - **`logInfo("chat", "sandbox_tool_call_log_cleanup", ...)`** — fired by the cleanup cron when at least one row was deleted, carrying `deletedCount`, `rescheduled`, and the `cutoff` timestamp.
-- **`logWarn("chat", "sandbox_tool_audit_log_write_failed", ...)`** — fired by `tryRecordSandboxToolCallLogEntry` on any underlying mutation failure. Plan 13 will lift this into an aggregated metric so a sustained failure rate becomes a SLO violation.
+- **`logWarn("chat", "sandbox_tool_audit_log_write_failed", ...)`** — fired by `tryRecordSandboxToolCallLogEntry` on any underlying mutation failure. Aggregated as a metric so a sustained failure rate becomes a SLO violation.
 
 The `sandbox_tool_audit_log_write_failed` warning carries enough context (`threadId`, `messageId`, `sandboxId`, `toolName`, error message) to correlate against the original chat reply when reconciling audit gaps.
 
 ## Open Questions / Future Work
 
 - **Compliance-strict mode.** If a regulatory regime requires guaranteed audit-log durability (i.e. failing the reply when the audit write fails), the change is a single-flag flip inside `tryRecordSandboxToolCallLogEntry`. The current best-effort posture is the pragmatic default; the strict-mode wiring is a one-file change away.
-- **Per-row retention.** A future plan that wants to keep errored / blocked calls longer than 90 days for incident debugging can add an optional `retentionExpiresAt` field, populate it on insert, and switch the cleanup query to a range scan on a new index. The current design does not preclude this.
-- **Audit query API.** Plan 12 ships the index but not a public query. The first audit consumer (Plan 13's metrics or a future internal dashboard) will define the query shape. Adding it later is purely additive — the indexes are in place.
+- **Per-row retention.** A future change that wants to keep errored / blocked calls longer than 90 days for incident debugging can add an optional `retentionExpiresAt` field, populate it on insert, and switch the cleanup query to a range scan on a new index. The current design does not preclude this.
+- **Audit query API.** The indexes are in place but no public query is shipped. The first audit consumer (metrics or a future internal dashboard) will define the query shape. Adding it later is purely additive.
 - **Differentiating SDK errors from envelope errors.** Today both end up in `errorCode` (the SDK error uses the literal `"tool_error"`; envelope errors use the tool's structured code). If a future audit consumer needs to count them separately without value-sniffing, an `errorSource: "sdk" | "envelope"` field is the cleanest extension. Not currently required by any consumer.
 - **`outputBytes` interpretation.** Recorded as the byte length of the JSON-stringified envelope (pre-redaction), not the raw tool output. This is uniform across all tools but includes envelope wrapper overhead. The existing field is well-defined in code; if a future audit consumer needs the *file* / *command output* size specifically, adding an optional `payloadBytes` field is a strict additive migration.
 

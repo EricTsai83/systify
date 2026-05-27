@@ -44,11 +44,11 @@ describe("resolveChatModes", () => {
 });
 
 /**
- * Plan 10 — sandbox daily-cost-cap gate now lives on the grounding axis
- * exposed by {@link resolveRepositoryModes}: when the per-user or
- * per-repository daily spend cap is exhausted the Sandbox grounding axis
- * closes and surfaces the cost-cap tooltip. Discuss / Library mode
- * availability itself is no longer touched by the cap.
+ * Sandbox daily-cost-cap gate lives on the grounding axis exposed by
+ * {@link resolveRepositoryModes}: when the per-user or per-repository
+ * daily spend cap is exhausted the Sandbox grounding axis closes and
+ * surfaces the cost-cap tooltip. Discuss / Library mode availability
+ * itself is not touched by the cap.
  */
 describe("resolveRepositoryModes (sandbox cost-cap gate on grounding axis)", () => {
   const USER_CAP_GATE_CLOSED: SandboxCostCapGate = {

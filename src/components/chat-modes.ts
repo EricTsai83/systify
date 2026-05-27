@@ -3,10 +3,9 @@ import type { ModeInfoEntry } from "@/components/mode-info-popover";
 import type { ChatMode } from "@/lib/types";
 
 /**
- * Static catalogue of the surviving top-level modes (Discuss / Library)
- * post-Lab collapse. The sandbox-grounded surface is no longer a separate
- * mode — it is a per-message grounding toggle the Discuss composer
- * surfaces (see {@link GROUNDING_CATALOG}).
+ * Static catalogue of the two top-level modes (Discuss / Library). The
+ * sandbox-grounded surface is a per-message grounding toggle on the
+ * Discuss composer (see {@link GROUNDING_CATALOG}), not a separate mode.
  *
  * `value` is the persisted DB literal (`messages.mode` / `threads.mode`)
  * AND the URL segment AND the user-facing label — one vocabulary across
@@ -82,8 +81,8 @@ export const GROUNDING_CATALOG = [
 ] as const;
 
 /**
- * Plan 14 — descriptors consumed by `<ModeInfoPopover>` for the user-
- * initiated "what do the modes do?" reference. Built once from
+ * Descriptors consumed by `<ModeInfoPopover>` for the user-initiated
+ * "what do the modes do?" reference. Built once from
  * `MODE_CATALOG` so the popover's vocabulary (label / caption /
  * example) cannot drift from the selector dropdown or the empty-state
  * cards. The popover only needs the *first* example prompt; the full
@@ -98,7 +97,7 @@ export const MODE_INFO_ENTRIES: ReadonlyArray<ModeInfoEntry> = MODE_CATALOG.map(
 }));
 
 /**
- * Plan 14 — O(1) lookup of a mode's example prompts by `ChatMode`. Used
+ * O(1) lookup of a mode's example prompts by `ChatMode`. Used
  * by the empty-state `<ModeExamples>` to render the active mode's
  * cards without re-scanning `MODE_CATALOG` on every render.
  */
@@ -119,7 +118,7 @@ export type MessageBadgeMode = ChatMode;
 
 /**
  * Lookup keyed by every persisted message mode so the per-message badge
- * (Plan 02) renders a label for any mode the schema permits.
+ * renders a label for any mode the schema permits.
  */
 export const MODE_LABELS: Record<MessageBadgeMode, string> = MODE_CATALOG.reduce(
   (acc, entry) => {

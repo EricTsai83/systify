@@ -1,5 +1,5 @@
 /**
- * Plan 06 — pure helpers for the `messageToolCallEvents` ephemeral table.
+ * Pure helpers for the `messageToolCallEvents` ephemeral table.
  *
  * The table itself is a fast append-only log of `start` / `end` rows produced
  * during a sandbox-mode reply. Three responsibilities live here, kept apart

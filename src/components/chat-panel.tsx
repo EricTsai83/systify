@@ -34,10 +34,10 @@ type ChatPanelProps = {
   chatInput: string;
   setChatInput: (v: string) => void;
   /**
-   * The thread's persisted mode. After the Lab collapse this is always
-   * `"discuss"` for panels rendered by the Discuss page; Library has its
-   * own surface. Kept as a prop so future surfaces that reuse the panel
-   * (e.g. a hypothetical preview shell) can drive it.
+   * The thread's persisted mode. Always `"discuss"` for panels rendered
+   * by the Discuss page; Library has its own surface. Kept as a prop so
+   * future surfaces that reuse the panel (e.g. a hypothetical preview
+   * shell) can drive it.
    */
   chatMode: ChatMode;
   /**
@@ -67,7 +67,7 @@ type ChatPanelProps = {
   isSending: boolean;
   onSendMessage: (e: FormEvent<HTMLFormElement>) => Promise<void>;
   /**
-   * Plan 07 — fires when the user clicks Stop on the in-flight reply. The
+   * Fires when the user clicks Stop on the in-flight reply. The
    * shell wires this to the `chat.cancel.cancelInFlightReply` mutation. The
    * panel only renders the Stop affordance when this prop is supplied *and*
    * the latest assistant message is still in a non-terminal state, so
@@ -76,8 +76,8 @@ type ChatPanelProps = {
    */
   onCancelInFlightReply?: () => void | Promise<void>;
   /**
-   * Plan 07 — true between user click and the assistant message
-   * transitioning out of `streaming` / `pending`. While true the button
+   * True between user click and the assistant message transitioning out
+   * of `streaming` / `pending`. While true the button
    * label switches to "Stopping…" so the user sees an acknowledgement that
    * the request is in flight even before the bubble flips to "Cancelled".
    * Defaults to `false` so existing call sites don't have to thread this
@@ -98,7 +98,7 @@ type ChatPanelProps = {
   onImported?: OnImportedCallback;
   onThreadMovedToRepository?: (repositoryId: RepositoryId | null, mode: ThreadMode | null) => void;
   /**
-   * Plan 02: clicking an inline `[A#]` citation in an assistant reply forwards
+   * Clicking an inline `[A#]` citation in an assistant reply forwards
    * the resolved artifact id to this callback. The shell uses it to open
    * the artifact panel and scroll/highlight the matching artifact card.
    * Optional so unit tests and headless renders can omit it.
@@ -125,8 +125,8 @@ type ChatPanelProps = {
    * selected. Acts as the anchor for the lazy
    * `sendMessageStartingNewThread` path — when supplied the Send button
    * stays enabled on a no-thread URL so the first send can create the
-   * thread atomically. Optional so legacy callers without a repository
-   * context can omit it.
+   * thread atomically. Optional so callers without a repository context
+   * can omit it.
    */
   repositoryId?: RepositoryId | null;
 };
@@ -233,7 +233,7 @@ export function ChatPanel({
   });
 
   /**
-   * Plan 07 — derive "is the most recent assistant reply still in flight?"
+   * Derive "is the most recent assistant reply still in flight?"
    * from the (already-subscribed) message list rather than threading another
    * boolean prop down. We check the *last* assistant message so a brand-new
    * thread (no messages) shows Send and a thread whose last reply finished
@@ -312,8 +312,8 @@ export function ChatPanel({
             />
           )}
           {/*
-           * Plan 14 — example prompts for the active mode. Renders at
-           * the bottom of the empty-state column (the centered hint
+           * Example prompts for the active mode. Renders at the bottom
+           * of the empty-state column (the centered hint
            * card has `flex-1` and pushes everything below toward the
            * composer), giving the prompts a consistent "just above
            * the input" anchor regardless of viewport height. Clicking
@@ -421,7 +421,7 @@ export function ChatPanel({
             </div>
             {canCancel && !isReadOnly ? (
               /*
-               * Plan 07 — Stop button. `type="button"` so a stray Enter in
+               * Stop button. `type="button"` so a stray Enter in
                * the textarea cannot accidentally submit a Stop click as if
                * it were Send. `aria-label` plus the visible "Stop" /
                * "Stopping…" label keep the affordance accessible to screen
@@ -462,9 +462,6 @@ export function ChatPanel({
                   isSending ||
                   isSyncing ||
                   !chatInput.trim() ||
-                  // Lazy first send needs at least one anchor: an existing
-                  // thread or the repository we'd create the thread in.
-                  (selectedThreadId === null && !repositoryId) ||
                   // Sandbox grounding requires a ready live source. Disable
                   // send until the sandbox lifecycle is `available` so an
                   // optimistically-flipped toggle does not produce a

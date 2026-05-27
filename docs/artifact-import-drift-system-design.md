@@ -19,7 +19,7 @@ The product needs to surface "this was written against an older snapshot"
 without:
 
 - claiming the artifact is *wrong* — the prose may still be accurate
-- conflating this with Lab verification freshness, which is a different axis
+- conflating this with sandbox verification freshness, which is a different axis
 - storing a flag that a second writer has to keep reconciled with the SHAs
 
 ## Two Independent Freshness Axes
@@ -28,10 +28,10 @@ Artifacts carry two unrelated staleness signals. They must not be merged.
 
 | Axis | Source fields | Question it answers |
 | ---- | ------------- | ------------------- |
-| **Lab verification freshness** (`freshness`) | `lastVerifiedAt` | "Was this checked against a live sandbox, and how long ago?" |
+| **Sandbox verification freshness** (`freshness`) | `lastVerifiedAt` | "Was this checked against a live sandbox, and how long ago?" |
 | **Import snapshot drift** (`importDriftFromLatestSync`) | `alignedImportCommitSha` vs latest import SHA | "Has the repository been re-imported since this was written?" |
 
-An `architecture_overview` artifact can be Lab-verified (`fresh`) and *also*
+An `architecture_overview` artifact can be sandbox-verified (`fresh`) and *also*
 drifted from the latest import — the two are orthogonal. The UI surfaces them
 as separate indicators.
 
@@ -135,7 +135,7 @@ in the Repository Remote Freshness Check design.
 answered by comparing SHAs. Attempting it would mean re-running analysis on
 every import, which defeats the point of artifacts as durable, reusable prose.
 Import drift deliberately answers only the structural question and leaves
-accuracy to Lab verification and to the user's judgement.
+accuracy to sandbox verification and to the user's judgement.
 
 ## Trade-Offs
 
@@ -143,14 +143,14 @@ accuracy to Lab verification and to the user's judgement.
 
 - the signal is coarse: unrelated commits still flag an artifact as drifted
 - a repository that is never re-imported never shows drift, even if its remote moved
-- artifacts predating `alignedImportCommitSha` are permanently silent until a writer backfills them
+- artifacts without `alignedImportCommitSha` are permanently silent until a writer fills it
 
 ### What this design avoids
 
 - no stored flag to reconcile against the SHAs
 - no per-artifact database read on the Library tree subscription path
 - no semantic re-analysis on import
-- no coupling to Lab verification freshness
+- no coupling to sandbox verification freshness
 
 ## Future Work — Path-Scoped Drift
 

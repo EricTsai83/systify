@@ -86,7 +86,7 @@ Only the final step is allowed to update repository-visible snapshot state:
 - entrypoints
 - `lastImportedAt` / `lastIndexedAt` / `lastSyncedCommitSha`
 
-This makes finalize the only publish boundary. Finalize is intentionally **not** allowed to touch `latestSandboxId` — sandbox lifecycle is owned by Lab and System Design via `ensureSandboxReady`, and the import pipeline never provisions one. See `repository-lifecycle.md` for the on-demand sandbox model.
+This makes finalize the only publish boundary. Finalize is intentionally **not** allowed to touch `latestSandboxId` — sandbox lifecycle is owned by sandbox-grounded Discuss and System Design via `ensureSandboxReady`, and the import pipeline never provisions one. See `repository-lifecycle.md` for the on-demand sandbox model.
 
 ## Why Publish Late
 
@@ -103,7 +103,7 @@ Late publish prevents that inconsistency. Readers either see:
 
 They never see an in-between version.
 
-Sandbox state is intentionally outside this contract. Because import is GitHub-API-only and never touches `repositories.latestSandboxId`, the late-publish rule only has to cover the knowledge-base outputs above. Whatever sandbox Lab or System Design provisioned earlier keeps pointing where it was, and its own lifecycle (idle auto-stop, archive, deletion) is independent of import publication.
+Sandbox state is intentionally outside this contract. Because import is GitHub-API-only and never touches `repositories.latestSandboxId`, the late-publish rule only has to cover the knowledge-base outputs above. Whatever sandbox the previous sandbox-grounded reply or System Design run provisioned keeps pointing where it was, and its own lifecycle (idle auto-stop, archive, deletion) is independent of import publication.
 
 ## Why Cleanup Runs On Failure And Cancellation
 
@@ -116,7 +116,7 @@ This gives the system a simple rule:
 - completed old snapshots are cleaned up after a successful publish
 - incomplete new snapshots are cleaned up after an unsuccessful publish
 
-Sandbox cleanup is no longer part of this contract. Imports do not provision sandboxes, so there is nothing to clean up on import failure. Repository deletion is the path that schedules cleanup for every known sandbox belonging to the repository (typically created by Lab or System Design).
+Sandbox cleanup is no longer part of this contract. Imports do not provision sandboxes, so there is nothing to clean up on import failure. Repository deletion is the path that schedules cleanup for every known sandbox belonging to the repository (typically created by sandbox-grounded Discuss or System Design).
 
 ## Idempotency Strategy
 

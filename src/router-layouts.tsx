@@ -111,7 +111,7 @@ export function ProtectedLayout() {
   // destination page. Hoisting it lets the pathname effect inside the
   // provider observe the route change and close the Sheet cleanly.
   return (
-    <Suspense fallback={<RouteLoadingScreen description="Loading your chat workspace." />}>
+    <Suspense fallback={<RouteLoadingScreen description="Loading your chat." />}>
       <SidebarProvider>
         <Outlet />
       </SidebarProvider>
@@ -154,7 +154,7 @@ export function AuthCallbackRoute() {
       elapsedMs < 2_000
         ? "Finishing sign-in and validating your session."
         : elapsedMs < 8_000
-          ? "Still syncing your workspace and permissions. This usually takes a few more seconds."
+          ? "Still syncing your account and permissions. This usually takes a few more seconds."
           : "This is taking longer than expected. You can retry or return home.";
 
     return (
@@ -245,7 +245,7 @@ export function NotFoundRoute() {
 }
 
 function AuthLoadingScreen() {
-  return <RouteLoadingScreen description="Reconnecting your session and loading your workspace." />;
+  return <RouteLoadingScreen description="Reconnecting your session and loading your account." />;
 }
 
 function RouteLoadingScreen({ description }: { description: string }) {

@@ -19,9 +19,9 @@ import type { ActiveMessageStream, ArtifactId } from "@/lib/types";
  *   - `"Library"` — Library-mode messages (mode === "library")
  *   - `null` — ungrounded Discuss replies and user messages
  *
- * Library-mode rows are tagged simply as "Library" — the legacy
- * `MODE_LABELS` lookup is folded in here so the message bubble does not
- * need to know about the mode/grounding split.
+ * Library-mode rows are tagged simply as "Library" — the mode label and
+ * grounding-derived chips are resolved here so the message bubble does
+ * not need to know about the mode/grounding split.
  */
 function deriveGroundingChip(message: Doc<"messages">): string | null {
   if (message.role !== "assistant") {
@@ -92,8 +92,8 @@ export const MessageBubble = memo(function MessageBubble({
   // never contains real citation tokens (and rewriting it would let a user
   // accidentally render a "fake" citation by typing `[A1]`).
   //
-  // Plan 11 — `unverifiedClaims` is only rendered for terminal assistant
-  // states. While the message is still streaming `displayContent` is the
+  // `unverifiedClaims` is only rendered for terminal assistant states.
+  // While the message is still streaming `displayContent` is the
   // live `activeMessageStream.content`, which the lint hasn't seen yet —
   // applying ranges from a previous (or future) snapshot would flag
   // arbitrary character positions in the live content. Gating on
@@ -129,7 +129,7 @@ export const MessageBubble = memo(function MessageBubble({
       unverified: ({ children }) => <UnverifiedMark>{children as ReactNode}</UnverifiedMark>,
     };
   }, [message.citationMap, onSelectArtifact]);
-  // Plan 10 — cost ticker for assistant messages: shows estimated cost
+  // Cost ticker for assistant messages: shows estimated cost
   // and tokens / tool-call count so the user can correlate spend to a
   // specific reply. Rendered only for *terminal* assistant states
   // (`completed` / `failed` / `cancelled`) — streaming messages have
@@ -205,7 +205,7 @@ export const MessageBubble = memo(function MessageBubble({
 });
 
 /**
- * Plan 10 — render the chat-bubble cost ticker.
+ * Render the chat-bubble cost ticker.
  *
  * Tries to surface as much information as is available, in this order:
  *
@@ -269,7 +269,7 @@ function formatTokenCount(tokens: number): string {
 }
 
 /**
- * Renders the injected `<citation>` tag (Plan 02 `[A#]` citation).
+ * Renders the injected `<citation>` tag for `[A#]` citation tokens.
  *
  * The tag wraps exactly the `[A1]` / `[A1#path]` token text, so this
  * parses the numeric index out of `children` and resolves it against
@@ -360,8 +360,8 @@ function getMessageStatusLabel(status: Doc<"messages">["status"]) {
     case "failed":
       return "Failed";
     case "cancelled":
-      // Plan 07 — distinct from "Failed" so the user can tell at a glance
-      // that they themselves stopped the reply (vs. an upstream error).
+      // Distinct from "Failed" so the user can tell at a glance that they
+      // themselves stopped the reply (vs. an upstream error).
       return "Cancelled";
     default:
       return status;

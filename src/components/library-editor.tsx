@@ -143,11 +143,10 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
 }
 
 /**
- * Inline verification status shown in the Reader header. Replaces the
- * colored-dot freshness indicator that used to live in the folder
- * navigator — the navigator is for finding artifacts, but verification
- * is a property of the artifact itself, so it belongs next to the rest
- * of the metadata (kind, version, source) where the user is already
+ * Inline verification status shown in the Reader header. Sits next to the
+ * rest of the artifact metadata (kind, version, source) because
+ * verification is a property of the artifact itself; the navigator stays
+ * focused on finding artifacts, where the user is already
  * scanning for context. Colors mirror the canonical freshness ramp
  * (fresh = emerald, aging = amber, stale = red, unverified = muted).
  */

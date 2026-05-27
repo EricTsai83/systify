@@ -6,8 +6,8 @@ import type { ThreadId } from "@/lib/types";
  * disappeared (deleted on another device, ownership transferred, etc).
  *
  * `onMissingThread` is fired once per (thread id, missing-flag) transition
- * — callers shape the bounce destination (workspace landing for the
- * repo shell, `/chat` for the workspaceless shell) inside the callback so
+ * — callers shape the bounce destination (repository landing for the
+ * repo shell, `/chat` for the repoless shell) inside the callback so
  * this hook can stay destination-agnostic.
  *
  * Pre-conditions:

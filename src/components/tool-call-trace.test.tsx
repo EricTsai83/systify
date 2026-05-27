@@ -8,7 +8,7 @@ import { ToolCallTrace } from "./tool-call-trace";
 import type { MessageId } from "@/lib/types";
 
 /**
- * Plan 06 — render coverage for `<ToolCallTrace>`.
+ * Render coverage for `<ToolCallTrace>`.
  *
  * Two scenarios under test, both rendering through one component:
  *

@@ -30,6 +30,10 @@ type AppSidebarLeftProps = {
   repositories: Doc<"repositories">[] | undefined;
   activeRepositoryId: RepositoryId | null;
   onSwitchRepository: (id: RepositoryId) => void;
+  // Optional callback for leaving the current repository context and
+  // returning to the repoless `/chat` surface. When supplied, the footer's
+  // RepositorySelector surfaces a "No repository" item.
+  onSelectNoRepository?: () => void;
   onImported: OnImportedCallback;
   onError: (message: string | null) => void;
   selectedThreadId: ThreadId | null;
@@ -62,6 +66,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
     repositories,
     activeRepositoryId,
     onSwitchRepository,
+    onSelectNoRepository,
     onImported,
     onError,
     selectedThreadId,
@@ -145,6 +150,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
             repositories={repositories}
             activeRepositoryId={activeRepositoryId}
             onSwitchRepository={onSwitchRepository}
+            onSelectNoRepository={onSelectNoRepository}
             onImported={onImported}
           />
         </div>

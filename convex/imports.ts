@@ -177,11 +177,10 @@ async function applyImportCompletionState(
     branch: args.branch,
     completedAt,
   });
-  // Import no longer touches `latestSandboxId` — sandbox provisioning is
-  // owned by Sandbox Mode / System Design via `ensureSandboxReady`. A
-  // previously-published sandbox (from a legacy import or a prior sandbox-
-  // mode session) stays as the live source until the user does something
-  // that explicitly re-provisions it.
+  // Import does not touch `latestSandboxId` — sandbox provisioning is
+  // owned by sandbox-grounded Discuss / System Design via
+  // `ensureSandboxReady`. Any sandbox the repository already points at
+  // stays as the live source until something explicitly re-provisions it.
   await ctx.db.patch(args.repositoryId, {
     importStatus: "completed",
     latestImportId: args.importId,

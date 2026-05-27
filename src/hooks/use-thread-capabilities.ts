@@ -16,7 +16,7 @@ export interface AttachedRepositorySummary {
 }
 
 /**
- * Plan 10 — sandbox daily-cost-cap snapshot for the chat-panel ticker.
+ * Sandbox daily-cost-cap snapshot for the chat-panel ticker.
  *
  * `remainingUsd` / `capacityUsd` are USD floats so the UI can format
  * with two decimals directly; cents-as-int is a server-side concern
@@ -25,7 +25,7 @@ export interface AttachedRepositorySummary {
  *
  * Always non-null when sandbox mode is at least theoretically usable
  * (thread has a repo). The frontend takes `min(user.remaining,
- * workspace.remaining)` as the visible budget so the ticker reflects
+ * repository.remaining)` as the visible budget so the ticker reflects
  * whichever cap will fire first.
  */
 export interface SandboxDailyCostBudget {
@@ -60,10 +60,10 @@ export interface ThreadCapabilities {
    */
   sandboxIsActivatable: boolean;
   /**
-   * Plan 10 — visible sandbox cost budget for the ticker. `null` when
-   * sandbox mode isn't currently relevant (no repo attached). When
+   * Visible sandbox cost budget for the ticker. `null` when sandbox
+   * mode isn't currently relevant (no repo attached). When
    * non-null, this reflects the *more restrictive* of the per-user and
-   * per-workspace caps so the user sees a single coherent number.
+   * per-repository caps so the user sees a single coherent number.
    */
   sandboxCostBudget: SandboxDailyCostBudget | null;
   /**
@@ -73,9 +73,9 @@ export interface ThreadCapabilities {
    * `groundLibrary` / `groundSandbox` state when a new thread is
    * opened so the composer "remembers" the user's last preference.
    * Both default to `false` on threads that have never recorded a
-   * preference (legacy rows, freshly created threads, no-thread
-   * sentinel) — the resolver does not infer "should be on" from
-   * structural availability here so a click is always intentional.
+   * preference (freshly created threads, no-thread sentinel) — the
+   * resolver does not infer "should be on" from structural availability
+   * here so a click is always intentional.
    */
   defaultGroundLibrary: boolean;
   defaultGroundSandbox: boolean;
@@ -176,7 +176,7 @@ export function useThreadCapabilities(threadId: ThreadId | null): ThreadCapabili
 }
 
 /**
- * Plan 10 — collapse the (per-user, per-workspace) budget pair into a
+ * Collapse the (per-user, per-repository) budget pair into a
  * single user-facing budget. Returns the *more restrictive* of the two
  * remaining values so the ticker shows the budget that will actually
  * block the next send.

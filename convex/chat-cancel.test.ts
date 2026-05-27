@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 /**
- * Plan 07 — `cancelInFlightReply` mutation + `markAssistantReplyCancelled`
+ * `cancelInFlightReply` mutation + `markAssistantReplyCancelled`
  * finalize variant.
  *
  * The interaction model under test:
@@ -28,7 +28,7 @@ import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
 
-describe("cancelInFlightReply (Plan 07)", () => {
+describe("cancelInFlightReply", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-23T00:00:00.000Z"));
@@ -149,7 +149,7 @@ describe("cancelInFlightReply (Plan 07)", () => {
   });
 });
 
-describe("getJobCancellationStatus (Plan 07)", () => {
+describe("getJobCancellationStatus", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-23T00:00:00.000Z"));
@@ -199,7 +199,7 @@ describe("getJobCancellationStatus (Plan 07)", () => {
   });
 });
 
-describe("markAssistantReplyCancelled (Plan 07)", () => {
+describe("markAssistantReplyCancelled", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-04-23T00:00:00.000Z"));
@@ -269,8 +269,8 @@ describe("markAssistantReplyCancelled (Plan 07)", () => {
   });
 
   test("drains in-flight tool-call events so the live ticker stops painting 'running'", async () => {
-    // Plan 06 invariant: events visible iff message is in non-terminal
-    // state. The cancel finalize variant must drain like finalize / fail
+    // Events visible iff message is in non-terminal state.
+    // The cancel finalize variant must drain like finalize / fail
     // do, otherwise the ticker would briefly resurrect a "running" entry
     // after the bubble already flipped to "Cancelled".
     const ownerTokenIdentifier = "user|cancel-tool-events";
@@ -398,10 +398,10 @@ describe("markAssistantReplyCancelled (Plan 07)", () => {
   });
 
   test("accepts a custom reason when the cancellation is system-initiated", async () => {
-    // Plan 09's fallback path will reuse this mutation with a system-level
-    // reason ("Daytona unreachable, falling back…"). The reason is the
-    // single field the UI surfaces, so the mutation must respect the
-    // override rather than always saying "Cancelled by user.".
+    // System-level callers may pass a specific reason (e.g. "Daytona
+    // unreachable, falling back…"). The reason is the single field the UI
+    // surfaces, so the mutation must respect the override rather than
+    // always saying "Cancelled by user.".
     const ownerTokenIdentifier = "user|cancel-reason";
     const t = convexTest(schema, modules);
     const { jobId, assistantMessageId } = await createCancelFixture(t, ownerTokenIdentifier, "cancel-reason");
@@ -424,8 +424,8 @@ describe("markAssistantReplyCancelled (Plan 07)", () => {
  * configurable initial states for the message + job so we can exercise the
  * "no active job" race ahead of cancellation. Keeping a separate fixture
  * factory (rather than parameterizing the existing one) avoids cross-test
- * coupling — Plan 06 tests should not have to think about Plan 07 status
- * values.
+ * coupling — the tool-call event tests should not have to think about
+ * cancellation status values.
  */
 async function createCancelFixture(
   t: ReturnType<typeof convexTest>,

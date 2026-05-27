@@ -18,10 +18,10 @@
  */
 
 /**
- * Token regex for the citation rewriter: matches the legacy `[A#]` form
- * and Library Ask's chunk-level `[A#section-path]` form. Captures the
- * numeric index so {@link injectCitationTags} (and `CitationRef` in
- * `chat-message.tsx`, which resolves the index against
+ * Token regex for the citation rewriter: matches both the artifact-level
+ * `[A#]` form and Library Ask's chunk-level `[A#section-path]` form.
+ * Captures the numeric index so {@link injectCitationTags} (and
+ * `CitationRef` in `chat-message.tsx`, which resolves the index against
  * `messages.citationMap`) can read it back out.
  *
  * Non-global on purpose: `RegExp.prototype.exec` against a non-global
@@ -95,8 +95,9 @@ export function injectCitationTags(content: string): string {
  *
  * Pure function over the content and the persisted ranges; defensive
  * about out-of-bounds or out-of-order ranges so a future schema change
- * with relaxed invariants cannot crash the renderer. Ports the logic
- * that previously lived in `chat-message.tsx`'s `buildContentRuns`:
+ * with relaxed invariants cannot crash the renderer. Lives alongside the
+ * citation rewriter so `chat-message.tsx`'s `buildContentRuns` can compose
+ * both transforms without owning their internals:
  *
  *   - Sorts a defensive copy of the ranges by `start` (the lint emits
  *     them sorted, but the renderer can't trust that across schema

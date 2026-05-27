@@ -5,9 +5,9 @@
  * capability-keyed model selection (`OPENAI_MODEL_SANDBOX` / `_LIBRARY` /
  * `_DISCUSS`) can land without a second pricing pass — adding a model that
  * isn't in the table would silently drop it from the daily-cap accounting
- * (Plan 10's `estimatedCostUsd` returns `undefined` for unknown models),
- * which would let users overspend through whichever variant happened to
- * be missing.
+ * (`estimatedCostUsd` returns `undefined` for unknown models), which
+ * would let users overspend through whichever variant happened to be
+ * missing.
  *
  * Numbers are public list pricing per 1 million tokens, USD. Update the
  * snapshot when OpenAI moves a tier; the values flow into:
@@ -28,10 +28,10 @@ export type OpenAIPricing = {
 };
 
 const PRICING: Record<string, OpenAIPricing> = {
-  // Plan 11 sandbox/docs/discuss defaults — sized roughly to the OpenAI
-  // GPT-5 family list pricing. Sandbox mode uses the full-tier model
-  // because it drives tool use; discuss / docs use the mini tier because
-  // they only need text-only completions.
+  // Sandbox/docs/discuss defaults — sized roughly to the OpenAI GPT-5
+  // family list pricing. Sandbox mode uses the full-tier model because
+  // it drives tool use; discuss / docs use the mini tier because they
+  // only need text-only completions.
   "gpt-5": {
     inputPerMillion: 1.25,
     outputPerMillion: 10,
@@ -44,9 +44,8 @@ const PRICING: Record<string, OpenAIPricing> = {
     inputPerMillion: 0.05,
     outputPerMillion: 0.4,
   },
-  // Pre-Plan-11 GPT-4 family fallbacks. Kept so existing fixtures and any
-  // operator who pinned `OPENAI_MODEL=gpt-4o` mid-rollout continue to bill
-  // correctly during the transition window.
+  // GPT-4 family fallbacks. Kept so existing fixtures and any operator
+  // who pins `OPENAI_MODEL=gpt-4o` continues to bill correctly.
   "gpt-4o-mini": {
     inputPerMillion: 0.15,
     outputPerMillion: 0.6,
@@ -81,8 +80,8 @@ export function estimateCostUsd(
 /**
  * Convert a USD cost to integer cents using **ceiling** rounding.
  *
- * The daily-cap rate-limiter (Plan 10) speaks in cents because the
- * underlying token-bucket component requires integer counts. Ceiling
+ * The daily-cap rate-limiter speaks in cents because the underlying
+ * token-bucket component requires integer counts. Ceiling
  * rounding is the one rule that keeps the sum of recorded message costs
  * always ≥ the real spend — flooring would let many sub-cent replies stack
  * up to several free dollars per user before the cap finally triggered.

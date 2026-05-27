@@ -27,7 +27,7 @@ flowchart TD
   Library --> LibraryArtifact
 ```
 
-`library/a/:artifactId` is the only long-form artifact reader — the artifact owns the path, and chat citations, quick-open, tabs, and folder navigation all converge on it. The active Library Ask thread is secondary view-state, carried as an optional `?ask=:threadId` query param rather than its own route; the legacy `/library/ask/:threadId` route redirects to the `?ask=` form. Sandbox-grounded Discuss replies render inside the standard Discuss URL — there is no separate "lab" surface anymore.
+`library/a/:artifactId` is the only long-form artifact reader — the artifact owns the path, and chat citations, quick-open, tabs, and folder navigation all converge on it. The active Library Ask thread is secondary view-state, carried as an optional `?ask=:threadId` query param rather than its own route. Sandbox-grounded Discuss replies render inside the standard Discuss URL — Sandbox grounding is a per-message flag on Discuss, not a separate surface.
 
 ## Library Shell Composition
 

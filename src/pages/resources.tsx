@@ -20,14 +20,14 @@ import { cn } from "@/lib/utils";
 import { DEFAULT_AUTHENTICATED_PATH, repositoryPath } from "@/route-paths";
 
 /**
- * Resources — cross-workspace inventory of the viewer's active repositories
+ * Resources — viewer-scoped inventory of the viewer's active repositories
  * with their live sandbox state. Surfaces what the per-thread TopBar's
- * StatusPill shows, but at workspace-aggregate granularity, so a viewer
+ * StatusPill shows, but at user-aggregate granularity, so a viewer
  * who is in Discuss mode (where the pill is intentionally hidden) still
  * has a single place to answer "what is my system doing right now".
  *
  * Read-only by design. Activate / stop / sync affordances stay on the
- * per-workspace TopBar where the user already has the workspace
+ * per-repository TopBar where the user already has the repository
  * context — Resources is a navigation surface, not a control plane.
  */
 export function ResourcesPage() {
