@@ -39,8 +39,8 @@ This folder contains the system design documentation for the current Systify cod
 - `github-callback-returnto-allowlist-system-design.md`
   - Why is URL-format validation alone insufficient for callback redirect trust?
   - How does origin allowlisting reduce open-redirect phishing-chain risk?
-- `workspace-persistence-system-design.md`
-  - Why is the viewer's "current workspace" stored in both Convex and localStorage?
+- `repository-persistence-system-design.md`
+  - Why is the viewer's "current repository" stored in both Convex and localStorage?
   - How does DB-wins reconciliation give cross-device continuity without a first-paint flash?
 - `sandbox-tool-call-audit-log-system-design.md`
   - Why does sandbox tool-call recording need a third table beyond `messageToolCallEvents` and `messages.toolCalls`?
@@ -69,7 +69,7 @@ The current codebase keeps system-design documentation for all implemented high-
 - Chat streaming architecture: `streaming-reply-optimization-system-design.md`
 - Vercel + Convex deployment model: `vercel-convex-deployment-system-design.md`
 - GitHub callback returnTo allowlist boundary: `github-callback-returnto-allowlist-system-design.md`
-- Workspace persistence and cross-device continuity: `workspace-persistence-system-design.md`
+- Repository persistence and cross-device continuity: `repository-persistence-system-design.md`
 - Sandbox tool-call audit log retention and recording boundary: `sandbox-tool-call-audit-log-system-design.md`
 - Archive listing pagination, search, and view state machine: `archive-listing-system-design.md`
 - Repository remote-freshness check trigger model and SHA comparison boundary: `repository-remote-freshness-check-system-design.md`
