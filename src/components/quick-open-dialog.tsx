@@ -102,7 +102,7 @@ export function QuickOpenDialog({
       <DialogContent className="overflow-hidden p-0 sm:max-w-xl">
         <DialogTitle className="sr-only">Quick open artifact</DialogTitle>
         <DialogDescription className="sr-only">
-          Search the workspace artifacts and press enter to open the highlighted row.
+          Search the repository artifacts and press enter to open the highlighted row.
         </DialogDescription>
         <div className="border-b border-border px-3 py-2">
           <Input

@@ -111,7 +111,7 @@ export function ProtectedLayout() {
   // destination page. Hoisting it lets the pathname effect inside the
   // provider observe the route change and close the Sheet cleanly.
   return (
-    <Suspense fallback={<RouteLoadingScreen description="Loading your chat workspace." />}>
+    <Suspense fallback={<RouteLoadingScreen description="Loading your chat." />}>
       <SidebarProvider>
         <Outlet />
       </SidebarProvider>
