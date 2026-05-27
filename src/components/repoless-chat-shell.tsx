@@ -28,11 +28,15 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
   const navigate = useNavigate();
   const repositories = useQuery(api.repositoryPreferences.listRepositoriesForSwitcher);
   // Live id sets for the localStorage GC sweep that runs inside the
-  // shared chat-shell lifecycle bundle.
+  // shared chat-shell lifecycle bundle. The GC sweep needs the *complete*
+  // owned-repo set (`listAllOwnerRepositoryIds`); the switcher's 20-row
+  // recency window would otherwise garbage-collect localStorage tied to
+  // repos the user still owns but hasn't touched recently.
+  const ownerRepositoryIds = useQuery(api.repositoryPreferences.listAllOwnerRepositoryIds, {});
   const ownerThreadIds = useQuery(api.chat.threads.listAllOwnerThreadIds, {});
   const liveRepositoryIds = useMemo(
-    () => (repositories ? new Set(repositories.map((r) => r._id as string)) : null),
-    [repositories],
+    () => (ownerRepositoryIds ? new Set(ownerRepositoryIds.map((id) => id as string)) : null),
+    [ownerRepositoryIds],
   );
   const liveThreadIds = useMemo(
     () => (ownerThreadIds ? new Set(ownerThreadIds.map((id) => id as string)) : null),

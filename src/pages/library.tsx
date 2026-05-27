@@ -66,17 +66,27 @@ function LibraryRepository({
   const [, setSearchParams] = useSearchParams();
 
   const repositories = useQuery(api.repositoryPreferences.listRepositoriesForSwitcher);
+  const ownerRepositoryIds = useQuery(api.repositoryPreferences.listAllOwnerRepositoryIds, {});
   const baseTouchRepository = useMutation(api.repositoryPreferences.touchRepository);
   const touchRepository = useMemo(
     () => baseTouchRepository.withOptimisticUpdate(applyTouchRepositoryOptimistic),
     [baseTouchRepository],
   );
 
+  const isAuthorizedForRepository = useMemo(() => {
+    if (ownerRepositoryIds === undefined) return null;
+    return (ownerRepositoryIds as ReadonlyArray<string>).includes(repositoryId);
+  }, [ownerRepositoryIds, repositoryId]);
+
   useEffect(() => {
     if (!repositoryId) return;
+    // Avoid persisting an active-repository pointer (or touching the server)
+    // before we know the viewer is authorized for this repo. Otherwise a
+    // stale URL would poison localStorage and trip a server error.
+    if (isAuthorizedForRepository !== true) return;
     writeString(ACTIVE_REPOSITORY_STORAGE_KEY, repositoryId);
     void touchRepository({ repositoryId, mode: "library" }).catch(() => {});
-  }, [touchRepository, repositoryId]);
+  }, [touchRepository, repositoryId, isAuthorizedForRepository]);
 
   const currentRepository = useMemo(
     () => repositories?.find((repo) => repo._id === repositoryId) ?? null,
@@ -139,14 +149,15 @@ function LibraryRepository({
     [navigate],
   );
 
-  // Library only renders when the repository exists. For missing
-  // repositories, route the user back to the default landing.
+  // Library only renders when the viewer owns the URL repository. Use the
+  // complete owner-repo set (not the recency-limited switcher list) so a
+  // repo outside the top-20 cache isn't mistakenly bounced to the landing.
   useEffect(() => {
-    if (repositories === undefined) return;
-    if (currentRepository === null) {
+    if (isAuthorizedForRepository === null) return;
+    if (!isAuthorizedForRepository) {
       void navigate(DEFAULT_AUTHENTICATED_PATH, { replace: true });
     }
-  }, [currentRepository, repositories, navigate]);
+  }, [isAuthorizedForRepository, navigate]);
 
   const artifactProbe = useQuery(api.artifacts.getById, artifactId ? { artifactId } : "skip");
   useEffect(() => {
@@ -167,8 +178,14 @@ function LibraryRepository({
     }
   }, [askThreadId, askThreadProbe, handleSelectLibraryThread, repositoryId]);
 
-  if (repositories === undefined) {
+  if (repositories === undefined || isAuthorizedForRepository === null) {
     return <ScreenState title="Loading…" description="Loading your repository." isLoading />;
+  }
+  // Bounce to the landing has been scheduled by the effect above; render a
+  // loading state in the meantime to avoid flashing repo-scoped chrome with
+  // a stale/unauthorized id.
+  if (!isAuthorizedForRepository) {
+    return <ScreenState title="Loading…" description="Redirecting…" isLoading />;
   }
 
   return (

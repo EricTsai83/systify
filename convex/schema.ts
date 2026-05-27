@@ -635,6 +635,7 @@ export default defineSchema({
     .index("by_repositoryId_and_pinnedAt", ["repositoryId", "pinnedAt"])
     .index("by_repositoryId_and_mode", ["repositoryId", "mode"])
     .index("by_repositoryId_mode_and_lastMessageAt", ["repositoryId", "mode", "lastMessageAt"])
+    .index("by_repositoryId_mode_and_pinnedAt", ["repositoryId", "mode", "pinnedAt"])
     .index("by_mode", ["mode"]),
 
   messages: defineTable({
@@ -1066,6 +1067,7 @@ export default defineSchema({
     spentCents: v.number(),
   })
     .index("by_repositoryId_and_status", ["repositoryId", "status"])
+    .index("by_repositoryId_and_startedAt", ["repositoryId", "startedAt"])
     .index("by_status_and_lastActivityAt", ["status", "lastActivityAt"])
     .index("by_ownerTokenIdentifier_and_startedAt", ["ownerTokenIdentifier", "startedAt"]),
 });

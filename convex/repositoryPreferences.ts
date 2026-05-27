@@ -31,6 +31,33 @@ export const listRepositoriesForSwitcher = query({
 });
 
 /**
+ * All repository ids the viewer owns, capped at 1000. Powers two callers
+ * that need the *complete* owned set — not the switcher's 20-row recency
+ * window:
+ *
+ *   1. The persisted `lastActiveRepositoryId` existence check in
+ *      `use-repository-persistence` — without this, a viewer whose
+ *      last-active repo sits outside the top-20 recency window would have
+ *      that pointer overwritten by `repositories[0]` on every fresh load.
+ *   2. The frontend `useStorageGC` sweep — repos outside the switcher
+ *      window must not be treated as garbage.
+ *
+ * The cap mirrors `chat.threads.listAllOwnerThreadIds`; beyond 1000 owned
+ * repos the trailing tail can drop out without a meaningful loss.
+ */
+export const listAllOwnerRepositoryIds = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await requireViewerIdentity(ctx);
+    const rows = await ctx.db
+      .query("repositories")
+      .withIndex("by_ownerTokenIdentifier", (q) => q.eq("ownerTokenIdentifier", identity.tokenIdentifier))
+      .take(1000);
+    return rows.map((row) => row._id);
+  },
+});
+
+/**
  * Mark `repositoryId` as the viewer's currently active repository,
  * optionally recording which mode (discuss / library) the user just
  * landed in inside that repository.

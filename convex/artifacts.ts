@@ -56,7 +56,15 @@ export const getById = query({
     if (!artifact) {
       return null;
     }
-    return toArtifactView(artifact, { now: Date.now() });
+    const now = Date.now();
+    let latestImportSha: string | undefined;
+    if (artifact.repositoryId) {
+      const repository = await ctx.db.get(artifact.repositoryId);
+      if (repository) {
+        latestImportSha = await resolveLatestImportSha(ctx, repository);
+      }
+    }
+    return toArtifactView(artifact, { now, latestImportSha });
   },
 });
 

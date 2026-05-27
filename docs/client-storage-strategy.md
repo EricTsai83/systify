@@ -57,7 +57,6 @@ When adding a new preference:
 
 Related keys are automatically cleaned up when their owner is deleted via the `useStorageGC` hook (mounted in `RepositoryShell`):
 
-- When a **repository** is deleted: `systify.folderNav.open.{repoId}.*` keys are removed
 - When a **repository** is deleted: `systify.library.tabs.{repoId}`, `systify.library.askTabs.{repoId}`, and `systify.folderNav.open.{repoId}.…` keys are removed
 
 Cleanup runs whenever the live id sets shrink (initial load, local deletion, or cross-tab deletion via Convex subscription). Adding a new id-scoped key? Add its prefix to `REPOSITORY_SCOPED_PREFIXES` in `use-storage-gc.ts` and the same machinery will sweep it.

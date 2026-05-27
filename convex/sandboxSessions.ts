@@ -111,23 +111,21 @@ export const stopSandboxSession = mutation({
 export const getSandboxSessionCostSummary = query({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
-    const { identity } = await requireOwnedDoc(ctx, args.repositoryId, {
+    await requireOwnedDoc(ctx, args.repositoryId, {
       notFoundMessage: "Repository not found.",
     });
-    const sessions = await ctx.db
+    const repositorySessions = await ctx.db
       .query("sandboxSessions")
-      .withIndex("by_ownerTokenIdentifier_and_startedAt", (q) => q.eq("ownerTokenIdentifier", identity.tokenIdentifier))
+      .withIndex("by_repositoryId_and_startedAt", (q) => q.eq("repositoryId", args.repositoryId))
       .order("desc")
-      .take(100);
-    const current = sessions.find(
-      (session) =>
-        session.repositoryId === args.repositoryId &&
-        (session.status === "starting" || session.status === "active" || session.status === "paused"),
+      .collect();
+    const current = repositorySessions.find(
+      (session) => session.status === "starting" || session.status === "active" || session.status === "paused",
     );
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const todaySpentCents = sessions
-      .filter((session) => session.repositoryId === args.repositoryId && session.startedAt >= todayStart.getTime())
+    const todaySpentCents = repositorySessions
+      .filter((session) => session.startedAt >= todayStart.getTime())
       .reduce((sum, session) => sum + session.spentCents, 0);
     return {
       current,

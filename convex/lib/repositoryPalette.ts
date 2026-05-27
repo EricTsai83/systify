@@ -17,7 +17,7 @@ export async function pickNextRepositoryColor(
   const rows = await ctx.db
     .query("repositories")
     .withIndex("by_ownerTokenIdentifier", (q) => q.eq("ownerTokenIdentifier", ownerTokenIdentifier))
-    .take(50);
+    .collect();
   return REPOSITORY_COLOR_PALETTE[rows.length % REPOSITORY_COLOR_PALETTE.length];
 }
 

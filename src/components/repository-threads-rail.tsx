@@ -370,6 +370,8 @@ export function RepolessChatsRail({
           variant="default"
           size="sm"
           className="h-8 w-full justify-start gap-1.5 text-xs"
+          disabled={!onRequestNewThread}
+          aria-disabled={!onRequestNewThread}
           onClick={onRequestNewThread}
         >
           <PlusIcon size={13} weight="bold" />

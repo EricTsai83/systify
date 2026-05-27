@@ -112,15 +112,16 @@ export const ensureRepositoryBootstrap = mutation({
  *
  * Returns the same shape for unowned or missing repositories so the
  * client doesn't need to special-case null. The auth check still
- * happens — `bootstrap: 0` and `bootstrapPending: false` means "never
- * show dots" because every artifact's `lastChangedAt` is greater than 0.
+ * happens — `bootstrap: Number.POSITIVE_INFINITY` paired with empty
+ * `views` keeps the navigator from lighting up dots for repos the
+ * viewer can't access.
  */
 export const listViewStateByRepository = query({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
     const { identity, doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
     if (!repository) {
-      return { bootstrap: 0, views: {} as Record<string, number>, bootstrapPending: false };
+      return { bootstrap: Number.POSITIVE_INFINITY, views: {} as Record<string, number>, bootstrapPending: false };
     }
 
     const bootstrapRow = await ctx.db

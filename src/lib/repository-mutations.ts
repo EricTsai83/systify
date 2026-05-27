@@ -33,8 +33,10 @@ export function applyTouchRepositoryOptimistic(
 ) {
   const now = Date.now();
 
-  for (const { args: queryArgs } of store.getAllQueries(api.userPreferences.getViewerPreferences)) {
+  for (const { args: queryArgs, value } of store.getAllQueries(api.userPreferences.getViewerPreferences)) {
+    if (value === undefined) continue;
     store.setQuery(api.userPreferences.getViewerPreferences, queryArgs, {
+      ...value,
       lastActiveRepositoryId: args.repositoryId,
       lastActiveRepositoryUpdatedAt: now,
     });

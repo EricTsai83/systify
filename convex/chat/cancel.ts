@@ -30,7 +30,7 @@
  * Why no lease check: the spec calls this out explicitly — the owner is
  * cancelling their own reply, so there is no concurrent-writer hazard the
  * lease would protect against. We still take the per-thread ownership check
- * via `requireViewerIdentity` so a different identity can't poke at someone
+ * via `requireOwnedDoc` so a different identity can't poke at someone
  * else's stream.
  */
 

@@ -61,7 +61,7 @@ export const RepositorySelector = memo(function RepositorySelector({
               return (
                 <DropdownMenuItem
                   key={repo._id}
-                  onClick={() => {
+                  onSelect={() => {
                     if (!isActive) onSwitchRepository(repo._id);
                   }}
                   className="gap-2"

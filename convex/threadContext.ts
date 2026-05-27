@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalQuery, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
-import { requireOwnedDoc } from "./lib/ownedDocs";
+import { loadOwnedDoc } from "./lib/ownedDocs";
 import { getRepositorySandboxStatus, type SandboxModeStatus } from "./lib/repositorySandbox";
 import {
   computeSandboxCostCapEvaluation,
@@ -139,21 +139,20 @@ export const getThreadContext = query({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
     // Probe for existence first so a stale thread id returns `null` (lets the
-    // client clear the URL) instead of "Thread not found." — keeping the
-    // non-owner path on the throw branch so we don't disclose existence.
+    // client clear the URL) instead of "Thread not found." — both missing and
+    // unauthorized return null to avoid disclosing existence.
     const probe = await loadThread(ctx, args.threadId);
     if (!probe) {
       return null;
     }
-    const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
-      notFoundMessage: "Thread not found.",
-    });
+    const { identity, doc: thread } = await loadOwnedDoc(ctx, args.threadId);
+    if (!thread) {
+      return null;
+    }
 
     let attachedRepository: Doc<"repositories"> | null = null;
     if (thread.repositoryId) {
-      const { doc } = await requireOwnedDoc(ctx, thread.repositoryId, {
-        notFoundMessage: "Thread not found.",
-      });
+      const { doc } = await loadOwnedDoc(ctx, thread.repositoryId);
       attachedRepository = doc;
     }
 

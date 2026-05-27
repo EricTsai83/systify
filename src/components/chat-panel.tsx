@@ -222,10 +222,11 @@ export function ChatPanel({
   const requestSandboxActivation = useMutation(api.repositories.requestSandboxActivation);
   const [activationError, setActivationError] = useState<string | null>(null);
   const [, activateSandbox] = useAsyncCallback(async () => {
-    if (!attachedRepositoryId) return;
+    const repoId = attachedRepositoryId ?? repositoryId;
+    if (!repoId) return;
     setActivationError(null);
     try {
-      await requestSandboxActivation({ repositoryId: attachedRepositoryId });
+      await requestSandboxActivation({ repositoryId: repoId });
     } catch (err) {
       setActivationError(toUserErrorMessage(err, "Couldn't start the sandbox. Try again."));
     }

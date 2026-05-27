@@ -124,6 +124,28 @@ export function useLibraryTabs(repositoryId: RepositoryId | null, activeFromRout
     };
   });
 
+  // Tabs are per-repository. When the active repositoryId changes, reseed
+  // state from the new repo's cache *before* the persistence effect runs —
+  // otherwise the previous repo's tabs would be written into the new repo's
+  // storage key on the first effect tick after the switch.
+  const seededRepositoryIdRef = useRef<RepositoryId | null>(repositoryId);
+  const skipPersistForRepoChangeRef = useRef(false);
+  const hasReconciledFromUrlRef = useRef(false);
+  useEffect(() => {
+    if (seededRepositoryIdRef.current === repositoryId) return;
+    seededRepositoryIdRef.current = repositoryId;
+    skipPersistForRepoChangeRef.current = true;
+    hasReconciledFromUrlRef.current = false;
+    const cached = readCachedTabs(repositoryId);
+    const openFromUrl = parseOpenParam(searchParams.get("open"));
+    const open = dedupe([...openFromUrl, ...(cached?.openArtifactIds ?? [])]).slice(0, MAX_OPEN_TABS);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setState({
+      openArtifactIds: open,
+      activeArtifactId: activeFromRoute ?? cached?.activeArtifactId ?? open[0] ?? null,
+    });
+  }, [repositoryId, activeFromRoute, searchParams]);
+
   // Reconcile URL-driven changes — when the user navigates to a new
   // `/library/a/:aid` (for example via the tree or quick-open), promote
   // it into the open list and mark it active. setState in an effect is
@@ -151,7 +173,6 @@ export function useLibraryTabs(repositoryId: RepositoryId | null, activeFromRout
   // `activeArtifactId` when the URL drops it, so state cannot drag
   // the URL back to a stale tab and start a ping-pong with the page's
   // artifact-validity guard.
-  const hasReconciledFromUrlRef = useRef(false);
   useEffect(() => {
     if (!hasReconciledFromUrlRef.current) {
       hasReconciledFromUrlRef.current = true;
@@ -181,6 +202,14 @@ export function useLibraryTabs(repositoryId: RepositoryId | null, activeFromRout
   // stack with one entry per tab close.
   const writeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
+    // Skip one tick after a repositoryId switch so the previous repo's
+    // state is not flushed into the new repo's storage key. The reseed
+    // effect schedules a fresh `setState` whose subsequent tick re-enters
+    // this effect with the new state and clears the flag.
+    if (skipPersistForRepoChangeRef.current) {
+      skipPersistForRepoChangeRef.current = false;
+      return;
+    }
     writeCachedTabs(repositoryId, state);
     if (!repositoryId) return;
     if (writeTimerRef.current) clearTimeout(writeTimerRef.current);

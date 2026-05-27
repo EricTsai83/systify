@@ -1,10 +1,14 @@
 // @vitest-environment jsdom
 
 import { renderHook } from "@testing-library/react";
-import { describe, expect, test } from "vitest";
+import { beforeEach, describe, expect, test } from "vitest";
 import { useStorageGC } from "./use-storage-gc";
 
 describe("useStorageGC", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
   test("does nothing while the live repository set is null (query still loading)", () => {
     window.localStorage.setItem("systify.library.tabs.repo_a", "{}");
     window.localStorage.setItem("systify.library.askTabs.repo_b", "[]");

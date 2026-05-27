@@ -34,8 +34,9 @@ import {
 } from "./lib/chatEligibility";
 import type { ChatMode } from "./lib/chatMode";
 import { requireViewerIdentity } from "./lib/auth";
-import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
+import { isOwnedBy } from "./lib/ownedDocs";
 import { getRepositorySandboxStatus, type SandboxModeStatus } from "./lib/repositorySandbox";
+import { loadAccessibleRepositoryForViewer } from "./lib/repositoryAccess";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -127,7 +128,9 @@ export const evaluate = query({
         tokenIdentifier: identity.tokenIdentifier,
       });
     }
-    const { identity, doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    const { identity, repository } = await loadAccessibleRepositoryForViewer(ctx, {
+      repositoryId: args.repositoryId,
+    });
     if (!repository) {
       return null;
     }
@@ -180,11 +183,10 @@ export async function assertRepositoryModeEligible(
   const identity = await requireViewerIdentity(ctx);
   const groundLibrary = args.mode === "discuss" && args.groundLibrary === true;
   const groundSandbox = args.mode === "discuss" && args.groundSandbox === true;
+  const isUngroundedDiscuss = args.mode === "discuss" && !groundLibrary && !groundSandbox;
 
-  if (args.mode === "discuss" && !groundLibrary && !groundSandbox) {
-    return;
-  }
   if (!args.repositoryId) {
+    if (isUngroundedDiscuss) return;
     throw new ConvexError({
       code: "no_repository_attached",
       mode: args.mode,
@@ -194,6 +196,7 @@ export async function assertRepositoryModeEligible(
           : "Library / Sandbox grounding requires an attached repository.",
     });
   }
+
   const repository = await ctx.db.get(args.repositoryId);
   if (!isOwnedBy(repository, identity.tokenIdentifier)) {
     throw new ConvexError({
@@ -201,6 +204,11 @@ export async function assertRepositoryModeEligible(
       message: "Repository not found.",
     });
   }
+
+  // Ownership has been enforced for the supplied repositoryId; an ungrounded
+  // discuss turn does not need further mode/grounding validation.
+  if (isUngroundedDiscuss) return;
+
   const verdict = await evaluateFromRepository(ctx, {
     repository,
     tokenIdentifier: identity.tokenIdentifier,

@@ -292,7 +292,7 @@ describe("artifactViews.listViewStateByRepository", () => {
 
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
     const state = await viewer.query(api.artifactViews.listViewStateByRepository, { repositoryId });
-    expect(state).toEqual({ bootstrap: 0, views: {}, bootstrapPending: false });
+    expect(state).toEqual({ bootstrap: Number.POSITIVE_INFINITY, views: {}, bootstrapPending: false });
   });
 });
 

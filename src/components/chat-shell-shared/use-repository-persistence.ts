@@ -58,11 +58,17 @@ export function useRepositoryPersistence({
   navigate: NavigateFunction;
 }): RepositoryPersistence {
   const repositories = useQuery(api.repositoryPreferences.listRepositoriesForSwitcher);
+  const ownerRepositoryIds = useQuery(api.repositoryPreferences.listAllOwnerRepositoryIds);
   const viewerPreferences = useQuery(api.userPreferences.getViewerPreferences);
   const baseTouchRepository = useMutation(api.repositoryPreferences.touchRepository);
   const touchRepository = useMemo(
     () => baseTouchRepository.withOptimisticUpdate(applyTouchRepositoryOptimistic),
     [baseTouchRepository],
+  );
+
+  const ownerRepositoryIdSet = useMemo(
+    () => (ownerRepositoryIds ? new Set(ownerRepositoryIds as ReadonlyArray<RepositoryId>) : null),
+    [ownerRepositoryIds],
   );
 
   const [activeRepositoryId, setActiveRepositoryId] = useState<RepositoryId | null>(() => {
@@ -80,24 +86,29 @@ export function useRepositoryPersistence({
 
   // DB-wins reconciliation. Cross-tab pushes flow through here too.
   useEffect(() => {
-    if (repositories === undefined || viewerPreferences === undefined) return;
+    if (viewerPreferences === undefined) return;
+    if (ownerRepositoryIdSet === null) return;
     const dbRepositoryId = viewerPreferences?.lastActiveRepositoryId ?? null;
     if (!dbRepositoryId) return;
-    const dbRepositoryExists = repositories.some((repo) => repo._id === dbRepositoryId);
-    if (!dbRepositoryExists) return;
-    if (dbRepositoryId !== activeRepositoryId) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setActiveRepositoryId(dbRepositoryId);
+    if (ownerRepositoryIdSet.has(dbRepositoryId)) {
+      if (dbRepositoryId !== activeRepositoryId) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setActiveRepositoryId(dbRepositoryId);
+      }
+      return;
     }
-  }, [repositories, viewerPreferences, activeRepositoryId]);
+    if (dbRepositoryId !== activeRepositoryId) {
+      setActiveRepositoryId(null);
+    }
+  }, [ownerRepositoryIdSet, viewerPreferences, activeRepositoryId]);
 
   // Auto-select the most recent repository if none is active or the active
   // one no longer exists. Seed the DB preference too.
   useEffect(() => {
     if (!repositories || repositories.length === 0) return;
     if (viewerPreferences === undefined) return;
-    const activeExists = repositories.some((repo) => repo._id === activeRepositoryId);
-    if (activeExists) return;
+    if (ownerRepositoryIdSet === null) return;
+    if (activeRepositoryId && ownerRepositoryIdSet.has(activeRepositoryId)) return;
     const fallback = repositories[0]._id;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setActiveRepositoryId(fallback);
@@ -106,7 +117,7 @@ export function useRepositoryPersistence({
         console.error(`touchRepository failed for fallback repositoryId=${fallback}`, err);
       });
     }
-  }, [repositories, viewerPreferences, activeRepositoryId, touchRepository]);
+  }, [repositories, viewerPreferences, ownerRepositoryIdSet, activeRepositoryId, touchRepository]);
 
   // URL → state sync.
   useEffect(() => {

@@ -52,10 +52,13 @@ export const captureAdr = mutation({
     }
 
     if (args.folderId) {
+      if (!thread.repositoryId) {
+        throw new Error("Cannot place an artifact in a folder from a repository-less thread.");
+      }
       const { doc: folder } = await requireOwnedDoc(ctx, args.folderId, {
         notFoundMessage: "Folder not found.",
       });
-      if (thread.repositoryId && folder.repositoryId !== thread.repositoryId) {
+      if (folder.repositoryId !== thread.repositoryId) {
         throw new Error("Cannot place an artifact in a folder from a different repository.");
       }
     }

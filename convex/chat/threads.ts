@@ -41,11 +41,19 @@ export const listThreads = query({
     }
     const repositoryId = args.repositoryId;
     const mode = args.mode;
-    const pinned = await ctx.db
-      .query("threads")
-      .withIndex("by_repositoryId_and_pinnedAt", (q) => q.eq("repositoryId", repositoryId).gt("pinnedAt", 0))
-      .order("desc")
-      .take(20);
+    const pinned = mode
+      ? await ctx.db
+          .query("threads")
+          .withIndex("by_repositoryId_mode_and_pinnedAt", (q) =>
+            q.eq("repositoryId", repositoryId).eq("mode", mode).gt("pinnedAt", 0),
+          )
+          .order("desc")
+          .take(20)
+      : await ctx.db
+          .query("threads")
+          .withIndex("by_repositoryId_and_pinnedAt", (q) => q.eq("repositoryId", repositoryId).gt("pinnedAt", 0))
+          .order("desc")
+          .take(20);
     const recent = mode
       ? await ctx.db
           .query("threads")
@@ -59,9 +67,8 @@ export const listThreads = query({
           .withIndex("by_repositoryId_and_lastMessageAt", (q) => q.eq("repositoryId", repositoryId))
           .order("desc")
           .take(20);
-    const pinnedForMode = mode ? pinned.filter((thread) => thread.mode === mode) : pinned;
-    const pinnedIds = new Set(pinnedForMode.map((thread) => thread._id));
-    return [...pinnedForMode, ...recent.filter((thread) => !pinnedIds.has(thread._id))];
+    const pinnedIds = new Set(pinned.map((thread) => thread._id));
+    return [...pinned, ...recent.filter((thread) => !pinnedIds.has(thread._id))];
   },
 });
 

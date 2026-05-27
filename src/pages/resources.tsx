@@ -74,7 +74,7 @@ export function ResourcesPage() {
 
           <p className="mb-4 text-sm leading-relaxed text-muted-foreground sm:mb-5">
             Live status for every repository you have imported. Sandboxes auto-archive after their TTL — open a
-            workspace to refresh or activate one.
+            repository to refresh or activate one.
           </p>
 
           {inventory === undefined ? (

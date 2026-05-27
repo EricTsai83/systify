@@ -50,7 +50,7 @@ const NULL_RESOLUTION = {
 export function useChatMode(repositoryId: RepositoryId | null) {
   const location = useLocation();
   const params = useParams<{ repositoryId?: string; threadId?: string; artifactId?: string }>();
-  const availability = useQuery(api.repositoryModeEligibility.evaluate, repositoryId ? { repositoryId } : "skip");
+  const availability = useQuery(api.repositoryModeEligibility.evaluate, { repositoryId: repositoryId ?? undefined });
 
   const mode = useMemo<ChatMode | null>(() => {
     const path = location.pathname;

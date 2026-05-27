@@ -60,10 +60,13 @@ export function RepositoryShell({
     handleSwitchRepository,
   } = useRepositoryPersistence({ urlRepositoryId, navigate });
 
+  const ownerRepositoryIds = useQuery(api.repositoryPreferences.listAllOwnerRepositoryIds, {});
   const ownerThreadIds = useQuery(api.chat.threads.listAllOwnerThreadIds, {});
+  // GC needs the full owned set so repositories outside the switcher's
+  // 20-row recency window aren't garbage-collected from localStorage.
   const liveRepositoryIds = useMemo(
-    () => (repositories ? new Set(repositories.map((r) => r._id as string)) : null),
-    [repositories],
+    () => (ownerRepositoryIds ? new Set(ownerRepositoryIds.map((id) => id as string)) : null),
+    [ownerRepositoryIds],
   );
   const liveThreadIds = useMemo(
     () => (ownerThreadIds ? new Set(ownerThreadIds.map((id) => id as string)) : null),
