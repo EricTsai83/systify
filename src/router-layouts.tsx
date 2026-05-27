@@ -1,33 +1,22 @@
 import { Suspense, useEffect, useState } from "react";
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import {
   Navigate,
   Outlet,
   Link,
   isRouteErrorResponse,
   useLocation,
-  useParams,
   useRouteError,
   useSearchParams,
 } from "react-router-dom";
-import { api } from "../convex/_generated/api";
 import { AppNotice } from "@/components/app-notice";
 import { ScreenState } from "@/components/screen-state";
 import { Button } from "@/components/ui/button";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { hasWorkOSSessionHint } from "@/lib/auth-session-hint";
 import { readString, removeKey, writeString } from "@/lib/storage";
-import type { ThreadId, WorkspaceId } from "@/lib/types";
 import { useConvexAuthStatus } from "@/providers/convex-provider-with-auth-kit";
-import {
-  AUTH_CALLBACK_PATH,
-  DEFAULT_AUTHENTICATED_PATH,
-  LANDING_PATH,
-  discussPath,
-  isProtectedReturnTo,
-  modeAwareThreadPath,
-  workspacePath,
-} from "@/route-paths";
+import { AUTH_CALLBACK_PATH, DEFAULT_AUTHENTICATED_PATH, LANDING_PATH, isProtectedReturnTo } from "@/route-paths";
 import { HomePage } from "@/pages/home";
 
 const MAX_CALLBACK_ERROR_DESCRIPTION_LENGTH = 240;
@@ -253,102 +242,6 @@ export function NotFoundRoute() {
       </div>
     </div>
   );
-}
-
-/**
- * Legacy Library Ask URL redirect. The standalone `/library/ask/:threadId`
- * route was removed when Library Ask became an always-visible column
- * addressed by `?ask=:threadId`. Old bookmarks/links land here and bounce
- * to the canonical query-param URL; `replace` keeps the dead URL out of
- * history so Back doesn't ping-pong between the two forms.
- *
- * This path is deliberately NOT registered in `PROTECTED_ROUTE_SEGMENTS` /
- * `isProtectedReturnTo` — re-adding the literal there would reintroduce the
- * route-table drift that allowlist is designed to prevent. The narrow cost:
- * a logged-out user hitting a stale Ask bookmark returns to the default
- * path after sign-in rather than to the thread.
- */
-export function LibraryAskLegacyRedirect() {
-  const { workspaceId, threadId } = useParams<{ workspaceId: string; threadId: string }>();
-  if (!workspaceId) {
-    return <Navigate to={LANDING_PATH} replace />;
-  }
-  const base = `/w/${workspaceId}/library`;
-  const target = threadId ? `${base}?ask=${threadId}` : base;
-  return <Navigate to={target} replace />;
-}
-
-/**
- * Legacy Lab-mode URL redirect. The old "/lab" path was the original
- * naming for what is now the "discuss" mode. Old bookmarks/links land here
- * and bounce to the canonical discuss URL; `replace` keeps the dead URL out
- * of history so Back doesn't ping-pong between the two forms.
- *
- * This path is deliberately NOT registered in `PROTECTED_ROUTE_SEGMENTS` /
- * `isProtectedReturnTo` — re-adding the literal there would reintroduce the
- * route-table drift that allowlist is designed to prevent. The narrow cost:
- * a logged-out user hitting a stale lab bookmark returns to the default
- * path after sign-in rather than to the thread.
- */
-export function LabLegacyRedirect() {
-  const { workspaceId, threadId } = useParams<{ workspaceId: string; threadId?: string }>();
-  if (!workspaceId) {
-    return <Navigate to={LANDING_PATH} replace />;
-  }
-  const target = discussPath(workspaceId as WorkspaceId, threadId as ThreadId | undefined);
-  return <Navigate to={target} replace />;
-}
-
-/**
- * Legacy mode-agnostic thread URL `/w/:wid/t/:tid`. In-app navigation now
- * goes straight to canonical mode-aware URLs (every callsite knows the
- * thread's mode at the moment it routes — `WorkspaceThreadsRail` forwards
- * `thread.mode`, freshly-created threads carry the mode through the
- * mutation return value, repo imports carry it through `defaultThreadMode`).
- * This redirect therefore only services genuinely stale bookmarks and
- * external links saved before the canonical-URL switchover.
- *
- * It still earns its place: without it, a stale bookmark would land
- * `useChatMode` in `null` and the shell would paint nothing useful.
- * The component reads the thread's stored mode, computes the matching
- * canonical URL via `modeAwareThreadPath`, and `<Navigate replace>`s the
- * browser there. Renders no shell chrome while the `getThreadContext`
- * query is in flight so the user does not see mode-dependent surfaces
- * paint and then unpaint as the redirect resolves.
- *
- * Falls back to the workspace landing when the thread cannot be loaded
- * (deleted, no access) — same recovery the shell-side missing-thread
- * effect applies, so behaviour stays consistent regardless of which
- * surface detected the dead URL first.
- */
-export function LegacyThreadRedirect() {
-  const { workspaceId, threadId } = useParams<{ workspaceId: string; threadId: string }>();
-  const wid = (workspaceId ?? null) as WorkspaceId | null;
-  const tid = (threadId ?? null) as ThreadId | null;
-
-  const threadContext = useQuery(api.threadContext.getThreadContext, tid ? { threadId: tid } : "skip");
-
-  if (!wid || !tid) {
-    return <Navigate to={DEFAULT_AUTHENTICATED_PATH} replace />;
-  }
-
-  if (threadContext === undefined) {
-    return <RouteLoadingScreen description="Loading thread…" />;
-  }
-
-  if (threadContext === null) {
-    // Thread is gone or inaccessible — bounce to the workspace landing,
-    // which will forward to a surviving thread or render the empty state.
-    return <Navigate to={workspacePath(wid)} replace />;
-  }
-
-  // Delegate the (thread.mode → canonical URL) mapping to the shared
-  // `modeAwareThreadPath` helper so this redirect and every in-app
-  // navigation stay in lockstep — adding a new thread mode is a single
-  // edit in `route-paths.ts` instead of two.
-  const target = modeAwareThreadPath(wid, tid, threadContext.thread.mode);
-
-  return <Navigate to={target} replace />;
 }
 
 function AuthLoadingScreen() {

@@ -85,6 +85,8 @@ async function seedRepoAndSandbox(
       packageManagers: [],
       entrypoints: [],
       fileCount: 0,
+      color: "blue",
+      lastAccessedAt: Date.now(),
     });
     let sandboxId: Id<"sandboxes"> | null = null;
     if (args.sandbox) {

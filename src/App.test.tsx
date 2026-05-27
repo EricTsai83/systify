@@ -40,8 +40,12 @@ vi.mock("@/pages/home", () => ({
   HomePage: () => <div>home page</div>,
 }));
 
-vi.mock("@/pages/chat", () => ({
-  ChatPage: () => <div>chat page</div>,
+vi.mock("@/components/repoless-chat-shell", () => ({
+  RepolessChatShell: () => <div>chat page</div>,
+}));
+
+vi.mock("@/pages/discuss", () => ({
+  DiscussPage: () => <div>chat page</div>,
 }));
 
 vi.mock("@/pages/library", () => ({
@@ -214,18 +218,18 @@ describe("App auth token failures", () => {
       };
     }
 
-    const router = renderWithAuth(useAuth, ["/w/workspace_xyz"]);
+    const router = renderWithAuth(useAuth, ["/r/repo_xyz"]);
 
     // ProtectedLayout should bounce signed-out users back to the landing route.
     expect(await screen.findByText("home page")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/");
     // …and have stashed the originally-requested path so AuthCallbackRoute can
     // resume there after sign-in (covers persistAuthReturnTo + normalizeReturnTo).
-    expect(window.sessionStorage.getItem(AUTH_RETURN_TO_KEY)).toBe("/w/workspace_xyz");
+    expect(window.sessionStorage.getItem(AUTH_RETURN_TO_KEY)).toBe("/r/repo_xyz");
   });
 
   test("redirects callback users back to stored destination", async () => {
-    window.sessionStorage.setItem(AUTH_RETURN_TO_KEY, "/w/workspace_123");
+    window.sessionStorage.setItem(AUTH_RETURN_TO_KEY, "/r/repo_123");
 
     function useAuth() {
       return {
@@ -238,7 +242,7 @@ describe("App auth token failures", () => {
     const router = renderWithAuth(useAuth, ["/callback?code=test-code"]);
 
     expect(await screen.findByText("chat page")).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe("/w/workspace_123");
+    expect(router.state.location.pathname).toBe("/r/repo_123");
     expect(window.sessionStorage.getItem(AUTH_RETURN_TO_KEY)).toBeNull();
   });
 
@@ -306,22 +310,6 @@ describe("App auth token failures", () => {
 
     expect(await screen.findByText("This page does not exist.")).toBeInTheDocument();
     expect(await screen.findByText("Go to home")).toBeInTheDocument();
-  });
-
-  test("redirects the legacy /library/ask/:threadId URL to the ?ask= query param form", async () => {
-    function useAuth() {
-      return {
-        isLoading: false,
-        user: { id: "user_1" },
-        getAccessToken: getAccessTokenMock,
-      };
-    }
-
-    const router = renderWithAuth(useAuth, ["/w/workspace_legacy/library/ask/thread_legacy"]);
-
-    expect(await screen.findByText("library page")).toBeInTheDocument();
-    expect(router.state.location.pathname).toBe("/w/workspace_legacy/library");
-    expect(router.state.location.search).toBe("?ask=thread_legacy");
   });
 });
 

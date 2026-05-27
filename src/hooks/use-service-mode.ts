@@ -2,19 +2,17 @@ import { useMemo } from "react";
 import { useLocation, useParams } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import type { WorkspaceModeDisabledReasonCode } from "../../convex/lib/chatEligibility";
-import type { ChatMode, WorkspaceId } from "@/lib/types";
+import type { RepositoryModeDisabledReasonCode } from "../../convex/lib/chatEligibility";
+import type { ChatMode, RepositoryId } from "@/lib/types";
 
 /**
  * Per-axis verdict shape consumed by chrome that subscribes to
- * `workspaceModeEligibility.evaluate`. `code` is the backend enum union
- * plus a `"loading"` sentinel for the placeholder fallback, so a backend
- * addition to `WorkspaceModeDisabledReasonCode` surfaces as a compile
- * error here rather than slipping through under `string`.
+ * `repositoryModeEligibility.evaluate`. `code` is the backend enum union
+ * plus a `"loading"` sentinel for the placeholder fallback.
  */
 interface ChatModeDisabledLike {
   enabled: false;
-  code: WorkspaceModeDisabledReasonCode | "loading";
+  code: RepositoryModeDisabledReasonCode | "loading";
   message: string;
 }
 type AxisVerdictLike = { enabled: true } | ChatModeDisabledLike;
@@ -42,55 +40,24 @@ const NULL_RESOLUTION = {
 };
 
 /**
- * Bridge between the workspace URL and the service-mode resolver.
+ * Bridge between the repository URL and the service-mode resolver.
  *
  * Returns:
- *   - `mode` — the mode the URL is currently rendering, or `null` if
- *     the URL is a transient / non-canonical one (`/chat`, `/w/:wid`,
- *     `/w/:wid/t/:tid`). Callers that gate chrome on the user's "current
- *     mode" should treat `null` as "no mode chrome yet" — never paint
- *     mode-dependent surfaces (StatusPill, ArtifactPanel) before the URL
- *     settles on a canonical `/w/:wid/{discuss,library,lab}/...` path.
- *     This eliminates the flash that used to happen when transient URLs
- *     briefly resolved to the workspace's default mode (e.g. "library"
- *     for a repo-attached workspace) before the canonicalising redirect
- *     landed on a legacy `/t/:tid` URL where the placeholder collapsed
- *     back to "discuss".
- *   - `availability` — the resolver output keyed by service mode, used by
- *     the switcher to decide which buttons to grey out, by the workspace
- *     shell to decide which mode to redirect transient URLs to, and the
- *     tooltip to render. Independent of `mode` — the URL tells us
- *     what's currently displayed; availability tells us what the
- *     workspace's *intended* default is.
- *
- * Callers should treat `availability === undefined` as "loading" and
- * defer rendering disabled-state tooltips until it lands. Returning
- * `null` here would force every consumer to write the same loading
- * branch; instead we surface a "discuss-only, no reasons" placeholder
- * resolution so the switcher can paint a usable surface on first paint
- * and reconcile once the query resolves.
+ *   - `mode` — the mode the URL is currently rendering, or `null` if the
+ *     URL is a transient / non-canonical one (`/chat`, `/r/:rid`).
+ *   - `availability` — the resolver output keyed by service mode.
  */
-export function useChatMode(workspaceId: WorkspaceId | null) {
+export function useChatMode(repositoryId: RepositoryId | null) {
   const location = useLocation();
-  const params = useParams<{ workspaceId?: string; threadId?: string; artifactId?: string }>();
-  const availability = useQuery(api.workspaceModeEligibility.evaluate, workspaceId ? { workspaceId } : "skip");
+  const params = useParams<{ repositoryId?: string; threadId?: string; artifactId?: string }>();
+  const availability = useQuery(api.repositoryModeEligibility.evaluate, { repositoryId: repositoryId ?? undefined });
 
   const mode = useMemo<ChatMode | null>(() => {
-    // The URL prefix tells us which mode is mounted. We match the path
-    // segment after the workspace id; query params (`?ask=1`, `?open=…`)
-    // do not change the service-mode bucket.
-    //
-    // Non-canonical URLs (`/chat`, `/w/:wid` workspace landing, and the
-    // legacy `/w/:wid/t/:tid` thread URL) return `null`: they are
-    // transient stops on the canonicalisation chain and have no settled
-    // mode of their own. The workspace shell consults `availability` for
-    // its redirect target; chrome consumers gate on a non-null mode so
-    // the StatusPill / ArtifactPanel only paint once the URL settles.
     const path = location.pathname;
-    if (!params.workspaceId) {
+    if (!params.repositoryId) {
       return null;
     }
-    const prefix = `/w/${params.workspaceId}`;
+    const prefix = `/r/${params.repositoryId}`;
     if (path.startsWith(`${prefix}/discuss`)) {
       return "discuss";
     }
@@ -98,12 +65,12 @@ export function useChatMode(workspaceId: WorkspaceId | null) {
       return "library";
     }
     return null;
-  }, [location.pathname, params.workspaceId]);
+  }, [location.pathname, params.repositoryId]);
 
   return {
     mode,
     /**
-     * `undefined` while the workspace query loads. Consumers that need a
+     * `undefined` while the repository query loads. Consumers that need a
      * never-undefined value can fall back to {@link NULL_RESOLUTION}.
      */
     availability,

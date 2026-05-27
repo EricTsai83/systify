@@ -122,6 +122,8 @@ describe("import snapshot cleanup", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       const oldJobId = await ctx.db.insert("jobs", {
@@ -305,6 +307,8 @@ describe("batched import persistence", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       const jobId = await ctx.db.insert("jobs", {
@@ -457,6 +461,8 @@ describe("batched import persistence", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       const jobId = await ctx.db.insert("jobs", {
@@ -616,6 +622,8 @@ describe("repository deletion during import", () => {
         packageManagers: ["npm"],
         entrypoints: ["src/current.ts"],
         fileCount: 1,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       const completedJobId = await ctx.db.insert("jobs", {
@@ -870,6 +878,8 @@ describe("repository deletion during import", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       const jobId = await ctx.db.insert("jobs", {

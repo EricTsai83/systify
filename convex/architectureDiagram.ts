@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import type { Doc } from "./_generated/dataModel";
 import { mutation, type MutationCtx } from "./_generated/server";
-import { requireViewerIdentity } from "./lib/auth";
-import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
+import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
+import { requireOwnedDoc } from "./lib/ownedDocs";
 import { createArtifactInMutation } from "./artifactStore";
 import {
   generateArchitectureDiagram,
@@ -46,25 +46,21 @@ export const requestArchitectureDiagram = mutation({
     folderId: v.optional(v.id("artifactFolders")),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread || thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Thread not found.");
-    }
+    const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
     if (!thread.repositoryId) {
       throw new Error("Architecture diagrams require an attached repository on this thread.");
     }
-    const repository = await requireActiveRepositoryForOwner(ctx, {
+    const { repository } = await requireActiveRepositoryForViewer(ctx, {
       repositoryId: thread.repositoryId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
       archivedMessage: "This repository is archived. Restore it to generate diagrams.",
     });
 
     if (args.folderId) {
-      const folder = await ctx.db.get(args.folderId);
-      if (!folder || folder.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Folder not found.");
-      }
+      const { doc: folder } = await requireOwnedDoc(ctx, args.folderId, {
+        notFoundMessage: "Folder not found.",
+      });
       if (folder.repositoryId !== repository._id) {
         throw new Error("Cannot place an artifact in a folder from a different repository.");
       }

@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { OnImportedCallback, RepositoryId, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
+import type { OnImportedCallback, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const EMPTY_CHAT_OWL = ["   ^...^   ", "  / o,o \\  ", "  |):::(|  ", "====w=w===="].join("\n");
@@ -119,7 +119,7 @@ function OwlAsciiArt() {
 /**
  * Shared hero block for chatroom empty states — visual, title, optional
  * description. The same structural primitive backs Library Ask, Discuss,
- * and the no-repo Lab/Docs hint so the framework stays consistent even
+ * and the no-repo hint so the framework stays consistent even
  * when the visual (icon vs. ASCII owl) and copy differ per context.
  */
 export function EmptyStateHero({
@@ -221,12 +221,12 @@ export function EmptyNoRepoHint({
   threadId,
   availableRepositories,
   onImported,
-  onThreadMovedToWorkspace,
+  onThreadMovedToRepository,
 }: {
   threadId: ThreadId | null;
   availableRepositories: ReadonlyArray<Doc<"repositories">>;
   onImported?: OnImportedCallback;
-  onThreadMovedToWorkspace?: (workspaceId: WorkspaceId | null, mode: ThreadMode | null) => void;
+  onThreadMovedToRepository?: (repositoryId: RepositoryId | null, mode: ThreadMode | null) => void;
 }) {
   const setThreadRepository = useMutation(api.chat.threads.setThreadRepository);
   const [isAttaching, setIsAttaching] = useState(false);
@@ -239,7 +239,7 @@ export function EmptyNoRepoHint({
     setAttachError(null);
     try {
       const result = await setThreadRepository({ threadId, repositoryId: repoId });
-      onThreadMovedToWorkspace?.(result.workspaceId, result.mode);
+      onThreadMovedToRepository?.(result.repositoryId, result.mode);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to attach repository";
       setAttachError(message);
@@ -310,8 +310,7 @@ export function EmptyNoRepoHint({
         </DropdownMenu>
 
         <p className="max-w-xs text-xs text-muted-foreground">
-          Move this thread into a repository workspace to unlock Docs and Sandbox modes, or keep typing here for a
-          free-form discussion.
+          Attach a repository to enable Library and Sandbox grounding, or keep typing here for a free-form discussion.
         </p>
       </div>
     </div>

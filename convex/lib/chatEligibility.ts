@@ -1,7 +1,7 @@
 /**
  * Chat-mode eligibility — pure resolvers + shared runtime helpers backing
- * both `workspaceModeEligibility.evaluate` (per-workspace read path used by
- * the workspace mode switcher and the Discuss composer) and
+ * both `repositoryModeEligibility.evaluate` (per-repository read path used by
+ * the repository mode switcher and the Discuss composer) and
  * `threadContext.getThreadContext` (per-thread read path used by the chat
  * panel and cost ticker).
  *
@@ -9,7 +9,7 @@
  * so they remain trivially testable. The runtime helpers below
  * (`toChatModeSandboxStatus`, `computeSandboxCostCapEvaluation`) own the
  * cross-query invariants that used to be duplicated between
- * `threadContext.ts` and `workspaceModeEligibility.ts`. Centralising them
+ * `threadContext.ts` and `repositoryModeEligibility.ts`. Centralising them
  * here means the two read paths cannot drift in how they translate sandbox
  * lifecycle state or apply the cost-cap precedence rule.
  *
@@ -26,8 +26,8 @@ import { type ChatMode, getDefaultThreadMode } from "./chatMode";
 import { type SandboxModeStatus } from "./repositorySandbox";
 import {
   getSandboxReplyEstimateCents,
+  peekSandboxDailyCostForRepository,
   peekSandboxDailyCostForUser,
-  peekSandboxDailyCostForWorkspace,
   type SandboxDailyCostBudget,
 } from "./rateLimit";
 
@@ -40,7 +40,7 @@ export type ChatModeSandboxStatus = "none" | "provisioning" | "ready" | "expired
  * deliberately disjoint — the resolvers enumerate the possible disabled
  * states; this enum names each one.
  */
-export type WorkspaceModeDisabledReasonCode =
+export type RepositoryModeDisabledReasonCode =
   | "no_repository_attached"
   | "library_no_artifact"
   | "sandbox_missing"
@@ -48,7 +48,7 @@ export type WorkspaceModeDisabledReasonCode =
   | "sandbox_expired"
   | "sandbox_failed"
   | "sandbox_user_cap_exceeded"
-  | "sandbox_workspace_cap_exceeded";
+  | "sandbox_repository_cap_exceeded";
 
 /**
  * Discriminated union: every axis verdict is either enabled or disabled
@@ -59,7 +59,7 @@ export type AxisVerdict =
   | { readonly enabled: true }
   | {
       readonly enabled: false;
-      readonly code: WorkspaceModeDisabledReasonCode;
+      readonly code: RepositoryModeDisabledReasonCode;
       readonly message: string;
     };
 
@@ -71,22 +71,24 @@ export type SandboxGroundingVerdict =
   | { readonly enabled: true }
   | {
       readonly enabled: false;
-      readonly code: WorkspaceModeDisabledReasonCode;
+      readonly code: RepositoryModeDisabledReasonCode;
       readonly message: string;
       readonly isActivatable: boolean;
     };
 
 /**
- * Sandbox daily-cost-cap gate. Closed when the per-user OR per-workspace
+ * Sandbox daily-cost-cap gate. Closed when the per-user OR per-repository
  * daily spend cap is reached; the resolver closes the Sandbox grounding
  * axis and surfaces the cost-cap tooltip so the user understands why the
  * toggle is greyed out.
  *
  * Two distinct closed `reason`s let the UI render scope-specific copy:
- * "your account" vs "this workspace" reach different remediation paths
- * (wait until midnight UTC vs. ask a workspace admin to raise the cap).
+ * "your account" vs "this repository" — same midnight-UTC reset, but the
+ * scope matters: the user-cap reason gates any sandbox-grounded send for
+ * this viewer (across all repositories), while the repository-cap reason
+ * only gates sends against the one repository whose bucket exhausted.
  */
-export type SandboxCostCapGateReason = "user_daily_cap_exceeded" | "workspace_daily_cap_exceeded";
+export type SandboxCostCapGateReason = "user_daily_cap_exceeded" | "repository_daily_cap_exceeded";
 
 export type SandboxCostCapGate =
   | { readonly enabled: true }
@@ -114,11 +116,11 @@ export interface ChatModeResolution {
 }
 
 /**
- * Workspace-shell variant of {@link ChatModeResolution}: same vocabulary,
+ * Repository-shell variant of {@link ChatModeResolution}: same vocabulary,
  * but carries the readiness gates the top-level mode switcher and the
  * Discuss composer need.
  */
-export interface WorkspaceModeResolution {
+export interface RepositoryModeResolution {
   readonly modes: { readonly discuss: AxisVerdict; readonly library: AxisVerdict };
   readonly defaultMode: ChatMode;
   readonly grounding: {
@@ -146,7 +148,7 @@ export const GROUNDING_SANDBOX_REASON_FAILED =
   "Sandbox provisioning failed — provision a new sandbox to use live-source grounding.";
 
 const ASK_REASON_NO_REPO = "Attach a repository and produce at least one artifact before asking a question.";
-const ASK_REASON_NO_ARTIFACT = "Library Ask needs at least one artifact in this workspace.";
+const ASK_REASON_NO_ARTIFACT = "Library Ask needs at least one artifact in this repository.";
 
 /**
  * Tooltips for the cost-cap gate. Promise "Resets at midnight UTC" verbatim
@@ -155,8 +157,8 @@ const ASK_REASON_NO_ARTIFACT = "Library Ask needs at least one artifact in this 
  */
 export const DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED =
   "Daily sandbox spend limit reached for your account. Resets at midnight UTC.";
-export const DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED =
-  "Daily sandbox spend limit reached for this workspace. Resets at midnight UTC.";
+export const DISABLED_REASON_SANDBOX_REPOSITORY_CAP_EXCEEDED =
+  "Daily sandbox spend limit reached for this repository. Resets at midnight UTC.";
 
 // ─── Pure resolvers ───────────────────────────────────────────────────────
 
@@ -213,10 +215,10 @@ export function resolveSandboxGroundingAxis(
     };
   }
   if (!sandboxCostCapGate.enabled) {
-    const code: WorkspaceModeDisabledReasonCode =
+    const code: RepositoryModeDisabledReasonCode =
       sandboxCostCapGate.reason === "user_daily_cap_exceeded"
         ? "sandbox_user_cap_exceeded"
-        : "sandbox_workspace_cap_exceeded";
+        : "sandbox_repository_cap_exceeded";
     return {
       enabled: false,
       code,
@@ -283,20 +285,20 @@ function resolveLibraryGroundingAxis(hasAttachedRepo: boolean, hasAtLeastOneArti
 
 /**
  * Translate the (repo, artifact, sandbox, gates) tuple into the
- * structured verdict the workspace shell consumes.
+ * structured verdict the repository shell consumes.
  *
  * Independent of {@link resolveChatModes}: the chat-mode resolver answers
  * the per-thread mode-selector question; this one answers "which top-level
- * mode can the user enter from the workspace shell AND what does the
+ * mode can the user enter from the repository shell AND what does the
  * Discuss composer's grounding toggle bar look like right now". Both stay
  * pure — no `process.env`, no Convex `ctx`.
  */
-export function resolveWorkspaceModes(
+export function resolveRepositoryModes(
   hasAttachedRepo: boolean,
   hasAtLeastOneArtifact: boolean,
   sandboxStatus: ChatModeSandboxStatus,
   sandboxCostCapGate: SandboxCostCapGate = OPEN_SANDBOX_COST_CAP_GATE,
-): WorkspaceModeResolution {
+): RepositoryModeResolution {
   const { modes, defaultMode } = resolveChatModes(hasAttachedRepo);
 
   const askReadiness: AxisVerdict = !hasAttachedRepo
@@ -330,7 +332,7 @@ export function resolveWorkspaceModes(
  * Map the centralized `SandboxModeStatus` (from `lib/repositorySandbox.ts`)
  * onto the pure resolver's `ChatModeSandboxStatus` input. Single source of
  * truth for the translation — `threadContext.getThreadContext` and
- * `workspaceModeEligibility.evaluate` both import this so the two read
+ * `repositoryModeEligibility.evaluate` both import this so the two read
  * paths cannot drift in how they classify the same sandbox doc.
  *
  * TTL, missing remoteId / repoPath, and provider-status semantics stay in
@@ -357,23 +359,23 @@ export interface SandboxCostCapEvaluation {
   gate: SandboxCostCapGate;
   /** Per-user daily budget snapshot (always populated for the cost ticker). */
   userBudget: SandboxDailyCostBudget;
-  /** Per-workspace daily budget snapshot, or `null` when no workspace is in play. */
-  workspaceBudget: SandboxDailyCostBudget | null;
+  /** Per-repository daily budget snapshot, or `null` when no repository is in play. */
+  repositoryBudget: SandboxDailyCostBudget | null;
 }
 
 /**
- * Compute the sandbox daily-cost-cap gate AND the per-user / per-workspace
+ * Compute the sandbox daily-cost-cap gate AND the per-user / per-repository
  * budget snapshots in one pass. Single source of truth for the precedence
  * rule (user cap blocks first) — previously duplicated between
  * `threadContext.computeSandboxCostBudgets` and
- * `workspaceModeEligibility.computeSandboxCostCapGate` with sync-comments
+ * `repositoryModeEligibility.computeSandboxCostCapGate` with sync-comments
  * pleading "keep this aligned with the other one". Both call sites now
  * share this implementation so the rule cannot drift.
  *
  * Both peeks happen inside the surrounding query's transaction so the gate
  * decision and the displayed budgets agree even under concurrent
  * settlement: a rate-limit settle that lands between the user peek and the
- * workspace peek would update both buckets atomically from the viewer's
+ * repository peek would update both buckets atomically from the viewer's
  * POV.
  *
  * Why we peek even when the gate ends up open: the chat-panel cost ticker
@@ -385,16 +387,17 @@ export interface SandboxCostCapEvaluation {
  * write-path ordering in `convex/lib/rateLimit.ts`. When both would block,
  * the gate surfaces the user-cap tooltip — the more user-actionable signal
  * because the viewer can switch to ungrounded chat immediately, whereas
- * the workspace-cap reset would also gate every other workspace member.
+ * the repository-cap reset blocks every sandbox-grounded send against the
+ * same repository regardless of which thread initiated the spend.
  */
 export async function computeSandboxCostCapEvaluation(
   ctx: QueryCtx,
   ownerTokenIdentifier: string,
-  workspaceId: Id<"workspaces"> | null,
+  repositoryId: Id<"repositories"> | null,
 ): Promise<SandboxCostCapEvaluation> {
   const estimateCents = getSandboxReplyEstimateCents();
   const userBudget = await peekSandboxDailyCostForUser(ctx, ownerTokenIdentifier);
-  const workspaceBudget = workspaceId ? await peekSandboxDailyCostForWorkspace(ctx, workspaceId) : null;
+  const repositoryBudget = repositoryId ? await peekSandboxDailyCostForRepository(ctx, repositoryId) : null;
 
   if (userBudget.remainingCents < estimateCents) {
     return {
@@ -405,20 +408,20 @@ export async function computeSandboxCostCapEvaluation(
         resetAtMs: userBudget.resetAtMs,
       },
       userBudget,
-      workspaceBudget,
+      repositoryBudget,
     };
   }
-  if (workspaceBudget && workspaceBudget.remainingCents < estimateCents) {
+  if (repositoryBudget && repositoryBudget.remainingCents < estimateCents) {
     return {
       gate: {
         enabled: false,
-        reason: "workspace_daily_cap_exceeded",
-        tooltip: DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED,
-        resetAtMs: workspaceBudget.resetAtMs,
+        reason: "repository_daily_cap_exceeded",
+        tooltip: DISABLED_REASON_SANDBOX_REPOSITORY_CAP_EXCEEDED,
+        resetAtMs: repositoryBudget.resetAtMs,
       },
       userBudget,
-      workspaceBudget,
+      repositoryBudget,
     };
   }
-  return { gate: { enabled: true }, userBudget, workspaceBudget };
+  return { gate: { enabled: true }, userBudget, repositoryBudget };
 }

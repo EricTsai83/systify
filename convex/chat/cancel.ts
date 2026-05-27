@@ -30,14 +30,14 @@
  * Why no lease check: the spec calls this out explicitly — the owner is
  * cancelling their own reply, so there is no concurrent-writer hazard the
  * lease would protect against. We still take the per-thread ownership check
- * via `requireViewerIdentity` so a different identity can't poke at someone
+ * via `requireOwnedDoc` so a different identity can't poke at someone
  * else's stream.
  */
 
 import { v } from "convex/values";
 import { mutation } from "../_generated/server";
-import { requireViewerIdentity } from "../lib/auth";
-import { cancelActiveJob } from "../jobLifecycle";
+import { requireOwnedDoc } from "../lib/ownedDocs";
+import { cancelActiveJob } from "../lib/jobs";
 import { logInfo } from "../lib/observability";
 import { isLeaseActive } from "../lib/rateLimit";
 
@@ -46,24 +46,17 @@ export const cancelInFlightReply = mutation({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread) {
-      throw new Error("Thread not found.");
-    }
-    if (thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      // Same fence as `listMessages` / `sendMessage` — return the same
-      // "Thread not found" error so the existence of the thread is not
-      // disclosed to non-owners.
-      throw new Error("Thread not found.");
-    }
+    // Same fence as `listMessages` / `sendMessage` — return "Thread not found"
+    // for missing or non-owned rows so the existence of the thread is not
+    // disclosed to non-owners.
+    const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
 
     if (thread.repositoryId) {
-      const repository = await ctx.db.get(thread.repositoryId);
-      if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Thread not found.");
-      }
+      await requireOwnedDoc(ctx, thread.repositoryId, {
+        notFoundMessage: "Thread not found.",
+      });
     }
 
     const now = Date.now();

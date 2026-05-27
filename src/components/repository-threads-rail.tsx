@@ -9,21 +9,20 @@ import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { usePrewarmThread } from "@/hooks/use-prewarm-thread";
 import { toUserErrorMessage } from "@/lib/errors";
 import type { ThreadMode } from "@/route-paths";
-import type { ChatMode, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
  * The sidebar rail surfaces threads by the chat mode they were persisted
- * under. The filter mirrors the canonical `ChatMode` union (DB literal +
- * URL segment + UI label all share one vocabulary), and the Library
- * variant of the rail uses {@link createLibraryAskThread} so the freshly
- * created thread carries an `artifactContext` scope filter on top of the
- * shared `mode: "library"` persistence.
+ * under. The filter mirrors the canonical `ChatMode` union, and the
+ * Library variant of the rail uses {@link createLibraryAskThread} so the
+ * freshly created thread carries an `artifactContext` scope filter on top
+ * of the shared `mode: "library"` persistence.
  */
 type ThreadModeFilter = ChatMode;
 
-export function WorkspaceThreadsRail({
-  workspaceId,
+export function RepositoryThreadsRail({
+  repositoryId,
   repositories,
   threadMode,
   selectedThreadId,
@@ -33,41 +32,25 @@ export function WorkspaceThreadsRail({
   compact,
   newThreadVariant,
   newThreadButtonLabel,
-  showRepoBadge,
-  requireWorkspaceForCreate = false,
+  requireRepositoryForCreate = false,
   onRequestNewThread,
 }: {
-  workspaceId: WorkspaceId | null;
+  repositoryId: RepositoryId | null;
   repositories: Doc<"repositories">[] | undefined;
   threadMode: ThreadModeFilter;
   selectedThreadId: ThreadId | null;
-  /**
-   * Selects a thread or clears the selection. `mode` is always supplied:
-   * row clicks read it off `thread.mode` (the rendered Doc), and the new-
-   * thread CTA derives it from the rail's active filter. The consumer
-   * routes directly to the canonical mode URL via {@link modeAwareThreadPath}
-   * so a freshly-selected thread never bounces through `LegacyThreadRedirect`.
-   * The id is `ThreadId | null` because some consumers (e.g. delete-then-
-   * select-fallback) clear selection through this same callback — mode is
-   * still required so the consumer has a well-typed value to forward when
-   * it does pick a replacement.
-   */
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onDeleteThread: (id: ThreadId) => void;
   onError: (message: string | null) => void;
   compact?: boolean;
   newThreadVariant?: "default" | "libraryAsk";
   newThreadButtonLabel?: string;
-  showRepoBadge: boolean;
-  /** Library Ask always needs a concrete workspace; Discuss sidebar historically allowed creating from a null pointer. */
-  requireWorkspaceForCreate?: boolean;
+  /** Library Ask always needs a concrete repository; Discuss sidebar historically allowed creating from a null pointer. */
+  requireRepositoryForCreate?: boolean;
   /**
    * When supplied, clicking "New Thread" on the default rail variant navigates
-   * to the workspace's mode URL (no thread id) instead of pre-creating an
-   * orphan thread. The chat composer's first send then triggers the lazy
-   * `sendMessageStartingNewThread` path. Library Ask keeps the immediate-
-   * create flow because Ask threads carry an `artifactContext` scope filter
-   * that has no place on the lazy path.
+   * to the repository's mode URL (no thread id) instead of pre-creating an
+   * orphan thread.
    */
   onRequestNewThread?: () => void;
 }) {
@@ -75,7 +58,7 @@ export function WorkspaceThreadsRail({
   const createLibraryAskThreadMutation = useMutation(api.chat.threads.createLibraryAskThread);
   const setThreadPinnedMutation = useMutation(api.chat.threads.setThreadPinned);
 
-  const threads = useQuery(api.chat.threads.listThreads, workspaceId ? { workspaceId, mode: threadMode } : {});
+  const threads = useQuery(api.chat.threads.listThreads, repositoryId ? { repositoryId, mode: threadMode } : "skip");
 
   const repositoriesById = useMemo(() => {
     const map = new Map<RepositoryId, Doc<"repositories">>();
@@ -87,29 +70,23 @@ export function WorkspaceThreadsRail({
 
   const [isCreatingThread, handleCreateThread] = useAsyncCallback(
     useCallback(async () => {
-      if (requireWorkspaceForCreate && !workspaceId) return;
+      if (requireRepositoryForCreate && !repositoryId) return;
       onError(null);
       try {
         if (newThreadVariant === "libraryAsk") {
-          if (!workspaceId) {
+          if (!repositoryId) {
             return;
           }
-          const created = await createLibraryAskThreadMutation({ workspaceId });
+          const created = await createLibraryAskThreadMutation({ repositoryId });
           onSelectThread(created._id, created.mode);
           return;
         }
-        // Default rail variant: if the shell supplied a navigate-only
-        // callback, prefer it over `createThreadMutation`. The lazy first
-        // send (`sendMessageStartingNewThread`) materialises the thread the
-        // moment the user actually sends a message, so we no longer leave
-        // an empty orphan thread behind when the user clicks New Thread
-        // and then navigates away.
         if (onRequestNewThread) {
           onRequestNewThread();
           return;
         }
         const created = await createThreadMutation({
-          workspaceId: workspaceId ?? undefined,
+          repositoryId: repositoryId ?? undefined,
           mode: threadMode,
         });
         onSelectThread(created._id, created.mode);
@@ -123,9 +100,9 @@ export function WorkspaceThreadsRail({
       onError,
       onRequestNewThread,
       onSelectThread,
-      requireWorkspaceForCreate,
+      requireRepositoryForCreate,
       threadMode,
-      workspaceId,
+      repositoryId,
     ]),
   );
 
@@ -148,8 +125,8 @@ export function WorkspaceThreadsRail({
           size="sm"
           className={cn("h-8 w-full justify-start gap-1.5 text-xs", compact && "h-8")}
           disabled={
-            (requireWorkspaceForCreate && !workspaceId) ||
-            (newThreadVariant === "libraryAsk" && !workspaceId) ||
+            (requireRepositoryForCreate && !repositoryId) ||
+            (newThreadVariant === "libraryAsk" && !repositoryId) ||
             isCreatingThread
           }
           onClick={() => void handleCreateThread()}
@@ -167,7 +144,6 @@ export function WorkspaceThreadsRail({
           onSelectThread={onSelectThread}
           onDeleteThread={onDeleteThread}
           onTogglePin={handleTogglePin}
-          showRepoBadge={showRepoBadge}
           compact={compact}
         />
       </div>
@@ -182,20 +158,14 @@ function ThreadsSection({
   onSelectThread,
   onDeleteThread,
   onTogglePin,
-  showRepoBadge,
   compact,
 }: {
   threads: Doc<"threads">[] | undefined;
   repositoriesById: Map<RepositoryId, Doc<"repositories">>;
   selectedThreadId: ThreadId | null;
-  /**
-   * See the top-level {@link WorkspaceThreadsRail} prop comment; the mode is
-   * always supplied so consumers can route to canonical mode-aware URLs.
-   */
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onDeleteThread: (id: ThreadId) => void;
   onTogglePin: (id: ThreadId, pinned: boolean) => void;
-  showRepoBadge: boolean;
   compact?: boolean;
 }) {
   const previousThreadCountRef = useRef<number | null>(null);
@@ -247,7 +217,6 @@ function ThreadsSection({
                 onPrewarmThread={prewarmThread}
                 onDeleteThread={onDeleteThread}
                 onTogglePin={onTogglePin}
-                showRepoBadge={showRepoBadge}
                 compact={compact}
               />
             </div>
@@ -273,7 +242,6 @@ function ThreadsSection({
                   onPrewarmThread={prewarmThread}
                   onDeleteThread={onDeleteThread}
                   onTogglePin={onTogglePin}
-                  showRepoBadge={showRepoBadge}
                   compact={compact}
                 />
               )}
@@ -293,20 +261,15 @@ const ThreadsList = memo(function ThreadsList({
   onPrewarmThread,
   onDeleteThread,
   onTogglePin,
-  showRepoBadge,
   compact,
 }: {
   threads: Doc<"threads">[];
   repositoriesById: Map<RepositoryId, Doc<"repositories">>;
   selectedThreadId: ThreadId | null;
-  /**
-   * See the top-level {@link WorkspaceThreadsRail} prop comment.
-   */
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onPrewarmThread: (id: ThreadId) => void;
   onDeleteThread: (id: ThreadId) => void;
   onTogglePin: (id: ThreadId, pinned: boolean) => void;
-  showRepoBadge: boolean;
   compact?: boolean;
 }) {
   return (
@@ -328,7 +291,7 @@ const ThreadsList = memo(function ThreadsList({
                 <p className={cn("truncate font-medium text-foreground", compact ? "text-[11px]" : "text-xs")}>
                   {thread.title}
                 </p>
-                {showRepoBadge && <ThreadRepoBadge repository={repository} />}
+                <ThreadRepoBadge repository={repository} />
               </div>
             </SidebarMenuButton>
             <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
@@ -368,7 +331,7 @@ const ThreadsList = memo(function ThreadsList({
 
 function ThreadRepoBadge({ repository }: { repository: Doc<"repositories"> | undefined }) {
   if (!repository) {
-    return <p className="mt-0.5 truncate text-[10px] uppercase tracking-wider text-muted-foreground/70">Home</p>;
+    return null;
   }
   const Icon = repository.visibility === "private" ? LockIcon : GlobeIcon;
   return (
@@ -376,5 +339,89 @@ function ThreadRepoBadge({ repository }: { repository: Doc<"repositories"> | und
       <Icon size={9} weight="bold" className="shrink-0" />
       <span className="truncate">{repository.sourceRepoFullName}</span>
     </p>
+  );
+}
+
+/**
+ * Sidebar rail for the repoless chat shell. Lists threads with
+ * `repositoryId === undefined` via the dedicated
+ * `chat.threads.listRepolessThreads` query. Always Discuss mode by
+ * construction.
+ */
+export function RepolessChatsRail({
+  selectedThreadId,
+  onSelectThread,
+  onDeleteThread,
+  onRequestNewThread,
+}: {
+  selectedThreadId: ThreadId | null;
+  onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
+  onDeleteThread: (id: ThreadId) => void;
+  onRequestNewThread?: () => void;
+}) {
+  const threads = useQuery(api.chat.threads.listRepolessThreads, {});
+  const prewarmThread = usePrewarmThread();
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="shrink-0 border-b border-border px-3 py-2">
+        <Button
+          type="button"
+          variant="default"
+          size="sm"
+          className="h-8 w-full justify-start gap-1.5 text-xs"
+          disabled={!onRequestNewThread}
+          aria-disabled={!onRequestNewThread}
+          onClick={onRequestNewThread}
+        >
+          <PlusIcon size={13} weight="bold" />
+          New thread
+        </Button>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+        <div className="flex flex-col">
+          <div className="flex items-center gap-1 px-1 pb-1">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Chats</p>
+          </div>
+          {threads === undefined ? null : threads.length === 0 ? (
+            <p className="px-1 text-xs text-muted-foreground">No conversations yet. Start one above.</p>
+          ) : (
+            <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-300 ease-out">
+              {threads.map((thread) => {
+                const isSelected = selectedThreadId === thread._id;
+                return (
+                  <div key={thread._id} className="group relative">
+                    <SidebarMenuButton
+                      selected={isSelected}
+                      onClick={() => onSelectThread(thread._id, thread.mode)}
+                      onMouseEnter={() => prewarmThread(thread._id)}
+                      onFocus={() => prewarmThread(thread._id)}
+                      className="py-1.5 pr-10"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-medium text-foreground">{thread.title}</p>
+                      </div>
+                    </SidebarMenuButton>
+                    <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+                        onClick={() => onDeleteThread(thread._id)}
+                        aria-label="Delete thread"
+                        title="Delete thread"
+                      >
+                        <TrashIcon size={13} weight="bold" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

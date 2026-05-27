@@ -14,25 +14,25 @@ import {
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ui/spinner";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { RepositoryId, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
+import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { toast } from "sonner";
 
 /**
- * Rare escape hatch — bind the current thread to a different repository /
- * workspace. Historical messages retain their older grounding; newer sends
- * follow `getReplyContext` rules. The UX warns about the "Frankenstein
+ * Rare escape hatch — bind the current thread to a different repository.
+ * Historical messages retain their older grounding; newer sends follow
+ * `getReplyContext` rules. The UX warns about the "Frankenstein
  * scrollback" that results.
  */
 export function SwapThreadRepositoryControl({
   threadId,
   attachedRepositoryFullName,
   candidates,
-  onMovedToWorkspace,
+  onMovedToRepository,
 }: {
   threadId: ThreadId;
   attachedRepositoryFullName: string;
   candidates: readonly Doc<"repositories">[];
-  onMovedToWorkspace: (workspaceId: WorkspaceId | null, mode: ThreadMode | null) => void;
+  onMovedToRepository: (repositoryId: RepositoryId | null, mode: ThreadMode | null) => void;
 }) {
   const setThreadRepository = useMutation(api.chat.threads.setThreadRepository);
   const [open, setOpen] = useState(false);
@@ -55,9 +55,8 @@ export function SwapThreadRepositoryControl({
           duration: 8500,
         });
       }
-      const nextWorkspaceId = result.workspaceId;
-      if (nextWorkspaceId) {
-        onMovedToWorkspace(nextWorkspaceId, result.mode);
+      if (result.repositoryId) {
+        onMovedToRepository(result.repositoryId, result.mode);
       }
       setOpen(false);
       setPicked(null);

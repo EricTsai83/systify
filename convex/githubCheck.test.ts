@@ -38,6 +38,8 @@ async function insertRepositoryForCheck(
       packageManagers: [],
       entrypoints: [],
       fileCount: 1,
+      color: "blue",
+      lastAccessedAt: Date.now(),
       lastSyncedCommitSha: "local-sha",
       lastCheckedForUpdatesAt: options?.lastCheckedForUpdatesAt,
     });

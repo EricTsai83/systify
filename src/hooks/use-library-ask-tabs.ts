@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ThreadId, WorkspaceId } from "@/lib/types";
+import type { RepositoryId, ThreadId } from "@/lib/types";
 import { readJSON, writeJSON } from "@/lib/storage";
 
 /**
@@ -7,15 +7,7 @@ import { readJSON, writeJSON } from "@/lib/storage";
  *
  * The Ask thread tab strip is an IDE-style *open set*, not the full thread
  * list: tabs are threads the user has explicitly opened, persisted to
- * localStorage so they survive a reload. The full searchable history lives
- * in `LibraryAskHistoryPopover`; the *active* tab is the page-owned `?ask=`
- * URL param.
- *
- * Tabs cache `{ id, title }` rather than bare ids because `listThreads` is
- * capped server-side — a long-lived open tab can fall out of that window,
- * and we still need its title to render the tab. The panel reconciles the
- * cached title against `listThreads` when the thread is present there, so
- * renames still propagate.
+ * localStorage so they survive a reload.
  */
 export interface OpenAskThread {
   id: ThreadId;
@@ -24,8 +16,8 @@ export interface OpenAskThread {
 
 const MAX_OPEN_ASK_TABS = 12;
 
-function storageKey(workspaceId: WorkspaceId): string {
-  return `systify.library.askTabs.${workspaceId}`;
+function storageKey(repositoryId: RepositoryId): string {
+  return `systify.library.askTabs.${repositoryId}`;
 }
 
 function isCachedAskThreadArray(v: unknown): v is Array<{ id: string; title: string }> {
@@ -45,8 +37,8 @@ function isCachedAskThreadArray(v: unknown): v is Array<{ id: string; title: str
   return true;
 }
 
-function readCache(workspaceId: WorkspaceId): OpenAskThread[] {
-  const cached = readJSON(storageKey(workspaceId), isCachedAskThreadArray);
+function readCache(repositoryId: RepositoryId): OpenAskThread[] {
+  const cached = readJSON(storageKey(repositoryId), isCachedAskThreadArray);
   if (!cached) return [];
   const out: OpenAskThread[] = [];
   for (const entry of cached) {
@@ -55,30 +47,26 @@ function readCache(workspaceId: WorkspaceId): OpenAskThread[] {
   return out.slice(0, MAX_OPEN_ASK_TABS);
 }
 
-function writeCache(workspaceId: WorkspaceId, tabs: ReadonlyArray<OpenAskThread>): void {
-  writeJSON(storageKey(workspaceId), tabs);
+function writeCache(repositoryId: RepositoryId, tabs: ReadonlyArray<OpenAskThread>): void {
+  writeJSON(storageKey(repositoryId), tabs);
 }
 
-export function useLibraryAskTabs(workspaceId: WorkspaceId) {
-  const [openThreads, setOpenThreads] = useState<OpenAskThread[]>(() => readCache(workspaceId));
-  const workspaceRef = useRef(workspaceId);
+export function useLibraryAskTabs(repositoryId: RepositoryId) {
+  const [openThreads, setOpenThreads] = useState<OpenAskThread[]>(() => readCache(repositoryId));
+  const repositoryRef = useRef(repositoryId);
 
   useEffect(() => {
-    if (workspaceRef.current !== workspaceId) return;
-    writeCache(workspaceId, openThreads);
-  }, [workspaceId, openThreads]);
+    if (repositoryRef.current !== repositoryId) return;
+    writeCache(repositoryId, openThreads);
+  }, [repositoryId, openThreads]);
 
-  // Re-seed when the workspace id changes under a reused hook instance.
   useEffect(() => {
-    if (workspaceRef.current === workspaceId) return;
-    workspaceRef.current = workspaceId;
+    if (repositoryRef.current === repositoryId) return;
+    repositoryRef.current = repositoryId;
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    setOpenThreads(readCache(workspaceId));
-  }, [workspaceId]);
+    setOpenThreads(readCache(repositoryId));
+  }, [repositoryId]);
 
-  // Add a tab (or refresh its cached title on rename). Idempotent — safe to
-  // call from an effect on every `listThreads` tick. Stable identity (empty
-  // deps) so the memoized tab strip is not re-rendered on stream ticks.
   const ensureOpen = useCallback((thread: OpenAskThread) => {
     setOpenThreads((current) => {
       const index = current.findIndex((t) => t.id === thread.id);
@@ -93,13 +81,6 @@ export function useLibraryAskTabs(workspaceId: WorkspaceId) {
     });
   }, []);
 
-  // Remove a tab. Returns the tab that should become active *if the closed
-  // tab was the active one* — the right neighbour, else the left, else null.
-  // The caller owns the active pointer (`?ask=`) and decides whether to act
-  // on the suggestion. Depends on `openThreads` (not a ref) so the returned
-  // id is always computed from current state; `openThreads` only changes when
-  // tabs change, never on stream ticks, so this stays stable across the
-  // panel's frequent re-renders.
   const closeTab = useCallback(
     (threadId: ThreadId): ThreadId | null => {
       const index = openThreads.findIndex((t) => t.id === threadId);

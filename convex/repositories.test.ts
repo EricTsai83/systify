@@ -4,7 +4,6 @@ import { describe, expect, test } from "vitest";
 import { register as registerRateLimiter } from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
 import { api } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -38,6 +37,8 @@ describe("repository detail metadata", () => {
           packageManagers: [],
           entrypoints: [],
           fileCount: 0,
+          color: "blue",
+          lastAccessedAt: Date.now(),
           lastImportedAt: now + index,
           deletionRequestedAt: now + index,
         });
@@ -58,6 +59,8 @@ describe("repository detail metadata", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 1,
+        color: "blue",
+        lastAccessedAt: Date.now(),
         lastImportedAt: now - 1,
         lastSyncedCommitSha: "abc123",
         latestRemoteSha: "def456",
@@ -93,6 +96,8 @@ describe("repository detail metadata", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 401,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       return repositoryId;
@@ -137,6 +142,8 @@ describe("repository detail metadata", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 12,
+        color: "blue",
+        lastAccessedAt: Date.now(),
         lastImportedAt,
         lastSyncedCommitSha: "abc123",
         latestRemoteSha: "def456",
@@ -203,6 +210,8 @@ describe("repository detail metadata", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 24,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       const importJobId = await ctx.db.insert("jobs", {
@@ -249,57 +258,46 @@ describe("repository detail metadata", () => {
 });
 
 describe("repository import guards", () => {
-  test("createRepositoryImport creates a repo workspace and assigns the default thread to it", async () => {
-    const ownerTokenIdentifier = "user|import-workspace";
+  test("createRepositoryImport stamps repository color/lastAccessedAt and creates the default thread", async () => {
+    const ownerTokenIdentifier = "user|import-repository";
     const t = createTestConvex();
     await seedGithubInstallation(t, ownerTokenIdentifier);
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
     const result = await viewer.mutation(api.repositories.createRepositoryImport, {
-      url: "https://github.com/acme/import-workspace",
+      url: "https://github.com/acme/import-repository",
     });
 
     const state = await t.run(async (ctx) => {
-      const workspace = await ctx.db.get(result.workspaceId);
+      const repository = await ctx.db.get(result.repositoryId);
       const thread = result.defaultThreadId ? await ctx.db.get(result.defaultThreadId) : null;
-      const workspaces = await ctx.db
-        .query("workspaces")
-        .withIndex("by_ownerTokenIdentifier_and_repositoryId", (q) =>
-          q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("repositoryId", result.repositoryId),
-        )
-        .take(10);
-
-      return { workspace, thread, workspaces };
+      return { repository, thread };
     });
 
-    expect(state.workspace?.name).toBe("acme/import-workspace");
-    expect(state.workspace?.repositoryId).toBe(result.repositoryId);
-    expect(state.thread?.workspaceId).toBe(result.workspaceId);
+    expect(state.repository?.sourceRepoFullName).toBe("acme/import-repository");
+    expect(state.repository?.color).toBeDefined();
+    expect(state.repository?.lastAccessedAt).toBeDefined();
     expect(state.thread?.repositoryId).toBe(result.repositoryId);
-    expect(state.workspaces).toHaveLength(1);
   });
 
-  test("completed repeated imports reuse the repo workspace", async () => {
-    const ownerTokenIdentifier = "user|repeat-import-workspace";
+  test("completed repeated imports reuse the existing repository row", async () => {
+    const ownerTokenIdentifier = "user|repeat-import-repository";
     const t = createTestConvex();
     await seedGithubInstallation(t, ownerTokenIdentifier);
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
     const first = await viewer.mutation(api.repositories.createRepositoryImport, {
-      url: "https://github.com/acme/repeat-import-workspace",
+      url: "https://github.com/acme/repeat-import-repository",
     });
     await t.run(async (ctx) => {
       await ctx.db.patch(first.repositoryId, { importStatus: "completed" });
     });
 
     const second = await viewer.mutation(api.repositories.createRepositoryImport, {
-      url: "https://github.com/acme/repeat-import-workspace",
+      url: "https://github.com/acme/repeat-import-repository",
     });
-    const workspaceCount = await countRepositoryWorkspaces(t, ownerTokenIdentifier, first.repositoryId);
 
     expect(second.repositoryId).toBe(first.repositoryId);
-    expect(second.workspaceId).toBe(first.workspaceId);
-    expect(workspaceCount).toBe(1);
   });
 
   test("createRepositoryImport rejects duplicate imports while one is already running", async () => {
@@ -332,6 +330,8 @@ describe("repository import guards", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
     });
 
@@ -356,21 +356,5 @@ async function seedGithubInstallation(t: ReturnType<typeof createTestConvex>, ow
       repositorySelection: "all",
       connectedAt: Date.now(),
     });
-  });
-}
-
-async function countRepositoryWorkspaces(
-  t: ReturnType<typeof createTestConvex>,
-  ownerTokenIdentifier: string,
-  repositoryId: Id<"repositories">,
-) {
-  return await t.run(async (ctx) => {
-    const workspaces = await ctx.db
-      .query("workspaces")
-      .withIndex("by_ownerTokenIdentifier_and_repositoryId", (q) =>
-        q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("repositoryId", repositoryId),
-      )
-      .take(10);
-    return workspaces.length;
   });
 }

@@ -7,11 +7,11 @@ import { CornerMarks } from "../primitives/corner-marks";
 const HEADING_ID = "modes-heading";
 
 /**
- * Three terminal panels, one per depth. Each panel owns its color via
- * the `tone` field on `<Mode>` — see `mode-tones.ts`. The depth metaphor
- * in the section title is made literal by an explicit SOURCES list:
- * the user reads exactly which knowledge layers each mode consults.
- * Every visual element carries information — no decorative chrome.
+ * One terminal panel per mode. Each panel owns its color via the `tone`
+ * field on `<Mode>` — see `mode-tones.ts`. The depth metaphor in the
+ * section title is made literal by an explicit SOURCES list: the user
+ * reads exactly which knowledge layers each mode consults. Every visual
+ * element carries information — no decorative chrome.
  */
 export function Modes() {
   return (
@@ -30,7 +30,7 @@ export function Modes() {
             </p>
           </div>
 
-          <ul className="grid gap-4 sm:gap-5 lg:grid-cols-3">
+          <ul className="grid gap-4 sm:gap-5 lg:grid-cols-2">
             {MODES.map((mode, idx) => (
               <ModePanel key={mode.name} mode={mode} index={idx} />
             ))}

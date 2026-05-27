@@ -50,6 +50,8 @@ describe("expired sandbox sweep", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       await ctx.db.insert("sandboxes", {
@@ -135,6 +137,8 @@ describe("expired sandbox sweep", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       return await ctx.db.insert("sandboxes", {
@@ -188,6 +192,8 @@ describe("expired sandbox sweep", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       return await ctx.db.insert("sandboxes", {
@@ -238,6 +244,8 @@ describe("expired sandbox sweep", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       const sandboxId = await ctx.db.insert("sandboxes", {
@@ -307,6 +315,8 @@ describe("expired sandbox sweep", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 1,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
       const publishedSandboxId = await ctx.db.insert("sandboxes", {
         repositoryId,
@@ -410,6 +420,8 @@ describe("expired sandbox sweep", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       await ctx.db.insert("sandboxes", {
@@ -541,6 +553,8 @@ describe("syncSandboxStatusFromRemote", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
       const sandboxId = await ctx.db.insert("sandboxes", {
         repositoryId,

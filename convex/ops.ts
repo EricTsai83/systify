@@ -2,9 +2,9 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { requireViewerIdentity } from "./lib/auth";
+import { requireOwnedDoc } from "./lib/ownedDocs";
 import { CASCADE_BATCH_SIZE } from "./lib/constants";
-import { completeRunningJob, failRunningJob, markQueuedJobRunning } from "./jobLifecycle";
+import { completeRunningJob, enqueueJob, failRunningJob, markQueuedJobRunning } from "./lib/jobs";
 
 const STALE_INTERACTIVE_JOBS_PER_KIND_LIMIT = 25;
 const STALE_INTERACTIVE_JOBS_TOTAL_LIMIT = 50;
@@ -53,14 +53,11 @@ async function queueSandboxCleanupJob(
     return existingJobId;
   }
 
-  const jobId = await ctx.db.insert("jobs", {
+  const jobId = await enqueueJob(ctx, {
+    kind: "cleanup",
     repositoryId: sandbox.repositoryId,
     ownerTokenIdentifier: sandbox.ownerTokenIdentifier,
     sandboxId: sandbox._id,
-    kind: "cleanup",
-    status: "queued",
-    stage: "queued",
-    progress: 0,
     costCategory: "ops",
     triggerSource,
   });
@@ -79,11 +76,9 @@ export const requestSandboxCleanup = mutation({
     repositoryId: v.id("repositories"),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const repository = await ctx.db.get(args.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Repository not found.");
-    }
+    const { doc: repository } = await requireOwnedDoc(ctx, args.repositoryId, {
+      notFoundMessage: "Repository not found.",
+    });
 
     if (!repository.latestSandboxId) {
       throw new Error("This repository does not have an active sandbox.");

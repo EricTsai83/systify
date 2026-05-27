@@ -1,13 +1,13 @@
 import { BookOpenIcon, FlaskIcon } from "@phosphor-icons/react";
-import type { WorkspaceModeDisabledReasonCode } from "../../convex/lib/chatEligibility";
+import type { RepositoryModeDisabledReasonCode } from "../../convex/lib/chatEligibility";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 /**
  * Per-message grounding availability for the Discuss composer. Mirrors the
  * discriminated `AxisVerdict` / `SandboxGroundingVerdict` shape exposed by
- * `workspaceModeEligibility.evaluate`. The code field is constrained to
- * `WorkspaceModeDisabledReasonCode | "loading"` so backend additions to
+ * `repositoryModeEligibility.evaluate`. The code field is constrained to
+ * `RepositoryModeDisabledReasonCode | "loading"` so backend additions to
  * the disabled-reason enum surface as compile errors here (the `"loading"`
  * sentinel covers the placeholder verdict the bar renders while the
  * eligibility query is still in flight). The bar only branches on
@@ -19,7 +19,7 @@ export type GroundingAxisLike =
   | { readonly enabled: true }
   | {
       readonly enabled: false;
-      readonly code: WorkspaceModeDisabledReasonCode | "loading";
+      readonly code: RepositoryModeDisabledReasonCode | "loading";
       readonly message: string;
       readonly isActivatable?: boolean;
     };
@@ -30,7 +30,7 @@ export interface GroundingToggleBarProps {
   setGroundLibrary: (v: boolean) => void;
   setGroundSandbox: (v: boolean) => void;
   /**
-   * Eligibility verdict from `workspaceModeEligibility.evaluate`. `null`
+   * Eligibility verdict from `repositoryModeEligibility.evaluate`. `null`
    * or `undefined` while the query loads — the bar renders both toggles
    * disabled until the verdict lands so a flash of clickable toggles
    * cannot fire an immediately-rejected send mutation.

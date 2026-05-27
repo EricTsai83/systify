@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { assertOwnedBy } from "./lib/ownedDocs";
 
 type ArtifactKind = Doc<"artifacts">["kind"];
 type ArtifactSource = Doc<"artifacts">["source"];
@@ -47,9 +48,7 @@ export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArt
 
   if (args.folderId) {
     const folder = await ctx.db.get(args.folderId);
-    if (!folder || folder.ownerTokenIdentifier !== args.ownerTokenIdentifier) {
-      throw new Error("Folder not found.");
-    }
+    assertOwnedBy(folder, args.ownerTokenIdentifier, "Folder not found.");
     if (!args.repositoryId) {
       throw new Error("Cannot place a repo-less artifact in a repository folder.");
     }
@@ -72,8 +71,8 @@ export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArt
     version: 1,
     folderId: args.folderId,
     alignedImportCommitSha: args.alignedImportCommitSha,
-    // Lab-sourced artifacts are "verified at creation"; everything else
-    // starts unverified until a Lab session stamps it. The presence of
+    // Sandbox-grounded artifacts are "verified at creation"; everything else
+    // starts unverified until a sandbox-grounded reply stamps it. The presence of
     // `lastVerifiedAt` is the single signal the Library freshness UI reads.
     lastVerifiedAt: args.source === "sandbox" ? now : undefined,
     chunkingStatus: args.repositoryId ? "pending" : undefined,

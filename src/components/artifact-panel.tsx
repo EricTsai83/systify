@@ -55,8 +55,8 @@ export function ArtifactPanel({
 }: {
   threadId: ThreadId | null;
   /**
-   * Repository the panel's folder tree is scoped to. `null` for the no-repo
-   * Home workspace — the navigator hides itself in that state.
+   * Repository the panel's folder tree is scoped to. `null` for a thread
+   * without an attached repo — the navigator hides itself in that state.
    */
   repositoryId: RepositoryId | null;
   /**

@@ -3,41 +3,26 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import type { MutationCtx } from "../_generated/server";
 import { mutation } from "../_generated/server";
-import { assertWorkspaceModeEligible } from "../workspaceModeEligibility";
+import { assertRepositoryModeEligible } from "../repositoryModeEligibility";
 import { requireViewerIdentity } from "../lib/auth";
-import { chatModeValidator, type ChatMode } from "../lib/chatMode";
-import { requireActiveRepositoryForOwner } from "../lib/repositoryAccess";
+import { chatModeValidator, resolveDiscussGrounding, type ChatMode } from "../lib/chatMode";
+import { enqueueJob, findActiveJob } from "../lib/jobs";
+import { requireActiveRepositoryForViewer } from "../lib/repositoryAccess";
+import { requireOwnedDoc } from "../lib/ownedDocs";
 import {
   CHAT_JOB_LEASE_MS,
   consumeChatGlobalRateLimit,
   consumeChatRateLimit,
   getLeaseRetryAfterMs,
-  isLeaseActive,
   throwOperationAlreadyInProgress,
 } from "../lib/rateLimit";
 
 async function getActiveChatJobForThread(ctx: MutationCtx, threadId: Id<"threads">, now: number) {
-  const queuedJob = await ctx.db
-    .query("jobs")
-    .withIndex("by_threadId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-      q.eq("threadId", threadId).eq("kind", "chat").eq("status", "queued").gte("leaseExpiresAt", now),
-    )
-    .first();
-  if (queuedJob && isLeaseActive(queuedJob.leaseExpiresAt, now)) {
-    return queuedJob;
-  }
-
-  const runningJob = await ctx.db
-    .query("jobs")
-    .withIndex("by_threadId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-      q.eq("threadId", threadId).eq("kind", "chat").eq("status", "running").gte("leaseExpiresAt", now),
-    )
-    .first();
-  if (runningJob && isLeaseActive(runningJob.leaseExpiresAt, now)) {
-    return runningJob;
-  }
-
-  return null;
+  return await findActiveJob(ctx, {
+    kind: "chat",
+    scope: { type: "thread", id: threadId },
+    now,
+  });
 }
 
 async function insertChatTurn(
@@ -59,21 +44,18 @@ async function insertChatTurn(
     sandboxSessionId?: Id<"sandboxSessions">;
   },
 ): Promise<{ jobId: Id<"jobs">; userMessageId: Id<"messages">; assistantMessageId: Id<"messages"> }> {
-  const jobId = await ctx.db.insert("jobs", {
+  // Sandbox-grounded Discuss replies cost the same as the old Lab mode
+  // (tool use + larger model) — keep them on the `system_design` budget
+  // line so the daily cost cap still gates correctly.
+  const jobId = await enqueueJob(ctx, {
+    kind: "chat",
+    threadId: args.thread._id,
     repositoryId: args.thread.repositoryId,
     ownerTokenIdentifier: args.ownerTokenIdentifier,
     sandboxId: args.repository?.latestSandboxId,
-    threadId: args.thread._id,
-    kind: "chat",
-    status: "queued",
-    stage: "queued",
-    progress: 0,
-    // Sandbox-grounded Discuss replies cost the same as the old Lab mode
-    // (tool use + larger model) — keep them on the `system_design` budget
-    // line so the daily cost cap still gates correctly.
     costCategory: args.groundSandbox ? "system_design" : "chat",
     triggerSource: "user",
-    leaseExpiresAt: args.now + CHAT_JOB_LEASE_MS,
+    leaseMs: CHAT_JOB_LEASE_MS,
   });
 
   const userMessageId = await ctx.db.insert("messages", {
@@ -150,53 +132,44 @@ async function insertChatTurn(
 
 export const sendMessageStartingNewThread = mutation({
   args: {
-    workspaceId: v.id("workspaces"),
+    /**
+     * Repository this thread is bound to, or `undefined` for a repoless
+     * thread (lives at `/chat/:threadId`). Library mode requires an
+     * attached repository; Discuss is the only mode legal for a repoless
+     * thread.
+     */
+    repositoryId: v.optional(v.id("repositories")),
     content: v.string(),
     mode: chatModeValidator,
     title: v.optional(v.string()),
     /**
-     * Discuss-only grounding flags. Ignored for `library` mode (Library
-     * grounding is implicit in the mode). Either may be omitted; both
-     * default to `false`.
+     * Discuss-only grounding flags. Ignored for `library` mode. Either
+     * may be omitted; both default to `false`.
      */
     groundLibrary: v.optional(v.boolean()),
     groundSandbox: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
-
-    const workspace = await ctx.db.get(args.workspaceId);
-    if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Workspace not found.");
-    }
-
-    const repositoryId = workspace.repositoryId;
+    const repositoryId = args.repositoryId;
 
     const trimmedContent = args.content.trim();
     if (!trimmedContent) {
       throw new Error("Message content cannot be empty.");
     }
 
-    // `requireActiveRepositoryForOwner` is the archived-state check
-    // (`assertWorkspaceModeEligible` doesn't model archive status), so it
-    // still runs here before the eligibility assert. The no-repo and
-    // unsatisfiable-grounding cases that used to throw inline are now
-    // covered by `assertWorkspaceModeEligible` below — single structured-
-    // `ConvexError` contract for the frontend instead of a mix of plain
-    // `Error`s and structured ones.
     let repository: Doc<"repositories"> | null = null;
     if (repositoryId) {
-      repository = await requireActiveRepositoryForOwner(ctx, {
+      const result = await requireActiveRepositoryForViewer(ctx, {
         repositoryId,
-        ownerTokenIdentifier: identity.tokenIdentifier,
-        notFoundMessage: "Workspace repository not found.",
-        archivedMessage: "The workspace repository is archived. Restore it to continue chatting.",
+        notFoundMessage: "Repository not found.",
+        archivedMessage: "This repository is archived. Restore it to continue chatting.",
       });
+      repository = result.repository;
     }
 
-    await assertWorkspaceModeEligible(ctx, {
+    await assertRepositoryModeEligible(ctx, {
       repositoryId,
-      workspaceId: args.workspaceId,
       mode: args.mode,
       groundLibrary: args.groundLibrary === true,
       groundSandbox: args.groundSandbox === true,
@@ -216,7 +189,6 @@ export const sendMessageStartingNewThread = mutation({
     }
 
     const threadId = await ctx.db.insert("threads", {
-      workspaceId: args.workspaceId,
       repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
       title,
@@ -277,41 +249,34 @@ export const sendMessage = mutation({
     ctx,
     args,
   ): Promise<{ jobId: Id<"jobs">; userMessageId: Id<"messages">; assistantMessageId: Id<"messages"> }> => {
-    const identity = await requireViewerIdentity(ctx);
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread) {
-      throw new Error("Thread not found.");
-    }
-
-    if (thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Thread not found.");
-    }
+    const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
 
     let repository: Doc<"repositories"> | null = null;
     if (thread.repositoryId) {
-      repository = await requireActiveRepositoryForOwner(ctx, {
+      const result = await requireActiveRepositoryForViewer(ctx, {
         repositoryId: thread.repositoryId,
-        ownerTokenIdentifier: identity.tokenIdentifier,
         notFoundMessage: "Thread not found.",
         archivedMessage: "This repository is archived. Restore it to continue chatting.",
       });
+      repository = result.repository;
     }
 
     const mode = args.mode ?? thread.mode;
     // Library grounding makes no sense in Library Mode (it's the same
-    // thing); Sandbox grounding only applies in Discuss. Coerce both to
-    // false on Library-mode turns so a stale composer toggle does not
-    // accidentally tag a Library reply with grounding metadata.
-    const groundLibrary = mode === "discuss" && args.groundLibrary === true;
-    const groundSandbox = mode === "discuss" && args.groundSandbox === true;
+    // thing); Sandbox grounding only applies in Discuss. The resolver
+    // coerces both to false on Library-mode turns so a stale composer
+    // toggle does not accidentally tag a Library reply with grounding
+    // metadata. Same rule used by `getReplyContext` on the read path.
+    const { groundLibrary, groundSandbox } = resolveDiscussGrounding(mode, args);
 
-    // `assertWorkspaceModeEligible` covers the unsatisfiable-grounding case
+    // `assertRepositoryModeEligible` covers the unsatisfiable-grounding case
     // (`no_repository_attached`) with the same structured ConvexError it
-    // uses for the workspace read path, so we don't need a separate
-    // plain-Error pre-check here.
-    await assertWorkspaceModeEligible(ctx, {
+    // uses for the read path, so we don't need a separate plain-Error
+    // pre-check here.
+    await assertRepositoryModeEligible(ctx, {
       repositoryId: thread.repositoryId,
-      workspaceId: thread.workspaceId,
       mode,
       groundLibrary,
       groundSandbox,

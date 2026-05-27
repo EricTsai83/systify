@@ -14,33 +14,21 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Spinner } from "@/components/ui/spinner";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { RepositoryId, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
+import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 
 /**
- * One-shot CTA for binding a no-repo thread to a repository workspace,
- * surfaced in the TopBar when the thread is sitting in Home with no repo
- * attached yet. Promotes a free-form discussion thread into a grounded
- * repo workspace.
- *
- * **The binding is permanent by design.** Once a repo is attached, this
- * component stops rendering (TopBar gates on `attachedRepository === null`)
- * and there is no swap or detach affordance anywhere in the UI. The decision:
- * a thread's history is grounded against the repo it was attached to, and
- * re-pointing the binding mid-conversation creates a Frankenstein context
- * where messages 1-N reference repo A and messages N+1 reference repo B —
- * confusing for the model and the user. To work against a different repo,
- * users start a new thread (cheap) instead. The backend mutation still
- * accepts arbitrary moves so a future "Fork thread" feature can copy a
- * thread into a different repo without mutating the original.
+ * One-shot CTA for binding a no-repo thread to a repository, surfaced in
+ * the TopBar when the thread has no repo attached yet. Promotes a free-form
+ * discussion thread into a repository-grounded chat.
  */
 export function AttachRepoMenu({
   threadId,
   availableRepositories,
-  onMovedToWorkspace,
+  onMovedToRepository,
 }: {
   threadId: ThreadId;
   availableRepositories: ReadonlyArray<Doc<"repositories">>;
-  onMovedToWorkspace: (workspaceId: WorkspaceId | null, mode: ThreadMode | null) => void;
+  onMovedToRepository: (repositoryId: RepositoryId | null, mode: ThreadMode | null) => void;
 }) {
   const setThreadRepository = useMutation(api.chat.threads.setThreadRepository);
   // Latest-request-wins: a fast user clicking two different repos in rapid
@@ -68,7 +56,7 @@ export function AttachRepoMenu({
     try {
       const result = await setThreadRepository({ threadId, repositoryId: repoId });
       if (latestRequestRef.current === requestId) {
-        onMovedToWorkspace(result.workspaceId, result.mode);
+        onMovedToRepository(result.repositoryId, result.mode);
       }
     } catch (err) {
       if (latestRequestRef.current === requestId) {

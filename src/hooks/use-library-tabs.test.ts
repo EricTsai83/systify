@@ -2,27 +2,22 @@
 
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import type { ArtifactId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, RepositoryId } from "@/lib/types";
 
 const { navigateMock } = vi.hoisted(() => ({ navigateMock: vi.fn() }));
 
-// Override only the two router hooks `useLibraryTabs` consumes; everything
-// else (`matchRoutes`, used transitively by `@/route-paths`) stays real.
 vi.mock("react-router-dom", async () => {
   const actual = await vi.importActual<typeof import("react-router-dom")>("react-router-dom");
   return {
     ...actual,
     useNavigate: () => navigateMock,
-    // The hook only reads `?open=` from this in its lazy initializer; the
-    // debounced writer reads `window.location.search` directly. Seeding from
-    // the live URL keeps both code paths consistent in the test.
     useSearchParams: () => [new URLSearchParams(window.location.search), vi.fn()],
   };
 });
 
 import { useLibraryTabs } from "./use-library-tabs";
 
-const workspaceId = "ws_libtabs" as WorkspaceId;
+const repositoryId = "repo_libtabs" as RepositoryId;
 const artifactA = "artifact_a" as ArtifactId;
 const artifactB = "artifact_b" as ArtifactId;
 
@@ -37,11 +32,9 @@ afterEach(() => {
 
 describe("useLibraryTabs — URL writer", () => {
   test("preserves the page-owned ?ask= param when it writes ?open=", () => {
-    // The page owns `?ask=`; this hook owns `?open=`. The debounced writer
-    // must seed from the live URL so it does not clobber the Ask thread.
-    window.history.replaceState({}, "", `/w/${workspaceId}/library?ask=thread_x`);
+    window.history.replaceState({}, "", `/r/${repositoryId}/library?ask=thread_x`);
 
-    const { result } = renderHook(() => useLibraryTabs(workspaceId, null));
+    const { result } = renderHook(() => useLibraryTabs(repositoryId, null));
 
     act(() => {
       result.current.openTab(artifactA);
@@ -57,17 +50,17 @@ describe("useLibraryTabs — URL writer", () => {
     const target = calls[calls.length - 1]?.[0] as string;
     expect(target).toContain("ask=thread_x");
     expect(target).toContain(`open=${artifactA}%2C${artifactB}`);
-    expect(target.startsWith(`/w/${workspaceId}/library/a/${artifactB}`)).toBe(true);
+    expect(target.startsWith(`/r/${repositoryId}/library/a/${artifactB}`)).toBe(true);
   });
 
   test("clears a stale ?open= when the open set drops to one tab, keeping ?ask=", () => {
     window.history.replaceState(
       {},
       "",
-      `/w/${workspaceId}/library/a/${artifactA}?ask=thread_x&open=${artifactA}%2C${artifactB}`,
+      `/r/${repositoryId}/library/a/${artifactA}?ask=thread_x&open=${artifactA}%2C${artifactB}`,
     );
 
-    const { result } = renderHook(() => useLibraryTabs(workspaceId, artifactA));
+    const { result } = renderHook(() => useLibraryTabs(repositoryId, artifactA));
 
     act(() => {
       result.current.closeTab(artifactB);
@@ -84,22 +77,16 @@ describe("useLibraryTabs — URL writer", () => {
   });
 
   test("drops state.activeArtifactId when the URL transitions to the library landing", () => {
-    // Regression for a URL ping-pong: the page-level artifact-validity guard
-    // redirects from `/library/a/<missing>` to `/library` when the artifact
-    // does not exist. If this hook leaves the stale id in state, its writer
-    // re-asserts the bad URL ~200 ms later and the guard redirects again,
-    // flickering forever. The hook must clear `activeArtifactId` so its
-    // next write is `/library`, not `/library/a/<missing>`.
-    window.history.replaceState({}, "", `/w/${workspaceId}/library/a/${artifactA}`);
+    window.history.replaceState({}, "", `/r/${repositoryId}/library/a/${artifactA}`);
 
-    const { result, rerender } = renderHook(({ active }) => useLibraryTabs(workspaceId, active), {
+    const { result, rerender } = renderHook(({ active }) => useLibraryTabs(repositoryId, active), {
       initialProps: { active: artifactA as ArtifactId | null },
     });
 
     expect(result.current.activeArtifactId).toBe(artifactA);
     expect(result.current.openArtifactIds).toContain(artifactA);
 
-    window.history.replaceState({}, "", `/w/${workspaceId}/library`);
+    window.history.replaceState({}, "", `/r/${repositoryId}/library`);
     rerender({ active: null });
 
     expect(result.current.activeArtifactId).toBe(null);
@@ -110,6 +97,6 @@ describe("useLibraryTabs — URL writer", () => {
     });
 
     const target = navigateMock.mock.calls[navigateMock.mock.calls.length - 1]?.[0] as string;
-    expect(target).toBe(`/w/${workspaceId}/library`);
+    expect(target).toBe(`/r/${repositoryId}/library`);
   });
 });

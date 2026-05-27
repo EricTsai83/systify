@@ -183,8 +183,8 @@ Mounted once at the top of `RepositoryShell`. Sweeps orphan
 
 ```ts
 useStorageGC({
-  liveWorkspaceIds: ReadonlySet<string> | null,
   liveRepositoryIds: ReadonlySet<string> | null,
+  liveThreadIds: ReadonlySet<string> | null,
 });
 ```
 
@@ -197,10 +197,11 @@ useStorageGC({
 ### Trigger paths
 
 All three deletion paths share the same machinery because they all
-observe the same `listWorkspaces` / `listRepositories` subscription:
+observe the same `listRepositoriesForSwitcher` / live-thread
+subscription:
 
 - **Initial mount.** The first non-null snapshot reaps keys left over
-  from prior sessions (e.g. a workspace deleted on another device while
+  from prior sessions (e.g. a repository deleted on another device while
   this browser was closed).
 - **Local deletion.** The mutation's reactivity drops the id from the
   local query cache; the live set shrinks; the sweep fires.
@@ -223,11 +224,11 @@ to keep in sync.
 
 ### Explicit non-handling
 
-`systify.activeWorkspaceId` is intentionally NOT in the registry. It is
-not id-scoped (one key, not per-workspace) and is already handled by
-the fallback effect in `RepositoryShell` that promotes a surviving
-workspace when the active id disappears. See
-[`workspace-persistence-system-design.md`](./workspace-persistence-system-design.md).
+`systify.activeRepositoryId` is intentionally NOT in the registry. It is
+not id-scoped (one key, not per-repository) and is already handled by
+the fallback effect in `useRepositoryPersistence` that promotes a
+surviving repository when the active id disappears. See
+[`repository-persistence-system-design.md`](./repository-persistence-system-design.md).
 
 ## sessionStorage vs localStorage
 
@@ -286,14 +287,14 @@ the other.
 ## Adding a new storage callsite — checklist
 
 1. **Classify** the data per [`client-storage-strategy.md`](./client-storage-strategy.md):
-   device-local, workspace-state, user-identity, or one-shot flow.
-2. **Pick the area:** `localStorage` for device / workspace state,
+   device-local, repository-state, user-identity, or one-shot flow.
+2. **Pick the area:** `localStorage` for device / repository state,
    `sessionStorage` for one-shot flow flags, DB (with localStorage
    cache) for identity.
 3. **Go through `src/lib/storage.ts`** — never touch
    `window.localStorage` / `window.sessionStorage` directly. Use
    `readJSON` / `writeJSON` for non-string values; write a type guard.
-4. **If the key is id-scoped** (`prefix.{workspaceId|repoId}.…`), add
+4. **If the key is id-scoped** (`prefix.{repoId}.…`), add
    its prefix to `WORKSPACE_SCOPED_PREFIXES` or
    `REPOSITORY_SCOPED_PREFIX` in `use-storage-gc.ts`. Do not write a
    manual cleanup callback in the delete mutation.
@@ -308,4 +309,4 @@ the other.
 ## See also
 
 - [`client-storage-strategy.md`](./client-storage-strategy.md) — placement policy and anti-patterns.
-- [`workspace-persistence-system-design.md`](./workspace-persistence-system-design.md) — the specific two-layer design (localStorage cache + DB source of truth) for `systify.activeWorkspaceId` and the orphan-cleanup contract for workspace/repository deletion.
+- [`repository-persistence-system-design.md`](./repository-persistence-system-design.md) — the specific two-layer design (localStorage cache + DB source of truth) for `systify.activeRepositoryId` and the orphan-cleanup contract for repository deletion.

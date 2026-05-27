@@ -3,8 +3,8 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { internalMutation, internalQuery, mutation } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
-import { requireViewerIdentity } from "./lib/auth";
-import { requireActiveRepositoryForOwner } from "./lib/repositoryAccess";
+import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
+import { requireOwnedDoc } from "./lib/ownedDocs";
 import {
   consumeDaytonaGlobalRateLimit,
   consumeSystemDesignRateLimit,
@@ -15,7 +15,14 @@ import {
 } from "./lib/rateLimit";
 import { requireRepositorySandbox } from "./lib/repositorySandbox";
 import { createOpaqueErrorId } from "./lib/observability";
-import { completeRunningJob, failRunningJob, failStaleActiveJob, markQueuedJobRunning } from "./jobLifecycle";
+import {
+  completeRunningJob,
+  enqueueJob,
+  failRunningJob,
+  failStaleActiveJob,
+  findActiveJob,
+  markQueuedJobRunning,
+} from "./lib/jobs";
 
 const MAX_ADR_SOURCE_MESSAGES = 10;
 const ACTIVE_FAILURE_MODE_JOB_SCAN_LIMIT = 10;
@@ -33,26 +40,25 @@ export const captureAdr = mutation({
     folderId: v.optional(v.id("artifactFolders")),
   },
   handler: async (ctx, args): Promise<{ artifactId: Id<"artifacts"> }> => {
-    const identity = await requireViewerIdentity(ctx);
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread || thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Thread not found.");
-    }
+    const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
     if (thread.repositoryId) {
-      await requireActiveRepositoryForOwner(ctx, {
+      await requireActiveRepositoryForViewer(ctx, {
         repositoryId: thread.repositoryId,
-        ownerTokenIdentifier: identity.tokenIdentifier,
         notFoundMessage: "Thread not found.",
         archivedMessage: "This repository is archived. Restore it to capture artifacts.",
       });
     }
 
     if (args.folderId) {
-      const folder = await ctx.db.get(args.folderId);
-      if (!folder || folder.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Folder not found.");
+      if (!thread.repositoryId) {
+        throw new Error("Cannot place an artifact in a folder from a repository-less thread.");
       }
-      if (thread.repositoryId && folder.repositoryId !== thread.repositoryId) {
+      const { doc: folder } = await requireOwnedDoc(ctx, args.folderId, {
+        notFoundMessage: "Folder not found.",
+      });
+      if (folder.repositoryId !== thread.repositoryId) {
         throw new Error("Cannot place an artifact in a folder from a different repository.");
       }
     }
@@ -94,26 +100,22 @@ export const requestFailureModeAnalysis = mutation({
     folderId: v.optional(v.id("artifactFolders")),
   },
   handler: async (ctx, args) => {
-    const identity = await requireViewerIdentity(ctx);
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread || thread.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Thread not found.");
-    }
+    const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
     if (!thread.repositoryId) {
       throw new Error("Failure mode analysis requires an attached repository.");
     }
 
-    const repository = await requireActiveRepositoryForOwner(ctx, {
+    const { repository } = await requireActiveRepositoryForViewer(ctx, {
       repositoryId: thread.repositoryId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
       archivedMessage: "This repository is archived. Restore it to run failure-mode analysis.",
     });
 
     if (args.folderId) {
-      const folder = await ctx.db.get(args.folderId);
-      if (!folder || folder.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Folder not found.");
-      }
+      const { doc: folder } = await requireOwnedDoc(ctx, args.folderId, {
+        notFoundMessage: "Folder not found.",
+      });
       if (folder.repositoryId !== repository._id) {
         throw new Error("Cannot place an artifact in a folder from a different repository.");
       }
@@ -139,19 +141,16 @@ export const requestFailureModeAnalysis = mutation({
     await consumeSystemDesignRateLimit(ctx, identity.tokenIdentifier);
     await consumeDaytonaGlobalRateLimit(ctx);
 
-    const jobId = await ctx.db.insert("jobs", {
+    const jobId = await enqueueJob(ctx, {
+      kind: "system_design",
       repositoryId: repository._id,
+      threadId: args.threadId,
       ownerTokenIdentifier: identity.tokenIdentifier,
       sandboxId: sandbox._id,
-      threadId: args.threadId,
-      kind: "system_design",
-      status: "queued",
-      stage: "queued",
-      progress: 0,
       costCategory: "system_design",
       triggerSource: "user",
       requestedCommand: `failure_mode_analysis:${trimmedSubsystem}`,
-      leaseExpiresAt: now + SYSTEM_DESIGN_JOB_LEASE_MS,
+      leaseMs: SYSTEM_DESIGN_JOB_LEASE_MS,
     });
 
     await ctx.scheduler.runAfter(0, internal.designArtifactsNode.runFailureModeAnalysis, {
@@ -392,23 +391,23 @@ function buildAlternatives(userPoints: string[]) {
   ];
 }
 
-async function getActiveFailureModeJob(ctx: MutationCtx, threadId: Id<"threads">, now: number) {
-  const [queuedJobs, runningJobs] = await Promise.all([
-    ctx.db
-      .query("jobs")
-      .withIndex("by_threadId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-        q.eq("threadId", threadId).eq("kind", "system_design").eq("status", "queued").gte("leaseExpiresAt", now),
-      )
-      .take(ACTIVE_FAILURE_MODE_JOB_SCAN_LIMIT),
-    ctx.db
-      .query("jobs")
-      .withIndex("by_threadId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-        q.eq("threadId", threadId).eq("kind", "system_design").eq("status", "running").gte("leaseExpiresAt", now),
-      )
-      .take(ACTIVE_FAILURE_MODE_JOB_SCAN_LIMIT),
-  ]);
-
-  return [...runningJobs, ...queuedJobs].find(
-    (job) => job.requestedCommand?.startsWith("failure_mode_analysis:") && isLeaseActive(job.leaseExpiresAt, now),
-  );
+/**
+ * FMA shares `kind: "system_design"` with Library System Design; the
+ * `failure_mode_analysis:` `requestedCommand` prefix discriminates the
+ * two. Scoped to the thread because FMA dedup is per-thread (Library
+ * System Design dedups per-repository).
+ */
+async function getActiveFailureModeJob(
+  ctx: MutationCtx,
+  threadId: Id<"threads">,
+  now: number,
+): Promise<Doc<"jobs"> | null> {
+  return await findActiveJob(ctx, {
+    kind: "system_design",
+    scope: { type: "thread", id: threadId },
+    now,
+    predicate: (job) =>
+      job.requestedCommand?.startsWith("failure_mode_analysis:") === true && isLeaseActive(job.leaseExpiresAt, now),
+    limit: ACTIVE_FAILURE_MODE_JOB_SCAN_LIMIT,
+  });
 }

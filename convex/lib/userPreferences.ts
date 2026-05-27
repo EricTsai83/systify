@@ -3,10 +3,10 @@ import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 /**
  * Per-viewer preferences live in their own table so they can be loaded with a
- * single owner-keyed lookup and extended without reshaping the workspace
+ * single owner-keyed lookup and extended without reshaping the repository
  * model. All access funnels through these helpers so the upsert / cascade
- * semantics stay consistent across `workspaces.ts` and the public
- * `userPreferences.ts` module.
+ * semantics stay consistent across `repositoryPreferences.ts`,
+ * `userPreferences.ts`, and the repository cascade in `repositories.ts`.
  */
 
 async function findUserPreferences(ctx: QueryCtx | MutationCtx, ownerTokenIdentifier: string) {
@@ -18,12 +18,12 @@ async function findUserPreferences(ctx: QueryCtx | MutationCtx, ownerTokenIdenti
 
 /**
  * Read the viewer's preferences row, validating the stored
- * `lastActiveWorkspaceId` still exists and still belongs to the viewer.
+ * `lastActiveRepositoryId` still exists and still belongs to the viewer.
  *
- * A stale id would normally appear if a workspace got deleted on another
- * device after the preference was written. Returning `null` for the field in
- * that case lets the frontend fall through to the "most recently accessed
- * workspace" fallback, which is the behavior we want.
+ * A stale id would normally appear if a repository got deleted on another
+ * device after the preference was written. Returning `null` for the field
+ * in that case lets the frontend fall through to the "most recently
+ * accessed repository" fallback, which is the behavior we want.
  */
 export async function loadViewerPreferences(ctx: QueryCtx | MutationCtx, ownerTokenIdentifier: string) {
   const pref = await findUserPreferences(ctx, ownerTokenIdentifier);
@@ -31,31 +31,31 @@ export async function loadViewerPreferences(ctx: QueryCtx | MutationCtx, ownerTo
     return null;
   }
 
-  let lastActiveWorkspaceId: Id<"workspaces"> | null = null;
-  if (pref.lastActiveWorkspaceId) {
-    const workspace = await ctx.db.get(pref.lastActiveWorkspaceId);
-    if (workspace && workspace.ownerTokenIdentifier === ownerTokenIdentifier) {
-      lastActiveWorkspaceId = workspace._id;
+  let lastActiveRepositoryId: Id<"repositories"> | null = null;
+  if (pref.lastActiveRepositoryId) {
+    const repository = await ctx.db.get(pref.lastActiveRepositoryId);
+    if (repository && repository.ownerTokenIdentifier === ownerTokenIdentifier) {
+      lastActiveRepositoryId = repository._id;
     }
   }
 
   return {
-    lastActiveWorkspaceId,
-    lastActiveWorkspaceUpdatedAt: pref.lastActiveWorkspaceUpdatedAt ?? null,
+    lastActiveRepositoryId,
+    lastActiveRepositoryUpdatedAt: pref.lastActiveRepositoryUpdatedAt ?? null,
   };
 }
 
 /**
- * Idempotently set the viewer's last active workspace. Skips the write when
+ * Idempotently set the viewer's last active repository. Skips the write when
  * the value already matches so subscriptions on `getViewerPreferences` stay
- * stable across redundant calls (e.g. the auto-select fallback re-running on
- * every workspaces query revalidation).
+ * stable across redundant calls (e.g. the auto-select fallback re-running
+ * on every repositories query revalidation).
  */
-export async function upsertLastActiveWorkspace(
+export async function upsertLastActiveRepository(
   ctx: MutationCtx,
   args: {
     ownerTokenIdentifier: string;
-    workspaceId: Id<"workspaces">;
+    repositoryId: Id<"repositories">;
   },
 ) {
   const existing = await findUserPreferences(ctx, args.ownerTokenIdentifier);
@@ -64,40 +64,40 @@ export async function upsertLastActiveWorkspace(
   if (!existing) {
     await ctx.db.insert("userPreferences", {
       ownerTokenIdentifier: args.ownerTokenIdentifier,
-      lastActiveWorkspaceId: args.workspaceId,
-      lastActiveWorkspaceUpdatedAt: now,
+      lastActiveRepositoryId: args.repositoryId,
+      lastActiveRepositoryUpdatedAt: now,
     });
     return;
   }
 
-  if (existing.lastActiveWorkspaceId === args.workspaceId) {
+  if (existing.lastActiveRepositoryId === args.repositoryId) {
     return;
   }
 
   await ctx.db.patch(existing._id, {
-    lastActiveWorkspaceId: args.workspaceId,
-    lastActiveWorkspaceUpdatedAt: now,
+    lastActiveRepositoryId: args.repositoryId,
+    lastActiveRepositoryUpdatedAt: now,
   });
 }
 
 /**
- * Cascade hook for `deleteWorkspace`: clear the pointer if the deleted
- * workspace was the viewer's stored "last active". Without this, the next
+ * Cascade hook for repository deletion: clear the pointer if the deleted
+ * repository was the viewer's stored "last active". Without this, the next
  * `getViewerPreferences` call would have to silently drop a dangling id.
  */
-export async function clearLastActiveWorkspaceIfMatches(
+export async function clearLastActiveRepositoryIfMatches(
   ctx: MutationCtx,
   args: {
     ownerTokenIdentifier: string;
-    workspaceId: Id<"workspaces">;
+    repositoryId: Id<"repositories">;
   },
 ) {
   const existing = await findUserPreferences(ctx, args.ownerTokenIdentifier);
-  if (!existing || existing.lastActiveWorkspaceId !== args.workspaceId) {
+  if (!existing || existing.lastActiveRepositoryId !== args.repositoryId) {
     return;
   }
   await ctx.db.patch(existing._id, {
-    lastActiveWorkspaceId: undefined,
-    lastActiveWorkspaceUpdatedAt: Date.now(),
+    lastActiveRepositoryId: undefined,
+    lastActiveRepositoryUpdatedAt: Date.now(),
   });
 }

@@ -16,7 +16,7 @@ import { SwapThreadRepositoryControl } from "@/components/swap-thread-repository
 import { StatusPill } from "@/components/status-pill";
 import { StatusPanel } from "@/components/status-panel";
 import type { AttachedRepositorySummary } from "@/hooks/use-thread-capabilities";
-import type { ArtifactId, SandboxModeStatus, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, RepositoryId, SandboxModeStatus, ThreadId, ThreadMode } from "@/lib/types";
 
 export type TopBarRepoDetail = {
   repository: Doc<"repositories"> & {
@@ -75,7 +75,7 @@ export function TopBar({
   onArchiveRepo,
   onRestoreRepo,
   onPermanentDeleteRepo,
-  onThreadMovedToWorkspace,
+  onThreadMovedToRepository,
   isDesktopLayout,
   onSync,
   onViewArtifact,
@@ -103,7 +103,7 @@ export function TopBar({
   onRestoreRepo: () => void;
   /** Permanently delete an archived repository. Triggered only from the archived kebab. */
   onPermanentDeleteRepo: () => void;
-  onThreadMovedToWorkspace: (workspaceId: WorkspaceId | null, mode: ThreadMode | null) => void;
+  onThreadMovedToRepository: (repositoryId: RepositoryId | null, mode: ThreadMode | null) => void;
   isDesktopLayout: boolean;
   onSync: () => void;
   onViewArtifact: (artifactId: ArtifactId) => void;
@@ -113,7 +113,7 @@ export function TopBar({
    * `mode !== "discuss"` derivation — the same gate
    * `isArtifactPanelEnabled` uses, so all repo-aware chrome (artifact panel,
    * sandbox pill, sandbox badge) appears and disappears together when the
-   * user toggles between Discuss and Library / Lab. Discuss is captioned "no
+   * user toggles between Discuss and Library. Discuss is captioned "no
    * repo context"; surfacing sync or sandbox state there would be a constant
    * nag for signals the mode does not touch. Errors are not lost — the moment
    * the user enters a repo-bound mode the pill repaints with whatever was
@@ -180,7 +180,7 @@ export function TopBar({
           <AttachRepoMenu
             threadId={threadId}
             availableRepositories={availableRepositories}
-            onMovedToWorkspace={onThreadMovedToWorkspace}
+            onMovedToRepository={onThreadMovedToRepository}
           />
         </div>
       ) : null}
@@ -193,7 +193,7 @@ export function TopBar({
             threadId={threadId}
             attachedRepositoryFullName={attachedRepository.fullName}
             candidates={availableRepositories.filter((candidate) => candidate._id !== attachedRepository.id)}
-            onMovedToWorkspace={onThreadMovedToWorkspace}
+            onMovedToRepository={onThreadMovedToRepository}
           />
         </div>
       ) : null}

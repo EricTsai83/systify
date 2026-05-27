@@ -26,19 +26,6 @@ async function seedRepository(t: ReturnType<typeof convexTest>): Promise<Id<"rep
       packageManagers: [],
       entrypoints: [],
       fileCount: 0,
-    }),
-  );
-}
-
-async function seedWorkspace(
-  t: ReturnType<typeof convexTest>,
-  repositoryId: Id<"repositories">,
-): Promise<Id<"workspaces">> {
-  return await t.run(async (ctx) =>
-    ctx.db.insert("workspaces", {
-      ownerTokenIdentifier: OWNER,
-      repositoryId,
-      name: "Test Workspace",
       color: "blue",
       lastAccessedAt: Date.now(),
     }),
@@ -49,11 +36,9 @@ describe("recordSandboxSessionActivity", () => {
   test("rejects negative spentCentsDelta", async () => {
     const t = convexTest(schema, modules);
     const repositoryId = await seedRepository(t);
-    const workspaceId = await seedWorkspace(t, repositoryId);
     const sessionId = await t.run(async (ctx) =>
       ctx.db.insert("sandboxSessions", {
         ownerTokenIdentifier: OWNER,
-        workspaceId,
         repositoryId,
         status: "active",
         startedAt: Date.now(),

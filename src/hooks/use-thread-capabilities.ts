@@ -195,22 +195,22 @@ function deriveSandboxCostBudget(
   }
   const userRemaining = budgets.userBudget.remainingCents / 100;
   const userCapacity = budgets.userBudget.capacityCents / 100;
-  if (!budgets.workspaceBudget) {
+  if (!budgets.repositoryBudget) {
     return {
       remainingUsd: userRemaining,
       capacityUsd: userCapacity,
       resetAtMs: budgets.userBudget.resetAtMs,
     };
   }
-  const workspaceRemaining = budgets.workspaceBudget.remainingCents / 100;
-  const workspaceCapacity = budgets.workspaceBudget.capacityCents / 100;
+  const repositoryRemaining = budgets.repositoryBudget.remainingCents / 100;
+  const repositoryCapacity = budgets.repositoryBudget.capacityCents / 100;
   // Pick the more restrictive remaining + the earlier reset. Capacity is
   // tied to whichever side gave us the binding remaining — using the
   // matching capacity keeps "$0.02 of $5.00 remaining" coherent.
-  const userBinds = userRemaining <= workspaceRemaining;
+  const userBinds = userRemaining <= repositoryRemaining;
   return {
-    remainingUsd: userBinds ? userRemaining : workspaceRemaining,
-    capacityUsd: userBinds ? userCapacity : workspaceCapacity,
-    resetAtMs: Math.min(budgets.userBudget.resetAtMs, budgets.workspaceBudget.resetAtMs),
+    remainingUsd: userBinds ? userRemaining : repositoryRemaining,
+    capacityUsd: userBinds ? userCapacity : repositoryCapacity,
+    resetAtMs: Math.min(budgets.userBudget.resetAtMs, budgets.repositoryBudget.resetAtMs),
   };
 }

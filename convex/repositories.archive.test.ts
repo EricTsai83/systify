@@ -40,6 +40,8 @@ async function seedRepository(
       packageManagers: [],
       entrypoints: [],
       fileCount: 1,
+      color: "blue",
+      lastAccessedAt: Date.now(),
       ...(args.archivedAt !== undefined ? { archivedAt: args.archivedAt } : {}),
       ...(args.deletionRequestedAt !== undefined ? { deletionRequestedAt: args.deletionRequestedAt } : {}),
     });

@@ -2,10 +2,10 @@ import { describe, expect, test } from "vitest";
 import { getDefaultThreadMode } from "./chatMode";
 import {
   DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
-  DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED,
+  DISABLED_REASON_SANDBOX_REPOSITORY_CAP_EXCEEDED,
   OPEN_SANDBOX_COST_CAP_GATE,
   resolveChatModes,
-  resolveWorkspaceModes,
+  resolveRepositoryModes,
   type ChatModeSandboxStatus,
   type SandboxCostCapGate,
 } from "./chatEligibility";
@@ -45,27 +45,27 @@ describe("resolveChatModes", () => {
 
 /**
  * Plan 10 — sandbox daily-cost-cap gate now lives on the grounding axis
- * exposed by {@link resolveWorkspaceModes}: when the per-user or
- * per-workspace daily spend cap is exhausted the Sandbox grounding axis
+ * exposed by {@link resolveRepositoryModes}: when the per-user or
+ * per-repository daily spend cap is exhausted the Sandbox grounding axis
  * closes and surfaces the cost-cap tooltip. Discuss / Library mode
  * availability itself is no longer touched by the cap.
  */
-describe("resolveWorkspaceModes (sandbox cost-cap gate on grounding axis)", () => {
+describe("resolveRepositoryModes (sandbox cost-cap gate on grounding axis)", () => {
   const USER_CAP_GATE_CLOSED: SandboxCostCapGate = {
     enabled: false,
     reason: "user_daily_cap_exceeded",
     tooltip: DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
     resetAtMs: Date.UTC(2026, 4, 6, 0, 0, 0), // 2026-05-06 00:00 UTC
   };
-  const WORKSPACE_CAP_GATE_CLOSED: SandboxCostCapGate = {
+  const REPOSITORY_CAP_GATE_CLOSED: SandboxCostCapGate = {
     enabled: false,
-    reason: "workspace_daily_cap_exceeded",
-    tooltip: DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED,
+    reason: "repository_daily_cap_exceeded",
+    tooltip: DISABLED_REASON_SANDBOX_REPOSITORY_CAP_EXCEEDED,
     resetAtMs: Date.UTC(2026, 4, 6, 0, 0, 0),
   };
 
   test("closed user-cap gate closes the sandbox grounding axis with the user-cap tooltip", () => {
-    const result = resolveWorkspaceModes(true, true, "ready", USER_CAP_GATE_CLOSED);
+    const result = resolveRepositoryModes(true, true, "ready", USER_CAP_GATE_CLOSED);
 
     expect(result.modes.discuss.enabled).toBe(true);
     expect(result.modes.library.enabled).toBe(true);
@@ -75,26 +75,26 @@ describe("resolveWorkspaceModes (sandbox cost-cap gate on grounding axis)", () =
     expect(result.grounding.sandbox).toHaveProperty("message", DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED);
   });
 
-  test("closed workspace-cap gate uses the workspace-scoped tooltip", () => {
-    const result = resolveWorkspaceModes(true, true, "ready", WORKSPACE_CAP_GATE_CLOSED);
+  test("closed repository-cap gate uses the repository-scoped tooltip", () => {
+    const result = resolveRepositoryModes(true, true, "ready", REPOSITORY_CAP_GATE_CLOSED);
 
     expect(result.modes.discuss.enabled).toBe(true);
     expect(result.modes.library.enabled).toBe(true);
     expect(result.grounding.sandbox.enabled).toBe(false);
-    expect(result.grounding.sandbox).toHaveProperty("code", "sandbox_workspace_cap_exceeded");
-    expect(result.grounding.sandbox).toHaveProperty("message", DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED);
-    expect(DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED).not.toBe(DISABLED_REASON_SANDBOX_WORKSPACE_CAP_EXCEEDED);
+    expect(result.grounding.sandbox).toHaveProperty("code", "sandbox_repository_cap_exceeded");
+    expect(result.grounding.sandbox).toHaveProperty("message", DISABLED_REASON_SANDBOX_REPOSITORY_CAP_EXCEEDED);
+    expect(DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED).not.toBe(DISABLED_REASON_SANDBOX_REPOSITORY_CAP_EXCEEDED);
   });
 
   test("open cap gate leaves the sandbox grounding axis enabled", () => {
-    const result = resolveWorkspaceModes(true, true, "ready", OPEN_SANDBOX_COST_CAP_GATE);
+    const result = resolveRepositoryModes(true, true, "ready", OPEN_SANDBOX_COST_CAP_GATE);
     expect(result.modes.discuss.enabled).toBe(true);
     expect(result.modes.library.enabled).toBe(true);
     expect(result.grounding.sandbox.enabled).toBe(true);
   });
 
   test("closed cap gate doesn't disable discuss or library modes", () => {
-    const result = resolveWorkspaceModes(true, true, "ready", USER_CAP_GATE_CLOSED);
+    const result = resolveRepositoryModes(true, true, "ready", USER_CAP_GATE_CLOSED);
     expect(result.modes.discuss.enabled).toBe(true);
     expect(result.modes.library.enabled).toBe(true);
   });
@@ -102,15 +102,15 @@ describe("resolveWorkspaceModes (sandbox cost-cap gate on grounding axis)", () =
   test("default mode invariant survives cost-cap closure across sandbox states", () => {
     const sandboxStates: ChatModeSandboxStatus[] = ["none", "provisioning", "ready", "expired", "failed"];
     for (const status of sandboxStates) {
-      const result = resolveWorkspaceModes(true, true, status, USER_CAP_GATE_CLOSED);
+      const result = resolveRepositoryModes(true, true, status, USER_CAP_GATE_CLOSED);
       expect(result.modes[result.defaultMode].enabled).toBe(true);
       expect(result.grounding.sandbox.enabled).toBe(false);
     }
   });
 
-  test("resolveWorkspaceModes is backward-compatible (cap gate defaults to open)", () => {
-    const withDefault = resolveWorkspaceModes(true, true, "ready");
-    const withExplicitOpen = resolveWorkspaceModes(true, true, "ready", OPEN_SANDBOX_COST_CAP_GATE);
+  test("resolveRepositoryModes is backward-compatible (cap gate defaults to open)", () => {
+    const withDefault = resolveRepositoryModes(true, true, "ready");
+    const withExplicitOpen = resolveRepositoryModes(true, true, "ready", OPEN_SANDBOX_COST_CAP_GATE);
     expect(withDefault).toEqual(withExplicitOpen);
   });
 });

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import type { ArtifactId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, RepositoryId } from "@/lib/types";
 import { libraryArtifactPath, libraryPath } from "@/route-paths";
 import { readJSON, writeJSON } from "@/lib/storage";
 
@@ -50,8 +50,8 @@ interface LibraryTabsState {
   openArtifactIds: ReadonlyArray<ArtifactId>;
 }
 
-function storageKey(workspaceId: WorkspaceId): string {
-  return `systify.library.tabs.${workspaceId}`;
+function storageKey(repositoryId: RepositoryId): string {
+  return `systify.library.tabs.${repositoryId}`;
 }
 
 interface CachedLibraryTabs {
@@ -68,11 +68,11 @@ function isCachedLibraryTabs(v: unknown): v is CachedLibraryTabs {
   return true;
 }
 
-function readCachedTabs(workspaceId: WorkspaceId | null): LibraryTabsState | null {
-  if (!workspaceId) {
+function readCachedTabs(repositoryId: RepositoryId | null): LibraryTabsState | null {
+  if (!repositoryId) {
     return null;
   }
-  const cached = readJSON(storageKey(workspaceId), isCachedLibraryTabs);
+  const cached = readJSON(storageKey(repositoryId), isCachedLibraryTabs);
   if (!cached) return null;
   return {
     openArtifactIds: cached.openArtifactIds.slice(0, MAX_OPEN_TABS) as unknown as ReadonlyArray<ArtifactId>,
@@ -80,9 +80,9 @@ function readCachedTabs(workspaceId: WorkspaceId | null): LibraryTabsState | nul
   };
 }
 
-function writeCachedTabs(workspaceId: WorkspaceId | null, state: LibraryTabsState): void {
-  if (!workspaceId) return;
-  writeJSON(storageKey(workspaceId), {
+function writeCachedTabs(repositoryId: RepositoryId | null, state: LibraryTabsState): void {
+  if (!repositoryId) return;
+  writeJSON(storageKey(repositoryId), {
     openArtifactIds: state.openArtifactIds,
     activeArtifactId: state.activeArtifactId,
   });
@@ -109,13 +109,13 @@ function dedupe<T>(values: ReadonlyArray<T>): T[] {
   return out;
 }
 
-export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute: ArtifactId | null) {
+export function useLibraryTabs(repositoryId: RepositoryId | null, activeFromRoute: ArtifactId | null) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   // Seed from cache for first paint; the URL effect below reconciles to
   // canonical state once the route settles.
   const [state, setState] = useState<LibraryTabsState>(() => {
-    const cached = readCachedTabs(workspaceId);
+    const cached = readCachedTabs(repositoryId);
     const openFromUrl = parseOpenParam(searchParams.get("open"));
     const open = dedupe([...openFromUrl, ...(cached?.openArtifactIds ?? [])]).slice(0, MAX_OPEN_TABS);
     return {
@@ -123,6 +123,28 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
       activeArtifactId: activeFromRoute ?? cached?.activeArtifactId ?? open[0] ?? null,
     };
   });
+
+  // Tabs are per-repository. When the active repositoryId changes, reseed
+  // state from the new repo's cache *before* the persistence effect runs —
+  // otherwise the previous repo's tabs would be written into the new repo's
+  // storage key on the first effect tick after the switch.
+  const seededRepositoryIdRef = useRef<RepositoryId | null>(repositoryId);
+  const skipPersistForRepoChangeRef = useRef(false);
+  const hasReconciledFromUrlRef = useRef(false);
+  useEffect(() => {
+    if (seededRepositoryIdRef.current === repositoryId) return;
+    seededRepositoryIdRef.current = repositoryId;
+    skipPersistForRepoChangeRef.current = true;
+    hasReconciledFromUrlRef.current = false;
+    const cached = readCachedTabs(repositoryId);
+    const openFromUrl = parseOpenParam(searchParams.get("open"));
+    const open = dedupe([...openFromUrl, ...(cached?.openArtifactIds ?? [])]).slice(0, MAX_OPEN_TABS);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setState({
+      openArtifactIds: open,
+      activeArtifactId: activeFromRoute ?? cached?.activeArtifactId ?? open[0] ?? null,
+    });
+  }, [repositoryId, activeFromRoute, searchParams]);
 
   // Reconcile URL-driven changes — when the user navigates to a new
   // `/library/a/:aid` (for example via the tree or quick-open), promote
@@ -151,7 +173,6 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
   // `activeArtifactId` when the URL drops it, so state cannot drag
   // the URL back to a stale tab and start a ping-pong with the page's
   // artifact-validity guard.
-  const hasReconciledFromUrlRef = useRef(false);
   useEffect(() => {
     if (!hasReconciledFromUrlRef.current) {
       hasReconciledFromUrlRef.current = true;
@@ -181,8 +202,16 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
   // stack with one entry per tab close.
   const writeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    writeCachedTabs(workspaceId, state);
-    if (!workspaceId) return;
+    // Skip one tick after a repositoryId switch so the previous repo's
+    // state is not flushed into the new repo's storage key. The reseed
+    // effect schedules a fresh `setState` whose subsequent tick re-enters
+    // this effect with the new state and clears the flag.
+    if (skipPersistForRepoChangeRef.current) {
+      skipPersistForRepoChangeRef.current = false;
+      return;
+    }
+    writeCachedTabs(repositoryId, state);
+    if (!repositoryId) return;
     if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
     writeTimerRef.current = setTimeout(() => {
       // Seed the query string from the *live* URL at flush time so params
@@ -205,8 +234,8 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
       }
       const search = liveParams.toString();
       const targetPath = state.activeArtifactId
-        ? libraryArtifactPath(workspaceId, state.activeArtifactId)
-        : libraryPath(workspaceId);
+        ? libraryArtifactPath(repositoryId, state.activeArtifactId)
+        : libraryPath(repositoryId);
       const target = search ? `${targetPath}?${search}` : targetPath;
       // `replace: true` because tab management is not a navigation event
       // the user wants in their back history — back should jump to the
@@ -217,7 +246,7 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
     return () => {
       if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
     };
-  }, [state, workspaceId, navigate]);
+  }, [state, repositoryId, navigate]);
 
   const openTab = useCallback((artifactId: ArtifactId) => {
     setState((current) => {

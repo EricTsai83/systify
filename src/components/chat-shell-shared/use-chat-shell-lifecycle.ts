@@ -1,0 +1,80 @@
+import { useChatLifecycle } from "@/hooks/use-chat-lifecycle";
+import { useComposerDraft } from "@/hooks/use-composer-draft";
+import { useStorageGC } from "@/hooks/use-storage-gc";
+import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
+
+/**
+ * Bundles the chat-shell primitives both shells need so the RepositoryShell
+ * and the RepolessChatShell don't duplicate the same wiring:
+ *
+ *   - `useStorageGC` — sweep orphan per-repository / per-thread
+ *     localStorage keys.
+ *   - `useComposerDraft` — `localStorage`-backed composer text persisted
+ *     per (repository, thread, mode).
+ *   - `useChatLifecycle` — send / cancel / delete mutations.
+ */
+export function useChatShellLifecycle({
+  urlThreadId,
+  repositoryId,
+  chatMode,
+  groundLibrary,
+  groundSandbox,
+  liveRepositoryIds,
+  liveThreadIds,
+  threadToDelete,
+  setActionError,
+  setThreadToDelete,
+  onAfterCreateThread,
+  onAfterDeleteThread,
+}: {
+  urlThreadId: ThreadId | null;
+  repositoryId: RepositoryId | null;
+  chatMode: ChatMode;
+  groundLibrary?: boolean;
+  groundSandbox?: boolean;
+  liveRepositoryIds: ReadonlySet<string> | null;
+  liveThreadIds: ReadonlySet<string> | null;
+  threadToDelete: ThreadId | null;
+  setActionError: (value: string | null) => void;
+  setThreadToDelete: (value: ThreadId | null) => void;
+  onAfterCreateThread: (threadId: ThreadId, mode: ChatMode) => void;
+  onAfterDeleteThread: (deletedThreadId: ThreadId) => void;
+}): {
+  chatInput: string;
+  setChatInput: (next: string) => void;
+  clearChatInput: () => void;
+  isSending: boolean;
+  handleSendMessage: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
+  isCancellingReply: boolean;
+  handleCancelInFlightReply: () => Promise<void>;
+  isDeletingThread: boolean;
+  handleDeleteThread: () => Promise<void>;
+} {
+  useStorageGC({ liveRepositoryIds, liveThreadIds });
+  const [chatInput, setChatInput, clearChatInput] = useComposerDraft({
+    repositoryId,
+    threadId: urlThreadId,
+    mode: chatMode,
+  });
+  const lifecycle = useChatLifecycle({
+    selectedThreadId: urlThreadId,
+    repositoryId,
+    threadToDelete,
+    chatInput,
+    chatMode,
+    groundLibrary,
+    groundSandbox,
+    clearChatInput,
+    setActionError,
+    setThreadToDelete,
+    onAfterCreateThread,
+    onAfterDeleteThread,
+  });
+
+  return {
+    chatInput,
+    setChatInput,
+    clearChatInput,
+    ...lifecycle,
+  };
+}

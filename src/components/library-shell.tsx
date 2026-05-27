@@ -58,7 +58,7 @@ export function LibraryShell({
       }
     },
     // Cmd+B now toggles the left sidebar (which carries the Library tree
-    // in Library mode), matching Discuss/Lab behaviour. The previous
+    // in Library mode), matching Discuss behaviour. The previous
     // separate "collapse icon rail" affordance is intentionally dropped
     // in exchange for a single muscle-memory across all modes.
     onToggleTree: toggleLeftSidebar,

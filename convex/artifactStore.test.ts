@@ -38,6 +38,8 @@ async function seedRepository(t: ReturnType<typeof convexTest>): Promise<Id<"rep
       packageManagers: [],
       entrypoints: [],
       fileCount: 0,
+      color: "blue",
+      lastAccessedAt: Date.now(),
     }),
   );
 }

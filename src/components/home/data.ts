@@ -114,17 +114,6 @@ export const MODES: ReadonlyArray<Mode> = [
     ],
     tone: "sky",
   },
-  {
-    name: "Lab",
-    pitch: "current state · line precise",
-    depth: 3,
-    scenarios: [
-      "Exact paths, line numbers, config values",
-      "Verifying state when the index is stale",
-      "Premium cost — when a stale answer would be wrong",
-    ],
-    tone: "amber",
-  },
 ];
 
 export const FAQS: ReadonlyArray<FaqEntry> = [
@@ -146,7 +135,7 @@ export const FAQS: ReadonlyArray<FaqEntry> = [
   },
   {
     q: "When should I pick which mode?",
-    a: "Discuss is fastest. Library is for grounded narrative answers from your indexed artifacts. Lab is for line-precise checks against the current state of the code.",
+    a: "Discuss is fastest. Library is for grounded narrative answers from your indexed artifacts. Toggle Sandbox grounding inside Discuss when you need line-precise checks against the current state of the code.",
   },
 ];
 

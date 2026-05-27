@@ -346,7 +346,7 @@ function ArchiveRow({
       try {
         await restoreRepository({ repositoryId: repo._id as RepositoryId });
         toast.success("Repository restored", {
-          description: `${repo.sourceRepoFullName} is back in your workspaces.`,
+          description: `${repo.sourceRepoFullName} is back in your repositories.`,
         });
       } catch (error) {
         toast.error(toUserErrorMessage(error, "Failed to restore the repository."));

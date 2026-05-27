@@ -335,7 +335,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
       sandboxIsActivatable: false,
       sandboxCostBudgets: {
         userBudget: { remainingCents: 320, capacityCents: 500, resetAtMs: 1_700_000_000_000 },
-        workspaceBudget: null,
+        repositoryBudget: null,
       },
     });
 
@@ -373,7 +373,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
         userBudget: { remainingCents: 480, capacityCents: 500, resetAtMs: 1_700_000_010_000 },
         // Workspace cap has only $0.10 left — far less than the user's
         // $4.80, so the workspace cap is the binding constraint.
-        workspaceBudget: { remainingCents: 10, capacityCents: 5000, resetAtMs: 1_700_000_005_000 },
+        repositoryBudget: { remainingCents: 10, capacityCents: 5000, resetAtMs: 1_700_000_005_000 },
       },
     });
 
@@ -411,7 +411,7 @@ describe("useThreadCapabilities — Plan 10 sandbox cost budget", () => {
       sandboxIsActivatable: false,
       sandboxCostBudgets: {
         userBudget: { remainingCents: 5, capacityCents: 500, resetAtMs: 1_700_000_010_000 },
-        workspaceBudget: { remainingCents: 4500, capacityCents: 5000, resetAtMs: 1_700_000_020_000 },
+        repositoryBudget: { remainingCents: 4500, capacityCents: 5000, resetAtMs: 1_700_000_020_000 },
       },
     });
 

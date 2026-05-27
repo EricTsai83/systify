@@ -3,7 +3,7 @@ import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { ChatMode, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
 
 /**
  * Owns the in-flight reply lifecycle (send, cancel) plus thread teardown.
@@ -20,7 +20,7 @@ import type { ChatMode, ThreadId, WorkspaceId } from "@/lib/types";
  */
 export function useChatLifecycle({
   selectedThreadId,
-  workspaceId,
+  repositoryId,
   threadToDelete,
   chatInput,
   chatMode,
@@ -33,7 +33,7 @@ export function useChatLifecycle({
   onAfterDeleteThread,
 }: {
   selectedThreadId: ThreadId | null;
-  workspaceId: WorkspaceId | null;
+  repositoryId: RepositoryId | null;
   threadToDelete: ThreadId | null;
   chatInput: string;
   chatMode: ChatMode;
@@ -80,9 +80,12 @@ export function useChatLifecycle({
             clearChatInput();
             return;
           }
-          if (!workspaceId) return;
+          // Lazy first send. Repoless threads (no `repositoryId`) are
+          // legal — the backend creates the thread with `repositoryId:
+          // undefined` and the repoless shell navigates to the matching
+          // `/chat/:threadId` URL inside `onAfterCreateThread`.
           const result = await sendMessageStartingNewThreadMutation({
-            workspaceId,
+            ...(repositoryId ? { repositoryId } : {}),
             content: chatInput,
             mode: chatMode,
             ...groundingArgs,
@@ -104,7 +107,7 @@ export function useChatLifecycle({
         sendMessageMutation,
         sendMessageStartingNewThreadMutation,
         setActionError,
-        workspaceId,
+        repositoryId,
       ],
     ),
   );

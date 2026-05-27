@@ -17,7 +17,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useTimeUntil, useRelativeTime } from "@/hooks/use-relative-time";
 import { presentSandboxSurface, type OperationTone } from "@/lib/operations";
 import { cn } from "@/lib/utils";
-import { DEFAULT_AUTHENTICATED_PATH, workspacePath } from "@/route-paths";
+import { DEFAULT_AUTHENTICATED_PATH, repositoryPath } from "@/route-paths";
 
 /**
  * Resources — cross-workspace inventory of the viewer's active repositories
@@ -74,7 +74,7 @@ export function ResourcesPage() {
 
           <p className="mb-4 text-sm leading-relaxed text-muted-foreground sm:mb-5">
             Live status for every repository you have imported. Sandboxes auto-archive after their TTL — open a
-            workspace to refresh or activate one.
+            repository to refresh or activate one.
           </p>
 
           {inventory === undefined ? (
@@ -104,12 +104,7 @@ function ResourceRow({ row }: { row: InventoryRow }) {
     sandbox: row.sandbox,
   });
   const lastSyncedLabel = useRelativeTime(row.lastImportedAt);
-  // Tier-1 destination for the row's primary action. When the workspace
-  // hasn't materialised yet (only happens for repos imported before the
-  // workspaces table existed in the schema), fall back to the chat
-  // landing — RepositoryShell will resolve it into the right workspace
-  // on first render.
-  const targetPath = row.workspaceId ? workspacePath(row.workspaceId) : DEFAULT_AUTHENTICATED_PATH;
+  const targetPath = repositoryPath(row.repositoryId);
 
   return (
     <Card className="p-4 transition-colors hover:border-foreground/25">
@@ -149,7 +144,7 @@ function ResourceRow({ row }: { row: InventoryRow }) {
         </div>
         <div className="flex flex-row gap-2 sm:shrink-0">
           <Button asChild type="button" variant="secondary" size="sm" className="flex-1 sm:flex-none">
-            <Link to={targetPath}>Open workspace</Link>
+            <Link to={targetPath}>Open repository</Link>
           </Button>
         </div>
       </div>

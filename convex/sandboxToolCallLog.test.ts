@@ -592,6 +592,8 @@ async function createAuditLogFixture(t: ReturnType<typeof convexTest>, ownerToke
       packageManagers: [],
       entrypoints: [],
       fileCount: 0,
+      color: "blue",
+      lastAccessedAt: Date.now(),
     });
 
     const sandboxId: Id<"sandboxes"> = await ctx.db.insert("sandboxes", {

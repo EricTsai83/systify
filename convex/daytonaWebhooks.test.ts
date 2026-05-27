@@ -35,6 +35,8 @@ async function seedRepository(t: ReturnType<typeof convexTest>, ownerTokenIdenti
       packageManagers: [],
       entrypoints: [],
       fileCount: 0,
+      color: "blue",
+      lastAccessedAt: Date.now(),
     });
   });
 }
