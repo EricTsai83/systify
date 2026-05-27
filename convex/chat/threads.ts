@@ -5,7 +5,7 @@ import { internalMutation, mutation, query, type MutationCtx } from "../_generat
 import { requireViewerIdentity } from "../lib/auth";
 import { chatModeValidator, getDefaultThreadMode } from "../lib/chatMode";
 import { MAX_STREAM_CHUNKS_PER_PASS, MAX_VISIBLE_MESSAGES } from "../lib/constants";
-import { ensureRepositoryWorkspace } from "../lib/workspaces";
+import { touchRepositoryLastAccessed } from "../lib/repositoryPalette";
 import { loadRecentMessages } from "./context";
 import { deleteMessageStreamState } from "./streamStore";
 import { drainMessageToolCallEvents } from "./toolCallEventStore";
@@ -13,17 +13,16 @@ import { drainMessageToolCallEvents } from "./toolCallEventStore";
 /**
  * Upper bound on the per-thread Ask scope filter. 20 ids keeps the filter
  * lookup small (the scope filter is applied during RAG retrieval, where
- * each candidate chunk is filtered by `artifactId IN scope`). A workspace
+ * each candidate chunk is filtered by `artifactId IN scope`). A repository
  * with more than 20 artifacts the user wants to scope the question to
- * almost certainly wants the unbounded "whole workspace" variant (empty
+ * almost certainly wants the unbounded "whole repository" variant (empty
  * array) instead.
  */
 const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
 
 export const listThreads = query({
   args: {
-    repositoryId: v.optional(v.id("repositories")),
-    workspaceId: v.id("workspaces"),
+    repositoryId: v.id("repositories"),
     /**
      * Service-mode-scoped listing. Each chat mode (Discuss / Library) owns
      * its own thread slice, so the sidebar query forwards the active mode
@@ -37,46 +36,30 @@ export const listThreads = query({
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
 
-    const workspace = await ctx.db.get(args.workspaceId);
-    if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
+    const repository = await ctx.db.get(args.repositoryId);
+    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
       return [];
     }
-    // Pinning preserves visibility independent of recency, so pinned rows
-    // are fetched through a dedicated index range (`pinnedAt > 0` filters
-    // out unpinned rows whose optional field is unset) instead of being
-    // hoped to fall inside the top-N by lastMessageAt. The unpinned tail
-    // is then truncated with the same 20-row cap as before; pinned rows
-    // are capped separately so a pathological pin-all user can't blow
-    // the query budget.
-    const workspaceId = args.workspaceId;
+    const repositoryId = args.repositoryId;
     const mode = args.mode;
     const pinned = await ctx.db
       .query("threads")
-      .withIndex("by_workspaceId_and_pinnedAt", (q) => q.eq("workspaceId", workspaceId).gt("pinnedAt", 0))
+      .withIndex("by_repositoryId_and_pinnedAt", (q) => q.eq("repositoryId", repositoryId).gt("pinnedAt", 0))
       .order("desc")
       .take(20);
-    // Mode-scoped recent listing uses the compound (workspaceId, mode,
-    // lastMessageAt) index so the equality filter on mode does not need
-    // a `.filter()` clause; without that index Convex would either scan
-    // the full workspace + mode set (no `.take(20)` short-circuit on a
-    // sorted result) or rely on `.filter()` (forbidden by the project
-    // guidelines). When no mode is supplied, fall back to the legacy
-    // workspace-only index so existing callers stay on the same plan.
     const recent = mode
       ? await ctx.db
           .query("threads")
-          .withIndex("by_workspaceId_mode_and_lastMessageAt", (q) => q.eq("workspaceId", workspaceId).eq("mode", mode))
+          .withIndex("by_repositoryId_mode_and_lastMessageAt", (q) =>
+            q.eq("repositoryId", repositoryId).eq("mode", mode),
+          )
           .order("desc")
           .take(20)
       : await ctx.db
           .query("threads")
-          .withIndex("by_workspaceId_and_lastMessageAt", (q) => q.eq("workspaceId", workspaceId))
+          .withIndex("by_repositoryId_and_lastMessageAt", (q) => q.eq("repositoryId", repositoryId))
           .order("desc")
           .take(20);
-    // Pinned rows are bounded at 20 and may include threads of any mode
-    // (the user can pin across modes). Drop the off-mode pins post-query
-    // so the sidebar in, say, Discuss never surfaces a pinned Ask thread
-    // — pinning is a per-mode affordance from the user's point of view.
     const pinnedForMode = mode ? pinned.filter((thread) => thread.mode === mode) : pinned;
     const pinnedIds = new Set(pinnedForMode.map((thread) => thread._id));
     return [...pinnedForMode, ...recent.filter((thread) => !pinnedIds.has(thread._id))];
@@ -84,22 +67,21 @@ export const listThreads = query({
 });
 
 /**
- * Workspaceless threads — chats not bound to any workspace, surfaced in the
- * workspaceless shell's "Chats" sidebar section. Always Discuss mode by
- * construction (Library requires an attached repository, and detach drops
- * the workspace binding). The new
- * `by_ownerTokenIdentifier_workspaceless_and_lastMessageAt` index pins
- * `workspaceId === undefined` so the range read scans only the workspaceless
+ * Repoless threads — chats not bound to any repository, surfaced in the
+ * repoless shell's "Chats" sidebar section. Always Discuss mode by
+ * construction (Library requires an attached repository). The
+ * `by_ownerTokenIdentifier_repoless_and_lastMessageAt` index pins
+ * `repositoryId === undefined` so the range read scans only the repoless
  * slice instead of filtering the whole owner table.
  */
-export const listWorkspacelessThreads = query({
+export const listRepolessThreads = query({
   args: {},
   handler: async (ctx) => {
     const identity = await requireViewerIdentity(ctx);
     return await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_workspaceless_and_lastMessageAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("workspaceId", undefined),
+      .withIndex("by_ownerTokenIdentifier_repoless_and_lastMessageAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("repositoryId", undefined),
       )
       .order("desc")
       .take(20);
@@ -186,28 +168,13 @@ export const getThreadSummary = query({
 export const createThread = mutation({
   args: {
     repositoryId: v.optional(v.id("repositories")),
-    workspaceId: v.optional(v.id("workspaces")),
     title: v.optional(v.string()),
     mode: v.optional(chatModeValidator),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
 
-    let repositoryId = args.repositoryId;
-    const workspaceId = args.workspaceId;
-    if (workspaceId) {
-      const workspace = await ctx.db.get(workspaceId);
-      if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Workspace not found.");
-      }
-      if (repositoryId !== undefined && workspace.repositoryId !== repositoryId) {
-        throw new Error("Thread repository must match the workspace repository.");
-      }
-      if (repositoryId === undefined && workspace.repositoryId) {
-        repositoryId = workspace.repositoryId;
-      }
-    }
-
+    const repositoryId = args.repositoryId;
     const mode = args.mode ?? getDefaultThreadMode(!!repositoryId);
 
     if (mode === "library" && !repositoryId) {
@@ -226,23 +193,18 @@ export const createThread = mutation({
     }
 
     const threadId = await ctx.db.insert("threads", {
-      workspaceId,
       repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
       title,
       mode,
       lastMessageAt: Date.now(),
     });
-    // Return the resolved mode alongside the id so the client can route
-    // straight to the canonical mode-aware URL without an extra `db.get`
-    // or duplicating the `requestedMode → mode` normalisation rules
-    // above. Callers that only need the id can ignore the field.
     return { _id: threadId, mode };
   },
 });
 
 /**
- * Create a Library Ask thread bound to a workspace. Distinct from
+ * Create a Library Ask thread bound to a repository. Distinct from
  * {@link createThread} because Ask carries a scope-filter
  * (`artifactContext`) the plain thread mutation has no place for. The
  * thread is persisted with `mode: "library"` — "Ask" is the user-facing
@@ -250,59 +212,42 @@ export const createThread = mutation({
  */
 export const createLibraryAskThread = mutation({
   args: {
-    workspaceId: v.id("workspaces"),
+    repositoryId: v.id("repositories"),
     artifactContext: v.optional(v.array(v.id("artifacts"))),
     title: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
-    const workspace = await ctx.db.get(args.workspaceId);
-    if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Workspace not found.");
-    }
-    if (!workspace.repositoryId) {
-      throw new Error("Library Ask requires a workspace bound to a repository.");
+    const repository = await ctx.db.get(args.repositoryId);
+    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      throw new Error("Repository not found.");
     }
 
     const artifactContext = args.artifactContext ?? [];
     if (artifactContext.length > ASK_THREAD_MAX_ARTIFACT_CONTEXT) {
-      // Validate up-front so callers get a single, actionable error
-      // instead of a runtime fail later in the RAG retriever.
       throw new Error(
         `Library Ask scope filter accepts at most ${ASK_THREAD_MAX_ARTIFACT_CONTEXT} artifacts (got ${artifactContext.length}).`,
       );
     }
 
-    // Validate every artifact id in the scope filter at thread-create time:
-    //   - artifact must exist;
-    //   - viewer must own it;
-    //   - artifact must live in the same workspace's repo (cross-repo
-    //     scoping would either return zero hits or — worse — leak chunks
-    //     from another workspace through the vector index filter).
     for (const artifactId of artifactContext) {
       const artifact = await ctx.db.get(artifactId);
       if (!artifact || artifact.ownerTokenIdentifier !== identity.tokenIdentifier) {
         throw new Error("Artifact not found.");
       }
-      if (artifact.repositoryId !== workspace.repositoryId) {
-        throw new Error("Artifact is not in this workspace's repository.");
+      if (artifact.repositoryId !== args.repositoryId) {
+        throw new Error("Artifact is not in this repository.");
       }
     }
 
     const threadId = await ctx.db.insert("threads", {
-      workspaceId: args.workspaceId,
-      repositoryId: workspace.repositoryId,
+      repositoryId: args.repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
       title: args.title ?? "Library Ask",
       mode: "library",
       lastMessageAt: Date.now(),
-      // Stored as `undefined` when empty so the "whole workspace" sentinel
-      // and a deliberately-empty user filter both share one shape.
       artifactContext: artifactContext.length > 0 ? artifactContext : undefined,
     });
-    // Mirror `createThread`'s return shape (`{ _id, mode }`) so callers can
-    // route to the canonical mode-aware URL uniformly regardless of which
-    // mutation created the thread.
     return { _id: threadId, mode: "library" as const };
   },
 });
@@ -348,33 +293,21 @@ export const setThreadRepository = mutation({
       if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
         throw new Error("Repository not found.");
       }
-      const workspaceId = await ensureRepositoryWorkspace(ctx, {
-        repositoryId: args.repositoryId,
-        ownerTokenIdentifier: identity.tokenIdentifier,
-        name: repository.sourceRepoFullName,
-      });
+      await touchRepositoryLastAccessed(ctx, { repositoryId: args.repositoryId });
       // Two transitions land in this branch:
-      //   1. no-repo  → has-repo:  the thread is in `discuss` (the only mode
-      //      a repo-less thread can hold per createThread + the detach path
-      //      below). Attaching a repo lifts the thread into the repo default
-      //      (`library`) so the user lands in the artifact reader by default.
-      //      The Discuss grounding toggles remain available for any future
-      //      Discuss turn in the same thread.
-      //   2. repo-A   → repo-B:    the thread already has a repo and the user
-      //      may have explicitly chosen `library`. Preserve their choice;
-      //      only `repositoryId` / `workspaceId` need to change.
+      //   1. no-repo  → has-repo: the thread is in `discuss`. Attaching a
+      //      repo lifts the thread into the repo default (`library`).
+      //   2. repo-A   → repo-B: preserve the user's chosen mode.
       const nextMode = thread.repositoryId ? thread.mode : getDefaultThreadMode(true);
       const previousRepositoryId = thread.repositoryId;
       const swappedFromRepositoryId =
         previousRepositoryId && previousRepositoryId !== args.repositoryId ? previousRepositoryId : undefined;
       await ctx.db.patch(args.threadId, {
         repositoryId: args.repositoryId,
-        workspaceId,
         mode: nextMode,
       });
       return {
         repositoryId: args.repositoryId,
-        workspaceId,
         mode: nextMode,
         ...(swappedFromRepositoryId ? { swappedFromRepositoryId } : {}),
       };
@@ -382,28 +315,24 @@ export const setThreadRepository = mutation({
 
     // Detach atomically: dropping the repository while resetting the
     // persisted mode keeps the thread in the same repo-less default state
-    // as `createThread`. Workspaceless: a detached thread leaves its
-    // workspace binding behind (no Home fallback) and lives under the
-    // workspaceless `/chat/:threadId` surface. Also clear the grounding
-    // defaults — a no-repo thread cannot satisfy Library or Sandbox
-    // grounding, so the composer should open with both toggles off on the
-    // next visit.
+    // as `createThread`. A detached thread lives under the repoless
+    // `/chat/:threadId` surface. Also clear the grounding defaults — a
+    // no-repo thread cannot satisfy Library or Sandbox grounding.
     const detachedMode = getDefaultThreadMode(false);
     await ctx.db.patch(args.threadId, {
-      workspaceId: undefined,
       repositoryId: undefined,
       mode: detachedMode,
       defaultGroundLibrary: false,
       defaultGroundSandbox: false,
     });
-    return { repositoryId: null as null, workspaceId: null as null, mode: detachedMode };
+    return { repositoryId: null as null, mode: detachedMode };
   },
 });
 
 /**
  * Toggle a thread's pinned state. Pinning stamps `pinnedAt` with the
  * current wall-clock so `listThreads` can both detect the pinned state
- * (via the `by_workspaceId_and_pinnedAt` range filter) and order pinned
+ * (via the `by_repositoryId_and_pinnedAt` range filter) and order pinned
  * rows by recency-of-pin. Unpinning drops the field (patch with
  * `pinnedAt: undefined`) so the row falls out of the pinned-range query
  * and back into the regular recency tail.

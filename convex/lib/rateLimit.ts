@@ -129,13 +129,18 @@ export function getSandboxReplyEstimateCents() {
 }
 
 /**
- * Wrap the workspace id with a stable string prefix so the same `key`
+ * Wrap the repository id with a stable string prefix so the same `key`
  * never collides with future ID-keyed buckets that share the rate-limiter
- * namespace. Today this looks like `"workspace:abc123"` — explicit so
- * a search for `key.startsWith("workspace:")` will match every entry.
+ * namespace. Today this looks like `"repository:abc123"` — explicit so
+ * a search for `key.startsWith("repository:")` will match every entry.
+ *
+ * Replaced the previous workspace-scoped key (`"workspace:..."`) when the
+ * workspace abstraction was collapsed into repositories. Any in-flight
+ * rate-limit state keyed on the old prefix is intentionally orphaned; the
+ * narrowing happens in early-access so the bucket reset is acceptable.
  */
-export function workspaceCostKey(workspaceId: Id<"workspaces">) {
-  return `workspace:${workspaceId}`;
+export function repositoryCostKey(repositoryId: Id<"repositories">) {
+  return `repository:${repositoryId}`;
 }
 
 export const CHAT_JOB_LEASE_MS = readPositiveIntEnv("CHAT_JOB_LEASE_MS", 10 * 60_000);
@@ -426,13 +431,13 @@ export async function peekSandboxDailyCostForUser(
 }
 
 /**
- * Plan 10 — peek the workspace-level daily budget. Pure read; no consumption.
+ * Plan 10 — peek the repository-level daily budget. Pure read; no consumption.
  */
-export async function peekSandboxDailyCostForWorkspace(
+export async function peekSandboxDailyCostForRepository(
   ctx: QueryCtx | MutationCtx,
-  workspaceId: Id<"workspaces">,
+  repositoryId: Id<"repositories">,
 ): Promise<SandboxDailyCostBudget> {
-  return await peekSandboxBucket(ctx, "sandboxCostUsdPerWorkspaceDaily", workspaceCostKey(workspaceId));
+  return await peekSandboxBucket(ctx, "sandboxCostUsdPerWorkspaceDaily", repositoryCostKey(repositoryId));
 }
 
 /**
@@ -462,7 +467,7 @@ export async function assertSandboxDailyCostBudget(
   ctx: MutationCtx,
   args: {
     ownerTokenIdentifier: string;
-    workspaceId: Id<"workspaces"> | null | undefined;
+    repositoryId: Id<"repositories"> | null | undefined;
     estimateCents: number;
   },
 ): Promise<void> {
@@ -487,22 +492,22 @@ export async function assertSandboxDailyCostBudget(
     throwSandboxDailyCapExceeded("user", userStatus.retryAfter, userBudget.capacityCents / 100);
   }
 
-  if (args.workspaceId) {
-    const workspaceStatus = await rateLimiter.check(ctx, SANDBOX_WORKSPACE_COST_BUCKET, {
-      key: workspaceCostKey(args.workspaceId),
+  if (args.repositoryId) {
+    const repositoryStatus = await rateLimiter.check(ctx, SANDBOX_WORKSPACE_COST_BUCKET, {
+      key: repositoryCostKey(args.repositoryId),
       count: args.estimateCents,
       config: getSandboxWorkspaceCapConfig(),
     });
-    if (!workspaceStatus.ok) {
-      const workspaceBudget = await peekSandboxDailyCostForWorkspace(ctx, args.workspaceId);
+    if (!repositoryStatus.ok) {
+      const repositoryBudget = await peekSandboxDailyCostForRepository(ctx, args.repositoryId);
       logInfo("rate_limit", "sandbox_daily_cap_blocked", {
-        scope: "workspace",
-        workspaceId: args.workspaceId,
-        remainingCents: workspaceBudget.remainingCents,
-        capacityCents: workspaceBudget.capacityCents,
+        scope: "repository",
+        repositoryId: args.repositoryId,
+        remainingCents: repositoryBudget.remainingCents,
+        capacityCents: repositoryBudget.capacityCents,
         estimateCents: args.estimateCents,
       });
-      throwSandboxDailyCapExceeded("workspace", workspaceStatus.retryAfter, workspaceBudget.capacityCents / 100);
+      throwSandboxDailyCapExceeded("workspace", repositoryStatus.retryAfter, repositoryBudget.capacityCents / 100);
     }
   }
 }
@@ -554,7 +559,7 @@ export async function consumeSandboxDailyCost(
   ctx: MutationCtx,
   args: {
     ownerTokenIdentifier: string;
-    workspaceId: Id<"workspaces"> | null | undefined;
+    repositoryId: Id<"repositories"> | null | undefined;
     cents: number;
   },
 ): Promise<void> {
@@ -562,7 +567,7 @@ export async function consumeSandboxDailyCost(
     return;
   }
   await consumeSandboxBucket(ctx, SANDBOX_USER_COST_BUCKET, args.ownerTokenIdentifier, args.cents);
-  if (args.workspaceId) {
-    await consumeSandboxBucket(ctx, SANDBOX_WORKSPACE_COST_BUCKET, workspaceCostKey(args.workspaceId), args.cents);
+  if (args.repositoryId) {
+    await consumeSandboxBucket(ctx, SANDBOX_WORKSPACE_COST_BUCKET, repositoryCostKey(args.repositoryId), args.cents);
   }
 }

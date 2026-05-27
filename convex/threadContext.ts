@@ -21,13 +21,13 @@ export type SandboxTableStatus = Doc<"sandboxes">["status"];
  * so the UI can render a "spent today" indicator + a "resets at" countdown
  * without re-querying the rate-limiter component on the frontend.
  *
- * `userBudget` is always populated; `workspaceBudget` is populated only
- * when the thread has an attached workspace. The frontend takes the
+ * `userBudget` is always populated; `repositoryBudget` is populated only
+ * when the thread has an attached repository. The frontend takes the
  * minimum of the two `remainingCents` values for its visible budget.
  */
 export interface ThreadContextSandboxCostBudgets {
   userBudget: SandboxDailyCostBudget;
-  workspaceBudget: SandboxDailyCostBudget | null;
+  repositoryBudget: SandboxDailyCostBudget | null;
 }
 
 export interface ThreadContext {
@@ -38,7 +38,7 @@ export interface ThreadContext {
   chatModes: ChatModeResolution;
   /**
    * Plan 10 — daily-cost-cap budgets for the viewer (always) and the
-   * thread's workspace (when one is attached). `null` when sandbox mode
+   * thread's repository (when one is attached). `null` when sandbox mode
    * isn't currently relevant to this thread (no attached repo); avoids
    * the cost of a rate-limiter peek in the no-repo case where the UI
    * has no use for the value.
@@ -99,21 +99,21 @@ async function enrichThreadContext(
   let costGate: SandboxCostCapGate = { enabled: true };
   let sandboxCostBudgets: ThreadContextSandboxCostBudgets | null = null;
   if (attachedRepository !== null) {
-    const evaluation = await computeSandboxCostCapEvaluation(ctx, viewerTokenIdentifier, thread.workspaceId ?? null);
+    const evaluation = await computeSandboxCostCapEvaluation(ctx, viewerTokenIdentifier, attachedRepository._id);
     costGate = evaluation.gate;
-    sandboxCostBudgets = { userBudget: evaluation.userBudget, workspaceBudget: evaluation.workspaceBudget };
+    sandboxCostBudgets = { userBudget: evaluation.userBudget, repositoryBudget: evaluation.repositoryBudget };
   }
 
   const chatModeSandboxStatus = toChatModeSandboxStatus(sandboxModeStatus);
   // Post-Lab collapse `resolveChatModes` only takes `hasAttachedRepo`; the
   // (sandbox-status, cost-cap) matrix that used to live here is now
-  // surfaced via the grounding axes on `resolveWorkspaceModes`. The
+  // surfaced via the grounding axes on `resolveRepositoryModes`. The
   // per-thread chat-mode resolver stays simple so legacy callers reading
   // `chatModes` get a stable shape.
   const chatModes = resolveChatModes(attachedRepository !== null);
 
   // Derive `sandboxIsActivatable` from the same grounding-axis resolver the
-  // workspace read path uses so the activation rule lives in exactly one
+  // repository read path uses so the activation rule lives in exactly one
   // place. The verdict is "activatable" iff disabled with `isActivatable:
   // true` — covers (no sandbox / expired / failed) while a healthy ready
   // sandbox or a cost-capped one stays not-activatable.

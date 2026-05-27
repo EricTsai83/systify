@@ -33,7 +33,7 @@ import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { readString, removeKey, writeString } from "@/lib/storage";
 import type { ThreadMode } from "@/route-paths";
-import type { RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { RepositoryId, ThreadId } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // sessionStorage flag: fallback for when the popup-based GitHub install is
@@ -198,12 +198,7 @@ export function ImportRepoDialog({
    * uses it to navigate straight to the canonical mode-aware URL instead of
    * bouncing through `LegacyThreadRedirect`.
    */
-  onImported: (
-    repoId: RepositoryId,
-    threadId: ThreadId | null,
-    workspaceId: WorkspaceId,
-    threadMode: ThreadMode | null,
-  ) => void;
+  onImported: (repoId: RepositoryId, threadId: ThreadId | null, threadMode: ThreadMode | null) => void;
   /**
    * Optional custom trigger element. Lets callers swap the default "+" sidebar
    * button for a contextual affordance — e.g. the no-repo chat surface mounts
@@ -507,7 +502,6 @@ export function ImportRepoDialog({
       onImported(
         result.repositoryId,
         result.defaultThreadId ?? null,
-        result.workspaceId,
         result.defaultThreadId ? result.defaultThreadMode : null,
       );
       setOpen(false);
@@ -530,7 +524,6 @@ export function ImportRepoDialog({
       onImported(
         result.repositoryId,
         result.defaultThreadId ?? null,
-        result.workspaceId,
         result.defaultThreadId ? result.defaultThreadMode : null,
       );
       setOpen(false);

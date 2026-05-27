@@ -24,7 +24,6 @@ import type {
   SandboxModeStatus,
   ThreadId,
   ThreadMode,
-  WorkspaceId,
 } from "@/lib/types";
 
 type ChatPanelProps = {
@@ -51,7 +50,7 @@ type ChatPanelProps = {
   setGroundLibrary: (v: boolean) => void;
   setGroundSandbox: (v: boolean) => void;
   /**
-   * Per-axis availability verdict from `workspaceModeEligibility.evaluate`.
+   * Per-axis availability verdict from `repositoryModeEligibility.evaluate`.
    * Mirrors the structured shape the eligibility module exposes, but typed
    * loosely here so the panel can render the toggle bar before the type
    * narrows on first paint.
@@ -97,7 +96,7 @@ type ChatPanelProps = {
   availableRepositories?: ReadonlyArray<Doc<"repositories">>;
   /** Callback after a new repository is imported via the inline dialog. */
   onImported?: OnImportedCallback;
-  onThreadMovedToWorkspace?: (workspaceId: WorkspaceId | null, mode: ThreadMode | null) => void;
+  onThreadMovedToRepository?: (repositoryId: RepositoryId | null, mode: ThreadMode | null) => void;
   /**
    * Plan 02: clicking an inline `[A#]` citation in an assistant reply forwards
    * the resolved artifact id to this callback. The shell uses it to open
@@ -120,16 +119,16 @@ type ChatPanelProps = {
    * explicitly activate the live source before sending. Optional so
    * pre-repo and unit-test render paths can omit it.
    */
-  repositoryId?: RepositoryId;
+  attachedRepositoryId?: RepositoryId;
   /**
-   * Workspace the composer is rendered inside, when it differs from the
-   * thread context (no-thread URLs). Acts as the anchor for the lazy
+   * Repository the composer is rendered inside, when no thread is
+   * selected. Acts as the anchor for the lazy
    * `sendMessageStartingNewThread` path — when supplied the Send button
    * stays enabled on a no-thread URL so the first send can create the
-   * thread atomically. Optional so legacy callers without a workspace
+   * thread atomically. Optional so legacy callers without a repository
    * context can omit it.
    */
-  workspaceId?: WorkspaceId | null;
+  repositoryId?: RepositoryId | null;
 };
 
 type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream" | "isChatLoading"> & {
@@ -183,12 +182,12 @@ export function ChatPanel({
   hasAttachedRepository = true,
   availableRepositories = [],
   onImported,
-  onThreadMovedToWorkspace,
+  onThreadMovedToRepository,
   onSelectArtifact,
   isReadOnly = false,
   readOnlyHint,
+  attachedRepositoryId,
   repositoryId,
-  workspaceId,
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
 
@@ -223,10 +222,10 @@ export function ChatPanel({
   const requestSandboxActivation = useMutation(api.repositories.requestSandboxActivation);
   const [activationError, setActivationError] = useState<string | null>(null);
   const [, activateSandbox] = useAsyncCallback(async () => {
-    if (!repositoryId) return;
+    if (!attachedRepositoryId) return;
     setActivationError(null);
     try {
-      await requestSandboxActivation({ repositoryId });
+      await requestSandboxActivation({ repositoryId: attachedRepositoryId });
     } catch (err) {
       setActivationError(toUserErrorMessage(err, "Couldn't start the sandbox. Try again."));
     }
@@ -265,7 +264,7 @@ export function ChatPanel({
   const shouldShowSandboxWarning =
     !isChatLoading && groundSandbox && sandboxModeStatus !== null && !sandboxModeAvailable;
   const shouldShowEmptyState = !isChatLoading && !hasMessages;
-  const shouldShowSandboxPill = groundSandbox && repositoryId !== undefined;
+  const shouldShowSandboxPill = groundSandbox && attachedRepositoryId !== undefined;
 
   // Hoisted so the empty-state branch (no ScrollArea) and the messages
   // branch (inside ScrollArea) can both render the warning above their
@@ -284,7 +283,7 @@ export function ChatPanel({
     />
   ) : null;
   const sandboxPill =
-    shouldShowSandboxPill && repositoryId ? <SandboxActivityPill repositoryId={repositoryId} /> : null;
+    shouldShowSandboxPill && attachedRepositoryId ? <SandboxActivityPill repositoryId={attachedRepositoryId} /> : null;
 
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -308,7 +307,7 @@ export function ChatPanel({
               threadId={selectedThreadId}
               availableRepositories={availableRepositories ?? []}
               onImported={onImported}
-              onThreadMovedToWorkspace={onThreadMovedToWorkspace}
+              onThreadMovedToRepository={onThreadMovedToRepository}
             />
           )}
           {/*
@@ -463,8 +462,8 @@ export function ChatPanel({
                   isSyncing ||
                   !chatInput.trim() ||
                   // Lazy first send needs at least one anchor: an existing
-                  // thread or the workspace we'd create the thread in.
-                  (selectedThreadId === null && !workspaceId) ||
+                  // thread or the repository we'd create the thread in.
+                  (selectedThreadId === null && !repositoryId) ||
                   // Sandbox grounding requires a ready live source. Disable
                   // send until the sandbox lifecycle is `available` so an
                   // optimistically-flipped toggle does not produce a

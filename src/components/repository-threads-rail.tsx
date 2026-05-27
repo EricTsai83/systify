@@ -9,21 +9,20 @@ import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { usePrewarmThread } from "@/hooks/use-prewarm-thread";
 import { toUserErrorMessage } from "@/lib/errors";
 import type { ThreadMode } from "@/route-paths";
-import type { ChatMode, RepositoryId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
  * The sidebar rail surfaces threads by the chat mode they were persisted
- * under. The filter mirrors the canonical `ChatMode` union (DB literal +
- * URL segment + UI label all share one vocabulary), and the Library
- * variant of the rail uses {@link createLibraryAskThread} so the freshly
- * created thread carries an `artifactContext` scope filter on top of the
- * shared `mode: "library"` persistence.
+ * under. The filter mirrors the canonical `ChatMode` union, and the
+ * Library variant of the rail uses {@link createLibraryAskThread} so the
+ * freshly created thread carries an `artifactContext` scope filter on top
+ * of the shared `mode: "library"` persistence.
  */
 type ThreadModeFilter = ChatMode;
 
-export function WorkspaceThreadsRail({
-  workspaceId,
+export function RepositoryThreadsRail({
+  repositoryId,
   repositories,
   threadMode,
   selectedThreadId,
@@ -33,39 +32,25 @@ export function WorkspaceThreadsRail({
   compact,
   newThreadVariant,
   newThreadButtonLabel,
-  requireWorkspaceForCreate = false,
+  requireRepositoryForCreate = false,
   onRequestNewThread,
 }: {
-  workspaceId: WorkspaceId | null;
+  repositoryId: RepositoryId | null;
   repositories: Doc<"repositories">[] | undefined;
   threadMode: ThreadModeFilter;
   selectedThreadId: ThreadId | null;
-  /**
-   * Selects a thread or clears the selection. `mode` is always supplied:
-   * row clicks read it off `thread.mode` (the rendered Doc), and the new-
-   * thread CTA derives it from the rail's active filter. The consumer
-   * routes directly to the canonical mode URL via {@link modeAwareThreadPath}
-   * so a freshly-selected thread never bounces through `LegacyThreadRedirect`.
-   * The id is `ThreadId | null` because some consumers (e.g. delete-then-
-   * select-fallback) clear selection through this same callback — mode is
-   * still required so the consumer has a well-typed value to forward when
-   * it does pick a replacement.
-   */
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onDeleteThread: (id: ThreadId) => void;
   onError: (message: string | null) => void;
   compact?: boolean;
   newThreadVariant?: "default" | "libraryAsk";
   newThreadButtonLabel?: string;
-  /** Library Ask always needs a concrete workspace; Discuss sidebar historically allowed creating from a null pointer. */
-  requireWorkspaceForCreate?: boolean;
+  /** Library Ask always needs a concrete repository; Discuss sidebar historically allowed creating from a null pointer. */
+  requireRepositoryForCreate?: boolean;
   /**
    * When supplied, clicking "New Thread" on the default rail variant navigates
-   * to the workspace's mode URL (no thread id) instead of pre-creating an
-   * orphan thread. The chat composer's first send then triggers the lazy
-   * `sendMessageStartingNewThread` path. Library Ask keeps the immediate-
-   * create flow because Ask threads carry an `artifactContext` scope filter
-   * that has no place on the lazy path.
+   * to the repository's mode URL (no thread id) instead of pre-creating an
+   * orphan thread.
    */
   onRequestNewThread?: () => void;
 }) {
@@ -73,7 +58,7 @@ export function WorkspaceThreadsRail({
   const createLibraryAskThreadMutation = useMutation(api.chat.threads.createLibraryAskThread);
   const setThreadPinnedMutation = useMutation(api.chat.threads.setThreadPinned);
 
-  const threads = useQuery(api.chat.threads.listThreads, workspaceId ? { workspaceId, mode: threadMode } : "skip");
+  const threads = useQuery(api.chat.threads.listThreads, repositoryId ? { repositoryId, mode: threadMode } : "skip");
 
   const repositoriesById = useMemo(() => {
     const map = new Map<RepositoryId, Doc<"repositories">>();
@@ -85,29 +70,23 @@ export function WorkspaceThreadsRail({
 
   const [isCreatingThread, handleCreateThread] = useAsyncCallback(
     useCallback(async () => {
-      if (requireWorkspaceForCreate && !workspaceId) return;
+      if (requireRepositoryForCreate && !repositoryId) return;
       onError(null);
       try {
         if (newThreadVariant === "libraryAsk") {
-          if (!workspaceId) {
+          if (!repositoryId) {
             return;
           }
-          const created = await createLibraryAskThreadMutation({ workspaceId });
+          const created = await createLibraryAskThreadMutation({ repositoryId });
           onSelectThread(created._id, created.mode);
           return;
         }
-        // Default rail variant: if the shell supplied a navigate-only
-        // callback, prefer it over `createThreadMutation`. The lazy first
-        // send (`sendMessageStartingNewThread`) materialises the thread the
-        // moment the user actually sends a message, so we no longer leave
-        // an empty orphan thread behind when the user clicks New Thread
-        // and then navigates away.
         if (onRequestNewThread) {
           onRequestNewThread();
           return;
         }
         const created = await createThreadMutation({
-          workspaceId: workspaceId ?? undefined,
+          repositoryId: repositoryId ?? undefined,
           mode: threadMode,
         });
         onSelectThread(created._id, created.mode);
@@ -121,9 +100,9 @@ export function WorkspaceThreadsRail({
       onError,
       onRequestNewThread,
       onSelectThread,
-      requireWorkspaceForCreate,
+      requireRepositoryForCreate,
       threadMode,
-      workspaceId,
+      repositoryId,
     ]),
   );
 
@@ -146,8 +125,8 @@ export function WorkspaceThreadsRail({
           size="sm"
           className={cn("h-8 w-full justify-start gap-1.5 text-xs", compact && "h-8")}
           disabled={
-            (requireWorkspaceForCreate && !workspaceId) ||
-            (newThreadVariant === "libraryAsk" && !workspaceId) ||
+            (requireRepositoryForCreate && !repositoryId) ||
+            (newThreadVariant === "libraryAsk" && !repositoryId) ||
             isCreatingThread
           }
           onClick={() => void handleCreateThread()}
@@ -184,10 +163,6 @@ function ThreadsSection({
   threads: Doc<"threads">[] | undefined;
   repositoriesById: Map<RepositoryId, Doc<"repositories">>;
   selectedThreadId: ThreadId | null;
-  /**
-   * See the top-level {@link WorkspaceThreadsRail} prop comment; the mode is
-   * always supplied so consumers can route to canonical mode-aware URLs.
-   */
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onDeleteThread: (id: ThreadId) => void;
   onTogglePin: (id: ThreadId, pinned: boolean) => void;
@@ -291,9 +266,6 @@ const ThreadsList = memo(function ThreadsList({
   threads: Doc<"threads">[];
   repositoriesById: Map<RepositoryId, Doc<"repositories">>;
   selectedThreadId: ThreadId | null;
-  /**
-   * See the top-level {@link WorkspaceThreadsRail} prop comment.
-   */
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onPrewarmThread: (id: ThreadId) => void;
   onDeleteThread: (id: ThreadId) => void;
@@ -358,10 +330,6 @@ const ThreadsList = memo(function ThreadsList({
 });
 
 function ThreadRepoBadge({ repository }: { repository: Doc<"repositories"> | undefined }) {
-  // Defensive null branch: `repositoriesById` may not yet carry the repo
-  // during a race between the threads query and the repositories query.
-  // The row's title alone carries the thread identity until the badge
-  // hydrates on the next render.
   if (!repository) {
     return null;
   }
@@ -375,19 +343,12 @@ function ThreadRepoBadge({ repository }: { repository: Doc<"repositories"> | und
 }
 
 /**
- * Sidebar rail for the workspaceless chat shell. Lists threads with
- * `workspaceId === undefined` via the dedicated
- * `chat.threads.listWorkspacelessThreads` query (which uses the
- * workspaceless range index, so the read cost is O(workspaceless-count)
- * rather than a full owner-table scan). Always Discuss mode by
+ * Sidebar rail for the repoless chat shell. Lists threads with
+ * `repositoryId === undefined` via the dedicated
+ * `chat.threads.listRepolessThreads` query. Always Discuss mode by
  * construction.
- *
- * The "New thread" button navigates the parent to `/chat` (the
- * workspaceless landing) — the lazy first send materialises the thread
- * once the user actually types and submits, so the sidebar never leaves
- * an empty orphan thread behind on click.
  */
-export function WorkspacelessChatsRail({
+export function RepolessChatsRail({
   selectedThreadId,
   onSelectThread,
   onDeleteThread,
@@ -398,7 +359,7 @@ export function WorkspacelessChatsRail({
   onDeleteThread: (id: ThreadId) => void;
   onRequestNewThread?: () => void;
 }) {
-  const threads = useQuery(api.chat.threads.listWorkspacelessThreads, {});
+  const threads = useQuery(api.chat.threads.listRepolessThreads, {});
   const prewarmThread = usePrewarmThread();
 
   return (

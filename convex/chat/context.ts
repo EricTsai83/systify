@@ -7,7 +7,6 @@ import type { ExtendedChatMode } from "./prompting";
 
 export type ReplyContext = {
   ownerTokenIdentifier: string;
-  workspaceId?: Id<"workspaces">;
   /**
    * Effective mode for this reply, anchored to the queued user message:
    * `userMessage.mode ?? thread.mode`. Anchoring to the specific queued
@@ -288,7 +287,6 @@ export const getReplyContext = internalQuery({
     if (!thread.repositoryId || (effectiveMode === "discuss" && !groundLibrary && !groundSandbox)) {
       return {
         ownerTokenIdentifier: thread.ownerTokenIdentifier,
-        workspaceId: thread.workspaceId,
         mode: effectiveMode,
         groundLibrary,
         groundSandbox,
@@ -361,7 +359,6 @@ export const getReplyContext = internalQuery({
 
     return {
       ownerTokenIdentifier: repository.ownerTokenIdentifier,
-      workspaceId: thread.workspaceId,
       mode: effectiveMode,
       groundLibrary,
       groundSandbox,

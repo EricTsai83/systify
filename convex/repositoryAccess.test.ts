@@ -38,6 +38,8 @@ async function seedRepositoryAccessFixture(
       packageManagers: [],
       entrypoints: [],
       fileCount: 3,
+      color: "blue",
+      lastAccessedAt: Date.now(),
       ...(args.deletionRequestedAt !== undefined ? { deletionRequestedAt: args.deletionRequestedAt } : {}),
     });
 

@@ -141,7 +141,7 @@ const messageStatus = v.union(
   v.literal("cancelled"),
 );
 
-const workspaceColor = v.union(
+const repositoryColor = v.union(
   v.literal("blue"),
   v.literal("emerald"),
   v.literal("amber"),
@@ -153,42 +153,15 @@ const workspaceColor = v.union(
 );
 
 export default defineSchema({
-  workspaces: defineTable({
-    ownerTokenIdentifier: v.string(),
-    repositoryId: v.id("repositories"),
-    name: v.string(),
-    color: workspaceColor,
-    lastAccessedAt: v.number(),
-    /**
-     * Last mode the user landed on inside this workspace
-     * (discuss / library). The workspace-landing redirect
-     * (`/chat` → `/w/:wid` → canonical mode URL) consults this so the
-     * user comes back to the mode they were last in, instead of the
-     * workspace's structural default. Optional because pre-existing
-     * workspaces don't have it set yet; the redirect falls back to
-     * `getDefaultThreadMode()` when missing.
-     */
-    lastMode: v.optional(chatModeValidator),
-  })
-    .index("by_ownerTokenIdentifier_and_lastAccessedAt", ["ownerTokenIdentifier", "lastAccessedAt"])
-    .index("by_ownerTokenIdentifier_and_repositoryId", ["ownerTokenIdentifier", "repositoryId"]),
-
   /**
-   * Per-viewer key-value preferences that need to follow the user across
-   * devices. Today this only carries the last active workspace so that
-   * re-entering the app on a different browser converges to the same
-   * selection; future user-level prefs (default chat mode, theme, etc.)
-   * extend this table without touching the workspace data model.
-   *
-   * Source-of-truth boundary: `lastActiveWorkspaceId` is the canonical
-   * "current workspace" for a viewer. The frontend keeps a localStorage
-   * cache for first-paint, but on conflict the DB wins (see
-   * `docs/workspace-persistence-system-design.md`).
+   * Per-viewer key-value preferences. `lastActiveRepositoryId` is the
+   * canonical "current repository" pointer for a viewer; the frontend keeps
+   * a localStorage cache for first-paint but on conflict the DB wins.
    */
   userPreferences: defineTable({
     ownerTokenIdentifier: v.string(),
-    lastActiveWorkspaceId: v.optional(v.id("workspaces")),
-    lastActiveWorkspaceUpdatedAt: v.optional(v.number()),
+    lastActiveRepositoryId: v.optional(v.id("repositories")),
+    lastActiveRepositoryUpdatedAt: v.optional(v.number()),
   }).index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
 
   repositories: defineTable({
@@ -220,6 +193,15 @@ export default defineSchema({
     lastCheckedForUpdatesAt: v.optional(v.number()),
     deletionRequestedAt: v.optional(v.number()),
     archivedAt: v.optional(v.number()),
+    /**
+     * Per-repository UI state. `color` is round-robin allocated on import
+     * (see `pickNextRepositoryColor`), `lastAccessedAt` powers the sidebar's
+     * recency ordering, `lastMode` keeps the user in the mode they last
+     * visited.
+     */
+    color: repositoryColor,
+    lastAccessedAt: v.number(),
+    lastMode: v.optional(chatModeValidator),
   })
     .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"])
     .index("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", [
@@ -233,6 +215,7 @@ export default defineSchema({
       "deletionRequestedAt",
     ])
     .index("by_ownerTokenIdentifier_and_archivedAt", ["ownerTokenIdentifier", "archivedAt"])
+    .index("by_ownerTokenIdentifier_and_lastAccessedAt", ["ownerTokenIdentifier", "lastAccessedAt"])
     .index("by_sourceRepoFullName", ["sourceRepoFullName"])
     .searchIndex("search_full_name", {
       searchField: "sourceRepoFullName",
@@ -597,7 +580,6 @@ export default defineSchema({
     }),
 
   threads: defineTable({
-    workspaceId: v.optional(v.id("workspaces")),
     repositoryId: v.optional(v.id("repositories")),
     ownerTokenIdentifier: v.string(),
     title: v.string(),
@@ -606,15 +588,15 @@ export default defineSchema({
     lastAssistantMessageAt: v.optional(v.number()),
     /**
      * Library Ask scope filter, read by the RAG retriever. Empty / undefined
-     * means "search the whole workspace" — does NOT mean "load these
+     * means "search the whole repository" — does NOT mean "load these
      * artifacts as context"; the actual context shrink happens via
      * per-query top-N chunk retrieval. Capped at 20 ids by mutation
      * validators so the filter list itself stays small.
      */
     artifactContext: v.optional(v.array(v.id("artifacts"))),
     /**
-     * Discuss thread → workspace-level sandbox session pointer. The single
-     * active sandbox session per workspace is shared across every Discuss
+     * Discuss thread → repository-level sandbox session pointer. The single
+     * active sandbox session per repository is shared across every Discuss
      * thread whose user has enabled sandbox grounding, so thread switching
      * never re-provisions a sandbox. Optional and unused on `library` threads
      * and on Discuss threads that have never used sandbox grounding.
@@ -625,10 +607,8 @@ export default defineSchema({
      * the user opens an existing thread. Updated whenever the user sends a
      * Discuss message with a particular grounding flag combination so the
      * thread "remembers" their last preference. Unset on `library` threads
-     * (Library Mode has its own UI for artifact context) and on legacy
-     * Discuss threads created before this column existed; consumers default
-     * both to `false` when absent for an unattached thread, or to
-     * `defaultGroundLibrary: true` for a repo-bound thread with artifacts.
+     * and on legacy Discuss threads created before this column existed;
+     * consumers default both to `false` when absent.
      */
     defaultGroundLibrary: v.optional(v.boolean()),
     defaultGroundSandbox: v.optional(v.boolean()),
@@ -636,29 +616,27 @@ export default defineSchema({
      * Wall-clock ms epoch when the viewer pinned this thread to the top of
      * their sidebar. Unset on unpin (drop the field via patch). The value
      * doubles as a tiebreaker — most-recently-pinned threads sort above
-     * earlier-pinned ones when multiple are pinned in the same workspace.
+     * earlier-pinned ones when multiple are pinned in the same repository.
      */
     pinnedAt: v.optional(v.number()),
   })
     .index("by_repositoryId_and_lastMessageAt", ["repositoryId", "lastMessageAt"])
     .index("by_ownerTokenIdentifier_and_lastMessageAt", ["ownerTokenIdentifier", "lastMessageAt"])
     /**
-     * Workspaceless-thread range read. Convex treats `undefined` as a distinct
-     * index key, so an `.eq("workspaceId", undefined)` range over this index
-     * scans only the workspaceless slice (O(workspaceless-count)) rather than
-     * filtering the whole owner table. Powers
-     * `chat.threads.listWorkspacelessThreads` and the workspaceless-shell
-     * "Chats" sidebar section.
+     * Repoless-thread range read. Convex treats `undefined` as a distinct
+     * index key, so an `.eq("repositoryId", undefined)` range over this index
+     * scans only the repoless slice rather than filtering the whole owner
+     * table. Powers `chat.threads.listRepolessThreads` and the
+     * repoless-shell "Chats" sidebar section.
      */
-    .index("by_ownerTokenIdentifier_workspaceless_and_lastMessageAt", [
+    .index("by_ownerTokenIdentifier_repoless_and_lastMessageAt", [
       "ownerTokenIdentifier",
-      "workspaceId",
+      "repositoryId",
       "lastMessageAt",
     ])
-    .index("by_workspaceId_and_lastMessageAt", ["workspaceId", "lastMessageAt"])
-    .index("by_workspaceId_and_pinnedAt", ["workspaceId", "pinnedAt"])
-    .index("by_workspaceId_and_mode", ["workspaceId", "mode"])
-    .index("by_workspaceId_mode_and_lastMessageAt", ["workspaceId", "mode", "lastMessageAt"])
+    .index("by_repositoryId_and_pinnedAt", ["repositoryId", "pinnedAt"])
+    .index("by_repositoryId_and_mode", ["repositoryId", "mode"])
+    .index("by_repositoryId_mode_and_lastMessageAt", ["repositoryId", "mode", "lastMessageAt"])
     .index("by_mode", ["mode"]),
 
   messages: defineTable({
@@ -1021,7 +999,6 @@ export default defineSchema({
    */
   artifactChunks: defineTable({
     ownerTokenIdentifier: v.string(),
-    workspaceId: v.id("workspaces"),
     repositoryId: v.id("repositories"),
     artifactId: v.id("artifacts"),
     artifactVersion: v.number(),
@@ -1034,25 +1011,24 @@ export default defineSchema({
     embedding: v.optional(v.array(v.float64())),
   })
     .index("by_artifactId_and_chunkIndex", ["artifactId", "chunkIndex"])
-    .index("by_workspaceId", ["workspaceId"])
     .index("by_repositoryId", ["repositoryId"])
     .vectorIndex("by_embedding", {
       vectorField: "embedding",
       dimensions: 1536,
-      filterFields: ["workspaceId", "repositoryId", "artifactId"],
+      filterFields: ["repositoryId", "artifactId"],
     })
     .searchIndex("search_content", {
       searchField: "content",
-      filterFields: ["workspaceId", "repositoryId", "artifactId"],
+      filterFields: ["repositoryId", "artifactId"],
     })
     .searchIndex("search_summary", {
       searchField: "summary",
-      filterFields: ["workspaceId", "repositoryId", "artifactId"],
+      filterFields: ["repositoryId", "artifactId"],
     }),
 
   /**
-   * Workspace-level sandbox session: at most one `active` row per workspace
-   * at any time, shared across every Discuss thread in that workspace whose
+   * Repository-level sandbox session: at most one `active` row per repository
+   * at any time, shared across every Discuss thread for that repository whose
    * user has enabled the Sandbox grounding toggle. Session lifecycle:
    *
    *   `starting` → `active` → `paused` (idle auto-pause) → `active`
@@ -1065,8 +1041,8 @@ export default defineSchema({
    * than hidden in env-var-only config.
    *
    * Indexes:
-   *   - `by_workspaceId_and_status` answers "is there an active / paused
-   *     session for this workspace right now?" in O(1).
+   *   - `by_repositoryId_and_status` answers "is there an active / paused
+   *     session for this repository right now?" in O(1).
    *   - `by_status_and_lastActivityAt` powers the auto-pause cron — find
    *     all `active` sessions with `lastActivityAt < now - 10m`.
    *   - `by_ownerTokenIdentifier_and_startedAt` is for the daily cost
@@ -1074,7 +1050,6 @@ export default defineSchema({
    */
   sandboxSessions: defineTable({
     ownerTokenIdentifier: v.string(),
-    workspaceId: v.id("workspaces"),
     repositoryId: v.id("repositories"),
     sandboxId: v.optional(v.id("sandboxes")),
     status: v.union(
@@ -1092,7 +1067,7 @@ export default defineSchema({
     idleAutoPauseMinutes: v.number(),
     spentCents: v.number(),
   })
-    .index("by_workspaceId_and_status", ["workspaceId", "status"])
+    .index("by_repositoryId_and_status", ["repositoryId", "status"])
     .index("by_status_and_lastActivityAt", ["status", "lastActivityAt"])
     .index("by_ownerTokenIdentifier_and_startedAt", ["ownerTokenIdentifier", "startedAt"]),
 });

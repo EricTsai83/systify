@@ -26,7 +26,6 @@ export interface RetrievedChunk {
 }
 
 type RetrieveArgs = {
-  workspaceId: Id<"workspaces">;
   repositoryId: Id<"repositories">;
   artifactScope?: Id<"artifacts">[];
   query: string;
@@ -83,7 +82,6 @@ export async function retrieveArtifactChunks(ctx: ActionCtx, args: RetrieveArgs)
     .slice(0, topN);
 
   logInfo("artifactRag", "retrieved_artifact_chunks", {
-    workspaceId: args.workspaceId,
     repositoryId: args.repositoryId,
     lexicalCandidates: lexical.length,
     semanticCandidates: semantic.length,

@@ -30,6 +30,8 @@ async function seedRepository(
       packageManagers: [],
       entrypoints: [],
       fileCount: 0,
+      color: "blue",
+      lastAccessedAt: Date.now(),
     }),
   );
 }

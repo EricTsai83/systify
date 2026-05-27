@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import type { ArtifactId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, RepositoryId } from "@/lib/types";
 import { libraryArtifactPath, libraryPath } from "@/route-paths";
 import { readJSON, writeJSON } from "@/lib/storage";
 
@@ -50,8 +50,8 @@ interface LibraryTabsState {
   openArtifactIds: ReadonlyArray<ArtifactId>;
 }
 
-function storageKey(workspaceId: WorkspaceId): string {
-  return `systify.library.tabs.${workspaceId}`;
+function storageKey(repositoryId: RepositoryId): string {
+  return `systify.library.tabs.${repositoryId}`;
 }
 
 interface CachedLibraryTabs {
@@ -68,11 +68,11 @@ function isCachedLibraryTabs(v: unknown): v is CachedLibraryTabs {
   return true;
 }
 
-function readCachedTabs(workspaceId: WorkspaceId | null): LibraryTabsState | null {
-  if (!workspaceId) {
+function readCachedTabs(repositoryId: RepositoryId | null): LibraryTabsState | null {
+  if (!repositoryId) {
     return null;
   }
-  const cached = readJSON(storageKey(workspaceId), isCachedLibraryTabs);
+  const cached = readJSON(storageKey(repositoryId), isCachedLibraryTabs);
   if (!cached) return null;
   return {
     openArtifactIds: cached.openArtifactIds.slice(0, MAX_OPEN_TABS) as unknown as ReadonlyArray<ArtifactId>,
@@ -80,9 +80,9 @@ function readCachedTabs(workspaceId: WorkspaceId | null): LibraryTabsState | nul
   };
 }
 
-function writeCachedTabs(workspaceId: WorkspaceId | null, state: LibraryTabsState): void {
-  if (!workspaceId) return;
-  writeJSON(storageKey(workspaceId), {
+function writeCachedTabs(repositoryId: RepositoryId | null, state: LibraryTabsState): void {
+  if (!repositoryId) return;
+  writeJSON(storageKey(repositoryId), {
     openArtifactIds: state.openArtifactIds,
     activeArtifactId: state.activeArtifactId,
   });
@@ -109,13 +109,13 @@ function dedupe<T>(values: ReadonlyArray<T>): T[] {
   return out;
 }
 
-export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute: ArtifactId | null) {
+export function useLibraryTabs(repositoryId: RepositoryId | null, activeFromRoute: ArtifactId | null) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   // Seed from cache for first paint; the URL effect below reconciles to
   // canonical state once the route settles.
   const [state, setState] = useState<LibraryTabsState>(() => {
-    const cached = readCachedTabs(workspaceId);
+    const cached = readCachedTabs(repositoryId);
     const openFromUrl = parseOpenParam(searchParams.get("open"));
     const open = dedupe([...openFromUrl, ...(cached?.openArtifactIds ?? [])]).slice(0, MAX_OPEN_TABS);
     return {
@@ -181,8 +181,8 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
   // stack with one entry per tab close.
   const writeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    writeCachedTabs(workspaceId, state);
-    if (!workspaceId) return;
+    writeCachedTabs(repositoryId, state);
+    if (!repositoryId) return;
     if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
     writeTimerRef.current = setTimeout(() => {
       // Seed the query string from the *live* URL at flush time so params
@@ -205,8 +205,8 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
       }
       const search = liveParams.toString();
       const targetPath = state.activeArtifactId
-        ? libraryArtifactPath(workspaceId, state.activeArtifactId)
-        : libraryPath(workspaceId);
+        ? libraryArtifactPath(repositoryId, state.activeArtifactId)
+        : libraryPath(repositoryId);
       const target = search ? `${targetPath}?${search}` : targetPath;
       // `replace: true` because tab management is not a navigation event
       // the user wants in their back history — back should jump to the
@@ -217,7 +217,7 @@ export function useLibraryTabs(workspaceId: WorkspaceId | null, activeFromRoute:
     return () => {
       if (writeTimerRef.current) clearTimeout(writeTimerRef.current);
     };
-  }, [state, workspaceId, navigate]);
+  }, [state, repositoryId, navigate]);
 
   const openTab = useCallback((artifactId: ArtifactId) => {
     setState((current) => {

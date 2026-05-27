@@ -453,6 +453,8 @@ async function createCancelFixture(
       packageManagers: [],
       entrypoints: [],
       fileCount: 0,
+      color: "blue",
+      lastAccessedAt: Date.now(),
     });
 
     const threadId = await ctx.db.insert("threads", {

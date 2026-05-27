@@ -1,34 +1,24 @@
 import { useChatLifecycle } from "@/hooks/use-chat-lifecycle";
 import { useComposerDraft } from "@/hooks/use-composer-draft";
 import { useStorageGC } from "@/hooks/use-storage-gc";
-import type { ChatMode, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
 
 /**
  * Bundles the chat-shell primitives both shells need so the RepositoryShell
- * and the WorkspacelessChatShell don't duplicate the same wiring:
+ * and the RepolessChatShell don't duplicate the same wiring:
  *
- *   - `useStorageGC` — sweep orphan per-workspace / per-repository /
- *     per-thread localStorage keys. The caller provides the live id sets so
- *     the GC sweep observes the same data the rest of the shell sees.
+ *   - `useStorageGC` — sweep orphan per-repository / per-thread
+ *     localStorage keys.
  *   - `useComposerDraft` — `localStorage`-backed composer text persisted
- *     per (workspace, thread, mode). The workspaceless shell passes
- *     `workspaceId: null` so the draft keys honour the dedicated
- *     workspaceless bucket in `use-composer-draft.ts`.
- *   - `useChatLifecycle` — send / cancel / delete mutations with the
- *     navigation callbacks the shell wires to its URL scheme.
- *
- * `useThreadCapabilities` is intentionally NOT bundled here — the shell
- * needs `capabilities` early enough that putting it inside this bundle
- * forces an awkward reorder of the shell's render flow. Each shell calls
- * `useThreadCapabilities(urlThreadId)` directly alongside this bundle.
+ *     per (repository, thread, mode).
+ *   - `useChatLifecycle` — send / cancel / delete mutations.
  */
 export function useChatShellLifecycle({
   urlThreadId,
-  workspaceId,
+  repositoryId,
   chatMode,
   groundLibrary,
   groundSandbox,
-  liveWorkspaceIds,
   liveRepositoryIds,
   liveThreadIds,
   threadToDelete,
@@ -38,11 +28,10 @@ export function useChatShellLifecycle({
   onAfterDeleteThread,
 }: {
   urlThreadId: ThreadId | null;
-  workspaceId: WorkspaceId | null;
+  repositoryId: RepositoryId | null;
   chatMode: ChatMode;
   groundLibrary?: boolean;
   groundSandbox?: boolean;
-  liveWorkspaceIds: ReadonlySet<string> | null;
   liveRepositoryIds: ReadonlySet<string> | null;
   liveThreadIds: ReadonlySet<string> | null;
   threadToDelete: ThreadId | null;
@@ -61,15 +50,15 @@ export function useChatShellLifecycle({
   isDeletingThread: boolean;
   handleDeleteThread: () => Promise<void>;
 } {
-  useStorageGC({ liveWorkspaceIds, liveRepositoryIds, liveThreadIds });
+  useStorageGC({ liveRepositoryIds, liveThreadIds });
   const [chatInput, setChatInput, clearChatInput] = useComposerDraft({
-    workspaceId,
+    repositoryId,
     threadId: urlThreadId,
     mode: chatMode,
   });
   const lifecycle = useChatLifecycle({
     selectedThreadId: urlThreadId,
-    workspaceId,
+    repositoryId,
     threadToDelete,
     chatInput,
     chatMode,

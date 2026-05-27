@@ -15,12 +15,12 @@ function getIdleAutoPauseMinutes(): number {
 
 async function findReusableSession(
   ctx: MutationCtx,
-  workspaceId: Id<"workspaces">,
+  repositoryId: Id<"repositories">,
 ): Promise<Doc<"sandboxSessions"> | null> {
   for (const status of ["active", "starting", "paused"] as const) {
     const session = await ctx.db
       .query("sandboxSessions")
-      .withIndex("by_workspaceId_and_status", (q) => q.eq("workspaceId", workspaceId).eq("status", status))
+      .withIndex("by_repositoryId_and_status", (q) => q.eq("repositoryId", repositoryId).eq("status", status))
       .first();
     if (session) {
       return session;
@@ -30,16 +30,9 @@ async function findReusableSession(
 }
 
 export const startSandboxSession = mutation({
-  args: { workspaceId: v.id("workspaces"), repositoryId: v.id("repositories") },
+  args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
-    const workspace = await ctx.db.get(args.workspaceId);
-    if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Workspace not found.");
-    }
-    if (workspace.repositoryId !== args.repositoryId) {
-      throw new Error("Workspace repository mismatch.");
-    }
     const repository = await requireActiveRepositoryForOwner(ctx, {
       repositoryId: args.repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
@@ -47,7 +40,7 @@ export const startSandboxSession = mutation({
       archivedMessage: "This repository is archived. Restore it to start a sandbox session.",
     });
 
-    const existing = await findReusableSession(ctx, args.workspaceId);
+    const existing = await findReusableSession(ctx, args.repositoryId);
     if (existing) {
       if (existing.status === "paused") {
         await ctx.db.patch(existing._id, {
@@ -63,7 +56,6 @@ export const startSandboxSession = mutation({
     const now = Date.now();
     return await ctx.db.insert("sandboxSessions", {
       ownerTokenIdentifier: identity.tokenIdentifier,
-      workspaceId: args.workspaceId,
       repositoryId: args.repositoryId,
       sandboxId: repository.latestSandboxId,
       status: repository.latestSandboxId ? "active" : "starting",
@@ -123,12 +115,12 @@ export const stopSandboxSession = mutation({
 });
 
 export const getSandboxSessionCostSummary = query({
-  args: { workspaceId: v.id("workspaces") },
+  args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
-    const workspace = await ctx.db.get(args.workspaceId);
-    if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
-      throw new Error("Workspace not found.");
+    const repository = await ctx.db.get(args.repositoryId);
+    if (!repository || repository.ownerTokenIdentifier !== identity.tokenIdentifier) {
+      throw new Error("Repository not found.");
     }
     const sessions = await ctx.db
       .query("sandboxSessions")
@@ -137,13 +129,13 @@ export const getSandboxSessionCostSummary = query({
       .take(100);
     const current = sessions.find(
       (session) =>
-        session.workspaceId === args.workspaceId &&
+        session.repositoryId === args.repositoryId &&
         (session.status === "starting" || session.status === "active" || session.status === "paused"),
     );
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const todaySpentCents = sessions
-      .filter((session) => session.workspaceId === args.workspaceId && session.startedAt >= todayStart.getTime())
+      .filter((session) => session.repositoryId === args.repositoryId && session.startedAt >= todayStart.getTime())
       .reduce((sum, session) => sum + session.spentCents, 0);
     return {
       current,
@@ -157,12 +149,12 @@ export const ensureSandboxSessionForThread = internalMutation({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
     const thread = await ctx.db.get(args.threadId);
-    if (!thread || !thread.workspaceId || !thread.repositoryId) {
-      throw new Error("Sandbox-grounded thread must be workspace and repository scoped.");
+    if (!thread || !thread.repositoryId) {
+      throw new Error("Sandbox-grounded thread must be repository scoped.");
     }
     const reusable = thread.sandboxSessionId
       ? await ctx.db.get(thread.sandboxSessionId)
-      : await findReusableSession(ctx, thread.workspaceId);
+      : await findReusableSession(ctx, thread.repositoryId);
     if (reusable && reusable.status !== "stopped" && reusable.status !== "ended") {
       const now = Date.now();
       if (reusable.status === "paused") {
@@ -188,7 +180,6 @@ export const ensureSandboxSessionForThread = internalMutation({
     const now = Date.now();
     const sessionId = await ctx.db.insert("sandboxSessions", {
       ownerTokenIdentifier: thread.ownerTokenIdentifier,
-      workspaceId: thread.workspaceId,
       repositoryId: thread.repositoryId,
       sandboxId: repository.latestSandboxId,
       status: repository.latestSandboxId ? "active" : "starting",

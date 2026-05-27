@@ -1,77 +1,56 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { readString, removeKey, writeString } from "@/lib/storage";
-import type { ChatMode, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
 
 const THREAD_KEY_PREFIX = "systify.composer.draft.thread.";
-const WORKSPACE_KEY_PREFIX = "systify.composer.draft.workspace.";
+const REPOSITORY_KEY_PREFIX = "systify.composer.draft.repository.";
 /**
- * Dedicated bucket for the workspaceless `/chat` landing (no workspace, no
+ * Dedicated bucket for the repoless `/chat` landing (no repository, no
  * thread yet). Carries any text the user types before the lazy first send
  * materialises a thread — at which point the draft key flips to the
  * thread-scoped form below.
  */
-const WORKSPACELESS_KEY = "systify.composer.draft.chat";
+const REPOLESS_KEY = "systify.composer.draft.chat";
 
 function deriveKey(args: {
-  workspaceId: WorkspaceId | null;
+  repositoryId: RepositoryId | null;
   threadId: ThreadId | null;
   mode: ChatMode | null;
 }): string | null {
   if (args.threadId !== null) {
     return `${THREAD_KEY_PREFIX}${args.threadId}`;
   }
-  if (args.workspaceId === null) {
-    // Workspaceless `/chat` landing — single shared draft bucket for the
-    // "no workspace, no thread" surface. Once the first send materialises
-    // a thread, the next render swaps to the thread-scoped key above.
-    return WORKSPACELESS_KEY;
+  if (args.repositoryId === null) {
+    return REPOLESS_KEY;
   }
   if (args.mode === null) {
     return null;
   }
-  // `library` opens a different panel (LibraryAskPanel) that doesn't use
-  // this hook, so the no-thread-key derivation only covers Discuss.
   if (args.mode !== "discuss") {
     return null;
   }
-  return `${WORKSPACE_KEY_PREFIX}${args.workspaceId}.${args.mode}`;
+  return `${REPOSITORY_KEY_PREFIX}${args.repositoryId}.${args.mode}`;
 }
 
 /**
  * Persist the chat composer's draft to `localStorage` so switching threads,
- * switching service modes, or hard-refreshing the page does not lose what the
- * user was typing.
+ * switching service modes, or hard-refreshing the page does not lose what
+ * the user was typing.
  *
  * Two key shapes:
- *   - `systify.composer.draft.thread.{threadId}` — once a thread exists, the
- *     draft is per-thread (mode-agnostic; the chat-mode dropdown at send time
- *     determines the message mode).
- *   - `systify.composer.draft.workspace.{workspaceId}.discuss` — before
- *     a thread exists, the draft is scoped to (workspace, mode) so
- *     `/w/:wid/discuss` and other future composer surfaces keep
- *     independent drafts.
- *
- * Writes are synchronous (no debounce):
- *   - `localStorage.setItem` on a few-KB value is microsecond-cost; even at
- *     typing speed (~5 keystrokes/sec) the per-frame cost is negligible.
- *   - A debounce window would race against (a) thread/mode switches that
- *     change the key mid-flight and (b) tab closes that don't fire
- *     `beforeunload` in time to flush. Sync writes avoid both.
- *
- * Empty strings are removed (not stored as `""`) so the GC sweep does not
- * have to distinguish "user cleared the draft" from "key is dormant".
- *
- * No cross-tab sync: composer drafts are inherently per-tab work-in-progress;
- * live-echoing keystrokes between tabs would be confusing, not helpful.
+ *   - `systify.composer.draft.thread.{threadId}` — once a thread exists,
+ *     the draft is per-thread.
+ *   - `systify.composer.draft.repository.{repositoryId}.discuss` — before
+ *     a thread exists, the draft is scoped to (repository, mode).
  */
 export function useComposerDraft(args: {
-  workspaceId: WorkspaceId | null;
+  repositoryId: RepositoryId | null;
   threadId: ThreadId | null;
   mode: ChatMode | null;
 }): readonly [string, (next: string) => void, () => void] {
   const currentKey = useMemo(
-    () => deriveKey({ workspaceId: args.workspaceId, threadId: args.threadId, mode: args.mode }),
-    [args.workspaceId, args.threadId, args.mode],
+    () => deriveKey({ repositoryId: args.repositoryId, threadId: args.threadId, mode: args.mode }),
+    [args.repositoryId, args.threadId, args.mode],
   );
 
   const [value, setValue] = useState<string>(() => {
@@ -79,18 +58,12 @@ export function useComposerDraft(args: {
     return readString(currentKey) ?? "";
   });
 
-  // Re-read when the key swaps (thread change, service-mode change, workspace
-  // change). React's `useState` initializer only fires on mount, so the swap
-  // must be reflected via a setState in this effect. The dependent
-  // `currentKey` derivation guarantees this fires at most once per swap.
   useEffect(() => {
     const stored = currentKey === null ? "" : (readString(currentKey) ?? "");
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setValue(stored);
   }, [currentKey]);
 
-  // Mirror writes synchronously. Empty value clears the key so GC need not
-  // treat zombie empty drafts as anomalies.
   useEffect(() => {
     if (currentKey === null) return;
     if (value === "") {

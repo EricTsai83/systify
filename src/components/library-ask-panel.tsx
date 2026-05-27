@@ -12,14 +12,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { useLibraryAskTabs } from "@/hooks/use-library-ask-tabs";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { ArtifactId, ThreadId, WorkspaceId } from "@/lib/types";
+import type { ArtifactId, RepositoryId, ThreadId } from "@/lib/types";
 import { toast } from "sonner";
 
 const LOCKED_PLACEHOLDER = "Generate a System Design to unlock Library Ask.";
-const LOCKED_HINT = "Library Ask needs at least one artifact in this workspace before you can send a question.";
+const LOCKED_HINT = "Library Ask needs at least one artifact in this repository before you can send a question.";
 
 export function LibraryAskPanel({
-  workspaceId,
+  repositoryId,
   threadId,
   activeArtifactId,
   hasArtifacts,
@@ -27,16 +27,15 @@ export function LibraryAskPanel({
   onSelectThread,
   onGenerate,
 }: {
-  workspaceId: WorkspaceId;
+  repositoryId: RepositoryId;
   threadId: ThreadId | null;
   activeArtifactId: ArtifactId | null;
   /**
-   * Whether the workspace's repository has at least one indexed artifact.
-   * Library Ask runs RAG over those artifacts, so when this is `false` the
-   * composer is locked and the empty state surfaces a "Generate System
-   * Design" CTA — the same gate the backend's
-   * `assertWorkspaceModeEligible` enforces with `library_no_artifact`,
-   * surfaced in the UI so the user never hits that error path.
+   * Whether the repository has at least one indexed artifact. Library Ask
+   * runs RAG over those artifacts, so when this is `false` the composer
+   * is locked and the empty state surfaces a "Generate System Design"
+   * CTA — the same gate the backend's `assertRepositoryModeEligible`
+   * enforces with `library_no_artifact`.
    */
   hasArtifacts: boolean;
   onSelectArtifact: (artifactId: ArtifactId) => void;
@@ -58,7 +57,7 @@ export function LibraryAskPanel({
   const deleteThread = useMutation(api.chat.threads.deleteThread);
   const setThreadPinned = useMutation(api.chat.threads.setThreadPinned);
 
-  const threads = useQuery(api.chat.threads.listThreads, { workspaceId, mode: "library" });
+  const threads = useQuery(api.chat.threads.listThreads, { repositoryId, mode: "library" });
   // Dual-purpose: confirms the active thread exists (so the message queries
   // below can be gated and never throw the route into its error boundary)
   // and supplies the tab title when the thread has aged out of `listThreads`.
@@ -77,7 +76,7 @@ export function LibraryAskPanel({
     confirmedThreadId ? { threadId: confirmedThreadId } : "skip",
   );
 
-  const { openThreads, ensureOpen, closeTab } = useLibraryAskTabs(workspaceId);
+  const { openThreads, ensureOpen, closeTab } = useLibraryAskTabs(repositoryId);
 
   const [input, setInput] = useState("");
   const [isStarting, setIsStarting] = useState(false);
@@ -225,7 +224,7 @@ export function LibraryAskPanel({
       let createdNew = false;
       if (!targetThreadId) {
         const created = await createLibraryAskThread({
-          workspaceId,
+          repositoryId,
           artifactContext: activeArtifactId ? [activeArtifactId] : undefined,
           title: "Library Ask",
         });

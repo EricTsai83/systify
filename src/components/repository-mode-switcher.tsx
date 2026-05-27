@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion, type Transition } from "framer-motion";
 import { BookOpenIcon, ChatCircleIcon } from "@phosphor-icons/react";
 import { discussPath, libraryPath } from "@/route-paths";
-import type { ChatMode, WorkspaceId } from "@/lib/types";
+import type { ChatMode, RepositoryId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 interface ChatModeAvailability {
@@ -21,24 +21,6 @@ const CHAT_MODE_ENTRIES: ReadonlyArray<{
 
 const MORPH: Transition = { duration: 0.3, ease: [0.77, 0, 0.175, 1] };
 
-// `flexBasis` isn't in Framer Motion's `numberValueTypes` map, so a bare
-// number (e.g. `30`) is written to `element.style` as `"30"` — which the
-// browser rejects as invalid for any non-zero length. The rejected frames
-// leave `flex-basis` stuck at its last valid value (typically `0`), collapsing
-// the inactive button to width 0 and clipping the icon under `overflow-hidden`.
-// Passing strings with explicit `px` units routes through Framer's pixel
-// interpolator so every frame produces a valid declaration.
-//
-// Only `flex-*` properties animate. Two other geometric anchors are locked
-// via className so the icon AND label feel like they were always there,
-// just revealed by the morph:
-//   1. Icon left position: `pl-[10px]` on the button (constant). The icon
-//      sits 10px from the button's left edge in every state.
-//   2. Label position: absolute `left-[30px]` (= the inactive button width).
-//      When inactive, the label sits exactly at the button's right edge and
-//      is clipped by `overflow-hidden`. As the button morphs wider, the
-//      label is revealed by the growing visible area — no separate
-//      fade/slide animation needed.
 const ACTIVE_FLEX = {
   flexGrow: 1,
   flexShrink: 1,
@@ -50,20 +32,19 @@ const INACTIVE_FLEX = {
   flexBasis: "30px",
 };
 
-// Survives unmount/remount so we can detect mode switches that happen
-// via route navigation (each mode is a separate route that fully
-// re-creates the component tree). Keyed by workspaceId so a switch in
-// one workspace doesn't trigger a phantom mount transition when the
-// user later opens a different workspace.
-const persistedModeByWorkspace = new Map<WorkspaceId | null, ChatMode>();
+// Survives unmount/remount so we can detect mode switches that happen via
+// route navigation. Keyed by repositoryId so a switch in one repository
+// doesn't trigger a phantom mount transition when the user later opens a
+// different repository.
+const persistedModeByRepository = new Map<RepositoryId | null, ChatMode>();
 
-export function WorkspaceModeSwitcher({
-  workspaceId,
+export function RepositoryModeSwitcher({
+  repositoryId,
   mode,
   availability,
   className,
 }: {
-  workspaceId: WorkspaceId | null;
+  repositoryId: RepositoryId | null;
   mode: ChatMode;
   availability: ChatModeAvailability | null | undefined;
   className?: string;
@@ -72,25 +53,25 @@ export function WorkspaceModeSwitcher({
   const shouldReduceMotion = useReducedMotion();
 
   const [transitionFrom] = useState<ChatMode | null>(() => {
-    const prev = persistedModeByWorkspace.get(workspaceId);
+    const prev = persistedModeByRepository.get(repositoryId);
     return prev !== undefined && prev !== mode ? prev : null;
   });
   const [exitPillDone, setExitPillDone] = useState(transitionFrom === null);
 
   useEffect(() => {
-    persistedModeByWorkspace.set(workspaceId, mode);
-  }, [mode, workspaceId]);
+    persistedModeByRepository.set(repositoryId, mode);
+  }, [mode, repositoryId]);
 
   const isMountTransition = transitionFrom !== null && !exitPillDone && !shouldReduceMotion;
 
   const handleSelect = (value: ChatMode, isAvailable: boolean) => {
-    if (!workspaceId) return;
+    if (!repositoryId) return;
     if (value === mode) return;
     if (!isAvailable) return;
     if (value === "discuss") {
-      void navigate(discussPath(workspaceId));
+      void navigate(discussPath(repositoryId));
     } else if (value === "library") {
-      void navigate(libraryPath(workspaceId));
+      void navigate(libraryPath(repositoryId));
     }
   };
 
@@ -98,7 +79,7 @@ export function WorkspaceModeSwitcher({
     <div className={cn("border-b border-border px-2 py-2", className)}>
       <div
         role="group"
-        aria-label="Workspace mode"
+        aria-label="Repository mode"
         className="flex h-9 gap-1 rounded-md border border-border bg-muted/40 p-1"
       >
         {CHAT_MODE_ENTRIES.map((entry) => {
@@ -134,8 +115,6 @@ export function WorkspaceModeSwitcher({
                 !isAvailable && "cursor-not-allowed opacity-50 hover:bg-transparent hover:text-muted-foreground",
               )}
             >
-              {/* Active pill — AnimatePresence handles within-mount switches;
-                  isMountTransition enables the enter animation on cross-mount switches. */}
               <AnimatePresence initial={isMountTransition}>
                 {isActive ? (
                   <motion.span
@@ -157,7 +136,6 @@ export function WorkspaceModeSwitcher({
                 ) : null}
               </AnimatePresence>
 
-              {/* Exit pill — fades out on the previously-active button during mount transitions */}
               {isMountTransition && isFromMode ? (
                 <motion.span
                   aria-hidden="true"
@@ -171,13 +149,6 @@ export function WorkspaceModeSwitcher({
 
               <Icon size={14} weight={isActive ? "fill" : "regular"} className="relative z-10 shrink-0" />
 
-              {/* Label is always rendered and absolutely positioned at the
-                  inactive button's right edge. When inactive, `overflow-hidden`
-                  on the button clips it entirely; as the button morphs wider,
-                  the label is revealed by the growing visible area. No
-                  separate fade/slide animation — the reveal is just
-                  geometry. The button's `aria-label` provides the accessible
-                  name, so the visible text span is marked aria-hidden. */}
               <span
                 aria-hidden="true"
                 className="pointer-events-none absolute left-[30px] top-1/2 z-10 -translate-y-1/2 whitespace-nowrap text-xs font-medium"

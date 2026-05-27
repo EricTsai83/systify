@@ -14,40 +14,22 @@ import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-th
 import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
-import type { ChatMode, RepositoryId, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
-import { DEFAULT_AUTHENTICATED_PATH, modeAwareThreadPath, workspacePath, workspacelessThreadPath } from "@/route-paths";
+import type { ChatMode, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
+import { DEFAULT_AUTHENTICATED_PATH, modeAwareThreadPath, repolessThreadPath, repositoryPath } from "@/route-paths";
 
 /**
- * Shell for the workspaceless chat surface mounted at `/chat` and
- * `/chat/:threadId`. A workspaceless thread structurally cannot satisfy
+ * Shell for the repoless chat surface mounted at `/chat` and
+ * `/chat/:threadId`. A repoless thread structurally cannot satisfy
  * Library mode (no repo to anchor artifacts) so this shell is permanently
- * Discuss-only — no `useChatMode`, no service-mode switcher, no artifact
- * panel, no Sandbox grounding affordance.
- *
- * Surface:
- *   - `/chat`             → owl + "Start a conversation" empty state.
- *                            Composer is live; the first send lazily
- *                            creates a workspaceless thread and the
- *                            redirect lands the user on `/chat/:tid`.
- *   - `/chat/:threadId`   → standard Discuss surface for a workspaceless
- *                            thread, with `AttachRepoMenu` in the top bar
- *                            so the user can promote the thread into a
- *                            repo workspace.
- *
- * Thread missing → bounce to `/chat` (not into a workspace), since the
- * workspaceless surface has no workspace context to fall back on.
+ * Discuss-only — no service-mode switcher, no artifact panel, no Sandbox
+ * grounding affordance.
  */
-export function WorkspacelessChatShell({ urlThreadId }: { urlThreadId: ThreadId | null }) {
+export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | null }) {
   const navigate = useNavigate();
-  const repositories = useQuery(api.repositories.listRepositories);
-  const workspaces = useQuery(api.workspaces.listWorkspaces);
+  const repositories = useQuery(api.repositoryPreferences.listRepositoriesForSwitcher);
   // Live id sets for the localStorage GC sweep that runs inside the
   // shared chat-shell lifecycle bundle.
   const ownerThreadIds = useQuery(api.chat.threads.listAllOwnerThreadIds, {});
-  const liveWorkspaceIds = useMemo(
-    () => (workspaces ? new Set(workspaces.map((w) => w._id as string)) : null),
-    [workspaces],
-  );
   const liveRepositoryIds = useMemo(
     () => (repositories ? new Set(repositories.map((r) => r._id as string)) : null),
     [repositories],
@@ -57,12 +39,12 @@ export function WorkspacelessChatShell({ urlThreadId }: { urlThreadId: ThreadId 
     [ownerThreadIds],
   );
 
-  // The workspaceless shell never picks an "active workspace" — workspace
-  // switches navigate into the repo shell via `workspacePath` and let
-  // RepositoryShell take over.
-  const handleSwitchWorkspace = useCallback(
-    (workspaceId: WorkspaceId) => {
-      void navigate(workspacePath(workspaceId));
+  // The repoless shell never picks an "active repository" — repository
+  // switches navigate into the repository shell via `repositoryPath` and
+  // let RepositoryShell take over.
+  const handleSwitchRepository = useCallback(
+    (repositoryId: RepositoryId) => {
+      void navigate(repositoryPath(repositoryId));
     },
     [navigate],
   );
@@ -72,23 +54,14 @@ export function WorkspacelessChatShell({ urlThreadId }: { urlThreadId: ThreadId 
   const [threadToDelete, setThreadToDelete] = useState<ThreadId | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  // Workspaceless threads are structurally Discuss-only (Library requires
-  // a repo binding). No `useChatMode` here — the canonical chat mode is
-  // a static literal.
   const chatMode: ChatMode = "discuss";
 
-  // Keep the chat surface hot-warm across thread switches inside the
-  // workspaceless rail so flipping between recent workspaceless threads
-  // doesn't refetch every time.
   const recentThreadIds = useRecentThreads(urlThreadId);
   useWarmThreadSubscriptions(recentThreadIds);
 
-  // Replace the URL with the canonical `/chat/:tid` path once the lazy
-  // first send materialised a thread. `replace: true` keeps the prior
-  // `/chat` landing out of history so Back doesn't bounce-redirect.
   const onAfterCreateThread = useCallback(
     (threadId: ThreadId) => {
-      void navigate(workspacelessThreadPath(threadId), { replace: true });
+      void navigate(repolessThreadPath(threadId), { replace: true });
     },
     [navigate],
   );
@@ -100,9 +73,8 @@ export function WorkspacelessChatShell({ urlThreadId }: { urlThreadId: ThreadId 
   const { chatInput, setChatInput, isSending, handleSendMessage, isDeletingThread, handleDeleteThread } =
     useChatShellLifecycle({
       urlThreadId,
-      workspaceId: null,
+      repositoryId: null,
       chatMode,
-      liveWorkspaceIds,
       liveRepositoryIds,
       liveThreadIds,
       threadToDelete,
@@ -112,9 +84,6 @@ export function WorkspacelessChatShell({ urlThreadId }: { urlThreadId: ThreadId 
       onAfterDeleteThread,
     });
 
-  // Thread missing → bounce to `/chat` (workspaceless landing). The shell
-  // has no workspace context to redirect into, so we cannot mirror the
-  // RepositoryShell behaviour of returning to the workspace URL.
   const onMissingThread = useCallback(() => {
     void navigate(DEFAULT_AUTHENTICATED_PATH, { replace: true });
   }, [navigate]);
@@ -131,16 +100,7 @@ export function WorkspacelessChatShell({ urlThreadId }: { urlThreadId: ThreadId 
         void navigate(DEFAULT_AUTHENTICATED_PATH);
         return;
       }
-      // Rail rows render workspaceless threads (no `workspaceId`) and any
-      // repo-bound threads the user surfaces from another sidebar section.
-      // Workspaceless threads are structurally Discuss-only (threadMode
-      // is passed but cannot change routing for workspaceless surface).
-      // Repo-bound threads would require fetching to determine their
-      // workspace, so route to workspaceless path and let the fallback
-      // redirect handle cross-workspace navigation if needed.
-      void navigate(workspacelessThreadPath(threadId));
-      // threadMode reflects the thread's last visited mode, but workspaceless
-      // surface is Discuss-only so the mode cannot be applied here.
+      void navigate(repolessThreadPath(threadId));
       void threadMode;
     },
     [navigate],
@@ -150,28 +110,28 @@ export function WorkspacelessChatShell({ urlThreadId }: { urlThreadId: ThreadId 
     void navigate(DEFAULT_AUTHENTICATED_PATH);
   }, [navigate]);
 
-  // After attach: the thread is now bound to a repo workspace; navigate
-  // straight into the canonical mode-aware URL inside that workspace so
+  // After attach: the thread is now bound to a repository; navigate
+  // straight into the canonical mode-aware URL inside that repository so
   // RepositoryShell takes over.
-  const handleThreadMovedToWorkspace = useCallback(
-    (workspaceId: WorkspaceId | null, threadMode: ThreadMode | null) => {
-      if (!workspaceId) return;
+  const handleThreadMovedToRepository = useCallback(
+    (repositoryId: RepositoryId | null, threadMode: ThreadMode | null) => {
+      if (!repositoryId) return;
       if (urlThreadId !== null && threadMode) {
-        void navigate(modeAwareThreadPath(workspaceId, urlThreadId, threadMode));
+        void navigate(modeAwareThreadPath(repositoryId, urlThreadId, threadMode));
       } else {
-        void navigate(workspacePath(workspaceId));
+        void navigate(repositoryPath(repositoryId));
       }
     },
     [navigate, urlThreadId],
   );
 
   const handleImported = useCallback(
-    (_repoId: RepositoryId, threadId: ThreadId | null, workspaceId: WorkspaceId, threadMode: ThreadMode | null) => {
+    (repoId: RepositoryId, threadId: ThreadId | null, threadMode: ThreadMode | null) => {
       setActionError(null);
       if (threadId && threadMode) {
-        void navigate(modeAwareThreadPath(workspaceId, threadId, threadMode));
+        void navigate(modeAwareThreadPath(repoId, threadId, threadMode));
       } else {
-        void navigate(workspacePath(workspaceId));
+        void navigate(repositoryPath(repoId));
       }
     },
     [navigate],
@@ -183,9 +143,8 @@ export function WorkspacelessChatShell({ urlThreadId }: { urlThreadId: ThreadId 
     <>
       <AppSidebarLeft
         repositories={repositories}
-        workspaces={workspaces}
-        activeWorkspaceId={null}
-        onSwitchWorkspace={handleSwitchWorkspace}
+        activeRepositoryId={null}
+        onSwitchRepository={handleSwitchRepository}
         selectedThreadId={urlThreadId}
         onSelectThread={handleSelectThread}
         onDeleteThread={setThreadToDelete}
@@ -204,7 +163,7 @@ export function WorkspacelessChatShell({ urlThreadId }: { urlThreadId: ThreadId 
             <AttachRepoMenu
               threadId={urlThreadId}
               availableRepositories={repositories ?? []}
-              onMovedToWorkspace={handleThreadMovedToWorkspace}
+              onMovedToRepository={handleThreadMovedToRepository}
             />
           ) : null}
         </div>
@@ -218,7 +177,7 @@ export function WorkspacelessChatShell({ urlThreadId }: { urlThreadId: ThreadId 
         <div className="flex min-h-0 min-w-0 flex-1">
           <ChatContainer
             selectedThreadId={urlThreadId}
-            workspaceId={null}
+            repositoryId={null}
             isShellLoading={isChatShellLoading}
             chatInput={chatInput}
             setChatInput={setChatInput}
@@ -237,7 +196,7 @@ export function WorkspacelessChatShell({ urlThreadId }: { urlThreadId: ThreadId 
             hasAttachedRepository={false}
             availableRepositories={repositories ?? []}
             onImported={handleImported}
-            onThreadMovedToWorkspace={handleThreadMovedToWorkspace}
+            onThreadMovedToRepository={handleThreadMovedToRepository}
           />
         </div>
       </SidebarInset>

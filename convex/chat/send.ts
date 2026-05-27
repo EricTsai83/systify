@@ -3,7 +3,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import type { MutationCtx } from "../_generated/server";
 import { mutation } from "../_generated/server";
-import { assertWorkspaceModeEligible } from "../workspaceModeEligibility";
+import { assertRepositoryModeEligible } from "../repositoryModeEligibility";
 import { requireViewerIdentity } from "../lib/auth";
 import { chatModeValidator, type ChatMode } from "../lib/chatMode";
 import { requireActiveRepositoryForOwner } from "../lib/repositoryAccess";
@@ -151,60 +151,43 @@ async function insertChatTurn(
 export const sendMessageStartingNewThread = mutation({
   args: {
     /**
-     * Workspace this thread belongs to, or `undefined` for a workspaceless
-     * thread (no repo attached, lives at `/chat/:threadId`). Library mode
-     * requires a workspace with an attached repository; Discuss is the only
-     * mode legal for a workspaceless thread.
+     * Repository this thread is bound to, or `undefined` for a repoless
+     * thread (lives at `/chat/:threadId`). Library mode requires an
+     * attached repository; Discuss is the only mode legal for a repoless
+     * thread.
      */
-    workspaceId: v.optional(v.id("workspaces")),
+    repositoryId: v.optional(v.id("repositories")),
     content: v.string(),
     mode: chatModeValidator,
     title: v.optional(v.string()),
     /**
-     * Discuss-only grounding flags. Ignored for `library` mode (Library
-     * grounding is implicit in the mode). Either may be omitted; both
-     * default to `false`.
+     * Discuss-only grounding flags. Ignored for `library` mode. Either
+     * may be omitted; both default to `false`.
      */
     groundLibrary: v.optional(v.boolean()),
     groundSandbox: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
-
-    let repositoryId: Id<"repositories"> | undefined;
-    if (args.workspaceId) {
-      const workspace = await ctx.db.get(args.workspaceId);
-      if (!workspace || workspace.ownerTokenIdentifier !== identity.tokenIdentifier) {
-        throw new Error("Workspace not found.");
-      }
-      repositoryId = workspace.repositoryId;
-    }
+    const repositoryId = args.repositoryId;
 
     const trimmedContent = args.content.trim();
     if (!trimmedContent) {
       throw new Error("Message content cannot be empty.");
     }
 
-    // `requireActiveRepositoryForOwner` is the archived-state check
-    // (`assertWorkspaceModeEligible` doesn't model archive status), so it
-    // still runs here before the eligibility assert. The no-repo and
-    // unsatisfiable-grounding cases that used to throw inline are now
-    // covered by `assertWorkspaceModeEligible` below — single structured-
-    // `ConvexError` contract for the frontend instead of a mix of plain
-    // `Error`s and structured ones.
     let repository: Doc<"repositories"> | null = null;
     if (repositoryId) {
       repository = await requireActiveRepositoryForOwner(ctx, {
         repositoryId,
         ownerTokenIdentifier: identity.tokenIdentifier,
-        notFoundMessage: "Workspace repository not found.",
-        archivedMessage: "The workspace repository is archived. Restore it to continue chatting.",
+        notFoundMessage: "Repository not found.",
+        archivedMessage: "This repository is archived. Restore it to continue chatting.",
       });
     }
 
-    await assertWorkspaceModeEligible(ctx, {
+    await assertRepositoryModeEligible(ctx, {
       repositoryId,
-      workspaceId: args.workspaceId,
       mode: args.mode,
       groundLibrary: args.groundLibrary === true,
       groundSandbox: args.groundSandbox === true,
@@ -224,7 +207,6 @@ export const sendMessageStartingNewThread = mutation({
     }
 
     const threadId = await ctx.db.insert("threads", {
-      workspaceId: args.workspaceId,
       repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
       title,
@@ -313,13 +295,12 @@ export const sendMessage = mutation({
     const groundLibrary = mode === "discuss" && args.groundLibrary === true;
     const groundSandbox = mode === "discuss" && args.groundSandbox === true;
 
-    // `assertWorkspaceModeEligible` covers the unsatisfiable-grounding case
+    // `assertRepositoryModeEligible` covers the unsatisfiable-grounding case
     // (`no_repository_attached`) with the same structured ConvexError it
-    // uses for the workspace read path, so we don't need a separate
-    // plain-Error pre-check here.
-    await assertWorkspaceModeEligible(ctx, {
+    // uses for the read path, so we don't need a separate plain-Error
+    // pre-check here.
+    await assertRepositoryModeEligible(ctx, {
       repositoryId: thread.repositoryId,
-      workspaceId: thread.workspaceId,
       mode,
       groundLibrary,
       groundSandbox,

@@ -134,17 +134,17 @@ async function settleSandboxReplyCost(
     return;
   }
 
-  // Look up workspace from the thread (the message stores threadId, not
-  // workspaceId). Concurrent thread deletion makes this a defensive
-  // fetch — if the thread is gone, we still want the per-user
-  // settlement to land, so a missing thread degrades to "user-only
-  // settlement" rather than blocking the cost recording entirely.
+  // Look up the repository from the thread (the message stores threadId,
+  // not repositoryId). Concurrent thread deletion makes this a defensive
+  // fetch — if the thread is gone, we still want the per-user settlement
+  // to land, so a missing thread degrades to "user-only settlement" rather
+  // than blocking the cost recording entirely.
   const thread = await ctx.db.get(args.assistantMessage.threadId);
-  const workspaceId = thread?.workspaceId ?? null;
+  const repositoryId = thread?.repositoryId ?? null;
 
   await consumeSandboxDailyCost(ctx, {
     ownerTokenIdentifier: args.assistantMessage.ownerTokenIdentifier,
-    workspaceId,
+    repositoryId,
     cents,
   });
 
@@ -152,7 +152,7 @@ async function settleSandboxReplyCost(
     jobId: args.jobId,
     assistantMessageId: args.assistantMessage._id,
     ownerTokenIdentifier: args.assistantMessage.ownerTokenIdentifier,
-    workspaceId,
+    repositoryId,
     cents,
   });
 }

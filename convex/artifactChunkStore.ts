@@ -1,6 +1,6 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internalMutation, internalQuery, type QueryCtx } from "./_generated/server";
 import { MAX_ARTIFACT_CHUNKS_PER_ARTIFACT } from "./lib/artifactChunking";
 
 const chunkValidator = v.object({
@@ -30,26 +30,6 @@ export type ArtifactChunkSearchHit = {
 };
 
 export type ArtifactChunkRecord = Omit<ArtifactChunkSearchHit, "lexicalScore">;
-
-async function loadArtifactWorkspace(
-  ctx: QueryCtx | MutationCtx,
-  artifact: Doc<"artifacts">,
-): Promise<{ workspaceId: Id<"workspaces">; repositoryId: Id<"repositories"> } | null> {
-  const repositoryId = artifact.repositoryId;
-  if (!repositoryId) {
-    return null;
-  }
-  const workspace = await ctx.db
-    .query("workspaces")
-    .withIndex("by_ownerTokenIdentifier_and_repositoryId", (q) =>
-      q.eq("ownerTokenIdentifier", artifact.ownerTokenIdentifier).eq("repositoryId", repositoryId),
-    )
-    .first();
-  if (!workspace) {
-    return null;
-  }
-  return { workspaceId: workspace._id, repositoryId };
-}
 
 async function buildChunkRecord(
   ctx: QueryCtx,
@@ -89,14 +69,14 @@ export const replaceChunksForArtifact = internalMutation({
     if (!artifact || artifact.version !== args.artifactVersion) {
       return { replaced: false, reason: "stale_artifact" as const };
     }
-    const workspace = await loadArtifactWorkspace(ctx, artifact);
-    if (!workspace) {
+    const repositoryId = artifact.repositoryId;
+    if (!repositoryId) {
       await ctx.db.patch(args.artifactId, {
         chunkingStatus: "failed",
         lastChunkedAt: Date.now(),
         lastChunkedVersion: args.artifactVersion,
       });
-      return { replaced: false, reason: "missing_workspace" as const };
+      return { replaced: false, reason: "missing_repository" as const };
     }
 
     const existing = await ctx.db
@@ -110,8 +90,7 @@ export const replaceChunksForArtifact = internalMutation({
     for (const [index, chunk] of args.chunks.entries()) {
       await ctx.db.insert("artifactChunks", {
         ownerTokenIdentifier: artifact.ownerTokenIdentifier,
-        workspaceId: workspace.workspaceId,
-        repositoryId: workspace.repositoryId,
+        repositoryId,
         artifactId: args.artifactId,
         artifactVersion: args.artifactVersion,
         chunkIndex: index,

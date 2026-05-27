@@ -60,16 +60,18 @@ import type * as lib_openaiPricing from "../lib/openaiPricing.js";
 import type * as lib_rateLimit from "../lib/rateLimit.js";
 import type * as lib_repoAnalysis from "../lib/repoAnalysis.js";
 import type * as lib_repositoryAccess from "../lib/repositoryAccess.js";
+import type * as lib_repositoryPalette from "../lib/repositoryPalette.js";
 import type * as lib_repositorySandbox from "../lib/repositorySandbox.js";
 import type * as lib_returnTo from "../lib/returnTo.js";
 import type * as lib_sandboxLiveness from "../lib/sandboxLiveness.js";
 import type * as lib_sandboxNames from "../lib/sandboxNames.js";
 import type * as lib_systemDesign from "../lib/systemDesign.js";
 import type * as lib_userPreferences from "../lib/userPreferences.js";
-import type * as lib_workspaces from "../lib/workspaces.js";
 import type * as ops from "../ops.js";
 import type * as opsNode from "../opsNode.js";
 import type * as repositories from "../repositories.js";
+import type * as repositoryModeEligibility from "../repositoryModeEligibility.js";
+import type * as repositoryPreferences from "../repositoryPreferences.js";
 import type * as sandboxActivationNode from "../sandboxActivationNode.js";
 import type * as sandboxSessions from "../sandboxSessions.js";
 import type * as sandboxSessionsNode from "../sandboxSessionsNode.js";
@@ -77,8 +79,6 @@ import type * as systemDesign from "../systemDesign.js";
 import type * as systemDesignNode from "../systemDesignNode.js";
 import type * as threadContext from "../threadContext.js";
 import type * as userPreferences from "../userPreferences.js";
-import type * as workspaceModeEligibility from "../workspaceModeEligibility.js";
-import type * as workspaces from "../workspaces.js";
 
 import type {
   ApiFromModules,
@@ -139,16 +139,18 @@ declare const fullApi: ApiFromModules<{
   "lib/rateLimit": typeof lib_rateLimit;
   "lib/repoAnalysis": typeof lib_repoAnalysis;
   "lib/repositoryAccess": typeof lib_repositoryAccess;
+  "lib/repositoryPalette": typeof lib_repositoryPalette;
   "lib/repositorySandbox": typeof lib_repositorySandbox;
   "lib/returnTo": typeof lib_returnTo;
   "lib/sandboxLiveness": typeof lib_sandboxLiveness;
   "lib/sandboxNames": typeof lib_sandboxNames;
   "lib/systemDesign": typeof lib_systemDesign;
   "lib/userPreferences": typeof lib_userPreferences;
-  "lib/workspaces": typeof lib_workspaces;
   ops: typeof ops;
   opsNode: typeof opsNode;
   repositories: typeof repositories;
+  repositoryModeEligibility: typeof repositoryModeEligibility;
+  repositoryPreferences: typeof repositoryPreferences;
   sandboxActivationNode: typeof sandboxActivationNode;
   sandboxSessions: typeof sandboxSessions;
   sandboxSessionsNode: typeof sandboxSessionsNode;
@@ -156,8 +158,6 @@ declare const fullApi: ApiFromModules<{
   systemDesignNode: typeof systemDesignNode;
   threadContext: typeof threadContext;
   userPreferences: typeof userPreferences;
-  workspaceModeEligibility: typeof workspaceModeEligibility;
-  workspaces: typeof workspaces;
 }>;
 
 /**

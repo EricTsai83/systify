@@ -2,15 +2,15 @@ import { v, type Infer } from "convex/values";
 
 /**
  * Canonical chat-mode vocabulary, shared by the persisted DB enum
- * (`threads.mode`, `messages.mode`, `workspaces.lastMode`) and the workspace
- * shell's URL router (`/w/:wid/discuss | library`). Defining it once keeps
- * DB literals, URL segments, and UI labels in lockstep.
+ * (`threads.mode`, `messages.mode`, `repositories.lastMode`) and the
+ * repository shell's URL router (`/r/:rid/discuss | library`). Defining
+ * it once keeps DB literals, URL segments, and UI labels in lockstep.
  *
  *   - `discuss` — free-form chat with per-message Library / Sandbox
  *                 grounding toggles (see `messages.groundLibrary` /
  *                 `messages.groundSandbox`). Both off → training-only.
  *   - `library` — read-mostly artifact reader with chunk-retrieval RAG
- *                 over the workspace's artifacts (Library Ask).
+ *                 over the repository's artifacts (Library Ask).
  */
 export const chatModeValidator = v.union(v.literal("discuss"), v.literal("library"));
 
@@ -28,7 +28,7 @@ export type ChatMode = Infer<typeof chatModeValidator>;
  * without pulling in the full resolver. The eligibility resolvers in
  * `lib/chatEligibility.ts` consume it too — they share the same source of
  * truth for "what does the URL land on when the user opens this
- * workspace?".
+ * repository?".
  */
 export function getDefaultThreadMode(hasAttachedRepo: boolean): ChatMode {
   return hasAttachedRepo ? "library" : "discuss";

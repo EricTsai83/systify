@@ -2,9 +2,9 @@ import type { Doc } from "../../convex/_generated/dataModel";
 import { LibraryAskPanel } from "@/components/library-ask-panel";
 import { LibraryTree } from "@/components/library-tree";
 import { ProfileCard } from "@/components/profile-card";
-import { WorkspaceModeSwitcher } from "@/components/workspace-mode-switcher";
-import { WorkspaceThreadsRail, WorkspacelessChatsRail } from "@/components/workspace-threads-rail";
-import { WorkspaceSelector } from "@/components/workspace-switcher";
+import { RepositoryModeSwitcher } from "@/components/repository-mode-switcher";
+import { RepositoryThreadsRail, RepolessChatsRail } from "@/components/repository-threads-rail";
+import { RepositorySelector } from "@/components/repository-switcher";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
 import { useChatMode } from "@/hooks/use-service-mode";
@@ -16,14 +16,8 @@ import type {
   RepositoryId,
   ThreadId,
   ThreadMode,
-  WorkspaceId,
 } from "@/lib/types";
 
-// Both sidebars share `clampSidebarWidth`'s configured min (240); the left
-// sidebar lives at a unified default across all modes so switching modes
-// never reshuffles the layout. Library Ask gets its own width memory + a
-// roomier ceiling because it carries a full chat surface (thread tabs,
-// conversation, composer) where the slim thread rail does not.
 const LEFT_SIDEBAR_WIDTH_STORAGE_KEY = "systify.sidebar.width";
 const LEFT_SIDEBAR_DEFAULT_WIDTH = 380;
 const LEFT_SIDEBAR_MAX_WIDTH = 480;
@@ -34,28 +28,23 @@ const LIBRARY_ASK_MAX_WIDTH = 720;
 
 type AppSidebarLeftProps = {
   repositories: Doc<"repositories">[] | undefined;
-  workspaces: Doc<"workspaces">[] | undefined;
-  activeWorkspaceId: WorkspaceId | null;
-  onSwitchWorkspace: (id: WorkspaceId) => void;
+  activeRepositoryId: RepositoryId | null;
+  onSwitchRepository: (id: RepositoryId) => void;
   onImported: OnImportedCallback;
   onError: (message: string | null) => void;
   selectedThreadId: ThreadId | null;
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onDeleteThread: (id: ThreadId) => void;
   /**
-   * Forwarded to {@link WorkspaceThreadsRail.onRequestNewThread} — when
-   * supplied, the "New Thread" button navigates to the workspace mode URL
-   * (no thread id) instead of pre-creating an orphan thread. Optional so
-   * legacy callers that still want immediate-create can omit it.
+   * Forwarded to {@link RepositoryThreadsRail.onRequestNewThread} — when
+   * supplied, the "New Thread" button navigates to the repository mode URL
+   * (no thread id) instead of pre-creating an orphan thread.
    */
   onRequestNewThread?: () => void;
   /**
    * Library-mode payload. The page hoists these so the same artifact query
    * powers the left sidebar's tree, the right sidebar's Ask panel, and the
    * editor — switching modes mounts/unmounts the tree without re-fetching.
-   * `null` when the active workspace has no attached repository (the page
-   * redirects to Discuss in that case, but the prop is still typed null-safe
-   * so the rail variant doesn't need any of the library fields).
    */
   libraryRepositoryId?: RepositoryId | null;
   libraryArtifacts?: ReadonlyArray<ArtifactListItem>;
@@ -66,25 +55,13 @@ type AppSidebarLeftProps = {
 };
 
 /**
- * Left workspace sidebar — shared across all service modes.
- *
- * Layout, top to bottom:
- *
- *   1. Header — logo + product name.
- *   2. Service-mode switcher — Discuss / Library.
- *   3. Content — `LibraryTree` in Library mode (System Design folder tree
- *      with Generate CTA), `WorkspaceThreadsRail` everywhere else.
- *   4. Footer — profile card + workspace switcher dropdown.
- *
- * Width + storage key are unified across modes so switching modes never
- * reshuffles the layout. Library Ask moved out to {@link AppSidebarRight}.
+ * Left repository sidebar — shared across all service modes.
  */
 export function AppSidebarLeft(props: AppSidebarLeftProps) {
   const {
     repositories,
-    workspaces,
-    activeWorkspaceId,
-    onSwitchWorkspace,
+    activeRepositoryId,
+    onSwitchRepository,
     onImported,
     onError,
     selectedThreadId,
@@ -98,11 +75,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
     onGenerate,
     isUnseen,
   } = props;
-  const { mode, availability } = useChatMode(activeWorkspaceId);
-  // `mode` is `null` on transient URLs (`/chat`, `/w/:wid` workspace
-  // landing, legacy `/w/:wid/t/:tid`) — fall back to the workspace's intended
-  // default so the sidebar paints a stable thread list and WorkspaceModeSwitcher
-  // highlight while the canonicalising redirect resolves.
+  const { mode, availability } = useChatMode(activeRepositoryId);
   const effectiveChatMode: ChatMode = mode ?? availability?.defaultMode ?? "discuss";
 
   const isLibraryMode = effectiveChatMode === "library";
@@ -121,8 +94,12 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
         </div>
       </SidebarHeader>
 
-      {activeWorkspaceId !== null ? (
-        <WorkspaceModeSwitcher workspaceId={activeWorkspaceId} mode={effectiveChatMode} availability={availability} />
+      {activeRepositoryId !== null ? (
+        <RepositoryModeSwitcher
+          repositoryId={activeRepositoryId}
+          mode={effectiveChatMode}
+          availability={availability}
+        />
       ) : null}
 
       {isLibraryMode && libraryRepositoryId && onSelectLibraryArtifact && onGenerate ? (
@@ -137,9 +114,9 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
             className="min-h-0 flex-1"
           />
         </SidebarContent>
-      ) : activeWorkspaceId === null ? (
+      ) : activeRepositoryId === null ? (
         <SidebarContent className="flex min-h-0 flex-1 flex-col">
-          <WorkspacelessChatsRail
+          <RepolessChatsRail
             selectedThreadId={selectedThreadId}
             onSelectThread={onSelectThread}
             onDeleteThread={onDeleteThread}
@@ -148,8 +125,8 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
         </SidebarContent>
       ) : (
         <SidebarContent className="flex min-h-0 flex-1 flex-col">
-          <WorkspaceThreadsRail
-            workspaceId={activeWorkspaceId}
+          <RepositoryThreadsRail
+            repositoryId={activeRepositoryId}
             repositories={repositories}
             threadMode={effectiveChatMode}
             selectedThreadId={selectedThreadId}
@@ -164,10 +141,10 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
       <SidebarFooter className="px-3 py-2">
         <div className="flex items-center gap-2">
           <ProfileCard />
-          <WorkspaceSelector
-            workspaces={workspaces}
-            activeWorkspaceId={activeWorkspaceId}
-            onSwitchWorkspace={onSwitchWorkspace}
+          <RepositorySelector
+            repositories={repositories}
+            activeRepositoryId={activeRepositoryId}
+            onSwitchRepository={onSwitchRepository}
             onImported={onImported}
           />
         </div>
@@ -177,13 +154,13 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
 }
 
 type AppSidebarRightProps = {
-  activeWorkspaceId: WorkspaceId;
+  activeRepositoryId: RepositoryId;
   askThreadId: ThreadId | null;
   activeArtifactId: ArtifactId | null;
   /**
-   * Whether the workspace has at least one indexed artifact. Forwarded to
-   * {@link LibraryAskPanel} so the composer locks (and the empty state
-   * surfaces a Generate CTA) instead of letting the user hit the
+   * Whether the repository has at least one indexed artifact. Forwarded
+   * to {@link LibraryAskPanel} so the composer locks (and the empty
+   * state surfaces a Generate CTA) instead of letting the user hit the
    * `library_no_artifact` backend gate on submit.
    */
   hasArtifacts: boolean;
@@ -198,14 +175,9 @@ type AppSidebarRightProps = {
 
 /**
  * Right Library-mode sidebar — mounts only in Library.
- *
- * Carries the full Library Ask surface (thread tabs, conversation, composer,
- * history popover). No header/footer chrome — the panel ships its own. Width
- * + storage key are independent of the left sidebar so users can size the
- * two surfaces separately.
  */
 export function AppSidebarRight({
-  activeWorkspaceId,
+  activeRepositoryId,
   askThreadId,
   activeArtifactId,
   hasArtifacts,
@@ -222,7 +194,7 @@ export function AppSidebarRight({
     >
       <div className="flex min-h-0 flex-1 flex-col">
         <LibraryAskPanel
-          workspaceId={activeWorkspaceId}
+          repositoryId={activeRepositoryId}
           threadId={askThreadId}
           activeArtifactId={activeArtifactId}
           hasArtifacts={hasArtifacts}

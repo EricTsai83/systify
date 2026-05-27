@@ -35,6 +35,8 @@ async function seedRepoWithSandbox(
       packageManagers: [],
       entrypoints: [],
       fileCount: 0,
+      color: "blue",
+      lastAccessedAt: Date.now(),
     });
 
     if (sandboxStatus !== "none") {
@@ -115,6 +117,8 @@ describe("getSandboxActivityStatus", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
       const sandboxId = await ctx.db.insert("sandboxes", {
         repositoryId: repoId,

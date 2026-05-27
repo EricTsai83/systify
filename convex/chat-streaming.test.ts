@@ -1154,6 +1154,8 @@ async function createStreamingFixture(t: ReturnType<typeof convexTest>, ownerTok
       packageManagers: [],
       entrypoints: [],
       fileCount: 0,
+      color: "blue",
+      lastAccessedAt: Date.now(),
     });
 
     const threadId = await ctx.db.insert("threads", {

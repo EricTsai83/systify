@@ -13,7 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import type { OnImportedCallback, RepositoryId, ThreadId, ThreadMode, WorkspaceId } from "@/lib/types";
+import type { OnImportedCallback, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const EMPTY_CHAT_OWL = ["   ^...^   ", "  / o,o \\  ", "  |):::(|  ", "====w=w===="].join("\n");
@@ -221,12 +221,12 @@ export function EmptyNoRepoHint({
   threadId,
   availableRepositories,
   onImported,
-  onThreadMovedToWorkspace,
+  onThreadMovedToRepository,
 }: {
   threadId: ThreadId | null;
   availableRepositories: ReadonlyArray<Doc<"repositories">>;
   onImported?: OnImportedCallback;
-  onThreadMovedToWorkspace?: (workspaceId: WorkspaceId | null, mode: ThreadMode | null) => void;
+  onThreadMovedToRepository?: (repositoryId: RepositoryId | null, mode: ThreadMode | null) => void;
 }) {
   const setThreadRepository = useMutation(api.chat.threads.setThreadRepository);
   const [isAttaching, setIsAttaching] = useState(false);
@@ -239,7 +239,7 @@ export function EmptyNoRepoHint({
     setAttachError(null);
     try {
       const result = await setThreadRepository({ threadId, repositoryId: repoId });
-      onThreadMovedToWorkspace?.(result.workspaceId, result.mode);
+      onThreadMovedToRepository?.(result.repositoryId, result.mode);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Failed to attach repository";
       setAttachError(message);

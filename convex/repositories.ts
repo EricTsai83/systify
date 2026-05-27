@@ -9,8 +9,8 @@ import { requireViewerIdentity } from "./lib/auth";
 import { getRepositorySandboxStatus } from "./lib/repositorySandbox";
 import { makeRepositoryTitle, parseGitHubUrl } from "./lib/github";
 import { CASCADE_BATCH_SIZE } from "./lib/constants";
-import { ensureRepositoryWorkspace } from "./lib/workspaces";
-import { clearLastActiveWorkspaceIfMatches } from "./lib/userPreferences";
+import { pickNextRepositoryColor, touchRepositoryLastAccessed } from "./lib/repositoryPalette";
+import { clearLastActiveRepositoryIfMatches } from "./lib/userPreferences";
 import {
   hasRemoteUpdates,
   isRepositoryArchived,
@@ -92,19 +92,13 @@ export const listRepositories = query({
 });
 
 /**
- * Resources page — cross-workspace inventory of the viewer's active
+ * Resources page — cross-repository inventory of the viewer's active
  * repositories joined with their latest sandbox + sync status.
  *
  * One query feeds the page so the client renders without an N+1 over
  * `getRepositoryDetail`. We re-use the same helpers the per-repo TopBar
- * status pill consumes (`getRepositorySandboxStatus`, the remote-sha diff for
- * `hasRemoteUpdates`) so the Resources cards and the per-thread chrome
+ * status pill consumes so the Resources cards and the per-thread chrome
  * never disagree about what a given sandbox is doing.
- *
- * Workspace ids ride along so each row can link straight into the right
- * `/w/:wid` URL — Resources is a navigation surface, not a control plane.
- * Stop / restart sandbox affordances stay on the per-workspace TopBar
- * where the user already has the full context.
  */
 export const listResourceInventory = query({
   args: {},
@@ -121,28 +115,12 @@ export const listResourceInventory = query({
 
     const activeRepositories = repositories.filter((repo) => repo.archivedAt === undefined);
 
-    // Per-repo point lookup against `by_ownerTokenIdentifier_and_repositoryId`.
-    // The data-model invariant is one workspace per (owner, repo); a compound-
-    // key index hit is cheaper than the full-workspace scan + map-build the
-    // previous implementation did, and the page no longer silently truncates
-    // when the viewer has more workspaces than the `repositories.take()`
-    // limit. Issued in parallel alongside the sandbox `get` so both round
-    // trips share one network batch.
     const inventory = await Promise.all(
       activeRepositories.map(async (repo) => {
-        const [sandboxStatus, workspace] = await Promise.all([
-          getRepositorySandboxStatus(ctx, repo),
-          ctx.db
-            .query("workspaces")
-            .withIndex("by_ownerTokenIdentifier_and_repositoryId", (q) =>
-              q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("repositoryId", repo._id),
-            )
-            .unique(),
-        ]);
+        const sandboxStatus = await getRepositorySandboxStatus(ctx, repo);
         const { sandboxModeStatus, sandbox } = sandboxStatus;
         return {
           repositoryId: repo._id,
-          workspaceId: workspace?._id ?? null,
           fullName: repo.sourceRepoFullName,
           importStatus: repo.importStatus,
           lastImportedAt: repo.lastImportedAt,
@@ -393,6 +371,7 @@ export const createRepositoryImport = mutation({
     if (!repository) {
       // Visibility will be updated after the import pipeline checks GitHub API.
       // Default to 'unknown' until the actual check completes.
+      const color = await pickNextRepositoryColor(ctx, identity.tokenIdentifier);
       repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier: identity.tokenIdentifier,
         sourceHost: "github",
@@ -408,20 +387,18 @@ export const createRepositoryImport = mutation({
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color,
+        lastAccessedAt: Date.now(),
       });
 
       repository = await ctx.db.get(repositoryId);
+    } else {
+      await touchRepositoryLastAccessed(ctx, { repositoryId: repository._id });
     }
 
     if (!repositoryId || !repository) {
       throw new Error("Failed to create repository.");
     }
-
-    const workspaceId = await ensureRepositoryWorkspace(ctx, {
-      repositoryId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
-      name: repository.sourceRepoFullName,
-    });
 
     const defaultThread = defaultThreadId ? await ctx.db.get(defaultThreadId) : null;
     let defaultThreadMode: Doc<"threads">["mode"];
@@ -435,7 +412,6 @@ export const createRepositoryImport = mutation({
       // one start on the same mode.
       defaultThreadMode = getDefaultThreadMode(true);
       defaultThreadId = await ctx.db.insert("threads", {
-        workspaceId,
         repositoryId,
         ownerTokenIdentifier: identity.tokenIdentifier,
         title: `${makeRepositoryTitle(repository.sourceRepoFullName)} chat`,
@@ -444,9 +420,6 @@ export const createRepositoryImport = mutation({
       });
     } else {
       defaultThreadMode = defaultThread.mode;
-      if (defaultThread.workspaceId !== workspaceId) {
-        await ctx.db.patch(defaultThread._id, { workspaceId });
-      }
     }
 
     await ctx.db.patch(repositoryId, { accessMode, defaultThreadId });
@@ -460,15 +433,13 @@ export const createRepositoryImport = mutation({
 
     // `defaultThreadMode` rides alongside `defaultThreadId` so the import
     // callback can route the user straight to the canonical mode-aware URL
-    // (`/w/:wid/discuss/:tid`) instead of bouncing through the legacy
-    // `/w/:wid/t/:tid` redirect for a flash of unmounted chrome.
+    // (`/r/:repositoryId/discuss/:tid`) without any intermediate redirect.
     return {
       repositoryId,
       importId,
       jobId,
       defaultThreadId,
       defaultThreadMode,
-      workspaceId,
     };
   },
 });
@@ -857,26 +828,10 @@ export const cascadeDeleteRepository = internalMutation({
 
     const repository = await ctx.db.get(args.repositoryId);
     if (repository) {
-      const workspaces = await ctx.db
-        .query("workspaces")
-        .withIndex("by_ownerTokenIdentifier_and_repositoryId", (q) =>
-          q.eq("ownerTokenIdentifier", repository.ownerTokenIdentifier).eq("repositoryId", args.repositoryId),
-        )
-        .take(CASCADE_BATCH_SIZE);
-      for (const workspace of workspaces) {
-        await clearLastActiveWorkspaceIfMatches(ctx, {
-          ownerTokenIdentifier: repository.ownerTokenIdentifier,
-          workspaceId: workspace._id,
-        });
-        await ctx.db.delete(workspace._id);
-      }
-      if (workspaces.length === CASCADE_BATCH_SIZE) {
-        await ctx.scheduler.runAfter(0, internal.repositories.cascadeDeleteRepository, {
-          repositoryId: args.repositoryId,
-        });
-        return;
-      }
-
+      await clearLastActiveRepositoryIfMatches(ctx, {
+        ownerTokenIdentifier: repository.ownerTokenIdentifier,
+        repositoryId: args.repositoryId,
+      });
       await ctx.db.delete(args.repositoryId);
     }
   },

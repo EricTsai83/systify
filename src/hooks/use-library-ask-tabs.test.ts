@@ -3,16 +3,16 @@
 import { act, renderHook } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
 import { useLibraryAskTabs } from "./use-library-ask-tabs";
-import type { ThreadId, WorkspaceId } from "@/lib/types";
+import type { RepositoryId, ThreadId } from "@/lib/types";
 
-const workspaceId = "ws_asktabs" as WorkspaceId;
+const repositoryId = "repo_asktabs" as RepositoryId;
 const t1 = "thread_1" as ThreadId;
 const t2 = "thread_2" as ThreadId;
 const t3 = "thread_3" as ThreadId;
 
 describe("useLibraryAskTabs", () => {
   test("ensureOpen appends a tab and is idempotent on an unchanged entry", () => {
-    const { result } = renderHook(() => useLibraryAskTabs(workspaceId));
+    const { result } = renderHook(() => useLibraryAskTabs(repositoryId));
 
     act(() => {
       result.current.ensureOpen({ id: t1, title: "First" });
@@ -28,7 +28,7 @@ describe("useLibraryAskTabs", () => {
   });
 
   test("ensureOpen refreshes a cached title in place (rename), keeping position", () => {
-    const { result } = renderHook(() => useLibraryAskTabs(workspaceId));
+    const { result } = renderHook(() => useLibraryAskTabs(repositoryId));
 
     act(() => {
       result.current.ensureOpen({ id: t1, title: "First" });
@@ -45,7 +45,7 @@ describe("useLibraryAskTabs", () => {
   });
 
   test("closeTab removes the tab and returns the right neighbour as next-active", () => {
-    const { result } = renderHook(() => useLibraryAskTabs(workspaceId));
+    const { result } = renderHook(() => useLibraryAskTabs(repositoryId));
     act(() => {
       result.current.ensureOpen({ id: t1, title: "First" });
       result.current.ensureOpen({ id: t2, title: "Second" });
@@ -61,7 +61,7 @@ describe("useLibraryAskTabs", () => {
   });
 
   test("closeTab on the rightmost tab falls back to the left neighbour, then null when empty", () => {
-    const { result } = renderHook(() => useLibraryAskTabs(workspaceId));
+    const { result } = renderHook(() => useLibraryAskTabs(repositoryId));
     act(() => {
       result.current.ensureOpen({ id: t1, title: "First" });
       result.current.ensureOpen({ id: t2, title: "Second" });
@@ -81,14 +81,14 @@ describe("useLibraryAskTabs", () => {
   });
 
   test("persists the open set to localStorage and restores it on a fresh mount", () => {
-    const first = renderHook(() => useLibraryAskTabs(workspaceId));
+    const first = renderHook(() => useLibraryAskTabs(repositoryId));
     act(() => {
       first.result.current.ensureOpen({ id: t1, title: "First" });
       first.result.current.ensureOpen({ id: t2, title: "Second" });
     });
     first.unmount();
 
-    const second = renderHook(() => useLibraryAskTabs(workspaceId));
+    const second = renderHook(() => useLibraryAskTabs(repositoryId));
     expect(second.result.current.openThreads).toEqual([
       { id: t1, title: "First" },
       { id: t2, title: "Second" },

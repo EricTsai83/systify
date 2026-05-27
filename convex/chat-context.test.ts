@@ -38,6 +38,8 @@ describe("chat reply context", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       const threadId = await ctx.db.insert("threads", {
@@ -165,6 +167,8 @@ describe("chat reply context", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       const sandboxId = await ctx.db.insert("sandboxes", {
@@ -243,6 +247,8 @@ describe("chat reply context", () => {
           packageManagers: [],
           entrypoints: [],
           fileCount: 0,
+          color: "blue",
+          lastAccessedAt: Date.now(),
         });
 
         const sandboxId = await ctx.db.insert("sandboxes", {
@@ -404,6 +410,8 @@ describe("chat reply context", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       const threadId = await ctx.db.insert("threads", {
@@ -515,6 +523,8 @@ describe("chat reply context", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       const threadId = await ctx.db.insert("threads", {
@@ -579,6 +589,8 @@ describe("chat reply context", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
         summary: "rich repository summary",
         readmeSummary: "readme",
         architectureSummary: "architecture",
@@ -808,6 +820,8 @@ describe("chat reply context", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
 
       const threadId = await ctx.db.insert("threads", {
@@ -910,6 +924,8 @@ describe("chat reply context", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
       const threadId = await ctx.db.insert("threads", {
         repositoryId,
@@ -1087,6 +1103,8 @@ describe("chat reply context", () => {
         packageManagers: [],
         entrypoints: [],
         fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
       });
       const threadId = await ctx.db.insert("threads", {
         repositoryId,
