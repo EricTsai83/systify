@@ -8,12 +8,12 @@
  * The pure resolvers stay independent of `process.env` and Convex `ctx`,
  * so they remain trivially testable. The runtime helpers below
  * (`toChatModeSandboxStatus`, `computeSandboxCostCapEvaluation`) own the
- * cross-query invariants that used to be duplicated between
- * `threadContext.ts` and `repositoryModeEligibility.ts`. Centralising them
- * here means the two read paths cannot drift in how they translate sandbox
- * lifecycle state or apply the cost-cap precedence rule.
+ * cross-query invariants shared by `threadContext.ts` and
+ * `repositoryModeEligibility.ts` so the two read paths cannot drift in
+ * how they translate sandbox lifecycle state or apply the cost-cap
+ * precedence rule.
  *
- * Mode semantics (post-Lab collapse):
+ * Mode semantics:
  *   - `discuss`  — free-form chat with two independent grounding axes
  *                  (Library / Sandbox) the composer surfaces as toggles.
  *   - `library`  — RAG over user-produced artifacts for the attached
@@ -163,12 +163,10 @@ export const DISABLED_REASON_SANDBOX_REPOSITORY_CAP_EXCEEDED =
 // ─── Pure resolvers ───────────────────────────────────────────────────────
 
 /**
- * Per-thread chat-mode resolution. Post-Lab collapse this is a thin
- * function — Lab is gone as a top-level mode, so only the
- * `(hasAttachedRepo)` axis matters for which modes are visible. Sandbox
- * status + cost cap now feed the Sandbox *grounding* axis (see
- * {@link resolveSandboxGroundingAxis}) rather than a mode availability
- * decision.
+ * Per-thread chat-mode resolution. Only `(hasAttachedRepo)` drives mode
+ * visibility; sandbox status and cost cap feed the Sandbox *grounding*
+ * axis (see {@link resolveSandboxGroundingAxis}) instead of a
+ * mode-availability decision.
  */
 export function resolveChatModes(hasAttachedRepo: boolean): ChatModeResolution {
   const discuss: AxisVerdict = { enabled: true };
@@ -366,11 +364,10 @@ export interface SandboxCostCapEvaluation {
 /**
  * Compute the sandbox daily-cost-cap gate AND the per-user / per-repository
  * budget snapshots in one pass. Single source of truth for the precedence
- * rule (user cap blocks first) — previously duplicated between
+ * rule (user cap blocks first); shared by
  * `threadContext.computeSandboxCostBudgets` and
- * `repositoryModeEligibility.computeSandboxCostCapGate` with sync-comments
- * pleading "keep this aligned with the other one". Both call sites now
- * share this implementation so the rule cannot drift.
+ * `repositoryModeEligibility.computeSandboxCostCapGate` so the rule cannot
+ * drift between the two call sites.
  *
  * Both peeks happen inside the surrounding query's transaction so the gate
  * decision and the displayed budgets agree even under concurrent

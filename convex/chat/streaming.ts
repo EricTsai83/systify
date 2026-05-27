@@ -89,7 +89,7 @@ async function foldAndDrainToolCallEvents(
 
 /**
  * Plan 10 — settle the actual reply cost against the per-user and
- * (when applicable) per-workspace daily caps.
+ * (when applicable) per-repository daily caps.
  *
  * Called from every terminal-state path:
  *   - `finalizeAssistantReply` (success)

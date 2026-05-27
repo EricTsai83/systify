@@ -310,8 +310,9 @@ export const verifyRepoAccess = action({
  * Returns { accessible: true, ... } or { accessible: false, message: "..." }.
  *
  * Used as the early-exit access probe by the import pipeline (before the
- * GitHub-API snapshot fetch) and by `ensureSandboxReady` (before any Lab /
- * System Design provisions a Daytona sandbox).
+ * GitHub-API snapshot fetch) and by `ensureSandboxReady` (before any
+ * sandbox-grounded reply or System Design generation provisions a Daytona
+ * sandbox).
  */
 export const checkRepoAccess = internalAction({
   args: {

@@ -3,10 +3,9 @@ import type { ModeInfoEntry } from "@/components/mode-info-popover";
 import type { ChatMode } from "@/lib/types";
 
 /**
- * Static catalogue of the surviving top-level modes (Discuss / Library)
- * post-Lab collapse. The sandbox-grounded surface is no longer a separate
- * mode — it is a per-message grounding toggle the Discuss composer
- * surfaces (see {@link GROUNDING_CATALOG}).
+ * Static catalogue of the two top-level modes (Discuss / Library). The
+ * sandbox-grounded surface is a per-message grounding toggle on the
+ * Discuss composer (see {@link GROUNDING_CATALOG}), not a separate mode.
  *
  * `value` is the persisted DB literal (`messages.mode` / `threads.mode`)
  * AND the URL segment AND the user-facing label — one vocabulary across

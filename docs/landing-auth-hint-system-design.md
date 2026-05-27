@@ -71,7 +71,7 @@ flowchart TD
 
 ### Hint helper — `src/lib/auth-session-hint.ts`
 
-`hasWorkOSSessionHint()` synchronously reads `document.cookie`, matches `workos-has-session=<value>`, and returns `true` when the value is non-empty. It accepts both formats the SDK emits — the legacy `"1"` value and the modern dot-separated client-ID list — without validating against the configured client ID. The single-client / single-origin assumption makes that match unnecessary.
+`hasWorkOSSessionHint()` synchronously reads `document.cookie`, matches `workos-has-session=<value>`, and returns `true` when the value is non-empty. It accepts both formats the SDK emits — the single-digit `"1"` value and the dot-separated client-ID list — without validating against the configured client ID. The single-client / single-origin assumption makes that match unnecessary.
 
 The helper is pure DOM + regex; no React, no env reads, no I/O. That keeps it cheap to call on every `LandingRoute` render and trivial to unit-test under jsdom.
 

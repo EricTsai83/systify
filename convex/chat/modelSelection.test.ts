@@ -98,13 +98,13 @@ describe("resolveModelForReply", () => {
     expect(resolveModelForReply({ mode: "discuss", groundSandbox: false })).toBe("gpt-4.1");
   });
 
-  test("capability-specific override takes precedence over legacy OPENAI_MODEL", () => {
+  test("capability-specific override takes precedence over the global OPENAI_MODEL", () => {
     process.env.OPENAI_MODEL = "gpt-4.1";
     process.env.OPENAI_MODEL_SANDBOX = "gpt-5";
 
     expect(resolveModelForReply({ mode: "discuss", groundSandbox: true })).toBe("gpt-5");
-    // Capabilities without their own override still see the legacy var;
-    // the override is per-capability, not all-or-nothing.
+    // Capabilities without their own override fall through to the global
+    // var; the override is per-capability, not all-or-nothing.
     expect(resolveModelForReply({ mode: "library", groundSandbox: false })).toBe("gpt-4.1");
     expect(resolveModelForReply({ mode: "discuss", groundSandbox: false })).toBe("gpt-4.1");
   });

@@ -44,9 +44,9 @@ async function insertChatTurn(
     sandboxSessionId?: Id<"sandboxSessions">;
   },
 ): Promise<{ jobId: Id<"jobs">; userMessageId: Id<"messages">; assistantMessageId: Id<"messages"> }> {
-  // Sandbox-grounded Discuss replies cost the same as the old Lab mode
-  // (tool use + larger model) — keep them on the `system_design` budget
-  // line so the daily cost cap still gates correctly.
+  // Sandbox-grounded Discuss replies use tool calls and the heavier model
+  // tier, so they bill against the `system_design` budget line and the
+  // daily sandbox cost cap rather than the chat budget.
   const jobId = await enqueueJob(ctx, {
     kind: "chat",
     threadId: args.thread._id,

@@ -188,10 +188,10 @@ describe("buildSystemPrompt", () => {
 });
 
 /**
- * Post-Lab-collapse: `buildDiscussSystemPrompt` composes the prompt from
- * grounding flags. All four (groundLibrary, groundSandbox) combinations
- * must produce a coherent prompt; the combined-citation rule only appears
- * when *both* axes are on.
+ * `buildDiscussSystemPrompt` composes the prompt from grounding flags.
+ * All four (groundLibrary, groundSandbox) combinations must produce a
+ * coherent prompt; the combined-citation rule only appears when *both*
+ * axes are on.
  */
 describe("buildDiscussSystemPrompt composability", () => {
   test("both flags off: ungrounded discuss baseline (no citation contracts)", () => {

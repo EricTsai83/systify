@@ -16,7 +16,7 @@ A sandbox-grounded session emits two classes of structured logs from the Convex 
 - **Session-level**: `[metrics] sandbox_session_finished { … }` — one line per terminal-state path (`completed` / `failed` / `cancelled` / `aborted_orphan`). Emitted only when the reply actually used sandbox tools (`hadTools === true`); ungrounded Discuss / Library replies do not appear here. Carries `mode` (`"discuss"`), `model`, `had_tools`, plus `tool_calls_count`, `tool_errors_count`, `input_tokens`, `output_tokens`, `cost_usd`, and the wall-clock `value` (= duration ms).
 - **Per-tool**: `[metrics] sandbox_tool_invoked { … }` — one line per tool result or tool error. Carries `tool` (`read_file` / `list_dir` / `run_shell`), `ok` (boolean), `error_code` (or undefined for success), and the `value` (= per-call duration ms).
 
-The metric names are kept on the historical `sandbox_*` prefix so existing dashboards and alert recipes stay stable across the chat-mode renames (originally `sandbox`, then `lab`, now `discuss` with the `groundSandbox` flag). The `tags.mode` value is the current DB literal (`"discuss"`), not the metric prefix; the fact that an event exists at all implies `had_tools === true`.
+Metric names use the `sandbox_*` prefix; `tags.mode` carries the DB literal (`"discuss"`). `sandbox_session_finished` is only emitted when `had_tools === true`, so any event in that metric stream represents a sandbox-grounded session.
 
 These two metric streams plus the existing `[chat] …` debug logs are the only data sources this runbook references. If your downstream logging pipeline supports it, group `tags.*` fields as dimensions — every dashboard recipe in this document filters on a `tags.*` value.
 

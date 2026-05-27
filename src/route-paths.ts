@@ -24,9 +24,8 @@ export const AUTH_CALLBACK_PATH = `/${AUTH_CALLBACK_ROUTE_SEGMENT}` as const;
  *                                        thread (or empty state).
  *   /archive                           — archived repos listing.
  *
- * Repositories no longer share a layer with a "workspace" entity — every
- * repo IS its own scope. Threads without a repo are repoless and surface
- * under `/chat/:threadId`.
+ * Every repository is its own top-level scope. Threads without a
+ * repository are repoless and surface under `/chat/:threadId`.
  */
 export const PROTECTED_ROUTE_SEGMENTS = {
   chat: "chat",

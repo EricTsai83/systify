@@ -6,8 +6,8 @@
  * stays out of `generation.ts`'s control flow. The resolver keys on a
  * capability tier rather than the mode literal because two replies in the
  * same mode can need very different tiers — a Sandbox-grounded Discuss
- * reply drives tool use just like the retired Lab mode did, while an
- * ungrounded Discuss reply is a single-step text completion.
+ * reply drives tool use, while an ungrounded Discuss reply is a
+ * single-step text completion.
  *
  * Capability tiers:
  *
@@ -48,7 +48,7 @@
  *   - Both the success path (`replyContext.mode` known) and the failure
  *     path (catch block, possibly before `replyContext` resolved) need
  *     the same model-name shape, so centralizing keeps them consistent.
- *   - Future per-workspace / per-user model overrides hook into this
+ *   - Future per-repository / per-user model overrides hook into this
  *     resolver rather than pollute `generation.ts` with conditional
  *     model selection.
  */
@@ -100,8 +100,8 @@ function readEnv(name: string): string | undefined {
  * Map a (mode, groundSandbox) pair to its capability tier. Sandbox
  * grounding wins over the underlying mode because the tool-use
  * trajectory is the dominant cost signal — a sandbox-grounded Discuss
- * reply behaves like the retired Lab mode and should land on the heavier
- * tier regardless of the surface name.
+ * reply lands on the heavier `sandbox` tier regardless of the surface
+ * name.
  */
 export function pickCapability(args: { mode: ChatMode; groundSandbox: boolean }): ModelCapability {
   if (args.groundSandbox) {

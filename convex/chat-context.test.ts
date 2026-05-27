@@ -11,14 +11,14 @@ const modules = import.meta.glob("./**/*.ts");
 
 describe("chat reply context", () => {
   test("sandbox mode (Plan 04) returns no chunks and no pre-loaded artifacts", async () => {
-    // Plan 04 contract: sandbox mode is now LLM-driven retrieval — the
-    // model runs `read_file` / `list_dir` against the live sandbox via
-    // tools. Pre-loading indexed `repoChunks` (the legacy behavior) is
-    // wasted work and would silently outvote tool results when the index
-    // is stale. All artifact kinds (including system-design artifacts) are
-    // excluded from context.artifacts in sandbox mode — the model retrieves
-    // live source state via tools rather than cached summaries to avoid
-    // divergence when the index is stale.
+    // Plan 04 contract: sandbox mode is LLM-driven retrieval — the model
+    // runs `read_file` / `list_dir` against the live sandbox via tools.
+    // Pre-loading indexed `repoChunks` would waste work and silently
+    // outvote tool results when the index is stale. All artifact kinds
+    // (including system-design artifacts) are excluded from
+    // context.artifacts in sandbox mode — the model retrieves live source
+    // state via tools rather than cached summaries to avoid divergence
+    // when the index is stale.
     const ownerTokenIdentifier = "user|sandbox-plan-04-context";
     const t = convexTest(schema, modules);
 

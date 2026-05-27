@@ -373,11 +373,10 @@ export default defineSchema({
      * Optional: artifacts with no `folderId` surface in the navigator's
      * "Uncategorized" virtual node.
      *
-     * System Design model: every artifact kind — including the previously
-     * repo-pinned `manifest`, `readme_summary`, and `architecture_overview` —
-     * lives inside the default System Design folder tree that is seeded on
-     * repository import. The folders themselves are user-editable (rename,
-     * move, delete) via `artifactFolders.systemKey` for stable lookup.
+     * System Design model: every artifact kind lives inside the default
+     * System Design folder tree that is seeded on repository import. The
+     * folders themselves are user-editable (rename, move, delete) via
+     * `artifactFolders.systemKey` for stable lookup.
      */
     folderId: v.optional(v.id("artifactFolders")),
     /**

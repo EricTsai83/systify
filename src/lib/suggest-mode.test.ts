@@ -10,12 +10,12 @@ const ALL_MODES: readonly ChatMode[] = ["discuss", "library"];
  * `useMemo`, but the heuristic itself must be predictable across every
  * (input, currentMode, availableModes) tuple the user can produce.
  *
- * Post-Lab collapse, the only two modes are `discuss` and `library`. The
- * file-path heuristic fires only when the user is in `library` and types
- * something that looks like a source path; it nudges to Discuss with
- * Sandbox grounding pre-flipped (encoded via `grounding: "sandbox"` on
- * the returned suggestion). The open-ended heuristic still nudges to
- * `discuss` from `library` (the only other mode).
+ * The two modes are `discuss` and `library`. The file-path heuristic
+ * fires only when the user is in `library` and types something that
+ * looks like a source path; it nudges to Discuss with Sandbox grounding
+ * pre-flipped (encoded via `grounding: "sandbox"` on the returned
+ * suggestion). The open-ended heuristic nudges to `discuss` from
+ * `library` (the only other mode).
  *
  * The cases below cover:
  *

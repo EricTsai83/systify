@@ -34,10 +34,10 @@ type ChatPanelProps = {
   chatInput: string;
   setChatInput: (v: string) => void;
   /**
-   * The thread's persisted mode. After the Lab collapse this is always
-   * `"discuss"` for panels rendered by the Discuss page; Library has its
-   * own surface. Kept as a prop so future surfaces that reuse the panel
-   * (e.g. a hypothetical preview shell) can drive it.
+   * The thread's persisted mode. Always `"discuss"` for panels rendered
+   * by the Discuss page; Library has its own surface. Kept as a prop so
+   * future surfaces that reuse the panel (e.g. a hypothetical preview
+   * shell) can drive it.
    */
   chatMode: ChatMode;
   /**
@@ -125,8 +125,8 @@ type ChatPanelProps = {
    * selected. Acts as the anchor for the lazy
    * `sendMessageStartingNewThread` path — when supplied the Send button
    * stays enabled on a no-thread URL so the first send can create the
-   * thread atomically. Optional so legacy callers without a repository
-   * context can omit it.
+   * thread atomically. Optional so callers without a repository context
+   * can omit it.
    */
   repositoryId?: RepositoryId | null;
 };

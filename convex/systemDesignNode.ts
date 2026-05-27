@@ -86,8 +86,8 @@ export const runSystemDesignGeneration = internalAction({
     let liveSandbox: Doc<"sandboxes"> | null = context.activeSandbox;
     const stageLabel: Record<SandboxPreparationStage, string> = {
       probing: "Preparing environment for your request…",
-      waking: "Waking up your repository workspace…",
-      provisioning: "Setting up the repository workspace…",
+      waking: "Waking up the repository sandbox…",
+      provisioning: "Setting up the repository sandbox…",
       cloning: "Cloning repository…",
       polling: "Preparing environment for your request…",
     };

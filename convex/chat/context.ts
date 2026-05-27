@@ -240,10 +240,10 @@ export const getReplyContext = internalQuery({
      * Anchor for mode and search-query derivation. Required so the same
      * message id that `generation.ts` is paired to determines both the
      * system prompt (via `userMessage.mode`) and the chunk-search query
-     * (via `userMessage.content`). Anchoring to "the latest user message
-     * in the window" used to be the rule here, but that derivation is
-     * unsafe under concurrent send — a newer message landing between
-     * queueing and generation would silently take over both fields.
+     * (via `userMessage.content`). Deriving these from "the latest user
+     * message in the window" is unsafe under concurrent send — a newer
+     * message landing between queueing and generation would silently
+     * take over both fields.
      */
     userMessageId: v.id("messages"),
   },

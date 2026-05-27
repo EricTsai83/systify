@@ -25,7 +25,7 @@ describe("hasWorkOSSessionHint", () => {
     expect(hasWorkOSSessionHint()).toBe(true);
   });
 
-  test("returns true for the legacy '1' value", () => {
+  test("returns true for the '1' value", () => {
     document.cookie = "workos-has-session=1";
     expect(hasWorkOSSessionHint()).toBe(true);
   });

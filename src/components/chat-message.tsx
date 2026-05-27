@@ -19,9 +19,9 @@ import type { ActiveMessageStream, ArtifactId } from "@/lib/types";
  *   - `"Library"` — Library-mode messages (mode === "library")
  *   - `null` — ungrounded Discuss replies and user messages
  *
- * Library-mode rows are tagged simply as "Library" — the legacy
- * `MODE_LABELS` lookup is folded in here so the message bubble does not
- * need to know about the mode/grounding split.
+ * Library-mode rows are tagged simply as "Library" — the mode label and
+ * grounding-derived chips are resolved here so the message bubble does
+ * not need to know about the mode/grounding split.
  */
 function deriveGroundingChip(message: Doc<"messages">): string | null {
   if (message.role !== "assistant") {

@@ -119,9 +119,8 @@ describe("useThreadCapabilities — bridging behavior", () => {
           "A live sandbox is unavailable because no sandbox is ready for this repository yet. Sync the repository to provision one.",
       },
       chatModes: {
-        // Post-Lab collapse: `resolveChatModes` no longer surfaces a `lab`
-        // disabled-reason. The "no sandbox" hint travels via grounding /
-        // sandboxIsActivatable instead.
+        // "No sandbox" hint travels via grounding / sandboxIsActivatable
+        // rather than as a disabled-reason on a mode.
         modes: {
           discuss: { enabled: true },
           library: { enabled: true },

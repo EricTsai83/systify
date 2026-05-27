@@ -346,9 +346,9 @@ export function buildHeuristicAnswer(
   const language = getUILanguage(context);
 
   // Sandbox-grounded Discuss reply with no API key: the model can't run
-  // the live tools, so surface the same dead-end message Lab mode used to
-  // emit (just without naming the mode literal — the user knows they
-  // asked for sandbox grounding via the composer toggle).
+  // the live tools, so surface a dead-end message rather than letting the
+  // heuristic fallback produce text that pretends to have inspected the
+  // sandbox.
   if (context.groundSandbox === true) {
     return HEURISTIC_MESSAGES[language].sandbox(question).join("\n");
   }

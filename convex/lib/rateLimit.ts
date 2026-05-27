@@ -133,13 +133,6 @@ export function getSandboxReplyEstimateCents() {
  * never collides with future ID-keyed buckets that share the rate-limiter
  * namespace. Today this looks like `"repository:abc123"` — explicit so
  * a search for `key.startsWith("repository:")` will match every entry.
- *
- * History note: the bucket and its keys were previously workspace-scoped
- * (`sandboxCostUsdPerWorkspaceDaily` with `"workspace:..."` keys). They
- * were renamed when the workspace abstraction collapsed into repositories;
- * any in-flight rate-limit state keyed on the old prefix is intentionally
- * orphaned. The narrowing happens in early-access so the resulting bucket
- * reset is acceptable.
  */
 export function repositoryCostKey(repositoryId: Id<"repositories">) {
   return `repository:${repositoryId}`;

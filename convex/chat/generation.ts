@@ -19,9 +19,9 @@
  *      tool events (logged for telemetry — Plan 06 turns these into a
  *      persisted trace and a live ticker).
  *
- *   2. **Text-only path.** Discuss / library / lab-without-tooling all use
- *      the same shape: a plain `streamText` over `textStream`, no tools.
- *      The deltas flow through the same character-budget flush as before.
+ *   2. **Text-only path.** Library replies and ungrounded Discuss replies
+ *      use the same shape: a plain `streamText` over `textStream`, no
+ *      tools. The deltas flow through the same character-budget flush.
  *
  * One uniform finalize: regardless of which path ran, we collect usage,
  * compute cost, and persist via `finalizeAssistantReply`.
@@ -277,11 +277,11 @@ export const generateAssistantReply = internalAction({
     // Plan 11 — model name is hoisted for the same reason as `streamResponse`:
     // the catch block needs to feed the post-throw cost extractor the same
     // model the stream actually ran on, otherwise a typo in the per-mode env
-    // var (resolved on the success path) would diverge from the legacy
-    // global default the catch path used to fall back to. `undefined`
-    // before `resolveModelForReply` runs — `extractStreamUsage` short-
-    // circuits on `streamResponse === undefined` so the model name is
-    // moot in that case.
+    // var (resolved on the success path) would diverge from the global
+    // default the catch path falls back to. `undefined` before
+    // `resolveModelForReply` runs — `extractStreamUsage` short-circuits on
+    // `streamResponse === undefined` so the model name is moot in that
+    // case.
     let modelName: string | undefined;
 
     // Plan 07 — cancellation control plane.

@@ -105,11 +105,10 @@ async function enrichThreadContext(
   }
 
   const chatModeSandboxStatus = toChatModeSandboxStatus(sandboxModeStatus);
-  // Post-Lab collapse `resolveChatModes` only takes `hasAttachedRepo`; the
-  // (sandbox-status, cost-cap) matrix that used to live here is now
-  // surfaced via the grounding axes on `resolveRepositoryModes`. The
-  // per-thread chat-mode resolver stays simple so legacy callers reading
-  // `chatModes` get a stable shape.
+  // `resolveChatModes` only takes `hasAttachedRepo`; sandbox status and
+  // cost cap feed the grounding axes on `resolveRepositoryModes` instead.
+  // The per-thread chat-mode resolver stays a thin function so `chatModes`
+  // consumers see a stable shape.
   const chatModes = resolveChatModes(attachedRepository !== null);
 
   // Derive `sandboxIsActivatable` from the same grounding-axis resolver the

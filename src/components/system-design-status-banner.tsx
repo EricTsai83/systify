@@ -193,8 +193,8 @@ function FailureBanner({ repositoryId, job }: { repositoryId: Id<"repositories">
     }
   });
 
-  // No descriptor → fall back to the legacy minimal banner so existing rows
-  // don't break.
+  // No descriptor → render the minimal banner so rows without a structured
+  // descriptor still display the error inline.
   if (!descriptor) {
     return (
       <div className="space-y-0 border-b border-border/50">
