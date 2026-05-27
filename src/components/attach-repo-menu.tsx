@@ -5,13 +5,7 @@ import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { EntityPicker } from "@/components/entity-picker";
 import { Spinner } from "@/components/ui/spinner";
 import { toUserErrorMessage } from "@/lib/errors";
 import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
@@ -71,8 +65,29 @@ export function AttachRepoMenu({
 
   return (
     <div className="flex items-center gap-2">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
+      <EntityPicker
+        items={availableRepositories}
+        getItemKey={(repo) => repo._id}
+        getSearchText={(repo) => repo.sourceRepoFullName}
+        onSelect={(repo) => {
+          void handleAttach(repo._id);
+        }}
+        renderItem={(repo) => (
+          <>
+            {repo.visibility === "private" ? (
+              <LockIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
+            ) : (
+              <GlobeIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
+            )}
+            <span className="min-w-0 flex-1 truncate text-xs">{repo.sourceRepoFullName}</span>
+          </>
+        )}
+        align="start"
+        contentClassName="w-72"
+        searchPlaceholder="Search repositories…"
+        ariaLabel="Search repositories to attach"
+        emptyHint="You have no repositories yet. Import one to get started."
+        trigger={
           <Button
             variant="outline"
             size="sm"
@@ -90,37 +105,8 @@ export function AttachRepoMenu({
             ) : null}
             <CaretDownIcon size={10} weight="bold" className="opacity-60" />
           </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-72">
-          <DropdownMenuLabel className="text-[11px] uppercase tracking-wider">Attach repository</DropdownMenuLabel>
-          {availableRepositories.length === 0 ? (
-            // Empty-state intentionally points at the sidebar's import flow
-            // rather than duplicating it inline — there's only one canonical
-            // entry point to importing a repo.
-            <div className="px-2 py-3 text-xs text-muted-foreground">
-              You have no repositories yet. Import one to get started.
-            </div>
-          ) : (
-            availableRepositories.map((repo) => (
-              <DropdownMenuItem
-                key={repo._id}
-                disabled={isPending}
-                onSelect={() => {
-                  void handleAttach(repo._id);
-                }}
-                className="flex items-center gap-2 text-xs"
-              >
-                {repo.visibility === "private" ? (
-                  <LockIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
-                ) : (
-                  <GlobeIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
-                )}
-                <span className="min-w-0 flex-1 truncate">{repo.sourceRepoFullName}</span>
-              </DropdownMenuItem>
-            ))
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
+        }
+      />
       {error ? (
         <Alert variant="destructive" className="w-full grid-cols-[1fr_auto] p-1.5 text-xs md:w-auto">
           <AlertDescription className="text-xs text-destructive">{error}</AlertDescription>

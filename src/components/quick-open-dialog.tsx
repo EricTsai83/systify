@@ -4,6 +4,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { formatArtifactKind } from "@/lib/operations";
+import { filterByQuery } from "@/lib/text-filter";
 import type { ArtifactId, ArtifactListItem } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -54,21 +55,18 @@ export function QuickOpenDialog({
     }
   }, [open]);
 
-  const filtered = useMemo(() => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) {
-      // No query — surface the most recently created artifacts at the
-      // top so the picker is useful as a "jump to recent work" tool
-      // even before the user types.
-      return artifacts.slice(0, 50);
-    }
-    return artifacts
-      .filter((artifact) => {
-        const haystack = `${artifact.title} ${artifact.summary} ${formatArtifactKind(artifact.kind)}`.toLowerCase();
-        return haystack.includes(needle);
-      })
-      .slice(0, 50);
-  }, [query, artifacts]);
+  const filtered = useMemo(
+    // Empty query passes through unchanged (filterByQuery returns the
+    // input as-is), so the slice still acts as the "jump to recent work"
+    // most-recent cap when the user hasn't typed anything yet.
+    () =>
+      filterByQuery(
+        artifacts,
+        query,
+        (artifact) => `${artifact.title} ${artifact.summary} ${formatArtifactKind(artifact.kind)}`,
+      ).slice(0, 50),
+    [query, artifacts],
+  );
 
   // Keep the active index in range when the result list shrinks.
   // setState in an effect is the right shape: `filtered` is derived

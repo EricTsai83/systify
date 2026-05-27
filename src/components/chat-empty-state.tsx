@@ -4,15 +4,9 @@ import { GlobeIcon, LinkIcon, LockIcon, PlusIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { AppNotice } from "@/components/app-notice";
+import { EntityPicker, PickerActionRow } from "@/components/entity-picker";
 import { ImportRepoDialog } from "@/components/import-repo-dialog";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import type { OnImportedCallback, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -266,48 +260,46 @@ export function EmptyNoRepoHint({
       <EmptyStateHero visual={<OwlAsciiArt />} title="Start a design conversation" />
 
       <div className="flex flex-col items-center gap-3">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+        <EntityPicker
+          items={availableRepositories}
+          getItemKey={(repo) => repo._id}
+          getSearchText={(repo) => repo.sourceRepoFullName}
+          onSelect={(repo) => void handleAttachRepo(repo._id)}
+          renderItem={(repo) => (
+            <>
+              {repo.visibility === "private" ? (
+                <LockIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
+              ) : (
+                <GlobeIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
+              )}
+              <span className="min-w-0 flex-1 truncate text-xs">{repo.sourceRepoFullName}</span>
+            </>
+          )}
+          align="center"
+          contentClassName="w-64"
+          searchPlaceholder="Search repositories…"
+          ariaLabel="Search repositories to attach"
+          emptyHint="No repositories imported yet."
+          footer={
+            onImported ? (
+              <ImportRepoDialog
+                onImported={onImported}
+                trigger={
+                  <PickerActionRow onSelect={() => {}} closeOnSelect={false}>
+                    <PlusIcon size={12} weight="bold" />
+                    <span className="text-xs">Import new repository</span>
+                  </PickerActionRow>
+                }
+              />
+            ) : undefined
+          }
+          trigger={
             <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={isAttachDisabled}>
               <LinkIcon size={13} weight="bold" />
               {isAttaching ? "Attaching…" : "Attach repository"}
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="center" className="w-64">
-            {availableRepositories.length === 0 ? (
-              <div className="px-2 py-3 text-xs text-muted-foreground">No repositories imported yet.</div>
-            ) : (
-              availableRepositories.map((repo) => (
-                <DropdownMenuItem
-                  key={repo._id}
-                  onSelect={() => void handleAttachRepo(repo._id)}
-                  className="flex items-center gap-2 text-xs"
-                >
-                  {repo.visibility === "private" ? (
-                    <LockIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
-                  ) : (
-                    <GlobeIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
-                  )}
-                  <span className="min-w-0 flex-1 truncate">{repo.sourceRepoFullName}</span>
-                </DropdownMenuItem>
-              ))
-            )}
-            {onImported ? (
-              <>
-                <DropdownMenuSeparator />
-                <ImportRepoDialog
-                  onImported={onImported}
-                  trigger={
-                    <DropdownMenuItem onSelect={(e) => e.preventDefault()} className="flex items-center gap-2 text-xs">
-                      <PlusIcon size={12} weight="bold" />
-                      Import new repository
-                    </DropdownMenuItem>
-                  }
-                />
-              </>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
+          }
+        />
 
         <p className="max-w-xs text-xs text-muted-foreground">
           Attach a repository to enable Library and Sandbox grounding, or keep typing here for a free-form discussion.

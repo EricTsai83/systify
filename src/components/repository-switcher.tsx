@@ -1,21 +1,16 @@
 import { memo } from "react";
 import { CaretUpDown, CheckIcon, GitBranchIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { EntityPicker, PickerActionRow } from "@/components/entity-picker";
 import { ImportRepoDialog } from "@/components/import-repo-dialog";
 import type { OnImportedCallback, RepositoryId } from "@/lib/types";
 
-// Repository selector — a dropdown that shows the current repository name
-// and lets the user switch repositories or import new ones. Sits next to
-// the compact profile avatar in the sidebar footer row.
+// Repository selector — popover-based picker that shows the current
+// repository name and lets the user switch repositories, jump back to the
+// repoless `/chat` surface, or import a new repository. Sits next to the
+// compact profile avatar in the sidebar footer row.
 export const RepositorySelector = memo(function RepositorySelector({
   repositories,
   activeRepositoryId,
@@ -26,10 +21,8 @@ export const RepositorySelector = memo(function RepositorySelector({
   repositories: Doc<"repositories">[] | undefined;
   activeRepositoryId: RepositoryId | null;
   onSwitchRepository: (id: RepositoryId) => void;
-  // When supplied, the dropdown surfaces a "No repository" item that
-  // navigates the user back to the repoless `/chat` surface. Optional so
-  // callers that don't want to expose the repoless context (none today,
-  // but kept flexible) can omit it.
+  // When supplied, the picker surfaces a "No repository" header item that
+  // navigates the user back to the repoless `/chat` surface.
   onSelectNoRepository?: () => void;
   onImported: OnImportedCallback;
 }) {
@@ -45,8 +38,51 @@ export const RepositorySelector = memo(function RepositorySelector({
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
+    <EntityPicker
+      items={repositories}
+      getItemKey={(repo) => repo._id}
+      getSearchText={(repo) => repo.sourceRepoFullName}
+      isItemActive={(repo) => repo._id === activeRepositoryId}
+      onSelect={(repo) => {
+        if (repo._id !== activeRepositoryId) onSwitchRepository(repo._id);
+      }}
+      renderItem={(repo, { isActive }) => (
+        <>
+          <span className="min-w-0 flex-1 truncate">{repo.sourceRepoFullName}</span>
+          {isActive ? <CheckIcon size={14} weight="bold" className="shrink-0 text-primary" /> : null}
+        </>
+      )}
+      side="top"
+      align="start"
+      contentClassName="w-56"
+      searchPlaceholder="Search repositories…"
+      emptyHint="No repositories yet."
+      ariaLabel="Search repositories"
+      header={
+        onSelectNoRepository ? (
+          <PickerActionRow
+            onSelect={() => {
+              if (!isRepoless) onSelectNoRepository();
+            }}
+            isActive={isRepoless}
+          >
+            <span className="min-w-0 flex-1 truncate">No repository</span>
+            {isRepoless ? <CheckIcon size={14} weight="bold" className="shrink-0 text-primary" /> : null}
+          </PickerActionRow>
+        ) : undefined
+      }
+      footer={
+        <ImportRepoDialog
+          onImported={onImported}
+          trigger={
+            <PickerActionRow onSelect={() => {}} closeOnSelect={false}>
+              <GitBranchIcon size={14} weight="bold" className="shrink-0" />
+              <span>Import repository</span>
+            </PickerActionRow>
+          }
+        />
+      }
+      trigger={
         <Button
           type="button"
           variant="outline"
@@ -58,56 +94,7 @@ export const RepositorySelector = memo(function RepositorySelector({
           </span>
           <CaretUpDown size={14} weight="bold" className="shrink-0 text-muted-foreground" />
         </Button>
-      </DropdownMenuTrigger>
-
-      <DropdownMenuContent side="top" align="start" className="w-56">
-        {onSelectNoRepository ? (
-          <>
-            <DropdownMenuItem
-              onSelect={() => {
-                if (!isRepoless) onSelectNoRepository();
-              }}
-              className="gap-2"
-            >
-              <span className="min-w-0 flex-1 truncate">No repository</span>
-              {isRepoless && <CheckIcon size={14} weight="bold" className="shrink-0 text-primary" />}
-            </DropdownMenuItem>
-            {repositories.length > 0 ? <DropdownMenuSeparator /> : null}
-          </>
-        ) : null}
-
-        {repositories.length > 0 && (
-          <>
-            {repositories.map((repo) => {
-              const isActive = repo._id === activeRepositoryId;
-              return (
-                <DropdownMenuItem
-                  key={repo._id}
-                  onSelect={() => {
-                    if (!isActive) onSwitchRepository(repo._id);
-                  }}
-                  className="gap-2"
-                >
-                  <span className="min-w-0 flex-1 truncate">{repo.sourceRepoFullName}</span>
-                  {isActive && <CheckIcon size={14} weight="bold" className="shrink-0 text-primary" />}
-                </DropdownMenuItem>
-              );
-            })}
-
-            <DropdownMenuSeparator />
-          </>
-        )}
-
-        <ImportRepoDialog
-          onImported={onImported}
-          trigger={
-            <DropdownMenuItem onSelect={(event) => event.preventDefault()} className="gap-2">
-              <GitBranchIcon size={14} weight="bold" className="shrink-0" />
-              <span>Import repository</span>
-            </DropdownMenuItem>
-          }
-        />
-      </DropdownMenuContent>
-    </DropdownMenu>
+      }
+    />
   );
 });
