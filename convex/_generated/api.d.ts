@@ -8,7 +8,6 @@
  * @module
  */
 
-import type * as architectureDiagram from "../architectureDiagram.js";
 import type * as artifactChunkStore from "../artifactChunkStore.js";
 import type * as artifactFolders from "../artifactFolders.js";
 import type * as artifactIndexing from "../artifactIndexing.js";
@@ -43,7 +42,6 @@ import type * as githubRepoFetcher from "../githubRepoFetcher.js";
 import type * as http from "../http.js";
 import type * as imports from "../imports.js";
 import type * as importsNode from "../importsNode.js";
-import type * as lib_architectureDiagram from "../lib/architectureDiagram.js";
 import type * as lib_artifactChunking from "../lib/artifactChunking.js";
 import type * as lib_artifactRag from "../lib/artifactRag.js";
 import type * as lib_artifactView from "../lib/artifactView.js";
@@ -89,7 +87,6 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  architectureDiagram: typeof architectureDiagram;
   artifactChunkStore: typeof artifactChunkStore;
   artifactFolders: typeof artifactFolders;
   artifactIndexing: typeof artifactIndexing;
@@ -124,7 +121,6 @@ declare const fullApi: ApiFromModules<{
   http: typeof http;
   imports: typeof imports;
   importsNode: typeof importsNode;
-  "lib/architectureDiagram": typeof lib_architectureDiagram;
   "lib/artifactChunking": typeof lib_artifactChunking;
   "lib/artifactRag": typeof lib_artifactRag;
   "lib/artifactView": typeof lib_artifactView;

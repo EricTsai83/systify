@@ -158,13 +158,6 @@ describe("repository access helpers", () => {
       }),
     ).rejects.toThrow("Repository not found.");
 
-    await expect(
-      viewer.mutation(api.architectureDiagram.requestArchitectureDiagram, {
-        threadId,
-        depth: "service",
-      }),
-    ).rejects.toThrow("Repository not found.");
-
     await expect(viewer.mutation(api.designArtifacts.captureAdr, { threadId })).rejects.toThrow("Thread not found.");
   });
 });

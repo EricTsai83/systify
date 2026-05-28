@@ -591,7 +591,6 @@ export function RepositoryShell({
                       repositoryId={effectiveSelectedRepositoryId}
                       artifacts={repoDetail?.artifacts}
                       hasAttachedRepository={capabilities.attachedRepository !== null}
-                      sandboxModeStatus={capabilities.sandboxModeStatus}
                       isVisible={isArtifactPanelOpen}
                       className="flex h-full w-full border-l-0"
                       onOpenInReader={handleSelectArtifact}
@@ -617,7 +616,6 @@ export function RepositoryShell({
                 repositoryId={effectiveSelectedRepositoryId}
                 artifacts={repoDetail?.artifacts}
                 hasAttachedRepository={capabilities.attachedRepository !== null}
-                sandboxModeStatus={capabilities.sandboxModeStatus}
                 isVisible={isArtifactSheetOpen}
                 className="flex h-full w-full border-l-0"
                 onOpenInReader={(artifactId) => {

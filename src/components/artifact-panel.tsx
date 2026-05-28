@@ -1,20 +1,18 @@
 import { memo, useCallback, useState, type ReactNode } from "react";
 import { useMutation } from "convex/react";
-import { CaretDownIcon, FileTextIcon, GraphIcon, WarningCircleIcon, XIcon } from "@phosphor-icons/react";
+import { CaretDownIcon, FileTextIcon, XIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Input } from "@/components/ui/input";
 import { Spinner } from "@/components/ui/spinner";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FolderNavigator } from "@/components/folder-navigator";
 import { FolderPicker } from "@/components/folder-picker";
 import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { ArtifactId, FolderId, RepositoryId, SandboxModeStatus, ThreadId } from "@/lib/types";
+import type { ArtifactId, FolderId, RepositoryId, ThreadId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const EMPTY_ARTIFACTS: Doc<"artifacts">[] = [];
@@ -23,12 +21,13 @@ const EMPTY_ARTIFACTS: Doc<"artifacts">[] = [];
  * ArtifactPanel — right-rail surface for browsing and launching artifacts
  * from the chat. Two sections, top to bottom:
  *
- *   1. **Generate** — collapsible launcher for thread-scoped artifact
- *      kinds (architecture diagram, ADR, failure-mode analysis). Visible
- *      operation entry points, not buried in a kebab menu, so the user
- *      doesn't have to remember they exist. Generation is gated on having
- *      a repository attached to the thread; CTA captions explain the
- *      missing precondition rather than silently disabling.
+ *   1. **Generate** — collapsible launcher for the ADR capture flow. The
+ *      richer System Design generation (README summary, architecture
+ *      overview, architecture diagram, …) is launched from the top-bar
+ *      `Generate System Design` dialog because it is a multi-kind LLM
+ *      publication, not a one-shot artifact. ADR stays in the right rail
+ *      because it is a single thread-scoped capture the user typically
+ *      wants alongside the in-progress chat.
  *
  *   2. **Folder navigator** — tree view replacing the original "Repository
  *      intelligence + Thread outputs" flat sections. Drives every artifact
@@ -46,7 +45,6 @@ export function ArtifactPanel({
   repositoryId,
   artifacts = EMPTY_ARTIFACTS,
   hasAttachedRepository,
-  sandboxModeStatus,
   isVisible = true,
   className,
   onOpenInReader,
@@ -66,7 +64,6 @@ export function ArtifactPanel({
    */
   artifacts?: ReadonlyArray<Doc<"artifacts">>;
   hasAttachedRepository: boolean;
-  sandboxModeStatus: SandboxModeStatus | null;
   isVisible?: boolean;
   className?: string;
   /**
@@ -82,6 +79,24 @@ export function ArtifactPanel({
   const [actionsOpen, setActionsOpen] = useState<boolean | null>(null);
   const effectiveActionsOpen = actionsOpen ?? artifacts.length === 0;
   const { isUnseen, markViewed } = useArtifactViewState(repositoryId);
+  // Internal fallback when the caller doesn't provide a controlled
+  // `selectedFolderId`. The chat right rail leaves selection uncontrolled,
+  // so we own the state here and share it between FolderNavigator (where
+  // the user clicks a folder) and ArtifactActions (where the picker shows
+  // the same destination). Library reader callers keep external control by
+  // passing `selectedFolderId` + `onSelectFolder` themselves.
+  const [internalSelectedFolderId, setInternalSelectedFolderId] = useState<FolderId | null>(null);
+  const isFolderSelectionControlled = selectedFolderId !== undefined;
+  const effectiveSelectedFolderId = isFolderSelectionControlled ? selectedFolderId : internalSelectedFolderId;
+  const handleSelectFolder = useCallback(
+    (folderId: FolderId | null) => {
+      if (!isFolderSelectionControlled) {
+        setInternalSelectedFolderId(folderId);
+      }
+      onSelectFolder?.(folderId);
+    },
+    [isFolderSelectionControlled, onSelectFolder],
+  );
   // Clicking a row in the panel always routes through `onOpenInReader`,
   // so it is the single chokepoint where we record the activation. The
   // Library shell has multiple activation entry points (URL, tab strip,
@@ -118,7 +133,8 @@ export function ArtifactPanel({
             threadId={threadId}
             repositoryId={repositoryId}
             hasAttachedRepository={hasAttachedRepository}
-            sandboxModeStatus={sandboxModeStatus}
+            folderId={effectiveSelectedFolderId}
+            onFolderChange={handleSelectFolder}
             open={effectiveActionsOpen}
             onOpenChange={setActionsOpen}
           />
@@ -129,16 +145,16 @@ export function ArtifactPanel({
         <FolderNavigator
           repositoryId={repositoryId}
           artifacts={artifacts}
-          selectedFolderId={selectedFolderId ?? null}
+          selectedFolderId={effectiveSelectedFolderId}
           onSelectArtifact={handleSelectArtifact}
-          onSelectFolder={onSelectFolder}
+          onSelectFolder={handleSelectFolder}
           isUnseen={isUnseen}
           className="border-l-0"
         />
       ) : (
         <div className="flex flex-1 items-center justify-center px-4 py-8">
           <p className="text-center text-[12px] text-muted-foreground">
-            Attach a repository to start producing diagrams, ADRs, and failure-mode analyses.
+            Attach a repository to capture ADRs and explore generated artifacts.
           </p>
         </div>
       )}
@@ -161,41 +177,26 @@ function ArtifactActions({
   threadId,
   repositoryId,
   hasAttachedRepository,
-  sandboxModeStatus,
+  folderId,
+  onFolderChange,
   open,
   onOpenChange,
 }: {
   threadId: ThreadId;
   repositoryId: RepositoryId | null;
   hasAttachedRepository: boolean;
-  sandboxModeStatus: SandboxModeStatus | null;
+  // The destination folder for the next generated artifact. Controlled by
+  // the parent panel so it stays in sync with the navigator's selection —
+  // clicking a folder below seeds this picker, and changing the picker
+  // here highlights the matching folder below.
+  folderId: FolderId | null;
+  onFolderChange: (folderId: FolderId | null) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [subsystem, setSubsystem] = useState("");
-  const [activeTab, setActiveTab] = useState<"diagram" | "adr" | "failure">("diagram");
-  // One folder pick shared across the three generation tabs — the user
-  // typically wants the same destination for whatever they're generating
-  // next. Resets to root on every panel mount so previous picks don't
-  // silently follow the user into a new context.
-  const [folderId, setFolderId] = useState<FolderId | null>(null);
   const captureAdr = useMutation(api.designArtifacts.captureAdr);
-  const requestFailureMode = useMutation(api.designArtifacts.requestFailureModeAnalysis);
-  const requestDiagram = useMutation(api.architectureDiagram.requestArchitectureDiagram);
-  const sandboxReady = sandboxModeStatus?.reasonCode === "available";
 
-  const [diagramError, setDiagramError] = useState<string | null>(null);
   const [adrError, setAdrError] = useState<string | null>(null);
-  const [failureError, setFailureError] = useState<string | null>(null);
-
-  const [isDiagramPending, runDiagram] = useAsyncCallback(async () => {
-    setDiagramError(null);
-    try {
-      await requestDiagram({ threadId, depth: "module", folderId: folderId ?? undefined });
-    } catch (err) {
-      setDiagramError(toUserErrorMessage(err, "Failed to generate architecture diagram."));
-    }
-  });
 
   const [isAdrPending, runAdr] = useAsyncCallback(async () => {
     setAdrError(null);
@@ -203,19 +204,6 @@ function ArtifactActions({
       await captureAdr({ threadId, folderId: folderId ?? undefined });
     } catch (err) {
       setAdrError(toUserErrorMessage(err, "Failed to capture ADR."));
-    }
-  });
-
-  const [isFailurePending, runFailureMode] = useAsyncCallback(async () => {
-    setFailureError(null);
-    try {
-      await requestFailureMode({
-        threadId,
-        subsystem: subsystem.trim(),
-        folderId: folderId ?? undefined,
-      });
-    } catch (err) {
-      setFailureError(toUserErrorMessage(err, "Failed to start failure mode analysis."));
     }
   });
 
@@ -231,100 +219,34 @@ function ArtifactActions({
           />
         </Button>
       </CollapsibleTrigger>
-      <CollapsibleContent className="pt-1">
-        <div className="mb-2 flex flex-col gap-1">
+      <CollapsibleContent className="flex flex-col gap-2 pt-1">
+        <div className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Folder</span>
           <FolderPicker
             repositoryId={repositoryId}
             value={folderId}
-            onChange={setFolderId}
-            hint="Where should this artifact land? Pick a feature folder or leave at Repository root."
+            onChange={onFolderChange}
+            hint="Where should this ADR land? Pick a feature folder or leave at Repository root."
             disabled={!hasAttachedRepository}
             className="w-full"
           />
         </div>
-        <Tabs
-          value={activeTab}
-          onValueChange={(value) => setActiveTab(value as "diagram" | "adr" | "failure")}
-          className="flex flex-col gap-2"
-        >
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="diagram" className="px-2 py-1.5 text-[11px]">
-              Diagram
-            </TabsTrigger>
-            <TabsTrigger value="adr" className="px-2 py-1.5 text-[11px]">
-              ADR
-            </TabsTrigger>
-            <TabsTrigger value="failure" className="px-2 py-1.5 text-[11px]">
-              Failure
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="diagram">
-            <ActionRow
-              pending={isDiagramPending}
-              onClick={() => void runDiagram()}
-              caption={
-                hasAttachedRepository
-                  ? "Module-level Mermaid graph from your repo's structure."
-                  : "Attach a repository to enable diagram generation."
-              }
-              error={diagramError}
-              onDismiss={() => setDiagramError(null)}
-              buttonLabel="Generate architecture diagram"
-              pendingLabel="Generating diagram…"
-              icon={<GraphIcon size={14} weight="bold" />}
-              disabled={!hasAttachedRepository || isDiagramPending}
-            />
-          </TabsContent>
-
-          <TabsContent value="adr">
-            <ActionRow
-              pending={isAdrPending}
-              onClick={() => void runAdr()}
-              caption={
-                hasAttachedRepository
-                  ? "One-click ADR in Context / Decision / Consequences / Alternatives format."
-                  : "Attach a repository to enable ADR capture."
-              }
-              error={adrError}
-              onDismiss={() => setAdrError(null)}
-              buttonLabel="Capture as ADR"
-              pendingLabel="Capturing ADR…"
-              icon={<FileTextIcon size={14} weight="bold" />}
-              variant="outline"
-              disabled={!hasAttachedRepository || isAdrPending}
-            />
-          </TabsContent>
-
-          <TabsContent value="failure">
-            <div className="flex flex-col gap-2">
-              <Input
-                value={subsystem}
-                onChange={(event) => setSubsystem(event.target.value)}
-                placeholder="API and data access"
-              />
-              <ActionRow
-                pending={isFailurePending}
-                onClick={() => void runFailureMode()}
-                caption={
-                  hasAttachedRepository
-                    ? sandboxReady
-                      ? "Sandbox-backed scan that records component, blast radius, mitigation, and code references."
-                      : (sandboxModeStatus?.message ?? "Sandbox is not ready yet. Sync and wait for ready state.")
-                    : "Attach a repository to enable failure mode analysis."
-                }
-                error={failureError}
-                onDismiss={() => setFailureError(null)}
-                buttonLabel="Run failure mode analysis"
-                pendingLabel="Running failure mode analysis…"
-                icon={<WarningCircleIcon size={14} weight="bold" />}
-                variant="outline"
-                disabled={!hasAttachedRepository || !sandboxReady || isFailurePending || !subsystem.trim()}
-              />
-            </div>
-          </TabsContent>
-        </Tabs>
+        <ActionRow
+          pending={isAdrPending}
+          onClick={() => void runAdr()}
+          caption={
+            hasAttachedRepository
+              ? "One-click ADR in Context / Decision / Consequences / Alternatives format."
+              : "Attach a repository to enable ADR capture."
+          }
+          error={adrError}
+          onDismiss={() => setAdrError(null)}
+          buttonLabel="Capture as ADR"
+          pendingLabel="Capturing ADR…"
+          icon={<FileTextIcon size={14} weight="bold" />}
+          variant="outline"
+          disabled={!hasAttachedRepository || isAdrPending}
+        />
       </CollapsibleContent>
     </Collapsible>
   );

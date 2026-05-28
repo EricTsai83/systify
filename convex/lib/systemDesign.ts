@@ -72,7 +72,7 @@ export async function ensureSystemDesignFolders(
 }
 
 /**
- * The 7 artifact kinds that the Library System Design publication can produce.
+ * The 8 artifact kinds that the Library System Design publication can produce.
  * Every kind is LLM-backed: the generator opens a Daytona sandbox and reads
  * the repository's live source through sandbox tools, so each document tracks
  * the current code state rather than a stale import snapshot.
@@ -80,6 +80,7 @@ export async function ensureSystemDesignFolders(
 export const SYSTEM_DESIGN_KINDS = [
   "readme_summary",
   "architecture_overview",
+  "architecture_diagram",
   "data_model_overview",
   "api_surface_overview",
   "deployment_overview",
@@ -112,6 +113,7 @@ export const systemDesignKindValidator = v.union(
   v.literal("manifest"),
   v.literal("readme_summary"),
   v.literal("architecture_overview"),
+  v.literal("architecture_diagram"),
   v.literal("data_model_overview"),
   v.literal("api_surface_overview"),
   v.literal("deployment_overview"),
@@ -127,6 +129,7 @@ export const systemDesignKindValidator = v.union(
 export const SYSTEM_DESIGN_KIND_TO_FOLDER: Record<SystemDesignKind, SystemDesignFolderKey> = {
   readme_summary: "overview",
   architecture_overview: "architecture",
+  architecture_diagram: "architecture",
   data_model_overview: "data_model",
   api_surface_overview: "api",
   deployment_overview: "infrastructure",
@@ -141,6 +144,7 @@ export const SYSTEM_DESIGN_KIND_TO_FOLDER: Record<SystemDesignKind, SystemDesign
 export const SYSTEM_DESIGN_KIND_TITLES: Record<SystemDesignKind, string> = {
   readme_summary: "README Summary",
   architecture_overview: "Architecture Overview",
+  architecture_diagram: "Architecture Diagram",
   data_model_overview: "Data Model Overview",
   api_surface_overview: "API Surface Overview",
   deployment_overview: "Deployment Overview",

@@ -33,10 +33,10 @@ describe("GenerateSystemDesignDialog", () => {
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // The publication opts the user in to the full set — all seven documents
+    // The publication opts the user in to the full set — all eight documents
     // start checked.
     const checkboxes = screen.getAllByRole("checkbox");
-    expect(checkboxes).toHaveLength(7);
+    expect(checkboxes).toHaveLength(8);
     for (const checkbox of checkboxes) {
       expect(checkbox).toBeChecked();
     }
@@ -64,15 +64,15 @@ describe("GenerateSystemDesignDialog", () => {
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // Default: all 7 documents selected.
-    expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 7 of 7 documents.");
+    // Default: all 8 documents selected.
+    expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 8 of 8 documents.");
 
     // Toggle two documents off.
     fireEvent.click(screen.getByRole("checkbox", { name: /README Summary/i }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Security Overview/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 5 of 7 documents.");
+      expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 6 of 8 documents.");
     });
   });
 
@@ -114,6 +114,7 @@ describe("GenerateSystemDesignDialog", () => {
         selections: [
           "readme_summary",
           "architecture_overview",
+          "architecture_diagram",
           "data_model_overview",
           "api_surface_overview",
           "deployment_overview",

@@ -74,7 +74,6 @@ describe("ArtifactPanel action defaults", () => {
         repositoryId={repositoryId}
         artifacts={[artifact]}
         hasAttachedRepository
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
         isVisible={false}
       />,
     );
@@ -89,7 +88,6 @@ describe("ArtifactPanel action defaults", () => {
         repositoryId={repositoryId}
         artifacts={[artifact]}
         hasAttachedRepository
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
         isVisible
       />,
     );
@@ -98,70 +96,36 @@ describe("ArtifactPanel action defaults", () => {
   });
 
   test("defaults the Generate panel open when there are no artifacts", () => {
-    render(
-      <ArtifactPanel
-        threadId={threadId}
-        repositoryId={repositoryId}
-        artifacts={[]}
-        hasAttachedRepository
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
-      />,
-    );
+    render(<ArtifactPanel threadId={threadId} repositoryId={repositoryId} artifacts={[]} hasAttachedRepository />);
 
-    expect(screen.getByRole("button", { name: /generate architecture diagram/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /capture as adr/i })).toBeInTheDocument();
   });
 
   test("auto-collapses the Generate panel once artifacts exist", () => {
     render(
-      <ArtifactPanel
-        threadId={threadId}
-        repositoryId={repositoryId}
-        artifacts={[artifact]}
-        hasAttachedRepository
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
-      />,
+      <ArtifactPanel threadId={threadId} repositoryId={repositoryId} artifacts={[artifact]} hasAttachedRepository />,
     );
 
-    expect(screen.queryByRole("button", { name: /generate architecture diagram/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /capture as adr/i })).not.toBeInTheDocument();
   });
 
   test("manual toggle locks preference across artifact-count changes", () => {
     const { rerender } = render(
-      <ArtifactPanel
-        threadId={threadId}
-        repositoryId={repositoryId}
-        artifacts={[]}
-        hasAttachedRepository
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
-      />,
+      <ArtifactPanel threadId={threadId} repositoryId={repositoryId} artifacts={[]} hasAttachedRepository />,
     );
 
     fireEvent.click(screen.getByRole("button", { name: /\+ generate/i }));
-    expect(screen.queryByRole("button", { name: /generate architecture diagram/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /capture as adr/i })).not.toBeInTheDocument();
 
     rerender(
-      <ArtifactPanel
-        threadId={threadId}
-        repositoryId={repositoryId}
-        artifacts={[artifact]}
-        hasAttachedRepository
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
-      />,
+      <ArtifactPanel threadId={threadId} repositoryId={repositoryId} artifacts={[artifact]} hasAttachedRepository />,
     );
-    expect(screen.queryByRole("button", { name: /generate architecture diagram/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /capture as adr/i })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /\+ generate/i }));
-    expect(screen.getByRole("button", { name: /generate architecture diagram/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /capture as adr/i })).toBeInTheDocument();
 
-    rerender(
-      <ArtifactPanel
-        threadId={threadId}
-        repositoryId={repositoryId}
-        artifacts={[]}
-        hasAttachedRepository
-        sandboxModeStatus={{ reasonCode: "available", message: null }}
-      />,
-    );
-    expect(screen.getByRole("button", { name: /generate architecture diagram/i })).toBeInTheDocument();
+    rerender(<ArtifactPanel threadId={threadId} repositoryId={repositoryId} artifacts={[]} hasAttachedRepository />);
+    expect(screen.getByRole("button", { name: /capture as adr/i })).toBeInTheDocument();
   });
 });

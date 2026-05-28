@@ -74,10 +74,11 @@ type FolderNavigatorProps = {
  *      kebab menu with rename / delete-and-move-contents-up. Children are
  *      nested folders and any artifact placed via `folderId`.
  *
- *   2. **Uncategorized** — artifacts with no `folderId` (legacy data, or
- *      artifacts whose folder was deleted with the "move contents to
- *      parent" strategy while at root). Acts as the pickup pile until the
- *      user moves them into a folder.
+ *   2. **Repository root** — artifacts with no `folderId`. The name mirrors
+ *      the FolderPicker's "Repository root" option so the same destination
+ *      reads the same way on both surfaces. Typical contents are
+ *      `+ Generate`-produced artifacts the user left at root, plus legacy
+ *      rows.
  *
  * Routing is single-source: `folderId` decides placement, full stop. There
  * is no separate kind-based "Repository" pin — repo-level System Design
@@ -226,8 +227,8 @@ export function FolderNavigator({
 
           {uncategorizedArtifacts.length > 0 ? (
             <NavigatorSection
-              title="Uncategorized"
-              description="Artifacts not yet placed in a folder. Move them in via the kebab menu."
+              title="Repository root"
+              description="Artifacts left at root (no folder). Move them into a folder via the kebab menu."
             >
               {uncategorizedArtifacts.map((artifact) => {
                 if (filterPredicate && !filterPredicate(artifact)) return null;

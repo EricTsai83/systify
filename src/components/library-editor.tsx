@@ -19,8 +19,10 @@ import { cn } from "@/lib/utils";
  * Reader text-size preference. The Library editor renders long-form
  * artifacts, so a viewer can scale the markdown body up or down for
  * comfortable reading; the choice persists per browser via
- * `useLocalStorageEnum`. Architecture diagrams are exempt — they render
- * as SVG, not text, so the control is hidden for them.
+ * `useLocalStorageEnum`. Legacy raw-Mermaid architecture diagrams are
+ * exempt — they render as SVG, not text, so the control is hidden for
+ * them. The new LLM-backed Architecture Diagram document is Markdown
+ * with an embedded mermaid block, so the scaler applies normally.
  *
  * Scaling uses CSS `zoom` on a wrapper around the body. `zoom` reflows
  * the content (text re-wraps within the fixed `68ch` measure) instead of
@@ -44,6 +46,22 @@ const DEFAULT_FONT_SIZE: FontSize = "100";
 /** The CSS `zoom` multiplier for a stored text-size rung. */
 function fontSizeZoom(size: FontSize): number {
   return Number(size) / 100;
+}
+
+/**
+ * Heuristic check for whether `contentMarkdown` is Markdown (versus raw
+ * Mermaid). True when the first non-empty line starts with `#`, which is
+ * how every LLM-emitted Architecture Diagram document begins. The
+ * heuristic generator's output starts directly with the Mermaid
+ * `graph`/`flowchart` keyword, so it does not match.
+ */
+function isMarkdownDocument(content: string): boolean {
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    return trimmed.startsWith("#");
+  }
+  return false;
 }
 
 /**
@@ -88,14 +106,23 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
     );
   }
 
-  const isDiagram = artifact.kind === "architecture_diagram";
+  // Legacy `architecture_diagram` rows produced by the heuristic generator
+  // store raw Mermaid (`graph TD …`) in `contentMarkdown`. The new
+  // LLM-backed System Design path emits Markdown with a fenced `mermaid`
+  // block plus legend / reading guide, which renders correctly through
+  // the Markdown pipeline (Streamdown's mermaid plugin). Detect by
+  // looking for a Markdown heading on the first non-empty line — every
+  // LLM-emitted document starts with `# Architecture Diagram`, while the
+  // heuristic output starts directly with the `graph`/`flowchart`
+  // keyword. This lets old rows keep rendering without a data migration.
+  const isLegacyRawDiagram = artifact.kind === "architecture_diagram" && !isMarkdownDocument(artifact.contentMarkdown);
 
   return (
     <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur">
         <LibraryBreadcrumb folderName={folder?.name ?? null} title={artifact.title} />
         <div className="ml-auto flex items-center gap-1.5">
-          {!isDiagram ? <FontSizeControl value={fontSize} onChange={setFontSize} /> : null}
+          {!isLegacyRawDiagram ? <FontSizeControl value={fontSize} onChange={setFontSize} /> : null}
           <Button
             type="button"
             variant="ghost"
@@ -129,7 +156,7 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
             <p className="text-[14px] text-muted-foreground">{artifact.summary}</p>
           </header>
 
-          {isDiagram ? (
+          {isLegacyRawDiagram ? (
             <MermaidRenderer source={artifact.contentMarkdown} />
           ) : (
             <div style={{ zoom: fontSizeZoom(fontSize) }}>
