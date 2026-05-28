@@ -154,7 +154,7 @@ export function GenerateSystemDesignDialog({
             return (
               <li key={item.kind}>
                 <label
-                  className="flex cursor-pointer items-start gap-3 rounded-md p-2 transition hover:bg-muted"
+                  className="flex cursor-pointer items-start gap-3 p-2 transition hover:bg-muted"
                   htmlFor={`gen-${item.kind}`}
                 >
                   <input

@@ -350,7 +350,7 @@ function FolderTreeBranch({
     <div>
       <div
         className={cn(
-          "group flex items-center gap-1 rounded-md px-1.5 py-1 text-[12px] hover:bg-muted/60",
+          "group flex items-center gap-1 px-1.5 py-1 text-[12px] hover:bg-muted/60",
           isSelected ? "bg-muted/60" : "",
         )}
         style={{ paddingLeft: `${indent * 12 + 6}px` }}
@@ -510,7 +510,7 @@ const ArtifactRow = memo(function ArtifactRow({
       tabIndex={0}
       aria-current={isSelected ? "true" : undefined}
       className={cn(
-        "group flex cursor-pointer items-center gap-1 rounded-md px-1.5 py-1 text-left text-[12px] hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+        "group flex cursor-pointer items-center gap-1 px-1.5 py-1 text-left text-[12px] hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
         isSelected ? "bg-primary/10 ring-1 ring-primary/30" : "",
       )}
       style={{ paddingLeft: `${indent * 12 + 22}px`, contentVisibility: "auto", containIntrinsicSize: "28px" }}

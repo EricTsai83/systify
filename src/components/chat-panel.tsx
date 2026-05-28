@@ -5,6 +5,13 @@ import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
+import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
+import {
+  PromptInput,
+  PromptInputFooter,
+  PromptInputTextarea,
+  PromptInputTools,
+} from "@/components/ai-elements/prompt-input";
 import { AppNotice } from "@/components/app-notice";
 import { EmptyChatHint, EmptyNoRepoHint } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
@@ -13,8 +20,6 @@ import { GroundingToggleBar, type GroundingAxisLike } from "@/components/groundi
 import { ModeExamples } from "@/components/mode-examples";
 import { SandboxActivityPill } from "@/components/sandbox-activity-pill";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
 import type {
   ActiveMessageStream,
   ArtifactId,
@@ -327,8 +332,13 @@ export function ChatPanel({
           />
         </div>
       ) : (
-        <ScrollArea className="flex-1 min-h-0">
-          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6">
+        // `Conversation` (ai-elements) wraps `use-stick-to-bottom`, so a
+        // streaming reply auto-sticks to the bottom and the scroll button
+        // surfaces only when the user has scrolled away. We override
+        // `ConversationContent`'s default gap-8 / p-4 because the chat
+        // column owns its own max-w-3xl gutter.
+        <Conversation className="flex-1 min-h-0">
+          <ConversationContent className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6">
             {sandboxPill}
             {sandboxWarning}
             {messages && (
@@ -354,145 +364,156 @@ export function ChatPanel({
                 })}
               </div>
             )}
-          </div>
-        </ScrollArea>
+          </ConversationContent>
+          <ConversationScrollButton />
+        </Conversation>
       )}
 
       <div className="border-t border-border bg-background">
-        <form
-          className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-6 py-3"
-          onSubmit={(e) => {
-            void onSendMessage(e);
-          }}
-        >
-          <Textarea
-            value={chatInput}
-            onChange={(e) => setChatInput(e.target.value)}
-            placeholder={
-              isReadOnly
-                ? (readOnlyHint ?? "This thread is read-only.")
-                : "Ask about architecture, module boundaries, data flow, risks…"
-            }
-            className="min-h-20 resize-none border-border"
-            readOnly={isReadOnly}
-            aria-describedby={isReadOnly && readOnlyHint ? "readonly-hint" : undefined}
-          />
+        {/*
+         * `PromptInput` (ai-elements) wraps the form in an `InputGroup`
+         * primitive that aligns the textarea + toolbar / submit as a
+         * single bordered control. Submitting routes through PromptInput's
+         * internal handler, which fires our `onSendMessage` with the
+         * captured form event. Per-message state (`chatInput`) stays
+         * controlled here so the parent's already-persisted draft logic
+         * (mode switches, thread switches) is untouched.
+         *
+         * `readonly-hint` and `activationError` live OUTSIDE the
+         * PromptInput because InputGroup expects only textarea + addons
+         * as children; arbitrary `<p>` siblings would break its CSS-only
+         * layout selectors.
+         */}
+        <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-6 py-3">
+          <PromptInput
+            onSubmit={(_, event) => {
+              void onSendMessage(event);
+            }}
+          >
+            <PromptInputTextarea
+              name="message"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder={
+                isReadOnly
+                  ? (readOnlyHint ?? "This thread is read-only.")
+                  : "Ask about architecture, module boundaries, data flow, risks…"
+              }
+              className="min-h-20"
+              readOnly={isReadOnly}
+              aria-describedby={isReadOnly && readOnlyHint ? "readonly-hint" : undefined}
+            />
+            <PromptInputFooter>
+              <PromptInputTools>
+                {showArtifactToggle && onToggleArtifactPanel ? (
+                  <Button
+                    type="button"
+                    variant={isArtifactPanelOpen ? "secondary" : "ghost"}
+                    size="sm"
+                    onClick={onToggleArtifactPanel}
+                    aria-label="Toggle artifacts panel"
+                    aria-pressed={isArtifactPanelOpen}
+                    className="h-8 shrink-0 gap-1.5 px-2 text-xs"
+                  >
+                    <FileTextIcon size={14} weight="bold" />
+                    <span className="hidden sm:inline">Artifacts</span>
+                  </Button>
+                ) : null}
+                {chatMode === "discuss" ? (
+                  <GroundingToggleBar
+                    groundLibrary={groundLibrary}
+                    groundSandbox={groundSandbox}
+                    setGroundLibrary={setGroundLibrary}
+                    setGroundSandbox={setGroundSandbox}
+                    grounding={grounding}
+                    onActivateSandbox={() => void activateSandbox()}
+                    onOpenGenerateSystemDesign={onOpenGenerateSystemDesign}
+                  />
+                ) : null}
+              </PromptInputTools>
+              {canCancel && !isReadOnly ? (
+                /*
+                 * Stop button. `type="button"` so a stray Enter in
+                 * the textarea cannot accidentally submit a Stop click as if
+                 * it were Send. `aria-label` plus the visible "Stop" /
+                 * "Stopping…" label keep the affordance accessible to screen
+                 * readers throughout the cancellation cycle.
+                 *
+                 * Disabled during the "Stopping…" interval to prevent
+                 * double-cancels: the mutation is idempotent on the server,
+                 * but stacking clicks would still fire redundant requests.
+                 */
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  disabled={isCancellingReply}
+                  aria-label="Stop generating reply"
+                  data-testid="chat-panel-stop-button"
+                  onClick={() => {
+                    void onCancelInFlightReply?.();
+                  }}
+                >
+                  <StopCircleIcon weight="bold" />
+                  <span className="grid">
+                    <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+                      Stopping…
+                    </span>
+                    <span className="col-start-1 row-start-1">{isCancellingReply ? "Stopping…" : "Stop"}</span>
+                  </span>
+                </Button>
+              ) : (
+                <Button
+                  type="submit"
+                  variant="default"
+                  size="sm"
+                  disabled={
+                    isReadOnly ||
+                    isSending ||
+                    isSyncing ||
+                    !chatInput.trim() ||
+                    // Sandbox grounding requires a ready live source. Disable
+                    // send until the sandbox lifecycle is `available` so an
+                    // optimistically-flipped toggle does not produce a
+                    // round-trip into a backend reject.
+                    (groundSandbox && !sandboxModeAvailable)
+                  }
+                  data-testid="chat-panel-send-button"
+                >
+                  <PaperPlaneTiltIcon weight="bold" />
+                  {/*
+                   * Grid-stack the label so the button width is always sized to
+                   * the longest possible state ("Sending…" / "Syncing…") and
+                   * doesn't reflow when toggling between idle/sending/syncing.
+                   * The invisible sizer reserves the max width; the visible
+                   * span is overlaid in the same grid cell.
+                   */}
+                  <span className="grid">
+                    <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+                      Sending…
+                    </span>
+                    <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+                      Syncing…
+                    </span>
+                    <span className="col-start-1 row-start-1">
+                      {isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
+                    </span>
+                  </span>
+                </Button>
+              )}
+            </PromptInputFooter>
+          </PromptInput>
           {isReadOnly && readOnlyHint ? (
             <p id="readonly-hint" className="text-xs text-muted-foreground">
               {readOnlyHint}
             </p>
           ) : null}
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-center gap-2">
-              {showArtifactToggle && onToggleArtifactPanel ? (
-                <Button
-                  type="button"
-                  variant={isArtifactPanelOpen ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={onToggleArtifactPanel}
-                  aria-label="Toggle artifacts panel"
-                  aria-pressed={isArtifactPanelOpen}
-                  className="h-8 shrink-0 gap-1.5 px-2 text-xs"
-                >
-                  <FileTextIcon size={14} weight="bold" />
-                  <span className="hidden sm:inline">Artifacts</span>
-                </Button>
-              ) : null}
-              {chatMode === "discuss" ? (
-                <GroundingToggleBar
-                  groundLibrary={groundLibrary}
-                  groundSandbox={groundSandbox}
-                  setGroundLibrary={setGroundLibrary}
-                  setGroundSandbox={setGroundSandbox}
-                  grounding={grounding}
-                  onActivateSandbox={() => void activateSandbox()}
-                  onOpenGenerateSystemDesign={onOpenGenerateSystemDesign}
-                />
-              ) : null}
-              {activationError ? (
-                <p
-                  className="basis-full text-[11px] text-destructive"
-                  role="alert"
-                  data-testid="sandbox-activation-error"
-                >
-                  {activationError}
-                </p>
-              ) : null}
-            </div>
-            {canCancel && !isReadOnly ? (
-              /*
-               * Stop button. `type="button"` so a stray Enter in
-               * the textarea cannot accidentally submit a Stop click as if
-               * it were Send. `aria-label` plus the visible "Stop" /
-               * "Stopping…" label keep the affordance accessible to screen
-               * readers throughout the cancellation cycle.
-               *
-               * Disabled during the "Stopping…" interval to prevent
-               * double-cancels: the mutation is idempotent on the server,
-               * but stacking clicks would still fire redundant requests.
-               */
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                className="w-full sm:w-auto"
-                disabled={isCancellingReply}
-                aria-label="Stop generating reply"
-                data-testid="chat-panel-stop-button"
-                onClick={() => {
-                  void onCancelInFlightReply?.();
-                }}
-              >
-                <StopCircleIcon weight="bold" />
-                <span className="grid">
-                  <span aria-hidden="true" className="invisible col-start-1 row-start-1">
-                    Stopping…
-                  </span>
-                  <span className="col-start-1 row-start-1">{isCancellingReply ? "Stopping…" : "Stop"}</span>
-                </span>
-              </Button>
-            ) : (
-              <Button
-                type="submit"
-                variant="default"
-                size="sm"
-                className="w-full sm:w-auto"
-                disabled={
-                  isReadOnly ||
-                  isSending ||
-                  isSyncing ||
-                  !chatInput.trim() ||
-                  // Sandbox grounding requires a ready live source. Disable
-                  // send until the sandbox lifecycle is `available` so an
-                  // optimistically-flipped toggle does not produce a
-                  // round-trip into a backend reject.
-                  (groundSandbox && !sandboxModeAvailable)
-                }
-                data-testid="chat-panel-send-button"
-              >
-                <PaperPlaneTiltIcon weight="bold" />
-                {/*
-                 * Grid-stack the label so the button width is always sized to
-                 * the longest possible state ("Sending…" / "Syncing…") and
-                 * doesn't reflow when toggling between idle/sending/syncing.
-                 * The invisible sizer reserves the max width; the visible
-                 * span is overlaid in the same grid cell.
-                 */}
-                <span className="grid">
-                  <span aria-hidden="true" className="invisible col-start-1 row-start-1">
-                    Sending…
-                  </span>
-                  <span aria-hidden="true" className="invisible col-start-1 row-start-1">
-                    Syncing…
-                  </span>
-                  <span className="col-start-1 row-start-1">
-                    {isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
-                  </span>
-                </span>
-              </Button>
-            )}
-          </div>
-        </form>
+          {activationError ? (
+            <p className="text-[11px] text-destructive" role="alert" data-testid="sandbox-activation-error">
+              {activationError}
+            </p>
+          ) : null}
+        </div>
       </div>
     </div>
   );

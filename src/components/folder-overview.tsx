@@ -246,7 +246,7 @@ function FolderArtifactCard({
   return (
     <button
       type="button"
-      className="group flex flex-col gap-1 rounded-md border border-border bg-background p-3 text-left transition-shadow hover:shadow-sm"
+      className="group flex flex-col gap-1 border border-border bg-background p-3 text-left transition-shadow hover:shadow-sm"
       onClick={() => onSelect(artifact._id as ArtifactId)}
     >
       <div className="flex items-start justify-between gap-2">

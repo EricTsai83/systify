@@ -176,7 +176,7 @@ export function PromptSuggestionList({
             onClick={() => onPick(prompt)}
             disabled={disabled}
             data-testid={`prompt-suggestion-${index}`}
-            className="group flex h-full items-start gap-2 rounded-md border border-border bg-card/50 px-3 py-2 text-left text-xs leading-5 text-foreground transition-colors hover:border-foreground/30 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+            className="group flex h-full items-start gap-2 border border-border bg-card/50 px-3 py-2 text-left text-xs leading-5 text-foreground transition-colors hover:border-foreground/30 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span className="min-w-0 whitespace-normal">{prompt}</span>
           </button>

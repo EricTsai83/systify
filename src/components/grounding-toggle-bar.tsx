@@ -184,7 +184,7 @@ function GroundingPill({ label, icon, active, available, reason, suffix, onToggl
       title={title}
       data-testid={testId}
       className={cn(
-        "inline-flex h-7 items-center gap-1.5 rounded-full border px-2 text-xs font-medium transition-colors",
+        "inline-flex h-7 items-center gap-1.5 border px-2 text-xs font-medium transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
         active && available
           ? "border-primary/30 bg-primary/10 text-primary hover:bg-primary/15"
