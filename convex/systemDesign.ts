@@ -59,9 +59,11 @@ export const requestSystemDesignGeneration = mutation({
       repositoryId: args.repositoryId,
     });
 
-    // Drop any non-generatable kind (e.g. the retired `manifest`) a stale
-    // client might still send, then dedup. The arg validator accepts the
-    // legacy literal for historical-row compatibility; the generator does not.
+    // Dedup, then defense-in-depth filter at the request boundary. The arg
+    // validator already restricts `selections` to the System Design union,
+    // so `isSystemDesignKind` is redundant for current literals — keeping it
+    // means a future kind added to the validator without an LLM prompt
+    // entry in `systemDesignNode` still cannot reach the generator.
     const uniqueSelections = Array.from(new Set(args.selections)).filter(isSystemDesignKind);
     if (uniqueSelections.length === 0) {
       throw new Error("Select at least one document to generate.");

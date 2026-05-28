@@ -3,34 +3,12 @@ import { useMutation, useQuery } from "convex/react";
 import { ArrowRightIcon, SparkleIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
+import { SYSTEM_DESIGN_KIND_TITLES, type SystemDesignKind } from "../../convex/lib/systemDesign";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
-
-// Mirrors the `systemDesignKindValidator` union persisted on `jobs.selections`
-// and `jobs.kindFailures`.
-type SystemDesignKind =
-  | "readme_summary"
-  | "architecture_overview"
-  | "architecture_diagram"
-  | "data_model_overview"
-  | "api_surface_overview"
-  | "deployment_overview"
-  | "security_overview"
-  | "operations_overview";
-
-const KIND_TITLES: Record<SystemDesignKind, string> = {
-  readme_summary: "README Summary",
-  architecture_overview: "Architecture Overview",
-  architecture_diagram: "Architecture Diagram",
-  data_model_overview: "Data Model Overview",
-  api_surface_overview: "API Surface Overview",
-  deployment_overview: "Deployment Overview",
-  security_overview: "Security Overview",
-  operations_overview: "Operations Overview",
-};
 
 const REASON_TEXT_ALL_LIVE_SOURCE =
   "Live access to the repository wasn't available when this ran. The next attempt will prepare it first.";
@@ -130,7 +108,7 @@ function describeFailures(job: Doc<"jobs">): FailureDescriptor | null {
     reason?: "live_source_unavailable" | "model_empty_output" | "other";
   }>;
 
-  const persistedSelections = (job.selections ?? []) as SystemDesignKind[];
+  const persistedSelections = job.selections ?? [];
   const failedKinds = Array.from(new Set(kindFailures.map((failure) => failure.kind)));
 
   let selections: SystemDesignKind[] = [];
@@ -146,7 +124,7 @@ function describeFailures(job: Doc<"jobs">): FailureDescriptor | null {
     return null;
   }
 
-  const titles = selections.map((kind) => KIND_TITLES[kind]).filter(Boolean);
+  const titles = selections.map((kind) => SYSTEM_DESIGN_KIND_TITLES[kind]).filter(Boolean);
   const title =
     selections.length === 1 ? `Couldn't generate ${titles[0]}` : `Couldn't generate ${selections.length} documents`;
   const buttonLabel = selections.length === 1 ? `Generate ${titles[0]}` : `Generate ${selections.length} documents`;

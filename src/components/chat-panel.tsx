@@ -207,8 +207,16 @@ export function ChatPanel({
       if (!selectedThreadId) return;
       setSeenThreads((prev) => {
         if (prev.has(selectedThreadId)) return prev;
+        // Set#values preserves insertion order, so dropping the first
+        // entry is the oldest seen-thread. Cap the working set so a
+        // long-running tab that visits hundreds of threads doesn't
+        // accumulate the id list indefinitely.
         const next = new Set(prev);
         next.add(selectedThreadId);
+        if (next.size > SEEN_THREADS_CAP) {
+          const oldest = next.values().next().value;
+          if (oldest !== undefined) next.delete(oldest);
+        }
         return next;
       });
     },
@@ -519,6 +527,8 @@ export function ChatPanel({
   );
 }
 
+const SEEN_THREADS_CAP = 64;
+
 function getSandboxStatusTitle(reasonCode: SandboxModeStatus["reasonCode"] | undefined) {
   switch (reasonCode) {
     case "sandbox_provisioning":
@@ -528,7 +538,11 @@ function getSandboxStatusTitle(reasonCode: SandboxModeStatus["reasonCode"] | und
     case "sandbox_unavailable":
       return "Sandbox no longer available";
     case "sandbox_expired":
-    default:
       return "Sandbox expired";
+    default:
+      // Future reason codes land here until the switch is extended. Render
+      // the generic copy so the banner stays accurate rather than silently
+      // mislabelling a new code as "expired".
+      return "Sandbox unavailable";
   }
 }
