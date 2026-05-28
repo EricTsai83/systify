@@ -148,8 +148,6 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
                 {new Date(artifact._creationTime).toLocaleString()}
               </span>
               <span className="text-[11px] text-muted-foreground">·</span>
-              <span className="text-[11px] capitalize text-muted-foreground">{artifact.source}</span>
-              <span className="text-[11px] text-muted-foreground">·</span>
               <FreshnessStatus freshness={artifact.freshness} lastVerifiedAt={artifact.lastVerifiedAt} />
             </div>
             <h1 className="text-2xl font-semibold leading-tight tracking-tight">{artifact.title}</h1>

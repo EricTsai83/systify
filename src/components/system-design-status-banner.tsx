@@ -10,12 +10,11 @@ import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
 
 // Mirrors the `systemDesignKindValidator` union persisted on `jobs.selections`
-// and `jobs.kindFailures`. `manifest` is retired — no longer generatable — but
-// kept here so a historical job row that referenced it still renders a title.
+// and `jobs.kindFailures`.
 type SystemDesignKind =
-  | "manifest"
   | "readme_summary"
   | "architecture_overview"
+  | "architecture_diagram"
   | "data_model_overview"
   | "api_surface_overview"
   | "deployment_overview"
@@ -23,9 +22,9 @@ type SystemDesignKind =
   | "operations_overview";
 
 const KIND_TITLES: Record<SystemDesignKind, string> = {
-  manifest: "Repository Manifest",
   readme_summary: "README Summary",
   architecture_overview: "Architecture Overview",
+  architecture_diagram: "Architecture Diagram",
   data_model_overview: "Data Model Overview",
   api_surface_overview: "API Surface Overview",
   deployment_overview: "Deployment Overview",

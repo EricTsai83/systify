@@ -444,7 +444,6 @@ export const persistGeneratedArtifact = internalMutation({
     title: v.string(),
     summary: v.string(),
     contentMarkdown: v.string(),
-    source: v.union(v.literal("heuristic"), v.literal("llm"), v.literal("sandbox")),
     alignedImportCommitSha: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<{ artifactId: Id<"artifacts"> }> => {
@@ -496,7 +495,6 @@ export const persistGeneratedArtifact = internalMutation({
       title: args.title,
       summary: args.summary,
       contentMarkdown: args.contentMarkdown,
-      source: args.source,
       folderId: targetFolder._id,
       alignedImportCommitSha: args.alignedImportCommitSha,
     });

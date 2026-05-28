@@ -158,9 +158,11 @@ export const MessageBranchContent = ({ children, ...props }: MessageBranchConten
   const { currentBranch, setBranches, branches } = useMessageBranch();
   const childrenArray = Array.isArray(children) ? children : [children];
 
-  // Use useEffect to update branches when they change
+  // Use useEffect to update branches when they change (length or content)
   useEffect(() => {
-    if (branches.length !== childrenArray.length) {
+    const sameLength = branches.length === childrenArray.length;
+    const sameContent = sameLength && branches.every((branch, index) => branch === childrenArray[index]);
+    if (!sameContent) {
       setBranches(childrenArray);
     }
   }, [childrenArray, branches, setBranches]);
@@ -252,12 +254,9 @@ export const MessageBranchPage = ({ className, ...props }: MessageBranchPageProp
 
 export type MessageResponseProps = ComponentProps<typeof Streamdown>;
 
-export const MessageResponse = memo(
-  ({ className, ...props }: MessageResponseProps) => (
-    <Streamdown className={cn("size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)} {...props} />
-  ),
-  (prevProps, nextProps) => prevProps.children === nextProps.children,
-);
+export const MessageResponse = memo(({ className, ...props }: MessageResponseProps) => (
+  <Streamdown className={cn("size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0", className)} {...props} />
+));
 
 MessageResponse.displayName = "MessageResponse";
 

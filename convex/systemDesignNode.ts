@@ -149,7 +149,6 @@ export const runSystemDesignGeneration = internalAction({
           title: SYSTEM_DESIGN_KIND_TITLES[kind],
           summary: result.summary,
           contentMarkdown: result.contentMarkdown,
-          source: result.source,
         });
         succeeded += 1;
       } catch (error) {
@@ -373,7 +372,7 @@ async function generateLlm(
   kind: SystemDesignKind,
   sandbox: Doc<"sandboxes"> | null,
   repository: Doc<"repositories">,
-): Promise<{ contentMarkdown: string; summary: string; source: "sandbox" }> {
+): Promise<{ contentMarkdown: string; summary: string }> {
   if (!sandbox || !sandbox.remoteId || !sandbox.repoPath) {
     throw new Error("Sandbox is not provisioned. Provision a sandbox to generate this document.");
   }
@@ -416,15 +415,9 @@ async function generateLlm(
   if (text.length === 0) {
     throw new Error("LLM returned an empty document.");
   }
-  // `source: "sandbox"` carries the semantic load here: the artifact was
-  // produced by an LLM session that read live source through the sandbox
-  // tool factory. `createArtifactInMutation` translates that to a
-  // `lastVerifiedAt: now` stamp, which gates the "verified against
-  // current source" badge in the Library freshness UI.
   return {
     contentMarkdown: text,
     summary: extractSummary(text),
-    source: "sandbox",
   };
 }
 

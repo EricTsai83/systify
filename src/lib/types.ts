@@ -41,7 +41,6 @@ export type ArtifactListItem = Pick<
   | "kind"
   | "title"
   | "summary"
-  | "source"
   | "version"
   | "folderId"
   | "lastVerifiedAt"

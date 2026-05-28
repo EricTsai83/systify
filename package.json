@@ -46,7 +46,6 @@
     "cmdk": "^1.1.1",
     "convex": "^1.39.1",
     "embla-carousel-react": "^8.6.0",
-    "framer-motion": "^12.38.0",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^1.17.0",
     "mermaid": "^11.14.0",

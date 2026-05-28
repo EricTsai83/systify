@@ -9,7 +9,7 @@ This document describes the two AI interaction paths currently available in Syst
   - `discuss` with **Library grounding** (`messages.groundLibrary`) — artifact-grounded reply with `[A#]` citations against the repository's design artifacts
   - `discuss` with **Sandbox grounding** (`messages.groundSandbox`) — sandbox-backed answers grounded in the live source tree via guarded tools
   - `library` — Library Ask, an artifact-reader thread with chunked-RAG retrieval
-- System Design generation — a sandbox-backed background job, triggered by the user clicking **Generate System Design** from the empty Library page, that writes a starter set of System Design artifacts (`manifest`, `readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`).
+- System Design generation — a sandbox-backed background job, triggered by the user clicking **Generate System Design** from the empty Library page, that writes a starter set of System Design artifacts (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`).
 
 Both are repository-centered, but they depend on different data sources and execution models. Chat and System Design generation are also complementary: System Design generation writes artifacts that later Library Ask and sandbox-grounded Discuss replies can cite.
 
@@ -239,12 +239,7 @@ System Design generation is **user-initiated, not import-driven**. Imports no lo
 
 ### Kinds and dispatch
 
-Library System Design produces up to eight artifact kinds, split by generator type:
-
-- **Heuristic** (no LLM, no sandbox) — `manifest`, `architecture_overview`. Derived from imported `repoFiles` rows. The `isEntryPoint` / `isConfig` / `isImportant` / `language` fields are computed at import time (`createRepoFileRecords` in `convex/lib/repoAnalysis.ts`) and cached on each row, so changes to those heuristic rules only affect newly imported or **re-synced** repos. To pick up updated rules on an existing repo, trigger Re-sync from the repository detail page.
-- **LLM-backed** (uses sandbox tools) — `readme_summary`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`. Each spins a `generateText` call against the sandbox-backed model with the same `read_file` / `list_dir` / `run_shell` tool factory the sandbox-grounded chat path uses.
-
-The dialog flags each kind with a **Free** or **~1 LLM call** badge driven by `SYSTEM_DESIGN_KIND_GENERATOR` in `convex/lib/systemDesign.ts`.
+Library System Design produces up to eight LLM-backed artifact kinds: `readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`. Each spins a `generateText` call against the sandbox-backed model with the same `read_file` / `list_dir` / `run_shell` tool factory the sandbox-grounded chat path uses.
 
 ### 1. Request validation
 
@@ -252,14 +247,14 @@ The dialog flags each kind with a **Free** or **~1 LLM call** badge driven by `S
 
 1. **Identity + repository ownership** — `requireViewerIdentity` + `requireActiveRepositoryForOwner` reject archived, deleted, or non-owned repos with the standard error messages.
 2. **Non-empty selection** — at least one kind must be checked.
-3. **Sandbox preflight** — runs *only when at least one LLM-backed kind is selected*. Reads `repository.latestSandboxId` and passes it through `getSandboxAvailability`; rejects the whole request with the helper's user-facing message if the sandbox is missing, provisioning, archived, stopped, expired, or failed. Heuristic-only requests skip this check entirely.
+3. **Sandbox preflight** — reads `repository.latestSandboxId` and passes it through `getSandboxAvailability`; rejects the whole request with the helper's user-facing message if the sandbox is missing, provisioning, archived, stopped, expired, or failed.
 4. **Idempotency dedup** — scans `jobs` by the `by_repositoryId_and_kind_and_status_and_leaseExpiresAt` index for an active (`queued` or `running`, lease still alive) `system_design` job that is *not* a Failure Mode Analysis. If one is found, the mutation returns that existing `jobId` instead of creating a duplicate. FMA jobs are filtered out via their `failure_mode_analysis:` `requestedCommand` prefix, so an in-flight FMA on the same repo does not block a Library generation.
-5. **Rate limiting** — always consumes the per-owner `systemDesignRequests` bucket (10/hour by default). Additionally consumes the global `daytonaRequestsGlobal` bucket *only when an LLM-backed kind is selected*, mirroring the actual Daytona use.
+5. **Rate limiting** — consumes the per-owner `systemDesignRequests` bucket (10/hour by default) and the global `daytonaRequestsGlobal` bucket.
 6. **Folder seeding** — `ensureSystemDesignFolders` is idempotent and creates the default System Design folder tree if it does not already exist.
 
 ### 2. Create the job
 
-The mutation inserts one `jobs` row with `kind: "system_design"`, `costCategory: "system_design"`, the selected `sandboxId` (when LLM kinds are present), an `outputSummary` summarising the selection, and a non-null `leaseExpiresAt = now + SYSTEM_DESIGN_JOB_LEASE_MS` (default 60 minutes).
+The mutation inserts one `jobs` row with `kind: "system_design"`, `costCategory: "system_design"`, the selected `sandboxId`, an `outputSummary` summarising the selection, and a non-null `leaseExpiresAt = now + SYSTEM_DESIGN_JOB_LEASE_MS` (default 60 minutes).
 
 The lease is set **at insert time** rather than only at the `queued → running` transition. This matters because the stale-job sweep (`opsNode.listStaleInteractiveJobs`) queries the `by_status_and_kind_and_leaseExpiresAt` index with `lt("leaseExpiresAt", now)`, which never matches rows where `leaseExpiresAt` is undefined. A pre-running job without a lease would be invisible to recovery if the Node action never started.
 
@@ -267,21 +262,15 @@ The job and the FMA flow share the `system_design` kind. Disambiguation is by `r
 
 ### 3. Run the generators
 
-`runSystemDesignGeneration` (in `convex/systemDesignNode.ts`) transitions the job to `running` via `markGenerationStarted`, which refreshes the lease for a fresh window, then splits the work into two concurrent passes:
+`runSystemDesignGeneration` (in `convex/systemDesignNode.ts`) transitions the job to `running` via `markGenerationStarted`, which refreshes the lease for a fresh window, then runs the selected kinds serially in their submission order, refreshing the job lease via `refreshGenerationLease` *before each kind*. Serial execution is intentional: it honours both the per-sandbox tool budget and OpenAI rate limits.
 
-- **Heuristic pass** — runs all heuristic kinds in parallel via `Promise.all`. The shared `RepositorySnapshot` is loaded once via `listRepoFilesForHeuristics` (bounded by `take(2000)`; a `logWarn` fires if the take cap was reached).
-- **LLM pass** — runs LLM-backed kinds serially in their submission order, refreshing the job lease via `refreshGenerationLease` *before each kind*. Serial execution is intentional: it honours both the per-sandbox tool budget and OpenAI rate limits.
-
-Both passes run concurrently against each other so a long LLM session does not gate the cheap heuristic publication. Per-kind failures are isolated in a `try/catch`; the failing kind is logged with an `errorId` and skipped without affecting later kinds. After every kind completes (success or failure) the action updates `jobs.stage` / `jobs.progress` via `updateGenerationProgress`.
+Per-kind failures are isolated in a `try/catch`; the failing kind is logged with an `errorId` and skipped without affecting later kinds. After every kind completes (success or failure) the action updates `jobs.stage` / `jobs.progress` via `updateGenerationProgress`.
 
 ### 4. Persist the artifacts
 
 `persistGeneratedArtifact` resolves the destination folder via the kind→folder map and `artifactFolders.systemKey`, then replaces any existing artifact of the same kind in that folder so re-running the publication overwrites rather than accumulates. The artifact is written through the standard `createArtifactInMutation` path so the chunking + embedding pipeline kicks in automatically.
 
-The `source` field encodes how the artifact was produced and drives the freshness UI:
-
-- Heuristic kinds carry `source: "heuristic"`. `createArtifactInMutation` leaves `lastVerifiedAt` unset — the freshness UI does not award a "verified" badge to heuristic output.
-- LLM-backed kinds carry `source: "sandbox"` because they read live source through the sandbox tool factory. `createArtifactInMutation` stamps `lastVerifiedAt: now` on the row, which gates the "verified against current source" badge in the Library freshness UI. (`lastVerifiedAt` is the single signal the freshness UI reads — an artifact is "verified" iff this field is set.)
+Every System Design kind is sandbox-grounded, so `createArtifactInMutation` stamps `lastVerifiedAt: now` at creation. (`lastVerifiedAt` is the single signal the freshness UI reads — an artifact is "verified" iff this field is set; sandbox-grounded chat replies can re-stamp it later on re-read.)
 
 ### 5. Finalize
 
@@ -298,7 +287,7 @@ Two distinct surfaces depend on a live Daytona sandbox: sandbox-grounded Discuss
 - has failed
 - is missing required remote path information
 
-then Sandbox grounding is unavailable and `requestSystemDesignGeneration` rejects requests *that include at least one LLM-backed kind*. A request that selects only heuristic kinds (`manifest`, `architecture_overview`) skips the sandbox preflight and runs even when no sandbox exists, so a freshly imported repo can publish the starter heuristic set immediately.
+then Sandbox grounding is unavailable and `requestSystemDesignGeneration` rejects the request with the helper's user-facing message.
 
 The frontend uses this state to tell the user to:
 

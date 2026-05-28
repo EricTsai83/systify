@@ -17,7 +17,7 @@ avoids the obvious-but-wrong shortcuts.
 
 The Library navigator lists every artifact produced for a repository.
 Users come back to it after generating new design documents, after a chat
-turn revised an existing ADR, or after returning from a break. Without an
+turn revised an existing artifact, or after returning from a break. Without an
 "unread" signal the user has no way to know **which** rows have new
 content — the list looks the same as the last time they saw it.
 

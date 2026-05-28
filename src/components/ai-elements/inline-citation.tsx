@@ -31,12 +31,20 @@ export type InlineCitationCardTriggerProps = ComponentProps<typeof Badge> & {
   sources: string[];
 };
 
+const safeHostname = (url: string): string => {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+};
+
 export const InlineCitationCardTrigger = ({ sources, className, ...props }: InlineCitationCardTriggerProps) => (
   <HoverCardTrigger asChild>
     <Badge className={cn("ml-1", className)} variant="muted" {...props}>
       {sources[0] ? (
         <>
-          {new URL(sources[0]).hostname} {sources.length > 1 && `+${sources.length - 1}`}
+          {safeHostname(sources[0])} {sources.length > 1 && `+${sources.length - 1}`}
         </>
       ) : (
         "unknown"
@@ -105,9 +113,14 @@ export const InlineCitationCarouselIndex = ({ children, className, ...props }: I
     setCount(api.scrollSnapList().length);
     setCurrent(api.selectedScrollSnap() + 1);
 
-    api.on("select", () => {
+    const onSelect = () => {
       setCurrent(api.selectedScrollSnap() + 1);
-    });
+    };
+    api.on("select", onSelect);
+
+    return () => {
+      api.off("select", onSelect);
+    };
   }, [api]);
 
   return (

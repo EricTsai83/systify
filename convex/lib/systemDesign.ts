@@ -96,12 +96,10 @@ export function isSystemDesignKind(kind: Doc<"artifacts">["kind"]): kind is Syst
 
 /**
  * Convex validator for a System Design kind, used by `schema.ts` for the
- * `jobs.selections` and `jobs.kindFailures` columns. It is intentionally a
- * *superset* of the currently-generatable `SYSTEM_DESIGN_KINDS`: the retired
- * `manifest` literal is retained so historical `jobs` rows that recorded a
- * `manifest` selection still pass schema validation. New generations never
- * include `manifest` — `requestSystemDesignGeneration` filters incoming
- * selections through `isSystemDesignKind`.
+ * `jobs.selections` and `jobs.kindFailures` columns. Stays 1:1 with
+ * {@link SYSTEM_DESIGN_KINDS}; `requestSystemDesignGeneration` additionally
+ * filters incoming selections through {@link isSystemDesignKind} as
+ * defense-in-depth at the request boundary.
  *
  * Lives in `lib/` (not `convex/systemDesign.ts`) so `schema.ts` can import it
  * without dragging the mutation module's `lib/rateLimit` dependency into
@@ -109,8 +107,6 @@ export function isSystemDesignKind(kind: Doc<"artifacts">["kind"]): kind is Syst
  * schema-eval time.
  */
 export const systemDesignKindValidator = v.union(
-  // Retired: no longer generated. Retained only so historical `jobs` rows validate.
-  v.literal("manifest"),
   v.literal("readme_summary"),
   v.literal("architecture_overview"),
   v.literal("architecture_diagram"),

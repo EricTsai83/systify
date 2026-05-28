@@ -119,11 +119,7 @@ Library generation and Failure Mode Analysis both ride `kind: "system_design"`. 
 
 ## Artifact Provenance
 
-The `artifacts.source` field is the input to the freshness UI, paired with the optional `lastVerifiedAt` timestamp:
-
-- `source: "heuristic"` — derived from imported repo metadata (no LLM). `createArtifactInMutation` leaves `lastVerifiedAt` unset; the Library freshness UI does not award a "verified" badge.
-- `source: "sandbox"` — produced by an LLM session that read live source through the sandbox tool factory (the `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview` kinds of Library System Design, and all Failure Mode Analysis outputs). `createArtifactInMutation` stamps `lastVerifiedAt: now` on the row, which gates the "verified against current source" badge.
-- `source: "llm"` — reserved for pure-LLM artifacts that did not read live source. Currently unused; future generators that do not need sandbox tools would write this.
+The Library freshness UI reads the optional `lastVerifiedAt` timestamp on each artifact. Every artifact is produced by a sandbox-grounded generator (Library System Design + Failure Mode Analysis), so `createArtifactInMutation` stamps `lastVerifiedAt: now` at creation, which gates the "verified against current source" badge.
 
 `lastVerifiedAt` is the single signal the freshness UI consults — an artifact is "verified" iff this field is set. Sandbox-grounded Discuss sessions can re-stamp it on a re-read so a re-verified artifact transitions from "unverified" back to "verified".
 

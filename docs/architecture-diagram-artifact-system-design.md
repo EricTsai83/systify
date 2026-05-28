@@ -28,7 +28,7 @@ The design optimizes for:
 2. bounded cost for backend reads and frontend rendering
 3. strict owner-scoped access to thread artifacts
 4. low coupling between Convex transaction concerns and graph-generation logic
-5. extensibility for future artifact kinds (ADR, FMA, etc.)
+5. extensibility for future artifact kinds (FMA, deployment overview, etc.)
 
 ## Chosen Architecture
 

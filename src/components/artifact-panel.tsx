@@ -1,57 +1,33 @@
-import { memo, useCallback, useState, type ReactNode } from "react";
-import { useMutation } from "convex/react";
-import { CaretDownIcon, FileTextIcon, XIcon } from "@phosphor-icons/react";
-import { api } from "../../convex/_generated/api";
+import { useCallback, useState } from "react";
 import type { Doc } from "../../convex/_generated/dataModel";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Spinner } from "@/components/ui/spinner";
 import { FolderNavigator } from "@/components/folder-navigator";
-import { FolderPicker } from "@/components/folder-picker";
 import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
-import { useAsyncCallback } from "@/hooks/use-async-callback";
-import { toUserErrorMessage } from "@/lib/errors";
-import type { ArtifactId, FolderId, RepositoryId, ThreadId } from "@/lib/types";
+import type { ArtifactId, FolderId, RepositoryId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 const EMPTY_ARTIFACTS: Doc<"artifacts">[] = [];
 
 /**
- * ArtifactPanel — right-rail surface for browsing and launching artifacts
- * from the chat. Two sections, top to bottom:
+ * ArtifactPanel — right-rail surface for browsing repository artifacts.
  *
- *   1. **Generate** — collapsible launcher for the ADR capture flow. The
- *      richer System Design generation (README summary, architecture
- *      overview, architecture diagram, …) is launched from the top-bar
- *      `Generate System Design` dialog because it is a multi-kind LLM
- *      publication, not a one-shot artifact. ADR stays in the right rail
- *      because it is a single thread-scoped capture the user typically
- *      wants alongside the in-progress chat.
+ * The panel is read-only: clicking an artifact opens the standalone
+ * Reader (`/r/:rid/library/a/:aid`) via `onOpenInReader`, and citation
+ * clicks from chat route through the same callback so the Reader is the
+ * canonical long-form reading experience.
  *
- *   2. **Folder navigator** — tree view replacing the original "Repository
- *      intelligence + Thread outputs" flat sections. Drives every artifact
- *      navigation in the panel: clicking a folder expands it; clicking
- *      an artifact opens the standalone Reader (`/r/:rid/library/a/:aid`) via
- *      `onOpenInReader`, which is where the long-form reading experience
- *      lives.
- *
- * The "Ask about this artifact" pathway is preserved through the
- * navigator's row affordances so chat workflows that pre-filled the input
- * with a templated question continue to work after this refactor.
+ * Generation entry points for repository-scoped artifacts (System Design,
+ * failure-mode analysis) live in the top bar / chat composer, not here —
+ * the panel exists purely to navigate what already exists.
  */
 export function ArtifactPanel({
-  threadId,
   repositoryId,
   artifacts = EMPTY_ARTIFACTS,
-  hasAttachedRepository,
   isVisible = true,
   className,
   onOpenInReader,
   onSelectFolder,
   selectedFolderId,
 }: {
-  threadId: ThreadId | null;
   /**
    * Repository the panel's folder tree is scoped to. `null` for a thread
    * without an attached repo — the navigator hides itself in that state.
@@ -63,7 +39,6 @@ export function ArtifactPanel({
    * keep its single subscription and the panel doesn't have to refetch.
    */
   artifacts?: ReadonlyArray<Doc<"artifacts">>;
-  hasAttachedRepository: boolean;
   isVisible?: boolean;
   className?: string;
   /**
@@ -76,16 +51,21 @@ export function ArtifactPanel({
   onSelectFolder?: (folderId: FolderId | null) => void;
   selectedFolderId?: FolderId | null;
 }) {
-  const [actionsOpen, setActionsOpen] = useState<boolean | null>(null);
-  const effectiveActionsOpen = actionsOpen ?? artifacts.length === 0;
   const { isUnseen, markViewed } = useArtifactViewState(repositoryId);
   // Internal fallback when the caller doesn't provide a controlled
-  // `selectedFolderId`. The chat right rail leaves selection uncontrolled,
-  // so we own the state here and share it between FolderNavigator (where
-  // the user clicks a folder) and ArtifactActions (where the picker shows
-  // the same destination). Library reader callers keep external control by
-  // passing `selectedFolderId` + `onSelectFolder` themselves.
+  // `selectedFolderId`. The chat right rail leaves selection uncontrolled.
+  // Library reader callers keep external control by passing
+  // `selectedFolderId` + `onSelectFolder` themselves.
   const [internalSelectedFolderId, setInternalSelectedFolderId] = useState<FolderId | null>(null);
+  // Reset uncontrolled folder selection when the repository changes so a
+  // stale folder ID from the previous repo doesn't leak into the navigator.
+  // Tracked via setState-during-render (React's recommended pattern for
+  // prop-driven resets) so we don't take a cascading-effect hit.
+  const [trackedRepositoryId, setTrackedRepositoryId] = useState<RepositoryId | null>(repositoryId);
+  if (trackedRepositoryId !== repositoryId) {
+    setTrackedRepositoryId(repositoryId);
+    setInternalSelectedFolderId(null);
+  }
   const isFolderSelectionControlled = selectedFolderId !== undefined;
   const effectiveSelectedFolderId = isFolderSelectionControlled ? selectedFolderId : internalSelectedFolderId;
   const handleSelectFolder = useCallback(
@@ -127,20 +107,6 @@ export function ArtifactPanel({
     >
       <ArtifactPanelHeader />
 
-      {threadId ? (
-        <div className="border-b border-border px-4 py-3">
-          <ArtifactActions
-            threadId={threadId}
-            repositoryId={repositoryId}
-            hasAttachedRepository={hasAttachedRepository}
-            folderId={effectiveSelectedFolderId}
-            onFolderChange={handleSelectFolder}
-            open={effectiveActionsOpen}
-            onOpenChange={setActionsOpen}
-          />
-        </div>
-      ) : null}
-
       {repositoryId ? (
         <FolderNavigator
           repositoryId={repositoryId}
@@ -154,7 +120,7 @@ export function ArtifactPanel({
       ) : (
         <div className="flex flex-1 items-center justify-center px-4 py-8">
           <p className="text-center text-[12px] text-muted-foreground">
-            Attach a repository to capture ADRs and explore generated artifacts.
+            Attach a repository to explore generated artifacts.
           </p>
         </div>
       )}
@@ -172,147 +138,3 @@ function ArtifactPanelHeader() {
     </div>
   );
 }
-
-function ArtifactActions({
-  threadId,
-  repositoryId,
-  hasAttachedRepository,
-  folderId,
-  onFolderChange,
-  open,
-  onOpenChange,
-}: {
-  threadId: ThreadId;
-  repositoryId: RepositoryId | null;
-  hasAttachedRepository: boolean;
-  // The destination folder for the next generated artifact. Controlled by
-  // the parent panel so it stays in sync with the navigator's selection —
-  // clicking a folder below seeds this picker, and changing the picker
-  // here highlights the matching folder below.
-  folderId: FolderId | null;
-  onFolderChange: (folderId: FolderId | null) => void;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const captureAdr = useMutation(api.designArtifacts.captureAdr);
-
-  const [adrError, setAdrError] = useState<string | null>(null);
-
-  const [isAdrPending, runAdr] = useAsyncCallback(async () => {
-    setAdrError(null);
-    try {
-      await captureAdr({ threadId, folderId: folderId ?? undefined });
-    } catch (err) {
-      setAdrError(toUserErrorMessage(err, "Failed to capture ADR."));
-    }
-  });
-
-  return (
-    <Collapsible open={open} onOpenChange={onOpenChange} className="flex flex-col gap-2">
-      <CollapsibleTrigger asChild>
-        <Button type="button" variant="outline" size="sm" className="justify-between gap-2">
-          <span>+ Generate</span>
-          <CaretDownIcon
-            size={12}
-            weight="bold"
-            className={cn("transition-transform duration-200", open ? "rotate-180" : "")}
-          />
-        </Button>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="flex flex-col gap-2 pt-1">
-        <div className="flex flex-col gap-1">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Folder</span>
-          <FolderPicker
-            repositoryId={repositoryId}
-            value={folderId}
-            onChange={onFolderChange}
-            hint="Where should this ADR land? Pick a feature folder or leave at Repository root."
-            disabled={!hasAttachedRepository}
-            className="w-full"
-          />
-        </div>
-        <ActionRow
-          pending={isAdrPending}
-          onClick={() => void runAdr()}
-          caption={
-            hasAttachedRepository
-              ? "One-click ADR in Context / Decision / Consequences / Alternatives format."
-              : "Attach a repository to enable ADR capture."
-          }
-          error={adrError}
-          onDismiss={() => setAdrError(null)}
-          buttonLabel="Capture as ADR"
-          pendingLabel="Capturing ADR…"
-          icon={<FileTextIcon size={14} weight="bold" />}
-          variant="outline"
-          disabled={!hasAttachedRepository || isAdrPending}
-        />
-      </CollapsibleContent>
-    </Collapsible>
-  );
-}
-
-const ActionRow = memo(function ActionRow({
-  pending,
-  onClick,
-  caption,
-  error,
-  onDismiss,
-  buttonLabel,
-  pendingLabel,
-  icon,
-  disabled,
-  variant = "default",
-}: {
-  pending: boolean;
-  onClick: () => void;
-  caption: string;
-  error: string | null;
-  onDismiss: () => void;
-  buttonLabel: string;
-  pendingLabel: string;
-  icon: ReactNode;
-  disabled?: boolean;
-  variant?: "default" | "outline";
-}) {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Button
-        type="button"
-        variant={variant}
-        size="sm"
-        disabled={disabled}
-        onClick={onClick}
-        className="justify-center gap-2"
-      >
-        {pending ? (
-          <>
-            <Spinner size={14} />
-            {pendingLabel}
-          </>
-        ) : (
-          <>
-            {icon}
-            {buttonLabel}
-          </>
-        )}
-      </Button>
-      <p className="text-[11px] leading-snug text-muted-foreground">{caption}</p>
-      {error ? (
-        <Alert variant="destructive" className="relative pr-9 text-[11px]">
-          <AlertDescription className="text-[11px]">{error}</AlertDescription>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="absolute right-1 top-1 h-6 w-6"
-            onClick={onDismiss}
-            aria-label="Dismiss error"
-          >
-            <XIcon size={10} weight="bold" />
-          </Button>
-        </Alert>
-      ) : null}
-    </div>
-  );
-});

@@ -9,11 +9,10 @@ function makeArtifact(overrides: Partial<Doc<"artifacts">> = {}): Doc<"artifacts
     _id: "k0000000000" as Doc<"artifacts">["_id"],
     _creationTime: 0,
     ownerTokenIdentifier: "user|fixture",
-    kind: "adr",
+    kind: "architecture_diagram",
     title: "Sample",
     summary: "Sample summary",
     contentMarkdown: "# Sample",
-    source: "heuristic",
     version: 1,
     ...overrides,
   } as Doc<"artifacts">;

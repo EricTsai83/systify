@@ -83,16 +83,11 @@ const sandboxRemoteDiscoveryStatus = v.union(
 );
 
 const artifactKind = v.union(
-  // Retired System Design kind: no longer generated. Retained so historical
-  // `artifacts` rows created before its removal still pass schema validation.
-  v.literal("manifest"),
   v.literal("readme_summary"),
   v.literal("architecture_overview"),
   v.literal("architecture_diagram"),
   v.literal("entrypoints"),
   v.literal("dependency_overview"),
-  v.literal("risk_report"),
-  v.literal("adr"),
   v.literal("failure_mode_analysis"),
   v.literal("trade_off_matrix"),
   v.literal("migration_plan"),
@@ -366,7 +361,6 @@ export default defineSchema({
     title: v.string(),
     summary: v.string(),
     contentMarkdown: v.string(),
-    source: v.union(v.literal("heuristic"), v.literal("llm"), v.literal("sandbox")),
     version: v.number(),
     /**
      * `folderId` ties an artifact to a user-created `artifactFolders` row.

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AnimatePresence, motion, useReducedMotion, type Transition } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion, type Transition } from "motion/react";
 import { BookOpenIcon, ChatCircleIcon } from "@phosphor-icons/react";
 import { discussPath, libraryPath } from "@/route-paths";
 import type { ChatMode, RepositoryId } from "@/lib/types";

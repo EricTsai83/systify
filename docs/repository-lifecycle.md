@@ -34,12 +34,12 @@ flowchart TD
 
 ## Where the sandbox lives in this picture
 
-Repository import is intentionally **sandbox-free**. The pipeline never provisions a Daytona sandbox, never clones the repository onto a Daytona disk, and never touches `repositories.latestSandboxId`. All knowledge produced by import (`repoFiles`, `repoChunks`, manifest / README / architecture artifacts) is built from GitHub API responses.
+Repository import is intentionally **sandbox-free**. The pipeline never provisions a Daytona sandbox, never clones the repository onto a Daytona disk, and never touches `repositories.latestSandboxId`. All knowledge produced by import (`repoFiles`, `repoChunks`) is built from GitHub API responses.
 
 A Daytona sandbox is only provisioned on demand by features that genuinely need a live filesystem:
 
 - **Sandbox-grounded Discuss** — provisioned the first time the user activates the Sandbox grounding toggle on a repository (via `requestSandboxActivation` → `sandboxActivationNode.runSandboxActivation`).
-- **System Design generation** — the LLM-backed kinds (`readme_summary`, `*_overview`) run through `ensureSandboxReady` inside `systemDesignNode.runSystemDesignGeneration`. Heuristic-only generations (`manifest`, `architecture_overview`) read `repoFiles` straight from Convex and never spin a sandbox at all.
+- **System Design generation** — every kind is LLM-backed and runs through `ensureSandboxReady` inside `systemDesignNode.runSystemDesignGeneration`.
 
 `ensureSandboxReady` (in `convex/lib/sandboxLiveness.ts`) is the single source of truth for "make a sandbox usable for this repository right now". It probes Daytona, wakes a stopped sandbox, or provisions a fresh one as needed, and patches `repositories.latestSandboxId` to the result. Import never sets that pointer — whatever sandbox the previous sandbox-grounded reply or System Design run left there stays there.
 
@@ -105,9 +105,8 @@ The fetched snapshot is converted into three durable outputs:
 
 - `repoFiles` — one row per tree entry, with `language`, `isEntryPoint`, `isConfig`, `isImportant` annotations
 - `repoChunks` — line-bounded chunks of the README and important files for retrieval / dependency detection
-- import-scoped artifacts (currently a repository manifest, README summary, and architecture overview)
 
-This is the same set of outputs the old sandbox-backed import produced; the only thing that changed is where the bytes came from.
+Artifacts (System Design, failure-mode analyses) are populated separately via the `Generate System Design` flow, not by import.
 
 ### 6. Persist the new snapshot in staged batches
 

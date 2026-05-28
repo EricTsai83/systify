@@ -6,7 +6,6 @@ import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { assertOwnedBy } from "./lib/ownedDocs";
 
 type ArtifactKind = Doc<"artifacts">["kind"];
-type ArtifactSource = Doc<"artifacts">["source"];
 
 interface CreateArtifactArgs {
   threadId?: Id<"threads">;
@@ -17,7 +16,6 @@ interface CreateArtifactArgs {
   title: string;
   summary: string;
   contentMarkdown: string;
-  source: ArtifactSource;
   alignedImportCommitSha?: string;
   /**
    * Optional folder placement (Phase A folder model). The store re-reads
@@ -67,14 +65,14 @@ export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArt
     title: args.title,
     summary: args.summary,
     contentMarkdown: args.contentMarkdown,
-    source: args.source,
     version: 1,
     folderId: args.folderId,
     alignedImportCommitSha: args.alignedImportCommitSha,
-    // Sandbox-grounded artifacts are "verified at creation"; everything else
-    // starts unverified until a sandbox-grounded reply stamps it. The presence of
-    // `lastVerifiedAt` is the single signal the Library freshness UI reads.
-    lastVerifiedAt: args.source === "sandbox" ? now : undefined,
+    // Every artifact is produced by a sandbox-grounded generator (System
+    // Design + FMA), so we stamp `lastVerifiedAt` at creation. The
+    // presence of this field is the single signal the Library freshness
+    // UI reads — sandbox-grounded replies can later re-stamp it on re-read.
+    lastVerifiedAt: now,
     chunkingStatus: args.repositoryId ? "pending" : undefined,
     updatedAt: now,
   });
@@ -218,15 +216,11 @@ async function listByRepositoryAndKindInternal(
 }
 
 const artifactKindValidator = v.union(
-  // Retired: see `artifactKind` in `schema.ts`. Kept in sync for historical rows.
-  v.literal("manifest"),
   v.literal("readme_summary"),
   v.literal("architecture_overview"),
   v.literal("architecture_diagram"),
   v.literal("entrypoints"),
   v.literal("dependency_overview"),
-  v.literal("risk_report"),
-  v.literal("adr"),
   v.literal("failure_mode_analysis"),
   v.literal("trade_off_matrix"),
   v.literal("migration_plan"),
@@ -239,8 +233,6 @@ const artifactKindValidator = v.union(
   v.literal("operations_overview"),
 );
 
-const artifactSourceValidator = v.union(v.literal("heuristic"), v.literal("llm"), v.literal("sandbox"));
-
 export const createArtifact = internalMutation({
   args: {
     threadId: v.optional(v.id("threads")),
@@ -251,7 +243,6 @@ export const createArtifact = internalMutation({
     title: v.string(),
     summary: v.string(),
     contentMarkdown: v.string(),
-    source: artifactSourceValidator,
     folderId: v.optional(v.id("artifactFolders")),
   },
   handler: (ctx, args) => createArtifactInMutation(ctx, args),

@@ -72,18 +72,16 @@ async function seedArtifact(
     threadId?: Id<"threads">;
     repositoryId?: Id<"repositories">;
     ownerTokenIdentifier: string;
-    kind: "adr";
+    kind: "architecture_diagram";
     title: string;
     summary: string;
     contentMarkdown: string;
-    source: "llm";
   } = {
     ownerTokenIdentifier: args.ownerTokenIdentifier ?? OWNER,
-    kind: "adr",
-    title: "ADR 001",
+    kind: "architecture_diagram",
+    title: "Diagram 001",
     summary: "s",
     contentMarkdown: "m",
-    source: "llm",
   };
   if (args.threadId !== undefined) createArgs.threadId = args.threadId;
   if (args.repositoryId !== undefined) createArgs.repositoryId = args.repositoryId;
@@ -98,11 +96,10 @@ describe("ArtifactStore — parent invariant", () => {
     await expect(
       t.mutation(internal.artifactStore.createArtifact, {
         ownerTokenIdentifier: OWNER,
-        kind: "adr",
+        kind: "architecture_diagram",
         title: "orphan",
         summary: "no parent",
         contentMarkdown: "# x",
-        source: "llm",
       }),
     ).rejects.toThrow(/at least one parent/i);
   });
@@ -114,18 +111,17 @@ describe("ArtifactStore — parent invariant", () => {
     const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
       threadId,
       ownerTokenIdentifier: OWNER,
-      kind: "adr",
-      title: "ADR 001",
+      kind: "architecture_diagram",
+      title: "Diagram 001",
       summary: "pick A over B",
       contentMarkdown: "# Decision",
-      source: "llm",
     });
 
     const stored = await t.query(internal.artifactStore.getArtifact, { artifactId });
     expect(stored).not.toBeNull();
     expect(stored!.threadId).toBe(threadId);
     expect(stored!.repositoryId).toBeUndefined();
-    expect(stored!.kind).toBe("adr");
+    expect(stored!.kind).toBe("architecture_diagram");
     expect(stored!.version).toBe(1);
   });
 
@@ -140,7 +136,6 @@ describe("ArtifactStore — parent invariant", () => {
       title: "Modules",
       summary: "top-level modules",
       contentMarkdown: "graph TD; A --> B",
-      source: "heuristic",
     });
 
     const stored = await t.query(internal.artifactStore.getArtifact, { artifactId });
@@ -163,7 +158,6 @@ describe("ArtifactStore — parent invariant", () => {
       title: "risk",
       summary: "failure modes",
       contentMarkdown: "## Risk",
-      source: "sandbox",
     });
 
     const stored = await t.query(internal.artifactStore.getArtifact, { artifactId });
@@ -181,11 +175,10 @@ describe("ArtifactStore — folder integrity", () => {
     const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
       repositoryId,
       ownerTokenIdentifier: OWNER,
-      kind: "adr",
-      title: "ADR 001",
+      kind: "architecture_diagram",
+      title: "Diagram 001",
       summary: "s",
       contentMarkdown: "m",
-      source: "llm",
       folderId,
     });
 
@@ -205,11 +198,10 @@ describe("ArtifactStore — folder integrity", () => {
       t.mutation(internal.artifactStore.createArtifact, {
         repositoryId,
         ownerTokenIdentifier: OWNER,
-        kind: "adr",
-        title: "ADR 001",
+        kind: "architecture_diagram",
+        title: "Diagram 001",
         summary: "s",
         contentMarkdown: "m",
-        source: "llm",
         folderId,
       }),
     ).rejects.toThrow(/folder not found/i);
@@ -225,11 +217,10 @@ describe("ArtifactStore — folder integrity", () => {
       t.mutation(internal.artifactStore.createArtifact, {
         repositoryId,
         ownerTokenIdentifier: OWNER,
-        kind: "adr",
-        title: "ADR 001",
+        kind: "architecture_diagram",
+        title: "Diagram 001",
         summary: "s",
         contentMarkdown: "m",
-        source: "llm",
         folderId,
       }),
     ).rejects.toThrow(/different repository/i);
@@ -245,11 +236,10 @@ describe("ArtifactStore — folder integrity", () => {
       t.mutation(internal.artifactStore.createArtifact, {
         threadId,
         ownerTokenIdentifier: OWNER,
-        kind: "adr",
-        title: "ADR 001",
+        kind: "architecture_diagram",
+        title: "Diagram 001",
         summary: "s",
         contentMarkdown: "m",
-        source: "llm",
         folderId,
       }),
     ).rejects.toThrow(/repo-less/i);
@@ -267,11 +257,10 @@ describe("ArtifactStore — folder integrity", () => {
       t.mutation(internal.artifactStore.createArtifact, {
         repositoryId,
         ownerTokenIdentifier: OWNER,
-        kind: "adr",
-        title: "ADR 001",
+        kind: "architecture_diagram",
+        title: "Diagram 001",
         summary: "s",
         contentMarkdown: "m",
-        source: "llm",
         folderId,
       }),
     ).rejects.toThrow(/folder not found/i);
@@ -354,20 +343,18 @@ describe("ArtifactStore — filters", () => {
     await t.mutation(internal.artifactStore.createArtifact, {
       threadId: threadA,
       ownerTokenIdentifier: OWNER,
-      kind: "adr",
+      kind: "architecture_diagram",
       title: "A1",
       summary: "s",
       contentMarkdown: "m",
-      source: "llm",
     });
     await t.mutation(internal.artifactStore.createArtifact, {
       threadId: threadB,
       ownerTokenIdentifier: OWNER,
-      kind: "adr",
+      kind: "architecture_diagram",
       title: "B1",
       summary: "s",
       contentMarkdown: "m",
-      source: "llm",
     });
 
     const aArtifacts = await t.query(internal.artifactStore.listByThread, { threadId: threadA });
@@ -384,11 +371,10 @@ describe("ArtifactStore — filters", () => {
     await t.mutation(internal.artifactStore.createArtifact, {
       threadId,
       ownerTokenIdentifier: OWNER,
-      kind: "adr",
-      title: "ADR 1",
+      kind: "architecture_diagram",
+      title: "Diagram 1",
       summary: "s",
       contentMarkdown: "m",
-      source: "llm",
     });
     await t.mutation(internal.artifactStore.createArtifact, {
       threadId,
@@ -397,19 +383,18 @@ describe("ArtifactStore — filters", () => {
       title: "FMA 1",
       summary: "s",
       contentMarkdown: "m",
-      source: "sandbox",
     });
 
-    const adrs = await t.query(internal.artifactStore.listByThreadAndKind, {
+    const diagrams = await t.query(internal.artifactStore.listByThreadAndKind, {
       threadId,
-      kind: "adr",
+      kind: "architecture_diagram",
     });
     const fmas = await t.query(internal.artifactStore.listByThreadAndKind, {
       threadId,
       kind: "failure_mode_analysis",
     });
 
-    expect(adrs.map((artifact) => artifact.title)).toEqual(["ADR 1"]);
+    expect(diagrams.map((artifact) => artifact.title)).toEqual(["Diagram 1"]);
     expect(fmas.map((artifact) => artifact.title)).toEqual(["FMA 1"]);
   });
 
@@ -425,7 +410,6 @@ describe("ArtifactStore — filters", () => {
       title: "A diagram",
       summary: "s",
       contentMarkdown: "graph TD; A --> A",
-      source: "heuristic",
     });
     await t.mutation(internal.artifactStore.createArtifact, {
       repositoryId: repoB,
@@ -434,7 +418,6 @@ describe("ArtifactStore — filters", () => {
       title: "B diagram",
       summary: "s",
       contentMarkdown: "graph TD; B --> B",
-      source: "heuristic",
     });
 
     const aArtifacts = await t.query(internal.artifactStore.listByRepository, {
@@ -459,29 +442,27 @@ describe("ArtifactStore — filters", () => {
       title: "diagram",
       summary: "s",
       contentMarkdown: "graph TD;",
-      source: "heuristic",
     });
     await t.mutation(internal.artifactStore.createArtifact, {
       repositoryId,
       ownerTokenIdentifier: OWNER,
-      kind: "risk_report",
+      kind: "design_review",
       title: "risks",
       summary: "s",
       contentMarkdown: "m",
-      source: "sandbox",
     });
 
     const diagrams = await t.query(internal.artifactStore.listByRepositoryAndKind, {
       repositoryId,
       kind: "architecture_diagram",
     });
-    const risks = await t.query(internal.artifactStore.listByRepositoryAndKind, {
+    const reviews = await t.query(internal.artifactStore.listByRepositoryAndKind, {
       repositoryId,
-      kind: "risk_report",
+      kind: "design_review",
     });
 
     expect(diagrams.map((artifact) => artifact.kind)).toEqual(["architecture_diagram"]);
-    expect(risks.map((artifact) => artifact.kind)).toEqual(["risk_report"]);
+    expect(reviews.map((artifact) => artifact.kind)).toEqual(["design_review"]);
   });
 });
 
@@ -493,29 +474,26 @@ describe("ArtifactStore — ordering", () => {
     await t.mutation(internal.artifactStore.createArtifact, {
       threadId,
       ownerTokenIdentifier: OWNER,
-      kind: "adr",
+      kind: "architecture_diagram",
       title: "first",
       summary: "s",
       contentMarkdown: "m",
-      source: "llm",
     });
     await t.mutation(internal.artifactStore.createArtifact, {
       threadId,
       ownerTokenIdentifier: OWNER,
-      kind: "adr",
+      kind: "architecture_diagram",
       title: "second",
       summary: "s",
       contentMarkdown: "m",
-      source: "llm",
     });
     await t.mutation(internal.artifactStore.createArtifact, {
       threadId,
       ownerTokenIdentifier: OWNER,
-      kind: "adr",
+      kind: "architecture_diagram",
       title: "third",
       summary: "s",
       contentMarkdown: "m",
-      source: "llm",
     });
 
     const result = await t.query(internal.artifactStore.listByThread, { threadId });
@@ -533,7 +511,6 @@ describe("ArtifactStore — ordering", () => {
       title: "v1",
       summary: "s",
       contentMarkdown: "m",
-      source: "heuristic",
     });
     await t.mutation(internal.artifactStore.createArtifact, {
       repositoryId,
@@ -542,7 +519,6 @@ describe("ArtifactStore — ordering", () => {
       title: "v2",
       summary: "s",
       contentMarkdown: "m",
-      source: "heuristic",
     });
 
     const result = await t.query(internal.artifactStore.listByRepository, { repositoryId });
@@ -558,11 +534,10 @@ describe("ArtifactStore — update/delete", () => {
     const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
       threadId,
       ownerTokenIdentifier: OWNER,
-      kind: "adr",
+      kind: "architecture_diagram",
       title: "v1",
       summary: "s",
       contentMarkdown: "m",
-      source: "llm",
     });
 
     await t.mutation(internal.artifactStore.updateArtifact, {
@@ -591,11 +566,10 @@ describe("ArtifactStore — update/delete", () => {
       const id = await ctx.db.insert("artifacts", {
         threadId,
         ownerTokenIdentifier: OWNER,
-        kind: "adr",
+        kind: "architecture_diagram",
         title: "tombstone",
         summary: "s",
         contentMarkdown: "m",
-        source: "llm",
         version: 1,
       });
       await ctx.db.delete(id);
@@ -617,11 +591,10 @@ describe("ArtifactStore — update/delete", () => {
     const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
       threadId,
       ownerTokenIdentifier: OWNER,
-      kind: "adr",
+      kind: "architecture_diagram",
       title: "doomed",
       summary: "s",
       contentMarkdown: "m",
-      source: "llm",
     });
 
     await t.mutation(internal.artifactStore.deleteArtifact, { artifactId });

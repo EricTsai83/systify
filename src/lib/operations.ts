@@ -115,9 +115,7 @@ export function isUserRelevantJob(job: Doc<"jobs">) {
 
 export function formatArtifactKind(kind: Doc<"artifacts">["kind"]) {
   const labels: Partial<Record<Doc<"artifacts">["kind"], string>> = {
-    manifest: "Repository manifest",
     architecture_diagram: "Architecture diagram",
-    adr: "ADR",
     failure_mode_analysis: "Failure mode",
   };
   return labels[kind] ?? humanizeToken(kind);

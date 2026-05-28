@@ -202,7 +202,7 @@ export function FolderOverview({ folderId, onSelectArtifact, onAfterDelete, clas
             <CardHeader className="gap-1 p-4">
               <CardTitle className="text-xs">Folder is empty</CardTitle>
               <CardDescription className="text-[11px]">
-                Generate an ADR, failure mode, or diagram from a chat thread and pick this folder in the placement
+                Generate a System Design artifact or failure-mode analysis and pick this folder in the placement
                 dropdown.
               </CardDescription>
             </CardHeader>

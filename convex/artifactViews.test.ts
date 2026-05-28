@@ -43,11 +43,10 @@ async function seedRepoArtifact(
   return await t.mutation(internal.artifactStore.createArtifact, {
     repositoryId: args.repositoryId,
     ownerTokenIdentifier: args.ownerTokenIdentifier ?? OWNER,
-    kind: "adr",
-    title: "ADR 001",
+    kind: "architecture_diagram",
+    title: "Diagram 001",
     summary: "s",
     contentMarkdown: "m",
-    source: "llm",
   });
 }
 
@@ -63,11 +62,10 @@ async function seedThreadArtifact(t: ReturnType<typeof makeHarness>): Promise<Id
   return await t.mutation(internal.artifactStore.createArtifact, {
     threadId,
     ownerTokenIdentifier: OWNER,
-    kind: "adr",
-    title: "ADR thread",
+    kind: "architecture_diagram",
+    title: "Diagram thread",
     summary: "s",
     contentMarkdown: "m",
-    source: "llm",
   });
 }
 
