@@ -101,6 +101,10 @@ export function isSystemDesignKind(kind: Doc<"artifacts">["kind"]): kind is Syst
  * filters incoming selections through {@link isSystemDesignKind} as
  * defense-in-depth at the request boundary.
  *
+ * The retired `manifest` literal is NOT retained here — see the note on
+ * `artifactKind` in `schema.ts` for the assumption that no historical
+ * `jobs.selections` or `jobs.kindFailures` array contains it.
+ *
  * Lives in `lib/` (not `convex/systemDesign.ts`) so `schema.ts` can import it
  * without dragging the mutation module's `lib/rateLimit` dependency into
  * schema evaluation — `process.env` reads in that module are forbidden at
