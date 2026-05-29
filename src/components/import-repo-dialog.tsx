@@ -572,7 +572,11 @@ export function ImportRepoDialog({
             {/* Ambient top-center glow — gives the dialog depth so it doesn't read as flat */}
             <div
               aria-hidden
-              className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-48 bg-[radial-gradient(ellipse_at_top,hsl(var(--primary)/0.14),transparent_70%)]"
+              className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-48"
+              style={{
+                backgroundImage:
+                  "radial-gradient(ellipse at top, color-mix(in oklab, var(--primary) 14%, transparent) 0%, transparent 70%)",
+              }}
             />
             {isAwaitingPopup ? (
               /* ---- Waiting for popup authorization ---- */
