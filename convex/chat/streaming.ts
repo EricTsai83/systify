@@ -5,7 +5,11 @@ import { loadOwnedDoc, requireOwnedDoc } from "../lib/ownedDocs";
 import { CHAT_JOB_LEASE_MS, consumeSandboxDailyCost } from "../lib/rateLimit";
 import { costUsdToCents } from "../lib/openaiPricing";
 import { logInfo, logWarn } from "../lib/observability";
-import { MAX_TOOL_CALL_EVENTS_PER_MESSAGE, TOOL_CALL_EVENT_SUMMARY_MAX_CHARS } from "../lib/constants";
+import {
+  MAX_LIVE_REASONING_CHARS,
+  MAX_TOOL_CALL_EVENTS_PER_MESSAGE,
+  TOOL_CALL_EVENT_SUMMARY_MAX_CHARS,
+} from "../lib/constants";
 import {
   cancelActiveJob,
   completeRunningJob,
@@ -220,6 +224,34 @@ function lintSandboxClaims(
 }
 
 /**
+ * Derive the durable `messages.reasoning` / `messages.reasoningDurationMs`
+ * pair from a stream row.
+ *
+ * Returns `undefined` on each field when the stream produced no reasoning
+ * at all (the model wasn't a thinking model, or the events never fired)
+ * so the persisted message stays clean rather than carrying empty-string
+ * + `NaN` placeholders. The duration is computed from the stamped
+ * start/end timestamps; when only the start is present (mid-cancel /
+ * mid-fail), we substitute the current time so the elapsed window is
+ * the partial-reasoning wall-clock rather than `NaN`.
+ *
+ * Optional `now` is passed in by the call site so the pair stays
+ * stable when multiple writes settle in the same finalize transaction.
+ */
+function deriveMessageReasoning(
+  stream: Pick<Doc<"messageStreams">, "liveReasoning" | "reasoningStartedAt" | "reasoningEndedAt"> | null,
+  now: number,
+): { reasoning: string | undefined; reasoningDurationMs: number | undefined } {
+  if (!stream || !stream.liveReasoning) {
+    return { reasoning: undefined, reasoningDurationMs: undefined };
+  }
+  const start = stream.reasoningStartedAt;
+  const end = stream.reasoningEndedAt ?? now;
+  const durationMs = typeof start === "number" ? Math.max(0, end - start) : undefined;
+  return { reasoning: stream.liveReasoning, reasoningDurationMs: durationMs };
+}
+
+/**
  * Cap a tool-call summary at `TOOL_CALL_EVENT_SUMMARY_MAX_CHARS` characters,
  * appending the truncation marker when truncation actually happens.
  * Operates on UTF-16 code units (the same units `String.slice` uses), so
@@ -265,6 +297,13 @@ export const getActiveMessageStream = query({
     return {
       assistantMessageId: stream.assistantMessageId,
       content: `${stream.compactedContent}${tailChunks.map((chunk) => chunk.text).join("")}`,
+      // Reasoning trace for extended-thinking models. `null` (rather than
+      // `undefined`) on the wire so the frontend's discriminated union
+      // can pattern-match on `reasoning === null` without nullish
+      // gymnastics. The same convention applies to the two timestamps.
+      reasoning: stream.liveReasoning ?? null,
+      reasoningStartedAt: stream.reasoningStartedAt ?? null,
+      reasoningEndedAt: stream.reasoningEndedAt ?? null,
       startedAt: stream.startedAt,
       lastAppendedAt: stream.lastAppendedAt,
     };
@@ -404,6 +443,149 @@ export const appendAssistantStreamChunk = internalMutation({
     }
 
     await compactMessageStreamTail(ctx, stream._id);
+  },
+});
+
+/**
+ * Append a reasoning delta into `messageStreams.liveReasoning`.
+ *
+ * Mirrors `appendAssistantStreamChunk` but for the model's extended-
+ * thinking trace. Reasoning chunks are appended into the stream row's
+ * `liveReasoning` column directly rather than a separate chunks table:
+ * the trace is bounded (a few KB), the trace renderer doesn't need
+ * sequence ordering across multiple writers, and the volume never
+ * justifies the per-row overhead of a sibling table.
+ *
+ * Side-effect: refreshes the chat job lease using the same half-window
+ * heuristic `appendAssistantToolCallEvent` applies. Reasoning-heavy
+ * replies can spend 5+ minutes thinking before any text or tool event
+ * fires; without this refresh a long reasoning trace would let the
+ * initial 10-minute lease expire and `recoverStaleChatJob` would mark a
+ * healthy in-flight job stale. We adopt the tool-event pattern
+ * (`lastAppendedAt` only advances on successful lease refresh) rather
+ * than the text-chunk pattern (`lastAppendedAt` always advances) so the
+ * marker tracks actual refresh times — a subsequent text flush still
+ * sees the correct staleness window and refreshes when needed.
+ *
+ * Defensive against late events on a stream that has already finalized
+ * (the message can race ahead of in-flight `runMutation` calls): a
+ * missing stream just logs and returns, mirroring how
+ * `appendAssistantToolCallEvent` treats a missing message.
+ */
+export const appendAssistantReasoningDelta = internalMutation({
+  args: {
+    assistantMessageId: v.id("messages"),
+    jobId: v.id("jobs"),
+    delta: v.string(),
+  },
+  handler: async (ctx, args) => {
+    if (!args.delta) {
+      return;
+    }
+    const stream = await getMessageStreamByAssistantMessageId(ctx, args.assistantMessageId);
+    if (!stream) {
+      logWarn("chat", "reasoning_delta_stream_missing", {
+        assistantMessageId: args.assistantMessageId,
+        jobId: args.jobId,
+        deltaLength: args.delta.length,
+      });
+      return;
+    }
+    // Bound the accumulated trace before the patch. Each call rewrites the
+    // whole `liveReasoning` column, so unbounded growth approaches Convex's
+    // 1 MB per-document hard limit and creates quadratic write cost across
+    // a long trace. When the cap is exceeded we drop the oldest bytes so the
+    // renderer keeps showing the model's most recent thinking — the trace is
+    // an auxiliary UI, not a durable transcript.
+    const concatenated = `${stream.liveReasoning ?? ""}${args.delta}`;
+    const next =
+      concatenated.length > MAX_LIVE_REASONING_CHARS
+        ? concatenated.slice(concatenated.length - MAX_LIVE_REASONING_CHARS)
+        : concatenated;
+    if (concatenated.length > MAX_LIVE_REASONING_CHARS) {
+      logWarn("chat", "live_reasoning_truncated", {
+        assistantMessageId: args.assistantMessageId,
+        jobId: args.jobId,
+        droppedChars: concatenated.length - MAX_LIVE_REASONING_CHARS,
+        cap: MAX_LIVE_REASONING_CHARS,
+      });
+    }
+    await ctx.db.patch(stream._id, {
+      liveReasoning: next,
+    });
+
+    const now = Date.now();
+    const leaseRefreshDeadline = now - Math.floor(CHAT_JOB_LEASE_MS / 2);
+    if (stream.lastAppendedAt <= leaseRefreshDeadline) {
+      const refreshedJob = await refreshRunningJobLease(ctx, {
+        jobId: args.jobId,
+        expectedKind: "chat",
+        leaseExpiresAt: now + CHAT_JOB_LEASE_MS,
+      });
+      if (refreshedJob) {
+        await ctx.db.patch(stream._id, {
+          lastAppendedAt: now,
+        });
+      }
+    }
+  },
+});
+
+/**
+ * Stamp the wall-clock start of the reasoning phase. Idempotent — a
+ * second `reasoning-start` event on the same reply keeps the original
+ * timestamp so the eventual "Thought for N seconds" label reflects
+ * total reasoning time across all steps. Defensive against a missing
+ * stream row, same shape as `appendAssistantReasoningDelta`.
+ */
+export const markReasoningStarted = internalMutation({
+  args: {
+    assistantMessageId: v.id("messages"),
+    jobId: v.id("jobs"),
+    occurredAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const stream = await getMessageStreamByAssistantMessageId(ctx, args.assistantMessageId);
+    if (!stream) {
+      logWarn("chat", "reasoning_start_stream_missing", {
+        assistantMessageId: args.assistantMessageId,
+        jobId: args.jobId,
+      });
+      return;
+    }
+    if (stream.reasoningStartedAt !== undefined) {
+      return;
+    }
+    await ctx.db.patch(stream._id, {
+      reasoningStartedAt: args.occurredAt,
+    });
+  },
+});
+
+/**
+ * Stamp the wall-clock end of the reasoning phase. Overwrites any
+ * previous value so the duration computed at finalize matches the
+ * most recent `reasoning-end` — important when the SDK emits multiple
+ * reasoning blocks per reply (each ends individually).
+ */
+export const markReasoningEnded = internalMutation({
+  args: {
+    assistantMessageId: v.id("messages"),
+    jobId: v.id("jobs"),
+    occurredAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const stream = await getMessageStreamByAssistantMessageId(ctx, args.assistantMessageId);
+    if (!stream) {
+      logWarn("chat", "reasoning_end_stream_missing", {
+        assistantMessageId: args.assistantMessageId,
+        jobId: args.jobId,
+      });
+      return;
+    }
+    await ctx.db.patch(stream._id, {
+      reasoningEndedAt: args.occurredAt,
+    });
   },
 });
 
@@ -572,6 +754,7 @@ export const finalizeAssistantReply = internalMutation({
         // `lintSandboxClaims`; discuss / library return `undefined` and
         // the optional schema field stays unset.
         const unverifiedClaims = lintSandboxClaims(message, finalContent);
+        const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
         await ctx.db.patch(args.assistantMessageId, {
           content: finalContent,
           status: "completed",
@@ -587,6 +770,8 @@ export const finalizeAssistantReply = internalMutation({
           citationMap: args.citationMap,
           toolCalls: persistedToolCalls,
           unverifiedClaims,
+          reasoning: reasoning.reasoning,
+          reasoningDurationMs: reasoning.reasoningDurationMs,
         });
         // The thread may have been deleted while we were streaming. Patching a
         // missing doc throws and would roll back the whole mutation (so the
@@ -711,12 +896,15 @@ export const failAssistantReply = internalMutation({
         // error message is system text and never contains model
         // claims to flag.
         const unverifiedClaims = lintSandboxClaims(message, streamedContent);
+        const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
         await ctx.db.patch(args.assistantMessageId, {
           status: "failed",
           errorMessage: args.errorMessage,
           content: streamedContent || args.errorMessage,
           toolCalls: persistedToolCalls,
           unverifiedClaims,
+          reasoning: reasoning.reasoning,
+          reasoningDurationMs: reasoning.reasoningDurationMs,
           // Partial cost is still real spend; persist it so the failed
           // bubble can show "Failed at $0.04 (800 tokens)" in the cost
           // ticker, and the daily cap can settle accurately.
@@ -890,6 +1078,7 @@ export const markAssistantReplyCancelled = internalMutation({
         // before any token was streamed) returns `undefined` so the
         // bubble just shows the cancellation reason.
         const unverifiedClaims = lintSandboxClaims(message, streamedContent);
+        const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
         await ctx.db.patch(args.assistantMessageId, {
           status: "cancelled",
           errorMessage: reason,
@@ -899,6 +1088,8 @@ export const markAssistantReplyCancelled = internalMutation({
           content: streamedContent || reason,
           toolCalls: persistedToolCalls,
           unverifiedClaims,
+          reasoning: reasoning.reasoning,
+          reasoningDurationMs: reasoning.reasoningDurationMs,
           // Preserve partial-cost telemetry on cancellation for both
           // UI display and audit. Falling back to the existing values
           // (rather than overwriting with `undefined`) handles the
@@ -997,12 +1188,15 @@ export const recoverStaleChatJob = internalMutation({
         // empty and `lintSandboxClaims` returns `undefined` so the
         // bubble shows just the stall message.
         const unverifiedClaims = lintSandboxClaims(assistantMessage, streamSnapshot?.content ?? "");
+        const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
         await ctx.db.patch(assistantMessage._id, {
           status: "failed",
           errorMessage: message,
           content: streamSnapshot?.content || message,
           toolCalls: persistedToolCalls,
           unverifiedClaims,
+          reasoning: reasoning.reasoning,
+          reasoningDurationMs: reasoning.reasoningDurationMs,
         });
       }
 

@@ -1,13 +1,16 @@
-import { isValidElement, memo, useMemo, type ReactNode } from "react";
+import { memo, isValidElement, useCallback, useMemo, type ReactNode } from "react";
 import type { AllowedTags, Components } from "streamdown";
 import type { Doc } from "../../convex/_generated/dataModel";
-import { Message, MessageContent } from "@/components/ai-elements/message";
+import { Message, MessageContent, MessageActions, MessageAction } from "@/components/ai-elements/message";
+import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { ToolCallTrace } from "@/components/tool-call-trace";
 import { Badge } from "@/components/ui/badge";
 import { Markdown } from "@/components/markdown";
+import { useClipboard } from "@/hooks/use-clipboard";
 import { CITATION_TOKEN_REGEX, prepareAssistantMarkdown } from "@/lib/assistant-markdown";
 import type { ActiveMessageStream, ArtifactId } from "@/lib/types";
+import { CopyIcon, CheckIcon } from "@phosphor-icons/react";
 
 /**
  * Derive the grounding chip label from a persisted assistant message.
@@ -159,6 +162,19 @@ export const MessageBubble = memo(function MessageBubble({
       : message.estimatedCostUsd !== undefined
         ? `Reply cost ${costTicker}`
         : `Usage ${costTicker}`;
+  // Reasoning trace, when this is the in-flight assistant reply for a
+  // reasoning-capable model. While streaming we read the live tail from
+  // `activeMessageStream`; once the reply terminates the durable
+  // `messages.reasoning` field takes over (the stream row has been
+  // deleted by then). Both sources are optional — non-reasoning replies
+  // leave everything `null/undefined` and the `<Reasoning>` block stays
+  // unmounted.
+  const isLiveStream = isAssistant && activeMessageStream?.assistantMessageId === message._id;
+  const reasoningContent = isLiveStream ? (activeMessageStream.reasoning ?? null) : (message.reasoning ?? null);
+  const isReasoningStreaming = Boolean(
+    isLiveStream && activeMessageStream.reasoningStartedAt !== null && activeMessageStream.reasoningEndedAt === null,
+  );
+  const reasoningDurationSeconds = computeReasoningDurationSeconds(message, activeMessageStream, isLiveStream);
   return (
     // `Message` (ai-elements) handles the role-based alignment (user →
     // right, assistant → left) and constrains bubble width to max-w-95%.
@@ -188,6 +204,14 @@ export const MessageBubble = memo(function MessageBubble({
           <p className="text-[10px] text-muted-foreground">{statusLabel}</p>
         )}
       </div>
+      {isAssistant && (reasoningContent || isReasoningStreaming) ? (
+        <div data-testid="message-reasoning" className="px-1">
+          <Reasoning isStreaming={isReasoningStreaming} duration={reasoningDurationSeconds} defaultOpen={false}>
+            <ReasoningTrigger />
+            <ReasoningContent>{reasoningContent ?? ""}</ReasoningContent>
+          </Reasoning>
+        </div>
+      ) : null}
       <MessageContent>
         {isAssistant ? (
           displayContent ? (
@@ -216,18 +240,101 @@ export const MessageBubble = memo(function MessageBubble({
           />
         ) : null}
       </MessageContent>
-      {costTicker ? (
-        <p
-          className="px-1 text-[11px] text-muted-foreground/80 tabular-nums"
-          data-testid="message-cost-ticker"
-          aria-label={tickerAriaLabel}
-        >
-          {costTicker}
-        </p>
+      {/*
+       * Reserve a fixed-height slot under every assistant bubble so the
+       * streaming → completed handoff (when the cost ticker becomes
+       * available) doesn't push subsequent messages down by ~28px each
+       * time a reply settles. The row hosts both the cost ticker (left)
+       * and the copy action (right), reserving space for the action
+       * even when streaming so no shift occurs when the action becomes
+       * visible on completion.
+       */}
+      {isAssistant ? (
+        <div className="flex min-h-7 items-center justify-between gap-2 px-1">
+          <div className="min-w-0 flex-1">
+            {costTicker ? (
+              <p
+                className="truncate text-[11px] text-muted-foreground/80 tabular-nums"
+                data-testid="message-cost-ticker"
+                aria-label={tickerAriaLabel}
+              >
+                {costTicker}
+              </p>
+            ) : null}
+          </div>
+          {!isInFlight ? (
+            <MessageActions className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+              <CopyMessageAction content={displayContent} />
+            </MessageActions>
+          ) : null}
+        </div>
       ) : null}
     </Message>
   );
 });
+
+/**
+ * Resolve the "Thought for N seconds" duration the `<Reasoning>` trigger
+ * renders. Three cases:
+ *
+ *   - **Terminal reply** with `reasoningDurationMs` persisted → derive
+ *     seconds from the durable field (rounded up so a sub-second reply
+ *     still reads as `1`, matching the Reasoning trigger's own
+ *     `Math.ceil` convention).
+ *   - **Live stream** with both a start and an end timestamp → compute
+ *     from the active-stream timestamps so the trigger settles on the
+ *     correct duration immediately at `reasoning-end` without waiting
+ *     for finalize to copy the field across.
+ *   - **Mid-stream** (no end timestamp yet) → return `undefined` and
+ *     let `<Reasoning>` paint the "Thinking…" shimmer.
+ */
+function computeReasoningDurationSeconds(
+  message: Doc<"messages">,
+  activeMessageStream: ActiveMessageStream | null,
+  isLiveStream: boolean,
+): number | undefined {
+  if (isLiveStream && activeMessageStream) {
+    const start = activeMessageStream.reasoningStartedAt;
+    const end = activeMessageStream.reasoningEndedAt;
+    if (start !== null && end !== null) {
+      return Math.max(1, Math.ceil((end - start) / 1000));
+    }
+    return undefined;
+  }
+  if (message.reasoningDurationMs !== undefined) {
+    return Math.max(1, Math.ceil(message.reasoningDurationMs / 1000));
+  }
+  return undefined;
+}
+
+/**
+ * Copy button for assistant messages. Shows a checkmark briefly after
+ * clicking to confirm the copy succeeded.
+ *
+ * Delegates to {@link useClipboard} so the timer cleanup (auto-reset
+ * after 1.5s), unmount guard, and `navigator.clipboard` availability
+ * check all match the rest of the app's copy affordances rather than
+ * being re-derived here. The hook swallows clipboard failures and
+ * leaves `copied` false on rejection — the affordance stays idle when
+ * the browser blocks the write (insecure context, permissions policy)
+ * instead of falsely confirming a successful copy.
+ */
+function CopyMessageAction({ content }: { content: string }) {
+  const { copied, copy } = useClipboard({ resetAfterMs: 1500 });
+  const handleCopy = useCallback(() => {
+    void copy(content);
+  }, [copy, content]);
+  return (
+    <MessageAction
+      tooltip={copied ? "Copied" : "Copy reply"}
+      size="xs"
+      onClick={handleCopy}
+      data-testid="message-copy-button"
+    >
+      {copied ? <CheckIcon size={14} weight="bold" /> : <CopyIcon size={14} />}
+    </MessageAction>
+  );
+}
 
 /**
  * Render the chat-bubble cost ticker.

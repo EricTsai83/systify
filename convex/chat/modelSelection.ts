@@ -63,11 +63,78 @@ import type { ChatMode } from "../lib/chatMode";
  */
 export type ModelCapability = "sandbox" | "library" | "discuss";
 
+/**
+ * OpenAI reasoning effort knob. Mirrors the provider's accepted values for
+ * `providerOptions.openai.reasoningEffort`.
+ */
+export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+
+/**
+ * Resolver output. Carries the picked model name alongside its reasoning
+ * capability so `streamText` can wire `providerOptions` without re-deriving
+ * the effort from the model name.
+ */
+export type ModelChoice = {
+  name: string;
+  /** Undefined when the model doesn't support reasoning. */
+  reasoningEffort: ReasoningEffort | undefined;
+};
+
 const DEFAULT_MODEL_BY_CAPABILITY: Record<ModelCapability, string> = {
   sandbox: "gpt-5",
   library: "gpt-5-mini",
   discuss: "gpt-5-mini",
 };
+
+/**
+ * Per-model-family reasoning default. Keys are family prefixes; a model
+ * matches if its name equals the key OR begins with `<key>-` (boundary at
+ * hyphen so `gpt-5` doesn't match a hypothetical `gpt-50`). Longest
+ * matching prefix wins, so `gpt-5-mini-2026-01-15` resolves to the
+ * `gpt-5-mini` row rather than the `gpt-5` row. A model that doesn't
+ * match any prefix has no reasoning support — adding a new reasoning-
+ * capable family means adding it here in the same change that introduces
+ * it to the pricing table (`convex/lib/openaiPricing.ts`).
+ *
+ * Family matching (not exact id) so operator-pinned snapshot names like
+ * `gpt-5-2026-01-15` keep the family's reasoning default instead of
+ * silently degrading to no reasoning at all.
+ *
+ * Defaults are chosen per-family, NOT per-tier:
+ *   - `gpt-5`      → `medium` — matches OpenAI's API default; the
+ *                    sandbox tier uses this family and tool trajectories
+ *                    (plan → call → re-plan) benefit from real thought.
+ *   - `gpt-5-mini` → `low`    — the lighter tier used for library + discuss;
+ *                    fast text replies don't justify deeper effort.
+ *
+ * To change a default permanently, edit this table — the diff is the
+ * audit trail. To suppress reasoning for one tier at runtime, point
+ * that tier at a non-reasoning model via `OPENAI_MODEL_<TIER>`.
+ */
+const MODEL_REASONING_DEFAULT: Record<string, ReasoningEffort> = {
+  "gpt-5": "medium",
+  "gpt-5-mini": "low",
+};
+
+/**
+ * Resolve a model name to its family's reasoning effort. Longest matching
+ * prefix wins so `gpt-5-mini-2026-01-15` lands on `gpt-5-mini` rather than
+ * `gpt-5`. Returns `undefined` when no family matches — the caller treats
+ * that as "non-reasoning model" and omits `providerOptions.openai.reasoningEffort`.
+ */
+function resolveReasoningEffort(modelName: string): ReasoningEffort | undefined {
+  let bestKey: string | undefined;
+  let bestEffort: ReasoningEffort | undefined;
+  for (const [key, effort] of Object.entries(MODEL_REASONING_DEFAULT)) {
+    if (modelName === key || modelName.startsWith(`${key}-`)) {
+      if (bestKey === undefined || key.length > bestKey.length) {
+        bestKey = key;
+        bestEffort = effort;
+      }
+    }
+  }
+  return bestEffort;
+}
 
 /**
  * Capability → capability-specific override env var name. Kept as a typed
@@ -119,16 +186,20 @@ export function pickCapability(args: { mode: ChatMode; groundSandbox: boolean })
  * reading partial usage post-throw): the result is deterministic for a
  * given env snapshot and never throws — a missing API key is detected
  * upstream by `generation.ts` before this resolver is ever consulted.
+ *
+ * The returned `reasoningEffort` is keyed off the *resolved* model name,
+ * not the capability tier — picking `gpt-5` always means "reasoning at
+ * the gpt-5 default effort", and overriding the env to a non-reasoning
+ * model (`OPENAI_MODEL_DISCUSS=gpt-4o`) returns `undefined` so the
+ * generation path can omit `providerOptions.openai.reasoningEffort`
+ * entirely. See {@link MODEL_REASONING_DEFAULT} for the per-model table.
  */
-export function resolveModelForReply(args: { mode: ChatMode; groundSandbox: boolean }): string {
+export function resolveModelForReply(args: { mode: ChatMode; groundSandbox: boolean }): ModelChoice {
   const capability = pickCapability(args);
   const override = readEnv(CAPABILITY_ENV_VAR[capability]);
-  if (override !== undefined) {
-    return override;
-  }
-  const global = readEnv("OPENAI_MODEL");
-  if (global !== undefined) {
-    return global;
-  }
-  return DEFAULT_MODEL_BY_CAPABILITY[capability];
+  const name = override ?? readEnv("OPENAI_MODEL") ?? DEFAULT_MODEL_BY_CAPABILITY[capability];
+  return {
+    name,
+    reasoningEffort: resolveReasoningEffort(name),
+  };
 }

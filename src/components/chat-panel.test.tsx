@@ -154,6 +154,9 @@ describe("ChatPanel streaming rendering", () => {
             content: "streamed from container",
             startedAt: Date.now(),
             lastAppendedAt: Date.now(),
+            reasoning: null,
+            reasoningStartedAt: null,
+            reasoningEndedAt: null,
           };
         default:
           return [];
@@ -202,6 +205,9 @@ describe("ChatPanel streaming rendering", () => {
           content: "streamed reply",
           startedAt: Date.now(),
           lastAppendedAt: Date.now(),
+          reasoning: null,
+          reasoningStartedAt: null,
+          reasoningEndedAt: null,
         }}
         isChatLoading={false}
         chatInput=""
@@ -241,6 +247,9 @@ describe("ChatPanel streaming rendering", () => {
           content: "final streamed reply",
           startedAt: Date.now(),
           lastAppendedAt: Date.now(),
+          reasoning: null,
+          reasoningStartedAt: null,
+          reasoningEndedAt: null,
         }}
         isChatLoading={false}
         chatInput=""
@@ -599,6 +608,9 @@ describe("ChatPanel unverified-claim highlights", () => {
           content: "live partial content",
           startedAt: Date.now(),
           lastAppendedAt: Date.now(),
+          reasoning: null,
+          reasoningStartedAt: null,
+          reasoningEndedAt: null,
         }}
         isChatLoading={false}
         chatInput=""
@@ -789,6 +801,9 @@ describe("ChatPanel cancel-in-flight reply", () => {
           content: "partial reply",
           startedAt: Date.now(),
           lastAppendedAt: Date.now(),
+          reasoning: null,
+          reasoningStartedAt: null,
+          reasoningEndedAt: null,
         }}
         isChatLoading={false}
         chatInput=""
@@ -1371,6 +1386,279 @@ describe("ChatPanel per-message cost ticker", () => {
     expect(ticker).toHaveTextContent("800 tokens");
     expect(ticker).not.toHaveTextContent("$");
   });
+
+  describe("copy action", () => {
+    test("renders copy button for assistant messages in completed status", () => {
+      render(
+        <ChatPanel
+          selectedThreadId={threadId}
+          messages={[
+            {
+              _id: assistantMessageId,
+              role: "assistant",
+              status: "completed",
+              mode: "discuss",
+              content: "This is the assistant's response",
+              estimatedInputTokens: 500,
+              estimatedOutputTokens: 250,
+              estimatedCostUsd: 0.01,
+              errorMessage: undefined,
+            } as unknown as Doc<"messages">,
+          ]}
+          activeMessageStream={null}
+          isChatLoading={false}
+          chatInput=""
+          setChatInput={vi.fn()}
+          chatMode="discuss"
+          groundLibrary={false}
+          groundSandbox={false}
+          setGroundLibrary={vi.fn()}
+          setGroundSandbox={vi.fn()}
+          grounding={undefined}
+          isSending={false}
+          onSendMessage={vi.fn()}
+          sandboxModeStatus={{ reasonCode: "available", message: null }}
+          isSyncing={false}
+          onSync={vi.fn()}
+        />,
+      );
+
+      expect(screen.getByTestId("message-copy-button")).toBeInTheDocument();
+    });
+
+    test("does not render copy button for user messages", () => {
+      render(
+        <ChatPanel
+          selectedThreadId={threadId}
+          messages={[
+            {
+              _id: "user-msg-id" as unknown as MessageId,
+              role: "user",
+              status: "completed",
+              mode: "discuss",
+              content: "user question",
+              errorMessage: undefined,
+            } as unknown as Doc<"messages">,
+          ]}
+          activeMessageStream={null}
+          isChatLoading={false}
+          chatInput=""
+          setChatInput={vi.fn()}
+          chatMode="discuss"
+          groundLibrary={false}
+          groundSandbox={false}
+          setGroundLibrary={vi.fn()}
+          setGroundSandbox={vi.fn()}
+          grounding={undefined}
+          isSending={false}
+          onSendMessage={vi.fn()}
+          sandboxModeStatus={{ reasonCode: "available", message: null }}
+          isSyncing={false}
+          onSync={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByTestId("message-copy-button")).not.toBeInTheDocument();
+    });
+
+    test("does not render copy button while assistant is streaming", () => {
+      render(
+        <ChatPanel
+          selectedThreadId={threadId}
+          messages={[
+            {
+              _id: assistantMessageId,
+              role: "assistant",
+              status: "streaming",
+              mode: "discuss",
+              content: "partial response",
+              estimatedInputTokens: 500,
+              estimatedOutputTokens: undefined,
+              errorMessage: undefined,
+            } as unknown as Doc<"messages">,
+          ]}
+          activeMessageStream={null}
+          isChatLoading={false}
+          chatInput=""
+          setChatInput={vi.fn()}
+          chatMode="discuss"
+          groundLibrary={false}
+          groundSandbox={false}
+          setGroundLibrary={vi.fn()}
+          setGroundSandbox={vi.fn()}
+          grounding={undefined}
+          isSending={false}
+          onSendMessage={vi.fn()}
+          sandboxModeStatus={{ reasonCode: "available", message: null }}
+          isSyncing={false}
+          onSync={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByTestId("message-copy-button")).not.toBeInTheDocument();
+    });
+
+    test("does not render copy button while assistant is pending", () => {
+      render(
+        <ChatPanel
+          selectedThreadId={threadId}
+          messages={[
+            {
+              _id: assistantMessageId,
+              role: "assistant",
+              status: "pending",
+              mode: "discuss",
+              content: "",
+              estimatedInputTokens: undefined,
+              estimatedOutputTokens: undefined,
+              errorMessage: undefined,
+            } as unknown as Doc<"messages">,
+          ]}
+          activeMessageStream={null}
+          isChatLoading={false}
+          chatInput=""
+          setChatInput={vi.fn()}
+          chatMode="discuss"
+          groundLibrary={false}
+          groundSandbox={false}
+          setGroundLibrary={vi.fn()}
+          setGroundSandbox={vi.fn()}
+          grounding={undefined}
+          isSending={false}
+          onSendMessage={vi.fn()}
+          sandboxModeStatus={{ reasonCode: "available", message: null }}
+          isSyncing={false}
+          onSync={vi.fn()}
+        />,
+      );
+
+      expect(screen.queryByTestId("message-copy-button")).not.toBeInTheDocument();
+    });
+
+    test("copies message content to clipboard on button click", async () => {
+      const writeTextMock = vi.fn().mockResolvedValue(undefined);
+      Object.assign(globalThis.navigator, {
+        clipboard: {
+          writeText: writeTextMock,
+        },
+      });
+
+      render(
+        <ChatPanel
+          selectedThreadId={threadId}
+          messages={[
+            {
+              _id: assistantMessageId,
+              role: "assistant",
+              status: "completed",
+              mode: "discuss",
+              content: "This is the message to copy",
+              estimatedInputTokens: 500,
+              estimatedOutputTokens: 250,
+              estimatedCostUsd: 0.01,
+              errorMessage: undefined,
+            } as unknown as Doc<"messages">,
+          ]}
+          activeMessageStream={null}
+          isChatLoading={false}
+          chatInput=""
+          setChatInput={vi.fn()}
+          chatMode="discuss"
+          groundLibrary={false}
+          groundSandbox={false}
+          setGroundLibrary={vi.fn()}
+          setGroundSandbox={vi.fn()}
+          grounding={undefined}
+          isSending={false}
+          onSendMessage={vi.fn()}
+          sandboxModeStatus={{ reasonCode: "available", message: null }}
+          isSyncing={false}
+          onSync={vi.fn()}
+        />,
+      );
+
+      const copyButton = screen.getByTestId("message-copy-button");
+      fireEvent.click(copyButton);
+
+      expect(writeTextMock).toHaveBeenCalledWith("This is the message to copy");
+    });
+
+    test("copy button is hidden while streaming and shown when completed", () => {
+      const { rerender } = render(
+        <ChatPanel
+          selectedThreadId={threadId}
+          messages={[
+            {
+              _id: assistantMessageId,
+              role: "assistant",
+              status: "streaming",
+              mode: "discuss",
+              content: "Message content",
+              estimatedInputTokens: 500,
+              estimatedOutputTokens: undefined,
+              errorMessage: undefined,
+            } as unknown as Doc<"messages">,
+          ]}
+          activeMessageStream={null}
+          isChatLoading={false}
+          chatInput=""
+          setChatInput={vi.fn()}
+          chatMode="discuss"
+          groundLibrary={false}
+          groundSandbox={false}
+          setGroundLibrary={vi.fn()}
+          setGroundSandbox={vi.fn()}
+          grounding={undefined}
+          isSending={false}
+          onSendMessage={vi.fn()}
+          sandboxModeStatus={{ reasonCode: "available", message: null }}
+          isSyncing={false}
+          onSync={vi.fn()}
+        />,
+      );
+
+      // Copy button should not be in the DOM while streaming
+      expect(screen.queryByTestId("message-copy-button")).not.toBeInTheDocument();
+
+      // Rerender with completed status
+      rerender(
+        <ChatPanel
+          selectedThreadId={threadId}
+          messages={[
+            {
+              _id: assistantMessageId,
+              role: "assistant",
+              status: "completed",
+              mode: "discuss",
+              content: "Message content",
+              estimatedInputTokens: 500,
+              estimatedOutputTokens: 250,
+              estimatedCostUsd: 0.01,
+              errorMessage: undefined,
+            } as unknown as Doc<"messages">,
+          ]}
+          activeMessageStream={null}
+          isChatLoading={false}
+          chatInput=""
+          setChatInput={vi.fn()}
+          chatMode="discuss"
+          groundLibrary={false}
+          groundSandbox={false}
+          setGroundLibrary={vi.fn()}
+          setGroundSandbox={vi.fn()}
+          grounding={undefined}
+          isSending={false}
+          onSendMessage={vi.fn()}
+          sandboxModeStatus={{ reasonCode: "available", message: null }}
+          isSyncing={false}
+          onSync={vi.fn()}
+        />,
+      );
+
+      // Copy button should be in the DOM when completed
+      expect(screen.getByTestId("message-copy-button")).toBeInTheDocument();
+    });
+  });
 });
 
 /**
@@ -1546,5 +1834,184 @@ describe("ChatPanel mode examples", () => {
     );
 
     expect(screen.queryByTestId("mode-examples")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Reasoning trace surface (Phase 2). Coverage targets:
+ *
+ *   - The collapsible block mounts only when the message (terminal) or
+ *     active stream (live) carries a reasoning trace.
+ *   - Non-reasoning replies stay free of the collapsible UI.
+ *   - During a live stream where `reasoningStartedAt !== null` and
+ *     `reasoningEndedAt === null`, the trigger shows the "Thinking…"
+ *     shimmer (rather than a duration label).
+ *   - Terminal messages render the `Thought for N seconds` label
+ *     derived from `messages.reasoningDurationMs`.
+ */
+describe("ChatPanel reasoning trace", () => {
+  test("renders Reasoning collapsible for terminal assistant messages with persisted reasoning", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "completed",
+            mode: "discuss",
+            content: "Final answer.",
+            reasoning: "Considered three approaches before committing.",
+            reasoningDurationMs: 4_400,
+            errorMessage: undefined,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("message-reasoning")).toBeInTheDocument();
+    // 4400ms → ceil(4.4) = 5 seconds. Anchor on the visible label so a
+    // future copy tweak surfaces here rather than silently regressing.
+    expect(screen.getByText("Thought for 5 seconds")).toBeInTheDocument();
+  });
+
+  test("omits Reasoning collapsible when the assistant message has no reasoning trace", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "completed",
+            mode: "discuss",
+            content: "Simple text answer.",
+            errorMessage: undefined,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("message-reasoning")).not.toBeInTheDocument();
+  });
+
+  test("renders Reasoning collapsible with 'Thinking…' shimmer while reasoning is mid-stream", () => {
+    // Mid-stream: start stamped, end NOT stamped. The active stream
+    // carries the live tail of the reasoning text; the `<Reasoning>`
+    // trigger renders the shimmer rather than a duration label.
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "streaming",
+            mode: "discuss",
+            content: "",
+            errorMessage: undefined,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={{
+          assistantMessageId,
+          content: "",
+          reasoning: "Thinking it through…",
+          reasoningStartedAt: 1_000,
+          reasoningEndedAt: null,
+          startedAt: 1_000,
+          lastAppendedAt: 1_200,
+        }}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("message-reasoning")).toBeInTheDocument();
+    // `Thinking...` is the shimmer label the Reasoning trigger renders
+    // while `isStreaming` is true. Anchor on the literal so the trigger
+    // copy stays stable.
+    expect(screen.getByText("Thinking...")).toBeInTheDocument();
+  });
+
+  test("user messages never render the Reasoning collapsible", () => {
+    // The schema technically lets `reasoning` exist on any role, but the
+    // bubble only renders the trace for assistant replies — user bubbles
+    // are gated on `isAssistant` regardless of field presence.
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: "user_msg" as unknown as MessageId,
+            role: "user",
+            status: "completed",
+            mode: "discuss",
+            content: "Question.",
+            reasoning: "Should not surface on user bubble.",
+            reasoningDurationMs: 1_000,
+            errorMessage: undefined,
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByTestId("message-reasoning")).not.toBeInTheDocument();
   });
 });

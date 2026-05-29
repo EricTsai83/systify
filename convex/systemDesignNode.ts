@@ -383,7 +383,7 @@ async function generateLlm(
   const client = await getSandboxFsClient(sandbox.remoteId);
   const tools = createSandboxTools(client, sandbox.repoPath);
 
-  const modelName = resolveModelForReply({ mode: "discuss", groundSandbox: true });
+  const modelChoice = resolveModelForReply({ mode: "discuss", groundSandbox: true });
   // Appended once for every LLM kind so the per-kind prompts don't have to
   // each restate the budget — keeps the limit in sync with
   // `SYSTEM_DESIGN_STEP_BUDGET` and avoids drift.
@@ -403,9 +403,12 @@ async function generateLlm(
     .join("\n");
 
   const completion = await generateText({
-    model: openai(modelName),
+    model: openai(modelChoice.name),
     system: systemPrompt,
     prompt: userPrompt,
+    providerOptions: modelChoice.reasoningEffort
+      ? { openai: { reasoningEffort: modelChoice.reasoningEffort } }
+      : undefined,
     tools,
     stopWhen: stepCountIs(SYSTEM_DESIGN_STEP_BUDGET),
     maxRetries: 2,
