@@ -128,7 +128,7 @@ export const RepositorySelector = memo(function RepositorySelector({
               setPopoverOpen(false);
               setImportDialogOpen(true);
             }}
-            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors hover:bg-accent/60"
           >
             <GitBranchIcon size={16} weight="bold" className="shrink-0" />
             <span>Import repository</span>

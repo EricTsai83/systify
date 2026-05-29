@@ -188,7 +188,7 @@ function ComboboxSeparator({ className, ...props }: ComboboxPrimitive.Separator.
   return (
     <ComboboxPrimitive.Separator
       data-slot="combobox-separator"
-      className={cn("my-1 h-px bg-border/60", className)}
+      className={cn("my-1 h-px bg-foreground/10", className)}
       {...props}
     />
   );
