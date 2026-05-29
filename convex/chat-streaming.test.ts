@@ -1135,6 +1135,208 @@ describe("chat tool-call event lifecycle", () => {
       .query(api.chat.streaming.getMessageToolCallEvents, { assistantMessageId });
     expect(strangerView).toBeNull();
   });
+
+  /**
+   * Reasoning trace plumbing (Plan: Phase 2). Covers:
+   *
+   *   - `appendAssistantReasoningDelta` accumulates into `liveReasoning`.
+   *   - `markReasoningStarted` stamps the start timestamp once.
+   *   - `markReasoningEnded` records the end and the surrounding
+   *     `getActiveMessageStream` query surfaces both for the UI.
+   *   - `finalizeAssistantReply` copies `liveReasoning` →
+   *     `messages.reasoning` and computes `reasoningDurationMs` from the
+   *     stamped timestamps.
+   *   - `markAssistantReplyCancelled` preserves whatever reasoning was
+   *     captured before the cancel landed (no data loss on partial).
+   */
+  test("reasoning deltas append into liveReasoning and stamp start / end", async () => {
+    const ownerTokenIdentifier = "user|reasoning-stream";
+    const t = convexTest(schema, modules);
+    const { threadId, jobId, assistantMessageId, streamId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "reasoning-stream",
+    );
+
+    await t.mutation(internal.chat.streaming.markReasoningStarted, {
+      assistantMessageId,
+      jobId,
+      occurredAt: 1_000,
+    });
+    await t.mutation(internal.chat.streaming.appendAssistantReasoningDelta, {
+      assistantMessageId,
+      jobId,
+      delta: "Thinking about ",
+    });
+    await t.mutation(internal.chat.streaming.appendAssistantReasoningDelta, {
+      assistantMessageId,
+      jobId,
+      delta: "the approach.",
+    });
+    // Second `markReasoningStarted` is a no-op so total duration includes
+    // the whole reasoning window.
+    await t.mutation(internal.chat.streaming.markReasoningStarted, {
+      assistantMessageId,
+      jobId,
+      occurredAt: 5_000,
+    });
+    await t.mutation(internal.chat.streaming.markReasoningEnded, {
+      assistantMessageId,
+      jobId,
+      occurredAt: 6_500,
+    });
+
+    const stream = await t.run(async (ctx) => ctx.db.get(streamId));
+    expect(stream?.liveReasoning).toBe("Thinking about the approach.");
+    expect(stream?.reasoningStartedAt).toBe(1_000);
+    expect(stream?.reasoningEndedAt).toBe(6_500);
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const active = await viewer.query(api.chat.streaming.getActiveMessageStream, { threadId });
+    expect(active).toMatchObject({
+      reasoning: "Thinking about the approach.",
+      reasoningStartedAt: 1_000,
+      reasoningEndedAt: 6_500,
+    });
+  });
+
+  test("finalizeAssistantReply copies reasoning to messages.reasoning and computes duration", async () => {
+    const ownerTokenIdentifier = "user|reasoning-finalize";
+    const t = convexTest(schema, modules);
+    const { threadId, jobId, assistantMessageId, streamId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "reasoning-finalize",
+    );
+
+    await t.mutation(internal.chat.streaming.markReasoningStarted, {
+      assistantMessageId,
+      jobId,
+      occurredAt: 1_000,
+    });
+    await t.mutation(internal.chat.streaming.appendAssistantReasoningDelta, {
+      assistantMessageId,
+      jobId,
+      delta: "Reasoned through the dependency graph.",
+    });
+    await t.mutation(internal.chat.streaming.markReasoningEnded, {
+      assistantMessageId,
+      jobId,
+      occurredAt: 4_200,
+    });
+
+    await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
+      threadId,
+      assistantMessageId,
+      jobId,
+      finalDelta: "Done.",
+    });
+
+    const state = await t.run(async (ctx) => ({
+      message: await ctx.db.get(assistantMessageId),
+      stream: await ctx.db.get(streamId),
+    }));
+    expect(state.message?.reasoning).toBe("Reasoned through the dependency graph.");
+    expect(state.message?.reasoningDurationMs).toBe(3_200);
+    // Stream row is dropped on finalize — `liveReasoning` doesn't outlive
+    // the durable `messages.reasoning` copy.
+    expect(state.stream).toBeNull();
+  });
+
+  test("non-reasoning replies leave messages.reasoning unset on finalize", async () => {
+    const ownerTokenIdentifier = "user|reasoning-absent";
+    const t = convexTest(schema, modules);
+    const { threadId, jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "reasoning-absent",
+    );
+
+    await t.mutation(internal.chat.streaming.appendAssistantStreamChunk, {
+      assistantMessageId,
+      jobId,
+      delta: "Text-only reply.",
+    });
+    await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
+      threadId,
+      assistantMessageId,
+      jobId,
+      finalDelta: "",
+    });
+
+    const message = await t.run(async (ctx) => ctx.db.get(assistantMessageId));
+    expect(message?.reasoning).toBeUndefined();
+    expect(message?.reasoningDurationMs).toBeUndefined();
+  });
+
+  test("markAssistantReplyCancelled preserves partial reasoning captured before the cancel", async () => {
+    const ownerTokenIdentifier = "user|reasoning-cancel";
+    const t = convexTest(schema, modules);
+    const { jobId, assistantMessageId } = await createStreamingFixture(t, ownerTokenIdentifier, "reasoning-cancel");
+
+    await t.mutation(internal.chat.streaming.markReasoningStarted, {
+      assistantMessageId,
+      jobId,
+      occurredAt: 100,
+    });
+    await t.mutation(internal.chat.streaming.appendAssistantReasoningDelta, {
+      assistantMessageId,
+      jobId,
+      delta: "Halfway through reasoning when the user clicked Stop.",
+    });
+
+    await t.mutation(internal.chat.streaming.markAssistantReplyCancelled, {
+      assistantMessageId,
+      jobId,
+      finalDelta: undefined,
+      reason: "Cancelled by user.",
+    });
+
+    const message = await t.run(async (ctx) => ctx.db.get(assistantMessageId));
+    expect(message?.status).toBe("cancelled");
+    expect(message?.reasoning).toBe("Halfway through reasoning when the user clicked Stop.");
+    // `reasoningEndedAt` was never stamped — duration falls back to
+    // `now - reasoningStartedAt`, which is positive regardless of the
+    // exact `Date.now()` reading inside the mutation. Assert >= 0
+    // rather than a specific value so the test isn't fake-timer-sensitive.
+    expect(message?.reasoningDurationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  test("appendAssistantReasoningDelta refreshes the job lease once half the lease window has elapsed", async () => {
+    const ownerTokenIdentifier = "user|reasoning-lease-refresh";
+    const t = convexTest(schema, modules);
+    const { jobId, assistantMessageId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "reasoning-lease-refresh",
+    );
+
+    // First delta: stream.lastAppendedAt was set at fixture creation time
+    // (now), so the half-window check sees a "recent refresh" and skips
+    // the job patch — same per-flush savings the text + tool paths apply.
+    const firstAppendAt = await t.run(async (ctx) => (await ctx.db.get(jobId))!.leaseExpiresAt!);
+    await t.mutation(internal.chat.streaming.appendAssistantReasoningDelta, {
+      assistantMessageId,
+      jobId,
+      delta: "early reasoning",
+    });
+    const afterFirstAppend = await t.run(async (ctx) => (await ctx.db.get(jobId))!.leaseExpiresAt!);
+    expect(afterFirstAppend).toBe(firstAppendAt);
+
+    // Advance past half the lease window. Now stream.lastAppendedAt is
+    // older than the threshold, so the next reasoning delta must extend
+    // the lease — otherwise a long reasoning trace (5+ minutes of pure
+    // thinking) would let the initial lease expire mid-stream and
+    // `recoverStaleChatJob` would mark a healthy job stale.
+    vi.advanceTimersByTime(6 * 60_000);
+    await t.mutation(internal.chat.streaming.appendAssistantReasoningDelta, {
+      assistantMessageId,
+      jobId,
+      delta: "still reasoning",
+    });
+    const afterLateAppend = await t.run(async (ctx) => (await ctx.db.get(jobId))!.leaseExpiresAt!);
+    expect(afterLateAppend).toBeGreaterThan(afterFirstAppend);
+  });
 });
 
 async function createStreamingFixture(t: ReturnType<typeof convexTest>, ownerTokenIdentifier: string, slug: string) {

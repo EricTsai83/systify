@@ -261,6 +261,31 @@ export const generateAssistantReply = internalAction({
 
     // Anything still buffered in pendingDelta below STREAM_FLUSH_THRESHOLD can be lost on a crash; recoverStaleChatJob only sees persisted messageStreamChunks flushed via appendAssistantStreamChunk before compactMessageStreamTail/finalizeAssistantReply/failAssistantReply run.
     let pendingDelta = "";
+    // Parallel reasoning buffer. Mirrors `pendingDelta` but for the
+    // model's extended-thinking trace — flushed into
+    // `messageStreams.liveReasoning` instead of a stream chunks row
+    // because reasoning volume is bounded (a few KB) and doesn't benefit
+    // from sequence-based compaction.
+    let pendingReasoningDelta = "";
+    // Defined at the action-handler scope (not inside the success-path
+    // `try` block) so the catch block can also force-flush the buffer on
+    // the failure / abort path — the success path defines its own usage
+    // alongside `flushIfNeeded` in the stream loop, but the catch needs
+    // the same callable.
+    const flushReasoningIfNeeded = async (options?: { force?: boolean }) => {
+      if (pendingReasoningDelta.length === 0) {
+        return;
+      }
+      if (!options?.force && pendingReasoningDelta.length < STREAM_FLUSH_THRESHOLD) {
+        return;
+      }
+      await ctx.runMutation(internal.chat.streaming.appendAssistantReasoningDelta, {
+        assistantMessageId: args.assistantMessageId,
+        jobId: args.jobId,
+        delta: pendingReasoningDelta,
+      });
+      pendingReasoningDelta = "";
+    };
 
     // `streamText` response is hoisted so every exit path (success
     // / cancel / fail / aborted) can read `response.totalUsage` to harvest
@@ -463,10 +488,13 @@ export const generateAssistantReply = internalAction({
       // Pick the model based on the reply's capability requirements. The
       // sandbox-grounded Discuss path is the heaviest (tool use) and stays on
       // the full GPT-5 tier; library / ungrounded discuss stay on the mini tier.
-      modelName = resolveModelForReply({
+      // The resolver also reports a per-model `reasoningEffort` so reasoning-
+      // capable models opt into extended thinking automatically.
+      const modelChoice = resolveModelForReply({
         mode: replyContext.mode,
         groundSandbox: groundedReplyContext.groundSandbox,
       });
+      modelName = modelChoice.name;
       telemetry.modelName = modelName;
       const systemPrompt = buildSystemPrompt(groundedReplyContext.mode, {
         groundLibrary: groundedReplyContext.groundLibrary,
@@ -595,6 +623,14 @@ export const generateAssistantReply = internalAction({
         model: openai(modelName),
         system: systemPrompt,
         prompt: userPromptText,
+        // Opt-in reasoning effort, keyed off the resolved model in
+        // `modelSelection.ts`. `undefined` for non-reasoning models means
+        // `providerOptions` is left unset and OpenAI behaves identically
+        // to today; reasoning-capable models (`gpt-5*`) get extended
+        // thinking at the per-model default effort.
+        providerOptions: modelChoice.reasoningEffort
+          ? { openai: { reasoningEffort: modelChoice.reasoningEffort } }
+          : undefined,
         // `tools` is an optional positional argument in the AI SDK; when
         // undefined the model behaves exactly like the previous text-only
         // streamText call. `stopWhen` is only meaningful when tools are
@@ -879,6 +915,33 @@ export const generateAssistantReply = internalAction({
             });
             break;
           }
+          case "reasoning-start": {
+            // Stamp the start of the reasoning phase so the `<Reasoning>` UI
+            // can render "Thought for N seconds" at finalize time. The
+            // mutation is idempotent on the timestamp field, so a duplicate
+            // `reasoning-start` (rare but possible across step boundaries)
+            // does not double-count duration.
+            await ctx.runMutation(internal.chat.streaming.markReasoningStarted, {
+              assistantMessageId: args.assistantMessageId,
+              jobId: args.jobId,
+              occurredAt: Date.now(),
+            });
+            break;
+          }
+          case "reasoning-delta": {
+            pendingReasoningDelta += part.text;
+            await flushReasoningIfNeeded();
+            break;
+          }
+          case "reasoning-end": {
+            await flushReasoningIfNeeded({ force: true });
+            await ctx.runMutation(internal.chat.streaming.markReasoningEnded, {
+              assistantMessageId: args.assistantMessageId,
+              jobId: args.jobId,
+              occurredAt: Date.now(),
+            });
+            break;
+          }
           case "error": {
             // Surface mid-stream provider errors. Re-throwing routes through
             // the outer catch which runs `failAssistantReply` exactly once.
@@ -887,7 +950,7 @@ export const generateAssistantReply = internalAction({
           }
           default:
             // `text-start` / `text-end` / `start-step` / `finish-step` /
-            // `start` / `finish` / `reasoning-*` / `tool-input-*` / `source` /
+            // `start` / `finish` / `tool-input-*` / `source` /
             // `file` / `tool-output-denied` / `tool-approval-request` /
             // `abort` / `raw` — none of these affect the text we persist.
             //
@@ -898,6 +961,15 @@ export const generateAssistantReply = internalAction({
             // the flag), so we don't need to special-case `abort` here.
             break;
         }
+      }
+
+      // Force any reasoning delta still buffered into the stream row so
+      // finalize / cancel can copy `liveReasoning` → `messages.reasoning`
+      // in a single transaction. Skipped when the job row is already gone
+      // — `appendAssistantReasoningDelta` would just no-op on a missing
+      // stream but avoiding the round trip keeps the abort path cheap.
+      if (!generationAborted) {
+        await flushReasoningIfNeeded({ force: true });
       }
 
       // Extract usage *before* branching on cancel/success so
@@ -971,6 +1043,23 @@ export const generateAssistantReply = internalAction({
       // `extractStreamUsage` short-circuits to `{}` — so the fallback
       // string is moot at runtime, just there to satisfy the helper's
       // `string` parameter type.
+      // Force any reasoning delta still buffered. Mirrors the success
+      // path so partial reasoning surfaces on failures and cancellations
+      // alike. `try`-wrapped because the catch is also reached on
+      // pre-context throws where the stream row doesn't exist yet — a
+      // flush attempt is fine to swallow there.
+      if (!generationAborted) {
+        try {
+          await flushReasoningIfNeeded({ force: true });
+        } catch (flushError) {
+          logWarn("chat", "reasoning_flush_failed_on_error_path", {
+            assistantMessageId: args.assistantMessageId,
+            jobId: args.jobId,
+            error: flushError instanceof Error ? flushError.message : String(flushError),
+          });
+        }
+      }
+
       const usage = await extractStreamUsage(streamResponse, {
         modelName: modelName ?? "gpt-5-mini",
         assistantMessageId: args.assistantMessageId,

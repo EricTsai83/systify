@@ -65,6 +65,13 @@ export type { ChatMode };
 export type ActiveMessageStream = {
   assistantMessageId: MessageId;
   content: string;
+  /**
+   * Live reasoning trace for extended-thinking models. `null` when the
+   * model is not reasoning-capable or the trace hasn't started yet.
+   */
+  reasoning: string | null;
+  reasoningStartedAt: number | null;
+  reasoningEndedAt: number | null;
   startedAt: number;
   lastAppendedAt: number;
 };

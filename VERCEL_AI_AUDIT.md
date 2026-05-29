@@ -111,8 +111,9 @@ const { uiState } = useUIState();
 - 外層容器的 `PromptInputFooter` 無固定寬度
 - 組合其他元素（Artifacts toggle、Grounding toggles）時，整個 footer 會變寬或變窄
 
-**目前有沒有修復**：✅ **有的（但只在 Send 按鈕）**
+**目前有沒有修復**：✅ **已完整實現**
 ```tsx
+// Send 按鈕（chat-panel.tsx:513-523）
 <span className="grid">
   <span aria-hidden="true" className="invisible col-start-1 row-start-1">
     Sending…
@@ -124,26 +125,20 @@ const { uiState } = useUIState();
     {isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
   </span>
 </span>
+
+// Stop 按鈕（chat-panel.tsx:486-491）
+<span className="grid">
+  <span aria-hidden="true" className="invisible col-start-1 row-start-1">
+    Stopping…
+  </span>
+  <span className="col-start-1 row-start-1">
+    {isCancellingReply ? "Stopping…" : "Stop"}
+  </span>
+</span>
 ```
 
 **修復方式**：
-✅ 已存在於 Send 按鈕，**但 Stop 按鈕沒有相同處理**
-
-**建議**：
-將 Stop 按鈕的標籤也用 grid-stack：
-```tsx
-<Button type="button" variant="destructive" size="sm">
-  <StopCircleIcon weight="bold" />
-  <span className="grid">
-    <span aria-hidden="true" className="invisible col-start-1 row-start-1">
-      Stopping…
-    </span>
-    <span className="col-start-1 row-start-1">
-      {isCancellingReply ? "Stopping…" : "Stop"}
-    </span>
-  </span>
-</Button>
-```
+✅ **已實現於兩個按鈕** — `chat-panel.tsx` 第 456–525 行的 Send 和 Stop 按鈕都使用了 hidden/aria-hidden 的 grid-stack 技術，確保按鈕寬度在所有狀態下保持固定，不會因標籤文字長度變化而引起 CLS。
 
 ---
 
@@ -252,7 +247,7 @@ return <div>Live source ready (stops in 5 min)</div>;
 </div>
 ```
 
-**目前狀態**：❌ **無防護**，會造成明顯 shift
+**目前狀態**：✅ **已修復**（commit 04b0d4f） — `sandbox-activity-pill.tsx` 三種狀態共用 `pillRowClass`（含 `min-h-7`），活躍生命週期切換時不會推動聊天訊息列表
 
 ---
 
@@ -326,20 +321,20 @@ return <div>Live source ready (stops in 5 min)</div>;
 
 | 優先級 | 元件 | 風險 | 修復難度 | 建議行動 |
 |--------|------|------|---------|---------|
-| 🔴 P0 | ChatPanel Stop按鈕 | 高 | 低 | 立即修復：加 grid-stack |
-| 🔴 P0 | SandboxActivityPill | 高 | 中 | 立即修復：min-h 或 grid |
+| ✅ 完成 | ChatPanel Stop按鈕 | 高 | 低 | 已加 grid-stack + `min-w-[7.5rem]`（commit 04b0d4f） |
+| ✅ 完成 | SandboxActivityPill | 高 | 中 | 已加 `min-h-7` 至共用 pill row（commit 04b0d4f） |
 | 🟡 P1 | StatusPill 寬度 | 中 | 低 | 修復：min-w-fit |
 | 🟡 P1 | ImportStatusBanner | 中 | 低 | 修復：min-h-[48px] |
 | 🟡 P2 | AppNotice action | 低 | 低 | 優化：min-w reserve |
 
 ### 快速修復清單
 
-```
-□ chat-panel.tsx:456-515
-  - Stop 按鈕加 grid-stack 標籤（複製 Send 按鈕的模式）
+```text
+✅ chat-panel.tsx:456-525
+  - CLS fixes 已實現於 Send 和 Stop 按鈕的 grid-stack 標籤
 
-□ sandbox-activity-pill.tsx
-  - 外層 div 加 min-h-[72px] 預留空間
+✅ sandbox-activity-pill.tsx
+  - 三種狀態共用 pillRowClass（含 min-h-7）
 
 □ status-pill.tsx:105-114
   - 改 min-w-26 為 min-w-fit

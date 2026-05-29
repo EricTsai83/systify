@@ -788,6 +788,19 @@ export default defineSchema({
         }),
       ),
     ),
+    /**
+     * Reasoning trace from extended-thinking models (OpenAI o-series,
+     * Anthropic thinking). Frozen at finalize time, alongside `content`.
+     * Optional and only written when the model emitted `reasoning-delta`
+     * events during the stream; reasoning-less models keep this unset.
+     */
+    reasoning: v.optional(v.string()),
+    /**
+     * Wall-clock duration of the reasoning phase in milliseconds. Drives
+     * the "Thought for N seconds" label in the `<Reasoning>` UI. Optional
+     * and paired with `reasoning` — if one is set, both should be.
+     */
+    reasoningDurationMs: v.optional(v.number()),
   })
     .index("by_threadId", ["threadId"])
     .index("by_threadId_and_status", ["threadId", "status"])
@@ -809,6 +822,16 @@ export default defineSchema({
     nextSequence: v.number(),
     startedAt: v.number(),
     lastAppendedAt: v.number(),
+    /**
+     * Live reasoning tail. Mirrors how `compactedContent` works for text,
+     * but reasoning chunks are appended into the same stream row rather
+     * than a separate chunks table — reasoning volume is bounded
+     * (a few KB) and doesn't benefit from sequence-based compaction.
+     * Optional so streams started before this column was added still load.
+     */
+    liveReasoning: v.optional(v.string()),
+    reasoningStartedAt: v.optional(v.number()),
+    reasoningEndedAt: v.optional(v.number()),
   })
     .index("by_threadId", ["threadId"])
     .index("by_assistantMessageId", ["assistantMessageId"])
