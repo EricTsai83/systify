@@ -35,9 +35,9 @@ export const MODE_CATALOG: ReadonlyArray<{
     caption: "free-form chat · optional Library / Sandbox grounding",
     icon: ChatCircleIcon,
     examplePrompts: [
-      "What are the trade-offs of optimistic vs pessimistic locking?",
-      "When does CQRS pay for the extra moving parts?",
-      "Explain how rate limiting interacts with idempotency keys.",
+      "Help me think through the architecture for a multi-tenant SaaS from scratch.",
+      "Compare event sourcing vs CRUD for an audit-heavy system — when does the complexity pay off?",
+      "What would you change about a microservices design that keeps getting bitten by consistency bugs?",
     ],
   },
   {

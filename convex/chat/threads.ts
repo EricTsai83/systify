@@ -246,11 +246,11 @@ export const createLibraryAskThread = mutation({
 /**
  * Attach, swap, or detach the repository bound to a thread.
  *
- * Two of the three transitions have a UI entry point, both from the TopBar:
- *   - **attach** (no-repo → repo) via `AttachRepoMenu`;
- *   - **swap** (repo-A → repo-B) via `SwapThreadRepositoryControl`, gated
- *     behind an explicit confirmation dialog.
- * **Detach** has no UI affordance — to drop a repo, users start a new thread.
+ * Only **swap** (repo-A → repo-B) has a UI entry point, via
+ * `SwapThreadRepositoryControl` in the TopBar, gated behind an explicit
+ * confirmation dialog. **Attach** (no-repo → repo) and **detach** have no UI
+ * affordance — to bind a previously repoless thread or drop a repo, users
+ * start a new thread in the desired context.
  *
  * This mutation does not re-ground historical messages: only new messages
  * pick up the new repo's context via `getReplyContext`. A swap therefore

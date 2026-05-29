@@ -484,9 +484,6 @@ export function RepositoryShell({
       onToggleArtifactPanel={handleToggleArtifactPanel}
       showArtifactToggle={isArtifactPanelEnabled}
       hasAttachedRepository={capabilities.attachedRepository !== null}
-      availableRepositories={repositories ?? []}
-      onImported={handleImported}
-      onThreadMovedToRepository={handleThreadMovedToRepository}
       onSelectArtifact={handleSelectArtifact}
       isReadOnly={isRepoArchived}
       readOnlyHint={chatReadOnlyHint}
@@ -520,7 +517,6 @@ export function RepositoryShell({
           onPermanentDeleteRepo={() => setShowPermanentDeleteDialog(true)}
           threadId={effectiveSelectedThreadId}
           attachedRepository={capabilities.attachedRepository}
-          isAttachedRepositoryLoading={capabilities.isLoading}
           availableRepositories={repositories ?? []}
           onThreadMovedToRepository={handleThreadMovedToRepository}
           isDesktopLayout={isDesktopLayout}

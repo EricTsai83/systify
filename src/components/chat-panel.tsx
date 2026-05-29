@@ -20,16 +20,7 @@ import { GroundingToggleBar, type GroundingAxisLike } from "@/components/groundi
 import { ModeExamples } from "@/components/mode-examples";
 import { SandboxActivityPill } from "@/components/sandbox-activity-pill";
 import { Button } from "@/components/ui/button";
-import type {
-  ActiveMessageStream,
-  ArtifactId,
-  ChatMode,
-  OnImportedCallback,
-  RepositoryId,
-  SandboxModeStatus,
-  ThreadId,
-  ThreadMode,
-} from "@/lib/types";
+import type { ActiveMessageStream, ArtifactId, ChatMode, RepositoryId, SandboxModeStatus, ThreadId } from "@/lib/types";
 
 type ChatPanelProps = {
   selectedThreadId: ThreadId | null;
@@ -97,11 +88,6 @@ type ChatPanelProps = {
   showArtifactToggle?: boolean;
   /** Whether the current thread has an attached repository. */
   hasAttachedRepository?: boolean;
-  /** All repositories the viewer owns — used to populate the attach dropdown. */
-  availableRepositories?: ReadonlyArray<Doc<"repositories">>;
-  /** Callback after a new repository is imported via the inline dialog. */
-  onImported?: OnImportedCallback;
-  onThreadMovedToRepository?: (repositoryId: RepositoryId | null, mode: ThreadMode | null) => void;
   /**
    * Clicking an inline `[A#]` citation in an assistant reply forwards
    * the resolved artifact id to this callback. The shell uses it to open
@@ -185,9 +171,6 @@ export function ChatPanel({
   onToggleArtifactPanel,
   showArtifactToggle = false,
   hasAttachedRepository = true,
-  availableRepositories = [],
-  onImported,
-  onThreadMovedToRepository,
   onSelectArtifact,
   isReadOnly = false,
   readOnlyHint,
@@ -327,16 +310,7 @@ export function ChatPanel({
         <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 flex-col gap-3 px-6 py-6">
           {sandboxPill}
           {sandboxWarning}
-          {hasAttachedRepository ? (
-            <EmptyChatHint />
-          ) : (
-            <EmptyNoRepoHint
-              threadId={selectedThreadId}
-              availableRepositories={availableRepositories ?? []}
-              onImported={onImported}
-              onThreadMovedToRepository={onThreadMovedToRepository}
-            />
-          )}
+          {hasAttachedRepository ? <EmptyChatHint /> : <EmptyNoRepoHint />}
           {/*
            * Example prompts for the active mode. Renders at the bottom
            * of the empty-state column (the centered hint
