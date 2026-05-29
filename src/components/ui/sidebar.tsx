@@ -320,7 +320,7 @@ export function Sidebar({
       data-side={side}
       style={{ width: open ? width : 0, [isLeftSide ? "left" : "right"]: 0 }}
       className={cn(
-        "relative hidden shrink-0 flex-col overflow-hidden bg-background motion-safe:duration-200 motion-safe:ease-out [will-change:width] xl:flex",
+        "relative hidden shrink-0 flex-col overflow-hidden bg-background motion-safe:duration-200 motion-safe:ease-out will-change-[width] xl:flex",
         borderClass,
         "border-border",
         isResizing ? "transition-none" : "motion-safe:transition-[width] motion-reduce:transition-none",

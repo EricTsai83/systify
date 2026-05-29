@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactElement } from "react";
 import { useAction, useMutation, useQuery } from "convex/react";
+import { useControllableState } from "@radix-ui/react-use-controllable-state";
 import {
   PlusIcon,
   LockIcon,
@@ -14,6 +15,7 @@ import { api } from "../../convex/_generated/api";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Logo } from "@/components/logo";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -190,6 +192,8 @@ function RepoRow({
 export function ImportRepoDialog({
   onImported,
   trigger,
+  open: openProp,
+  onOpenChange: onOpenChangeProp,
 }: {
   /**
    * Fires once the backend has accepted the import and queued the workflow.
@@ -206,6 +210,14 @@ export function ImportRepoDialog({
    * repository" actions.
    */
   trigger?: ReactElement;
+  /**
+   * Controlled-open mode. When `open` is provided, the parent owns dialog
+   * visibility — required when the trigger lives inside a Popover (or other
+   * surface that unmounts on close), because internal `useState` would die
+   * with the trigger before the dialog can mount.
+   */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const createRepositoryImport = useMutation(api.repositories.createRepositoryImport);
   const initiateGitHubInstall = useAction(api.githubAppNode.initiateGitHubInstall);
@@ -214,7 +226,11 @@ export function ImportRepoDialog({
   const verifyAccess = useAction(api.githubAppNode.verifyRepoAccess);
   const importedSummaries = useQuery(api.repositories.getImportedRepoSummaries);
   const { isConnected, installationId, isLoading: isConnectionLoading } = useGitHubConnection();
-  const [open, setOpen] = useState(false);
+  const [open = false, setOpen] = useControllableState({
+    prop: openProp,
+    defaultProp: false,
+    onChange: onOpenChangeProp,
+  });
 
   // --- Auto-open after GitHub connection redirect (fallback path) ---
   // When the popup is blocked, handleConnectGitHub falls back to a full-page
@@ -237,7 +253,7 @@ export function ImportRepoDialog({
         // search already surfaces authorized private repos in results.
       }
     }
-  }, [isConnectionLoading, isConnected]);
+  }, [isConnectionLoading, isConnected, setOpen]);
 
   // --- Shared state ---
   const [importError, setImportError] = useState<string | null>(null);
@@ -477,7 +493,7 @@ export function ImportRepoDialog({
         setIsAwaitingPopup(false);
       }
     },
-    [fetchAuthorizedRepos, isConnected],
+    [setOpen, fetchAuthorizedRepos, isConnected],
   );
 
   // Import by URL
@@ -536,13 +552,15 @@ export function ImportRepoDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogTrigger asChild>
-        {trigger ?? (
+      {trigger ? (
+        <DialogTrigger asChild>{trigger}</DialogTrigger>
+      ) : openProp !== undefined ? null : (
+        <DialogTrigger asChild>
           <Button variant="secondary" size="icon" aria-label="Add repository" title="Add repository">
             <PlusIcon weight="bold" />
           </Button>
-        )}
-      </DialogTrigger>
+        </DialogTrigger>
+      )}
       <DialogContent className="flex h-[560px] flex-col overflow-y-hidden data-[state=open]:animate-none">
         <DialogHeader className="shrink-0">
           <DialogTitle>Import Repository</DialogTitle>
@@ -550,7 +568,16 @@ export function ImportRepoDialog({
         </DialogHeader>
 
         {!isConnected ? (
-          <div className="flex flex-1 flex-col items-center justify-center gap-6">
+          <div className="relative flex flex-1 flex-col items-center justify-center gap-6">
+            {/* Ambient top-center glow — gives the dialog depth so it doesn't read as flat */}
+            <div
+              aria-hidden
+              className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-48"
+              style={{
+                backgroundImage:
+                  "radial-gradient(ellipse at top, color-mix(in oklab, var(--primary) 14%, transparent) 0%, transparent 70%)",
+              }}
+            />
             {isAwaitingPopup ? (
               /* ---- Waiting for popup authorization ---- */
               <>
@@ -576,55 +603,83 @@ export function ImportRepoDialog({
             ) : (
               /* ---- Initial connect prompt ---- */
               <>
+                {/* Hero: Systify ⇄ GitHub bridge — anchors the upper half and
+                    visualises the "secure, scoped connection" promise made below. */}
+                <div className="flex items-center gap-4">
+                  <Logo size={44} />
+                  <div className="relative flex h-8 w-24 items-center justify-center">
+                    <div className="absolute -inset-x-12 top-1/2 h-px -translate-y-1/2 bg-primary/45 blur-sm" />
+                    <div className="absolute -inset-x-12 top-1/2 h-2 -translate-y-1/2 rounded-[50%] bg-primary/30 blur-sm" />
+                    <div className="relative z-10">
+                      <div className="absolute inset-0 -m-1.5 rounded-full bg-primary/20 blur-md" />
+                      <div className="relative flex h-7 w-7 items-center justify-center rounded-full border border-primary/40 bg-card shadow-md shadow-primary/25">
+                        <ShieldCheckIcon size={13} weight="fill" className="text-primary" />
+                      </div>
+                    </div>
+                  </div>
+                  <span className="flex h-11 w-11 items-center justify-center rounded-xl border border-border bg-background">
+                    <GithubLogoIcon size={26} weight="fill" />
+                  </span>
+                </div>
+
                 {/* Feature highlights */}
-                <div className="flex w-full max-w-xs flex-col gap-3">
+                <div className="flex w-full max-w-sm flex-col gap-2">
                   {[
                     {
-                      icon: <EyeIcon size={16} weight="duotone" className="text-primary" />,
-                      text: "Read-only access to your repository contents",
+                      icon: EyeIcon,
+                      title: "Read-only access",
+                      subtitle: "We fetch repo contents — never push or modify.",
                     },
                     {
-                      icon: <ShieldCheckIcon size={16} weight="duotone" className="text-primary" />,
-                      text: "Code is never stored beyond the active session",
+                      icon: ShieldCheckIcon,
+                      title: "Session-scoped",
+                      subtitle: "Source code lives only inside the active session.",
                     },
                     {
-                      icon: <ArrowsClockwiseIcon size={16} weight="duotone" className="text-primary" />,
-                      text: "Change repo access anytime in GitHub Settings",
+                      icon: ArrowsClockwiseIcon,
+                      title: "Revoke anytime",
+                      subtitle: "Manage repo access from GitHub Settings.",
                     },
-                  ].map((item, i) => (
+                  ].map(({ icon: Icon, title, subtitle }, i) => (
                     <div
                       key={i}
-                      className="flex items-center gap-3 rounded-lg border border-border/50 bg-muted/30 px-3.5 py-2.5"
+                      className="flex items-start gap-3 rounded-lg border border-border/50 bg-muted/30 px-3.5 py-2.5"
                     >
-                      <span className="flex shrink-0 items-center justify-center rounded-md border border-border/60 bg-background p-1.5">
-                        {item.icon}
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary/10 ring-1 ring-inset ring-primary/20">
+                        <Icon size={14} weight="duotone" className="text-primary" />
                       </span>
-                      <span className="text-[13px] leading-snug text-muted-foreground">{item.text}</span>
+                      <div className="flex min-w-0 flex-col">
+                        <span className="text-[13px] font-medium text-foreground">{title}</span>
+                        <span className="text-[12px] leading-snug text-muted-foreground">{subtitle}</span>
+                      </div>
                     </div>
                   ))}
                 </div>
 
-                {/* Connect button */}
-                <Button
-                  type="button"
-                  variant="default"
-                  className="gap-2 px-8 shadow-md shadow-primary/20"
-                  disabled={isConnectingGitHub}
-                  onClick={() => void handleConnectGitHub()}
-                >
-                  {isConnectingGitHub ? (
-                    <>
-                      <Spinner size={15} />
-                      Connecting…
-                    </>
-                  ) : (
-                    <>
-                      <GithubLogoIcon size={15} weight="fill" />
-                      Install GitHub App
-                    </>
-                  )}
-                </Button>
-                {connectError ? <p className="text-xs text-destructive">{connectError}</p> : null}
+                {/* Connect button + microcopy */}
+                <div className="flex flex-col items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="default"
+                    className="gap-2 px-8 shadow-md shadow-primary/20"
+                    disabled={isConnectingGitHub}
+                    onClick={() => void handleConnectGitHub()}
+                  >
+                    {isConnectingGitHub ? (
+                      <>
+                        <Spinner size={15} />
+                        Connecting…
+                      </>
+                    ) : (
+                      <>
+                        <GithubLogoIcon size={15} weight="fill" />
+                        Install GitHub App
+                      </>
+                    )}
+                  </Button>
+                  <p className="text-[11px] text-muted-foreground">Takes about 30 seconds · You stay in control</p>
+                  {connectError ? <p className="text-xs text-destructive">{connectError}</p> : null}
+                </div>
               </>
             )}
           </div>
@@ -721,7 +776,7 @@ export function ImportRepoDialog({
                     </Button>
                   </div>
                 ) : (
-                  <ScrollArea className="min-h-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:!block">
+                  <ScrollArea className="min-h-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:block!">
                     <div className="flex flex-col pr-3">
                       {/* Authorized repos (filtered client-side by search input) */}
                       {filteredAuthorizedRepos &&

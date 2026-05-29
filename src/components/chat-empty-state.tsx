@@ -66,11 +66,11 @@ function SleepingOwlAsciiArt() {
       className="pointer-events-none mb-1 select-none font-mono text-[12px] leading-4 tracking-tight text-muted-foreground"
     >
       {"             "}
-      <span className="animate-z-puff-3">z</span>
+      <span className="animate-z-puff-3 text-muted-foreground/70">z</span>
       {"\n           "}
-      <span className="animate-z-puff-2">Z</span>
+      <span className="animate-z-puff-2 text-muted-foreground/70">Z</span>
       {"\n         "}
-      <span className="animate-z-puff-1">z</span>
+      <span className="animate-z-puff-1 text-muted-foreground/70">z</span>
       {"\n"}
       <span className="animate-owl-head-nod">{"    ^...^    \n   / ~,~ \\   "}</span>
       {"\n   |):::(|   \n ====w=w==== "}

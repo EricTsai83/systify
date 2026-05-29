@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@ai-sdk/openai": "^3.0.53",
+    "@base-ui/react": "^1.5.0",
     "@convex-dev/rate-limiter": "^0.3.2",
     "@daytona/sdk": "0.173.0",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
