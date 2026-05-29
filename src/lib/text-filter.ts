@@ -1,6 +1,6 @@
 /**
  * Case-insensitive substring filter shared by in-memory pickers
- * (EntityPicker, QuickOpenDialog).
+ * (Combobox, QuickOpenDialog).
  *
  * Behavior: trims the query; empty query returns every item unchanged.
  * Otherwise, each item is kept if its `getSearchText(item)` lowercased

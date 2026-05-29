@@ -18,10 +18,10 @@ import { cn } from "@/lib/utils";
 
 const DEFAULT_SEARCH_THRESHOLD = 8;
 
-type PickerCtx = { close: () => void };
-const PickerContext = createContext<PickerCtx | null>(null);
+type ComboboxCtx = { close: () => void };
+const ComboboxContext = createContext<ComboboxCtx | null>(null);
 
-export type EntityPickerProps<T> = {
+export type ComboboxProps<T> = {
   items: ReadonlyArray<T>;
   getItemKey: (item: T) => string;
   getSearchText: (item: T) => string;
@@ -31,20 +31,20 @@ export type EntityPickerProps<T> = {
   trigger: ReactNode;
   /**
    * Sticky region rendered above the scrollable list and below the search
-   * input. Use {@link PickerActionRow} for selectable entries so the visual
+   * input. Use {@link ComboboxActionRow} for selectable entries so the visual
    * matches in-list rows and the popover closes automatically on click.
    */
   header?: ReactNode;
   /**
    * Sticky region rendered below the scrollable list. Typical use: an
-   * action like "Import repository" that opens a dialog. {@link PickerActionRow}
+   * action like "Import repository" that opens a dialog. {@link ComboboxActionRow}
    * applies if the entry is a simple click, but raw ReactNode works too
    * (e.g. a Dialog `trigger` already rendered as a button).
    */
   footer?: ReactNode;
   searchPlaceholder?: string;
   /**
-   * Item count at which the search input appears. Below this, the picker
+   * Item count at which the search input appears. Below this, the combobox
    * stays simple — search-input chrome on a tiny list is pure noise.
    */
   searchThreshold?: number;
@@ -57,16 +57,16 @@ export type EntityPickerProps<T> = {
 };
 
 /**
- * Popover-based picker for entity lists (repositories, threads, folders…).
- * Designed to replace `DropdownMenu` for data-bound, variable-length lists
- * where DropdownMenu's menu semantics ("a short list of actions") become
- * a poor fit: no scroll, no filter, items can overflow the viewport.
+ * Popover-based combobox for data-bound lists (repositories, threads, folders…).
+ * Designed to replace `DropdownMenu` for variable-length lists where
+ * DropdownMenu's menu semantics ("a short list of actions") become a poor
+ * fit: no scroll, no filter, items can overflow the viewport.
  *
  * Reserve DropdownMenu for actual action menus (kebab, profile menu).
- * Use EntityPicker whenever the list is bound to a Convex query or a
+ * Use Combobox whenever the list is bound to a Convex query or a
  * variable-length data source.
  */
-export function EntityPicker<T>({
+export function Combobox<T>({
   items,
   getItemKey,
   getSearchText,
@@ -84,7 +84,7 @@ export function EntityPicker<T>({
   align = "start",
   side = "bottom",
   ariaLabel,
-}: EntityPickerProps<T>) {
+}: ComboboxProps<T>) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -142,17 +142,17 @@ export function EntityPicker<T>({
     }
   };
 
-  const ctx = useMemo<PickerCtx>(() => ({ close: () => setOpen(false) }), []);
+  const ctx = useMemo<ComboboxCtx>(() => ({ close: () => setOpen(false) }), []);
 
   return (
-    <PickerContext.Provider value={ctx}>
+    <ComboboxContext.Provider value={ctx}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>{trigger}</PopoverTrigger>
         <PopoverContent
           // Keep Popover's default scale-95 entry — it's the recommended
           // pattern for surfaces appearing from a trigger (the small
           // transform gives the "pop" that fade-only menus lack). Just
-          // shorten the duration so the picker feels snappy like a
+          // shorten the duration so the combobox feels snappy like a
           // dropdown rather than the heavier-popover default.
           //
           // `motion-safe:` so reduced-motion users keep the global 1ms
@@ -174,7 +174,7 @@ export function EntityPicker<T>({
                 onKeyDown={handleKeyDown}
                 placeholder={searchPlaceholder}
                 aria-activedescendant={
-                  filtered[activeIndex] ? `entity-picker-row-${getItemKey(filtered[activeIndex])}` : undefined
+                  filtered[activeIndex] ? `combobox-row-${getItemKey(filtered[activeIndex])}` : undefined
                 }
                 aria-label={ariaLabel ?? searchPlaceholder}
                 className="h-7 border-0 bg-transparent px-1 text-sm focus-visible:border-transparent"
@@ -193,7 +193,7 @@ export function EntityPicker<T>({
                   const key = getItemKey(item);
                   const active = isItemActive?.(item) ?? false;
                   return (
-                    <li key={key} id={`entity-picker-row-${key}`} role="option" aria-selected={index === activeIndex}>
+                    <li key={key} id={`combobox-row-${key}`} role="option" aria-selected={index === activeIndex}>
                       <button
                         type="button"
                         onClick={() => {
@@ -217,11 +217,11 @@ export function EntityPicker<T>({
           {footer ? <div className="border-t border-border p-1">{footer}</div> : null}
         </PopoverContent>
       </Popover>
-    </PickerContext.Provider>
+    </ComboboxContext.Provider>
   );
 }
 
-type PickerActionRowProps = {
+type ComboboxActionRowProps = {
   children: ReactNode;
   onSelect: () => void;
   isActive?: boolean;
@@ -230,20 +230,22 @@ type PickerActionRowProps = {
 
 /**
  * Row primitive for header / footer slots. Matches the in-list row visual
- * (same padding / hover) and auto-closes the picker on click via
- * {@link PickerContext}. Set `closeOnSelect={false}` for footer rows whose
- * onSelect opens a Dialog — letting the popover stay open avoids a focus
- * race with the Dialog mount.
+ * (same padding / hover) and auto-closes the combobox on click via
+ * {@link ComboboxContext}.
+ *
+ * If `onSelect` opens a Dialog, mount the Dialog outside the Combobox and
+ * drive it via controlled `open` state — otherwise the Dialog unmounts
+ * together with the footer the instant the row is clicked.
  *
  * `forwardRef` + rest-prop spread lets this row sit inside a Radix
- * `asChild` trigger (e.g. `<DialogTrigger asChild>`); Slot's injected
- * onClick composes with the row's own click logic instead of being dropped.
+ * `asChild` trigger; Slot's injected onClick composes with the row's own
+ * click logic instead of being dropped.
  */
-export const PickerActionRow = forwardRef<HTMLButtonElement, PickerActionRowProps>(function PickerActionRow(
+export const ComboboxActionRow = forwardRef<HTMLButtonElement, ComboboxActionRowProps>(function ComboboxActionRow(
   { children, onSelect, isActive = false, disabled = false, closeOnSelect = true, onClick: externalOnClick, ...rest },
   ref,
 ) {
-  const ctx = useContext(PickerContext);
+  const ctx = useContext(ComboboxContext);
   return (
     <button
       {...rest}
