@@ -215,8 +215,7 @@ flowchart TD
   SeedFolders[EnsureSystemDesignFolders]
   CreateJob[CreateSystemDesignJobWithLease]
   Schedule[ScheduleNodeAction]
-  HeuristicPass[ParallelHeuristicGenerators]
-  LlmPass[SerialLlmGeneratorsWithLeaseRefresh]
+  Generate[SerialLlmGeneratorsWithLeaseRefresh]
   Persist[PersistEachArtifactInItsFolder]
   Finish[CompleteOrFailJob]
 
@@ -228,10 +227,8 @@ flowchart TD
   RateLimit --> SeedFolders
   SeedFolders --> CreateJob
   CreateJob --> Schedule
-  Schedule --> HeuristicPass
-  Schedule --> LlmPass
-  HeuristicPass --> Persist
-  LlmPass --> Persist
+  Schedule --> Generate
+  Generate --> Persist
   Persist --> Finish
 ```
 
@@ -274,7 +271,7 @@ Every System Design kind is sandbox-grounded, so `createArtifactInMutation` stam
 
 ### 5. Finalize
 
-After both passes complete, `completeGeneration` marks the job `completed` with a final `outputSummary` (`Generated X of Y documents.` / `; N failed.`). Progress and final status flow back to the UI through the standard job subscription.
+After all kinds complete (success or failure), `completeGeneration` marks the job `completed` with a final `outputSummary` (`Generated X of Y documents.` / `; N failed.`). Progress and final status flow back to the UI through the standard job subscription.
 
 If the action dies (process restart, panic) before `completeGeneration`, the daily cron `reconcileStaleInteractiveJobs` will eventually call `recoverStaleSystemDesignJob`, which fails the job with the standard stale-lease message — the lease semantics above guarantee the row is discoverable by the sweep.
 

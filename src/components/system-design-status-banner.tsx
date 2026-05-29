@@ -124,7 +124,9 @@ function describeFailures(job: Doc<"jobs">): FailureDescriptor | null {
     return null;
   }
 
-  const titles = selections.map((kind) => SYSTEM_DESIGN_KIND_TITLES[kind]).filter(Boolean);
+  const titles = selections
+    .map((kind) => (kind in SYSTEM_DESIGN_KIND_TITLES ? SYSTEM_DESIGN_KIND_TITLES[kind] : "Unknown System Design"))
+    .filter(Boolean);
   const title =
     selections.length === 1 ? `Couldn't generate ${titles[0]}` : `Couldn't generate ${selections.length} documents`;
   const buttonLabel = selections.length === 1 ? `Generate ${titles[0]}` : `Generate ${selections.length} documents`;
@@ -218,12 +220,18 @@ function FailureBanner({ repositoryId, job }: { repositoryId: Id<"repositories">
         <details className="cursor-pointer border-t border-destructive/20 bg-destructive/5">
           <summary className="px-4 py-1.5 text-[11px] font-medium text-destructive md:px-6">See what failed</summary>
           <div className="space-y-1 border-t border-destructive/20 px-4 py-2 md:px-6">
-            {kindFailures.map((failure) => (
-              <div key={failure.errorId} className="text-[10px] text-destructive/80">
-                <div className="font-medium">{failure.kind}</div>
-                <div className="mt-0.5 line-clamp-2">{failure.message}</div>
-              </div>
-            ))}
+            {kindFailures.map((failure) => {
+              const kindTitle =
+                failure.kind in SYSTEM_DESIGN_KIND_TITLES
+                  ? SYSTEM_DESIGN_KIND_TITLES[failure.kind as SystemDesignKind]
+                  : failure.kind;
+              return (
+                <div key={failure.errorId} className="text-[10px] text-destructive/80">
+                  <div className="font-medium">{kindTitle}</div>
+                  <div className="mt-0.5 line-clamp-2">{failure.message}</div>
+                </div>
+              );
+            })}
           </div>
         </details>
       ) : null}

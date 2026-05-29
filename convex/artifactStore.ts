@@ -71,7 +71,7 @@ export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArt
     // Every artifact is produced by a sandbox-grounded generator (System
     // Design + FMA), so we stamp `lastVerifiedAt` at creation. The
     // presence of this field is the single signal the Library freshness
-    // UI reads — sandbox-grounded replies can later re-stamp it on re-read.
+    // UI reads.
     lastVerifiedAt: now,
     chunkingStatus: args.repositoryId ? "pending" : undefined,
     updatedAt: now,
