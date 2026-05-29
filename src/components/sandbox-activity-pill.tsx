@@ -53,14 +53,21 @@ export function SandboxActivityPill({ repositoryId }: { repositoryId: Repository
     return null;
   }
 
+  // All three states share the same outer flex-col + same inner pill row
+  // height (`min-h-7`, matching `Button size="xs"` so the idle Activate
+  // button sits flush in the same row), so transitions across the
+  // activation lifecycle (idle → activating → ready) don't change the
+  // bubble's height and shove the message list around.
+  const pillRowClass = "flex min-h-7 items-center gap-2 rounded-md border px-3 py-1.5 text-xs";
+
   if (status.kind === "idle") {
     return (
       <div className="flex flex-col gap-1">
-        <div className="flex items-center gap-2 rounded-md border border-border/50 bg-muted/30 px-3 py-1.5 text-xs">
+        <div className={cn(pillRowClass, "border-border/50 bg-muted/30")}>
           <CircleIcon size={12} className="shrink-0 text-muted-foreground" weight="regular" />
           <span className="min-w-0 flex-1 text-muted-foreground">Live source inactive</span>
           <Button
-            size="sm"
+            size="xs"
             variant="secondary"
             onClick={() => {
               void activate();
@@ -79,10 +86,14 @@ export function SandboxActivityPill({ repositoryId }: { repositoryId: Repository
     const progressPct = Math.round((status.activeJob?.progress ?? 0) * 100);
     const stage = status.activeJob?.stage ?? "Activating live source…";
     return (
-      <div className="flex items-center gap-2 rounded-md border border-border/50 bg-blue-500/10 px-3 py-1.5 text-xs">
-        <Spinner size={12} className="shrink-0 text-blue-500" />
-        <span className="min-w-0 flex-1 truncate text-blue-700 dark:text-blue-300">{stage}</span>
-        <span className="shrink-0 tabular-nums text-[11px] text-blue-700/80 dark:text-blue-300/80">{progressPct}%</span>
+      <div className="flex flex-col gap-1">
+        <div className={cn(pillRowClass, "border-border/50 bg-blue-500/10")}>
+          <Spinner size={12} className="shrink-0 text-blue-500" />
+          <span className="min-w-0 flex-1 truncate text-blue-700 dark:text-blue-300">{stage}</span>
+          <span className="shrink-0 tabular-nums text-[11px] text-blue-700/80 dark:text-blue-300/80">
+            {progressPct}%
+          </span>
+        </div>
       </div>
     );
   }
@@ -91,23 +102,25 @@ export function SandboxActivityPill({ repositoryId }: { repositoryId: Repository
   const remainingMinutes = Math.max(0, Math.floor(remainingMs / 60_000));
   const isExpiringSoon = status.kind === "expiring_soon";
   return (
-    <div
-      className={cn(
-        "flex items-center gap-2 rounded-md border px-3 py-1.5 text-xs",
-        isExpiringSoon
-          ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
-          : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-      )}
-    >
-      <CircleHalfIcon
-        size={12}
-        weight="fill"
-        className={cn("shrink-0", isExpiringSoon ? "text-amber-500" : "text-emerald-500")}
-      />
-      <span className="min-w-0 flex-1">Live source ready</span>
-      <span className="shrink-0 text-[11px]">
-        {remainingMinutes > 0 ? `stops in ${remainingMinutes} min` : "stops shortly"}
-      </span>
+    <div className="flex flex-col gap-1">
+      <div
+        className={cn(
+          pillRowClass,
+          isExpiringSoon
+            ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+            : "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+        )}
+      >
+        <CircleHalfIcon
+          size={12}
+          weight="fill"
+          className={cn("shrink-0", isExpiringSoon ? "text-amber-500" : "text-emerald-500")}
+        />
+        <span className="min-w-0 flex-1">Live source ready</span>
+        <span className="shrink-0 text-[11px]">
+          {remainingMinutes > 0 ? `stops in ${remainingMinutes} min` : "stops shortly"}
+        </span>
+      </div>
     </div>
   );
 }

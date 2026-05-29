@@ -216,14 +216,27 @@ export const MessageBubble = memo(function MessageBubble({
           />
         ) : null}
       </MessageContent>
-      {costTicker ? (
-        <p
-          className="px-1 text-[11px] text-muted-foreground/80 tabular-nums"
-          data-testid="message-cost-ticker"
-          aria-label={tickerAriaLabel}
-        >
-          {costTicker}
-        </p>
+      {/*
+       * Reserve a fixed-height slot under every assistant bubble so the
+       * streaming → completed handoff (when the cost ticker becomes
+       * available) doesn't push subsequent messages down by ~24px each
+       * time a reply settles. Heuristic replies (no tokens, no cost)
+       * still skip the `<p>` so the test's `queryByTestId` returns null,
+       * but the reserve itself stays so the bubble's height matches a
+       * paid reply at the same scroll position.
+       */}
+      {isAssistant ? (
+        <div className="min-h-4 px-1">
+          {costTicker ? (
+            <p
+              className="text-[11px] text-muted-foreground/80 tabular-nums"
+              data-testid="message-cost-ticker"
+              aria-label={tickerAriaLabel}
+            >
+              {costTicker}
+            </p>
+          ) : null}
+        </div>
       ) : null}
     </Message>
   );
