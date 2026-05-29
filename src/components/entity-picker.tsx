@@ -1,10 +1,12 @@
 import {
   createContext,
+  forwardRef,
   useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
+  type ButtonHTMLAttributes,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -219,32 +221,38 @@ export function EntityPicker<T>({
   );
 }
 
+type PickerActionRowProps = {
+  children: ReactNode;
+  onSelect: () => void;
+  isActive?: boolean;
+  closeOnSelect?: boolean;
+} & Omit<ButtonHTMLAttributes<HTMLButtonElement>, "type" | "children">;
+
 /**
  * Row primitive for header / footer slots. Matches the in-list row visual
  * (same padding / hover) and auto-closes the picker on click via
  * {@link PickerContext}. Set `closeOnSelect={false}` for footer rows whose
  * onSelect opens a Dialog — letting the popover stay open avoids a focus
  * race with the Dialog mount.
+ *
+ * `forwardRef` + rest-prop spread lets this row sit inside a Radix
+ * `asChild` trigger (e.g. `<DialogTrigger asChild>`); Slot's injected
+ * onClick composes with the row's own click logic instead of being dropped.
  */
-export function PickerActionRow({
-  children,
-  onSelect,
-  isActive = false,
-  disabled = false,
-  closeOnSelect = true,
-}: {
-  children: ReactNode;
-  onSelect: () => void;
-  isActive?: boolean;
-  disabled?: boolean;
-  closeOnSelect?: boolean;
-}) {
+export const PickerActionRow = forwardRef<HTMLButtonElement, PickerActionRowProps>(function PickerActionRow(
+  { children, onSelect, isActive = false, disabled = false, closeOnSelect = true, onClick: externalOnClick, ...rest },
+  ref,
+) {
   const ctx = useContext(PickerContext);
   return (
     <button
+      {...rest}
+      ref={ref}
       type="button"
-      onClick={() => {
+      onClick={(event) => {
         if (disabled) return;
+        externalOnClick?.(event);
+        if (event.defaultPrevented) return;
         onSelect();
         if (closeOnSelect) ctx?.close();
       }}
@@ -258,4 +266,4 @@ export function PickerActionRow({
       {children}
     </button>
   );
-}
+});

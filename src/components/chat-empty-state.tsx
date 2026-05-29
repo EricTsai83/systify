@@ -203,7 +203,11 @@ export function EmptyChatHint() {
 export function EmptyNoRepoHint() {
   return (
     <div className="flex flex-1 animate-in items-center justify-center fade-in duration-300 ease-out">
-      <EmptyStateHero visual={<OwlAsciiArt />} title="Start a design conversation" />
+      <EmptyStateHero
+        visual={<OwlAsciiArt />}
+        title="Start a design conversation"
+        description="Architecture · Trade-offs · Anything you'd whiteboard"
+      />
     </div>
   );
 }
