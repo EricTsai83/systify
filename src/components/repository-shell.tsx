@@ -517,7 +517,6 @@ export function RepositoryShell({
           onPermanentDeleteRepo={() => setShowPermanentDeleteDialog(true)}
           threadId={effectiveSelectedThreadId}
           attachedRepository={capabilities.attachedRepository}
-          isAttachedRepositoryLoading={capabilities.isLoading}
           availableRepositories={repositories ?? []}
           onThreadMovedToRepository={handleThreadMovedToRepository}
           isDesktopLayout={isDesktopLayout}

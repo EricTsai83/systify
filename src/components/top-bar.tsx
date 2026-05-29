@@ -11,7 +11,6 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { RepoInfoPopover } from "@/components/repo-info-popover";
 import { RepoStatusIndicator } from "@/components/repo-status-indicator";
-import { AttachRepoMenu } from "@/components/attach-repo-menu";
 import { SwapThreadRepositoryControl } from "@/components/swap-thread-repository-control";
 import { StatusPill } from "@/components/status-pill";
 import { StatusPanel } from "@/components/status-panel";
@@ -49,7 +48,8 @@ export type TopBarRepoDetail = {
  * TopBar — minimal command surface above the chat. After the Surface 1
  * redesign (`background-operations-ux-redesign.md`) the bar holds only:
  *   - sidebar toggle + repo title chip (with detail popover)
- *   - attach-repo affordance for unattached threads
+ *   - swap-repo affordance when the active thread is bound and other
+ *     repos are available
  *   - the StatusPill, which doubles as the trigger for an inline Popover
  *     (desktop) or a bottom Sheet (mobile) carrying the on-demand
  *     {@link StatusPanel} — sync, run analysis, activity history all live
@@ -67,7 +67,6 @@ export function TopBar({
   repoDetail,
   threadId,
   attachedRepository,
-  isAttachedRepositoryLoading,
   availableRepositories,
   isSyncing,
   isStatusPanelOpen,
@@ -84,15 +83,6 @@ export function TopBar({
   repoDetail?: TopBarRepoDetail;
   threadId: ThreadId | null;
   attachedRepository: AttachedRepositorySummary | null;
-  /**
-   * True while the upstream `getThreadContext` query is still resolving the
-   * thread's attached-repository binding. During that window `attachedRepository`
-   * is conservatively `null`, but we should not yet conclude "no repo" — gating
-   * on this flag prevents the AttachRepoMenu from flashing in for a thread that
-   * actually has a repo, only to be replaced by the repo title once the query
-   * resolves.
-   */
-  isAttachedRepositoryLoading: boolean;
   availableRepositories: ReadonlyArray<Doc<"repositories">>;
   isSyncing: boolean;
   isStatusPanelOpen: boolean;
@@ -162,26 +152,6 @@ export function TopBar({
         <div key={repoDetail.repository._id} className="flex min-w-0 flex-1 items-center gap-2 animate-fade-in">
           <RepoInfoPopover repoDetail={repoDetail} title={repoDetail.repository.sourceRepoFullName} />
           {showSystemStatus ? <RepoStatusIndicator sandbox={repoDetail.sandbox} /> : null}
-        </div>
-      ) : null}
-
-      {threadId !== null && !isAttachedRepositoryLoading && attachedRepository === null ? (
-        // One-shot affordance for promoting a no-repo thread into a
-        // repository binding. Hidden once a repo is attached because the
-        // binding is permanent — to work against another repo, start a new thread.
-        //
-        // Wrapping fade-in mirrors the title block above so both surfaces
-        // (title for repo-bound threads, AttachRepoMenu for unbound ones) share
-        // the same entry timing. Combined with the `isAttachedRepositoryLoading`
-        // gate, this avoids the "AttachRepoMenu flashes then gets replaced by
-        // the title" sequence on thread switches — the slot stays empty until
-        // we know which surface belongs there, then the chosen one fades in.
-        <div className="animate-fade-in">
-          <AttachRepoMenu
-            threadId={threadId}
-            availableRepositories={availableRepositories}
-            onMovedToRepository={onThreadMovedToRepository}
-          />
         </div>
       ) : null}
 

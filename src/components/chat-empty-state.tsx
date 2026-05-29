@@ -195,9 +195,10 @@ export function EmptyChatHint() {
 }
 
 /**
- * Empty-state hint for threads with no attached repository yet. The
- * TopBar's `AttachRepoMenu` already surfaces the attach affordance, so
- * this surface stays focused on the conversation-starter hero.
+ * Empty-state hint for threads with no attached repository. Binding a
+ * repoless thread to a repo has no UI entry point — to work against a
+ * repo, users start a new thread in that repo's shell — so this surface
+ * stays focused on the conversation-starter hero.
  */
 export function EmptyNoRepoHint() {
   return (
