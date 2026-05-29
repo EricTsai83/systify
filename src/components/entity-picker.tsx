@@ -200,7 +200,7 @@ export function EntityPicker<T>({
                         }}
                         onMouseEnter={() => setActiveIndex(index)}
                         className={cn(
-                          "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors",
+                          "flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm transition-colors",
                           index === activeIndex ? "bg-muted" : "hover:bg-muted/60",
                         )}
                       >
@@ -250,7 +250,7 @@ export function PickerActionRow({
       }}
       disabled={disabled}
       className={cn(
-        "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm transition-colors",
+        "flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm transition-colors",
         isActive ? "bg-muted" : "hover:bg-muted/60",
         disabled && "cursor-not-allowed opacity-50",
       )}

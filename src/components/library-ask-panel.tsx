@@ -3,13 +3,13 @@ import { BookOpenIcon, PaperPlaneTiltIcon, SparkleIcon } from "@phosphor-icons/r
 import { useMutation, useQuery } from "convex/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
+import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
+import { PromptInput, PromptInputFooter, PromptInputTextarea } from "@/components/ai-elements/prompt-input";
 import { EmptyStateHero, PromptSuggestionList } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { LibraryAskThreadTabs } from "@/components/library-ask-thread-tabs";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
 import { useLibraryAskTabs } from "@/hooks/use-library-ask-tabs";
 import { toUserErrorMessage } from "@/lib/errors";
 import type { ArtifactId, RepositoryId, ThreadId } from "@/lib/types";
@@ -270,8 +270,8 @@ export function LibraryAskPanel({
       />
 
       {threadId ? (
-        <ScrollArea className="min-h-0 flex-1 px-4 py-3">
-          <div className="space-y-3">
+        <Conversation className="min-h-0 flex-1">
+          <ConversationContent className="space-y-3 px-4 py-3">
             {(messages ?? []).map((message) => (
               <MessageBubble
                 key={message._id}
@@ -280,8 +280,9 @@ export function LibraryAskPanel({
                 onSelectArtifact={onSelectArtifact}
               />
             ))}
-          </div>
-        </ScrollArea>
+          </ConversationContent>
+          <ConversationScrollButton />
+        </Conversation>
       ) : isLocked ? (
         <NoArtifactsHint onGenerate={onGenerate} />
       ) : (
@@ -334,35 +335,41 @@ export function LibraryAskPanel({
         </div>
       ) : null}
 
-      <form
-        onSubmit={(event) => {
-          void handleSubmit(event);
-        }}
-        className="border-t border-border p-3"
-      >
+      <div className="border-t border-border p-3">
         {error ? <p className="mb-2 text-xs text-destructive">{error}</p> : null}
-        <Textarea
-          ref={textareaRef}
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder={
-            isLocked
-              ? LOCKED_PLACEHOLDER
-              : activeArtifactId
-                ? "Question about the open artifact..."
-                : "Question about this library..."
-          }
-          className="min-h-24 resize-none text-sm"
-          disabled={isSending || latestAssistantInFlight || isLocked}
-          aria-describedby={isLocked && threadId ? "library-ask-locked-hint" : undefined}
-        />
-        <div className="mt-2 flex justify-end">
-          <Button type="submit" size="sm" disabled={!input.trim() || isSending || latestAssistantInFlight || isLocked}>
-            <PaperPlaneTiltIcon size={14} weight="fill" />
-            {isSending || isStarting ? "Asking..." : "Ask"}
-          </Button>
-        </div>
-      </form>
+        <PromptInput
+          onSubmit={(_, event) => {
+            void handleSubmit(event);
+          }}
+        >
+          <PromptInputTextarea
+            ref={textareaRef}
+            name="message"
+            value={input}
+            onChange={(event) => setInput(event.target.value)}
+            placeholder={
+              isLocked
+                ? LOCKED_PLACEHOLDER
+                : activeArtifactId
+                  ? "Question about the open artifact..."
+                  : "Question about this library..."
+            }
+            className="min-h-24 text-sm"
+            disabled={isSending || latestAssistantInFlight || isLocked}
+            aria-describedby={isLocked && threadId ? "library-ask-locked-hint" : undefined}
+          />
+          <PromptInputFooter className="justify-end">
+            <Button
+              type="submit"
+              size="sm"
+              disabled={!input.trim() || isSending || latestAssistantInFlight || isLocked}
+            >
+              <PaperPlaneTiltIcon size={14} weight="fill" />
+              {isSending || isStarting ? "Asking..." : "Ask"}
+            </Button>
+          </PromptInputFooter>
+        </PromptInput>
+      </div>
 
       <ConfirmDialog
         open={pendingDeleteThreadId !== null}

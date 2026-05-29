@@ -66,7 +66,7 @@ export const GROUNDING_CATALOG = [
     caption: "ground in your design artifacts",
     examplePrompts: [
       "Summarize what the artifacts say about our authentication boundary.",
-      "Which ADR justified the choice of Postgres over DynamoDB?",
+      "Which architecture overview justified the choice of Postgres over DynamoDB?",
     ],
   },
   {

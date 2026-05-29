@@ -202,7 +202,7 @@ export function FolderOverview({ folderId, onSelectArtifact, onAfterDelete, clas
             <CardHeader className="gap-1 p-4">
               <CardTitle className="text-xs">Folder is empty</CardTitle>
               <CardDescription className="text-[11px]">
-                Generate an ADR, failure mode, or diagram from a chat thread and pick this folder in the placement
+                Generate a System Design artifact or failure-mode analysis and pick this folder in the placement
                 dropdown.
               </CardDescription>
             </CardHeader>
@@ -246,7 +246,7 @@ function FolderArtifactCard({
   return (
     <button
       type="button"
-      className="group flex flex-col gap-1 rounded-md border border-border bg-background p-3 text-left transition-shadow hover:shadow-sm"
+      className="group flex flex-col gap-1 border border-border bg-background p-3 text-left transition-shadow hover:shadow-sm"
       onClick={() => onSelect(artifact._id as ArtifactId)}
     >
       <div className="flex items-start justify-between gap-2">

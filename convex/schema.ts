@@ -82,17 +82,24 @@ const sandboxRemoteDiscoveryStatus = v.union(
   v.literal("ignored"),
 );
 
+/**
+ * Retired artifact kinds (`manifest`, `adr`, `risk_report`) are NOT retained
+ * here as historical literals — they were removed from the union outright.
+ * The narrowing only deploys cleanly against a database with no `artifacts`
+ * row carrying one of those kinds; Convex schema validation otherwise fails
+ * on the first read of any retired-kind row. The branch that shipped this
+ * removal was deployed against an early-access database that held none. If
+ * a future environment may hold such rows, run a cleanup `internalMutation`
+ * (or a widen-migrate-narrow migration through `@convex-dev/migrations`)
+ * BEFORE deploying this schema. The same assumption applies to
+ * `systemDesignKindValidator` (`jobs.selections`, `jobs.kindFailures`).
+ */
 const artifactKind = v.union(
-  // Retired System Design kind: no longer generated. Retained so historical
-  // `artifacts` rows created before its removal still pass schema validation.
-  v.literal("manifest"),
   v.literal("readme_summary"),
   v.literal("architecture_overview"),
   v.literal("architecture_diagram"),
   v.literal("entrypoints"),
   v.literal("dependency_overview"),
-  v.literal("risk_report"),
-  v.literal("adr"),
   v.literal("failure_mode_analysis"),
   v.literal("trade_off_matrix"),
   v.literal("migration_plan"),
@@ -366,7 +373,6 @@ export default defineSchema({
     title: v.string(),
     summary: v.string(),
     contentMarkdown: v.string(),
-    source: v.union(v.literal("heuristic"), v.literal("llm"), v.literal("sandbox")),
     version: v.number(),
     /**
      * `folderId` ties an artifact to a user-created `artifactFolders` row.

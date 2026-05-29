@@ -78,7 +78,7 @@ export const NARRATIVE: ReadonlyArray<NarrativeEntry> = [
   {
     num: "02",
     lead: "Systify maps the codebase.",
-    trail: "Files indexed, README parsed, ADRs surfaced.",
+    trail: "Files indexed, README parsed, architecture overviews surfaced.",
   },
   {
     num: "03",
@@ -108,7 +108,7 @@ export const MODES: ReadonlyArray<Mode> = [
     pitch: "grounded · always sourced",
     depth: 2,
     scenarios: [
-      "Architecture & onboarding from README / ADRs",
+      "Architecture & onboarding from generated System Design artifacts",
       "Concept traces with file citations",
       "Best CP for grounded answers — no live-fs cost",
     ],

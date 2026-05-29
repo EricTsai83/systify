@@ -24,68 +24,7 @@ import {
   markQueuedJobRunning,
 } from "./lib/jobs";
 
-const MAX_ADR_SOURCE_MESSAGES = 10;
 const ACTIVE_FAILURE_MODE_JOB_SCAN_LIMIT = 10;
-
-export const captureAdr = mutation({
-  args: {
-    threadId: v.id("threads"),
-    title: v.optional(v.string()),
-    /**
-     * Optional folder placement. Surfaced by the panel's "+ Generate / ADR"
-     * tab so a captured decision can land directly in its feature folder
-     * (or stay at Repository root with `null`/undefined). Server validates
-     * the folder belongs to the same repository as the thread's repo.
-     */
-    folderId: v.optional(v.id("artifactFolders")),
-  },
-  handler: async (ctx, args): Promise<{ artifactId: Id<"artifacts"> }> => {
-    const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
-      notFoundMessage: "Thread not found.",
-    });
-    if (thread.repositoryId) {
-      await requireActiveRepositoryForViewer(ctx, {
-        repositoryId: thread.repositoryId,
-        notFoundMessage: "Thread not found.",
-        archivedMessage: "This repository is archived. Restore it to capture artifacts.",
-      });
-    }
-
-    if (args.folderId) {
-      if (!thread.repositoryId) {
-        throw new Error("Cannot place an artifact in a folder from a repository-less thread.");
-      }
-      const { doc: folder } = await requireOwnedDoc(ctx, args.folderId, {
-        notFoundMessage: "Folder not found.",
-      });
-      if (folder.repositoryId !== thread.repositoryId) {
-        throw new Error("Cannot place an artifact in a folder from a different repository.");
-      }
-    }
-
-    const messages = await ctx.db
-      .query("messages")
-      .withIndex("by_threadId_and_status", (q) => q.eq("threadId", args.threadId).eq("status", "completed"))
-      .order("desc")
-      .take(MAX_ADR_SOURCE_MESSAGES);
-
-    const adr = synthesizeAdrFromThreadMessages([...messages].reverse());
-    const title = args.title?.trim() || adr.title;
-    const artifactId: Id<"artifacts"> = await ctx.runMutation(internal.artifactStore.createArtifact, {
-      threadId: args.threadId,
-      repositoryId: thread.repositoryId,
-      ownerTokenIdentifier: identity.tokenIdentifier,
-      kind: "adr",
-      title,
-      summary: adr.summary,
-      contentMarkdown: adr.contentMarkdown,
-      source: "heuristic",
-      folderId: args.folderId,
-    });
-
-    return { artifactId };
-  },
-});
 
 export const requestFailureModeAnalysis = mutation({
   args: {
@@ -257,7 +196,6 @@ export const completeFailureModeAnalysis = internalMutation({
       title: `Failure mode analysis: ${args.subsystem}`,
       summary: args.summary,
       contentMarkdown: args.contentMarkdown,
-      source: "sandbox",
       folderId: resolvedFolderId,
     });
 
@@ -305,91 +243,14 @@ export const recoverStaleFailureModeJob = internalMutation({
 
     const errorId = createOpaqueErrorId("design_artifacts");
     const message = `${args.errorMessage ?? STALE_FAILURE_MODE_JOB_ERROR_MESSAGE}\n\nReference: ${errorId}`;
-    const failedJob = await failStaleActiveJob(ctx, {
+    await failStaleActiveJob(ctx, {
       jobId: args.jobId,
       expectedKind: "system_design",
       now,
       errorMessage: message,
     });
-    if (!failedJob) {
-      return;
-    }
   },
 });
-
-function synthesizeAdrFromThreadMessages(messages: Doc<"messages">[]) {
-  const userPoints = messages
-    .filter((message) => message.role === "user")
-    .map((message) => message.content.trim())
-    .filter(Boolean);
-  const assistantPoints = messages
-    .filter((message) => message.role === "assistant")
-    .map((message) => message.content.trim())
-    .filter(Boolean);
-
-  const contextLine =
-    userPoints[0] ??
-    "This ADR is captured from an in-progress thread where the team discussed architectural direction.";
-  const decisionLine =
-    assistantPoints[assistantPoints.length - 1] ??
-    userPoints[userPoints.length - 1] ??
-    "Adopt the latest thread recommendation as the current design direction.";
-
-  const title = deriveAdrTitle(decisionLine);
-  const summary = `${title} captured from thread context with explicit decision and follow-up implications.`;
-  const consequences = buildConsequences(decisionLine);
-  const alternatives = buildAlternatives(userPoints);
-
-  const contentMarkdown = [
-    "# ADR",
-    "",
-    "## Context",
-    contextLine,
-    "",
-    "## Decision",
-    decisionLine,
-    "",
-    "## Consequences",
-    ...consequences.map((line) => `- ${line}`),
-    "",
-    "## Alternatives",
-    ...alternatives.map((line) => `- ${line}`),
-  ].join("\n");
-
-  return { title, summary, contentMarkdown };
-}
-
-function deriveAdrTitle(decisionLine: string) {
-  const plain = decisionLine.replace(/\s+/g, " ").trim();
-  if (!plain) {
-    return "ADR: captured decision";
-  }
-  const normalized = plain.length > 72 ? `${plain.slice(0, 72).trimEnd()}…` : plain;
-  return `ADR: ${normalized}`;
-}
-
-function buildConsequences(decisionLine: string) {
-  return [
-    "The selected direction becomes the default implementation path for the current thread.",
-    "Follow-up work should validate this decision against runtime constraints and team ownership.",
-    `The team should monitor regressions related to: "${decisionLine.slice(0, 80)}${decisionLine.length > 80 ? "…" : ""}"`,
-  ];
-}
-
-function buildAlternatives(userPoints: string[]) {
-  if (userPoints.length === 0) {
-    return [
-      "Keep current architecture unchanged and revisit after collecting more operational evidence.",
-      "Split the problem into smaller ADRs per subsystem before deciding globally.",
-    ];
-  }
-
-  const lastPrompt = userPoints[userPoints.length - 1]!;
-  return [
-    `Preserve the status quo and defer this decision ("${lastPrompt.slice(0, 60)}${lastPrompt.length > 60 ? "…" : ""}").`,
-    "Implement a narrower incremental change to reduce migration risk.",
-  ];
-}
 
 /**
  * FMA shares `kind: "system_design"` with Library System Design; the

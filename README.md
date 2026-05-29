@@ -6,7 +6,7 @@ Systify is an open source repository analysis app for understanding unfamiliar c
 
 - **Chat** with two top-level modes:
   - `discuss` (UI label "Discuss") — free-form chat with two independent per-message grounding toggles the composer surfaces:
-    - **Library** grounds the reply in your design artifacts (ADRs, diagrams, deep analyses) with `[A#]` citations.
+    - **Library** grounds the reply in your design artifacts (architecture overviews, diagrams, deep analyses) with `[A#]` citations.
     - **Sandbox** grounds the reply in the live sandbox source tree with `[path:line]` citations and read-only tool calls.
     - Both off → training-only chat; both on → combined citation contract.
   - `library` (UI label "Library") — artifact reader with the always-visible Ask panel for artifact-grounded questions.

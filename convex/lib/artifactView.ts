@@ -130,7 +130,6 @@ export function toArtifactMetadataView(artifact: Doc<"artifacts">, opts: Artifac
     kind: artifact.kind,
     title: artifact.title,
     summary: artifact.summary,
-    source: artifact.source,
     version: artifact.version,
     folderId: artifact.folderId,
     lastVerifiedAt: artifact.lastVerifiedAt,

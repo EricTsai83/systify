@@ -149,7 +149,6 @@ export const runSystemDesignGeneration = internalAction({
           title: SYSTEM_DESIGN_KIND_TITLES[kind],
           summary: result.summary,
           contentMarkdown: result.contentMarkdown,
-          source: result.source,
         });
         succeeded += 1;
       } catch (error) {
@@ -249,6 +248,48 @@ concrete file paths in backticks. Be specific to this repository — do not
 invent components or describe a generic architecture. If the evidence for a
 section is thin, say what you could determine and what you could not rather
 than padding.`,
+  architecture_diagram: `You are drawing an architecture diagram of a software repository as a
+Mermaid graph for an engineer who needs to understand the system at a
+design level. Use the sandbox tools (read_file, list_dir, run_shell) to
+inspect the repository — directory layout, entry points, routing /
+controller / handler files, ORM / schema files, build & deploy config —
+and identify:
+
+- the major components / modules / services that make up the system;
+- how data and control flow between them (request paths, event paths,
+  background workers, queues);
+- external boundaries (third-party APIs, databases, queues, blob stores);
+- which components belong together logically (group them into subgraphs).
+
+Write a Markdown document titled "# Architecture Diagram" with these
+parts in order:
+
+1. A short (2–3 sentence) introduction stating what the diagram covers
+   and what it deliberately omits.
+2. A fenced \`\`\`mermaid code block containing a single \`graph TD\` or
+   \`graph LR\` diagram. The block must be valid Mermaid that parses on
+   its own.
+3. A 'Legend' section that briefly explains any subgraph groupings,
+   node styling, or non-obvious edge labels you used.
+4. A 'Reading guide' section that lists 3–8 highest-signal files (in
+   backticks) and notes which diagram node each one backs.
+
+Constraints on the Mermaid block:
+
+- Use unique alphanumeric node ids (e.g. \`api\`, \`worker_1\`) and put
+  the human label in quotes: \`api["API server"]\`.
+- Keep labels short (≤ 5 words). Move detail to the Legend or Reading
+  guide, not into the node.
+- Aim for 10–25 nodes. Under-detail beats hallucinated detail.
+- Group related components with \`subgraph\` blocks where it aids clarity.
+- Use solid arrows (\`-->\`) for in-process calls and dotted arrows
+  (\`-.->\`) for boundaries crossing into external services. Label edges
+  only when the flow is non-obvious.
+- Do not invent components, services, or integrations. Every node must
+  correspond to evidence you read in the source.
+
+If the evidence for a section is thin, say what you could determine and
+what you could not — do not pad the diagram with placeholder boxes.`,
   data_model_overview: `You are documenting the data model of a software repository for a new
 engineer joining the team. Use the sandbox tools (read_file, list_dir,
 run_shell) to inspect the repository and identify:
@@ -331,7 +372,7 @@ async function generateLlm(
   kind: SystemDesignKind,
   sandbox: Doc<"sandboxes"> | null,
   repository: Doc<"repositories">,
-): Promise<{ contentMarkdown: string; summary: string; source: "sandbox" }> {
+): Promise<{ contentMarkdown: string; summary: string }> {
   if (!sandbox || !sandbox.remoteId || !sandbox.repoPath) {
     throw new Error("Sandbox is not provisioned. Provision a sandbox to generate this document.");
   }
@@ -374,15 +415,9 @@ async function generateLlm(
   if (text.length === 0) {
     throw new Error("LLM returned an empty document.");
   }
-  // `source: "sandbox"` carries the semantic load here: the artifact was
-  // produced by an LLM session that read live source through the sandbox
-  // tool factory. `createArtifactInMutation` translates that to a
-  // `lastVerifiedAt: now` stamp, which gates the "verified against
-  // current source" badge in the Library freshness UI.
   return {
     contentMarkdown: text,
     summary: extractSummary(text),
-    source: "sandbox",
   };
 }
 

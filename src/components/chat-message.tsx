@@ -1,11 +1,11 @@
 import { isValidElement, memo, useMemo, type ReactNode } from "react";
 import type { AllowedTags, Components } from "streamdown";
 import type { Doc } from "../../convex/_generated/dataModel";
+import { Message, MessageContent } from "@/components/ai-elements/message";
+import { Shimmer } from "@/components/ai-elements/shimmer";
 import { ToolCallTrace } from "@/components/tool-call-trace";
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
 import { Markdown } from "@/components/markdown";
-import { cn } from "@/lib/utils";
 import { CITATION_TOKEN_REGEX, prepareAssistantMarkdown } from "@/lib/assistant-markdown";
 import type { ActiveMessageStream, ArtifactId } from "@/lib/types";
 
@@ -74,9 +74,20 @@ export const MessageBubble = memo(function MessageBubble({
   activeMessageStream: ActiveMessageStream | null;
   onSelectArtifact?: (artifactId: ArtifactId) => void;
 }) {
-  const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
+  // `Message`'s `from` accepts `"system" | "user" | "assistant"`, but the
+  // Convex schema also allows `"tool"` (tool-call traces folded into a
+  // turn). Map `"tool"` → `"assistant"` so the bubble stays left-aligned
+  // and the rest of the rendering branches unchanged (the original
+  // `<Card>` rendered tool rows under the assistant-style fallback).
+  const fromRole: "system" | "user" | "assistant" = message.role === "tool" ? "assistant" : message.role;
   const statusLabel = getMessageStatusLabel(message.status);
+  // While the reply is still landing, the status label gets a subtle
+  // text-shimmer so the user has an at-a-glance cue that something is
+  // actively happening (in addition to streaming content / tool ticker).
+  // Terminal states render the plain label so the eye isn't pulled to a
+  // finished bubble.
+  const isInFlight = message.status === "streaming" || message.status === "pending";
   const displayContent =
     isAssistant && activeMessageStream?.assistantMessageId === message._id
       ? activeMessageStream.content || message.content
@@ -149,8 +160,14 @@ export const MessageBubble = memo(function MessageBubble({
         ? `Reply cost ${costTicker}`
         : `Usage ${costTicker}`;
   return (
-    <Card className={cn("p-4", isUser ? "bg-muted border-transparent" : "border-transparent bg-transparent px-0")}>
-      <div className="mb-1 flex items-center justify-between gap-3">
+    // `Message` (ai-elements) handles the role-based alignment (user →
+    // right, assistant → left) and constrains bubble width to max-w-95%.
+    // The header (role label + grounding chip + status) sits ABOVE
+    // `MessageContent` so it appears outside the user-bubble background
+    // and stays aligned with the bubble edge. Cost ticker sits BELOW
+    // `MessageContent` for the same reason.
+    <Message from={fromRole}>
+      <div className="flex items-center justify-between gap-3 px-1">
         <div className="flex items-center gap-2">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{message.role}</p>
           {groundingChip ? (
@@ -163,44 +180,52 @@ export const MessageBubble = memo(function MessageBubble({
             </Badge>
           ) : null}
         </div>
-        <p className="text-[10px] text-muted-foreground">{statusLabel}</p>
-      </div>
-      {isAssistant ? (
-        displayContent ? (
-          <Markdown
-            className="text-sm leading-6"
-            isAnimating={message.status === "streaming"}
-            allowedTags={ASSISTANT_ALLOWED_TAGS}
-            components={markdownComponents}
-          >
-            {preparedMarkdown}
-          </Markdown>
+        {isInFlight ? (
+          <Shimmer as="p" className="text-[10px]" duration={1.6}>
+            {statusLabel}
+          </Shimmer>
         ) : (
-          // Empty assistant content (queued / just-started reply): show a
-          // placeholder rather than hand streamdown an empty string.
-          <p className="text-sm leading-6">…</p>
-        )
-      ) : (
-        <p className="whitespace-pre-wrap text-sm leading-6">{displayContent || "…"}</p>
-      )}
-      {message.errorMessage ? <p className="mt-2 text-xs text-destructive">{message.errorMessage}</p> : null}
-      {isAssistant ? (
-        <ToolCallTrace
-          messageId={message._id}
-          persistedToolCalls={message.toolCalls}
-          isStreaming={message.status === "streaming"}
-        />
-      ) : null}
+          <p className="text-[10px] text-muted-foreground">{statusLabel}</p>
+        )}
+      </div>
+      <MessageContent>
+        {isAssistant ? (
+          displayContent ? (
+            <Markdown
+              className="text-sm leading-6"
+              isAnimating={message.status === "streaming"}
+              allowedTags={ASSISTANT_ALLOWED_TAGS}
+              components={markdownComponents}
+            >
+              {preparedMarkdown}
+            </Markdown>
+          ) : (
+            // Empty assistant content (queued / just-started reply): show a
+            // placeholder rather than hand streamdown an empty string.
+            <p className="text-sm leading-6">…</p>
+          )
+        ) : (
+          <p className="whitespace-pre-wrap text-sm leading-6">{displayContent || "…"}</p>
+        )}
+        {message.errorMessage ? <p className="mt-2 text-xs text-destructive">{message.errorMessage}</p> : null}
+        {isAssistant ? (
+          <ToolCallTrace
+            messageId={message._id}
+            persistedToolCalls={message.toolCalls}
+            isStreaming={message.status === "streaming"}
+          />
+        ) : null}
+      </MessageContent>
       {costTicker ? (
         <p
-          className="mt-1 text-[11px] text-muted-foreground/80 tabular-nums"
+          className="px-1 text-[11px] text-muted-foreground/80 tabular-nums"
           data-testid="message-cost-ticker"
           aria-label={tickerAriaLabel}
         >
           {costTicker}
         </p>
       ) : null}
-    </Card>
+    </Message>
   );
 });
 
@@ -253,9 +278,6 @@ function formatCostUsd(usd: number): string {
   if (usd < 0.01) {
     return "<$0.01";
   }
-  if (usd < 1) {
-    return `~$${usd.toFixed(2)}`;
-  }
   return `~$${usd.toFixed(2)}`;
 }
 
@@ -301,7 +323,7 @@ function CitationRef({
     <button
       type="button"
       onClick={() => onSelectArtifact(artifactId)}
-      className="mx-0.5 inline-flex items-center rounded-sm border border-primary/30 bg-primary/5 px-1 py-0 text-[11px] font-semibold leading-5 text-primary hover:bg-primary/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      className="mx-0.5 inline-flex items-center border border-primary/30 bg-primary/5 px-1 py-0 text-[11px] font-semibold leading-5 text-primary hover:bg-primary/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
       data-testid={`citation-link-${tokenIndex}`}
       aria-label={`Open referenced artifact A${tokenIndex}`}
     >

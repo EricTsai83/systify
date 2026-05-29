@@ -4,7 +4,6 @@ import { describe, expect, test } from "vitest";
 import { register as registerRateLimiter } from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
 import { api } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -92,23 +91,6 @@ async function seedThreadWithRepository(
 }
 
 describe("design artifacts phase 4", () => {
-  test("captureAdr stores a structured ADR artifact on the thread", async () => {
-    const ownerTokenIdentifier = "user|phase4-adr";
-    const t = createTestConvex();
-    const { threadId } = await seedThreadWithRepository(t, ownerTokenIdentifier, "ready");
-    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
-
-    const result = await viewer.mutation(api.designArtifacts.captureAdr, { threadId });
-
-    const artifact = await t.run(async (ctx) => await ctx.db.get(result.artifactId as Id<"artifacts">));
-    expect(artifact?.kind).toBe("adr");
-    expect(artifact?.threadId).toBe(threadId);
-    expect(artifact?.contentMarkdown).toContain("## Context");
-    expect(artifact?.contentMarkdown).toContain("## Decision");
-    expect(artifact?.contentMarkdown).toContain("## Consequences");
-    expect(artifact?.contentMarkdown).toContain("## Alternatives");
-  });
-
   test("requestFailureModeAnalysis rejects when sandbox is not ready", async () => {
     const ownerTokenIdentifier = "user|phase4-fma-reject";
     const t = createTestConvex();

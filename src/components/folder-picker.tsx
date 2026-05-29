@@ -35,8 +35,8 @@ type FolderPickerProps = {
 };
 
 /**
- * Folder selector for generation dialogs (deep-analysis, ADR, failure
- * mode, …). Two interactions:
+ * Folder selector for generation dialogs (failure-mode analysis, deep
+ * analyses, …). Two interactions:
  *
  *   1. Pick from existing — popover lists every folder in the repo as a
  *      flat (dot-separated) path so nested folders are still pickable in

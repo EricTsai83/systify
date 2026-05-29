@@ -72,7 +72,7 @@ export async function ensureSystemDesignFolders(
 }
 
 /**
- * The 7 artifact kinds that the Library System Design publication can produce.
+ * The 8 artifact kinds that the Library System Design publication can produce.
  * Every kind is LLM-backed: the generator opens a Daytona sandbox and reads
  * the repository's live source through sandbox tools, so each document tracks
  * the current code state rather than a stale import snapshot.
@@ -80,6 +80,7 @@ export async function ensureSystemDesignFolders(
 export const SYSTEM_DESIGN_KINDS = [
   "readme_summary",
   "architecture_overview",
+  "architecture_diagram",
   "data_model_overview",
   "api_surface_overview",
   "deployment_overview",
@@ -95,12 +96,14 @@ export function isSystemDesignKind(kind: Doc<"artifacts">["kind"]): kind is Syst
 
 /**
  * Convex validator for a System Design kind, used by `schema.ts` for the
- * `jobs.selections` and `jobs.kindFailures` columns. It is intentionally a
- * *superset* of the currently-generatable `SYSTEM_DESIGN_KINDS`: the retired
- * `manifest` literal is retained so historical `jobs` rows that recorded a
- * `manifest` selection still pass schema validation. New generations never
- * include `manifest` — `requestSystemDesignGeneration` filters incoming
- * selections through `isSystemDesignKind`.
+ * `jobs.selections` and `jobs.kindFailures` columns. Stays 1:1 with
+ * {@link SYSTEM_DESIGN_KINDS}; `requestSystemDesignGeneration` additionally
+ * filters incoming selections through {@link isSystemDesignKind} as
+ * defense-in-depth at the request boundary.
+ *
+ * The retired `manifest` literal is NOT retained here — see the note on
+ * `artifactKind` in `schema.ts` for the assumption that no historical
+ * `jobs.selections` or `jobs.kindFailures` array contains it.
  *
  * Lives in `lib/` (not `convex/systemDesign.ts`) so `schema.ts` can import it
  * without dragging the mutation module's `lib/rateLimit` dependency into
@@ -108,10 +111,9 @@ export function isSystemDesignKind(kind: Doc<"artifacts">["kind"]): kind is Syst
  * schema-eval time.
  */
 export const systemDesignKindValidator = v.union(
-  // Retired: no longer generated. Retained only so historical `jobs` rows validate.
-  v.literal("manifest"),
   v.literal("readme_summary"),
   v.literal("architecture_overview"),
+  v.literal("architecture_diagram"),
   v.literal("data_model_overview"),
   v.literal("api_surface_overview"),
   v.literal("deployment_overview"),
@@ -127,6 +129,7 @@ export const systemDesignKindValidator = v.union(
 export const SYSTEM_DESIGN_KIND_TO_FOLDER: Record<SystemDesignKind, SystemDesignFolderKey> = {
   readme_summary: "overview",
   architecture_overview: "architecture",
+  architecture_diagram: "architecture",
   data_model_overview: "data_model",
   api_surface_overview: "api",
   deployment_overview: "infrastructure",
@@ -141,6 +144,7 @@ export const SYSTEM_DESIGN_KIND_TO_FOLDER: Record<SystemDesignKind, SystemDesign
 export const SYSTEM_DESIGN_KIND_TITLES: Record<SystemDesignKind, string> = {
   readme_summary: "README Summary",
   architecture_overview: "Architecture Overview",
+  architecture_diagram: "Architecture Diagram",
   data_model_overview: "Data Model Overview",
   api_surface_overview: "API Surface Overview",
   deployment_overview: "Deployment Overview",

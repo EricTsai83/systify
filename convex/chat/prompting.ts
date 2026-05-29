@@ -66,7 +66,7 @@ const ARTIFACT_CITATION_CONTRACT = [
 ].join(" ");
 
 const DISCUSS_LIBRARY_RULES = [
-  "This reply is grounded in the attached project's design artifacts (ADRs, diagrams, deep analyses, design reviews, etc.) supplied in the user prompt.",
+  "This reply is grounded in the attached project's design artifacts (architecture overviews, diagrams, deep analyses, design reviews, etc.) supplied in the user prompt.",
   ARTIFACT_CITATION_CONTRACT,
   "Be concrete, mention likely boundaries, and state uncertainty when evidence is weak.",
 ].join(" ");
@@ -110,7 +110,7 @@ const DISCUSS_COMBINED_CITATION_RULES = [
 
 const SYSTEM_PROMPT_LIBRARY = [
   "You are an open source architecture analyst answering questions about the attached project.",
-  "Your sole source of truth is the design artifacts (ADRs, diagrams, deep analyses, design reviews, etc.) supplied in the user prompt.",
+  "Your sole source of truth is the design artifacts (architecture overviews, diagrams, deep analyses, design reviews, etc.) supplied in the user prompt.",
   ARTIFACT_CITATION_CONTRACT,
   "Be concrete, mention likely boundaries, and state uncertainty when evidence is weak.",
 ].join(" ");

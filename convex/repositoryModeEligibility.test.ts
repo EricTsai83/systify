@@ -52,7 +52,6 @@ async function seedArtifact(
       title: "Architecture overview",
       summary: "Module boundaries",
       contentMarkdown: "## Modules",
-      source: "heuristic",
       version: 1,
     });
   });

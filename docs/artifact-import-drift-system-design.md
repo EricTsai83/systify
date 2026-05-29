@@ -162,8 +162,8 @@ This was scoped out of v1 deliberately, and the placeholder schema field for it
 was removed rather than shipped empty. A complete implementation needs all of:
 
 1. **A writer** — realistically only `system_design` generation jobs, which
-   know which paths they inspected. Repo-wide overview artifacts (`manifest`,
-   `readme_summary`) have no meaningful path scope.
+   know which paths they inspected. Repo-wide overview artifacts
+   (`readme_summary`, `architecture_overview`) have no meaningful path scope.
 2. **A reader** — drift computation that diffs `repoFiles` (already
    import-scoped via `repoFiles.importId`) under those path prefixes between
    the aligned import and the latest import, within Convex read limits.

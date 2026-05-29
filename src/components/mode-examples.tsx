@@ -67,7 +67,7 @@ export function ModeExamples({
             // to click before they can read it. `whitespace-normal`
             // lets long prompts wrap; `text-left` is the default for
             // multi-line button content.
-            className="group flex h-full flex-col items-start gap-1 rounded-md border border-border bg-card px-3 py-2 text-left text-xs leading-5 text-foreground transition-colors hover:border-foreground/30 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+            className="group flex h-full flex-col items-start gap-1 border border-border bg-card px-3 py-2 text-left text-xs leading-5 text-foreground transition-colors hover:border-foreground/30 hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
           >
             <span className="whitespace-normal">{prompt}</span>
           </button>

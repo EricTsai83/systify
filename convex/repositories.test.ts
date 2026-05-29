@@ -235,11 +235,10 @@ describe("repository detail metadata", () => {
           repositoryId,
           ownerTokenIdentifier,
           jobId: importJobId,
-          kind: "manifest",
+          kind: "architecture_diagram",
           title: `import-artifact-${index}`,
           summary: `Import artifact ${index}`,
           contentMarkdown: "import content",
-          source: "heuristic",
           version: 1,
         });
       }

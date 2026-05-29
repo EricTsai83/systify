@@ -976,6 +976,50 @@ describe("ChatPanel cancel-in-flight reply", () => {
     expect(onCancel).not.toHaveBeenCalled();
   });
 
+  test("pressing Enter while the Stop button is rendered does not fire onSendMessage", () => {
+    // Regression: the PromptInputTextarea's Enter-handler probes the form for
+    // a `button[type="submit"]` and skips submit when it's disabled. While
+    // Stop is rendered there *is* no submit button, so the probe used to
+    // miss and a stray Enter would queue a fresh message mid-flight.
+    const onSendMessage = vi.fn();
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[
+          {
+            _id: assistantMessageId,
+            role: "assistant",
+            status: "streaming",
+            mode: "discuss",
+            content: "partial reply",
+          } as unknown as Doc<"messages">,
+        ]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput="another question"
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
+        isSending={false}
+        onSendMessage={onSendMessage}
+        onCancelInFlightReply={vi.fn()}
+        isCancellingReply={false}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("chat-panel-stop-button")).toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole("textbox"), { key: "Enter" });
+    expect(onSendMessage).not.toHaveBeenCalled();
+  });
+
   test("flips back to Send once the assistant message reaches a terminal state", () => {
     // Smoke test of the post-cancellation state: bubble is `cancelled`,
     // but for the form footer the panel should be ready for the next

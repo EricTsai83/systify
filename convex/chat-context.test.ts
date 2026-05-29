@@ -99,18 +99,17 @@ describe("chat reply context", () => {
         content: "const value = 1;",
       });
 
-      // Manifest artifact retained as a control row — sandbox mode no
-      // longer pre-loads any artifacts (design context is read on demand
-      // via tools), so this row must NOT appear in `context.artifacts`.
+      // Control row — sandbox mode no longer pre-loads any artifacts
+      // (design context is read on demand via tools), so this row must
+      // NOT appear in `context.artifacts`.
       await ctx.db.insert("artifacts", {
         repositoryId,
         jobId: latestJobId,
         ownerTokenIdentifier,
-        kind: "manifest",
-        title: "Manifest (excluded)",
+        kind: "architecture_diagram",
+        title: "Diagram (excluded)",
         summary: "Excluded by sandbox-mode artifact filter",
-        contentMarkdown: "manifest body",
-        source: "heuristic",
+        contentMarkdown: "graph TD;A-->B;",
         version: 1,
       });
       await ctx.db.patch(repositoryId, {
@@ -477,7 +476,6 @@ describe("chat reply context", () => {
         title: "Architecture diagram",
         summary: "Module boundaries",
         contentMarkdown: "graph TD\nA-->B",
-        source: "heuristic",
         version: 1,
       });
       const userMessageId = await ctx.db.insert("messages", {
@@ -544,7 +542,6 @@ describe("chat reply context", () => {
           title: `Architecture diagram ${index}`,
           summary: `Diagram summary ${index}`,
           contentMarkdown: `graph TD\nA${index}-->B${index}`,
-          source: "heuristic",
           version: 1,
         });
       }
@@ -661,7 +658,6 @@ describe("chat reply context", () => {
         title: "Architecture diagram",
         summary: "Module boundaries",
         contentMarkdown: "graph TD\nA-->B",
-        source: "heuristic",
         version: 1,
       });
       const userMessageId = await ctx.db.insert("messages", {
@@ -840,7 +836,6 @@ describe("chat reply context", () => {
         title: "Architecture diagram",
         summary: "Module boundaries",
         contentMarkdown: "graph TD\nA-->B",
-        source: "heuristic",
         version: 1,
       });
 

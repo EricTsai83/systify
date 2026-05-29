@@ -3,7 +3,6 @@ import { useQuery } from "convex/react";
 import { CaretRightIcon, CheckIcon, CopySimpleIcon, MinusIcon, PlusIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import { Markdown } from "@/components/markdown";
-import { MermaidRenderer } from "@/components/mermaid-renderer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -19,8 +18,7 @@ import { cn } from "@/lib/utils";
  * Reader text-size preference. The Library editor renders long-form
  * artifacts, so a viewer can scale the markdown body up or down for
  * comfortable reading; the choice persists per browser via
- * `useLocalStorageEnum`. Architecture diagrams are exempt — they render
- * as SVG, not text, so the control is hidden for them.
+ * `useLocalStorageEnum`.
  *
  * Scaling uses CSS `zoom` on a wrapper around the body. `zoom` reflows
  * the content (text re-wraps within the fixed `68ch` measure) instead of
@@ -88,14 +86,12 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
     );
   }
 
-  const isDiagram = artifact.kind === "architecture_diagram";
-
   return (
     <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur">
         <LibraryBreadcrumb folderName={folder?.name ?? null} title={artifact.title} />
         <div className="ml-auto flex items-center gap-1.5">
-          {!isDiagram ? <FontSizeControl value={fontSize} onChange={setFontSize} /> : null}
+          <FontSizeControl value={fontSize} onChange={setFontSize} />
           <Button
             type="button"
             variant="ghost"
@@ -121,21 +117,15 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
                 {new Date(artifact._creationTime).toLocaleString()}
               </span>
               <span className="text-[11px] text-muted-foreground">·</span>
-              <span className="text-[11px] capitalize text-muted-foreground">{artifact.source}</span>
-              <span className="text-[11px] text-muted-foreground">·</span>
               <FreshnessStatus freshness={artifact.freshness} lastVerifiedAt={artifact.lastVerifiedAt} />
             </div>
             <h1 className="text-2xl font-semibold leading-tight tracking-tight">{artifact.title}</h1>
             <p className="text-[14px] text-muted-foreground">{artifact.summary}</p>
           </header>
 
-          {isDiagram ? (
-            <MermaidRenderer source={artifact.contentMarkdown} />
-          ) : (
-            <div style={{ zoom: fontSizeZoom(fontSize) }}>
-              <Markdown>{artifact.contentMarkdown}</Markdown>
-            </div>
-          )}
+          <div style={{ zoom: fontSizeZoom(fontSize) }}>
+            <Markdown>{artifact.contentMarkdown}</Markdown>
+          </div>
         </article>
       </ScrollArea>
     </div>

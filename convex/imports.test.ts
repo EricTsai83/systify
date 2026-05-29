@@ -176,11 +176,10 @@ describe("import snapshot cleanup", () => {
         repositoryId,
         jobId: oldJobId,
         ownerTokenIdentifier,
-        kind: "manifest",
-        title: "Old Manifest",
+        kind: "architecture_diagram",
+        title: "Old Diagram",
         summary: "Old summary",
         contentMarkdown: "old",
-        source: "heuristic",
         version: 1,
       });
 
@@ -234,11 +233,10 @@ describe("import snapshot cleanup", () => {
         repositoryId,
         jobId: currentJobId,
         ownerTokenIdentifier,
-        kind: "manifest",
-        title: "Current Manifest",
+        kind: "architecture_diagram",
+        title: "Current Diagram",
         summary: "Current summary",
         contentMarkdown: "current",
-        source: "heuristic",
         version: 1,
       });
 
@@ -677,11 +675,10 @@ describe("repository deletion during import", () => {
         repositoryId,
         jobId: completedJobId,
         ownerTokenIdentifier,
-        kind: "manifest",
-        title: "Current Manifest",
+        kind: "architecture_diagram",
+        title: "Current Diagram",
         summary: "Current summary",
         contentMarkdown: "current",
-        source: "heuristic",
         version: 1,
       });
 

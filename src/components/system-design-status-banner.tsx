@@ -3,35 +3,12 @@ import { useMutation, useQuery } from "convex/react";
 import { ArrowRightIcon, SparkleIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
+import { SYSTEM_DESIGN_KIND_TITLES, type SystemDesignKind } from "../../convex/lib/systemDesign";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
-
-// Mirrors the `systemDesignKindValidator` union persisted on `jobs.selections`
-// and `jobs.kindFailures`. `manifest` is retired — no longer generatable — but
-// kept here so a historical job row that referenced it still renders a title.
-type SystemDesignKind =
-  | "manifest"
-  | "readme_summary"
-  | "architecture_overview"
-  | "data_model_overview"
-  | "api_surface_overview"
-  | "deployment_overview"
-  | "security_overview"
-  | "operations_overview";
-
-const KIND_TITLES: Record<SystemDesignKind, string> = {
-  manifest: "Repository Manifest",
-  readme_summary: "README Summary",
-  architecture_overview: "Architecture Overview",
-  data_model_overview: "Data Model Overview",
-  api_surface_overview: "API Surface Overview",
-  deployment_overview: "Deployment Overview",
-  security_overview: "Security Overview",
-  operations_overview: "Operations Overview",
-};
 
 const REASON_TEXT_ALL_LIVE_SOURCE =
   "Live access to the repository wasn't available when this ran. The next attempt will prepare it first.";
@@ -131,7 +108,7 @@ function describeFailures(job: Doc<"jobs">): FailureDescriptor | null {
     reason?: "live_source_unavailable" | "model_empty_output" | "other";
   }>;
 
-  const persistedSelections = (job.selections ?? []) as SystemDesignKind[];
+  const persistedSelections = job.selections ?? [];
   const failedKinds = Array.from(new Set(kindFailures.map((failure) => failure.kind)));
 
   let selections: SystemDesignKind[] = [];
@@ -147,7 +124,9 @@ function describeFailures(job: Doc<"jobs">): FailureDescriptor | null {
     return null;
   }
 
-  const titles = selections.map((kind) => KIND_TITLES[kind]).filter(Boolean);
+  const titles = selections
+    .map((kind) => (kind in SYSTEM_DESIGN_KIND_TITLES ? SYSTEM_DESIGN_KIND_TITLES[kind] : "Unknown System Design"))
+    .filter(Boolean);
   const title =
     selections.length === 1 ? `Couldn't generate ${titles[0]}` : `Couldn't generate ${selections.length} documents`;
   const buttonLabel = selections.length === 1 ? `Generate ${titles[0]}` : `Generate ${selections.length} documents`;
@@ -241,12 +220,18 @@ function FailureBanner({ repositoryId, job }: { repositoryId: Id<"repositories">
         <details className="cursor-pointer border-t border-destructive/20 bg-destructive/5">
           <summary className="px-4 py-1.5 text-[11px] font-medium text-destructive md:px-6">See what failed</summary>
           <div className="space-y-1 border-t border-destructive/20 px-4 py-2 md:px-6">
-            {kindFailures.map((failure) => (
-              <div key={failure.errorId} className="text-[10px] text-destructive/80">
-                <div className="font-medium">{failure.kind}</div>
-                <div className="mt-0.5 line-clamp-2">{failure.message}</div>
-              </div>
-            ))}
+            {kindFailures.map((failure) => {
+              const kindTitle =
+                failure.kind in SYSTEM_DESIGN_KIND_TITLES
+                  ? SYSTEM_DESIGN_KIND_TITLES[failure.kind as SystemDesignKind]
+                  : failure.kind;
+              return (
+                <div key={failure.errorId} className="text-[10px] text-destructive/80">
+                  <div className="font-medium">{kindTitle}</div>
+                  <div className="mt-0.5 line-clamp-2">{failure.message}</div>
+                </div>
+              );
+            })}
           </div>
         </details>
       ) : null}

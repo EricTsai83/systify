@@ -61,7 +61,7 @@ export function ModeInfoPopover({ entries, className }: { entries: ReadonlyArray
           size="icon"
           aria-label="What do the modes do?"
           data-testid="mode-info-trigger"
-          className={`h-7 w-7 rounded-sm text-muted-foreground/80 hover:bg-muted hover:text-foreground ${className ?? ""}`}
+          className={`h-7 w-7 text-muted-foreground/80 hover:bg-muted hover:text-foreground ${className ?? ""}`}
         >
           <InfoIcon size={14} weight="bold" />
         </Button>

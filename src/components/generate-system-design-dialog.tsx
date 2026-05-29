@@ -30,6 +30,7 @@ const CATALOG: ReadonlyArray<{
   kind:
     | "readme_summary"
     | "architecture_overview"
+    | "architecture_diagram"
     | "data_model_overview"
     | "api_surface_overview"
     | "deployment_overview"
@@ -47,6 +48,11 @@ const CATALOG: ReadonlyArray<{
     kind: "architecture_overview",
     title: "Architecture Overview",
     description: "Components, responsibilities, data and control flow, and key boundaries.",
+  },
+  {
+    kind: "architecture_diagram",
+    title: "Architecture Diagram",
+    description: "Mermaid graph of components, flows, and boundaries — with legend and reading guide.",
   },
   {
     kind: "data_model_overview",
@@ -154,7 +160,7 @@ export function GenerateSystemDesignDialog({
             return (
               <li key={item.kind}>
                 <label
-                  className="flex cursor-pointer items-start gap-3 rounded-md p-2 transition hover:bg-muted"
+                  className="flex cursor-pointer items-start gap-3 p-2 transition hover:bg-muted"
                   htmlFor={`gen-${item.kind}`}
                 >
                   <input

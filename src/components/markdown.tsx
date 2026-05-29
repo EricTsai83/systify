@@ -1,4 +1,8 @@
-import { Streamdown, type AllowedTags, type Components, type ControlsConfig } from "streamdown";
+import { Streamdown, type AllowedTags, type Components, type ControlsConfig, type PluginConfig } from "streamdown";
+import { cjk } from "@streamdown/cjk";
+import { code } from "@streamdown/code";
+import { math } from "@streamdown/math";
+import { mermaid } from "@streamdown/mermaid";
 import { cn } from "@/lib/utils";
 
 interface MarkdownProps {
@@ -36,16 +40,18 @@ interface MarkdownProps {
  * defaults and drop the sanitization pass. The chat surface's two inline
  * annotations (`[A#]` citations and unverified-claim highlights) instead
  * ride through Streamdown's `allowedTags` + `components` mechanism, which
- * leaves the security pipeline intact.
+ * leaves the security pipeline intact. The `plugins` prop below is the
+ * supported add-on path and composes with — does not replace — that
+ * pipeline.
  */
 export function Markdown({ children, className, isAnimating, allowedTags, components }: MarkdownProps) {
   return (
     <Streamdown
       className={cn("systify-markdown", className)}
       controls={MARKDOWN_CONTROLS}
-      // No Shiki plugin is installed, so code fences render as a plain
-      // block; a line-number gutter would add weight neither surface
-      // carried before this renderer.
+      plugins={MARKDOWN_PLUGINS}
+      // Line-number gutter would add weight neither surface carried
+      // before; Shiki still highlights syntax without it.
       lineNumbers={false}
       isAnimating={isAnimating}
       allowedTags={allowedTags}
@@ -57,9 +63,24 @@ export function Markdown({ children, className, isAnimating, allowedTags, compon
 }
 
 /**
- * Keep only the code-block copy button. Table copy/download and the
- * mermaid control overlay are affordances neither surface needs — no
- * mermaid plugin is installed, and table export is not a workflow here.
+ * Shared plugin set for both chat and artifact surfaces:
+ *   - `code`     — Shiki syntax highlighting for fenced code blocks
+ *   - `cjk`      — CJK-friendly tokenization (Chinese/Japanese/Korean
+ *                  word boundaries and emphasis handling)
+ *   - `math`     — `$...$` / `$$...$$` rendered through KaTeX
+ *   - `mermaid`  — ` ```mermaid ` fences rendered as diagrams
+ *
+ * Module-level so the reference stays stable across renders (Streamdown
+ * uses referential equality on `plugins` to avoid re-initializing the
+ * pipeline).
+ */
+const MARKDOWN_PLUGINS: PluginConfig = { code, cjk, math, mermaid };
+
+/**
+ * Keep only the code-block copy button. Table copy/download isn't a
+ * workflow here, and the mermaid control overlay (download / fullscreen
+ * / pan-zoom) would compete visually with the chat bubble's own chrome
+ * — the diagram still renders, just without the overlay.
  */
 const MARKDOWN_CONTROLS: ControlsConfig = {
   code: { copy: true, download: false },

@@ -57,7 +57,6 @@ flowchart TD
 The first step writes only small, import-scoped metadata:
 
 - import commit metadata
-- import artifacts such as manifest and README summary
 - job stage progress
 
 This step is intentionally small so it is cheap to retry.

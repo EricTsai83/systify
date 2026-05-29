@@ -169,7 +169,7 @@ export function LibraryAskHistoryPopover({
                           <button
                             type="button"
                             className={cn(
-                              "flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-2 pr-14 text-left text-sm",
+                              "flex min-w-0 flex-1 items-center gap-2 py-1.5 pl-2 pr-14 text-left text-sm",
                               isActive ? "bg-muted" : "hover:bg-muted/60",
                             )}
                             onClick={() => {

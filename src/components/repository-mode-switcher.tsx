@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { AnimatePresence, motion, useReducedMotion, type Transition } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion, type Transition } from "motion/react";
 import { BookOpenIcon, ChatCircleIcon } from "@phosphor-icons/react";
 import { discussPath, libraryPath } from "@/route-paths";
 import type { ChatMode, RepositoryId } from "@/lib/types";
@@ -77,11 +77,7 @@ export function RepositoryModeSwitcher({
 
   return (
     <div className={cn("border-b border-border px-2 py-2", className)}>
-      <div
-        role="group"
-        aria-label="Repository mode"
-        className="flex h-9 gap-1 rounded-md border border-border bg-muted/40 p-1"
-      >
+      <div role="group" aria-label="Repository mode" className="flex h-9 gap-1 border border-border bg-muted/40 p-1">
         {CHAT_MODE_ENTRIES.map((entry) => {
           const isActive = mode === entry.value;
           const isAvailable = availability ? availability.modes[entry.value].enabled : true;
@@ -108,7 +104,7 @@ export function RepositoryModeSwitcher({
               transition={shouldReduceMotion ? { duration: 0 } : MORPH}
               whileTap={isAvailable && !shouldReduceMotion ? { scale: 0.96, transition: { duration: 0.1 } } : undefined}
               className={cn(
-                "relative flex h-full items-center justify-start overflow-hidden rounded-sm pl-[10px] outline-none",
+                "relative flex h-full items-center justify-start overflow-hidden pl-[10px] outline-none",
                 "motion-safe:transition-colors motion-safe:duration-300",
                 "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
                 isActive ? "text-foreground" : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
@@ -131,7 +127,7 @@ export function RepositoryModeSwitcher({
                       opacity: 0,
                       transition: shouldReduceMotion ? { duration: 0 } : MORPH,
                     }}
-                    className="absolute inset-0 rounded-sm bg-background shadow-sm"
+                    className="absolute inset-0 bg-background shadow-sm"
                   />
                 ) : null}
               </AnimatePresence>
@@ -143,7 +139,7 @@ export function RepositoryModeSwitcher({
                   animate={{ opacity: 0 }}
                   transition={MORPH}
                   onAnimationComplete={() => setExitPillDone(true)}
-                  className="absolute inset-0 rounded-sm bg-background shadow-sm"
+                  className="absolute inset-0 bg-background shadow-sm"
                 />
               ) : null}
 

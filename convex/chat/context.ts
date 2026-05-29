@@ -95,7 +95,6 @@ export type ReplyContext = {
 
 const DOCS_ARTIFACT_KINDS: Array<Doc<"artifacts">["kind"]> = [
   "architecture_diagram",
-  "adr",
   "failure_mode_analysis",
   "architecture_overview",
   "design_review",

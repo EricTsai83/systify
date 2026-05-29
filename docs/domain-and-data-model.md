@@ -9,7 +9,7 @@ This document explains Systify's core domain entities, data responsibility bound
 The current data model has three clear centers:
 
 - **Code facts** — imports pin concrete trees (`imports.commitSha`), then `repoFiles` / `repoChunks` indexed from that snapshot. This is what sandbox-grounded tools ultimately reason about.
-- **Narratives** — `artifacts` hold longer-lived prose (System Design overviews, ADRs, notes). They link to repos (and optionally threads) via `repositoryId` / `threadId` and citations in chat—not a substitute for chunk-level grounding.
+- **Narratives** — `artifacts` hold longer-lived prose (System Design overviews, failure-mode analyses, notes). They link to repos (and optionally threads) via `repositoryId` / `threadId` and citations in chat—not a substitute for chunk-level grounding.
 - **Repository aggregate** — `repositories` is the long-lived aggregate root and the binding point for sandbox sessions, threads, artifacts, and the import pipeline. Threads may also exist repository-less (`threads.repositoryId` unset) for ungrounded Discuss before an attach.
 - **Tenant isolation** — `ownerTokenIdentifier` scopes every viewer-owned row.
 - **Workflow progress** — `imports`, `jobs`, `sandboxes`, `messages`, `sandboxSessions` carry lifecycle fields.
@@ -136,7 +136,6 @@ Because of this, the UI does not need to know the internal implementation of eve
 
 `artifacts` stores outputs with long-term value relative to repositories (and optionally threads) rather than ephemeral stream state. Current artifact kinds include:
 
-- `manifest`
 - `readme_summary`
 - `architecture_overview`
 - `architecture_diagram`
@@ -147,8 +146,6 @@ Because of this, the UI does not need to know the internal implementation of eve
 - `deployment_overview`
 - `security_overview`
 - `operations_overview`
-- `risk_report`
-- `adr`
 - `failure_mode_analysis`
 - `trade_off_matrix`
 - `migration_plan`
@@ -157,7 +154,7 @@ Because of this, the UI does not need to know the internal implementation of eve
 
 This table plays two roles:
 
-1. Reusable knowledge produced by **System Design generation**: the user opts into this from the empty Library page, and the sandbox-backed job writes user-selected artifact kinds (defaults: `manifest`, `readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`). Import itself no longer seeds artifact bodies — it only seeds the default folder tree so the Library has a place to put them.
+1. Reusable knowledge produced by **System Design generation**: the user opts into this from the empty Library page, and the sandbox-backed job writes user-selected artifact kinds (defaults: `readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`). Import itself no longer seeds artifact bodies — it only seeds the default folder tree so the Library has a place to put them.
 2. Additional prose authored later by the user as Library notes, or produced by future per-folder generation jobs.
 
 Artifacts may optionally carry **`alignedImportCommitSha`**: best-effort record of which import revision the prose was authored against—used alongside sandbox verification timestamps to distinguish "checked against sandbox" freshness from **import snapshot drift**.

@@ -587,11 +587,8 @@ export function RepositoryShell({
                 >
                   <div className="h-full xl:w-96 2xl:w-md">
                     <ArtifactPanel
-                      threadId={effectiveSelectedThreadId}
                       repositoryId={effectiveSelectedRepositoryId}
                       artifacts={repoDetail?.artifacts}
-                      hasAttachedRepository={capabilities.attachedRepository !== null}
-                      sandboxModeStatus={capabilities.sandboxModeStatus}
                       isVisible={isArtifactPanelOpen}
                       className="flex h-full w-full border-l-0"
                       onOpenInReader={handleSelectArtifact}
@@ -613,11 +610,8 @@ export function RepositoryShell({
             </DrawerDescription>
             <div className="flex min-h-0 flex-1 flex-col">
               <ArtifactPanel
-                threadId={effectiveSelectedThreadId}
                 repositoryId={effectiveSelectedRepositoryId}
                 artifacts={repoDetail?.artifacts}
-                hasAttachedRepository={capabilities.attachedRepository !== null}
-                sandboxModeStatus={capabilities.sandboxModeStatus}
                 isVisible={isArtifactSheetOpen}
                 className="flex h-full w-full border-l-0"
                 onOpenInReader={(artifactId) => {
