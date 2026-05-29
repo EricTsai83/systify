@@ -275,6 +275,19 @@ export function ChatPanel({
 
   const canCancel = inFlightAssistantMessage !== null && typeof onCancelInFlightReply === "function";
 
+  // Centralized gate for "should a Send fire right now?". Used both as the
+  // Send button's `disabled` prop and to short-circuit the PromptInput's
+  // `onSubmit` so the Enter-key path can't bypass the same checks. Without
+  // the shared gate, pressing Enter while the Stop button is rendered (Stop is
+  // `type="button"`, so the textarea's submit-disabled probe finds no submit
+  // button and lets the submit through) would fire `onSendMessage` mid-flight.
+  // The `groundSandbox && !sandboxModeAvailable` clause is here because
+  // sandbox grounding needs a ready live source; sending before lifecycle is
+  // `available` would let an optimistically-flipped toggle round-trip into a
+  // backend reject.
+  const isSendBlocked =
+    isReadOnly || isSending || isSyncing || !chatInput.trim() || (groundSandbox && !sandboxModeAvailable) || canCancel;
+
   const shouldShowSandboxWarning =
     !isChatLoading && groundSandbox && sandboxModeStatus !== null && !sandboxModeAvailable;
   const shouldShowEmptyState = !isChatLoading && !hasMessages;
@@ -395,6 +408,7 @@ export function ChatPanel({
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-6 py-3">
           <PromptInput
             onSubmit={(_, event) => {
+              if (isSendBlocked) return;
               void onSendMessage(event);
             }}
           >
@@ -475,17 +489,7 @@ export function ChatPanel({
                   type="submit"
                   variant="default"
                   size="sm"
-                  disabled={
-                    isReadOnly ||
-                    isSending ||
-                    isSyncing ||
-                    !chatInput.trim() ||
-                    // Sandbox grounding requires a ready live source. Disable
-                    // send until the sandbox lifecycle is `available` so an
-                    // optimistically-flipped toggle does not produce a
-                    // round-trip into a backend reject.
-                    (groundSandbox && !sandboxModeAvailable)
-                  }
+                  disabled={isSendBlocked}
                   data-testid="chat-panel-send-button"
                 >
                   <PaperPlaneTiltIcon weight="bold" />
