@@ -175,35 +175,46 @@ export const MessageBubble = memo(function MessageBubble({
     isLiveStream && activeMessageStream.reasoningStartedAt !== null && activeMessageStream.reasoningEndedAt === null,
   );
   const reasoningDurationSeconds = computeReasoningDurationSeconds(message, activeMessageStream, isLiveStream);
+  // Header (grounding chip + non-terminal status) sits ABOVE
+  // `MessageContent` so it stays outside the user-bubble background and
+  // aligns with the bubble edge. The role itself is conveyed by
+  // alignment + bubble styling — no explicit label needed. `Ready` is
+  // suppressed because "completed" is the boring default; only states
+  // that actually carry information (in-flight, failed, cancelled)
+  // surface a label. When neither the chip nor a status applies the
+  // header row collapses entirely so user messages don't leave an empty
+  // strip above the bubble.
+  const showStatus = statusLabel !== null;
+  const showHeader = groundingChip !== null || showStatus;
   return (
     // `Message` (ai-elements) handles the role-based alignment (user →
     // right, assistant → left) and constrains bubble width to max-w-95%.
-    // The header (role label + grounding chip + status) sits ABOVE
-    // `MessageContent` so it appears outside the user-bubble background
-    // and stays aligned with the bubble edge. Cost ticker sits BELOW
-    // `MessageContent` for the same reason.
+    // Cost ticker sits BELOW `MessageContent` for the same reason.
     <Message from={fromRole}>
-      <div className="flex items-center justify-between gap-3 px-1">
-        <div className="flex items-center gap-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{message.role}</p>
-          {groundingChip ? (
-            <Badge
-              variant="muted"
-              className="border-transparent px-1.5 py-0 text-[10px] font-medium uppercase tracking-wider"
-              data-testid="message-grounding-badge"
-            >
-              {groundingChip}
-            </Badge>
+      {showHeader ? (
+        <div className="flex items-center justify-between gap-3 px-1">
+          <div className="flex items-center gap-2">
+            {groundingChip ? (
+              <Badge
+                variant="muted"
+                className="border-transparent px-1.5 py-0 text-[10px] font-medium uppercase tracking-wider"
+                data-testid="message-grounding-badge"
+              >
+                {groundingChip}
+              </Badge>
+            ) : null}
+          </div>
+          {showStatus ? (
+            isInFlight ? (
+              <Shimmer as="p" className="text-[10px]" duration={1.6}>
+                {statusLabel}
+              </Shimmer>
+            ) : (
+              <p className="text-[10px] text-muted-foreground">{statusLabel}</p>
+            )
           ) : null}
         </div>
-        {isInFlight ? (
-          <Shimmer as="p" className="text-[10px]" duration={1.6}>
-            {statusLabel}
-          </Shimmer>
-        ) : (
-          <p className="text-[10px] text-muted-foreground">{statusLabel}</p>
-        )}
-      </div>
+      ) : null}
       {isAssistant && (reasoningContent || isReasoningStreaming) ? (
         <div data-testid="message-reasoning" className="px-1">
           <Reasoning isStreaming={isReasoningStreaming} duration={reasoningDurationSeconds} defaultOpen={false}>
@@ -478,14 +489,17 @@ function UnverifiedMark({ children }: { children?: ReactNode }) {
   );
 }
 
-function getMessageStatusLabel(status: Doc<"messages">["status"]) {
+function getMessageStatusLabel(status: Doc<"messages">["status"]): string | null {
   switch (status) {
     case "pending":
       return "Queued";
     case "streaming":
       return "Generating";
     case "completed":
-      return "Ready";
+      // The default terminal state — every settled reply lands here, so
+      // labelling it would just paint "Ready" on every bubble forever.
+      // Suppress entirely; the absence of a status IS the "ok" signal.
+      return null;
     case "failed":
       return "Failed";
     case "cancelled":

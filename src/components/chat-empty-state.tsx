@@ -1,13 +1,4 @@
-import { useState, type ReactNode } from "react";
-import { useMutation } from "convex/react";
-import { GlobeIcon, LinkIcon, LockIcon, PlusIcon } from "@phosphor-icons/react";
-import type { Doc } from "../../convex/_generated/dataModel";
-import { api } from "../../convex/_generated/api";
-import { AppNotice } from "@/components/app-notice";
-import { EntityPicker, PickerActionRow } from "@/components/entity-picker";
-import { ImportRepoDialog } from "@/components/import-repo-dialog";
-import { Button } from "@/components/ui/button";
-import type { OnImportedCallback, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
+import { type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 const EMPTY_CHAT_OWL = ["   ^...^   ", "  / o,o \\  ", "  |):::(|  ", "====w=w===="].join("\n");
@@ -204,107 +195,14 @@ export function EmptyChatHint() {
 }
 
 /**
- * Empty-state guidance for threads that have no attached repository yet.
- * Surfaces two clear paths:
- *
- * 1. Move to a repository — a dropdown listing the user's imported
- *    repos plus an "Import new repository" option that opens the ImportRepoDialog.
- * 2. Free-form discussion — the user can just start typing.
+ * Empty-state hint for threads with no attached repository yet. The
+ * TopBar's `AttachRepoMenu` already surfaces the attach affordance, so
+ * this surface stays focused on the conversation-starter hero.
  */
-export function EmptyNoRepoHint({
-  threadId,
-  availableRepositories,
-  onImported,
-  onThreadMovedToRepository,
-}: {
-  threadId: ThreadId | null;
-  availableRepositories: ReadonlyArray<Doc<"repositories">>;
-  onImported?: OnImportedCallback;
-  onThreadMovedToRepository?: (repositoryId: RepositoryId | null, mode: ThreadMode | null) => void;
-}) {
-  const setThreadRepository = useMutation(api.chat.threads.setThreadRepository);
-  const [isAttaching, setIsAttaching] = useState(false);
-  const [attachError, setAttachError] = useState<string | null>(null);
-  const isAttachDisabled = isAttaching || !threadId;
-
-  const handleAttachRepo = async (repoId: RepositoryId) => {
-    if (!threadId) return;
-    setIsAttaching(true);
-    setAttachError(null);
-    try {
-      const result = await setThreadRepository({ threadId, repositoryId: repoId });
-      onThreadMovedToRepository?.(result.repositoryId, result.mode);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to attach repository";
-      setAttachError(message);
-      console.error("Error attaching repository:", err);
-    } finally {
-      setIsAttaching(false);
-    }
-  };
-
+export function EmptyNoRepoHint() {
   return (
-    <div className="flex flex-1 animate-in flex-col items-center justify-center gap-5 fade-in duration-300 ease-out">
-      {attachError ? (
-        <div className="w-full max-w-md">
-          <AppNotice
-            title="Failed to attach repository"
-            message={attachError}
-            tone="error"
-            onDismiss={() => setAttachError(null)}
-            dismissLabel="Dismiss attach error"
-          />
-        </div>
-      ) : null}
-
+    <div className="flex flex-1 animate-in items-center justify-center fade-in duration-300 ease-out">
       <EmptyStateHero visual={<OwlAsciiArt />} title="Start a design conversation" />
-
-      <div className="flex flex-col items-center gap-3">
-        <EntityPicker
-          items={availableRepositories}
-          getItemKey={(repo) => repo._id}
-          getSearchText={(repo) => repo.sourceRepoFullName}
-          onSelect={(repo) => void handleAttachRepo(repo._id)}
-          renderItem={(repo) => (
-            <>
-              {repo.visibility === "private" ? (
-                <LockIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
-              ) : (
-                <GlobeIcon size={12} weight="bold" className="shrink-0 text-muted-foreground" />
-              )}
-              <span className="min-w-0 flex-1 truncate text-xs">{repo.sourceRepoFullName}</span>
-            </>
-          )}
-          align="center"
-          contentClassName="w-64"
-          searchPlaceholder="Search repositories…"
-          ariaLabel="Search repositories to attach"
-          emptyHint="No repositories imported yet."
-          footer={
-            onImported ? (
-              <ImportRepoDialog
-                onImported={onImported}
-                trigger={
-                  <PickerActionRow onSelect={() => {}} closeOnSelect={false}>
-                    <PlusIcon size={12} weight="bold" />
-                    <span className="text-xs">Import new repository</span>
-                  </PickerActionRow>
-                }
-              />
-            ) : undefined
-          }
-          trigger={
-            <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={isAttachDisabled}>
-              <LinkIcon size={13} weight="bold" />
-              {isAttaching ? "Attaching…" : "Attach repository"}
-            </Button>
-          }
-        />
-
-        <p className="max-w-xs text-xs text-muted-foreground">
-          Attach a repository to enable Library and Sandbox grounding, or keep typing here for a free-form discussion.
-        </p>
-      </div>
     </div>
   );
 }

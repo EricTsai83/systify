@@ -484,9 +484,6 @@ export function RepositoryShell({
       onToggleArtifactPanel={handleToggleArtifactPanel}
       showArtifactToggle={isArtifactPanelEnabled}
       hasAttachedRepository={capabilities.attachedRepository !== null}
-      availableRepositories={repositories ?? []}
-      onImported={handleImported}
-      onThreadMovedToRepository={handleThreadMovedToRepository}
       onSelectArtifact={handleSelectArtifact}
       isReadOnly={isRepoArchived}
       readOnlyHint={chatReadOnlyHint}
