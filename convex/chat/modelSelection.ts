@@ -87,15 +87,22 @@ const DEFAULT_MODEL_BY_CAPABILITY: Record<ModelCapability, string> = {
 };
 
 /**
- * Per-model reasoning default. A model that doesn't appear in this map
- * has no reasoning support — adding a new reasoning-capable model means
- * adding it here in the same change that introduces it to the pricing
- * table (`convex/lib/openaiPricing.ts`). Colocated so the two snapshots
- * stay in lockstep.
+ * Per-model-family reasoning default. Keys are family prefixes; a model
+ * matches if its name equals the key OR begins with `<key>-` (boundary at
+ * hyphen so `gpt-5` doesn't match a hypothetical `gpt-50`). Longest
+ * matching prefix wins, so `gpt-5-mini-2026-01-15` resolves to the
+ * `gpt-5-mini` row rather than the `gpt-5` row. A model that doesn't
+ * match any prefix has no reasoning support — adding a new reasoning-
+ * capable family means adding it here in the same change that introduces
+ * it to the pricing table (`convex/lib/openaiPricing.ts`).
  *
- * Defaults are chosen per-model, NOT per-tier:
+ * Family matching (not exact id) so operator-pinned snapshot names like
+ * `gpt-5-2026-01-15` keep the family's reasoning default instead of
+ * silently degrading to no reasoning at all.
+ *
+ * Defaults are chosen per-family, NOT per-tier:
  *   - `gpt-5`      → `medium` — matches OpenAI's API default; the
- *                    sandbox tier uses this model and tool trajectories
+ *                    sandbox tier uses this family and tool trajectories
  *                    (plan → call → re-plan) benefit from real thought.
  *   - `gpt-5-mini` → `low`    — the lighter tier used for library + discuss;
  *                    fast text replies don't justify deeper effort.
@@ -108,6 +115,26 @@ const MODEL_REASONING_DEFAULT: Record<string, ReasoningEffort> = {
   "gpt-5": "medium",
   "gpt-5-mini": "low",
 };
+
+/**
+ * Resolve a model name to its family's reasoning effort. Longest matching
+ * prefix wins so `gpt-5-mini-2026-01-15` lands on `gpt-5-mini` rather than
+ * `gpt-5`. Returns `undefined` when no family matches — the caller treats
+ * that as "non-reasoning model" and omits `providerOptions.openai.reasoningEffort`.
+ */
+function resolveReasoningEffort(modelName: string): ReasoningEffort | undefined {
+  let bestKey: string | undefined;
+  let bestEffort: ReasoningEffort | undefined;
+  for (const [key, effort] of Object.entries(MODEL_REASONING_DEFAULT)) {
+    if (modelName === key || modelName.startsWith(`${key}-`)) {
+      if (bestKey === undefined || key.length > bestKey.length) {
+        bestKey = key;
+        bestEffort = effort;
+      }
+    }
+  }
+  return bestEffort;
+}
 
 /**
  * Capability → capability-specific override env var name. Kept as a typed
@@ -173,6 +200,6 @@ export function resolveModelForReply(args: { mode: ChatMode; groundSandbox: bool
   const name = override ?? readEnv("OPENAI_MODEL") ?? DEFAULT_MODEL_BY_CAPABILITY[capability];
   return {
     name,
-    reasoningEffort: MODEL_REASONING_DEFAULT[name],
+    reasoningEffort: resolveReasoningEffort(name),
   };
 }

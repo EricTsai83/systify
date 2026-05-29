@@ -279,12 +279,22 @@ export const generateAssistantReply = internalAction({
       if (!options?.force && pendingReasoningDelta.length < STREAM_FLUSH_THRESHOLD) {
         return;
       }
-      await ctx.runMutation(internal.chat.streaming.appendAssistantReasoningDelta, {
-        assistantMessageId: args.assistantMessageId,
-        jobId: args.jobId,
-        delta: pendingReasoningDelta,
-      });
+      const delta = pendingReasoningDelta;
       pendingReasoningDelta = "";
+      try {
+        await ctx.runMutation(internal.chat.streaming.appendAssistantReasoningDelta, {
+          assistantMessageId: args.assistantMessageId,
+          jobId: args.jobId,
+          delta,
+        });
+      } catch (err) {
+        logWarn("chat", "reasoning_flush_failed", {
+          assistantMessageId: args.assistantMessageId,
+          jobId: args.jobId,
+          deltaLength: delta.length,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     };
 
     // `streamText` response is hoisted so every exit path (success
@@ -921,11 +931,19 @@ export const generateAssistantReply = internalAction({
             // mutation is idempotent on the timestamp field, so a duplicate
             // `reasoning-start` (rare but possible across step boundaries)
             // does not double-count duration.
-            await ctx.runMutation(internal.chat.streaming.markReasoningStarted, {
-              assistantMessageId: args.assistantMessageId,
-              jobId: args.jobId,
-              occurredAt: Date.now(),
-            });
+            try {
+              await ctx.runMutation(internal.chat.streaming.markReasoningStarted, {
+                assistantMessageId: args.assistantMessageId,
+                jobId: args.jobId,
+                occurredAt: Date.now(),
+              });
+            } catch (err) {
+              logWarn("chat", "reasoning_start_failed", {
+                assistantMessageId: args.assistantMessageId,
+                jobId: args.jobId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
             break;
           }
           case "reasoning-delta": {
@@ -935,11 +953,19 @@ export const generateAssistantReply = internalAction({
           }
           case "reasoning-end": {
             await flushReasoningIfNeeded({ force: true });
-            await ctx.runMutation(internal.chat.streaming.markReasoningEnded, {
-              assistantMessageId: args.assistantMessageId,
-              jobId: args.jobId,
-              occurredAt: Date.now(),
-            });
+            try {
+              await ctx.runMutation(internal.chat.streaming.markReasoningEnded, {
+                assistantMessageId: args.assistantMessageId,
+                jobId: args.jobId,
+                occurredAt: Date.now(),
+              });
+            } catch (err) {
+              logWarn("chat", "reasoning_end_failed", {
+                assistantMessageId: args.assistantMessageId,
+                jobId: args.jobId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+            }
             break;
           }
           case "error": {

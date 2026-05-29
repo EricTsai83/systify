@@ -322,7 +322,9 @@ return <div>Live source ready (stops in 5 min)</div>;
 | 優先級 | 元件 | 風險 | 修復難度 | 建議行動 |
 |--------|------|------|---------|---------|
 | ✅ 完成 | ChatPanel Stop按鈕 | 高 | 低 | 已加 grid-stack + `min-w-[7.5rem]`（commit 04b0d4f） |
+| ✅ 完成 | ChatMessage 助理 bubble 底列 | 中 | 低 | 已加 `min-h-7` 預留 cost ticker / copy action 空間，streaming→completed 不再推動下方訊息 |
 | ✅ 完成 | SandboxActivityPill | 高 | 中 | 已加 `min-h-7` 至共用 pill row（commit 04b0d4f） |
+| ✅ 完成 | ChatMessage 推理時長 | 低 | 低 | 改 `Math.max(0, ...)` 為 `Math.max(1, ...)` 以確保最少 1 秒顯示 |
 | 🟡 P1 | StatusPill 寬度 | 中 | 低 | 修復：min-w-fit |
 | 🟡 P1 | ImportStatusBanner | 中 | 低 | 修復：min-h-[48px] |
 | 🟡 P2 | AppNotice action | 低 | 低 | 優化：min-w reserve |
@@ -333,8 +335,15 @@ return <div>Live source ready (stops in 5 min)</div>;
 ✅ chat-panel.tsx:456-525
   - CLS fixes 已實現於 Send 和 Stop 按鈕的 grid-stack 標籤
 
+✅ chat-message.tsx (助理 bubble 底列)
+  - 加 min-h-7 預留 cost ticker / copy action 空間，
+    streaming → completed 切換不再讓後續訊息往下跳
+
 ✅ sandbox-activity-pill.tsx
   - 三種狀態共用 pillRowClass（含 min-h-7）
+
+✅ chat-message.tsx:299-305
+  - 改 `Math.max(0, ...)` 為 `Math.max(1, ...)` 於推理時長計算
 
 □ status-pill.tsx:105-114
   - 改 min-w-26 為 min-w-fit
@@ -373,5 +382,5 @@ return <div>Live source ready (stops in 5 min)</div>;
 
 **Layout Shift 風險**：
 - 🔴 5 個明顯問題點（按優先級修復）
-- ✅ 部分已防護（Send 按鈕、icon 尺寸）
-- 💡 大多修復簡單（min-w、min-h、grid-stack）
+- ✅ 3 個 CLS 已完成（Send 按鈕、ChatMessage 助理 bubble 底列、SandboxActivityPill）+ ChatMessage 推理時長顯示
+- 💡 其餘修復簡單（min-w、min-h）

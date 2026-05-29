@@ -59,6 +59,25 @@ export const DEFAULT_AUTO_ARCHIVE_MINUTES = 60 * 24;
 export const DEFAULT_AUTO_DELETE_MINUTES = 60 * 24;
 
 /**
+ * Defensive upper bound on `messageStreams.liveReasoning` size.
+ *
+ * Each `appendAssistantReasoningDelta` rewrites the whole `liveReasoning`
+ * column on the stream row (Convex documents are rewritten in full on every
+ * patch), so unbounded growth has two failure modes:
+ *   - Convex's 1 MB per-document hard limit eventually rejects the patch,
+ *     which would tear down the reply mid-stream.
+ *   - Even well below the limit, repeated full-string rewrites of an
+ *     ever-larger value approach O(n²) total bytes written across a single
+ *     reasoning trace.
+ *
+ * The expected per-reply trace is a few KB; this cap is a defensive
+ * backstop for pathological cases (high reasoning effort on a long
+ * prompt). When the cap is hit, the oldest bytes are dropped so the
+ * trace renderer always shows the model's most recent thinking.
+ */
+export const MAX_LIVE_REASONING_CHARS = 64_000;
+
+/**
  * Defensive upper bound on the number of `messageToolCallEvents`
  * rows pulled in a single read.
  *

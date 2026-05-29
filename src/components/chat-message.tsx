@@ -297,12 +297,12 @@ function computeReasoningDurationSeconds(
     const start = activeMessageStream.reasoningStartedAt;
     const end = activeMessageStream.reasoningEndedAt;
     if (start !== null && end !== null) {
-      return Math.max(0, Math.ceil((end - start) / 1000));
+      return Math.max(1, Math.ceil((end - start) / 1000));
     }
     return undefined;
   }
   if (message.reasoningDurationMs !== undefined) {
-    return Math.max(0, Math.ceil(message.reasoningDurationMs / 1000));
+    return Math.max(1, Math.ceil(message.reasoningDurationMs / 1000));
   }
   return undefined;
 }

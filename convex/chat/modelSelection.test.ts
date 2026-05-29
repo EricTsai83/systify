@@ -164,4 +164,17 @@ describe("resolveModelForReply", () => {
     expect(choice.name).toBe("gpt-4o");
     expect(choice.reasoningEffort).toBeUndefined();
   });
+
+  test("applies family-level reasoning defaults to pinned snapshot names", () => {
+    // Operators commonly pin a dated snapshot like `gpt-5-2026-01-15` to
+    // freeze behavior. Exact-id lookup would silently drop reasoning for
+    // these; the resolver must match on the family prefix so reasoning
+    // stays on at the family's default effort. Longest prefix wins so
+    // `gpt-5-mini-*` snapshots resolve to the mini row, not the gpt-5
+    // row above it.
+    process.env.OPENAI_MODEL_SANDBOX = "gpt-5-2026-01-15";
+    expect(resolveModelForReply({ mode: "discuss", groundSandbox: true }).reasoningEffort).toBe("medium");
+    process.env.OPENAI_MODEL_DISCUSS = "gpt-5-mini-2026-01-15";
+    expect(resolveModelForReply({ mode: "discuss", groundSandbox: false }).reasoningEffort).toBe("low");
+  });
 });

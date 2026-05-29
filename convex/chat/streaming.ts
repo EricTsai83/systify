@@ -5,7 +5,11 @@ import { loadOwnedDoc, requireOwnedDoc } from "../lib/ownedDocs";
 import { CHAT_JOB_LEASE_MS, consumeSandboxDailyCost } from "../lib/rateLimit";
 import { costUsdToCents } from "../lib/openaiPricing";
 import { logInfo, logWarn } from "../lib/observability";
-import { MAX_TOOL_CALL_EVENTS_PER_MESSAGE, TOOL_CALL_EVENT_SUMMARY_MAX_CHARS } from "../lib/constants";
+import {
+  MAX_LIVE_REASONING_CHARS,
+  MAX_TOOL_CALL_EVENTS_PER_MESSAGE,
+  TOOL_CALL_EVENT_SUMMARY_MAX_CHARS,
+} from "../lib/constants";
 import {
   cancelActiveJob,
   completeRunningJob,
@@ -487,7 +491,25 @@ export const appendAssistantReasoningDelta = internalMutation({
       });
       return;
     }
-    const next = `${stream.liveReasoning ?? ""}${args.delta}`;
+    // Bound the accumulated trace before the patch. Each call rewrites the
+    // whole `liveReasoning` column, so unbounded growth approaches Convex's
+    // 1 MB per-document hard limit and creates quadratic write cost across
+    // a long trace. When the cap is exceeded we drop the oldest bytes so the
+    // renderer keeps showing the model's most recent thinking — the trace is
+    // an auxiliary UI, not a durable transcript.
+    const concatenated = `${stream.liveReasoning ?? ""}${args.delta}`;
+    const next =
+      concatenated.length > MAX_LIVE_REASONING_CHARS
+        ? concatenated.slice(concatenated.length - MAX_LIVE_REASONING_CHARS)
+        : concatenated;
+    if (concatenated.length > MAX_LIVE_REASONING_CHARS) {
+      logWarn("chat", "live_reasoning_truncated", {
+        assistantMessageId: args.assistantMessageId,
+        jobId: args.jobId,
+        droppedChars: concatenated.length - MAX_LIVE_REASONING_CHARS,
+        cap: MAX_LIVE_REASONING_CHARS,
+      });
+    }
     await ctx.db.patch(stream._id, {
       liveReasoning: next,
     });
