@@ -602,12 +602,10 @@ export function ImportRepoDialog({
                 {/* Hero: Systify ⇄ GitHub bridge — anchors the upper half and
                     visualises the "secure, scoped connection" promise made below. */}
                 <div className="flex items-center gap-4">
-                  <Logo size={44} hero />
+                  <Logo size={44} />
                   <div className="relative flex h-8 w-24 items-center justify-center">
-                    <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-linear-to-r from-transparent via-primary/50 to-transparent" />
-                    <div className="absolute inset-x-3 top-1/2 h-[3px] -translate-y-1/2 rounded-full bg-primary/15 blur-sm" />
-                    <div className="absolute left-0 top-1/2 h-1 w-1 -translate-y-1/2 rounded-full bg-primary/60" />
-                    <div className="absolute right-0 top-1/2 h-1 w-1 -translate-y-1/2 rounded-full bg-primary/60" />
+                    <div className="absolute -inset-x-12 top-1/2 h-px -translate-y-1/2 bg-primary/45 blur-sm" />
+                    <div className="absolute -inset-x-12 top-1/2 h-2 -translate-y-1/2 rounded-[50%] bg-primary/30 blur-sm" />
                     <div className="relative z-10">
                       <div className="absolute inset-0 -m-1.5 rounded-full bg-primary/20 blur-md" />
                       <div className="relative flex h-7 w-7 items-center justify-center rounded-full border border-primary/40 bg-card shadow-md shadow-primary/25">

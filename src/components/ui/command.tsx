@@ -24,21 +24,24 @@ function CommandDialog({
   description = "Search for a command to run...",
   children,
   className,
+  showCloseButton = false,
   ...props
 }: React.ComponentProps<typeof Dialog> & {
   title?: string;
   description?: string;
   className?: string;
+  showCloseButton?: boolean;
 }) {
-  // Project's DialogContent always renders a close affordance (no opt-out),
-  // so the upstream `showCloseButton` knob is dropped here.
   return (
     <Dialog {...props}>
       <DialogHeader className="sr-only">
         <DialogTitle>{title}</DialogTitle>
         <DialogDescription>{description}</DialogDescription>
       </DialogHeader>
-      <DialogContent className={cn("top-1/3 translate-y-0 overflow-hidden rounded-none p-0", className)}>
+      <DialogContent
+        className={cn("top-1/3 translate-y-0 overflow-hidden rounded-none p-0", className)}
+        showCloseButton={showCloseButton}
+      >
         {children}
       </DialogContent>
     </Dialog>

@@ -1,7 +1,7 @@
 type LogoProps = {
   size?: number;
   className?: string;
-  /** When true, renders the expressive hero variant with a soft halo + shimmer. */
+  /** When true, renders the expressive hero variant with a soft halo. */
   hero?: boolean;
 };
 
@@ -45,8 +45,6 @@ export function Logo({ size = 36, className, hero = false }: LogoProps) {
         <circle cx="182" cy="112" r="4" fill="#FFFFFF" opacity="0.5" />
       </g>
 
-      {hero ? <HeroShimmer /> : null}
-
       <defs>
         <clipPath id="aaLogoClip">
           <rect width={VB} height={VB} rx={RADIUS} />
@@ -65,41 +63,19 @@ export function Logo({ size = 36, className, hero = false }: LogoProps) {
   );
 }
 
-function HeroShimmer() {
-  return (
-    <rect width={VB} height={VB} rx={RADIUS} fill="url(#aaLogoShimmer)" opacity="0.6">
-      <animateTransform
-        attributeName="transform"
-        type="translate"
-        from={`-${VB} 0`}
-        to={`${VB} 0`}
-        dur="6s"
-        repeatCount="indefinite"
-      />
-    </rect>
-  );
-}
-
 function HeroDefs() {
   return (
-    <>
-      <radialGradient
-        id="aaLogoHalo"
-        cx="0"
-        cy="0"
-        r="1"
-        gradientUnits="userSpaceOnUse"
-        gradientTransform={`translate(${VB / 2} ${VB / 2}) scale(${VB / 2 - 4})`}
-      >
-        <stop stopColor="#FFFFFF" stopOpacity="0.18" />
-        <stop offset="0.6" stopColor="#FFFFFF" stopOpacity="0.04" />
-        <stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
-      </radialGradient>
-      <linearGradient id="aaLogoShimmer" x1="0" y1="0" x2={VB} y2={VB} gradientUnits="userSpaceOnUse">
-        <stop offset="0.35" stopColor="#FFFFFF" stopOpacity="0" />
-        <stop offset="0.5" stopColor="#FFFFFF" stopOpacity="0.08" />
-        <stop offset="0.65" stopColor="#FFFFFF" stopOpacity="0" />
-      </linearGradient>
-    </>
+    <radialGradient
+      id="aaLogoHalo"
+      cx="0"
+      cy="0"
+      r="1"
+      gradientUnits="userSpaceOnUse"
+      gradientTransform={`translate(${VB / 2} ${VB / 2}) scale(${VB / 2 - 4})`}
+    >
+      <stop stopColor="#FFFFFF" stopOpacity="0.18" />
+      <stop offset="0.6" stopColor="#FFFFFF" stopOpacity="0.04" />
+      <stop offset="1" stopColor="#FFFFFF" stopOpacity="0" />
+    </radialGradient>
   );
 }
