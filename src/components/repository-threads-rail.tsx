@@ -42,11 +42,16 @@ function useThreadRename({ thread, onError }: { thread: Doc<"threads">; onError:
   const [draft, setDraft] = useState("");
   const [originalTitle, setOriginalTitle] = useState("");
   const isCancellingRef = useRef(false);
+  const isCommittingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const renameThreadMutation = useMutation(api.chat.threads.renameThread);
 
   const handleStartEdit = useCallback(() => {
     isCancellingRef.current = false;
+    // `handleCommit` leaves the committing latch set on success so the
+    // unmount-blur it triggers is suppressed. Without this reset, the next
+    // rename on the same row would short-circuit silently.
+    isCommittingRef.current = false;
     setOriginalTitle(thread.title);
     setDraft(thread.title);
     setIsEditing(true);
@@ -72,6 +77,11 @@ function useThreadRename({ thread, onError }: { thread: Doc<"threads">; onError:
       setIsEditing(false);
       return;
     }
+    // Guard against double-commit from Enter + unmount blur race.
+    if (isCommittingRef.current) {
+      return;
+    }
+    isCommittingRef.current = true;
     setIsEditing(false);
     const trimmed = draft.trim();
     // No-op if the user committed an empty draft or a no-change rename —
@@ -84,6 +94,7 @@ function useThreadRename({ thread, onError }: { thread: Doc<"threads">; onError:
       onError(null);
       await renameThreadMutation({ threadId: thread._id, title: trimmed });
     } catch (error) {
+      isCommittingRef.current = false;
       onError(toUserErrorMessage(error, "Failed to rename thread."));
     }
   }, [draft, originalTitle, thread._id, renameThreadMutation, onError]);
@@ -106,6 +117,25 @@ function useThreadRename({ thread, onError }: { thread: Doc<"threads">; onError:
     [handleCommit, handleCancel],
   );
 
+  // F2 keyboard entry into rename mode, wired to the non-editing row's
+  // parent `SidebarMenuButton` (the focusable element). The title `<p>`
+  // can't host its own keyboard handler — it sits inside a `<button>`, and
+  // adding `tabIndex` / `role="button"` to a paragraph inside a button is
+  // exactly the interactive-descendant nesting `EditableRowFrame` warns
+  // against (invalid HTML, undefined focus behaviour, double screen-reader
+  // announcements). Hosting the shortcut on the button keeps a single focus
+  // stop per row and a clean a11y tree. F2 mirrors the rename convention in
+  // Finder, Linear, and VS Code.
+  const handleItemKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLButtonElement>) => {
+      if (e.key === "F2") {
+        e.preventDefault();
+        handleStartEdit();
+      }
+    },
+    [handleStartEdit],
+  );
+
   return {
     isEditing,
     draft,
@@ -114,6 +144,7 @@ function useThreadRename({ thread, onError }: { thread: Doc<"threads">; onError:
     handleStartEdit,
     handleCommit,
     handleKeyDown,
+    handleItemKeyDown,
   };
 }
 
@@ -464,10 +495,11 @@ function ThreadItem({
   compact?: boolean;
   onError: (message: string | null) => void;
 }) {
-  const { isEditing, draft, setDraft, inputRef, handleStartEdit, handleCommit, handleKeyDown } = useThreadRename({
-    thread,
-    onError,
-  });
+  const { isEditing, draft, setDraft, inputRef, handleStartEdit, handleCommit, handleKeyDown, handleItemKeyDown } =
+    useThreadRename({
+      thread,
+      onError,
+    });
 
   const titleTextClass = threadTitleTextClass(compact);
   return (
@@ -497,6 +529,8 @@ function ThreadItem({
           onClick={() => onSelectThread(thread._id, thread.mode)}
           onMouseEnter={() => onPrewarmThread(thread._id)}
           onFocus={() => onPrewarmThread(thread._id)}
+          onKeyDown={handleItemKeyDown}
+          aria-keyshortcuts="F2"
           className={cn("py-1.5 pr-16", compact && "py-1")}
         >
           <div className="min-w-0 flex-1">
@@ -646,10 +680,11 @@ function RepolessThreadItem({
   onDeleteThread: (id: ThreadId) => void;
   onError: (message: string | null) => void;
 }) {
-  const { isEditing, draft, setDraft, inputRef, handleStartEdit, handleCommit, handleKeyDown } = useThreadRename({
-    thread,
-    onError,
-  });
+  const { isEditing, draft, setDraft, inputRef, handleStartEdit, handleCommit, handleKeyDown, handleItemKeyDown } =
+    useThreadRename({
+      thread,
+      onError,
+    });
 
   const titleTextClass = threadTitleTextClass(false);
   return (
@@ -678,6 +713,8 @@ function RepolessThreadItem({
           onClick={() => onSelectThread(thread._id, thread.mode)}
           onMouseEnter={() => onPrewarmThread(thread._id)}
           onFocus={() => onPrewarmThread(thread._id)}
+          onKeyDown={handleItemKeyDown}
+          aria-keyshortcuts="F2"
           className="py-1.5 pr-10"
         >
           <div className="min-w-0 flex-1">

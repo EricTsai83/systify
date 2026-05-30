@@ -528,6 +528,6 @@ export const renameThread = mutation({
         message: `Title must be at most ${MAX_RENAME_TITLE_LENGTH} characters.`,
       });
     }
-    await ctx.db.patch(args.threadId, { title: trimmed });
+    await ctx.db.patch(args.threadId, { title: trimmed, userEditedTitle: true });
   },
 });

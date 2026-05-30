@@ -33,5 +33,5 @@ export const MAX_RENAME_TITLE_LENGTH = 200;
  * always wins over the late-arriving LLM summary.
  */
 export function isDefaultTitle(thread: Doc<"threads">): boolean {
-  return thread.title === NEW_THREAD_DEFAULT_TITLE;
+  return !thread.userEditedTitle && thread.title === NEW_THREAD_DEFAULT_TITLE;
 }
