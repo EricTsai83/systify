@@ -46,8 +46,6 @@ const STAGE_LABELS: Record<string, string> = {
   persisting_files: "Persisting source files",
   persisting_chunks: "Writing searchable chunks",
   generating_reply: "Writing the assistant reply",
-  focused_inspection: "Inspecting the live source tree",
-  failure_mode_analysis: "Scanning subsystem risks",
   completed: "Completed",
   failed: "Needs attention",
   cancelled: "Cancelled",
@@ -116,7 +114,6 @@ export function isUserRelevantJob(job: Doc<"jobs">) {
 export function formatArtifactKind(kind: Doc<"artifacts">["kind"]) {
   const labels: Partial<Record<Doc<"artifacts">["kind"], string>> = {
     architecture_diagram: "Architecture diagram",
-    failure_mode_analysis: "Failure mode",
   };
   return labels[kind] ?? humanizeToken(kind);
 }

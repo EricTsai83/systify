@@ -245,7 +245,7 @@ Library System Design produces up to eight LLM-backed artifact kinds: `readme_su
 1. **Identity + repository ownership** — `requireViewerIdentity` + `requireActiveRepositoryForOwner` reject archived, deleted, or non-owned repos with the standard error messages.
 2. **Non-empty selection** — at least one kind must be checked.
 3. **Sandbox preflight** — reads `repository.latestSandboxId` and passes it through `getSandboxAvailability`; rejects the whole request with the helper's user-facing message if the sandbox is missing, provisioning, archived, stopped, expired, or failed.
-4. **Idempotency dedup** — scans `jobs` by the `by_repositoryId_and_kind_and_status_and_leaseExpiresAt` index for an active (`queued` or `running`, lease still alive) `system_design` job that is *not* a Failure Mode Analysis. If one is found, the mutation returns that existing `jobId` instead of creating a duplicate. FMA jobs are filtered out via their `failure_mode_analysis:` `requestedCommand` prefix, so an in-flight FMA on the same repo does not block a Library generation.
+4. **Idempotency dedup** — scans `jobs` by the `by_repositoryId_and_kind_and_status_and_leaseExpiresAt` index for an active (`queued` or `running`, lease still alive) `system_design` job. If one is found, the mutation returns that existing `jobId` instead of creating a duplicate.
 5. **Rate limiting** — consumes the per-owner `systemDesignRequests` bucket (10/hour by default) and the global `daytonaRequestsGlobal` bucket.
 6. **Folder seeding** — `ensureSystemDesignFolders` is idempotent and creates the default System Design folder tree if it does not already exist.
 
@@ -254,8 +254,6 @@ Library System Design produces up to eight LLM-backed artifact kinds: `readme_su
 The mutation inserts one `jobs` row with `kind: "system_design"`, `costCategory: "system_design"`, the selected `sandboxId`, an `outputSummary` summarising the selection, and a non-null `leaseExpiresAt = now + SYSTEM_DESIGN_JOB_LEASE_MS` (default 60 minutes).
 
 The lease is set **at insert time** rather than only at the `queued → running` transition. This matters because the stale-job sweep (`opsNode.listStaleInteractiveJobs`) queries the `by_status_and_kind_and_leaseExpiresAt` index with `lt("leaseExpiresAt", now)`, which never matches rows where `leaseExpiresAt` is undefined. A pre-running job without a lease would be invisible to recovery if the Node action never started.
-
-The job and the FMA flow share the `system_design` kind. Disambiguation is by `requestedCommand`: FMA writes the `failure_mode_analysis:<subsystem>` prefix; Library System Design jobs leave it unset. Both the active-job dedup and the stale-job recovery branch use the same `isFailureModeJob` predicate.
 
 ### 3. Run the generators
 

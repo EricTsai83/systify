@@ -573,48 +573,6 @@ function safeUrlHost(url: string): string {
   }
 }
 
-export async function runFocusedInspection(remoteId: string, repoPath: string, prompt: string) {
-  const sandbox = await getSandbox(remoteId);
-  const inspectionCommand = `
-python3 - <<'PY'
-import json, os, re
-
-repo_path = os.environ["REPO_PATH"]
-prompt = os.environ["ANALYSIS_PROMPT"]
-terms = [token for token in re.findall(r"[A-Za-z0-9_]+", prompt.lower()) if len(token) > 2][:8]
-matches = []
-for root, dirs, files in os.walk(repo_path):
-    dirs[:] = [d for d in dirs if d not in {".git", "node_modules", "dist", "build", ".next", ".turbo"}]
-    rel_root = os.path.relpath(root, repo_path)
-    for name in files:
-        rel_path = name if rel_root == "." else os.path.join(rel_root, name)
-        score = sum(1 for term in terms if term in rel_path.lower())
-        if score:
-            matches.append((score, rel_path))
-matches.sort(key=lambda item: (-item[0], item[1]))
-print(json.dumps({
-    "terms": terms,
-    "matchingFiles": [path for _, path in matches[:20]]
-}))
-PY`;
-
-  const result = await withDaytonaRetry(
-    () =>
-      sandbox.process.executeCommand(
-        inspectionCommand,
-        undefined,
-        {
-          REPO_PATH: repoPath,
-          ANALYSIS_PROMPT: prompt,
-        },
-        60,
-      ),
-    { operation: "sandbox.exec.focused_inspection", resourceId: remoteId },
-  );
-
-  return result.result.trim();
-}
-
 /**
  * Validates every env var required to provision a Daytona sandbox. Call this
  * at the entry point of any action that will provision a sandbox so the

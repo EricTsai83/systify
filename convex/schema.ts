@@ -100,7 +100,6 @@ const artifactKind = v.union(
   v.literal("architecture_diagram"),
   v.literal("entrypoints"),
   v.literal("dependency_overview"),
-  v.literal("failure_mode_analysis"),
   v.literal("trade_off_matrix"),
   v.literal("migration_plan"),
   v.literal("capacity_estimate"),

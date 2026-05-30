@@ -29,12 +29,6 @@ import {
 } from "./lib/rateLimit";
 import { logWarn } from "./lib/observability";
 
-const FAILURE_MODE_REQUESTED_COMMAND_PREFIX = "failure_mode_analysis:";
-
-function isFailureModeJob(job: Doc<"jobs">): boolean {
-  return job.requestedCommand?.startsWith(FAILURE_MODE_REQUESTED_COMMAND_PREFIX) ?? false;
-}
-
 /**
  * Library System Design generation entry point.
  *
@@ -45,9 +39,8 @@ function isFailureModeJob(job: Doc<"jobs">): boolean {
  *
  * Jobs are tagged with `kind: "system_design"` so the existing job-runner
  * accounting, cost-cap path, and stale-recovery infrastructure pick them up
- * uniformly with the other sandbox-backed analyses (Failure Mode Analysis).
- * Progress and final status flow back to the UI through the standard job
- * subscription.
+ * uniformly with the other sandbox-backed jobs. Progress and final status
+ * flow back to the UI through the standard job subscription.
  */
 export const requestSystemDesignGeneration = mutation({
   args: {
@@ -79,11 +72,6 @@ export const requestSystemDesignGeneration = mutation({
     // patches the new row's id onto downstream artifact records.
     const sandboxId: Id<"sandboxes"> | undefined = repository.latestSandboxId ?? undefined;
 
-    // Library System Design generation and Failure Mode Analysis both ride the
-    // `system_design` job kind. FMA jobs are distinguished by a
-    // `failure_mode_analysis:` requestedCommand prefix; the dedup below
-    // ignores those so an in-flight FMA does not block a Library
-    // generation (and vice versa via FMA's own thread-scoped guard).
     const activeJob = await findActiveLibrarySystemDesignJob(ctx, repository._id, now);
     if (activeJob) {
       return { jobId: activeJob._id };
@@ -124,18 +112,6 @@ export const requestSystemDesignGeneration = mutation({
   },
 });
 
-const LIBRARY_SYSTEM_DESIGN_ACTIVE_SCAN_LIMIT = 8;
-
-/**
- * Library System Design generation and Failure Mode Analysis share the
- * `system_design` job kind; FMA rows are tagged via the
- * `failure_mode_analysis:` `requestedCommand` prefix. The predicate
- * excludes those so an in-flight FMA does not appear as the active
- * Library System Design job (and vice versa via the FMA-side scanner).
- * We overfetch up to {@link LIBRARY_SYSTEM_DESIGN_ACTIVE_SCAN_LIMIT}
- * rows per status so the predicate has headroom to skip several
- * FMA rows before giving up.
- */
 async function findActiveLibrarySystemDesignJob(
   ctx: QueryCtx,
   repositoryId: Id<"repositories">,
@@ -145,8 +121,6 @@ async function findActiveLibrarySystemDesignJob(
     kind: "system_design",
     scope: { type: "repository", id: repositoryId },
     now,
-    predicate: (job) => !isFailureModeJob(job),
-    limit: LIBRARY_SYSTEM_DESIGN_ACTIVE_SCAN_LIMIT,
   });
 }
 
@@ -193,44 +167,25 @@ export const getLatestSystemDesignJob = query({
       return null;
     }
 
-    // Paginated scan: iteratively fetch batches until we find the first
-    // non-FMA `system_design` job, bounded by a hard cap to keep cost predictable.
     const now = Date.now();
-    const hardCap = LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT * 4;
-    let batchSize = LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT;
-    let scanned = 0;
+    const batch = await ctx.db
+      .query("jobs")
+      .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
+      .order("desc")
+      .take(LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT);
 
-    while (scanned < hardCap) {
-      const batch = await ctx.db
-        .query("jobs")
-        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
-        .order("desc")
-        .take(batchSize);
-
-      // Only scan the new items in this batch (beyond what we already checked).
-      const startIdx = Math.max(0, scanned);
-      for (let i = startIdx; i < batch.length; i++) {
-        const job = batch[i];
-        if (job.kind !== "system_design") continue;
-        if (isFailureModeJob(job)) continue;
-        if (job.status === "queued" || job.status === "running") {
-          return job;
-        }
-        if (typeof job.completedAt === "number" && now - job.completedAt < SYSTEM_DESIGN_BANNER_TERMINAL_WINDOW_MS) {
-          return job;
-        }
-        // Found the latest Library System Design job but it's terminal and
-        // outside the visibility window — stop here rather than walking back
-        // through older history.
-        return null;
+    for (const job of batch) {
+      if (job.kind !== "system_design") continue;
+      if (job.status === "queued" || job.status === "running") {
+        return job;
       }
-
-      scanned = batch.length;
-      if (batch.length < batchSize) {
-        // No more jobs available.
-        break;
+      if (typeof job.completedAt === "number" && now - job.completedAt < SYSTEM_DESIGN_BANNER_TERMINAL_WINDOW_MS) {
+        return job;
       }
-      batchSize = Math.min(batchSize * 2, hardCap);
+      // Found the latest System Design job but it's terminal and outside the
+      // visibility window — stop here rather than walking back through older
+      // history.
+      return null;
     }
     return null;
   },
@@ -367,20 +322,15 @@ const STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE =
 /**
  * Background stale-job recovery for System Design generation. Called by
  * `opsNode.recoverStaleInteractiveJobs` when a `system_design`-kind job
- * without the FMA `requestedCommand` prefix has overrun its lease.
+ * has overrun its lease.
  */
 export const recoverStaleSystemDesignJob = internalMutation({
   args: { jobId: v.id("jobs") },
   handler: async (ctx, args) => {
-    // `system_design` is shared with Failure Mode Analysis; the
-    // negative predicate keeps this recovery scoped to Library System
-    // Design jobs. FMA has its own recovery in `designArtifacts.ts`
-    // that asserts the positive `requestedCommand` prefix.
     await runStaleJobRecovery(ctx, {
       jobId: args.jobId,
       expectedKind: "system_design",
       errorMessage: STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE,
-      predicate: (job) => !isFailureModeJob(job),
     });
   },
 });

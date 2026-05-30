@@ -132,7 +132,6 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
         repositories={repositories}
         activeRepositoryId={null}
         onSwitchRepository={handleSwitchRepository}
-        onSelectNoRepository={() => void navigate(DEFAULT_AUTHENTICATED_PATH)}
         selectedThreadId={urlThreadId}
         onSelectThread={handleSelectThread}
         onDeleteThread={setThreadToDelete}

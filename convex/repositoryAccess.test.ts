@@ -150,13 +150,6 @@ describe("repository access helpers", () => {
         selections: ["architecture_overview"],
       }),
     ).rejects.toThrow("Repository not found.");
-
-    await expect(
-      viewer.mutation(api.designArtifacts.requestFailureModeAnalysis, {
-        threadId,
-        subsystem: "billing pipeline",
-      }),
-    ).rejects.toThrow("Repository not found.");
   });
 });
 

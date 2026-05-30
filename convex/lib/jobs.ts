@@ -65,8 +65,7 @@ async function patchJobIfCurrent(
  *
  *   - `import` / `sandbox_activation` / `cleanup` — `repositoryId` required,
  *     `threadId` forbidden.
- *   - `system_design` — `repositoryId` required; `threadId` is set only for
- *     Failure Mode Analysis (which scopes dedup per-thread).
+ *   - `system_design` — `repositoryId` required; `threadId` is unused.
  *   - `chat` — `threadId` required; `repositoryId` is denormalized from the
  *     thread when the thread is repository-attached.
  *   - `index` — currently unused; left permissive for future use.
@@ -181,9 +180,8 @@ export interface FindActiveJobArgs {
   now: number;
   /**
    * Filters the bounded scan after the index read. Used by callers that
-   * share a `kind` literal but need to discriminate further — e.g.
-   * Failure Mode Analysis vs Library System Design both ride
-   * `kind: "system_design"` and split on `requestedCommand`.
+   * share a `kind` literal but need to discriminate further on a job
+   * field the index does not cover.
    */
   predicate?: (job: Doc<"jobs">) => boolean;
   /**
@@ -414,10 +412,8 @@ export async function failStaleActiveJob(
  *   - of the expected kind,
  *   - in an active status (`queued` or `running`),
  *   - past its lease expiration (`leaseExpiresAt <= now`), and
- *   - matches any extra `predicate` (used to discriminate kinds that
- *     share a `kind` literal — e.g. Failure Mode Analysis vs Library
- *     System Design both ride `kind: "system_design"` and split on
- *     `requestedCommand`).
+ *   - matches any extra `predicate` (used to discriminate jobs that
+ *     share a `kind` literal on a field the index does not cover).
  *
  * Pure — takes a pre-loaded job document so callers can decide
  * separately what to do with the same lookup result. The simple

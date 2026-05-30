@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { LibraryAskPanel } from "@/components/library-ask-panel";
 import { LibraryTree } from "@/components/library-tree";
@@ -8,6 +9,7 @@ import { RepositorySelector } from "@/components/repository-switcher";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
 import { useChatMode } from "@/hooks/use-service-mode";
+import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
 import type {
   ArtifactId,
   ArtifactListItem,
@@ -30,10 +32,6 @@ type AppSidebarLeftProps = {
   repositories: Doc<"repositories">[] | undefined;
   activeRepositoryId: RepositoryId | null;
   onSwitchRepository: (id: RepositoryId) => void;
-  // Optional callback for leaving the current repository context and
-  // returning to the repoless `/chat` surface. When supplied, the footer's
-  // RepositorySelector surfaces a "No repository" item.
-  onSelectNoRepository?: () => void;
   onImported: OnImportedCallback;
   onError: (message: string | null) => void;
   selectedThreadId: ThreadId | null;
@@ -66,7 +64,6 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
     repositories,
     activeRepositoryId,
     onSwitchRepository,
-    onSelectNoRepository,
     onImported,
     onError,
     selectedThreadId,
@@ -80,6 +77,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
     onGenerate,
     isUnseen,
   } = props;
+  const navigate = useNavigate();
   const { mode, availability } = useChatMode(activeRepositoryId);
   const effectiveChatMode: ChatMode = mode ?? availability?.defaultMode ?? "discuss";
 
@@ -151,7 +149,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
             repositories={repositories}
             activeRepositoryId={activeRepositoryId}
             onSwitchRepository={onSwitchRepository}
-            onSelectNoRepository={onSelectNoRepository}
+            onSelectNoRepository={() => void navigate(DEFAULT_AUTHENTICATED_PATH)}
             onImported={onImported}
           />
         </div>

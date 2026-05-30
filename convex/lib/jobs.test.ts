@@ -127,15 +127,15 @@ describe("enqueueJob defaults and lease", () => {
       ownerTokenIdentifier: BASE_OWNER,
       costCategory: "system_design",
       triggerSource: "user",
-      requestedCommand: "failure_mode_analysis:billing",
-      outputSummary: "Queued failure mode analysis",
+      requestedCommand: "library_generation:architecture_overview",
+      outputSummary: "Queued System Design generation",
       selections: ["architecture_overview"],
     });
 
     expect(job?.sandboxId).toBe(sandboxId);
     expect(job?.threadId).toBe(threadId);
-    expect(job?.requestedCommand).toBe("failure_mode_analysis:billing");
-    expect(job?.outputSummary).toBe("Queued failure mode analysis");
+    expect(job?.requestedCommand).toBe("library_generation:architecture_overview");
+    expect(job?.outputSummary).toBe("Queued System Design generation");
     expect(job?.selections).toEqual(["architecture_overview"]);
   });
 
@@ -296,10 +296,11 @@ describe("findActiveJob", () => {
 
   test("applies predicate to discriminate same-kind jobs", async () => {
     const t = createTestConvex();
-    const { repositoryId, threadId } = await seedRepositoryAndThread(t);
+    const { repositoryId } = await seedRepositoryAndThread(t);
     const now = Date.now();
 
-    // One Library System Design job + one FMA job, same kind, same scope.
+    // Two same-kind jobs distinguished by `triggerSource`. The predicate
+    // filters by that field — exercising the helper's predicate parameter.
     await t.run(async (ctx) =>
       enqueueJob(ctx, {
         kind: "system_design",
@@ -310,15 +311,13 @@ describe("findActiveJob", () => {
         leaseMs: 60_000,
       }),
     );
-    const fmaId = await t.run(async (ctx) =>
+    const systemTriggeredId = await t.run(async (ctx) =>
       enqueueJob(ctx, {
         kind: "system_design",
         repositoryId,
-        threadId,
         ownerTokenIdentifier: BASE_OWNER,
         costCategory: "system_design",
-        triggerSource: "user",
-        requestedCommand: "failure_mode_analysis:billing",
+        triggerSource: "system",
         leaseMs: 60_000,
       }),
     );
@@ -328,12 +327,12 @@ describe("findActiveJob", () => {
         kind: "system_design",
         scope: { type: "repository", id: repositoryId },
         now,
-        predicate: (job) => job.requestedCommand?.startsWith("failure_mode_analysis:") === true,
+        predicate: (job) => job.triggerSource === "system",
         limit: 4,
       }),
     );
 
-    expect(found?._id).toBe(fmaId);
+    expect(found?._id).toBe(systemTriggeredId);
   });
 
   test("thread scope queries via thread index (does not pick up repository-only jobs)", async () => {
