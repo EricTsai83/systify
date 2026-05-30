@@ -267,6 +267,425 @@ function capSummary(value: string): string {
   );
 }
 
+/**
+ * Cost telemetry grouped together because the three fields always arrive
+ * together or all arrive missing. Splitting them per-field would invite
+ * partial-combination callers ("tokens but no cost") that the upstream
+ * `estimateCostUsd` never produces.
+ */
+type TerminalUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  costUsd?: number;
+};
+
+/**
+ * Discriminated outcome handed to {@link applyTerminalSettlement}. Each
+ * variant carries only the fields its terminal path actually needs:
+ *
+ *   - `completed` is the only path that updates the owning thread's
+ *     timestamps (so it carries `threadId`) and the only one that
+ *     persists a `citationMap`.
+ *   - `failed` / `cancelled` share the same shape: partial content,
+ *     optional partial cost, a user-visible reason or error message.
+ *   - `stale` carries only the `jobId` because the cron-driven caller
+ *     does not know the assistant message id; the helper resolves both
+ *     the message and the stream from job-scoped indexes.
+ */
+type TerminalOutcome =
+  | {
+      kind: "completed";
+      threadId: Id<"threads">;
+      assistantMessageId: Id<"messages">;
+      jobId: Id<"jobs">;
+      finalDelta: string;
+      usage?: TerminalUsage;
+      citationMap?: Array<{
+        index: number;
+        artifactId: Id<"artifacts">;
+        chunkId?: Id<"artifactChunks">;
+        headingPath?: string[];
+      }>;
+    }
+  | {
+      kind: "failed";
+      assistantMessageId: Id<"messages">;
+      jobId: Id<"jobs">;
+      errorMessage: string;
+      finalDelta?: string;
+      usage?: TerminalUsage;
+    }
+  | {
+      kind: "cancelled";
+      assistantMessageId: Id<"messages">;
+      jobId: Id<"jobs">;
+      /**
+       * Already-normalized (callers pass a default before reaching the
+       * helper). Surfaced on `messages.errorMessage` so the cancelled
+       * bubble can render a specific reason even when no partial content
+       * was streamed.
+       */
+      reason: string;
+      finalDelta?: string;
+      usage?: TerminalUsage;
+    }
+  | {
+      kind: "stale";
+      jobId: Id<"jobs">;
+      errorMessage: string;
+    };
+
+/**
+ * Log breadcrumb fed to {@link foldAndDrainToolCallEvents} so a
+ * truncated fold tells ops which terminal path observed the overflow.
+ * Kept consistent with the pre-refactor strings so any existing log-
+ * search dashboards keep matching.
+ */
+const MUTATION_LABEL_BY_KIND: Record<TerminalOutcome["kind"], string> = {
+  completed: "finalizeAssistantReply",
+  failed: "failAssistantReply",
+  cancelled: "markAssistantReplyCancelled",
+  stale: "recoverStaleChatJob",
+};
+
+/**
+ * Single seam for the four terminal-state transitions an assistant reply
+ * can reach: completed, failed, cancelled, and stale-recovered.
+ *
+ * All four share ~80% of their ceremony — fold + drain tool-call events,
+ * patch the message into terminal status, transition the job row, settle
+ * sandbox cost against the daily cap, record sandbox session activity,
+ * and clean the ephemeral stream tables in `finally`. The per-kind
+ * differences (which `lib/jobs` transition to call, whether thread
+ * timestamps move, whether cost settlement runs) live in the switch, so
+ * a future "what does termination need to do?" change has one place to
+ * land instead of four.
+ *
+ * Contracts the helper is responsible for preserving:
+ *
+ *   1. **Idempotency vs already-terminal jobs.** A late `finalize` after
+ *      the same job already failed must leave the failed state intact:
+ *      the per-kind job transition returns null → the helper returns
+ *      `false` before patching the message. The `cancelled` path further
+ *      distinguishes "job is in a different terminal state" (return
+ *      silently) from "job row is gone" (log warn and continue patching
+ *      — the action is still the only writer that knows the final
+ *      partial content).
+ *
+ *   2. **Stale recovery ordering.** Stale recovery patches the message
+ *      *before* calling `failStaleActiveJob`, opposite to the action-
+ *      driven paths. The eligibility pre-check at the caller already
+ *      gates whether we reach the helper at all, so the race window for
+ *      the order to matter is narrow; flipping it would be a separate
+ *      change.
+ *
+ *   3. **Stream cleanup runs in `finally`.** A throw inside the try
+ *      rolls back the whole transaction (Convex mutations are
+ *      transactional), so the `finally` is partly ceremonial — but
+ *      keeping the cleanup there documents the intent and protects
+ *      against future refactors that might wrap individual writes in
+ *      try/catch.
+ *
+ * Returns `true` when the helper applied a terminal transition (the
+ * caller's logical operation took effect), `false` when it short-circuited
+ * because the job was already in an incompatible terminal state. Most
+ * callers ignore the result; the cancellation mutation uses it to gate
+ * the success-side info log.
+ */
+async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcome): Promise<boolean> {
+  const now = Date.now();
+  const mutationLabel = MUTATION_LABEL_BY_KIND[outcome.kind];
+
+  // Phase 1: resolve message + stream. Action-driven paths know the
+  // assistantMessageId up front; stale recovery only has the jobId and
+  // must look up both via job-scoped indexes.
+  let assistantMessageId: Id<"messages"> | null;
+  let stream: Doc<"messageStreams"> | null;
+  let streamSnapshot: Awaited<ReturnType<typeof loadMessageStreamSnapshot>>;
+  let message: Doc<"messages"> | null;
+
+  if (outcome.kind === "stale") {
+    const jobMessages = await ctx.db
+      .query("messages")
+      .withIndex("by_jobId", (q) => q.eq("jobId", outcome.jobId))
+      .take(10);
+    const assistantMessage = jobMessages.find((entry) => entry.role === "assistant") ?? null;
+    assistantMessageId = assistantMessage?._id ?? null;
+    message = assistantMessage;
+    stream = await getMessageStreamByJobId(ctx, outcome.jobId);
+    // Match the pre-refactor `recoverStaleChatJob` shape: only resolve
+    // the snapshot when both the message and stream exist. Without
+    // either, the lint runs against an empty string and the patch falls
+    // back to the error message — exactly the original behavior.
+    streamSnapshot = assistantMessage && stream ? await loadMessageStreamSnapshot(ctx, assistantMessage._id) : null;
+  } else {
+    assistantMessageId = outcome.assistantMessageId;
+    streamSnapshot = await loadMessageStreamSnapshot(ctx, outcome.assistantMessageId);
+    stream = streamSnapshot?.stream ?? null;
+    message = await ctx.db.get(outcome.assistantMessageId);
+  }
+
+  // Phase 2: fold + drain. The helper sweeps past the fold's read cap so
+  // a runaway producer cannot leave orphan events pointing at the
+  // already-finalized message. Skipped only when we have no message id
+  // (a stale recovery on a job whose messages were cascade-deleted).
+  const persistedToolCalls = assistantMessageId
+    ? await foldAndDrainToolCallEvents(ctx, assistantMessageId, {
+        jobId: outcome.jobId,
+        mutation: mutationLabel,
+      })
+    : undefined;
+
+  let applied = true;
+  try {
+    switch (outcome.kind) {
+      case "completed": {
+        if (!message) {
+          logWarn("chat", "finalize_assistant_message_missing", {
+            assistantMessageId: outcome.assistantMessageId,
+            jobId: outcome.jobId,
+          });
+          // The reply cannot be delivered, so mark the still-running job
+          // failed. Terminal jobs are left untouched by `failRunningJob`.
+          await failRunningJob(ctx, {
+            jobId: outcome.jobId,
+            expectedKind: "chat",
+            completedAt: now,
+            errorMessage: "Assistant message was deleted before the reply could be persisted.",
+          });
+          break;
+        }
+        const completedJob = await completeRunningJob(ctx, {
+          jobId: outcome.jobId,
+          expectedKind: "chat",
+          completedAt: now,
+          outputSummary: "Assistant reply generated.",
+          estimatedInputTokens: outcome.usage?.inputTokens,
+          estimatedOutputTokens: outcome.usage?.outputTokens,
+          estimatedCostUsd: outcome.usage?.costUsd,
+        });
+        if (!completedJob) {
+          applied = false;
+          return applied;
+        }
+        const finalContent = `${streamSnapshot?.content ?? message.content}${outcome.finalDelta}`;
+        // Citation lint runs against the finalized content *before* the
+        // patch so `messages.unverifiedClaims` is committed in the same
+        // transaction that flips status to `completed`. Sandbox-only via
+        // `lintSandboxClaims`; non-sandbox replies leave the field unset.
+        const unverifiedClaims = lintSandboxClaims(message, finalContent);
+        const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
+        await ctx.db.patch(message._id, {
+          content: finalContent,
+          status: "completed",
+          errorMessage: undefined,
+          estimatedInputTokens: outcome.usage?.inputTokens,
+          estimatedOutputTokens: outcome.usage?.outputTokens,
+          estimatedCostUsd: outcome.usage?.costUsd,
+          citationMap: outcome.citationMap,
+          toolCalls: persistedToolCalls,
+          unverifiedClaims,
+          reasoning: reasoning.reasoning,
+          reasoningDurationMs: reasoning.reasoningDurationMs,
+        });
+        // The thread may have been deleted while we were streaming.
+        // Patching a missing doc throws and would roll back the whole
+        // mutation (so the job lease and stream state would never be
+        // cleared). Wrap so the rest of cleanup still runs.
+        try {
+          await ctx.db.patch(outcome.threadId, {
+            lastAssistantMessageAt: now,
+            lastMessageAt: now,
+          });
+        } catch (error) {
+          logWarn("chat", "finalize_thread_patch_failed", {
+            threadId: outcome.threadId,
+            jobId: outcome.jobId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+        break;
+      }
+      case "failed": {
+        const failedJob = await failRunningJob(ctx, {
+          jobId: outcome.jobId,
+          expectedKind: "chat",
+          completedAt: now,
+          errorMessage: outcome.errorMessage,
+          estimatedInputTokens: outcome.usage?.inputTokens,
+          estimatedOutputTokens: outcome.usage?.outputTokens,
+          estimatedCostUsd: outcome.usage?.costUsd,
+        });
+        if (!failedJob) {
+          applied = false;
+          return applied;
+        }
+        if (message) {
+          const streamedContent = `${streamSnapshot?.content ?? message.content}${outcome.finalDelta ?? ""}`;
+          // Lint the *streamed* content (not the error fallback). A
+          // failed reply that produced partial prose before throwing
+          // should still surface unverified-claim highlights so the
+          // user can read what they got with appropriate skepticism.
+          const unverifiedClaims = lintSandboxClaims(message, streamedContent);
+          const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
+          await ctx.db.patch(message._id, {
+            status: "failed",
+            errorMessage: outcome.errorMessage,
+            content: streamedContent || outcome.errorMessage,
+            toolCalls: persistedToolCalls,
+            unverifiedClaims,
+            reasoning: reasoning.reasoning,
+            reasoningDurationMs: reasoning.reasoningDurationMs,
+            // Partial cost is real spend; persist it so the failed
+            // bubble can show "Failed at $0.04 (800 tokens)" and the
+            // daily cap can settle accurately. Falling back to existing
+            // values handles the "failure fired before any usage was
+            // reported" case.
+            estimatedInputTokens: outcome.usage?.inputTokens ?? message.estimatedInputTokens,
+            estimatedOutputTokens: outcome.usage?.outputTokens ?? message.estimatedOutputTokens,
+            estimatedCostUsd: outcome.usage?.costUsd ?? message.estimatedCostUsd,
+          });
+        } else {
+          logWarn("chat", "fail_assistant_message_missing", {
+            assistantMessageId: outcome.assistantMessageId,
+            jobId: outcome.jobId,
+          });
+        }
+        break;
+      }
+      case "cancelled": {
+        const cancelledJob = await cancelActiveJob(ctx, {
+          jobId: outcome.jobId,
+          expectedKind: "chat",
+          completedAt: now,
+          errorMessage: outcome.reason,
+          estimatedInputTokens: outcome.usage?.inputTokens,
+          estimatedOutputTokens: outcome.usage?.outputTokens,
+          estimatedCostUsd: outcome.usage?.costUsd,
+        });
+        if (!cancelledJob) {
+          const job = await ctx.db.get(outcome.jobId);
+          if (job) {
+            // Job exists in a different terminal state (completed /
+            // failed). Leave it alone — re-patching the message would
+            // overwrite that path's bubble copy.
+            applied = false;
+            return applied;
+          }
+          logWarn("chat", "cancel_job_missing", {
+            assistantMessageId: outcome.assistantMessageId,
+            jobId: outcome.jobId,
+          });
+        }
+        if (message) {
+          const streamedContent = `${streamSnapshot?.content ?? message.content}${outcome.finalDelta ?? ""}`;
+          // Same partial-lint rationale as the fail path: a cancelled
+          // reply that produced prose before the user clicked Stop
+          // benefits from the same unverified-claim highlights the
+          // completed bubble would show.
+          const unverifiedClaims = lintSandboxClaims(message, streamedContent);
+          const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
+          await ctx.db.patch(message._id, {
+            status: "cancelled",
+            errorMessage: outcome.reason,
+            // Empty partial replies render as the cancellation reason
+            // so the bubble never shows blank.
+            content: streamedContent || outcome.reason,
+            toolCalls: persistedToolCalls,
+            unverifiedClaims,
+            reasoning: reasoning.reasoning,
+            reasoningDurationMs: reasoning.reasoningDurationMs,
+            estimatedInputTokens: outcome.usage?.inputTokens ?? message.estimatedInputTokens,
+            estimatedOutputTokens: outcome.usage?.outputTokens ?? message.estimatedOutputTokens,
+            estimatedCostUsd: outcome.usage?.costUsd ?? message.estimatedCostUsd,
+          });
+        } else {
+          logWarn("chat", "cancel_assistant_message_missing", {
+            assistantMessageId: outcome.assistantMessageId,
+            jobId: outcome.jobId,
+          });
+        }
+        break;
+      }
+      case "stale": {
+        if (message) {
+          // Lint only the *streamed* portion (not the system error
+          // message). When the action stalled before producing
+          // anything, the snapshot content is empty and the lint
+          // returns `undefined` so the bubble shows just the stall
+          // message without highlights.
+          const unverifiedClaims = lintSandboxClaims(message, streamSnapshot?.content ?? "");
+          const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
+          await ctx.db.patch(message._id, {
+            status: "failed",
+            errorMessage: outcome.errorMessage,
+            content: streamSnapshot?.content || outcome.errorMessage,
+            toolCalls: persistedToolCalls,
+            unverifiedClaims,
+            reasoning: reasoning.reasoning,
+            reasoningDurationMs: reasoning.reasoningDurationMs,
+          });
+        }
+        // Stale-recovery deliberately does NOT settle cost against the
+        // daily cap. The action that stalled never reached the
+        // finalize / fail mutation, so we have no reliable usage data
+        // — recording an arbitrary fixed cost would either double-
+        // count (if the action actually completed and the settlement
+        // landed before the crash) or under-count (if it stalled mid-
+        // stream after burning many tokens). Logged so ops can
+        // correlate billing reconciliation findings with stale-recovery
+        // events.
+        if (message && message.groundSandbox === true) {
+          logWarn("chat", "sandbox_cost_settlement_skipped_on_stale_recovery", {
+            jobId: outcome.jobId,
+            assistantMessageId: message._id,
+            ownerTokenIdentifier: message.ownerTokenIdentifier,
+            hint: "Action never reported usage; daily cap not charged for this stalled reply.",
+          });
+        }
+        const failedJob = await failStaleActiveJob(ctx, {
+          jobId: outcome.jobId,
+          expectedKind: "chat",
+          now,
+          errorMessage: outcome.errorMessage,
+        });
+        if (!failedJob) {
+          applied = false;
+          return applied;
+        }
+        break;
+      }
+    }
+
+    // Settle the cost AFTER the message + job patches commit their
+    // statuses. Doing it last means a hypothetical settle failure
+    // never blocks the message's terminal-state write, which is the
+    // user-visible part of finalize. Stale recovery skips this
+    // entirely (see the per-kind comment above). Settle is a no-op for
+    // non-sandbox replies and for `costUsd === undefined`.
+    if (outcome.kind !== "stale") {
+      await settleSandboxReplyCost(ctx, {
+        jobId: outcome.jobId,
+        assistantMessage: message,
+        costUsd: outcome.usage?.costUsd,
+      });
+      await recordSandboxSessionActivityForReply(ctx, {
+        assistantMessage: message,
+        costUsd: outcome.usage?.costUsd,
+      });
+    }
+
+    return applied;
+  } finally {
+    if (stream) {
+      await deleteMessageStreamState(ctx, stream._id);
+    }
+    // Tool-call events were already drained by
+    // `foldAndDrainToolCallEvents` (sweep-past-cap), so no separate
+    // cleanup is needed here.
+  }
+}
+
 export const getActiveMessageStream = query({
   args: {
     threadId: v.id("threads"),
@@ -711,130 +1130,19 @@ export const finalizeAssistantReply = internalMutation({
     ),
   },
   handler: async (ctx, args) => {
-    const now = Date.now();
-    const message = await ctx.db.get(args.assistantMessageId);
-    const streamSnapshot = await loadMessageStreamSnapshot(ctx, args.assistantMessageId);
-
-    // Fold the ephemeral tool-call event log into the durable
-    // `messages.toolCalls` field, then drain the events. Doing both inside
-    // the same transaction means the frontend never sees a half-state where
-    // events still exist but the message is already `completed`; the
-    // `getMessageToolCallEvents` subscription either returns the running
-    // trace (pre-finalize) or the empty list (post-finalize, with
-    // `messages.toolCalls` taking over). The helper also drains beyond the
-    // fold's read cap so a runaway producer doesn't leave orphan rows.
-    const persistedToolCalls = await foldAndDrainToolCallEvents(ctx, args.assistantMessageId, {
+    await applyTerminalSettlement(ctx, {
+      kind: "completed",
+      threadId: args.threadId,
+      assistantMessageId: args.assistantMessageId,
       jobId: args.jobId,
-      mutation: "finalizeAssistantReply",
+      finalDelta: args.finalDelta,
+      usage: {
+        inputTokens: args.inputTokens,
+        outputTokens: args.outputTokens,
+        costUsd: args.costUsd,
+      },
+      citationMap: args.citationMap,
     });
-
-    try {
-      if (message) {
-        const completedJob = await completeRunningJob(ctx, {
-          jobId: args.jobId,
-          expectedKind: "chat",
-          completedAt: now,
-          outputSummary: "Assistant reply generated.",
-          estimatedInputTokens: args.inputTokens,
-          estimatedOutputTokens: args.outputTokens,
-          estimatedCostUsd: args.costUsd,
-        });
-        if (!completedJob) {
-          return;
-        }
-
-        const finalContent = `${streamSnapshot?.content ?? message.content}${args.finalDelta}`;
-        // Citation lint runs against the finalized content *before* the
-        // patch so `messages.unverifiedClaims` is committed in the same
-        // transaction that flips status to `completed`. The chat bubble
-        // derives "is this reply linted?" from the message status (it
-        // only renders highlights for terminal states), so a
-        // transactional write means a refresh-after-finalize never sees
-        // the message as completed-but-unlinted. Sandbox-only via
-        // `lintSandboxClaims`; discuss / library return `undefined` and
-        // the optional schema field stays unset.
-        const unverifiedClaims = lintSandboxClaims(message, finalContent);
-        const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
-        await ctx.db.patch(args.assistantMessageId, {
-          content: finalContent,
-          status: "completed",
-          errorMessage: undefined,
-          estimatedInputTokens: args.inputTokens,
-          estimatedOutputTokens: args.outputTokens,
-          // Persist the per-message cost so the chat bubble's cost
-          // ticker can render an exact value rather than re-deriving it
-          // from tokens + model on every render. Stays `undefined` when
-          // usage was unavailable or the model wasn't priced (the ticker
-          // degrades gracefully to "—" in that case).
-          estimatedCostUsd: args.costUsd,
-          citationMap: args.citationMap,
-          toolCalls: persistedToolCalls,
-          unverifiedClaims,
-          reasoning: reasoning.reasoning,
-          reasoningDurationMs: reasoning.reasoningDurationMs,
-        });
-        // The thread may have been deleted while we were streaming. Patching a
-        // missing doc throws and would roll back the whole mutation (so the
-        // job lease and persisted stream state would never be cleared). Wrap
-        // it so the rest of the cleanup still runs.
-        try {
-          await ctx.db.patch(args.threadId, {
-            lastAssistantMessageAt: now,
-            lastMessageAt: now,
-          });
-        } catch (error) {
-          logWarn("chat", "finalize_thread_patch_failed", {
-            threadId: args.threadId,
-            jobId: args.jobId,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      } else {
-        logWarn("chat", "finalize_assistant_message_missing", {
-          assistantMessageId: args.assistantMessageId,
-          jobId: args.jobId,
-        });
-      }
-
-      // If the assistant message is gone we can't deliver the reply, so mark
-      // the still-running job as failed. Terminal jobs are left untouched.
-      if (!message) {
-        await failRunningJob(ctx, {
-          jobId: args.jobId,
-          expectedKind: "chat",
-          completedAt: now,
-          errorMessage: "Assistant message was deleted before the reply could be persisted.",
-        });
-      }
-
-      // Settle the cost AFTER the message + job patches commit their
-      // statuses. Doing it last means a hypothetical settle failure
-      // never blocks the message's terminal-state write, which is the
-      // user-visible part of finalize. Settle is a no-op for non-sandbox
-      // replies, so this is also free for discuss / library.
-      await settleSandboxReplyCost(ctx, {
-        jobId: args.jobId,
-        assistantMessage: message ?? null,
-        costUsd: args.costUsd,
-      });
-      await recordSandboxSessionActivityForReply(ctx, {
-        assistantMessage: message ?? null,
-        costUsd: args.costUsd,
-      });
-    } finally {
-      // Always remove persisted stream state on completion. Note: Convex
-      // mutations are transactional, so if any write above throws the
-      // transaction rolls back and this cleanup is reverted along with the
-      // rest of the writes (recoverStaleChatJob will retry from the lease).
-      // Keeping the cleanup in `finally` documents the intent and protects
-      // against future refactors that wrap individual writes in try/catch.
-      if (streamSnapshot) {
-        await deleteMessageStreamState(ctx, streamSnapshot.stream._id);
-      }
-      // Tool-call events are already drained by `foldAndDrainToolCallEvents`
-      // above (which sweeps past the fold's read cap), so there's no
-      // separate cleanup to do here.
-    }
   },
 });
 
@@ -855,90 +1163,18 @@ export const failAssistantReply = internalMutation({
     costUsd: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const now = Date.now();
-    const streamSnapshot = await loadMessageStreamSnapshot(ctx, args.assistantMessageId);
-    const message = await ctx.db.get(args.assistantMessageId);
-
-    // Surface partial tool-call traces on failures so the user can
-    // see which tool the reply was running when it died. Unfinished entries
-    // (only `start` events) fold to `endedAt === startedAt` and the trace
-    // UI renders them as "interrupted". The helper also drains beyond the
-    // fold's read cap so failure paths can't leak orphan events.
-    const persistedToolCalls = await foldAndDrainToolCallEvents(ctx, args.assistantMessageId, {
+    await applyTerminalSettlement(ctx, {
+      kind: "failed",
+      assistantMessageId: args.assistantMessageId,
       jobId: args.jobId,
-      mutation: "failAssistantReply",
+      errorMessage: args.errorMessage,
+      finalDelta: args.finalDelta,
+      usage: {
+        inputTokens: args.inputTokens,
+        outputTokens: args.outputTokens,
+        costUsd: args.costUsd,
+      },
     });
-
-    try {
-      const failedJob = await failRunningJob(ctx, {
-        jobId: args.jobId,
-        expectedKind: "chat",
-        completedAt: now,
-        errorMessage: args.errorMessage,
-        estimatedInputTokens: args.inputTokens,
-        estimatedOutputTokens: args.outputTokens,
-        estimatedCostUsd: args.costUsd,
-      });
-      if (!failedJob) {
-        return;
-      }
-
-      if (message) {
-        const streamedContent = `${streamSnapshot?.content ?? message.content}${args.finalDelta ?? ""}`;
-        // Lint the *streamed* content (not the error fallback).
-        // A failed reply that produced 200 tokens of partial prose
-        // before throwing should still surface unverified-claim
-        // highlights so the user can read the partial answer with
-        // appropriate skepticism. When the stream produced nothing,
-        // `streamedContent` is empty and `lintSandboxClaims` returns
-        // `undefined`, so the bubble just shows the error message
-        // without any highlights — the right behavior, since the
-        // error message is system text and never contains model
-        // claims to flag.
-        const unverifiedClaims = lintSandboxClaims(message, streamedContent);
-        const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
-        await ctx.db.patch(args.assistantMessageId, {
-          status: "failed",
-          errorMessage: args.errorMessage,
-          content: streamedContent || args.errorMessage,
-          toolCalls: persistedToolCalls,
-          unverifiedClaims,
-          reasoning: reasoning.reasoning,
-          reasoningDurationMs: reasoning.reasoningDurationMs,
-          // Partial cost is still real spend; persist it so the failed
-          // bubble can show "Failed at $0.04 (800 tokens)" in the cost
-          // ticker, and the daily cap can settle accurately.
-          estimatedInputTokens: args.inputTokens ?? message.estimatedInputTokens,
-          estimatedOutputTokens: args.outputTokens ?? message.estimatedOutputTokens,
-          estimatedCostUsd: args.costUsd ?? message.estimatedCostUsd,
-        });
-      } else {
-        logWarn("chat", "fail_assistant_message_missing", {
-          assistantMessageId: args.assistantMessageId,
-          jobId: args.jobId,
-        });
-      }
-
-      // Even on failure, the cost has been incurred upstream (OpenAI
-      // charges for streamed tokens regardless of whether the stream
-      // completed). Settling on this path prevents users from bypassing
-      // the daily cap by repeatedly triggering errors.
-      await settleSandboxReplyCost(ctx, {
-        jobId: args.jobId,
-        assistantMessage: message ?? null,
-        costUsd: args.costUsd,
-      });
-      await recordSandboxSessionActivityForReply(ctx, {
-        assistantMessage: message ?? null,
-        costUsd: args.costUsd,
-      });
-    } finally {
-      if (streamSnapshot) {
-        await deleteMessageStreamState(ctx, streamSnapshot.stream._id);
-      }
-      // Tool-call events are already drained by `foldAndDrainToolCallEvents`
-      // above (sweep-past-cap), so there's no separate cleanup to do here.
-    }
   },
 });
 
@@ -1032,107 +1268,30 @@ export const markAssistantReplyCancelled = internalMutation({
     costUsd: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const now = Date.now();
-    const reason = args.reason ?? "Cancelled by user.";
-    const streamSnapshot = await loadMessageStreamSnapshot(ctx, args.assistantMessageId);
-    const message = await ctx.db.get(args.assistantMessageId);
-
-    // Drain in the same transaction the message flips to terminal state —
-    // same lifecycle invariant `failAssistantReply` enforces, see the
-    // comment on `foldAndDrainToolCallEvents`. Without this, the live
-    // `getMessageToolCallEvents` subscription could briefly paint
-    // "running" after the user already saw "Cancelled" in the bubble.
-    const persistedToolCalls = await foldAndDrainToolCallEvents(ctx, args.assistantMessageId, {
-      jobId: args.jobId,
-      mutation: "markAssistantReplyCancelled",
-    });
-
-    try {
-      const cancelledJob = await cancelActiveJob(ctx, {
-        jobId: args.jobId,
-        expectedKind: "chat",
-        completedAt: now,
-        errorMessage: reason,
-        estimatedInputTokens: args.inputTokens,
-        estimatedOutputTokens: args.outputTokens,
-        estimatedCostUsd: args.costUsd,
-      });
-      if (!cancelledJob) {
-        const job = await ctx.db.get(args.jobId);
-        if (job) {
-          return;
-        }
-        logWarn("chat", "cancel_job_missing", {
-          assistantMessageId: args.assistantMessageId,
-          jobId: args.jobId,
-        });
-      }
-
-      if (message) {
-        const streamedContent = `${streamSnapshot?.content ?? message.content}${args.finalDelta ?? ""}`;
-        // Same rationale as the fail path: a cancelled reply that
-        // produced partial prose before the user clicked Stop benefits
-        // from the same unverified-claim highlights so the user can scan
-        // what they got with the same skepticism the completed-state
-        // bubble would offer. Empty `streamedContent` (stop arrived
-        // before any token was streamed) returns `undefined` so the
-        // bubble just shows the cancellation reason.
-        const unverifiedClaims = lintSandboxClaims(message, streamedContent);
-        const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
-        await ctx.db.patch(args.assistantMessageId, {
-          status: "cancelled",
-          errorMessage: reason,
-          // Empty partial replies render as the cancellation reason so the
-          // bubble never shows blank — `failAssistantReply` uses the same
-          // fallback for the same reason.
-          content: streamedContent || reason,
-          toolCalls: persistedToolCalls,
-          unverifiedClaims,
-          reasoning: reasoning.reasoning,
-          reasoningDurationMs: reasoning.reasoningDurationMs,
-          // Preserve partial-cost telemetry on cancellation for both
-          // UI display and audit. Falling back to the existing values
-          // (rather than overwriting with `undefined`) handles the
-          // "stop arrived before generation produced any tokens" case
-          // where the action passes `costUsd: undefined`.
-          estimatedInputTokens: args.inputTokens ?? message.estimatedInputTokens,
-          estimatedOutputTokens: args.outputTokens ?? message.estimatedOutputTokens,
-          estimatedCostUsd: args.costUsd ?? message.estimatedCostUsd,
-        });
-      } else {
-        logWarn("chat", "cancel_assistant_message_missing", {
-          assistantMessageId: args.assistantMessageId,
-          jobId: args.jobId,
-        });
-      }
-
-      // Settle the partial cost. Cancellation is a common path (user
-      // clicked Stop because the reply was taking too long or going off
-      // the rails) so charging the actual spend prevents the cap from
-      // being a no-op for power users. Settle is a no-op for non-sandbox
-      // replies and for `costUsd === undefined`.
-      await settleSandboxReplyCost(ctx, {
-        jobId: args.jobId,
-        assistantMessage: message ?? null,
-        costUsd: args.costUsd,
-      });
-      await recordSandboxSessionActivityForReply(ctx, {
-        assistantMessage: message ?? null,
-        costUsd: args.costUsd,
-      });
-    } finally {
-      if (streamSnapshot) {
-        await deleteMessageStreamState(ctx, streamSnapshot.stream._id);
-      }
-      // Tool-call events were drained by `foldAndDrainToolCallEvents`
-      // above; nothing else to clean up.
-    }
-
-    logInfo("chat", "assistant_reply_cancelled", {
+    const applied = await applyTerminalSettlement(ctx, {
+      kind: "cancelled",
       assistantMessageId: args.assistantMessageId,
       jobId: args.jobId,
-      hadPartialContent: Boolean(args.finalDelta && args.finalDelta.length > 0),
+      reason: args.reason ?? "Cancelled by user.",
+      finalDelta: args.finalDelta,
+      usage: {
+        inputTokens: args.inputTokens,
+        outputTokens: args.outputTokens,
+        costUsd: args.costUsd,
+      },
     });
+
+    // Only log the success event when the cancellation actually applied
+    // (i.e. the job was active or missing — see the helper's contract
+    // notes). A no-op against an already-terminal job is not a real
+    // cancellation event and would clutter the audit trail.
+    if (applied) {
+      logInfo("chat", "assistant_reply_cancelled", {
+        assistantMessageId: args.assistantMessageId,
+        jobId: args.jobId,
+        hadPartialContent: Boolean(args.finalDelta && args.finalDelta.length > 0),
+      });
+    }
   },
 });
 
@@ -1144,6 +1303,10 @@ export const recoverStaleChatJob = internalMutation({
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
     const now = Date.now();
+    // Eligibility pre-check stays at the call site so we skip every
+    // read (message lookup, fold/drain, stream load) when the job is
+    // not actually stale. `failStaleActiveJob` inside the shared
+    // settlement re-checks the lease as a second-level guard.
     if (
       !job ||
       job.kind !== "chat" ||
@@ -1154,86 +1317,10 @@ export const recoverStaleChatJob = internalMutation({
       return;
     }
 
-    const message = args.errorMessage ?? STALE_CHAT_JOB_ERROR_MESSAGE;
-    const jobMessages = await ctx.db
-      .query("messages")
-      .withIndex("by_jobId", (q) => q.eq("jobId", args.jobId))
-      .take(10);
-    const assistantMessage = jobMessages.find((entry) => entry.role === "assistant");
-    const stream = await getMessageStreamByJobId(ctx, args.jobId);
-    const streamSnapshot =
-      assistantMessage && stream ? await loadMessageStreamSnapshot(ctx, assistantMessage._id) : null;
-
-    // Same partial-trace fold as `failAssistantReply` so the user
-    // can tell what was running when the job stalled. Drained in the same
-    // mutation; orphan events from a stalled-then-recovered reply must not
-    // outlive the message (they'd leak via the live subscription forever).
-    // The helper sweeps past the fold's read cap, so even a runaway
-    // producer can't leave rows pointing at a failed message.
-    const persistedToolCalls = assistantMessage
-      ? await foldAndDrainToolCallEvents(ctx, assistantMessage._id, {
-          jobId: args.jobId,
-          mutation: "recoverStaleChatJob",
-        })
-      : undefined;
-
-    try {
-      if (assistantMessage) {
-        // Lint only the *streamed* portion (not the system error
-        // message that takes over when the stream produced nothing).
-        // When the stale-recovery rescues a reply that had
-        // already streamed partial prose the user can still benefit
-        // from unverified-claim highlights; when the action stalled
-        // before producing anything, `streamSnapshot?.content` is
-        // empty and `lintSandboxClaims` returns `undefined` so the
-        // bubble shows just the stall message.
-        const unverifiedClaims = lintSandboxClaims(assistantMessage, streamSnapshot?.content ?? "");
-        const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
-        await ctx.db.patch(assistantMessage._id, {
-          status: "failed",
-          errorMessage: message,
-          content: streamSnapshot?.content || message,
-          toolCalls: persistedToolCalls,
-          unverifiedClaims,
-          reasoning: reasoning.reasoning,
-          reasoningDurationMs: reasoning.reasoningDurationMs,
-        });
-      }
-
-      // Note: stale-recovery deliberately does NOT settle cost
-      // against the daily cap. The action that crashed/stalled never
-      // reached the finalize / fail mutation, so we have no reliable
-      // usage data — recording an arbitrary fixed cost here would either
-      // double-count (if the action actually completed and the
-      // settlement landed before the crash) or under-count (if it
-      // stalled mid-stream after burning many tokens). We accept this
-      // as a known shortfall: the daily cap may be slightly under-
-      // recorded for stalled replies. Logged so ops can correlate
-      // billing reconciliation findings with stale-recovery events.
-      if (assistantMessage && assistantMessage.groundSandbox === true) {
-        logWarn("chat", "sandbox_cost_settlement_skipped_on_stale_recovery", {
-          jobId: args.jobId,
-          assistantMessageId: assistantMessage._id,
-          ownerTokenIdentifier: assistantMessage.ownerTokenIdentifier,
-          hint: "Action never reported usage; daily cap not charged for this stalled reply.",
-        });
-      }
-
-      const failedJob = await failStaleActiveJob(ctx, {
-        jobId: args.jobId,
-        expectedKind: "chat",
-        now,
-        errorMessage: message,
-      });
-      if (!failedJob) {
-        return;
-      }
-    } finally {
-      if (stream) {
-        await deleteMessageStreamState(ctx, stream._id);
-      }
-      // Tool-call events are already drained by `foldAndDrainToolCallEvents`
-      // above (sweep-past-cap), so there's no separate cleanup to do here.
-    }
+    await applyTerminalSettlement(ctx, {
+      kind: "stale",
+      jobId: args.jobId,
+      errorMessage: args.errorMessage ?? STALE_CHAT_JOB_ERROR_MESSAGE,
+    });
   },
 });
