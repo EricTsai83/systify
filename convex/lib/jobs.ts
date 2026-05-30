@@ -65,7 +65,8 @@ async function patchJobIfCurrent(
  *
  *   - `import` / `sandbox_activation` / `cleanup` — `repositoryId` required,
  *     `threadId` forbidden.
- *   - `system_design` — `repositoryId` required; `threadId` is unused.
+ *   - `system_design` — `repositoryId` required; `threadId` is optional (allowed by
+ *     {@link assertEnqueueScope} but not required or used by handlers).
  *   - `chat` — `threadId` required; `repositoryId` is denormalized from the
  *     thread when the thread is repository-attached.
  *   - `index` — currently unused; left permissive for future use.

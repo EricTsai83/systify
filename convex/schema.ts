@@ -311,6 +311,7 @@ export default defineSchema({
     selections: v.optional(v.array(systemDesignKindValidator)),
   })
     .index("by_repositoryId", ["repositoryId"])
+    .index("by_repositoryId_and_kind", ["repositoryId", "kind"])
     .index("by_threadId", ["threadId"])
     .index("by_threadId_and_kind_and_status_and_leaseExpiresAt", ["threadId", "kind", "status", "leaseExpiresAt"])
     .index("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", [

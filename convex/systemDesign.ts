@@ -156,9 +156,12 @@ const SYSTEM_DESIGN_BANNER_TERMINAL_WINDOW_MS = 10 * 60 * 1000;
  * `getActiveSystemDesignJob` for dedup — this query exists so the banner
  * can show post-completion failure summaries without changing that
  * "is there an in-flight job?" semantic.
+ *
+ * Scoped to `kind === "system_design"` via `by_repositoryId_and_kind` so
+ * an active repository with a long tail of other-kind jobs (chat,
+ * sandbox_activation, …) cannot push the latest system_design row past
+ * any bounded scan.
  */
-const LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT = 16;
-
 export const getLatestSystemDesignJob = query({
   args: { repositoryId: v.id("repositories") },
   handler: async (ctx, args): Promise<Doc<"jobs"> | null> => {
@@ -167,25 +170,21 @@ export const getLatestSystemDesignJob = query({
       return null;
     }
 
-    const now = Date.now();
-    const batch = await ctx.db
+    const job = await ctx.db
       .query("jobs")
-      .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
+      .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", args.repositoryId).eq("kind", "system_design"))
       .order("desc")
-      .take(LIBRARY_SYSTEM_DESIGN_LATEST_SCAN_LIMIT);
+      .first();
 
-    for (const job of batch) {
-      if (job.kind !== "system_design") continue;
-      if (job.status === "queued" || job.status === "running") {
-        return job;
-      }
-      if (typeof job.completedAt === "number" && now - job.completedAt < SYSTEM_DESIGN_BANNER_TERMINAL_WINDOW_MS) {
-        return job;
-      }
-      // Found the latest System Design job but it's terminal and outside the
-      // visibility window — stop here rather than walking back through older
-      // history.
+    if (!job) {
       return null;
+    }
+    if (job.status === "queued" || job.status === "running") {
+      return job;
+    }
+    const now = Date.now();
+    if (typeof job.completedAt === "number" && now - job.completedAt < SYSTEM_DESIGN_BANNER_TERMINAL_WINDOW_MS) {
+      return job;
     }
     return null;
   },
