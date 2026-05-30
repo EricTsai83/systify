@@ -37,13 +37,22 @@ type ThreadModeFilter = ChatMode;
  * user, and a no-typing blur would commit the *stale* default and silently
  * clobber the autogen result.
  */
-function useThreadRename({ thread, onError }: { thread: Doc<"threads">; onError: (message: string | null) => void }) {
+function useThreadRename({
+  thread,
+  onError,
+  rowRef,
+}: {
+  thread: Doc<"threads">;
+  onError: (message: string | null) => void;
+  rowRef?: React.MutableRefObject<HTMLDivElement | null>;
+}) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [originalTitle, setOriginalTitle] = useState("");
   const isCancellingRef = useRef(false);
   const isCommittingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const wasEditingRef = useRef(false);
   const renameThreadMutation = useMutation(api.chat.threads.renameThread);
 
   const handleStartEdit = useCallback(() => {
@@ -57,16 +66,45 @@ function useThreadRename({ thread, onError }: { thread: Doc<"threads">; onError:
     setIsEditing(true);
   }, [thread.title]);
 
-  // Focus + select the input on the render that flips `isEditing` to true.
-  // Using `useEffect` keyed on `isEditing` (rather than a `queueMicrotask`
-  // chained off the click handler) decouples the focus from React's commit
-  // ordering — it runs after every commit where the input is mounted,
-  // regardless of concurrent-mode discards.
+  // Focus + select the input on the render that flips `isEditing` to true,
+  // and restore focus to the row's menu button on the render that flips it
+  // back to false. Using `useEffect` keyed on `isEditing` (rather than a
+  // `queueMicrotask` chained off the click handler) decouples the focus from
+  // React's commit ordering — it runs after every commit where the input is
+  // mounted, regardless of concurrent-mode discards. The first button in the
+  // row is the SidebarMenuButton (the pin/delete buttons live in an overlay
+  // sibling rendered after it), so `querySelector("button")` reliably picks
+  // it without threading a ref through the shadcn primitive.
+  //
+  // The exit branch is gated on two things:
+  //   1. `wasEditingRef` — only fire after a true→false transition, never
+  //      on initial mount. The effect runs once at mount with `isEditing`
+  //      false; without this gate every freshly-mounted row would steal
+  //      focus on subscribe (e.g. when a new thread appears in the rail
+  //      while the user is typing in the composer).
+  //   2. `activeElement` fell back to `<body>` — Enter / Escape exit while
+  //      focus is still on the soon-to-unmount input, so by the time this
+  //      effect runs there is no focused element and the row should reclaim
+  //      it. A blur-triggered exit (click elsewhere, Tab to another
+  //      control) has already moved focus to the new target; stealing it
+  //      back would be wrong.
   useEffect(() => {
     if (isEditing) {
+      wasEditingRef.current = true;
       inputRef.current?.select();
+      return;
     }
-  }, [isEditing]);
+    if (!wasEditingRef.current) {
+      return;
+    }
+    wasEditingRef.current = false;
+    if (typeof document === "undefined") return;
+    const active = document.activeElement;
+    if (active && active !== document.body) {
+      return;
+    }
+    rowRef?.current?.querySelector("button")?.focus();
+  }, [isEditing, rowRef]);
 
   const handleCommit = useCallback(async () => {
     // Escape sets the cancelling flag synchronously before flipping
@@ -495,15 +533,17 @@ function ThreadItem({
   compact?: boolean;
   onError: (message: string | null) => void;
 }) {
+  const rowRef = useRef<HTMLDivElement>(null);
   const { isEditing, draft, setDraft, inputRef, handleStartEdit, handleCommit, handleKeyDown, handleItemKeyDown } =
     useThreadRename({
       thread,
       onError,
+      rowRef,
     });
 
   const titleTextClass = threadTitleTextClass(compact);
   return (
-    <div className="group relative">
+    <div ref={rowRef} className="group relative">
       {isEditing ? (
         <EditableRowFrame className={cn("py-1.5 pr-16", compact && "py-1")}>
           <div className="min-w-0 flex-1">
@@ -680,15 +720,17 @@ function RepolessThreadItem({
   onDeleteThread: (id: ThreadId) => void;
   onError: (message: string | null) => void;
 }) {
+  const rowRef = useRef<HTMLDivElement>(null);
   const { isEditing, draft, setDraft, inputRef, handleStartEdit, handleCommit, handleKeyDown, handleItemKeyDown } =
     useThreadRename({
       thread,
       onError,
+      rowRef,
     });
 
   const titleTextClass = threadTitleTextClass(false);
   return (
-    <div className="group relative">
+    <div ref={rowRef} className="group relative">
       {isEditing ? (
         <EditableRowFrame className="py-1.5 pr-10">
           <div className="min-w-0 flex-1">
