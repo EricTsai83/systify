@@ -7,9 +7,6 @@ export const MAX_CHUNKS_PER_FILE = 4;
 /** Maximum number of artifacts included in a chat context prompt. */
 export const MAX_CONTEXT_ARTIFACTS = 6;
 
-/** Maximum number of recent messages loaded into the chat UI. */
-export const MAX_VISIBLE_MESSAGES = 100;
-
 /** Maximum number of recent messages loaded for a chat reply. */
 export const MAX_CONTEXT_MESSAGES = 20;
 

@@ -134,27 +134,6 @@ async function loadLatestDocsArtifacts(ctx: Pick<QueryCtx, "db">, repositoryId: 
 }
 
 /**
- * Load the most recent `limit` messages on a thread for UI display.
- *
- * Returned in ascending creation-time order. This function intentionally
- * applies **no** mode-aware filtering: the chat panel must render every
- * message the user sent or received, including replies generated under a
- * previous mode, so the user can scroll back through the full thread
- * history. Mode-aware filtering for the LLM reply context lives in
- * `loadReplyContextMessages` below — that's the only call site where
- * cross-mode assistant replies must be hidden from the model.
- */
-export async function loadRecentMessages(ctx: Pick<QueryCtx, "db">, threadId: Id<"threads">, limit: number) {
-  const recentMessages = await ctx.db
-    .query("messages")
-    .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
-    .order("desc")
-    .take(limit);
-
-  return recentMessages.reverse();
-}
-
-/**
  * How aggressively `loadReplyContextMessages` over-fetches the
  * `by_threadId` index before applying the cross-mode + empty-content
  * filters. With `MAX_CONTEXT_MESSAGES = 20` this caps the index read at
