@@ -3,7 +3,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "convex-test";
 import { api, internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { MAX_CONTEXT_MESSAGES, MAX_VISIBLE_MESSAGES } from "./lib/constants";
 import schema from "./schema";
 
@@ -29,6 +29,55 @@ describe("chat history ordering", () => {
 
     expect(messages).toHaveLength(MAX_VISIBLE_MESSAGES);
     expect(messages.map((message) => message.content)).toEqual(contents.slice(-MAX_VISIBLE_MESSAGES));
+  });
+
+  test("listMessagesPaginated returns descending pages and walks the cursor to exhaustion", async () => {
+    // Server returns newest-first pages; the client reverses the
+    // flattened result set into ascending order before rendering. This
+    // test pins both halves of that contract:
+    //   1. Each page from the server is in DESC creation-time order.
+    //   2. Walking the cursor visits every message exactly once before
+    //      `isDone` flips to true (no off-by-one at the tail).
+    const ownerTokenIdentifier = "user|chat-history-paginated";
+    const t = convexTest(schema, modules);
+    const totalMessages = 25;
+    const pageSize = 10;
+    const { threadId, contents } = await seedThreadWithMessages(t, ownerTokenIdentifier, totalMessages);
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const collected: string[] = [];
+    let cursor: string | null = null;
+    let pageCount = 0;
+    let lastIsDone = false;
+    // Bound the loop defensively so a regression in cursor advancement
+    // cannot turn this into an infinite test.
+    for (let guard = 0; guard < 10; guard += 1) {
+      const result: {
+        page: Doc<"messages">[];
+        isDone: boolean;
+        continueCursor: string;
+      } = await viewer.query(api.chat.threads.listMessagesPaginated, {
+        threadId,
+        paginationOpts: { numItems: pageSize, cursor },
+      });
+      pageCount += 1;
+      // Each individual page is in descending order — the most recent
+      // message in the page sits at index 0.
+      for (let i = 1; i < result.page.length; i += 1) {
+        expect(result.page[i]._creationTime).toBeLessThanOrEqual(result.page[i - 1]._creationTime);
+      }
+      collected.push(...result.page.map((m) => m.content));
+      lastIsDone = result.isDone;
+      if (result.isDone) break;
+      cursor = result.continueCursor;
+    }
+
+    // 25 messages / 10 per page → 3 pages (10 + 10 + 5).
+    expect(pageCount).toBe(3);
+    expect(lastIsDone).toBe(true);
+    // The concatenation of pages is newest-first across all pages.
+    // Reversing matches the ascending order the seeder produced.
+    expect([...collected].reverse()).toEqual(contents);
   });
 
   test("getReplyContext trims old messages and preserves the latest conversation", async () => {

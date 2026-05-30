@@ -2,7 +2,7 @@
 
 import type React from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { useQuery } from "convex/react";
+import { usePaginatedQuery, useQuery } from "convex/react";
 import { getFunctionName } from "convex/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
@@ -15,9 +15,21 @@ import type { ArtifactId, MessageId, ThreadId } from "@/lib/types";
 // Returning `[]` for any `useQuery` call keeps the trace rendering but
 // surfaces no entries, which is the correct behavior for the existing
 // fixtures that don't supply `toolCalls`.
+//
+// `usePaginatedQuery` is mocked separately because `ChatContainer` now
+// subscribes to `listMessagesPaginated` through that hook rather than
+// `useQuery`. The default return shape mirrors a settled "no more pages"
+// state with no messages, which suits the trivial render paths most
+// `ChatPanel`-only tests take.
 vi.mock("convex/react", () => ({
   useMutation: vi.fn(() => vi.fn()),
   useQuery: vi.fn(() => []),
+  usePaginatedQuery: vi.fn(() => ({
+    results: [],
+    status: "Exhausted",
+    loadMore: vi.fn(),
+    isLoading: false,
+  })),
 }));
 
 vi.mock("@/components/import-repo-dialog", () => ({
@@ -128,18 +140,28 @@ afterEach(() => {
   cleanup();
   vi.mocked(useQuery).mockReset();
   vi.mocked(useQuery).mockReturnValue([]);
+  vi.mocked(usePaginatedQuery).mockReset();
+  vi.mocked(usePaginatedQuery).mockReturnValue({
+    results: [],
+    status: "Exhausted",
+    loadMore: vi.fn(),
+    isLoading: false,
+  });
 });
 
 describe("ChatPanel streaming rendering", () => {
   test("ChatContainer owns message and active-stream subscriptions for the selected thread", () => {
-    vi.mocked(useQuery).mockImplementation((...callArgs) => {
-      const [query, args] = callArgs;
+    // Paginated message subscription. The server returns pages in
+    // newest-first order; `ChatContainer` reverses the flattened result
+    // set to ascending creation-time order before rendering. A
+    // single-row fixture is shape-equivalent either way.
+    vi.mocked(usePaginatedQuery).mockImplementation((query, args) => {
       if (args === "skip") {
-        return undefined;
+        return { results: [], status: "LoadingFirstPage", loadMore: vi.fn(), isLoading: true };
       }
-      switch (queryName(query)) {
-        case "chat/threads:listMessages":
-          return [
+      if (queryName(query) === "chat/threads:listMessagesPaginated") {
+        return {
+          results: [
             {
               _id: assistantMessageId,
               role: "assistant",
@@ -147,7 +169,20 @@ describe("ChatPanel streaming rendering", () => {
               content: "",
               errorMessage: undefined,
             } as unknown as Doc<"messages">,
-          ];
+          ],
+          status: "Exhausted",
+          loadMore: vi.fn(),
+          isLoading: false,
+        };
+      }
+      return { results: [], status: "Exhausted", loadMore: vi.fn(), isLoading: false };
+    });
+    vi.mocked(useQuery).mockImplementation((...callArgs) => {
+      const [query, args] = callArgs;
+      if (args === "skip") {
+        return undefined;
+      }
+      switch (queryName(query)) {
         case "chat/streaming:getActiveMessageStream":
           return {
             assistantMessageId,
@@ -183,6 +218,15 @@ describe("ChatPanel streaming rendering", () => {
       />,
     );
 
+    // Paginated message subscription is keyed on `{ threadId, paginationOpts }`.
+    // The active-stream subscription is the one that goes through plain
+    // `useQuery({ threadId })`; assert on that to confirm the container
+    // is wiring both subscriptions through the correct hooks.
+    expect(vi.mocked(usePaginatedQuery)).toHaveBeenCalledWith(
+      expect.anything(),
+      { threadId },
+      expect.objectContaining({ initialNumItems: expect.any(Number) }),
+    );
     expect(vi.mocked(useQuery)).toHaveBeenCalledWith(expect.anything(), { threadId });
     expect(screen.getByText("streamed from container")).toBeInTheDocument();
   });

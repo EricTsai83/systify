@@ -12,6 +12,14 @@ import type { ThreadId } from "@/lib/types";
 const PREWARM_DURATION_MS = 8_000;
 
 /**
+ * Page-1 args for the paginated message query. Must serialize identically
+ * to `usePaginatedQuery(..., { initialNumItems: 30 })`'s first-page
+ * issuance so the prewarmed subscription is ref-count-shared with the
+ * `ChatContainer` mount when the user actually clicks through.
+ */
+const MESSAGES_PAGE_ONE_ARGS = { numItems: 30, cursor: null } as const;
+
+/**
  * Returns a stable callback that warms a thread's Convex subscriptions
  * (messages + active stream) for ~8 seconds. Wire to hover/focus on
  * sidebar thread rows so that by the time the user clicks, both
@@ -25,8 +33,8 @@ export function usePrewarmThread(): (threadId: ThreadId) => void {
   return useCallback(
     (threadId: ThreadId) => {
       convex.prewarmQuery({
-        query: api.chat.threads.listMessages,
-        args: { threadId },
+        query: api.chat.threads.listMessagesPaginated,
+        args: { threadId, paginationOpts: MESSAGES_PAGE_ONE_ARGS },
         extendSubscriptionFor: PREWARM_DURATION_MS,
       });
       convex.prewarmQuery({

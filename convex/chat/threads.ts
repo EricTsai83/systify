@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalMutation, mutation, query, type MutationCtx } from "../_generated/server";
@@ -111,6 +112,46 @@ export const listMessages = query({
     }
 
     return await loadRecentMessages(ctx, args.threadId, MAX_VISIBLE_MESSAGES);
+  },
+});
+
+/**
+ * Paginated thread messages, newest page first. The chat UI consumes this
+ * via `usePaginatedQuery` so arbitrarily long threads can be browsed
+ * end-to-end — `listMessages` is capped at `MAX_VISIBLE_MESSAGES` and
+ * silently loses older history beyond that bound.
+ *
+ * The page returned by the server is in **descending** creation-time
+ * order (newest first). The client reverses the flattened result set to
+ * ascending order before rendering, so a freshly-attached subscription
+ * paints the most recent 30 messages without any prepend, and "load
+ * older" calls extend the rendered list at the top.
+ *
+ * Reuses the ownership-guard pattern from {@link listMessages}: any
+ * unauthorized read throws "Thread not found." so a stale `threadId`
+ * routes to the same error boundary path.
+ */
+export const listMessagesPaginated = query({
+  args: {
+    threadId: v.id("threads"),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const { doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
+
+    if (thread.repositoryId) {
+      await requireOwnedDoc(ctx, thread.repositoryId, {
+        notFoundMessage: "Thread not found.",
+      });
+    }
+
+    return await ctx.db
+      .query("messages")
+      .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
+      .order("desc")
+      .paginate(args.paginationOpts);
   },
 });
 

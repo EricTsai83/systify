@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState, type AnimationEvent, type FormEvent } from "react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
@@ -126,8 +126,49 @@ type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream
   isShellLoading: boolean;
 };
 
+/**
+ * Page size for the paginated message subscription. The server returns
+ * pages in descending creation-time order (newest first); the client
+ * reverses the flattened result set so the rendered list stays in
+ * ascending order.
+ *
+ * 30 keeps the resident set at ~30 × max-message-cost — lighter than a
+ * typical Radix dialog tree — while still landing the latest several
+ * turns in a single subscription tick (no prepend on first paint, so
+ * the initial scroll-to-bottom snaps without a jump).
+ */
+const MESSAGES_PAGE_SIZE = 30;
+
 export function ChatContainer({ selectedThreadId, isShellLoading, ...panelProps }: ChatContainerProps) {
-  const messages = useQuery(api.chat.threads.listMessages, selectedThreadId ? { threadId: selectedThreadId } : "skip");
+  // `usePaginatedQuery`'s `results` is the concatenation of every fetched
+  // page in arrival order — that is, newest page first, then progressively
+  // older pages as the user scrolls up. Reversing the flat array yields
+  // ascending creation-time order without paying per-page reversal cost.
+  //
+  // PR 1 only renders the first page; the load-older sentinel + custom
+  // scroll controller arrive in PR 2. So `status === "CanLoadMore"`
+  // here is the intended steady state for any thread with more than
+  // `MESSAGES_PAGE_SIZE` messages — the older history is browseable
+  // only after PR 2 lands.
+  const { results: paginatedResults, status: paginationStatus } = usePaginatedQuery(
+    api.chat.threads.listMessagesPaginated,
+    selectedThreadId ? { threadId: selectedThreadId } : "skip",
+    { initialNumItems: MESSAGES_PAGE_SIZE },
+  );
+  const messages = useMemo(() => {
+    if (selectedThreadId === null) {
+      return undefined;
+    }
+    if (paginationStatus === "LoadingFirstPage") {
+      return undefined;
+    }
+    // `paginatedResults` from convex is plain Doc<"messages"> rows in the
+    // server's paginate order (newest first). Reverse once so all
+    // downstream consumers (rendering, `inFlightAssistantMessage`,
+    // `hasMessages`) see ascending-by-creation-time order — the shape
+    // the prior `listMessages` query exposed.
+    return [...paginatedResults].reverse();
+  }, [paginatedResults, paginationStatus, selectedThreadId]);
   const activeMessageStream = useQuery(
     api.chat.streaming.getActiveMessageStream,
     selectedThreadId ? { threadId: selectedThreadId } : "skip",
