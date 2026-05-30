@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "convex/react";
 import { GlobeIcon, LockIcon, PlusIcon, PushPinIcon, TrashIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
+import { MAX_RENAME_TITLE_LENGTH } from "../../convex/lib/threadDefaults";
 import { Button } from "@/components/ui/button";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
@@ -29,32 +30,54 @@ type ThreadModeFilter = ChatMode;
  * the row (navigating to the thread) — matches the Notion / Linear / IDE
  * explorer convention where "double-click" means "navigate to this row AND
  * start renaming it".
+ *
+ * The "no-change" check compares against `originalTitle` (captured at
+ * `handleStartEdit` time), not the live `thread.title`. Otherwise a
+ * mid-edit autogen landing could change `thread.title` out from under the
+ * user, and a no-typing blur would commit the *stale* default and silently
+ * clobber the autogen result.
  */
 function useThreadRename({ thread, onError }: { thread: Doc<"threads">; onError: (message: string | null) => void }) {
   const [isEditing, setIsEditing] = useState(false);
   const [draft, setDraft] = useState("");
+  const [originalTitle, setOriginalTitle] = useState("");
+  const isCancellingRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const renameThreadMutation = useMutation(api.chat.threads.renameThread);
 
   const handleStartEdit = useCallback(() => {
+    isCancellingRef.current = false;
+    setOriginalTitle(thread.title);
     setDraft(thread.title);
     setIsEditing(true);
-    // The input mounts on the next render — defer focus + select until
-    // after that paint so `inputRef.current` is non-null. `queueMicrotask`
-    // is enough here because React flushes the commit before the next
-    // microtask, so the input is in the DOM by the time we ask for it.
-    queueMicrotask(() => {
-      inputRef.current?.select();
-    });
   }, [thread.title]);
 
+  // Focus + select the input on the render that flips `isEditing` to true.
+  // Using `useEffect` keyed on `isEditing` (rather than a `queueMicrotask`
+  // chained off the click handler) decouples the focus from React's commit
+  // ordering — it runs after every commit where the input is mounted,
+  // regardless of concurrent-mode discards.
+  useEffect(() => {
+    if (isEditing) {
+      inputRef.current?.select();
+    }
+  }, [isEditing]);
+
   const handleCommit = useCallback(async () => {
+    // Escape sets the cancelling flag synchronously before flipping
+    // `isEditing`; the subsequent input-unmount blur would otherwise race
+    // in and commit the draft. Consume the flag and bail out.
+    if (isCancellingRef.current) {
+      isCancellingRef.current = false;
+      setIsEditing(false);
+      return;
+    }
     setIsEditing(false);
     const trimmed = draft.trim();
     // No-op if the user committed an empty draft or a no-change rename —
     // saves a server round trip and avoids surfacing the empty-string
     // validation as a spurious toast.
-    if (!trimmed || trimmed === thread.title) {
+    if (!trimmed || trimmed === originalTitle) {
       return;
     }
     try {
@@ -63,9 +86,10 @@ function useThreadRename({ thread, onError }: { thread: Doc<"threads">; onError:
     } catch (error) {
       onError(toUserErrorMessage(error, "Failed to rename thread."));
     }
-  }, [draft, thread._id, thread.title, renameThreadMutation, onError]);
+  }, [draft, originalTitle, thread._id, renameThreadMutation, onError]);
 
   const handleCancel = useCallback(() => {
+    isCancellingRef.current = true;
     setIsEditing(false);
   }, []);
 
@@ -91,6 +115,46 @@ function useThreadRename({ thread, onError }: { thread: Doc<"threads">; onError:
     handleCommit,
     handleKeyDown,
   };
+}
+
+/**
+ * Visual stand-in for {@link SidebarMenuButton} used while a thread title
+ * is being renamed inline. Renders as a `<div>` rather than a `<button>`
+ * so the `<input>` inside is HTML-valid — `<button>` disallows interactive
+ * descendants, and nesting an input inside one trips React's
+ * `validateDOMNesting` warning and produces undefined browser focus /
+ * keyboard behavior.
+ *
+ * The class list intentionally mirrors `SidebarMenuButton`'s selected
+ * state — `inline-flex items-center` matches the underlying `Button`
+ * base, and the border + bg-muted combo mirrors the selected look.
+ * Keeping the geometry identical to the non-editing button is what makes
+ * the edit-mode transition layout-shift-free; if `SidebarMenuButton`'s
+ * styling drifts, this row must drift with it.
+ */
+function EditableRowFrame({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div
+      className={cn(
+        "inline-flex h-auto w-full items-center justify-start gap-2 whitespace-nowrap rounded-none border border-transparent border-l-2 border-l-primary bg-muted px-3 py-2 text-left text-xs text-foreground",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+/**
+ * Shared text metric for the rename `<input>` and the non-editing `<p>`.
+ * Pinning both to the same explicit `leading-*` value is what keeps the
+ * box height identical across the edit-toggle — `<input>` defaults to UA
+ * `line-height: normal` (~1.15), while a bare `<p>` inherits a typically
+ * larger value from the body. Matching them eliminates the 1–3 px
+ * vertical wobble you'd otherwise see when entering / leaving edit mode.
+ */
+function threadTitleTextClass(compact?: boolean): string {
+  return compact ? "text-[11px] leading-[14px]" : "text-xs leading-4";
 }
 
 export function RepositoryThreadsRail({
@@ -405,39 +469,47 @@ function ThreadItem({
     onError,
   });
 
+  const titleTextClass = threadTitleTextClass(compact);
   return (
-    <div key={thread._id} className="group relative">
-      <SidebarMenuButton
-        selected={isSelected}
-        onClick={isEditing ? undefined : () => onSelectThread(thread._id, thread.mode)}
-        onMouseEnter={() => onPrewarmThread(thread._id)}
-        onFocus={() => onPrewarmThread(thread._id)}
-        className={cn("py-1.5 pr-16", compact && "py-1")}
-      >
-        <div className="min-w-0 flex-1">
-          {isEditing ? (
+    <div className="group relative">
+      {isEditing ? (
+        <EditableRowFrame className={cn("py-1.5 pr-16", compact && "py-1")}>
+          <div className="min-w-0 flex-1">
             <input
               ref={inputRef}
               value={draft}
+              maxLength={MAX_RENAME_TITLE_LENGTH}
+              aria-label="Rename thread"
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={handleKeyDown}
               onBlur={() => void handleCommit()}
               className={cn(
-                "w-full truncate border-0 bg-transparent font-medium text-foreground outline-none ring-0",
-                compact ? "text-[11px]" : "text-xs",
+                "m-0 block w-full truncate border-0 bg-transparent p-0 font-medium text-foreground outline-none ring-0",
+                titleTextClass,
               )}
             />
-          ) : (
+            <ThreadRepoBadge repository={repository} />
+          </div>
+        </EditableRowFrame>
+      ) : (
+        <SidebarMenuButton
+          selected={isSelected}
+          onClick={() => onSelectThread(thread._id, thread.mode)}
+          onMouseEnter={() => onPrewarmThread(thread._id)}
+          onFocus={() => onPrewarmThread(thread._id)}
+          className={cn("py-1.5 pr-16", compact && "py-1")}
+        >
+          <div className="min-w-0 flex-1">
             <p
               onDoubleClick={handleStartEdit}
-              className={cn("cursor-text truncate font-medium text-foreground", compact ? "text-[11px]" : "text-xs")}
+              className={cn("cursor-text truncate font-medium text-foreground", titleTextClass)}
             >
               {thread.title}
             </p>
-          )}
-          <ThreadRepoBadge repository={repository} />
-        </div>
-      </SidebarMenuButton>
+            <ThreadRepoBadge repository={repository} />
+          </div>
+        </SidebarMenuButton>
+      )}
       <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
         <Button
           variant="ghost"
@@ -494,13 +566,19 @@ export function RepolessChatsRail({
   onSelectThread,
   onDeleteThread,
   onRequestNewThread,
-  onError = () => {},
+  onError,
 }: {
   selectedThreadId: ThreadId | null;
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onDeleteThread: (id: ThreadId) => void;
   onRequestNewThread?: () => void;
-  onError?: (message: string | null) => void;
+  /**
+   * Required: rename failures (server-side validation rejecting an
+   * over-length title, for instance) must surface to the user via the
+   * toast pipeline. A swallowed `() => {}` default would silently drop
+   * the feedback.
+   */
+  onError: (message: string | null) => void;
 }) {
   const threads = useQuery(api.chat.threads.listRepolessThreads, {});
   const prewarmThread = usePrewarmThread();
@@ -573,32 +651,45 @@ function RepolessThreadItem({
     onError,
   });
 
+  const titleTextClass = threadTitleTextClass(false);
   return (
     <div className="group relative">
-      <SidebarMenuButton
-        selected={isSelected}
-        onClick={isEditing ? undefined : () => onSelectThread(thread._id, thread.mode)}
-        onMouseEnter={() => onPrewarmThread(thread._id)}
-        onFocus={() => onPrewarmThread(thread._id)}
-        className="py-1.5 pr-10"
-      >
-        <div className="min-w-0 flex-1">
-          {isEditing ? (
+      {isEditing ? (
+        <EditableRowFrame className="py-1.5 pr-10">
+          <div className="min-w-0 flex-1">
             <input
               ref={inputRef}
               value={draft}
+              maxLength={MAX_RENAME_TITLE_LENGTH}
+              aria-label="Rename thread"
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={handleKeyDown}
               onBlur={() => void handleCommit()}
-              className="w-full truncate border-0 bg-transparent text-xs font-medium text-foreground outline-none ring-0"
+              className={cn(
+                "m-0 block w-full truncate border-0 bg-transparent p-0 font-medium text-foreground outline-none ring-0",
+                titleTextClass,
+              )}
             />
-          ) : (
-            <p onDoubleClick={handleStartEdit} className="cursor-text truncate text-xs font-medium text-foreground">
+          </div>
+        </EditableRowFrame>
+      ) : (
+        <SidebarMenuButton
+          selected={isSelected}
+          onClick={() => onSelectThread(thread._id, thread.mode)}
+          onMouseEnter={() => onPrewarmThread(thread._id)}
+          onFocus={() => onPrewarmThread(thread._id)}
+          className="py-1.5 pr-10"
+        >
+          <div className="min-w-0 flex-1">
+            <p
+              onDoubleClick={handleStartEdit}
+              className={cn("cursor-text truncate font-medium text-foreground", titleTextClass)}
+            >
               {thread.title}
             </p>
-          )}
-        </div>
-      </SidebarMenuButton>
+          </div>
+        </SidebarMenuButton>
+      )}
       <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
         <Button
           variant="ghost"

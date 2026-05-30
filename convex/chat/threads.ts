@@ -5,7 +5,7 @@ import { internalMutation, mutation, query, type MutationCtx } from "../_generat
 import { requireViewerIdentity } from "../lib/auth";
 import { chatModeValidator, getDefaultThreadMode } from "../lib/chatMode";
 import { loadOwnedDoc, requireOwnedDoc } from "../lib/ownedDocs";
-import { NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
+import { MAX_RENAME_TITLE_LENGTH, NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
 import { MAX_STREAM_CHUNKS_PER_PASS, MAX_VISIBLE_MESSAGES } from "../lib/constants";
 import { touchRepositoryLastAccessed } from "../lib/repositoryPalette";
 import { loadRecentMessages } from "./context";
@@ -491,22 +491,20 @@ export const cleanupOrphanedMessageStreams = internalMutation({
 });
 
 /**
- * Cap on thread title length. 200 chars is comfortably wider than any sane
- * sidebar truncation point (~30 chars at the widest UI variant), but short
- * enough that a runaway paste — say, a stack trace — fails loudly at the
- * mutation boundary instead of silently bloating the threads document.
- */
-const MAX_TITLE_LENGTH = 200;
-
-/**
  * Manual thread rename, driven by the sidebar's inline-edit affordance
  * (double-click the title text, Enter / blur to commit, Esc to cancel).
  *
- * Throws via `ConvexError` so the user-facing message survives the Convex
- * transport and reaches the frontend toast unchanged. The autogen path
- * (`generateThreadTitle`) guards against overwriting a renamed thread via
- * `isDefaultTitle` — any non-default title (including a manual rename that
- * happens to equal the autogen output) wins over a late-arriving LLM patch.
+ * Errors use the structured `ConvexError({ code, message })` shape so
+ * `toUserErrorMessage` on the client extracts a clean message from
+ * `error.data.message`. A plain `ConvexError(string)` would force the
+ * client to fall back to `error.message`, which Convex wraps with
+ * transport noise (`[CONVEX M(chat/threads:renameThread)] [Request ID:
+ * ...]`) — a poor toast.
+ *
+ * The autogen path (`generateThreadTitle`) guards against overwriting a
+ * renamed thread via `isDefaultTitle` — any non-default title (including a
+ * manual rename that happens to equal the autogen output) wins over a
+ * late-arriving LLM patch.
  */
 export const renameThread = mutation({
   args: {
@@ -519,10 +517,16 @@ export const renameThread = mutation({
     });
     const trimmed = args.title.trim();
     if (trimmed.length === 0) {
-      throw new ConvexError("Title cannot be empty.");
+      throw new ConvexError({
+        code: "INVALID_TITLE",
+        message: "Title cannot be empty.",
+      });
     }
-    if (trimmed.length > MAX_TITLE_LENGTH) {
-      throw new ConvexError(`Title must be at most ${MAX_TITLE_LENGTH} characters.`);
+    if (trimmed.length > MAX_RENAME_TITLE_LENGTH) {
+      throw new ConvexError({
+        code: "INVALID_TITLE",
+        message: `Title must be at most ${MAX_RENAME_TITLE_LENGTH} characters.`,
+      });
     }
     await ctx.db.patch(args.threadId, { title: trimmed });
   },

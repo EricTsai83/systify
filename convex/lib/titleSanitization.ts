@@ -12,8 +12,9 @@
  * truncates (instead of rejecting) so a verbose LLM still produces a usable
  * title.
  *
- * Intentionally smaller than {@link MAX_RENAME_TITLE_LENGTH} (200) — manual
- * renames trust the user, autogen does not trust the model.
+ * Intentionally smaller than `MAX_RENAME_TITLE_LENGTH` (200, in
+ * `threadDefaults.ts`) — manual renames trust the user, autogen does not
+ * trust the model.
  */
 export const MAX_AUTOGEN_TITLE_LENGTH = 80;
 

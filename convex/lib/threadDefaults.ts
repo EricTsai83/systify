@@ -15,6 +15,18 @@ import type { Doc } from "../_generated/dataModel";
 export const NEW_THREAD_DEFAULT_TITLE = "New chat";
 
 /**
+ * Cap on manual-rename thread title length. Lives here (not in
+ * `chat/threads.ts`) so the rail's inline-rename `<input>` can mirror the
+ * cap in `maxLength` without dragging the server-side mutation module
+ * into the client bundle.
+ *
+ * Intentionally larger than `MAX_AUTOGEN_TITLE_LENGTH` (80, in
+ * `titleSanitization.ts`) — manual renames trust the user, autogen does
+ * not trust the model.
+ */
+export const MAX_RENAME_TITLE_LENGTH = 200;
+
+/**
  * Whether a thread still carries the default title — i.e. neither the user
  * nor the autogen pass has replaced it. Used as a race guard before the
  * `generateThreadTitle` action's patch so a mid-flight rename by the user
