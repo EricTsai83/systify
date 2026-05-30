@@ -126,6 +126,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
             onSelectThread={onSelectThread}
             onDeleteThread={onDeleteThread}
             onRequestNewThread={onRequestNewThread}
+            onError={onError}
           />
         </SidebarContent>
       ) : (

@@ -17,9 +17,9 @@ import { createArtifactInMutation, deleteArtifactInternal } from "./artifactStor
 import {
   completeRunningJob,
   failRunningJob,
-  failStaleActiveJob,
   markQueuedJobRunning,
   refreshRunningJobLease,
+  runStaleJobRecovery,
   updateRunningJobProgress,
 } from "./lib/jobs";
 import {
@@ -372,23 +372,15 @@ const STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE =
 export const recoverStaleSystemDesignJob = internalMutation({
   args: { jobId: v.id("jobs") },
   handler: async (ctx, args) => {
-    const job = await ctx.db.get(args.jobId);
-    const now = Date.now();
-    if (
-      !job ||
-      job.kind !== "system_design" ||
-      (job.status !== "queued" && job.status !== "running") ||
-      isFailureModeJob(job) ||
-      typeof job.leaseExpiresAt !== "number" ||
-      job.leaseExpiresAt > now
-    ) {
-      return;
-    }
-    await failStaleActiveJob(ctx, {
+    // `system_design` is shared with Failure Mode Analysis; the
+    // negative predicate keeps this recovery scoped to Library System
+    // Design jobs. FMA has its own recovery in `designArtifacts.ts`
+    // that asserts the positive `requestedCommand` prefix.
+    await runStaleJobRecovery(ctx, {
       jobId: args.jobId,
       expectedKind: "system_design",
-      now,
       errorMessage: STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE,
+      predicate: (job) => !isFailureModeJob(job),
     });
   },
 });
@@ -406,26 +398,10 @@ export const getGenerationContext = internalQuery({
     args,
   ): Promise<{
     repository: Doc<"repositories">;
-    folders: Array<{ systemKey: string; folderId: Id<"artifactFolders"> }>;
-    activeSandbox: Doc<"sandboxes"> | null;
   } | null> => {
     const repository = await ctx.db.get(args.repositoryId);
     if (!isOwnedBy(repository, args.ownerTokenIdentifier)) return null;
-
-    const folders = await ctx.db
-      .query("artifactFolders")
-      .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
-      .collect();
-
-    const activeSandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
-
-    return {
-      repository,
-      folders: folders
-        .filter((folder) => folder.systemKey !== undefined)
-        .map((folder) => ({ systemKey: folder.systemKey as string, folderId: folder._id })),
-      activeSandbox,
-    };
+    return { repository };
   },
 });
 

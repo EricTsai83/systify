@@ -403,3 +403,91 @@ export async function failStaleActiveJob(
     },
   );
 }
+
+// ─── Stale recovery ───────────────────────────────────────────────────────
+
+/**
+ * Eligibility predicate for stale-job recovery. Returns `true` when the
+ * job is currently:
+ *
+ *   - present (`!== null`),
+ *   - of the expected kind,
+ *   - in an active status (`queued` or `running`),
+ *   - past its lease expiration (`leaseExpiresAt <= now`), and
+ *   - matches any extra `predicate` (used to discriminate kinds that
+ *     share a `kind` literal — e.g. Failure Mode Analysis vs Library
+ *     System Design both ride `kind: "system_design"` and split on
+ *     `requestedCommand`).
+ *
+ * Pure — takes a pre-loaded job document so callers can decide
+ * separately what to do with the same lookup result. The simple
+ * recoveries hand straight off to {@link runStaleJobRecovery}; the chat
+ * recovery checks eligibility here and then runs an extensive cleanup
+ * ceremony (drain tool events, patch the assistant message, settle
+ * stream state) before its own internal call to {@link failStaleActiveJob}.
+ *
+ * The TypeScript predicate narrows `job` to `Doc<"jobs">` so callers
+ * using the result inside an `if` block can dereference `job.xxx`
+ * without re-asserting non-null.
+ */
+export function isJobStaleAndRecoverable(
+  job: Doc<"jobs"> | null,
+  now: number,
+  options: {
+    expectedKind: JobKind;
+    predicate?: (job: Doc<"jobs">) => boolean;
+  },
+): job is Doc<"jobs"> {
+  if (
+    !job ||
+    job.kind !== options.expectedKind ||
+    !isActiveJobStatus(job.status) ||
+    typeof job.leaseExpiresAt !== "number" ||
+    job.leaseExpiresAt > now
+  ) {
+    return false;
+  }
+  return options.predicate ? options.predicate(job) : true;
+}
+
+/**
+ * Full stale-recovery mutation helper for the common case: load the
+ * job, check eligibility via {@link isJobStaleAndRecoverable}, and call
+ * {@link failStaleActiveJob} when the check passes.
+ *
+ * Returns `{ recovered: true }` when the helper actually transitioned
+ * a stale job to `failed`, and `{ recovered: false }` when the job was
+ * healthy, terminal, never existed, or lost the race to a concurrent
+ * recovery (e.g. another scheduler tick). Most callers ignore the
+ * result; cron-driven callers ({@link reconcileStaleInteractiveJobs})
+ * use the boolean only when they need to count actual recoveries.
+ *
+ * Callers that need to do additional cleanup work alongside the
+ * transition (chat: drain tool events, patch the assistant message)
+ * should NOT use this helper. Load the job themselves, call
+ * {@link isJobStaleAndRecoverable} for the same eligibility gate, then
+ * run their own ceremony — that pattern keeps the eligibility logic in
+ * one place without forcing this helper to grow callbacks.
+ */
+export async function runStaleJobRecovery(
+  ctx: MutationCtx,
+  args: {
+    jobId: Id<"jobs">;
+    expectedKind: JobKind;
+    errorMessage: string;
+    predicate?: (job: Doc<"jobs">) => boolean;
+  },
+): Promise<{ recovered: boolean }> {
+  const now = Date.now();
+  const job = await ctx.db.get(args.jobId);
+  if (!isJobStaleAndRecoverable(job, now, { expectedKind: args.expectedKind, predicate: args.predicate })) {
+    return { recovered: false };
+  }
+  const failedJob = await failStaleActiveJob(ctx, {
+    jobId: args.jobId,
+    expectedKind: args.expectedKind,
+    now,
+    errorMessage: args.errorMessage,
+  });
+  return { recovered: failedJob !== null };
+}

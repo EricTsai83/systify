@@ -1,10 +1,11 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalMutation, mutation, query, type MutationCtx } from "../_generated/server";
 import { requireViewerIdentity } from "../lib/auth";
 import { chatModeValidator, getDefaultThreadMode } from "../lib/chatMode";
 import { loadOwnedDoc, requireOwnedDoc } from "../lib/ownedDocs";
+import { MAX_RENAME_TITLE_LENGTH, NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
 import { MAX_STREAM_CHUNKS_PER_PASS, MAX_VISIBLE_MESSAGES } from "../lib/constants";
 import { touchRepositoryLastAccessed } from "../lib/repositoryPalette";
 import { loadRecentMessages } from "./context";
@@ -176,15 +177,7 @@ export const createThread = mutation({
       throw new Error(`'${mode}' mode requires an attached repository.`);
     }
 
-    let title = args.title;
-    if (repositoryId) {
-      const { doc: repository } = await requireOwnedDoc(ctx, repositoryId, {
-        notFoundMessage: "Repository not found.",
-      });
-      title ??= `${repository.sourceRepoName} chat`;
-    } else {
-      title ??= "New design conversation";
-    }
+    const title = args.title ?? NEW_THREAD_DEFAULT_TITLE;
 
     const threadId = await ctx.db.insert("threads", {
       repositoryId,
@@ -234,7 +227,7 @@ export const createLibraryAskThread = mutation({
     const threadId = await ctx.db.insert("threads", {
       repositoryId: args.repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
-      title: args.title ?? "Library Ask",
+      title: args.title ?? NEW_THREAD_DEFAULT_TITLE,
       mode: "library",
       lastMessageAt: Date.now(),
       artifactContext: artifactContext.length > 0 ? artifactContext : undefined,
@@ -494,5 +487,47 @@ export const cleanupOrphanedMessageStreams = internalMutation({
         threadId: args.threadId,
       });
     }
+  },
+});
+
+/**
+ * Manual thread rename, driven by the sidebar's inline-edit affordance
+ * (double-click the title text, Enter / blur to commit, Esc to cancel).
+ *
+ * Errors use the structured `ConvexError({ code, message })` shape so
+ * `toUserErrorMessage` on the client extracts a clean message from
+ * `error.data.message`. A plain `ConvexError(string)` would force the
+ * client to fall back to `error.message`, which Convex wraps with
+ * transport noise (`[CONVEX M(chat/threads:renameThread)] [Request ID:
+ * ...]`) — a poor toast.
+ *
+ * The autogen path (`generateThreadTitle`) guards against overwriting a
+ * renamed thread via `isDefaultTitle` — any non-default title (including a
+ * manual rename that happens to equal the autogen output) wins over a
+ * late-arriving LLM patch.
+ */
+export const renameThread = mutation({
+  args: {
+    threadId: v.id("threads"),
+    title: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await requireOwnedDoc(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
+    const trimmed = args.title.trim();
+    if (trimmed.length === 0) {
+      throw new ConvexError({
+        code: "INVALID_TITLE",
+        message: "Title cannot be empty.",
+      });
+    }
+    if (trimmed.length > MAX_RENAME_TITLE_LENGTH) {
+      throw new ConvexError({
+        code: "INVALID_TITLE",
+        message: `Title must be at most ${MAX_RENAME_TITLE_LENGTH} characters.`,
+      });
+    }
+    await ctx.db.patch(args.threadId, { title: trimmed, userEditedTitle: true });
   },
 });

@@ -9,6 +9,7 @@ import { chatModeValidator, resolveDiscussGrounding, type ChatMode } from "../li
 import { enqueueJob, findActiveJob } from "../lib/jobs";
 import { requireActiveRepositoryForViewer } from "../lib/repositoryAccess";
 import { requireOwnedDoc } from "../lib/ownedDocs";
+import { NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
 import {
   CHAT_JOB_LEASE_MS,
   consumeChatGlobalRateLimit,
@@ -127,6 +128,21 @@ async function insertChatTurn(
     jobId,
   });
 
+  // Fire-and-forget title autogen on the first user message of a thread.
+  // The Vercel-AI-Chatbot pattern: a parallel scheduler tick runs the
+  // (cheap) summary LLM call without blocking the assistant streaming
+  // path, then patches the thread row only if the title is still the
+  // default literal. `lastAssistantMessageAt === undefined` is the cheapest
+  // "first message" probe — it flips to a number the moment the assistant
+  // streaming path lands a delta, so subsequent user messages never
+  // re-trigger autogen.
+  if (args.thread.lastAssistantMessageAt === undefined) {
+    await ctx.scheduler.runAfter(0, internal.chat.titlesNode.generateThreadTitle, {
+      threadId: args.thread._id,
+      userMessageId,
+    });
+  }
+
   return { jobId, userMessageId, assistantMessageId };
 }
 
@@ -180,13 +196,7 @@ export const sendMessageStartingNewThread = mutation({
     await consumeChatRateLimit(ctx, identity.tokenIdentifier);
     await consumeChatGlobalRateLimit(ctx);
 
-    let title = args.title;
-    if (repositoryId) {
-      const repo = await ctx.db.get(repositoryId);
-      title ??= repo ? `${repo.sourceRepoName} chat` : "New chat";
-    } else {
-      title ??= "New design conversation";
-    }
+    const title = args.title ?? NEW_THREAD_DEFAULT_TITLE;
 
     const threadId = await ctx.db.insert("threads", {
       repositoryId,

@@ -9,7 +9,12 @@ import { internalAction } from "./_generated/server";
 import { createSandboxTools } from "./chat/sandboxTools";
 import { resolveModelForReply } from "./chat/modelSelection";
 import { getSandboxFsClient } from "./daytona";
-import { ensureSandboxReady, SandboxPreparationError, type SandboxPreparationStage } from "./lib/sandboxLiveness";
+import {
+  ensureSandboxReady,
+  type EnsureSandboxReadyResult,
+  SandboxPreparationError,
+  type SandboxPreparationStage,
+} from "./lib/sandboxLiveness";
 import { logErrorWithId, logInfo, logWarn } from "./lib/observability";
 import {
   SYSTEM_DESIGN_KIND_TITLES,
@@ -82,8 +87,10 @@ export const runSystemDesignGeneration = internalAction({
     // needs a ready sandbox. `ensureSandboxReady` probes / wakes / provisions
     // / clones as needed and reports each stage as job progress. On failure
     // the whole run is failed with the structured `userFacingMessage` — no
-    // kinds run, because the user requested them together.
-    let liveSandbox: Doc<"sandboxes"> | null = context.activeSandbox;
+    // kinds run, because the user requested them together. The returned
+    // `EnsureSandboxReadyResult` already carries the post-clone `remoteId`
+    // and `repoPath`, so the per-kind LLM passes consume `prepared`
+    // directly without a redundant DB re-fetch.
     const stageLabel: Record<SandboxPreparationStage, string> = {
       probing: "Preparing environment for your request…",
       waking: "Waking up the repository sandbox…",
@@ -91,8 +98,9 @@ export const runSystemDesignGeneration = internalAction({
       cloning: "Cloning repository…",
       polling: "Preparing environment for your request…",
     };
+    let prepared: EnsureSandboxReadyResult;
     try {
-      const prepared = await ensureSandboxReady(
+      prepared = await ensureSandboxReady(
         ctx,
         {
           repositoryId: args.repositoryId,
@@ -107,9 +115,6 @@ export const runSystemDesignGeneration = internalAction({
           });
         },
       );
-      // Re-fetch the sandbox row so the LLM pass sees the post-clone state
-      // (`remoteId`, `repoPath`, status=ready) without re-reading per kind.
-      liveSandbox = await ctx.runQuery(internal.ops.getSandboxRow, { sandboxId: prepared.sandboxId });
     } catch (error) {
       if (error instanceof SandboxPreparationError) {
         await ctx.runMutation(internal.systemDesign.failGeneration, {
@@ -140,7 +145,7 @@ export const runSystemDesignGeneration = internalAction({
       await ctx.runMutation(internal.systemDesign.refreshGenerationLease, { jobId: args.jobId });
 
       try {
-        const result = await generateLlm(kind, liveSandbox, context.repository);
+        const result = await generateLlm(kind, prepared, context.repository);
         await ctx.runMutation(internal.systemDesign.persistGeneratedArtifact, {
           repositoryId: args.repositoryId,
           ownerTokenIdentifier: args.ownerTokenIdentifier,
@@ -370,12 +375,13 @@ emit metrics or has no run-books, say so directly rather than padding.`,
 
 async function generateLlm(
   kind: SystemDesignKind,
-  sandbox: Doc<"sandboxes"> | null,
+  sandbox: { remoteId: string; repoPath: string },
   repository: Doc<"repositories">,
 ): Promise<{ contentMarkdown: string; summary: string }> {
-  if (!sandbox || !sandbox.remoteId || !sandbox.repoPath) {
-    throw new Error("Sandbox is not provisioned. Provision a sandbox to generate this document.");
-  }
+  // `sandbox` is the post-clone `EnsureSandboxReadyResult` projected to
+  // the two fields this function actually touches. Both are required
+  // strings in the source type, so no runtime presence guard is needed
+  // — the caller cannot reach this point without a ready sandbox.
   if (!process.env.OPENAI_API_KEY) {
     throw new Error("OPENAI_API_KEY is not configured on the backend.");
   }
