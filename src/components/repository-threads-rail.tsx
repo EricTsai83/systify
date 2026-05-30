@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { GlobeIcon, LockIcon, PlusIcon, PushPinIcon, TrashIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
@@ -20,6 +20,78 @@ import { cn } from "@/lib/utils";
  * of the shared `mode: "library"` persistence.
  */
 type ThreadModeFilter = ChatMode;
+
+/**
+ * Inline rename state machine shared between the repo-bound and repoless
+ * thread item components. Same UX in both rails: double-click the title to
+ * enter edit mode, Enter or blur to commit, Esc to cancel. The single click
+ * that precedes the double click is deliberately allowed to bubble up to
+ * the row (navigating to the thread) — matches the Notion / Linear / IDE
+ * explorer convention where "double-click" means "navigate to this row AND
+ * start renaming it".
+ */
+function useThreadRename({ thread, onError }: { thread: Doc<"threads">; onError: (message: string | null) => void }) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const renameThreadMutation = useMutation(api.chat.threads.renameThread);
+
+  const handleStartEdit = useCallback(() => {
+    setDraft(thread.title);
+    setIsEditing(true);
+    // The input mounts on the next render — defer focus + select until
+    // after that paint so `inputRef.current` is non-null. `queueMicrotask`
+    // is enough here because React flushes the commit before the next
+    // microtask, so the input is in the DOM by the time we ask for it.
+    queueMicrotask(() => {
+      inputRef.current?.select();
+    });
+  }, [thread.title]);
+
+  const handleCommit = useCallback(async () => {
+    setIsEditing(false);
+    const trimmed = draft.trim();
+    // No-op if the user committed an empty draft or a no-change rename —
+    // saves a server round trip and avoids surfacing the empty-string
+    // validation as a spurious toast.
+    if (!trimmed || trimmed === thread.title) {
+      return;
+    }
+    try {
+      onError(null);
+      await renameThreadMutation({ threadId: thread._id, title: trimmed });
+    } catch (error) {
+      onError(toUserErrorMessage(error, "Failed to rename thread."));
+    }
+  }, [draft, thread._id, thread.title, renameThreadMutation, onError]);
+
+  const handleCancel = useCallback(() => {
+    setIsEditing(false);
+  }, []);
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        void handleCommit();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        handleCancel();
+      }
+    },
+    [handleCommit, handleCancel],
+  );
+
+  return {
+    isEditing,
+    draft,
+    setDraft,
+    inputRef,
+    handleStartEdit,
+    handleCommit,
+    handleKeyDown,
+  };
+}
 
 export function RepositoryThreadsRail({
   repositoryId,
@@ -145,6 +217,7 @@ export function RepositoryThreadsRail({
           onDeleteThread={onDeleteThread}
           onTogglePin={handleTogglePin}
           compact={compact}
+          onError={onError}
         />
       </div>
     </div>
@@ -159,6 +232,7 @@ function ThreadsSection({
   onDeleteThread,
   onTogglePin,
   compact,
+  onError,
 }: {
   threads: Doc<"threads">[] | undefined;
   repositoriesById: Map<RepositoryId, Doc<"repositories">>;
@@ -167,6 +241,7 @@ function ThreadsSection({
   onDeleteThread: (id: ThreadId) => void;
   onTogglePin: (id: ThreadId, pinned: boolean) => void;
   compact?: boolean;
+  onError: (message: string | null) => void;
 }) {
   const previousThreadCountRef = useRef<number | null>(null);
   const liveRegionRef = useRef<HTMLSpanElement | null>(null);
@@ -218,6 +293,7 @@ function ThreadsSection({
                 onDeleteThread={onDeleteThread}
                 onTogglePin={onTogglePin}
                 compact={compact}
+                onError={onError}
               />
             </div>
           )}
@@ -243,6 +319,7 @@ function ThreadsSection({
                   onDeleteThread={onDeleteThread}
                   onTogglePin={onTogglePin}
                   compact={compact}
+                  onError={onError}
                 />
               )}
             </div>
@@ -262,6 +339,7 @@ const ThreadsList = memo(function ThreadsList({
   onDeleteThread,
   onTogglePin,
   compact,
+  onError,
 }: {
   threads: Doc<"threads">[];
   repositoriesById: Map<RepositoryId, Doc<"repositories">>;
@@ -271,6 +349,7 @@ const ThreadsList = memo(function ThreadsList({
   onDeleteThread: (id: ThreadId) => void;
   onTogglePin: (id: ThreadId, pinned: boolean) => void;
   compact?: boolean;
+  onError: (message: string | null) => void;
 }) {
   return (
     <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-300 ease-out">
@@ -279,55 +358,117 @@ const ThreadsList = memo(function ThreadsList({
         const isPinned = Boolean(thread.pinnedAt);
         const repository = thread.repositoryId ? repositoriesById.get(thread.repositoryId) : undefined;
         return (
-          <div key={thread._id} className="group relative">
-            <SidebarMenuButton
-              selected={isSelected}
-              onClick={() => onSelectThread(thread._id, thread.mode)}
-              onMouseEnter={() => onPrewarmThread(thread._id)}
-              onFocus={() => onPrewarmThread(thread._id)}
-              className={cn("py-1.5 pr-16", compact && "py-1")}
-            >
-              <div className="min-w-0 flex-1">
-                <p className={cn("truncate font-medium text-foreground", compact ? "text-[11px]" : "text-xs")}>
-                  {thread.title}
-                </p>
-                <ThreadRepoBadge repository={repository} />
-              </div>
-            </SidebarMenuButton>
-            <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  "pointer-events-auto h-6 w-6 transition-opacity focus-visible:opacity-100 group-hover:opacity-100",
-                  isPinned
-                    ? "text-foreground opacity-100 hover:text-muted-foreground"
-                    : "text-muted-foreground opacity-0 hover:text-foreground",
-                )}
-                onClick={() => onTogglePin(thread._id, !isPinned)}
-                aria-label={isPinned ? "Unpin thread" : "Pin thread"}
-                aria-pressed={isPinned}
-                title={isPinned ? "Unpin thread" : "Pin thread"}
-              >
-                <PushPinIcon size={13} weight={isPinned ? "fill" : "regular"} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-                onClick={() => onDeleteThread(thread._id)}
-                aria-label="Delete thread"
-                title="Delete thread"
-              >
-                <TrashIcon size={13} weight="bold" />
-              </Button>
-            </div>
-          </div>
+          <ThreadItem
+            key={thread._id}
+            thread={thread}
+            isSelected={isSelected}
+            isPinned={isPinned}
+            repository={repository}
+            onSelectThread={onSelectThread}
+            onPrewarmThread={onPrewarmThread}
+            onDeleteThread={onDeleteThread}
+            onTogglePin={onTogglePin}
+            compact={compact}
+            onError={onError}
+          />
         );
       })}
     </div>
   );
 });
+
+function ThreadItem({
+  thread,
+  isSelected,
+  isPinned,
+  repository,
+  onSelectThread,
+  onPrewarmThread,
+  onDeleteThread,
+  onTogglePin,
+  compact,
+  onError,
+}: {
+  thread: Doc<"threads">;
+  isSelected: boolean;
+  isPinned: boolean;
+  repository: Doc<"repositories"> | undefined;
+  onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
+  onPrewarmThread: (id: ThreadId) => void;
+  onDeleteThread: (id: ThreadId) => void;
+  onTogglePin: (id: ThreadId, pinned: boolean) => void;
+  compact?: boolean;
+  onError: (message: string | null) => void;
+}) {
+  const { isEditing, draft, setDraft, inputRef, handleStartEdit, handleCommit, handleKeyDown } = useThreadRename({
+    thread,
+    onError,
+  });
+
+  return (
+    <div key={thread._id} className="group relative">
+      <SidebarMenuButton
+        selected={isSelected}
+        onClick={isEditing ? undefined : () => onSelectThread(thread._id, thread.mode)}
+        onMouseEnter={() => onPrewarmThread(thread._id)}
+        onFocus={() => onPrewarmThread(thread._id)}
+        className={cn("py-1.5 pr-16", compact && "py-1")}
+      >
+        <div className="min-w-0 flex-1">
+          {isEditing ? (
+            <input
+              ref={inputRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onBlur={() => void handleCommit()}
+              className={cn(
+                "w-full truncate border-0 bg-transparent font-medium text-foreground outline-none ring-0",
+                compact ? "text-[11px]" : "text-xs",
+              )}
+            />
+          ) : (
+            <p
+              onDoubleClick={handleStartEdit}
+              className={cn("cursor-text truncate font-medium text-foreground", compact ? "text-[11px]" : "text-xs")}
+            >
+              {thread.title}
+            </p>
+          )}
+          <ThreadRepoBadge repository={repository} />
+        </div>
+      </SidebarMenuButton>
+      <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+        <Button
+          variant="ghost"
+          size="icon"
+          className={cn(
+            "pointer-events-auto h-6 w-6 transition-opacity focus-visible:opacity-100 group-hover:opacity-100",
+            isPinned
+              ? "text-foreground opacity-100 hover:text-muted-foreground"
+              : "text-muted-foreground opacity-0 hover:text-foreground",
+          )}
+          onClick={() => onTogglePin(thread._id, !isPinned)}
+          aria-label={isPinned ? "Unpin thread" : "Pin thread"}
+          aria-pressed={isPinned}
+          title={isPinned ? "Unpin thread" : "Pin thread"}
+        >
+          <PushPinIcon size={13} weight={isPinned ? "fill" : "regular"} />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+          onClick={() => onDeleteThread(thread._id)}
+          aria-label="Delete thread"
+          title="Delete thread"
+        >
+          <TrashIcon size={13} weight="bold" />
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function ThreadRepoBadge({ repository }: { repository: Doc<"repositories"> | undefined }) {
   if (!repository) {
@@ -353,11 +494,13 @@ export function RepolessChatsRail({
   onSelectThread,
   onDeleteThread,
   onRequestNewThread,
+  onError = () => {},
 }: {
   selectedThreadId: ThreadId | null;
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onDeleteThread: (id: ThreadId) => void;
   onRequestNewThread?: () => void;
+  onError?: (message: string | null) => void;
 }) {
   const threads = useQuery(api.chat.threads.listRepolessThreads, {});
   const prewarmThread = usePrewarmThread();
@@ -391,36 +534,82 @@ export function RepolessChatsRail({
               {threads.map((thread) => {
                 const isSelected = selectedThreadId === thread._id;
                 return (
-                  <div key={thread._id} className="group relative">
-                    <SidebarMenuButton
-                      selected={isSelected}
-                      onClick={() => onSelectThread(thread._id, thread.mode)}
-                      onMouseEnter={() => prewarmThread(thread._id)}
-                      onFocus={() => prewarmThread(thread._id)}
-                      className="py-1.5 pr-10"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-medium text-foreground">{thread.title}</p>
-                      </div>
-                    </SidebarMenuButton>
-                    <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-                        onClick={() => onDeleteThread(thread._id)}
-                        aria-label="Delete thread"
-                        title="Delete thread"
-                      >
-                        <TrashIcon size={13} weight="bold" />
-                      </Button>
-                    </div>
-                  </div>
+                  <RepolessThreadItem
+                    key={thread._id}
+                    thread={thread}
+                    isSelected={isSelected}
+                    onSelectThread={onSelectThread}
+                    onPrewarmThread={prewarmThread}
+                    onDeleteThread={onDeleteThread}
+                    onError={onError}
+                  />
                 );
               })}
             </div>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function RepolessThreadItem({
+  thread,
+  isSelected,
+  onSelectThread,
+  onPrewarmThread,
+  onDeleteThread,
+  onError,
+}: {
+  thread: Doc<"threads">;
+  isSelected: boolean;
+  onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
+  onPrewarmThread: (id: ThreadId) => void;
+  onDeleteThread: (id: ThreadId) => void;
+  onError: (message: string | null) => void;
+}) {
+  const { isEditing, draft, setDraft, inputRef, handleStartEdit, handleCommit, handleKeyDown } = useThreadRename({
+    thread,
+    onError,
+  });
+
+  return (
+    <div className="group relative">
+      <SidebarMenuButton
+        selected={isSelected}
+        onClick={isEditing ? undefined : () => onSelectThread(thread._id, thread.mode)}
+        onMouseEnter={() => onPrewarmThread(thread._id)}
+        onFocus={() => onPrewarmThread(thread._id)}
+        className="py-1.5 pr-10"
+      >
+        <div className="min-w-0 flex-1">
+          {isEditing ? (
+            <input
+              ref={inputRef}
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onBlur={() => void handleCommit()}
+              className="w-full truncate border-0 bg-transparent text-xs font-medium text-foreground outline-none ring-0"
+            />
+          ) : (
+            <p onDoubleClick={handleStartEdit} className="cursor-text truncate text-xs font-medium text-foreground">
+              {thread.title}
+            </p>
+          )}
+        </div>
+      </SidebarMenuButton>
+      <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+          onClick={() => onDeleteThread(thread._id)}
+          aria-label="Delete thread"
+          title="Delete thread"
+        >
+          <TrashIcon size={13} weight="bold" />
+        </Button>
       </div>
     </div>
   );

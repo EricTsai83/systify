@@ -190,6 +190,66 @@ describe("setThreadRepository", () => {
   });
 });
 
+describe("renameThread", () => {
+  test("trims and persists a valid new title", async () => {
+    const ownerTokenIdentifier = "user|rename-happy";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const { _id: threadId } = await viewer.mutation(api.chat.threads.createThread, {});
+    await viewer.mutation(api.chat.threads.renameThread, {
+      threadId,
+      title: "   Auth Flow Overview   ",
+    });
+
+    const stored = await t.run((ctx) => ctx.db.get(threadId));
+    expect(stored?.title).toBe("Auth Flow Overview");
+  });
+
+  test("rejects an empty title", async () => {
+    const ownerTokenIdentifier = "user|rename-empty";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const { _id: threadId } = await viewer.mutation(api.chat.threads.createThread, {});
+    await expect(viewer.mutation(api.chat.threads.renameThread, { threadId, title: "   " })).rejects.toThrow(
+      /cannot be empty/i,
+    );
+  });
+
+  test("rejects a title that exceeds the cap", async () => {
+    const ownerTokenIdentifier = "user|rename-overflow";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const { _id: threadId } = await viewer.mutation(api.chat.threads.createThread, {});
+    await expect(
+      viewer.mutation(api.chat.threads.renameThread, {
+        threadId,
+        title: "x".repeat(201),
+      }),
+    ).rejects.toThrow(/at most 200/);
+  });
+
+  test("non-owner cannot rename someone else's thread", async () => {
+    const ownerTokenIdentifier = "user|rename-owner";
+    const intruderTokenIdentifier = "user|rename-intruder";
+    const t = createTestConvex();
+    const owner = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const intruder = t.withIdentity({ tokenIdentifier: intruderTokenIdentifier });
+
+    const { _id: threadId } = await owner.mutation(api.chat.threads.createThread, {});
+
+    await expect(intruder.mutation(api.chat.threads.renameThread, { threadId, title: "Hijacked" })).rejects.toThrow(
+      /thread not found/i,
+    );
+
+    // The owner's title must be untouched after the failed intruder attempt.
+    const stored = await t.run((ctx) => ctx.db.get(threadId));
+    expect(stored?.title).not.toBe("Hijacked");
+  });
+});
+
 describe("listRepolessThreads", () => {
   test("empty viewer returns no threads", async () => {
     const ownerTokenIdentifier = "user|list-repoless-empty";
