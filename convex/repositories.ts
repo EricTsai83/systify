@@ -31,7 +31,7 @@ import {
   completeRunningJob,
   findActiveJob,
   markQueuedJobRunning,
-  failStaleActiveJob,
+  runStaleJobRecovery,
 } from "./lib/jobs";
 
 const FILE_COUNT_DISPLAY_LIMIT = 400;
@@ -1035,21 +1035,9 @@ const STALE_SANDBOX_ACTIVATION_JOB_ERROR_MESSAGE = "Sandbox activation stalled a
 export const recoverStaleSandboxActivationJob = internalMutation({
   args: { jobId: v.id("jobs") },
   handler: async (ctx, args) => {
-    const job = await ctx.db.get(args.jobId);
-    const now = Date.now();
-    if (
-      !job ||
-      job.kind !== "sandbox_activation" ||
-      (job.status !== "queued" && job.status !== "running") ||
-      typeof job.leaseExpiresAt !== "number" ||
-      job.leaseExpiresAt > now
-    ) {
-      return;
-    }
-    await failStaleActiveJob(ctx, {
+    await runStaleJobRecovery(ctx, {
       jobId: args.jobId,
       expectedKind: "sandbox_activation",
-      now,
       errorMessage: STALE_SANDBOX_ACTIVATION_JOB_ERROR_MESSAGE,
     });
   },

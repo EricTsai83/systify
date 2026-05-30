@@ -15,6 +15,7 @@ import {
   completeRunningJob,
   failRunningJob,
   failStaleActiveJob,
+  isJobStaleAndRecoverable,
   markQueuedJobRunning,
   refreshRunningJobLease,
 } from "../lib/jobs";
@@ -1301,19 +1302,13 @@ export const recoverStaleChatJob = internalMutation({
     errorMessage: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const job = await ctx.db.get(args.jobId);
     const now = Date.now();
+    const job = await ctx.db.get(args.jobId);
     // Eligibility pre-check stays at the call site so we skip every
     // read (message lookup, fold/drain, stream load) when the job is
     // not actually stale. `failStaleActiveJob` inside the shared
     // settlement re-checks the lease as a second-level guard.
-    if (
-      !job ||
-      job.kind !== "chat" ||
-      (job.status !== "queued" && job.status !== "running") ||
-      typeof job.leaseExpiresAt !== "number" ||
-      job.leaseExpiresAt > now
-    ) {
+    if (!isJobStaleAndRecoverable(job, now, { expectedKind: "chat" })) {
       return;
     }
 

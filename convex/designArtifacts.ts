@@ -19,9 +19,9 @@ import {
   completeRunningJob,
   enqueueJob,
   failRunningJob,
-  failStaleActiveJob,
   findActiveJob,
   markQueuedJobRunning,
+  runStaleJobRecovery,
 } from "./lib/jobs";
 
 const ACTIVE_FAILURE_MODE_JOB_SCAN_LIMIT = 10;
@@ -228,26 +228,20 @@ export const recoverStaleFailureModeJob = internalMutation({
     errorMessage: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const job = await ctx.db.get(args.jobId);
-    const now = Date.now();
-    if (
-      !job ||
-      job.kind !== "system_design" ||
-      (job.status !== "queued" && job.status !== "running") ||
-      !job.requestedCommand?.startsWith("failure_mode_analysis:") ||
-      typeof job.leaseExpiresAt !== "number" ||
-      job.leaseExpiresAt > now
-    ) {
-      return;
-    }
-
+    // The Reference ID is minted unconditionally before the recovery
+    // attempt so the user-visible error string stays stable regardless
+    // of whether the helper actually transitioned the job. The id is
+    // cheap to mint and discarded when the recovery short-circuits.
     const errorId = createOpaqueErrorId("design_artifacts");
     const message = `${args.errorMessage ?? STALE_FAILURE_MODE_JOB_ERROR_MESSAGE}\n\nReference: ${errorId}`;
-    await failStaleActiveJob(ctx, {
+    await runStaleJobRecovery(ctx, {
       jobId: args.jobId,
       expectedKind: "system_design",
-      now,
       errorMessage: message,
+      // Positive discriminator: only FMA-prefixed `system_design` jobs
+      // belong to this recovery. The negative side (non-FMA Library
+      // System Design jobs) is handled in `systemDesign.ts`.
+      predicate: (job) => job.requestedCommand?.startsWith("failure_mode_analysis:") === true,
     });
   },
 });
