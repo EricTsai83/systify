@@ -154,9 +154,9 @@ describe("ArtifactStore — parent invariant", () => {
       threadId,
       repositoryId,
       ownerTokenIdentifier: OWNER,
-      kind: "failure_mode_analysis",
+      kind: "design_review",
       title: "risk",
-      summary: "failure modes",
+      summary: "design review",
       contentMarkdown: "## Risk",
     });
 
@@ -379,8 +379,8 @@ describe("ArtifactStore — filters", () => {
     await t.mutation(internal.artifactStore.createArtifact, {
       threadId,
       ownerTokenIdentifier: OWNER,
-      kind: "failure_mode_analysis",
-      title: "FMA 1",
+      kind: "design_review",
+      title: "Review 1",
       summary: "s",
       contentMarkdown: "m",
     });
@@ -389,13 +389,13 @@ describe("ArtifactStore — filters", () => {
       threadId,
       kind: "architecture_diagram",
     });
-    const fmas = await t.query(internal.artifactStore.listByThreadAndKind, {
+    const reviews = await t.query(internal.artifactStore.listByThreadAndKind, {
       threadId,
-      kind: "failure_mode_analysis",
+      kind: "design_review",
     });
 
     expect(diagrams.map((artifact) => artifact.title)).toEqual(["Diagram 1"]);
-    expect(fmas.map((artifact) => artifact.title)).toEqual(["FMA 1"]);
+    expect(reviews.map((artifact) => artifact.title)).toEqual(["Review 1"]);
   });
 
   test("listByRepository returns only artifacts attached to the requested repository", async () => {

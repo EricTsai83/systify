@@ -13,7 +13,6 @@ const {
   deleteSandboxMock,
   getSandboxStateMock,
   provisionSandboxMock,
-  runFocusedInspectionMock,
   stopSandboxMock,
 } = vi.hoisted(() => ({
   assertSandboxProvisioningConfiguredMock: vi.fn(),
@@ -21,7 +20,6 @@ const {
   deleteSandboxMock: vi.fn(),
   getSandboxStateMock: vi.fn(),
   provisionSandboxMock: vi.fn(),
-  runFocusedInspectionMock: vi.fn(),
   stopSandboxMock: vi.fn(),
 }));
 
@@ -31,7 +29,6 @@ vi.mock("./daytona", () => ({
   deleteSandbox: deleteSandboxMock,
   getSandboxState: getSandboxStateMock,
   provisionSandbox: provisionSandboxMock,
-  runFocusedInspection: runFocusedInspectionMock,
   stopSandbox: stopSandboxMock,
 }));
 
@@ -43,7 +40,6 @@ describe("repository deletion cleanup", () => {
     deleteSandboxMock.mockReset();
     getSandboxStateMock.mockReset();
     provisionSandboxMock.mockReset();
-    runFocusedInspectionMock.mockReset();
     stopSandboxMock.mockReset();
   });
 

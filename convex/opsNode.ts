@@ -67,7 +67,6 @@ type ExpiredSandbox = {
 type StaleInteractiveJob = {
   jobId: Id<"jobs">;
   kind: "chat" | "system_design" | "sandbox_activation";
-  requestedCommand?: string;
 };
 
 type SandboxLookupResult = {
@@ -173,15 +172,9 @@ export const reconcileStaleInteractiveJobs = internalAction({
         continue;
       }
 
-      if (job.requestedCommand?.startsWith("failure_mode_analysis:")) {
-        await ctx.runMutation(internal.designArtifacts.recoverStaleFailureModeJob, {
-          jobId: job.jobId,
-        });
-      } else {
-        await ctx.runMutation(internal.systemDesign.recoverStaleSystemDesignJob, {
-          jobId: job.jobId,
-        });
-      }
+      await ctx.runMutation(internal.systemDesign.recoverStaleSystemDesignJob, {
+        jobId: job.jobId,
+      });
     }
   },
 });

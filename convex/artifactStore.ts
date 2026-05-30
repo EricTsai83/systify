@@ -68,8 +68,8 @@ export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArt
     version: 1,
     folderId: args.folderId,
     alignedImportCommitSha: args.alignedImportCommitSha,
-    // Every artifact is produced by a sandbox-grounded generator (System
-    // Design + FMA), so we stamp `lastVerifiedAt` at creation. The
+    // Every artifact is produced by a sandbox-grounded generator (Library
+    // System Design), so we stamp `lastVerifiedAt` at creation. The
     // presence of this field is the single signal the Library freshness
     // UI reads.
     lastVerifiedAt: now,
@@ -221,7 +221,6 @@ const artifactKindValidator = v.union(
   v.literal("architecture_diagram"),
   v.literal("entrypoints"),
   v.literal("dependency_overview"),
-  v.literal("failure_mode_analysis"),
   v.literal("trade_off_matrix"),
   v.literal("migration_plan"),
   v.literal("capacity_estimate"),

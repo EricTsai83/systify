@@ -146,7 +146,6 @@ Because of this, the UI does not need to know the internal implementation of eve
 - `deployment_overview`
 - `security_overview`
 - `operations_overview`
-- `failure_mode_analysis`
 - `trade_off_matrix`
 - `migration_plan`
 - `capacity_estimate`
