@@ -229,10 +229,17 @@ function extractRetryAfterMs(error: unknown): number | null {
     const raw = headerMap[name];
     if (typeof raw !== "string" || raw.length === 0) continue;
 
-    // Try numeric seconds first (common case)
-    const seconds = Number.parseFloat(raw);
-    if (Number.isFinite(seconds) && seconds > 0) {
-      return Math.min(Math.ceil(seconds * 1000), MAX_DELAY_MS);
+    // Try numeric seconds first (common case). Guard against
+    // `Number.parseFloat` swallowing the year out of an RFC3339
+    // timestamp like "2026-06-01T12:00:00Z" (which would yield 2026
+    // and be treated as a 2026-second wait) by only taking the
+    // numeric branch when `raw` is a plain numeric token.
+    const trimmed = raw.trim();
+    if (/^-?\d+(?:\.\d+)?$/.test(trimmed)) {
+      const seconds = Number.parseFloat(trimmed);
+      if (Number.isFinite(seconds) && seconds > 0) {
+        return Math.min(Math.ceil(seconds * 1000), MAX_DELAY_MS);
+      }
     }
 
     // Try RFC3339 timestamp (Anthropic ratelimit reset headers)

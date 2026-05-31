@@ -289,10 +289,16 @@ export function diffSummaries(
 
 export function parseEvalRecordsJsonl(jsonl: string): EvalRunRecord[] {
   const out: EvalRunRecord[] = [];
-  for (const line of jsonl.split("\n")) {
-    const trimmed = line.trim();
+  const lines = jsonl.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
     if (!trimmed) continue;
-    out.push(JSON.parse(trimmed) as EvalRunRecord);
+    try {
+      out.push(JSON.parse(trimmed) as EvalRunRecord);
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      throw new Error(`Failed to parse JSONL at line ${i + 1}: ${errMsg}\nContent: ${trimmed.slice(0, 100)}`);
+    }
   }
   return out;
 }

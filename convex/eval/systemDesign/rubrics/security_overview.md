@@ -28,7 +28,7 @@ Scores how accurately a Security Overview describes the project's security postu
 
 Return ONLY a JSON object — no prose, no code fence.
 
-```
+```json
 {
   "axes": {
     "faithfulness": <1-5>,

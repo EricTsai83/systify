@@ -27,7 +27,7 @@ Scores how completely and accurately an API Surface Overview enumerates the exte
 
 Return ONLY a JSON object — no prose, no code fence.
 
-```
+```json
 {
   "axes": {
     "faithfulness": <1-5>,

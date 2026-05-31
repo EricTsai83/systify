@@ -27,7 +27,7 @@ Scores how well a Deployment Overview describes how the project actually runs in
 
 Return ONLY a JSON object — no prose, no code fence.
 
-```
+```json
 {
   "axes": {
     "faithfulness": <1-5>,

@@ -127,11 +127,28 @@ export function parseJudgeOutput(rawText: string): JudgeResult {
     };
   }
 
+  const axesRecord = axesRaw as Record<string, unknown>;
+  const requiredAxes = ["faithfulness", "completeness", "specificity", "citationQuality"] as const;
+  for (const key of requiredAxes) {
+    if (!(key in axesRecord) || typeof axesRecord[key] !== "number") {
+      return {
+        axes: ZERO_AXES,
+        comments:
+          typeof (parsed as { comments?: unknown }).comments === "string"
+            ? (parsed as { comments: string }).comments
+            : "",
+        overallScore: 0,
+        parseError: `Judge output JSON missing or invalid axis '${key}'.`,
+        rawOutput: rawText.slice(0, 1024),
+      };
+    }
+  }
+
   const axes: JudgeAxisScores = {
-    faithfulness: clampAxis((axesRaw as Record<string, unknown>).faithfulness),
-    completeness: clampAxis((axesRaw as Record<string, unknown>).completeness),
-    specificity: clampAxis((axesRaw as Record<string, unknown>).specificity),
-    citationQuality: clampAxis((axesRaw as Record<string, unknown>).citationQuality),
+    faithfulness: clampAxis(axesRecord.faithfulness as number),
+    completeness: clampAxis(axesRecord.completeness as number),
+    specificity: clampAxis(axesRecord.specificity as number),
+    citationQuality: clampAxis(axesRecord.citationQuality as number),
   };
 
   const overallScore =

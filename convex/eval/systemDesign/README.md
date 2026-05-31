@@ -38,14 +38,14 @@ The eval action provisions a Daytona sandbox for each corpus entry. The repos mu
 
 Full sweep across all kinds at the default budget (20), using the catalog's default `(openai, gpt-5)`:
 
-```
+```bash
 bun run eval:system-design \
   --repos=py-click:k57abc...,py-fastapi:k58def...,ts-chalk:k59ghi...,ts-swr:k60jkl...,go-cobra:k61mno...,go-grafana:k62pqr...
 ```
 
 Single kind, budget sweep (cheap iteration loop when tuning one prompt):
 
-```
+```bash
 bun run eval:system-design \
   --repos=ts-swr:k60jkl...,go-cobra:k61mno... \
   --kinds=architecture_diagram \
@@ -54,20 +54,20 @@ bun run eval:system-design \
 
 Cross-provider comparison:
 
-```
+```bash
 bun run eval:system-design --repos=... --provider=anthropic --model=claude-sonnet-4-6 \
   --output=eval-results/2026-06-01-anthropic-sonnet.jsonl
 ```
 
 Smoke run with no judge (validates the prompt + sandbox pipeline without paying for judge tokens):
 
-```
+```bash
 bun run eval:system-design --repos=py-click:k57abc... --no-judge
 ```
 
 ## Reading a report
 
-```
+```bash
 bun run eval:report eval-results/2026-06-01.jsonl
 ```
 
@@ -81,7 +81,7 @@ The report prints:
 
 ## Diffing two runs
 
-```
+```bash
 bun run eval:diff eval-results/before.jsonl eval-results/after.jsonl
 ```
 

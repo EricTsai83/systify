@@ -27,7 +27,7 @@ Scores how well an Architecture Overview captures the system shape and component
 
 Return ONLY a JSON object — no prose, no code fence.
 
-```
+```json
 {
   "axes": {
     "faithfulness": <1-5>,

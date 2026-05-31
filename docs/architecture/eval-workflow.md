@@ -40,7 +40,7 @@ gitignored.
 3. Run the harness. The CLI lives in `scripts/evalSystemDesign.ts` and
    wraps the `runEval` internal action at `convex/eval/systemDesign/runner.ts:62`:
 
-   ```
+   ```bash
    bun run eval:system-design \
      --repos=py-click:k57abc...,ts-swr:k60jkl...,go-cobra:k61mno... \
      [--corpus=py-click,ts-swr] \
