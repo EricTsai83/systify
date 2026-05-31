@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { FolderNavigator } from "@/components/folder-navigator";
 import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
@@ -52,31 +52,6 @@ export function ArtifactPanel({
   selectedFolderId?: FolderId | null;
 }) {
   const { isUnseen, markViewed } = useArtifactViewState(repositoryId);
-  // Internal fallback when the caller doesn't provide a controlled
-  // `selectedFolderId`. The chat right rail leaves selection uncontrolled.
-  // Library reader callers keep external control by passing
-  // `selectedFolderId` + `onSelectFolder` themselves.
-  const [internalSelectedFolderId, setInternalSelectedFolderId] = useState<FolderId | null>(null);
-  // Reset uncontrolled folder selection when the repository changes so a
-  // stale folder ID from the previous repo doesn't leak into the navigator.
-  // Tracked via setState-during-render (React's recommended pattern for
-  // prop-driven resets) so we don't take a cascading-effect hit.
-  const [trackedRepositoryId, setTrackedRepositoryId] = useState<RepositoryId | null>(repositoryId);
-  if (trackedRepositoryId !== repositoryId) {
-    setTrackedRepositoryId(repositoryId);
-    setInternalSelectedFolderId(null);
-  }
-  const isFolderSelectionControlled = selectedFolderId !== undefined;
-  const effectiveSelectedFolderId = isFolderSelectionControlled ? selectedFolderId : internalSelectedFolderId;
-  const handleSelectFolder = useCallback(
-    (folderId: FolderId | null) => {
-      if (!isFolderSelectionControlled) {
-        setInternalSelectedFolderId(folderId);
-      }
-      onSelectFolder?.(folderId);
-    },
-    [isFolderSelectionControlled, onSelectFolder],
-  );
   // Clicking a row in the panel always routes through `onOpenInReader`,
   // so it is the single chokepoint where we record the activation. The
   // Library shell has multiple activation entry points (URL, tab strip,
@@ -111,9 +86,9 @@ export function ArtifactPanel({
         <FolderNavigator
           repositoryId={repositoryId}
           artifacts={artifacts}
-          selectedFolderId={effectiveSelectedFolderId}
+          selectedFolderId={selectedFolderId}
           onSelectArtifact={handleSelectArtifact}
-          onSelectFolder={handleSelectFolder}
+          onSelectFolder={onSelectFolder}
           isUnseen={isUnseen}
           className="border-l-0"
         />

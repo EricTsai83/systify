@@ -1,5 +1,6 @@
-import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { useControllableState } from "@radix-ui/react-use-controllable-state";
 import {
   ArrowsClockwiseIcon,
   CaretDownIcon,
@@ -13,9 +14,18 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
+import { FOLDER_NAME_MAX_LENGTH } from "../../convex/artifactFolders";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { useInlineRename } from "@/hooks/use-inline-rename";
 import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
 import { toUserErrorMessage } from "@/lib/errors";
 import { buildFolderTree, type FolderTreeNode } from "@/lib/artifact-folders";
@@ -96,12 +107,57 @@ export function FolderNavigator({
   selectedArtifactId = null,
   onSelectArtifact,
   onSelectFolder,
-  selectedFolderId = null,
+  selectedFolderId: selectedFolderIdProp,
   isUnseen,
   className,
 }: FolderNavigatorProps) {
   const folders = useQuery(api.artifactFolders.listByRepository, { repositoryId });
   const createFolder = useMutation(api.artifactFolders.create);
+
+  // Selection is controllable: omit `selectedFolderId` to let the navigator
+  // own the state (chat right rail), or pass it through to centralise state
+  // in the parent (Library reader keeps the URL in sync). Either way the
+  // navigator's "+ Create folder" path and row-click handler write through
+  // `setSelectedFolderId`, so the caller never has to thread an uncontrolled
+  // fallback around the navigator.
+  const [selectedFolderId, setSelectedFolderId] = useControllableState<FolderId | null>({
+    prop: selectedFolderIdProp,
+    defaultProp: null,
+    onChange: onSelectFolder,
+  });
+
+  // Folder vs. artifact activation is mutually exclusive: opening a file
+  // clears any prior folder highlight so the tree doesn't render two
+  // "selected" rows at once when the user drills from a folder into one of
+  // its children.
+  const handleSelectArtifact = useCallback(
+    (artifactId: ArtifactId) => {
+      setSelectedFolderId(null);
+      onSelectArtifact(artifactId);
+    },
+    [onSelectArtifact, setSelectedFolderId],
+  );
+
+  // The inverse direction: when a folder gets selected, mask the artifact
+  // highlight so the tree doesn't render two "selected" rows at once. We
+  // mask (not reset) because `selectedArtifactId` is parent-owned — in the
+  // Library shell it's the active reader tab, which should stay open even
+  // when the user is poking at folders in the navigator. The next
+  // `handleSelectArtifact` call resets `selectedFolderId` and the artifact
+  // row's highlight returns.
+  const effectiveSelectedArtifactId = selectedFolderId ? null : selectedArtifactId;
+
+  // Reset selection on repo switch so a stale folder ID from the previous
+  // repo can't leak into the navigator. setState-during-render is React's
+  // recommended pattern for prop-driven resets. The block runs in both
+  // controlled and uncontrolled modes — the radix dispatcher routes through
+  // `onSelectFolder` when controlled and updates internal state otherwise,
+  // so the parent (if any) stays in sync.
+  const [trackedRepositoryId, setTrackedRepositoryId] = useState<RepositoryId>(repositoryId);
+  if (trackedRepositoryId !== repositoryId) {
+    setTrackedRepositoryId(repositoryId);
+    setSelectedFolderId(null);
+  }
 
   const [search, setSearch] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
@@ -176,7 +232,10 @@ export function FolderNavigator({
         setPendingExpandFolderId(parentFolderId);
       }
       setPendingRenameFolderId(newFolderId);
-      onSelectFolder?.(newFolderId);
+      setSelectedFolderId(newFolderId);
+      // Clear any active search needle so the freshly-spawned folder isn't
+      // filtered out before it can mount and enter rename mode.
+      setSearch("");
     } catch (error) {
       setCreateError(toUserErrorMessage(error, "Failed to create folder."));
     }
@@ -238,10 +297,10 @@ export function FolderNavigator({
                     node={node}
                     artifactsByFolder={artifactsByFolder}
                     indent={0}
-                    selectedArtifactId={selectedArtifactId}
+                    selectedArtifactId={effectiveSelectedArtifactId}
                     selectedFolderId={selectedFolderId}
-                    onSelectArtifact={onSelectArtifact}
-                    onSelectFolder={onSelectFolder}
+                    onSelectArtifact={handleSelectArtifact}
+                    onSelectFolder={setSelectedFolderId}
                     filterArtifact={filterPredicate}
                     folderMatchesSearch={folderMatchesSearch}
                     isUnseen={isUnseen}
@@ -265,8 +324,8 @@ export function FolderNavigator({
                   <ArtifactRow
                     key={artifact._id}
                     artifact={artifact}
-                    isSelected={selectedArtifactId === artifact._id}
-                    onSelect={onSelectArtifact}
+                    isSelected={effectiveSelectedArtifactId === artifact._id}
+                    onSelect={handleSelectArtifact}
                     indent={0}
                     isUnseen={isUnseen ? isUnseen(artifact) : false}
                   />
@@ -342,28 +401,48 @@ function FolderTreeBranch({
   const renameFolder = useMutation(api.artifactFolders.rename);
   const removeFolder = useMutation(api.artifactFolders.remove);
   const setFolderPinned = useMutation(api.artifactFolders.setPinned);
-  const [isRenaming, setIsRenaming] = useState(false);
-  const [draftName, setDraftName] = useState(node.name);
+  // Distinguishes a fresh-create rename session (entered via the "+" button)
+  // from a regular kebab rename. Esc during a fresh create discards the
+  // folder; Esc during a regular rename only cancels the edit. The flag
+  // lives in the host (not the hook) because the cancel side-effect is
+  // host-specific and the hook only owns the rename state machine.
+  const [wasJustCreated, setWasJustCreated] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
   const folderArtifacts = artifactsByFolder.get(node.id) ?? EMPTY_ARTIFACTS;
   const childCount = folderArtifacts.length + node.children.length;
   const isSelected = selectedFolderId === (node.id as FolderId);
   const isPinned = node.pinnedAt !== undefined;
 
-  const [isRenamePending, runRename] = useAsyncCallback(async () => {
-    const next = draftName.trim();
-    if (!next || next === node.name) {
-      setIsRenaming(false);
-      setDraftName(node.name);
-      return;
-    }
-    try {
-      await renameFolder({ folderId: node.id as FolderId, name: next });
-    } catch {
-      // Surface inline; reset to known-good name.
-      setDraftName(node.name);
-    } finally {
-      setIsRenaming(false);
-    }
+  const {
+    isEditing: isInlineEditing,
+    isCommitting: isInlineCommitting,
+    draft: inlineDraft,
+    setDraft: setInlineDraft,
+    inputRef: inlineInputRef,
+    startEdit: startInlineEdit,
+    startEditEmpty: startInlineEditEmpty,
+    commit: commitInline,
+    handleInputKeyDown: handleInlineInputKeyDown,
+  } = useInlineRename({
+    currentValue: node.name,
+    onCommit: useCallback(
+      async (next: string) => {
+        await renameFolder({ folderId: node.id as FolderId, name: next });
+        setWasJustCreated(false);
+      },
+      [renameFolder, node.id],
+    ),
+    onCancel: useCallback(() => {
+      if (wasJustCreated) {
+        // Esc during fresh-create discards the just-spawned folder so the
+        // user gets a real "abort" path. Best-effort: a failed delete leaves
+        // the folder visible and the user can clear it from the kebab.
+        void removeFolder({ folderId: node.id as FolderId, strategy: "moveContentsToParent" }).catch(() => {});
+      }
+      setWasJustCreated(false);
+    }, [removeFolder, node.id, wasJustCreated]),
+    errorFallback: "Failed to rename folder.",
+    rowRef,
   });
 
   const [isRemovePending, runRemoveMoveContents] = useAsyncCallback(async () => {
@@ -392,12 +471,18 @@ function FolderTreeBranch({
 
   useEffect(() => {
     if (pendingRenameFolderId !== (node.id as FolderId)) return;
-    // Empty draft so the user types the name from scratch (VS Code parity).
-    // Blur or Escape keep the seeded "New folder" name — see `runRename`.
-    setDraftName("");
-    setIsRenaming(true);
+    // VS Code parity: enter rename with an empty draft so the user types
+    // from scratch. Blur with empty draft is a no-op (the hook keeps the
+    // seeded "New folder" name); Esc routes through the host's `onCancel`
+    // which deletes the just-spawned folder. setState-in-effect is the
+    // pattern for one-shot prop-driven signals — the next-render guard
+    // (`pendingRenameFolderId !== node.id` once consumed) keeps it
+    // single-shot.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setWasJustCreated(true);
+    startInlineEditEmpty();
     onConsumePendingRename();
-  }, [node.id, onConsumePendingRename, pendingRenameFolderId]);
+  }, [node.id, onConsumePendingRename, pendingRenameFolderId, startInlineEditEmpty]);
 
   // Whole-row activation: clicking anywhere on the row toggles
   // expand/collapse and selects the folder, so the caret no longer needs to
@@ -410,99 +495,142 @@ function FolderTreeBranch({
 
   return (
     <div>
-      <div
-        role="button"
-        tabIndex={isRenaming ? -1 : 0}
-        aria-expanded={isOpen}
-        aria-label={node.name}
-        className={cn(
-          "group flex cursor-pointer items-center gap-1 px-1.5 py-1 text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-          isSelected ? "bg-primary/10 ring-1 ring-primary/40 hover:bg-primary/15" : "hover:bg-muted/60",
-        )}
-        style={{ paddingLeft: `${indent * 12 + 6}px` }}
-        onClick={handleRowActivate}
-        onKeyDown={(event) => {
-          if ((event.key === "Enter" || event.key === " ") && event.currentTarget === event.target) {
-            event.preventDefault();
-            handleRowActivate();
-          }
-        }}
-      >
-        <span aria-hidden className="text-muted-foreground">
-          {isOpen ? <CaretDownIcon size={11} weight="bold" /> : <CaretRightIcon size={11} weight="bold" />}
-        </span>
-        {isRenaming ? (
-          <Input
-            autoFocus
-            value={draftName}
-            onChange={(event) => setDraftName(event.target.value)}
-            onBlur={() => void runRename()}
-            onClick={(event) => event.stopPropagation()}
+      <ContextMenu>
+        <ContextMenuTrigger asChild disabled={isInlineEditing}>
+          <div
+            ref={rowRef}
+            role="button"
+            tabIndex={isInlineEditing ? -1 : 0}
+            aria-expanded={isOpen}
+            aria-label={node.name}
+            className={cn(
+              "group flex cursor-pointer items-center gap-1 px-1.5 py-1 text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+              isSelected ? "bg-primary/10 ring-1 ring-primary/40 hover:bg-primary/15" : "hover:bg-muted/60",
+            )}
+            style={{ paddingLeft: `${indent * 12 + 6}px` }}
+            onClick={handleRowActivate}
             onKeyDown={(event) => {
-              event.stopPropagation();
-              if (event.key === "Enter") {
+              // F2 takes precedence over Enter/Space so the row's activation
+              // shortcut doesn't swallow the rename trigger when the user has
+              // a folder row focused.
+              if (event.key === "F2") {
                 event.preventDefault();
-                void runRename();
-              } else if (event.key === "Escape") {
-                setIsRenaming(false);
-                setDraftName(node.name);
+                setWasJustCreated(false);
+                startInlineEdit();
+                return;
+              }
+              if ((event.key === "Enter" || event.key === " ") && event.currentTarget === event.target) {
+                event.preventDefault();
+                handleRowActivate();
               }
             }}
-            className="h-6 flex-1 text-[12px]"
-            disabled={isRenamePending}
-          />
-        ) : (
-          <span className="flex flex-1 items-center justify-between gap-2 truncate text-left">
-            <span className="truncate font-medium">{node.name}</span>
-            <span className="flex shrink-0 items-center gap-1.5 text-[10px] tabular-nums text-muted-foreground">
-              {isPinned ? (
-                <PushPinIcon size={10} weight="fill" aria-label="Pinned" className="text-muted-foreground" />
-              ) : null}
-              {childCount}
+          >
+            <span aria-hidden className="text-muted-foreground">
+              {isOpen ? <CaretDownIcon size={11} weight="bold" /> : <CaretRightIcon size={11} weight="bold" />}
             </span>
-          </span>
-        )}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
-              aria-label="Folder actions"
-              disabled={isRemovePending}
-              onClick={(event) => event.stopPropagation()}
-            >
-              <DotsThreeVerticalIcon size={13} weight="bold" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => void runTogglePin()} disabled={isPinPending}>
+            {isInlineEditing ? (
+              <Input
+                ref={inlineInputRef}
+                autoFocus
+                value={inlineDraft}
+                onChange={(event) => setInlineDraft(event.target.value)}
+                onBlur={() => void commitInline()}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  handleInlineInputKeyDown(event);
+                }}
+                className="h-6 flex-1 text-[12px]"
+                disabled={isInlineCommitting}
+                maxLength={FOLDER_NAME_MAX_LENGTH}
+              />
+            ) : (
+              <span className="flex flex-1 items-center justify-between gap-2 truncate text-left">
+                <span className="truncate font-medium">{node.name}</span>
+                <span className="flex shrink-0 items-center gap-1.5 text-[10px] tabular-nums text-muted-foreground">
+                  {isPinned ? (
+                    <PushPinIcon size={10} weight="fill" aria-label="Pinned" className="text-muted-foreground" />
+                  ) : null}
+                  {childCount}
+                </span>
+              </span>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+                  aria-label="Folder actions"
+                  disabled={isRemovePending}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <DotsThreeVerticalIcon size={13} weight="bold" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => void runTogglePin()} disabled={isPinPending}>
+                  {isPinned ? (
+                    <>
+                      <PushPinSlashIcon size={12} weight="bold" /> Unpin
+                    </>
+                  ) : (
+                    <>
+                      <PushPinIcon size={12} weight="bold" /> Pin to top
+                    </>
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setWasJustCreated(false);
+                    startInlineEdit();
+                  }}
+                >
+                  <PencilSimpleIcon size={12} weight="bold" /> Rename
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => void runRemoveMoveContents()} className="text-destructive">
+                  <TrashIcon size={12} weight="bold" /> Delete (move contents up)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuGroup>
+            <ContextMenuItem onClick={() => void runTogglePin()} disabled={isPinPending}>
               {isPinned ? (
                 <>
-                  <PushPinSlashIcon size={12} weight="bold" /> Unpin
+                  <PushPinSlashIcon weight="bold" /> Unpin
                 </>
               ) : (
                 <>
-                  <PushPinIcon size={12} weight="bold" /> Pin to top
+                  <PushPinIcon weight="bold" /> Pin to top
                 </>
               )}
-            </DropdownMenuItem>
-            <DropdownMenuItem
+            </ContextMenuItem>
+            <ContextMenuItem
               onClick={() => {
-                setIsRenaming(true);
-                setDraftName(node.name);
+                setWasJustCreated(false);
+                startInlineEdit();
               }}
             >
-              <PencilSimpleIcon size={12} weight="bold" /> Rename
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => void runRemoveMoveContents()} className="text-destructive">
-              <TrashIcon size={12} weight="bold" /> Delete (move contents up)
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+              <PencilSimpleIcon weight="bold" /> Rename
+            </ContextMenuItem>
+          </ContextMenuGroup>
+          <ContextMenuSeparator />
+          <ContextMenuGroup>
+            <ContextMenuItem
+              variant="destructive"
+              onClick={() => void runRemoveMoveContents()}
+              disabled={isRemovePending}
+            >
+              <TrashIcon weight="bold" /> Delete (move contents up)
+            </ContextMenuItem>
+          </ContextMenuGroup>
+        </ContextMenuContent>
+      </ContextMenu>
 
       {isOpen ? (
         <div className="flex flex-col gap-0.5">

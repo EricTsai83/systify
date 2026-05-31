@@ -8,7 +8,7 @@ import { replaceArtifactFolder } from "./lib/artifactWrites";
 
 const FOLDERS_PER_REPO_LIMIT = 200;
 const ARTIFACTS_PER_FOLDER_LIMIT = 200;
-const FOLDER_NAME_MAX_LENGTH = 80;
+export const FOLDER_NAME_MAX_LENGTH = 80;
 const FOLDER_DESCRIPTION_MAX_LENGTH = 400;
 
 function normalizeFolderName(raw: string): string {
