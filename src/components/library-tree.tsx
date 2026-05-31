@@ -48,7 +48,7 @@ export function LibraryTree({
         repositoryId={repositoryId}
         artifacts={artifacts}
         selectedArtifactId={selectedArtifactId}
-        selectedFolderId={selectedFolderId ?? null}
+        selectedFolderId={selectedFolderId}
         onSelectArtifact={onSelectArtifact}
         onSelectFolder={onSelectFolder}
         isUnseen={isUnseen}

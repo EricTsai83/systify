@@ -1,11 +1,11 @@
-import { memo, useMemo, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { useControllableState } from "@radix-ui/react-use-controllable-state";
 import {
   ArrowsClockwiseIcon,
   CaretDownIcon,
   CaretRightIcon,
   DotsThreeVerticalIcon,
-  FolderIcon,
   FolderPlusIcon,
   PencilSimpleIcon,
   PushPinIcon,
@@ -14,9 +14,18 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
+import { FOLDER_NAME_MAX_LENGTH } from "../../convex/lib/artifactFolderDefaults";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,6 +34,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { useInlineRename } from "@/hooks/use-inline-rename";
 import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
 import { toUserErrorMessage } from "@/lib/errors";
 import { buildFolderTree, type FolderTreeNode } from "@/lib/artifact-folders";
@@ -65,16 +75,23 @@ type FolderNavigatorProps = {
 };
 
 /**
- * Tree-shaped artifact navigator. Two logical sections at the root:
+ * Tree-shaped artifact navigator. Three logical sections at the root:
  *
- *   1. **Folders** — every folder for the repo, including the seeded
- *      System Design folders (Overview, Architecture, …) that carry a
- *      `systemKey`. Seeded folders default-expanded; user-created folders
- *      start collapsed. Each folder header shows name + child count and a
- *      kebab menu with rename / delete-and-move-contents-up. Children are
- *      nested folders and any artifact placed via `folderId`.
+ *   1. **Pinned** — root-level folders the user has pinned, surfaced as
+ *      their own band at the top for quick access. Each pinned folder
+ *      still renders its full subtree (unpinned descendants included);
+ *      a pinned sub-folder of an unpinned parent stays under that parent
+ *      in section 2, since root placement is the only thing pinning
+ *      moves. Hidden entirely when nothing is pinned.
  *
- *   2. **Repository root** — artifacts with no `folderId`. The name mirrors
+ *   2. **Folders** — every other folder for the repo, including the
+ *      seeded System Design folders (Overview, Architecture, …) that
+ *      carry a `systemKey`. Seeded folders default-expanded; user-created
+ *      folders start collapsed. Each folder header carries a kebab /
+ *      right-click menu with pin / rename / delete-and-move-contents-up.
+ *      Children are nested folders and any artifact placed via `folderId`.
+ *
+ *   3. **Repository root** — artifacts with no `folderId`. The name mirrors
  *      the FolderPicker's "Repository root" option so the same destination
  *      reads the same way on both surfaces. Typical contents are
  *      `+ Generate`-produced artifacts the user left at root, plus legacy
@@ -97,17 +114,85 @@ export function FolderNavigator({
   selectedArtifactId = null,
   onSelectArtifact,
   onSelectFolder,
-  selectedFolderId = null,
+  selectedFolderId: selectedFolderIdProp,
   isUnseen,
   className,
 }: FolderNavigatorProps) {
   const folders = useQuery(api.artifactFolders.listByRepository, { repositoryId });
   const createFolder = useMutation(api.artifactFolders.create);
 
+  // Selection is controllable: omit `selectedFolderId` to let the navigator
+  // own the state (chat right rail), or pass it through to centralise state
+  // in the parent (Library reader keeps the URL in sync). Either way the
+  // navigator's "+ Create folder" path and row-click handler write through
+  // `setSelectedFolderId`, so the caller never has to thread an uncontrolled
+  // fallback around the navigator.
+  const [selectedFolderId, setSelectedFolderId] = useControllableState<FolderId | null>({
+    prop: selectedFolderIdProp,
+    defaultProp: null,
+    onChange: onSelectFolder,
+  });
+
+  // Folder vs. artifact activation is mutually exclusive: opening a file
+  // clears any prior folder highlight so the tree doesn't render two
+  // "selected" rows at once when the user drills from a folder into one of
+  // its children.
+  const handleSelectArtifact = useCallback(
+    (artifactId: ArtifactId) => {
+      setSelectedFolderId(null);
+      onSelectArtifact(artifactId);
+    },
+    [onSelectArtifact, setSelectedFolderId],
+  );
+
+  // The inverse direction: when a folder gets selected, mask the artifact
+  // highlight so the tree doesn't render two "selected" rows at once. We
+  // mask (not reset) because `selectedArtifactId` is parent-owned — in the
+  // Library shell it's the active reader tab, which should stay open even
+  // when the user is poking at folders in the navigator. The next
+  // `handleSelectArtifact` call resets `selectedFolderId` and the artifact
+  // row's highlight returns.
+  const effectiveSelectedArtifactId = selectedFolderId ? null : selectedArtifactId;
+
+  // Reset selection on repo switch so a stale folder ID from the previous
+  // repo can't leak into the navigator. Runs in an effect rather than
+  // during render because the controlled `setSelectedFolderId` routes
+  // through the parent's `onSelectFolder`, and calling a parent callback
+  // synchronously during the child's render trips React's "Cannot update
+  // a component while rendering a different component" rule.
+  const prevRepositoryIdRef = useRef<RepositoryId>(repositoryId);
+  useEffect(() => {
+    if (prevRepositoryIdRef.current !== repositoryId) {
+      setSelectedFolderId(null);
+      prevRepositoryIdRef.current = repositoryId;
+    }
+  }, [repositoryId, setSelectedFolderId]);
+
   const [search, setSearch] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
+  // VS Code-style nested create: after `createFolder` returns we hand the
+  // tree two one-shot signals — `pendingExpand…` flips the new folder's
+  // parent open so the child can mount, and `pendingRename…` puts the new
+  // child into inline-rename mode so the user names it immediately. Each
+  // branch consumes its matching signal and clears it.
+  const [pendingExpandFolderId, setPendingExpandFolderId] = useState<FolderId | null>(null);
+  const [pendingRenameFolderId, setPendingRenameFolderId] = useState<FolderId | null>(null);
+  const consumePendingExpand = useCallback(() => setPendingExpandFolderId(null), []);
+  const consumePendingRename = useCallback(() => setPendingRenameFolderId(null), []);
 
   const tree = useMemo(() => buildFolderTree(folders ?? []), [folders]);
+
+  // Split root-level folders into a Pinned section (top) and a Folders
+  // section (everything else). Sub-folder pin state is preserved in the
+  // data but doesn't promote the sub-folder out of its parent's subtree —
+  // root placement is the only thing that changes visually.
+  const pinnedRoots = useMemo(() => tree.filter((node) => node.pinnedAt !== undefined), [tree]);
+  const unpinnedRoots = useMemo(() => tree.filter((node) => node.pinnedAt === undefined), [tree]);
+
+  const selectedFolderName = useMemo(() => {
+    if (!selectedFolderId || !folders) return null;
+    return folders.find((folder) => folder._id === selectedFolderId)?.name ?? null;
+  }, [folders, selectedFolderId]);
 
   const artifactsByFolder = useMemo(() => {
     const map = new Map<string, NavigatorArtifact[]>();
@@ -152,13 +237,27 @@ export function FolderNavigator({
 
   const [isCreating, runCreateFolder] = useAsyncCallback(async () => {
     const baseName = "New folder";
+    const parentFolderId = selectedFolderId ?? undefined;
     setCreateError(null);
     try {
-      await createFolder({ repositoryId, name: baseName });
+      const newFolderId = await createFolder({ repositoryId, name: baseName, parentFolderId });
+      // Expand the parent (if any) so the new branch can actually mount, then
+      // hand selection to the new folder and pop it into rename mode so the
+      // next "+" press creates deeper and the user can name it inline.
+      if (parentFolderId) {
+        setPendingExpandFolderId(parentFolderId);
+      }
+      setPendingRenameFolderId(newFolderId);
+      setSelectedFolderId(newFolderId);
+      // Clear any active search needle so the freshly-spawned folder isn't
+      // filtered out before it can mount and enter rename mode.
+      setSearch("");
     } catch (error) {
       setCreateError(toUserErrorMessage(error, "Failed to create folder."));
     }
   });
+
+  const createButtonLabel = selectedFolderName ? `Create folder in ${selectedFolderName}` : "Create folder at root";
 
   return (
     <div className={cn("flex h-full min-h-0 flex-col", className)}>
@@ -174,7 +273,8 @@ export function FolderNavigator({
           variant="ghost"
           size="icon"
           className="h-8 w-8 shrink-0"
-          aria-label="Create folder"
+          aria-label={createButtonLabel}
+          title={createButtonLabel}
           disabled={isCreating}
           onClick={() => void runCreateFolder()}
         >
@@ -198,13 +298,9 @@ export function FolderNavigator({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-3">
-          <NavigatorSection title="Folders" description="Group artifacts by feature, decision, or subsystem.">
-            {tree.length === 0 ? (
-              <p className="px-1 text-[11px] text-muted-foreground/80">
-                No folders yet. Click the folder-plus icon above to create one.
-              </p>
-            ) : (
-              tree
+          {pinnedRoots.length > 0 ? (
+            <NavigatorSection title="Pinned">
+              {pinnedRoots
                 .filter((node) => folderMatchesSearch(node))
                 .map((node) => (
                   <FolderTreeBranch
@@ -213,17 +309,54 @@ export function FolderNavigator({
                     node={node}
                     artifactsByFolder={artifactsByFolder}
                     indent={0}
-                    selectedArtifactId={selectedArtifactId}
+                    selectedArtifactId={effectiveSelectedArtifactId}
                     selectedFolderId={selectedFolderId}
-                    onSelectArtifact={onSelectArtifact}
-                    onSelectFolder={onSelectFolder}
+                    onSelectArtifact={handleSelectArtifact}
+                    onSelectFolder={setSelectedFolderId}
                     filterArtifact={filterPredicate}
                     folderMatchesSearch={folderMatchesSearch}
                     isUnseen={isUnseen}
+                    pendingExpandFolderId={pendingExpandFolderId}
+                    pendingRenameFolderId={pendingRenameFolderId}
+                    onConsumePendingExpand={consumePendingExpand}
+                    onConsumePendingRename={consumePendingRename}
                   />
-                ))
-            )}
-          </NavigatorSection>
+                ))}
+            </NavigatorSection>
+          ) : null}
+
+          {tree.length === 0 || unpinnedRoots.length > 0 ? (
+            <NavigatorSection title="Folders" description="Group artifacts by feature, decision, or subsystem.">
+              {tree.length === 0 ? (
+                <p className="px-1 text-[11px] text-muted-foreground/80">
+                  No folders yet. Click the folder-plus icon above to create one.
+                </p>
+              ) : (
+                unpinnedRoots
+                  .filter((node) => folderMatchesSearch(node))
+                  .map((node) => (
+                    <FolderTreeBranch
+                      key={node.id}
+                      repositoryId={repositoryId}
+                      node={node}
+                      artifactsByFolder={artifactsByFolder}
+                      indent={0}
+                      selectedArtifactId={effectiveSelectedArtifactId}
+                      selectedFolderId={selectedFolderId}
+                      onSelectArtifact={handleSelectArtifact}
+                      onSelectFolder={setSelectedFolderId}
+                      filterArtifact={filterPredicate}
+                      folderMatchesSearch={folderMatchesSearch}
+                      isUnseen={isUnseen}
+                      pendingExpandFolderId={pendingExpandFolderId}
+                      pendingRenameFolderId={pendingRenameFolderId}
+                      onConsumePendingExpand={consumePendingExpand}
+                      onConsumePendingRename={consumePendingRename}
+                    />
+                  ))
+              )}
+            </NavigatorSection>
+          ) : null}
 
           {uncategorizedArtifacts.length > 0 ? (
             <NavigatorSection
@@ -236,8 +369,8 @@ export function FolderNavigator({
                   <ArtifactRow
                     key={artifact._id}
                     artifact={artifact}
-                    isSelected={selectedArtifactId === artifact._id}
-                    onSelect={onSelectArtifact}
+                    isSelected={effectiveSelectedArtifactId === artifact._id}
+                    onSelect={handleSelectArtifact}
                     indent={0}
                     isUnseen={isUnseen ? isUnseen(artifact) : false}
                   />
@@ -257,14 +390,14 @@ function NavigatorSection({
   children,
 }: {
   title: string;
-  description: string;
+  description?: string;
   children: ReactNode;
 }) {
   return (
     <section className="flex flex-col gap-1.5">
       <div className="px-1">
         <h3 className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{title}</h3>
-        <p className="text-[10px] text-muted-foreground/70">{description}</p>
+        {description ? <p className="text-[10px] text-muted-foreground/70">{description}</p> : null}
       </div>
       <div className="flex flex-col gap-1">{children}</div>
     </section>
@@ -285,6 +418,10 @@ function FolderTreeBranch({
   filterArtifact,
   folderMatchesSearch,
   isUnseen,
+  pendingExpandFolderId,
+  pendingRenameFolderId,
+  onConsumePendingExpand,
+  onConsumePendingRename,
 }: {
   repositoryId: RepositoryId;
   node: FolderTreeNode;
@@ -297,6 +434,10 @@ function FolderTreeBranch({
   filterArtifact: FilterFn;
   folderMatchesSearch: (node: FolderTreeNode) => boolean;
   isUnseen?: (artifact: NavigatorArtifact) => boolean;
+  pendingExpandFolderId: FolderId | null;
+  pendingRenameFolderId: FolderId | null;
+  onConsumePendingExpand: () => void;
+  onConsumePendingRename: () => void;
 }) {
   const [isOpen, setIsOpen] = useLocalStorageBoolean(
     `systify.folderNav.open.${repositoryId}.${node.id}`,
@@ -305,28 +446,47 @@ function FolderTreeBranch({
   const renameFolder = useMutation(api.artifactFolders.rename);
   const removeFolder = useMutation(api.artifactFolders.remove);
   const setFolderPinned = useMutation(api.artifactFolders.setPinned);
-  const [isRenaming, setIsRenaming] = useState(false);
-  const [draftName, setDraftName] = useState(node.name);
+  // Distinguishes a fresh-create rename session (entered via the "+" button)
+  // from a regular kebab rename. Esc during a fresh create discards the
+  // folder; Esc during a regular rename only cancels the edit. The flag
+  // lives in the host (not the hook) because the cancel side-effect is
+  // host-specific and the hook only owns the rename state machine.
+  const [wasJustCreated, setWasJustCreated] = useState(false);
+  const rowRef = useRef<HTMLDivElement>(null);
   const folderArtifacts = artifactsByFolder.get(node.id) ?? EMPTY_ARTIFACTS;
-  const childCount = folderArtifacts.length + node.children.length;
   const isSelected = selectedFolderId === (node.id as FolderId);
   const isPinned = node.pinnedAt !== undefined;
 
-  const [isRenamePending, runRename] = useAsyncCallback(async () => {
-    const next = draftName.trim();
-    if (!next || next === node.name) {
-      setIsRenaming(false);
-      setDraftName(node.name);
-      return;
-    }
-    try {
-      await renameFolder({ folderId: node.id as FolderId, name: next });
-    } catch {
-      // Surface inline; reset to known-good name.
-      setDraftName(node.name);
-    } finally {
-      setIsRenaming(false);
-    }
+  const {
+    isEditing: isInlineEditing,
+    isCommitting: isInlineCommitting,
+    draft: inlineDraft,
+    setDraft: setInlineDraft,
+    inputRef: inlineInputRef,
+    startEdit: startInlineEdit,
+    startEditEmpty: startInlineEditEmpty,
+    commit: commitInline,
+    handleInputKeyDown: handleInlineInputKeyDown,
+  } = useInlineRename({
+    currentValue: node.name,
+    onCommit: useCallback(
+      async (next: string) => {
+        await renameFolder({ folderId: node.id as FolderId, name: next });
+        setWasJustCreated(false);
+      },
+      [renameFolder, node.id],
+    ),
+    onCancel: useCallback(() => {
+      if (wasJustCreated) {
+        // Esc during fresh-create discards the just-spawned folder so the
+        // user gets a real "abort" path. Best-effort: a failed delete leaves
+        // the folder visible and the user can clear it from the kebab.
+        void removeFolder({ folderId: node.id as FolderId, strategy: "moveContentsToParent" }).catch(() => {});
+      }
+      setWasJustCreated(false);
+    }, [removeFolder, node.id, wasJustCreated]),
+    errorFallback: "Failed to rename folder.",
+    rowRef,
   });
 
   const [isRemovePending, runRemoveMoveContents] = useAsyncCallback(async () => {
@@ -347,100 +507,171 @@ function FolderTreeBranch({
     }
   });
 
+  useEffect(() => {
+    if (pendingExpandFolderId !== (node.id as FolderId)) return;
+    setIsOpen(true);
+    onConsumePendingExpand();
+  }, [node.id, onConsumePendingExpand, pendingExpandFolderId, setIsOpen]);
+
+  useEffect(() => {
+    if (pendingRenameFolderId !== (node.id as FolderId)) return;
+    // VS Code parity: enter rename with an empty draft so the user types
+    // from scratch. Blur with empty draft is a no-op (the hook keeps the
+    // seeded "New folder" name); Esc routes through the host's `onCancel`
+    // which deletes the just-spawned folder. setState-in-effect is the
+    // pattern for one-shot prop-driven signals — the next-render guard
+    // (`pendingRenameFolderId !== node.id` once consumed) keeps it
+    // single-shot.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setWasJustCreated(true);
+    startInlineEditEmpty();
+    onConsumePendingRename();
+  }, [node.id, onConsumePendingRename, pendingRenameFolderId, startInlineEditEmpty]);
+
+  // Whole-row activation: clicking anywhere on the row toggles
+  // expand/collapse and selects the folder, so the caret no longer needs to
+  // be a separate hit target. Children that own their own click semantics
+  // (rename input, kebab) call `stopPropagation` so they don't double-fire.
+  const handleRowActivate = () => {
+    setIsOpen((open) => !open);
+    onSelectFolder?.(node.id as FolderId);
+  };
+
   return (
     <div>
-      <div
-        className={cn(
-          "group flex items-center gap-1 px-1.5 py-1 text-[12px] hover:bg-muted/60",
-          isSelected ? "bg-muted/60" : "",
-        )}
-        style={{ paddingLeft: `${indent * 12 + 6}px` }}
-      >
-        <button
-          type="button"
-          aria-label={isOpen ? "Collapse folder" : "Expand folder"}
-          className="text-muted-foreground transition-transform hover:text-foreground"
-          onClick={() => setIsOpen((open) => !open)}
-        >
-          {isOpen ? <CaretDownIcon size={11} weight="bold" /> : <CaretRightIcon size={11} weight="bold" />}
-        </button>
-        <FolderIcon size={13} weight="duotone" className="shrink-0 text-muted-foreground" />
-        {isRenaming ? (
-          <Input
-            autoFocus
-            value={draftName}
-            onChange={(event) => setDraftName(event.target.value)}
-            onBlur={() => void runRename()}
+      <ContextMenu>
+        <ContextMenuTrigger asChild disabled={isInlineEditing}>
+          <div
+            ref={rowRef}
+            role="button"
+            tabIndex={isInlineEditing ? -1 : 0}
+            aria-expanded={isOpen}
+            aria-label={node.name}
+            className={cn(
+              "group flex cursor-pointer items-center gap-1 px-1.5 py-1 text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+              isSelected ? "bg-primary/10 ring-1 ring-primary/40 hover:bg-primary/15" : "hover:bg-muted/60",
+            )}
+            style={{ paddingLeft: `${indent * 12 + 6}px` }}
+            onClick={handleRowActivate}
             onKeyDown={(event) => {
-              if (event.key === "Enter") {
+              // F2 takes precedence over Enter/Space so the row's activation
+              // shortcut doesn't swallow the rename trigger when the user has
+              // a folder row focused.
+              if (event.key === "F2") {
                 event.preventDefault();
-                void runRename();
-              } else if (event.key === "Escape") {
-                setIsRenaming(false);
-                setDraftName(node.name);
+                setWasJustCreated(false);
+                startInlineEdit();
+                return;
+              }
+              if ((event.key === "Enter" || event.key === " ") && event.currentTarget === event.target) {
+                event.preventDefault();
+                handleRowActivate();
               }
             }}
-            className="h-6 flex-1 text-[12px]"
-            disabled={isRenamePending}
-          />
-        ) : (
-          <button
-            type="button"
-            className="flex flex-1 items-center justify-between gap-2 truncate text-left"
-            onClick={() => {
-              onSelectFolder?.(node.id as FolderId);
-              setIsOpen(true);
-            }}
           >
-            <span className="truncate font-medium">{node.name}</span>
-            <span className="flex shrink-0 items-center gap-1.5 text-[10px] tabular-nums text-muted-foreground">
-              {isPinned ? (
-                <PushPinIcon size={10} weight="fill" aria-label="Pinned" className="text-muted-foreground" />
-              ) : null}
-              {childCount}
+            <span aria-hidden className="text-muted-foreground">
+              {isOpen ? <CaretDownIcon size={11} weight="bold" /> : <CaretRightIcon size={11} weight="bold" />}
             </span>
-          </button>
-        )}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
-              aria-label="Folder actions"
-              disabled={isRemovePending}
-            >
-              <DotsThreeVerticalIcon size={13} weight="bold" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => void runTogglePin()} disabled={isPinPending}>
+            {isInlineEditing ? (
+              <Input
+                ref={inlineInputRef}
+                autoFocus
+                value={inlineDraft}
+                onChange={(event) => setInlineDraft(event.target.value)}
+                onBlur={() => void commitInline()}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  event.stopPropagation();
+                  handleInlineInputKeyDown(event);
+                }}
+                className="h-6 flex-1 text-[12px]"
+                disabled={isInlineCommitting}
+                maxLength={FOLDER_NAME_MAX_LENGTH}
+              />
+            ) : (
+              <span className="flex flex-1 items-center justify-between gap-2 truncate text-left">
+                <span className="truncate font-medium">{node.name}</span>
+                {isPinned ? (
+                  <PushPinIcon size={14} weight="fill" aria-label="Pinned" className="shrink-0 text-muted-foreground" />
+                ) : null}
+              </span>
+            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
+                  aria-label="Folder actions"
+                  disabled={isRemovePending}
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <DotsThreeVerticalIcon size={13} weight="bold" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => void runTogglePin()} disabled={isPinPending}>
+                  {isPinned ? (
+                    <>
+                      <PushPinSlashIcon size={12} weight="bold" /> Unpin
+                    </>
+                  ) : (
+                    <>
+                      <PushPinIcon size={12} weight="bold" /> Pin to top
+                    </>
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
+                    setWasJustCreated(false);
+                    startInlineEdit();
+                  }}
+                >
+                  <PencilSimpleIcon size={12} weight="bold" /> Rename
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => void runRemoveMoveContents()} className="text-destructive">
+                  <TrashIcon size={12} weight="bold" /> Delete (move contents up)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuGroup>
+            <ContextMenuItem onClick={() => void runTogglePin()} disabled={isPinPending}>
               {isPinned ? (
                 <>
-                  <PushPinSlashIcon size={12} weight="bold" /> Unpin
+                  <PushPinSlashIcon weight="bold" /> Unpin
                 </>
               ) : (
                 <>
-                  <PushPinIcon size={12} weight="bold" /> Pin to top
+                  <PushPinIcon weight="bold" /> Pin to top
                 </>
               )}
-            </DropdownMenuItem>
-            <DropdownMenuItem
+            </ContextMenuItem>
+            <ContextMenuItem
               onClick={() => {
-                setIsRenaming(true);
-                setDraftName(node.name);
+                setWasJustCreated(false);
+                startInlineEdit();
               }}
             >
-              <PencilSimpleIcon size={12} weight="bold" /> Rename
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => void runRemoveMoveContents()} className="text-destructive">
-              <TrashIcon size={12} weight="bold" /> Delete (move contents up)
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+              <PencilSimpleIcon weight="bold" /> Rename
+            </ContextMenuItem>
+          </ContextMenuGroup>
+          <ContextMenuSeparator />
+          <ContextMenuGroup>
+            <ContextMenuItem
+              variant="destructive"
+              onClick={() => void runRemoveMoveContents()}
+              disabled={isRemovePending}
+            >
+              <TrashIcon weight="bold" /> Delete (move contents up)
+            </ContextMenuItem>
+          </ContextMenuGroup>
+        </ContextMenuContent>
+      </ContextMenu>
 
       {isOpen ? (
         <div className="flex flex-col gap-0.5">
@@ -460,6 +691,10 @@ function FolderTreeBranch({
                 filterArtifact={filterArtifact}
                 folderMatchesSearch={folderMatchesSearch}
                 isUnseen={isUnseen}
+                pendingExpandFolderId={pendingExpandFolderId}
+                pendingRenameFolderId={pendingRenameFolderId}
+                onConsumePendingExpand={onConsumePendingExpand}
+                onConsumePendingRename={onConsumePendingRename}
               />
             ))}
           {folderArtifacts.map((artifact) => {

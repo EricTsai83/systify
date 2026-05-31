@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { GlobeIcon, LockIcon, PlusIcon, PushPinIcon, TrashIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
@@ -7,6 +7,7 @@ import { MAX_RENAME_TITLE_LENGTH } from "../../convex/lib/threadDefaults";
 import { Button } from "@/components/ui/button";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { useInlineRename } from "@/hooks/use-inline-rename";
 import { usePrewarmThread } from "@/hooks/use-prewarm-thread";
 import { toUserErrorMessage } from "@/lib/errors";
 import type { ThreadMode } from "@/route-paths";
@@ -31,11 +32,11 @@ type ThreadModeFilter = ChatMode;
  * explorer convention where "double-click" means "navigate to this row AND
  * start renaming it".
  *
- * The "no-change" check compares against `originalTitle` (captured at
- * `handleStartEdit` time), not the live `thread.title`. Otherwise a
- * mid-edit autogen landing could change `thread.title` out from under the
- * user, and a no-typing blur would commit the *stale* default and silently
- * clobber the autogen result.
+ * The race-prone bits (cancel-vs-blur, no-op baseline snapshotting, the
+ * unmount-blur dedupe latch, post-exit focus restoration) live in
+ * {@link useInlineRename}; this wrapper just binds the thread mutation and
+ * keeps the legacy `handleStartEdit` / `handleCommit` / `handleKeyDown` /
+ * `handleItemKeyDown` shape so the call sites don't churn.
  */
 function useThreadRename({
   thread,
@@ -44,145 +45,32 @@ function useThreadRename({
 }: {
   thread: Doc<"threads">;
   onError: (message: string | null) => void;
-  rowRef?: React.MutableRefObject<HTMLDivElement | null>;
+  rowRef?: React.RefObject<HTMLDivElement | null>;
 }) {
-  const [isEditing, setIsEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [originalTitle, setOriginalTitle] = useState("");
-  const isCancellingRef = useRef(false);
-  const isCommittingRef = useRef(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const wasEditingRef = useRef(false);
   const renameThreadMutation = useMutation(api.chat.threads.renameThread);
-
-  const handleStartEdit = useCallback(() => {
-    isCancellingRef.current = false;
-    // `handleCommit` leaves the committing latch set on success so the
-    // unmount-blur it triggers is suppressed. Without this reset, the next
-    // rename on the same row would short-circuit silently.
-    isCommittingRef.current = false;
-    setOriginalTitle(thread.title);
-    setDraft(thread.title);
-    setIsEditing(true);
-  }, [thread.title]);
-
-  // Focus + select the input on the render that flips `isEditing` to true,
-  // and restore focus to the row's menu button on the render that flips it
-  // back to false. Using `useEffect` keyed on `isEditing` (rather than a
-  // `queueMicrotask` chained off the click handler) decouples the focus from
-  // React's commit ordering — it runs after every commit where the input is
-  // mounted, regardless of concurrent-mode discards. The first button in the
-  // row is the SidebarMenuButton (the pin/delete buttons live in an overlay
-  // sibling rendered after it), so `querySelector("button")` reliably picks
-  // it without threading a ref through the shadcn primitive.
-  //
-  // The exit branch is gated on two things:
-  //   1. `wasEditingRef` — only fire after a true→false transition, never
-  //      on initial mount. The effect runs once at mount with `isEditing`
-  //      false; without this gate every freshly-mounted row would steal
-  //      focus on subscribe (e.g. when a new thread appears in the rail
-  //      while the user is typing in the composer).
-  //   2. `activeElement` fell back to `<body>` — Enter / Escape exit while
-  //      focus is still on the soon-to-unmount input, so by the time this
-  //      effect runs there is no focused element and the row should reclaim
-  //      it. A blur-triggered exit (click elsewhere, Tab to another
-  //      control) has already moved focus to the new target; stealing it
-  //      back would be wrong.
-  useEffect(() => {
-    if (isEditing) {
-      wasEditingRef.current = true;
-      inputRef.current?.select();
-      return;
-    }
-    if (!wasEditingRef.current) {
-      return;
-    }
-    wasEditingRef.current = false;
-    if (typeof document === "undefined") return;
-    const active = document.activeElement;
-    if (active && active !== document.body) {
-      return;
-    }
-    rowRef?.current?.querySelector("button")?.focus();
-  }, [isEditing, rowRef]);
-
-  const handleCommit = useCallback(async () => {
-    // Escape sets the cancelling flag synchronously before flipping
-    // `isEditing`; the subsequent input-unmount blur would otherwise race
-    // in and commit the draft. Consume the flag and bail out.
-    if (isCancellingRef.current) {
-      isCancellingRef.current = false;
-      setIsEditing(false);
-      return;
-    }
-    // Guard against double-commit from Enter + unmount blur race.
-    if (isCommittingRef.current) {
-      return;
-    }
-    isCommittingRef.current = true;
-    setIsEditing(false);
-    const trimmed = draft.trim();
-    // No-op if the user committed an empty draft or a no-change rename —
-    // saves a server round trip and avoids surfacing the empty-string
-    // validation as a spurious toast.
-    if (!trimmed || trimmed === originalTitle) {
-      return;
-    }
-    try {
-      onError(null);
-      await renameThreadMutation({ threadId: thread._id, title: trimmed });
-    } catch (error) {
-      isCommittingRef.current = false;
-      onError(toUserErrorMessage(error, "Failed to rename thread."));
-    }
-  }, [draft, originalTitle, thread._id, renameThreadMutation, onError]);
-
-  const handleCancel = useCallback(() => {
-    isCancellingRef.current = true;
-    setIsEditing(false);
-  }, []);
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        void handleCommit();
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        handleCancel();
-      }
-    },
-    [handleCommit, handleCancel],
-  );
-
-  // F2 keyboard entry into rename mode, wired to the non-editing row's
-  // parent `SidebarMenuButton` (the focusable element). The title `<p>`
-  // can't host its own keyboard handler — it sits inside a `<button>`, and
-  // adding `tabIndex` / `role="button"` to a paragraph inside a button is
-  // exactly the interactive-descendant nesting `EditableRowFrame` warns
-  // against (invalid HTML, undefined focus behaviour, double screen-reader
-  // announcements). Hosting the shortcut on the button keeps a single focus
-  // stop per row and a clean a11y tree. F2 mirrors the rename convention in
-  // Finder, Linear, and VS Code.
-  const handleItemKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLButtonElement>) => {
-      if (e.key === "F2") {
-        e.preventDefault();
-        handleStartEdit();
-      }
-    },
-    [handleStartEdit],
-  );
+  const inline = useInlineRename({
+    currentValue: thread.title,
+    onCommit: useCallback(
+      async (title: string) => {
+        await renameThreadMutation({ threadId: thread._id, title });
+      },
+      [renameThreadMutation, thread._id],
+    ),
+    onError,
+    errorFallback: "Failed to rename thread.",
+    rowRef,
+  });
 
   return {
-    isEditing,
-    draft,
-    setDraft,
-    inputRef,
-    handleStartEdit,
-    handleCommit,
-    handleKeyDown,
-    handleItemKeyDown,
+    isEditing: inline.isEditing,
+    isCommitting: inline.isCommitting,
+    draft: inline.draft,
+    setDraft: inline.setDraft,
+    inputRef: inline.inputRef,
+    handleStartEdit: inline.startEdit,
+    handleCommit: inline.commit,
+    handleKeyDown: inline.handleInputKeyDown,
+    handleItemKeyDown: inline.handleRowKeyDown,
   };
 }
 
@@ -534,12 +422,21 @@ function ThreadItem({
   onError: (message: string | null) => void;
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
-  const { isEditing, draft, setDraft, inputRef, handleStartEdit, handleCommit, handleKeyDown, handleItemKeyDown } =
-    useThreadRename({
-      thread,
-      onError,
-      rowRef,
-    });
+  const {
+    isEditing,
+    isCommitting,
+    draft,
+    setDraft,
+    inputRef,
+    handleStartEdit,
+    handleCommit,
+    handleKeyDown,
+    handleItemKeyDown,
+  } = useThreadRename({
+    thread,
+    onError,
+    rowRef,
+  });
 
   const titleTextClass = threadTitleTextClass(compact);
   return (
@@ -552,6 +449,7 @@ function ThreadItem({
               value={draft}
               maxLength={MAX_RENAME_TITLE_LENGTH}
               aria-label="Rename thread"
+              disabled={isCommitting}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={handleKeyDown}
               onBlur={() => void handleCommit()}
@@ -576,7 +474,7 @@ function ThreadItem({
           <div className="min-w-0 flex-1">
             <p
               onDoubleClick={handleStartEdit}
-              className={cn("cursor-text truncate font-medium text-foreground", titleTextClass)}
+              className={cn("cursor-pointer truncate font-medium text-foreground", titleTextClass)}
             >
               {thread.title}
             </p>
@@ -721,12 +619,21 @@ function RepolessThreadItem({
   onError: (message: string | null) => void;
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
-  const { isEditing, draft, setDraft, inputRef, handleStartEdit, handleCommit, handleKeyDown, handleItemKeyDown } =
-    useThreadRename({
-      thread,
-      onError,
-      rowRef,
-    });
+  const {
+    isEditing,
+    isCommitting,
+    draft,
+    setDraft,
+    inputRef,
+    handleStartEdit,
+    handleCommit,
+    handleKeyDown,
+    handleItemKeyDown,
+  } = useThreadRename({
+    thread,
+    onError,
+    rowRef,
+  });
 
   const titleTextClass = threadTitleTextClass(false);
   return (
@@ -739,6 +646,7 @@ function RepolessThreadItem({
               value={draft}
               maxLength={MAX_RENAME_TITLE_LENGTH}
               aria-label="Rename thread"
+              disabled={isCommitting}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={handleKeyDown}
               onBlur={() => void handleCommit()}
@@ -762,7 +670,7 @@ function RepolessThreadItem({
           <div className="min-w-0 flex-1">
             <p
               onDoubleClick={handleStartEdit}
-              className={cn("cursor-text truncate font-medium text-foreground", titleTextClass)}
+              className={cn("cursor-pointer truncate font-medium text-foreground", titleTextClass)}
             >
               {thread.title}
             </p>
