@@ -46,9 +46,9 @@ export const cancelInFlightReply = mutation({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    // Same fence as `listMessages` / `sendMessage` — return "Thread not found"
-    // for missing or non-owned rows so the existence of the thread is not
-    // disclosed to non-owners.
+    // Same fence as `listMessagesPaginated` / `sendMessage` — return
+    // "Thread not found" for missing or non-owned rows so the existence
+    // of the thread is not disclosed to non-owners.
     const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });

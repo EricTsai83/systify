@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useConvex } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { CHAT_MESSAGES_FIRST_PAGE_ARGS } from "../../convex/lib/constants";
 import type { ThreadId } from "@/lib/types";
 
 /**
@@ -25,8 +26,8 @@ export function usePrewarmThread(): (threadId: ThreadId) => void {
   return useCallback(
     (threadId: ThreadId) => {
       convex.prewarmQuery({
-        query: api.chat.threads.listMessages,
-        args: { threadId },
+        query: api.chat.threads.listMessagesPaginated,
+        args: { threadId, paginationOpts: CHAT_MESSAGES_FIRST_PAGE_ARGS },
         extendSubscriptionFor: PREWARM_DURATION_MS,
       });
       convex.prewarmQuery({

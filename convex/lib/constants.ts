@@ -7,9 +7,6 @@ export const MAX_CHUNKS_PER_FILE = 4;
 /** Maximum number of artifacts included in a chat context prompt. */
 export const MAX_CONTEXT_ARTIFACTS = 6;
 
-/** Maximum number of recent messages loaded into the chat UI. */
-export const MAX_VISIBLE_MESSAGES = 100;
-
 /** Maximum number of recent messages loaded for a chat reply. */
 export const MAX_CONTEXT_MESSAGES = 20;
 
@@ -90,6 +87,38 @@ export const MAX_LIVE_REASONING_CHARS = 64_000;
  * fold within Convex's transaction-read budget.
  */
 export const MAX_TOOL_CALL_EVENTS_PER_MESSAGE = 64;
+
+/**
+ * Page size for the chat panel's paginated message subscription
+ * (`chat/threads:listMessagesPaginated` via `usePaginatedQuery`). Shared
+ * by the Discuss chat panel, Library Ask panel, and the hover/warm
+ * prewarm hooks so all four subscription sites serialize to identical
+ * first-page args.
+ *
+ * `usePaginatedQuery` ref-counts subscriptions by `(query, args)`, and the
+ * prewarm path posts the page-1 args explicitly. A mismatched page size
+ * between prewarm and the real mount would silently fork the subscription
+ * and defeat the prewarming optimization with no typecheck or test
+ * catching it — keep the literal in one place.
+ *
+ * 30 keeps the resident set at ~30 × max-message-cost while still landing
+ * the latest several turns in a single subscription tick (no prepend on
+ * first paint, so the initial scroll-to-bottom snaps without a jump).
+ */
+export const CHAT_MESSAGES_PAGE_SIZE = 30;
+
+/**
+ * First-page `paginationOpts` for `chat/threads:listMessagesPaginated`.
+ * Mirrors how `usePaginatedQuery(..., { initialNumItems: CHAT_MESSAGES_PAGE_SIZE })`
+ * serializes its first issuance, so a prewarm / warm subscription posted
+ * with these args shares the ref-counted subscription with the actual
+ * mount instead of duplicating it. `cursor: null` is the canonical
+ * "first page" cursor.
+ */
+export const CHAT_MESSAGES_FIRST_PAGE_ARGS = {
+  numItems: CHAT_MESSAGES_PAGE_SIZE,
+  cursor: null,
+} as const;
 
 /**
  * Character cap applied to each tool-call event's `inputSummary`

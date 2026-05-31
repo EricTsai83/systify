@@ -23,7 +23,7 @@
 **位置**：`src/components/chat-panel.tsx` 和相關的訊息流程
 
 **理由**：
-- 專案目前手動管理訊息狀態：`messages = useQuery(api.chat.threads.listMessages, ...)`
+- 專案目前手動管理訊息狀態：`messages = usePaginatedQuery(api.chat.threads.listMessagesPaginated, ...)`
 - 手動處理 streaming：`activeMessageStream = useQuery(api.chat.streaming.getActiveMessageStream, ...)`
 - 手動處理發送/取消：`onSendMessage` 和 `onCancelInFlightReply` callbacks
 

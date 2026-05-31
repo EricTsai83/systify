@@ -1,4 +1,5 @@
 import { ConvexError, v } from "convex/values";
+import { paginationOptsValidator } from "convex/server";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalMutation, mutation, query, type MutationCtx } from "../_generated/server";
@@ -6,9 +7,8 @@ import { requireViewerIdentity } from "../lib/auth";
 import { chatModeValidator, getDefaultThreadMode } from "../lib/chatMode";
 import { loadOwnedDoc, requireOwnedDoc } from "../lib/ownedDocs";
 import { MAX_RENAME_TITLE_LENGTH, NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
-import { MAX_STREAM_CHUNKS_PER_PASS, MAX_VISIBLE_MESSAGES } from "../lib/constants";
+import { MAX_STREAM_CHUNKS_PER_PASS } from "../lib/constants";
 import { touchRepositoryLastAccessed } from "../lib/repositoryPalette";
-import { loadRecentMessages } from "./context";
 import { deleteMessageStreamState } from "./streamStore";
 import { drainMessageToolCallEvents } from "./toolCallEventStore";
 
@@ -95,9 +95,24 @@ export const listRepolessThreads = query({
   },
 });
 
-export const listMessages = query({
+/**
+ * Paginated thread messages, newest page first. The chat UI consumes this
+ * via `usePaginatedQuery` so arbitrarily long threads can be browsed
+ * end-to-end.
+ *
+ * The page returned by the server is in **descending** creation-time
+ * order (newest first). The client reverses the flattened result set to
+ * ascending order before rendering, so a freshly-attached subscription
+ * paints the most recent page without any prepend, and "load older"
+ * calls extend the rendered list at the top.
+ *
+ * Any unauthorized read throws "Thread not found." so a stale `threadId`
+ * routes to the same error boundary path as other thread queries.
+ */
+export const listMessagesPaginated = query({
   args: {
     threadId: v.id("threads"),
+    paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
     const { doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
@@ -110,7 +125,11 @@ export const listMessages = query({
       });
     }
 
-    return await loadRecentMessages(ctx, args.threadId, MAX_VISIBLE_MESSAGES);
+    return await ctx.db
+      .query("messages")
+      .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
+      .order("desc")
+      .paginate(args.paginationOpts);
   },
 });
 
@@ -143,10 +162,10 @@ export const listAllOwnerThreadIds = query({
 });
 
 /**
- * Lightweight thread-existence probe. Unlike {@link listMessages} (which
- * throws "Thread not found." so a broken thread surfaces as an error
- * boundary), this returns `null` when the thread is missing or owned by
- * another viewer. The Library page uses it to validate the
+ * Lightweight thread-existence probe. Unlike {@link listMessagesPaginated}
+ * (which throws "Thread not found." so a broken thread surfaces as an
+ * error boundary), this returns `null` when the thread is missing or
+ * owned by another viewer. The Library page uses it to validate the
  * `?ask=:threadId` URL param — a stale bookmark or a since-deleted thread
  * is cleared gracefully instead of crashing the page. Mirrors the
  * artifact-id guard pattern (`artifacts.getById`).

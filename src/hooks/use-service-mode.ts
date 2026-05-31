@@ -40,6 +40,33 @@ const NULL_RESOLUTION = {
 };
 
 /**
+ * Pick the mode to render when the URL doesn't pin one:
+ *   URL → repository's `lastMode` (if still enabled) → backend default → "discuss".
+ *
+ * Lives here so every consumer agrees byte-for-byte. The repository shell and
+ * the left sidebar used to diverge — the sidebar fell straight to
+ * `defaultMode`, producing a Discuss→Library flip on return navigation while
+ * `availability` was still loading.
+ */
+export function resolveEffectiveChatMode(args: {
+  mode: ChatMode | null;
+  lastMode: ChatMode | null | undefined;
+  availability:
+    | {
+        modes: { discuss: { enabled: boolean }; library: { enabled: boolean } };
+        defaultMode: ChatMode;
+      }
+    | null
+    | undefined;
+}): ChatMode {
+  const { mode, lastMode, availability } = args;
+  if (mode) return mode;
+  const lastModeEnabled = lastMode ? (availability?.modes[lastMode].enabled ?? false) : false;
+  if (lastModeEnabled && lastMode) return lastMode;
+  return availability?.defaultMode ?? "discuss";
+}
+
+/**
  * Bridge between the repository URL and the service-mode resolver.
  *
  * Returns:

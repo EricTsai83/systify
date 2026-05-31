@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { BookOpenIcon, PaperPlaneTiltIcon, SparkleIcon } from "@phosphor-icons/react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
+import { CHAT_MESSAGES_PAGE_SIZE } from "../../convex/lib/constants";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
+import { useChatScroll } from "@/components/ai-elements/use-chat-scroll";
 import { PromptInput, PromptInputFooter, PromptInputTextarea } from "@/components/ai-elements/prompt-input";
 import { EmptyStateHero, PromptSuggestionList } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
@@ -62,19 +64,47 @@ export function LibraryAskPanel({
   // below can be gated and never throw the route into its error boundary)
   // and supplies the tab title when the thread has aged out of `listThreads`.
   const activeThreadProbe = useQuery(api.chat.threads.getThreadSummary, threadId ? { threadId } : "skip");
-  // `listMessages` / `getActiveMessageStream` THROW for a missing or
+  // `listMessagesPaginated` / `getActiveMessageStream` THROW for a missing or
   // unauthorized thread. Only subscribe once the probe has confirmed the
   // thread exists; a stale `?ask=` bookmark then degrades to the empty
   // state instead of tearing down the Library route.
   const confirmedThreadId = threadId && activeThreadProbe ? threadId : null;
-  const messages = useQuery(
-    api.chat.threads.listMessages,
+  const {
+    results: paginatedMessages,
+    status: messagesStatus,
+    loadMore: loadOlderMessages,
+  } = usePaginatedQuery(
+    api.chat.threads.listMessagesPaginated,
     confirmedThreadId ? { threadId: confirmedThreadId } : "skip",
+    { initialNumItems: CHAT_MESSAGES_PAGE_SIZE },
   );
+  // Same ordering contract as the Discuss panel: server pages arrive
+  // newest-first; flatten + reverse so all downstream consumers see
+  // ascending creation-time order.
+  const messages = useMemo<Doc<"messages">[] | undefined>(() => {
+    if (confirmedThreadId === null) return undefined;
+    if (messagesStatus === "LoadingFirstPage") return undefined;
+    return [...paginatedMessages].reverse();
+  }, [confirmedThreadId, messagesStatus, paginatedMessages]);
+  const canLoadOlderMessages = messagesStatus === "CanLoadMore";
+  const handleLoadOlderMessages = useCallback(() => {
+    loadOlderMessages(CHAT_MESSAGES_PAGE_SIZE);
+  }, [loadOlderMessages]);
   const activeMessageStream = useQuery(
     api.chat.streaming.getActiveMessageStream,
     confirmedThreadId ? { threadId: confirmedThreadId } : "skip",
   );
+
+  // Owns stick-to-bottom, anchor preservation on prepend, sentinel
+  // observer for load-older, threadId-keyed reset, and prefers-
+  // reduced-motion gating for the Ask conversation.
+  const conversationScroll = useChatScroll({
+    threadId: confirmedThreadId,
+    messages,
+    streamingSignal: activeMessageStream?.content ?? null,
+    canLoadOlder: canLoadOlderMessages,
+    onLoadOlder: handleLoadOlderMessages,
+  });
 
   const { openThreads, ensureOpen, closeTab } = useLibraryAskTabs(repositoryId);
 
@@ -217,9 +247,10 @@ export function LibraryAskPanel({
       // telling the parent to flip `?ask=`. Switching the active thread no
       // longer remounts this panel (the thread is a query param on the same
       // route), so this is not a remount-safety requirement anymore — but
-      // the ordering still matters: flipping `?ask=` re-keys `listMessages`
-      // to the new thread, and we want that query to resolve with the
-      // freshly persisted user + pending-assistant pair on its first read.
+      // the ordering still matters: flipping `?ask=` re-keys the paginated
+      // message query to the new thread, and we want that query to resolve
+      // with the freshly persisted user + pending-assistant pair on its
+      // first read.
       let targetThreadId = threadId;
       let createdNew = false;
       if (!targetThreadId) {
@@ -270,8 +301,8 @@ export function LibraryAskPanel({
       />
 
       {threadId ? (
-        <Conversation className="min-h-0 flex-1">
-          <ConversationContent className="space-y-3 px-4 py-3">
+        <Conversation scroll={conversationScroll} className="min-h-0 flex-1">
+          <ConversationContent className="space-y-3 px-4 py-3" showLoadOlderSentinel={canLoadOlderMessages}>
             {(messages ?? []).map((message) => (
               <MessageBubble
                 key={message._id}

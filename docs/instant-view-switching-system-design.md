@@ -84,7 +84,7 @@ This is **not a cache**. Every entry is a real, server-pushed subscription. Serv
 
 The bounded id list comes from different places depending on the view:
 
-- **Chat threads.** A small companion hook (`useRecentThreads`) tracks the most-recently-used N (default 5) thread ids in MRU order, where index `[0]` is the active thread. Re-selecting a thread moves it to the front rather than appending; the list is capped so the working set stays bounded. The warm hook (`useWarmThreadSubscriptions`) warms `listMessages` + `getActiveMessageStream` for each id.
+- **Chat threads.** A small companion hook (`useRecentThreads`) tracks the most-recently-used N (default 5) thread ids in MRU order, where index `[0]` is the active thread. Re-selecting a thread moves it to the front rather than appending; the list is capped so the working set stays bounded. The warm hook (`useWarmThreadSubscriptions`) warms `listMessagesPaginated` + `getActiveMessageStream` for each id.
 - **Library tabs.** The tab strip is already the bounded set — `useLibraryTabs` maintains `openArtifactIds` capped at `MAX_OPEN_TABS` (10), with VS Code-style least-recently-used eviction. No separate MRU hook is needed; the open-tab list is fed directly to `useWarmArtifactSubscriptions`, which warms `artifacts.getById` for each tab plus `artifactFolders.getById` for each unique folder referenced by those tabs (the folder id is read off `ArtifactListItem.folderId` from the shell's already-loaded metadata query, so no extra round-trip is required to discover what to warm).
 
 ### Layer 2 — Speculative prefetch
@@ -112,7 +112,7 @@ The set is keyed by `ThreadId`, not by message identity, so a thread that gains 
 | File                                       | Role |
 | ------------------------------------------ | ---- |
 | `src/hooks/use-recent-threads.ts`          | MRU tracking of viewed thread ids. Updates state during render (React-documented derived-state pattern) so the new list is observable in the same render that observes the new active id. |
-| `src/hooks/use-warm-thread-subscriptions.ts` | Holds live `useQueries` subscriptions for `listMessages` + `getActiveMessageStream` across the MRU set. No data is consumed; the side-effect is the retention itself. |
+| `src/hooks/use-warm-thread-subscriptions.ts` | Holds live `useQueries` subscriptions for `listMessagesPaginated` + `getActiveMessageStream` across the MRU set. No data is consumed; the side-effect is the retention itself. |
 | `src/hooks/use-prewarm-thread.ts`          | Stable callback that calls `prewarmQuery` for both queries with an 8 s extension. Used on hover/focus from the sidebar. |
 | `src/components/repository-shell.tsx`      | Mounts `useRecentThreads(effectiveSelectedThreadId)` and feeds the result into `useWarmThreadSubscriptions`. |
 | `src/components/app-sidebar.tsx`           | Calls `usePrewarmThread()` and wires the callback to `onMouseEnter` / `onFocus` on each thread row. |
@@ -178,7 +178,7 @@ There is no separate MRU hook because the tab strip already enforces the bounded
 
 ### Subscription budget
 
-- **Chat threads.** Default upper bound: `N × 2 = 10` subscriptions held by the MRU retention layer, plus transient hover prefetches that drop after 8 s. Both `listMessages` and `getActiveMessageStream` are small bounded queries; ten of each over a single multiplexed WebSocket is a negligible client and server cost.
+- **Chat threads.** Default upper bound: `N × 2 = 10` subscriptions held by the MRU retention layer, plus transient hover prefetches that drop after 8 s. Both `listMessagesPaginated` and `getActiveMessageStream` are small bounded queries; ten of each over a single multiplexed WebSocket is a negligible client and server cost.
 - **Library tabs.** Upper bound is `MAX_OPEN_TABS + unique folders` — at most `10 + 10 = 20`, and in practice far fewer because most tabs share a handful of folders. `artifacts.getById` returns a single document and `artifactFolders.getById` returns a single folder row; the budget is comparable to chat.
 
 If a future use case needs to extend either window, raise the `limit` parameter on `useRecentThreads` (or `MAX_OPEN_TABS` in `use-library-tabs.ts`) rather than introducing a second mechanism.

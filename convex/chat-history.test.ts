@@ -3,8 +3,8 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "convex-test";
 import { api, internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
-import { MAX_CONTEXT_MESSAGES, MAX_VISIBLE_MESSAGES } from "./lib/constants";
+import type { Doc, Id } from "./_generated/dataModel";
+import { CHAT_MESSAGES_FIRST_PAGE_ARGS, MAX_CONTEXT_MESSAGES } from "./lib/constants";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -19,16 +19,53 @@ describe("chat history ordering", () => {
     vi.useRealTimers();
   });
 
-  test("listMessages returns the most recent messages in chronological order", async () => {
-    const ownerTokenIdentifier = "user|chat-history-list";
+  test("listMessagesPaginated returns descending pages and walks the cursor to exhaustion", async () => {
+    // Server returns newest-first pages; the client reverses the
+    // flattened result set into ascending order before rendering. This
+    // test pins both halves of that contract:
+    //   1. Each page from the server is in DESC creation-time order.
+    //   2. Walking the cursor visits every message exactly once before
+    //      `isDone` flips to true (no off-by-one at the tail).
+    const ownerTokenIdentifier = "user|chat-history-paginated";
     const t = convexTest(schema, modules);
-    const { threadId, contents } = await seedThreadWithMessages(t, ownerTokenIdentifier, MAX_VISIBLE_MESSAGES + 5);
+    const totalMessages = 25;
+    const pageSize = 10;
+    const { threadId, contents } = await seedThreadWithMessages(t, ownerTokenIdentifier, totalMessages);
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
-    const messages = await viewer.query(api.chat.threads.listMessages, { threadId });
+    const collected: string[] = [];
+    let cursor: string | null = null;
+    let pageCount = 0;
+    let lastIsDone = false;
+    // Bound the loop defensively so a regression in cursor advancement
+    // cannot turn this into an infinite test.
+    for (let guard = 0; guard < 10; guard += 1) {
+      const result: {
+        page: Doc<"messages">[];
+        isDone: boolean;
+        continueCursor: string;
+      } = await viewer.query(api.chat.threads.listMessagesPaginated, {
+        threadId,
+        paginationOpts: { numItems: pageSize, cursor },
+      });
+      pageCount += 1;
+      // Each individual page is in descending order — the most recent
+      // message in the page sits at index 0.
+      for (let i = 1; i < result.page.length; i += 1) {
+        expect(result.page[i]._creationTime).toBeLessThanOrEqual(result.page[i - 1]._creationTime);
+      }
+      collected.push(...result.page.map((m) => m.content));
+      lastIsDone = result.isDone;
+      if (result.isDone) break;
+      cursor = result.continueCursor;
+    }
 
-    expect(messages).toHaveLength(MAX_VISIBLE_MESSAGES);
-    expect(messages.map((message) => message.content)).toEqual(contents.slice(-MAX_VISIBLE_MESSAGES));
+    // 25 messages / 10 per page → 3 pages (10 + 10 + 5).
+    expect(pageCount).toBe(3);
+    expect(lastIsDone).toBe(true);
+    // The concatenation of pages is newest-first across all pages.
+    // Reversing matches the ascending order the seeder produced.
+    expect([...collected].reverse()).toEqual(contents);
   });
 
   test("getReplyContext trims old messages and preserves the latest conversation", async () => {
@@ -67,17 +104,25 @@ describe("chat history ordering", () => {
     });
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
-    const messages = await viewer.query(api.chat.threads.listMessages, { threadId });
+    // First (newest-first) page contains the streaming placeholder at the
+    // head — the chat UI flips the array to ascending order at render
+    // time, so the placeholder ends up at the *bottom* of the rendered
+    // conversation. Anchoring on `page[0]` here matches that visual
+    // expectation against the raw paginated response.
+    const firstPage = await viewer.query(api.chat.threads.listMessagesPaginated, {
+      threadId,
+      paginationOpts: CHAT_MESSAGES_FIRST_PAGE_ARGS,
+    });
     const context = await t.query(internal.chat.context.getReplyContext, {
       threadId,
       userMessageId: latestUserMessageId,
     });
 
-    expect(messages.at(-1)?.content).toBe("");
+    expect(firstPage.page.at(0)?.content).toBe("");
     expect(context.messages.at(-1)?.content).toBe("message-3");
   });
 
-  test("listMessages returns assistant replies from every mode the thread has been in", async () => {
+  test("listMessagesPaginated returns assistant replies from every mode the thread has been in", async () => {
     // Contract divergence: the cross-mode assistant filter only
     // applies to the LLM reply context (`getReplyContext`). The chat panel
     // still has to render every message the user can see in their thread,
@@ -138,10 +183,14 @@ describe("chat history ordering", () => {
     });
 
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
-    const messages = await viewer.query(api.chat.threads.listMessages, { threadId });
-
-    // Every message — including the cross-mode `discuss` assistant reply —
-    // is visible to the UI, in chronological order.
+    const firstPage = await viewer.query(api.chat.threads.listMessagesPaginated, {
+      threadId,
+      paginationOpts: CHAT_MESSAGES_FIRST_PAGE_ARGS,
+    });
+    // Reverse the page to ascending order — the same transformation the
+    // chat panel applies before rendering. Every message, including the
+    // cross-mode `discuss` assistant reply, must surface to the UI.
+    const messages = [...firstPage.page].reverse();
     expect(messages.map((message) => ({ role: message.role, mode: message.mode, content: message.content }))).toEqual([
       { role: "user", mode: "discuss", content: "discuss-question" },
       { role: "assistant", mode: "discuss", content: "discuss-answer" },

@@ -1,11 +1,13 @@
 import { useCallback, useMemo, useState, type AnimationEvent, type FormEvent } from "react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
+import { CHAT_MESSAGES_PAGE_SIZE } from "../../convex/lib/constants";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
+import { useChatScroll } from "@/components/ai-elements/use-chat-scroll";
 import {
   PromptInput,
   PromptInputFooter,
@@ -120,6 +122,21 @@ type ChatPanelProps = {
    * can omit it.
    */
   repositoryId?: RepositoryId | null;
+  /**
+   * Whether the paginated message subscription has more history to
+   * fetch (`status === "CanLoadMore"`). The conversation mounts a top
+   * sentinel only while true so an Exhausted thread pays no observer
+   * cost. Defaults to `false` for headless callers / tests that aren't
+   * exercising load-older.
+   */
+  canLoadOlderMessages?: boolean;
+  /**
+   * Fires when the conversation's top sentinel intersects. Wired to the
+   * paginated query's `loadMore`. Defaults to a no-op so call sites
+   * that don't drive pagination (tests, demos) compile without
+   * threading the callback through.
+   */
+  onLoadOlderMessages?: () => void;
 };
 
 type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream" | "isChatLoading"> & {
@@ -127,13 +144,44 @@ type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream
 };
 
 export function ChatContainer({ selectedThreadId, isShellLoading, ...panelProps }: ChatContainerProps) {
-  const messages = useQuery(api.chat.threads.listMessages, selectedThreadId ? { threadId: selectedThreadId } : "skip");
+  // `usePaginatedQuery`'s `results` is the concatenation of every fetched
+  // page in arrival order — that is, newest page first, then progressively
+  // older pages as the user scrolls up. Reversing the flat array yields
+  // ascending creation-time order without paying per-page reversal cost.
+  const {
+    results: paginatedResults,
+    status: paginationStatus,
+    loadMore,
+  } = usePaginatedQuery(
+    api.chat.threads.listMessagesPaginated,
+    selectedThreadId ? { threadId: selectedThreadId } : "skip",
+    { initialNumItems: CHAT_MESSAGES_PAGE_SIZE },
+  );
+  const messages = useMemo(() => {
+    if (selectedThreadId === null) {
+      return undefined;
+    }
+    if (paginationStatus === "LoadingFirstPage") {
+      return undefined;
+    }
+    // `paginatedResults` from convex is plain Doc<"messages"> rows in the
+    // server's paginate order (newest first). Reverse once so all
+    // downstream consumers (rendering, `inFlightAssistantMessage`,
+    // `hasMessages`) see ascending-by-creation-time order — the same
+    // shape the prior, unpaginated query exposed.
+    return [...paginatedResults].reverse();
+  }, [paginatedResults, paginationStatus, selectedThreadId]);
   const activeMessageStream = useQuery(
     api.chat.streaming.getActiveMessageStream,
     selectedThreadId ? { threadId: selectedThreadId } : "skip",
   );
 
   const isChatLoading = isShellLoading || (selectedThreadId !== null && messages === undefined);
+
+  const canLoadOlderMessages = paginationStatus === "CanLoadMore";
+  const handleLoadOlderMessages = useCallback(() => {
+    loadMore(CHAT_MESSAGES_PAGE_SIZE);
+  }, [loadMore]);
 
   return (
     <ChatPanel
@@ -142,9 +190,13 @@ export function ChatContainer({ selectedThreadId, isShellLoading, ...panelProps 
       messages={messages}
       activeMessageStream={activeMessageStream}
       isChatLoading={isChatLoading}
+      canLoadOlderMessages={canLoadOlderMessages}
+      onLoadOlderMessages={handleLoadOlderMessages}
     />
   );
 }
+
+const NOOP_LOAD_OLDER = () => {};
 
 export function ChatPanel({
   selectedThreadId,
@@ -176,11 +228,33 @@ export function ChatPanel({
   readOnlyHint,
   attachedRepositoryId,
   repositoryId,
+  canLoadOlderMessages = false,
+  onLoadOlderMessages = NOOP_LOAD_OLDER,
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
 
+  // Owns stick-to-bottom on append, anchor preservation on prepend,
+  // sentinel observer for load-older, threadId-keyed reset, and
+  // prefers-reduced-motion gating. `didPrependRef` is read at render
+  // time below to short-circuit the entrance animation once an older
+  // page has been prepended into the current thread.
+  const conversationScroll = useChatScroll({
+    threadId: selectedThreadId,
+    messages,
+    streamingSignal: activeMessageStream?.content ?? null,
+    canLoadOlder: canLoadOlderMessages,
+    onLoadOlder: onLoadOlderMessages,
+  });
+
   const [seenThreads, setSeenThreads] = useState(() => new Set<ThreadId>());
-  const skipEntrance = selectedThreadId !== null && seenThreads.has(selectedThreadId);
+  // Skip the entrance animation once either (a) the user has already
+  // seen this thread's entrance animation play to completion, or (b)
+  // an older page has been prepended on this thread — animating the
+  // wrapper after backfilled history would render a slide-in over
+  // messages that are mid-restore. `didPrepend` is state inside the
+  // hook so the prepend-driven re-render carries the updated flag.
+  const skipEntrance =
+    selectedThreadId !== null && (seenThreads.has(selectedThreadId) || conversationScroll.didPrepend);
   const markCurrentThreadSeen = useCallback(
     (event: AnimationEvent<HTMLDivElement>) => {
       // Filter out bubbled animationend events from children (e.g. streaming
@@ -327,13 +401,19 @@ export function ChatPanel({
           />
         </div>
       ) : (
-        // `Conversation` (ai-elements) wraps `use-stick-to-bottom`, so a
-        // streaming reply auto-sticks to the bottom and the scroll button
-        // surfaces only when the user has scrolled away. We override
+        // `Conversation` (ai-elements) owns a custom scroll controller
+        // (`useChatScroll`) that handles stick-to-bottom on append,
+        // anchor preservation on prepend, the load-older top sentinel,
+        // and prefers-reduced-motion. The hook is invoked above so the
+        // chat panel can read `didPrependRef` synchronously alongside
+        // its entrance-animation decision. We override
         // `ConversationContent`'s default gap-8 / p-4 because the chat
         // column owns its own max-w-3xl gutter.
-        <Conversation className="flex-1 min-h-0">
-          <ConversationContent className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6">
+        <Conversation scroll={conversationScroll} className="flex-1 min-h-0">
+          <ConversationContent
+            className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6"
+            showLoadOlderSentinel={canLoadOlderMessages}
+          >
             {sandboxPill}
             {sandboxWarning}
             {messages && (

@@ -22,7 +22,7 @@ import { useCheckForUpdates } from "@/hooks/use-check-for-updates";
 import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
 import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useRepositoryLifecycle } from "@/hooks/use-repository-lifecycle";
-import { useChatMode } from "@/hooks/use-service-mode";
+import { resolveEffectiveChatMode, useChatMode } from "@/hooks/use-service-mode";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
 import type { ArtifactId, ChatMode, RepositoryId, SandboxModeStatus, ThreadId, ThreadMode } from "@/lib/types";
@@ -74,13 +74,10 @@ export function RepositoryShell({
   );
 
   const { mode, availability } = useChatMode(currentRepositoryId);
-  const intendedChatMode = useMemo<ChatMode>(() => {
-    if (mode) return mode;
-    const lastMode = currentRepository?.lastMode ?? null;
-    const lastModeAvailable = lastMode ? (availability?.modes[lastMode].enabled ?? false) : false;
-    if (lastModeAvailable && lastMode) return lastMode;
-    return availability?.defaultMode ?? "discuss";
-  }, [mode, currentRepository?.lastMode, availability]);
+  const intendedChatMode = useMemo<ChatMode>(
+    () => resolveEffectiveChatMode({ mode, lastMode: currentRepository?.lastMode ?? null, availability }),
+    [mode, currentRepository?.lastMode, availability],
+  );
 
   const capabilities = useThreadCapabilities(urlThreadId);
 
