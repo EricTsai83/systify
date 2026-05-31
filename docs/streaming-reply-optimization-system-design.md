@@ -23,7 +23,7 @@ That meant one `messages` row had to serve two very different jobs:
 This created predictable pressure:
 
 - every flush rewrote a growing string
-- every flush re-invalidated `listMessages`
+- every flush re-invalidated `listMessagesPaginated`
 - stable history and hot stream state had no clean boundary
 
 ## Design Goals
@@ -125,7 +125,7 @@ The UI now reads three sources:
 
 ```mermaid
 flowchart TD
-  historyQuery[listMessages]
+  historyQuery[listMessagesPaginated]
   streamQuery[getActiveMessageStream]
   toolCallQuery[getMessageToolCallEvents]
   mergeUi[MergeByAssistantMessageId]
@@ -137,7 +137,7 @@ flowchart TD
   mergeUi --> chatPanel
 ```
 
-`listMessages` is now responsible for stable history and placeholder rows (including the finalized `messages.toolCalls` trace once a sandbox reply has settled).
+`listMessagesPaginated` is now responsible for stable history and placeholder rows (including the finalized `messages.toolCalls` trace once a sandbox reply has settled).
 
 `getActiveMessageStream` is responsible only for the live in-flight assistant text.
 

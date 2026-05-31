@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { LibraryAskPanel } from "@/components/library-ask-panel";
@@ -8,17 +9,9 @@ import { RepositoryThreadsRail, RepolessChatsRail } from "@/components/repositor
 import { RepositorySelector } from "@/components/repository-switcher";
 import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
-import { useChatMode } from "@/hooks/use-service-mode";
+import { resolveEffectiveChatMode, useChatMode } from "@/hooks/use-service-mode";
 import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
-import type {
-  ArtifactId,
-  ArtifactListItem,
-  ChatMode,
-  OnImportedCallback,
-  RepositoryId,
-  ThreadId,
-  ThreadMode,
-} from "@/lib/types";
+import type { ArtifactId, ArtifactListItem, OnImportedCallback, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 
 const LEFT_SIDEBAR_WIDTH_STORAGE_KEY = "systify.sidebar.width";
 const LEFT_SIDEBAR_DEFAULT_WIDTH = 380;
@@ -79,7 +72,11 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
   } = props;
   const navigate = useNavigate();
   const { mode, availability } = useChatMode(activeRepositoryId);
-  const effectiveChatMode: ChatMode = mode ?? availability?.defaultMode ?? "discuss";
+  const lastMode = useMemo(() => {
+    if (!activeRepositoryId || !repositories) return null;
+    return repositories.find((repo) => repo._id === activeRepositoryId)?.lastMode ?? null;
+  }, [repositories, activeRepositoryId]);
+  const effectiveChatMode = resolveEffectiveChatMode({ mode, lastMode, availability });
 
   const isLibraryMode = effectiveChatMode === "library";
 

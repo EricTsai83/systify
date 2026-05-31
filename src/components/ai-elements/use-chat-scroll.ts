@@ -134,6 +134,10 @@ export function useChatScroll<TMessage extends Identifiable>({
 
   const [isAtBottom, setIsAtBottom] = useState(true);
   const isAtBottomRef = useRef(true);
+  // Syncing ref during render is intentional: provides synchronous access to the latest isAtBottom
+  // for layout effects/callbacks, which run before state updates propagate. Safe because the ref
+  // is only read in effects/callbacks (not during render), and this sync pattern avoids stale
+  // closures in the scroll/resize observers. See react-hooks/rules-of-hooks lint.
   isAtBottomRef.current = isAtBottom;
 
   const [didPrepend, setDidPrepend] = useState(false);
