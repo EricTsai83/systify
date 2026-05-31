@@ -3,6 +3,7 @@ import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icon
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
+import { CHAT_MESSAGES_PAGE_SIZE } from "../../convex/lib/constants";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
@@ -142,19 +143,6 @@ type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream
   isShellLoading: boolean;
 };
 
-/**
- * Page size for the paginated message subscription. The server returns
- * pages in descending creation-time order (newest first); the client
- * reverses the flattened result set so the rendered list stays in
- * ascending order.
- *
- * 30 keeps the resident set at ~30 × max-message-cost — lighter than a
- * typical Radix dialog tree — while still landing the latest several
- * turns in a single subscription tick (no prepend on first paint, so
- * the initial scroll-to-bottom snaps without a jump).
- */
-const MESSAGES_PAGE_SIZE = 30;
-
 export function ChatContainer({ selectedThreadId, isShellLoading, ...panelProps }: ChatContainerProps) {
   // `usePaginatedQuery`'s `results` is the concatenation of every fetched
   // page in arrival order — that is, newest page first, then progressively
@@ -167,7 +155,7 @@ export function ChatContainer({ selectedThreadId, isShellLoading, ...panelProps 
   } = usePaginatedQuery(
     api.chat.threads.listMessagesPaginated,
     selectedThreadId ? { threadId: selectedThreadId } : "skip",
-    { initialNumItems: MESSAGES_PAGE_SIZE },
+    { initialNumItems: CHAT_MESSAGES_PAGE_SIZE },
   );
   const messages = useMemo(() => {
     if (selectedThreadId === null) {
@@ -192,7 +180,7 @@ export function ChatContainer({ selectedThreadId, isShellLoading, ...panelProps 
 
   const canLoadOlderMessages = paginationStatus === "CanLoadMore";
   const handleLoadOlderMessages = useCallback(() => {
-    loadMore(MESSAGES_PAGE_SIZE);
+    loadMore(CHAT_MESSAGES_PAGE_SIZE);
   }, [loadMore]);
 
   return (

@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useConvex } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { CHAT_MESSAGES_FIRST_PAGE_ARGS } from "../../convex/lib/constants";
 import type { ThreadId } from "@/lib/types";
 
 /**
@@ -10,14 +11,6 @@ import type { ThreadId } from "@/lib/types";
  * long enough that a thoughtful click still lands inside the window.
  */
 const PREWARM_DURATION_MS = 8_000;
-
-/**
- * Page-1 args for the paginated message query. Must serialize identically
- * to `usePaginatedQuery(..., { initialNumItems: 30 })`'s first-page
- * issuance so the prewarmed subscription is ref-count-shared with the
- * `ChatContainer` mount when the user actually clicks through.
- */
-const MESSAGES_PAGE_ONE_ARGS = { numItems: 30, cursor: null } as const;
 
 /**
  * Returns a stable callback that warms a thread's Convex subscriptions
@@ -34,7 +27,7 @@ export function usePrewarmThread(): (threadId: ThreadId) => void {
     (threadId: ThreadId) => {
       convex.prewarmQuery({
         query: api.chat.threads.listMessagesPaginated,
-        args: { threadId, paginationOpts: MESSAGES_PAGE_ONE_ARGS },
+        args: { threadId, paginationOpts: CHAT_MESSAGES_FIRST_PAGE_ARGS },
         extendSubscriptionFor: PREWARM_DURATION_MS,
       });
       convex.prewarmQuery({

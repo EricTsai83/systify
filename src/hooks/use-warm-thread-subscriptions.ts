@@ -1,17 +1,8 @@
 import { useMemo } from "react";
 import { useQueries } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { CHAT_MESSAGES_FIRST_PAGE_ARGS } from "../../convex/lib/constants";
 import type { ThreadId } from "@/lib/types";
-
-/**
- * Page-1 args for the paginated message query. Must serialize identically
- * to `usePaginatedQuery(..., { initialNumItems: 30 })`'s first-page
- * issuance so the warmed subscription is ref-count-shared with the
- * `ChatContainer` mount instead of duplicated. `cursor: null` is the
- * canonical "first page" cursor; `numItems` matches the page size used by
- * the chat panel.
- */
-const MESSAGES_PAGE_ONE_ARGS = { numItems: 30, cursor: null } as const;
 
 /**
  * Hold Convex subscriptions open for `threadIds` so switching between them is
@@ -40,13 +31,13 @@ export function useWarmThreadSubscriptions(threadIds: readonly ThreadId[]): void
       string,
       {
         query: typeof api.chat.threads.listMessagesPaginated | typeof api.chat.streaming.getActiveMessageStream;
-        args: { threadId: ThreadId; paginationOpts?: typeof MESSAGES_PAGE_ONE_ARGS };
+        args: { threadId: ThreadId; paginationOpts?: typeof CHAT_MESSAGES_FIRST_PAGE_ARGS };
       }
     > = {};
     for (const threadId of threadIds) {
       map[`messages:${threadId}`] = {
         query: api.chat.threads.listMessagesPaginated,
-        args: { threadId, paginationOpts: MESSAGES_PAGE_ONE_ARGS },
+        args: { threadId, paginationOpts: CHAT_MESSAGES_FIRST_PAGE_ARGS },
       };
       map[`stream:${threadId}`] = {
         query: api.chat.streaming.getActiveMessageStream,

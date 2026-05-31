@@ -3,6 +3,7 @@ import { BookOpenIcon, PaperPlaneTiltIcon, SparkleIcon } from "@phosphor-icons/r
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
+import { CHAT_MESSAGES_PAGE_SIZE } from "../../convex/lib/constants";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { useChatScroll } from "@/components/ai-elements/use-chat-scroll";
 import { PromptInput, PromptInputFooter, PromptInputTextarea } from "@/components/ai-elements/prompt-input";
@@ -18,13 +19,6 @@ import { toast } from "sonner";
 
 const LOCKED_PLACEHOLDER = "Generate a System Design to unlock Library Ask.";
 const LOCKED_HINT = "Library Ask needs at least one artifact in this repository before you can send a question.";
-/**
- * Page size for the paginated message subscription. Matches the value
- * used by the Discuss chat panel so long Library Ask threads behave
- * the same way: first page = newest 30, older history loads via the
- * top sentinel.
- */
-const ASK_MESSAGES_PAGE_SIZE = 30;
 
 export function LibraryAskPanel({
   repositoryId,
@@ -82,7 +76,7 @@ export function LibraryAskPanel({
   } = usePaginatedQuery(
     api.chat.threads.listMessagesPaginated,
     confirmedThreadId ? { threadId: confirmedThreadId } : "skip",
-    { initialNumItems: ASK_MESSAGES_PAGE_SIZE },
+    { initialNumItems: CHAT_MESSAGES_PAGE_SIZE },
   );
   // Same ordering contract as the Discuss panel: server pages arrive
   // newest-first; flatten + reverse so all downstream consumers see
@@ -94,7 +88,7 @@ export function LibraryAskPanel({
   }, [confirmedThreadId, messagesStatus, paginatedMessages]);
   const canLoadOlderMessages = messagesStatus === "CanLoadMore";
   const handleLoadOlderMessages = useCallback(() => {
-    loadOlderMessages(ASK_MESSAGES_PAGE_SIZE);
+    loadOlderMessages(CHAT_MESSAGES_PAGE_SIZE);
   }, [loadOlderMessages]);
   const activeMessageStream = useQuery(
     api.chat.streaming.getActiveMessageStream,

@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "convex-test";
 import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { MAX_CONTEXT_MESSAGES } from "./lib/constants";
+import { CHAT_MESSAGES_FIRST_PAGE_ARGS, MAX_CONTEXT_MESSAGES } from "./lib/constants";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -111,7 +111,7 @@ describe("chat history ordering", () => {
     // expectation against the raw paginated response.
     const firstPage = await viewer.query(api.chat.threads.listMessagesPaginated, {
       threadId,
-      paginationOpts: { numItems: 30, cursor: null },
+      paginationOpts: CHAT_MESSAGES_FIRST_PAGE_ARGS,
     });
     const context = await t.query(internal.chat.context.getReplyContext, {
       threadId,
@@ -185,7 +185,7 @@ describe("chat history ordering", () => {
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
     const firstPage = await viewer.query(api.chat.threads.listMessagesPaginated, {
       threadId,
-      paginationOpts: { numItems: 30, cursor: null },
+      paginationOpts: CHAT_MESSAGES_FIRST_PAGE_ARGS,
     });
     // Reverse the page to ascending order — the same transformation the
     // chat panel applies before rendering. Every message, including the
