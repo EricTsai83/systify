@@ -58,6 +58,7 @@ function ContextMenuItem({
   className,
   inset,
   variant = "default",
+  onPointerUp,
   ...props
 }: React.ComponentProps<typeof ContextMenuPrimitive.Item> & {
   inset?: boolean;
@@ -72,6 +73,18 @@ function ContextMenuItem({
         "group/context-menu-item relative flex cursor-default items-center gap-2 rounded-none px-2 py-2 text-xs outline-hidden select-none focus:bg-accent focus:text-accent-foreground data-inset:pl-7 data-[variant=destructive]:text-destructive data-[variant=destructive]:focus:bg-destructive/10 data-[variant=destructive]:focus:text-destructive dark:data-[variant=destructive]:focus:bg-destructive/20 data-disabled:pointer-events-none data-disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 focus:*:[svg]:text-accent-foreground data-[variant=destructive]:*:[svg]:text-destructive",
         className,
       )}
+      onPointerUp={(event) => {
+        // Suppress Radix Menu's "drag-and-release" auto-click for non-primary
+        // pointer buttons. Right-click on a ContextMenu trigger opens the menu
+        // under the cursor; the right-click's own pointerup then lands on the
+        // first item, which Radix turns into a programmatic .click() because no
+        // matching pointerdown happened on the item. The auto-click silently
+        // fires the item's handler (e.g. pinning the right-clicked folder).
+        // composeEventHandlers respects defaultPrevented, so preventing here
+        // skips Radix's handler without affecting real left-clicks or keyboard.
+        if (event.button !== 0) event.preventDefault();
+        onPointerUp?.(event);
+      }}
       {...props}
     />
   );

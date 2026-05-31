@@ -73,9 +73,10 @@ async function ensureNoCycle(
 
 /**
  * Public, owner-scoped listing of every folder in a repository. Returned
- * flat — the frontend builds the tree from `parentFolderId` and computes
- * visible child counts from the artifact metadata it already loaded. Keeping
- * this query folder-only avoids an N+1 artifact scan on every Library render.
+ * flat — the frontend builds the tree from `parentFolderId` and derives any
+ * folder-level aggregates (counts, etc.) from the artifact metadata it has
+ * already loaded for rendering. Keeping this query folder-only avoids an
+ * N+1 artifact scan on every Library render.
  */
 export const listByRepository = query({
   args: { repositoryId: v.id("repositories") },

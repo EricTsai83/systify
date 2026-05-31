@@ -80,9 +80,10 @@ type FolderNavigatorProps = {
  *   1. **Folders** — every folder for the repo, including the seeded
  *      System Design folders (Overview, Architecture, …) that carry a
  *      `systemKey`. Seeded folders default-expanded; user-created folders
- *      start collapsed. Each folder header shows name + child count and a
- *      kebab menu with rename / delete-and-move-contents-up. Children are
- *      nested folders and any artifact placed via `folderId`.
+ *      start collapsed. Each folder header shows the folder name (plus a
+ *      pin marker when pinned) and a kebab / right-click menu with pin /
+ *      rename / delete-and-move-contents-up. Children are nested folders
+ *      and any artifact placed via `folderId`.
  *
  *   2. **Repository root** — artifacts with no `folderId`. The name mirrors
  *      the FolderPicker's "Repository root" option so the same destination
@@ -409,7 +410,6 @@ function FolderTreeBranch({
   const [wasJustCreated, setWasJustCreated] = useState(false);
   const rowRef = useRef<HTMLDivElement>(null);
   const folderArtifacts = artifactsByFolder.get(node.id) ?? EMPTY_ARTIFACTS;
-  const childCount = folderArtifacts.length + node.children.length;
   const isSelected = selectedFolderId === (node.id as FolderId);
   const isPinned = node.pinnedAt !== undefined;
 
@@ -547,12 +547,9 @@ function FolderTreeBranch({
             ) : (
               <span className="flex flex-1 items-center justify-between gap-2 truncate text-left">
                 <span className="truncate font-medium">{node.name}</span>
-                <span className="flex shrink-0 items-center gap-1.5 text-[10px] tabular-nums text-muted-foreground">
-                  {isPinned ? (
-                    <PushPinIcon size={10} weight="fill" aria-label="Pinned" className="text-muted-foreground" />
-                  ) : null}
-                  {childCount}
-                </span>
+                {isPinned ? (
+                  <PushPinIcon size={10} weight="fill" aria-label="Pinned" className="shrink-0 text-muted-foreground" />
+                ) : null}
               </span>
             )}
             <DropdownMenu>
