@@ -1,6 +1,7 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { chatModeValidator } from "./lib/chatMode";
+import { llmProviderValidator } from "./lib/llmProvider";
 import { systemDesignKindValidator } from "./lib/systemDesign";
 
 const repositoryStatus = v.union(
@@ -66,6 +67,33 @@ const kindFailureReason = v.union(
   v.literal("infra"),
   // Retained during widen-backfill-narrow rollout; dropped in a follow-up commit.
   v.literal("other"),
+);
+
+/**
+ * Per-kind run outcome for `systemDesignKindRuns`. The append-only log
+ * carries every attempt — including the no-LLM-call cache hits — so the
+ * eval / cost analytics can distinguish "the kind ran" from "the kind
+ * resolved without rerunning":
+ *
+ *   - `succeeded`         — LLM ran, output passed quality gates, artifact
+ *                            written.
+ *   - `failed`             — LLM call failed (transport, infra, empty
+ *                            output) before the quality gate could run.
+ *   - `cached_hit`         — Idempotency match against a previous artifact
+ *                            with the same `(repo, kind, commitSha,
+ *                            provider, model, promptVersion)` tuple; no
+ *                            LLM call was made.
+ *   - `quality_rejected`   — LLM produced text but the section / mermaid
+ *                            validators rejected it; no artifact written.
+ *                            Distinct from `failed` so the eval harness
+ *                            can attribute quality regressions separately
+ *                            from transport faults.
+ */
+const kindRunStatus = v.union(
+  v.literal("succeeded"),
+  v.literal("failed"),
+  v.literal("cached_hit"),
+  v.literal("quality_rejected"),
 );
 
 const jobStatus = v.union(
@@ -337,6 +365,29 @@ export default defineSchema({
      * same selection set without re-derivation from the failure list.
      */
     selections: v.optional(v.array(systemDesignKindValidator)),
+    /**
+     * LLM provider + model baked into the job at creation. Once a System
+     * Design job runs, every kind in `selections` uses this same pair —
+     * the cache key (`artifacts.generatedByProvider/Model/promptVersion`)
+     * relies on this immutability so a resume after action timeout picks
+     * up exactly where the original attempt left off.
+     *
+     * Optional because pre-PR-A2 chat jobs and historical rows have no
+     * provider attribution; new System Design jobs always set both.
+     */
+    provider: v.optional(llmProviderValidator),
+    modelName: v.optional(v.string()),
+    /**
+     * Auto-resume counter for System Design jobs. Incremented each time
+     * `recoverStaleSystemDesignJob` re-enqueues a stale-but-recoverable
+     * job (partial progress, some kinds still un-cached). Bounded by
+     * `MAX_RESUME_ATTEMPTS` in `convex/systemDesign.ts` — when the cap
+     * is reached the job is marked `failed` instead of resuming again.
+     *
+     * Optional because non-System-Design jobs never set it; absence is
+     * read as `0`.
+     */
+    resumeAttempts: v.optional(v.number()),
   })
     .index("by_repositoryId", ["repositoryId"])
     .index("by_repositoryId_and_kind", ["repositoryId", "kind"])
@@ -349,7 +400,15 @@ export default defineSchema({
       "leaseExpiresAt",
     ])
     .index("by_status_and_kind_and_leaseExpiresAt", ["status", "kind", "leaseExpiresAt"])
-    .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
+    .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"])
+    /**
+     * Time-windowed per-user cost aggregation index. Powers the
+     * `report:user-costs` CLI in `convex/lib/userCost.ts` — without it,
+     * a cost rollup query would scan every job owned by the user and
+     * filter in-memory. With `completedAt` as the trailing range key,
+     * the scan is bounded by the requested time window.
+     */
+    .index("by_ownerTokenIdentifier_and_completedAt", ["ownerTokenIdentifier", "completedAt"]),
 
   daytonaWebhookEvents: defineTable({
     providerDeliveryId: v.optional(v.string()),
@@ -459,6 +518,30 @@ export default defineSchema({
      * without a recorded edit timestamp fall back to `_creationTime`.
      */
     updatedAt: v.optional(v.number()),
+    /**
+     * Provenance + idempotency triple for LLM-generated artifacts.
+     * The System Design generator's cache lookup matches against the
+     * full key `(repositoryId, kind, alignedImportCommitSha,
+     * generatedByProvider, generatedByModel, promptVersion)` — a hit
+     * means "we already produced this exact artifact for the same
+     * commit, with the same model, against the same prompt revision,
+     * so reusing it is safe". Bumping any of provider / model /
+     * promptVersion invalidates the cache and forces a fresh run.
+     *
+     * All optional because non-generated artifacts (future user-authored
+     * artifacts, pre-PR-A2 rows) carry none of these. The cache lookup
+     * filters out rows missing any of the triple.
+     */
+    generatedByProvider: v.optional(llmProviderValidator),
+    generatedByModel: v.optional(v.string()),
+    promptVersion: v.optional(v.number()),
+    /**
+     * Forensic anchor back to the originating `systemDesignKindRuns` row
+     * so a user looking at an artifact can trace it to the exact LLM run
+     * (token usage, step count, duration). Optional because non-System-
+     * Design artifacts have no kind-run row.
+     */
+    kindRunId: v.optional(v.id("systemDesignKindRuns")),
   })
     .index("by_repositoryId", ["repositoryId"])
     .index("by_repositoryId_and_kind", ["repositoryId", "kind"])
@@ -838,7 +921,15 @@ export default defineSchema({
   })
     .index("by_threadId", ["threadId"])
     .index("by_threadId_and_status", ["threadId", "status"])
-    .index("by_jobId", ["jobId"]),
+    .index("by_jobId", ["jobId"])
+    /**
+     * Per-owner scan for the per-user cost rollup. Convex implicitly
+     * orders by `_creationTime` as the trailing key, so the rollup
+     * query can window by time by filtering the index-scoped result —
+     * an active user with thousands of messages still scans only their
+     * own slice, not the global table.
+     */
+    .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
 
   /**
    * Application invariant: each assistant reply owns at most one `messageStreams`
@@ -998,6 +1089,90 @@ export default defineSchema({
   })
     .index("by_owner_and_time", ["ownerTokenIdentifier"])
     .index("by_message", ["messageId"]),
+
+  /**
+   * Append-only per-kind run log for the System Design generator. One
+   * row per `(jobId, kind)` attempt — whether the call hit the LLM, hit
+   * the artifact cache, failed transport, or failed quality gates.
+   *
+   * Distinct from `jobs.kindFailures` (which records only failure
+   * summaries) and from `artifacts.kindRunId` (which back-references the
+   * winning run on the surviving artifact). Every attempt — success,
+   * cache hit, transport failure, quality reject — writes one row here
+   * so:
+   *
+   *   1. The eval harness (`convex/eval/systemDesign/`) can compute
+   *      per-prompt success rate, mean step count, token mix, and
+   *      cost regression across `promptVersion` bumps without
+   *      replaying jobs.
+   *   2. The cost telemetry CLI (`convex/lib/userCost.ts`) aggregates
+   *      per-user System Design spend.
+   *   3. Operator forensics: tracing back from "this kind keeps
+   *      failing for that repo" to the exact step trace + failure
+   *      reason of every recent attempt.
+   *
+   * Lifecycle: rows are written from `convex/systemDesign.ts:
+   * recordKindRun` exactly once per attempt. They are never patched
+   * after insert — the artifact row updates separately via
+   * `linkKindRun`. Rows never expire today; retention can be added as
+   * a cron when volume justifies it.
+   */
+  systemDesignKindRuns: defineTable({
+    ownerTokenIdentifier: v.string(),
+    repositoryId: v.id("repositories"),
+    jobId: v.id("jobs"),
+    kind: systemDesignKindValidator,
+    /**
+     * Set on `succeeded` and `cached_hit` rows; absent on `failed` and
+     * `quality_rejected`. The `linkKindRun` mutation patches the
+     * artifact's `kindRunId` back-reference once both rows exist.
+     */
+    artifactId: v.optional(v.id("artifacts")),
+    provider: llmProviderValidator,
+    modelName: v.string(),
+    promptVersion: v.number(),
+    /**
+     * Commit SHA captured from the repository at run time so the cache
+     * key tuple stays self-describing. Optional because a repository
+     * that has never finished an import can still have System Design
+     * runs attempted (they would fail on `live_source_unavailable`).
+     */
+    alignedImportCommitSha: v.optional(v.string()),
+    stepCap: v.number(),
+    actualSteps: v.number(),
+    inputTokens: v.optional(v.number()),
+    outputTokens: v.optional(v.number()),
+    cachedInputTokens: v.optional(v.number()),
+    /** Anthropic-only; always absent on OpenAI rows. */
+    cacheWriteTokens: v.optional(v.number()),
+    reasoningTokens: v.optional(v.number()),
+    totalCostUsd: v.optional(v.number()),
+    durationMs: v.number(),
+    status: kindRunStatus,
+    failureReason: v.optional(kindFailureReason),
+    outputCharLength: v.optional(v.number()),
+    /**
+     * Section names the quality gate flagged as missing. Empty / unset
+     * on `succeeded` and `cached_hit` rows; populated on
+     * `quality_rejected`. Used by the eval harness to characterise
+     * which prompts produce structurally-incomplete output.
+     */
+    missingSections: v.optional(v.array(v.string())),
+    startedAt: v.number(),
+  })
+    .index("by_jobId", ["jobId"])
+    .index("by_repositoryId_and_kind", ["repositoryId", "kind"])
+    /**
+     * Eval index: slice runs by `(kind, provider, model)` and time so
+     * the harness can compute per-prompt-version regression deltas
+     * without scanning the whole table.
+     */
+    .index("by_kind_provider_model_and_startedAt", ["kind", "provider", "modelName", "startedAt"])
+    /**
+     * Per-user cost aggregation index — same shape as the new jobs
+     * index — so the userCost rollup can window scan by time.
+     */
+    .index("by_owner_and_startedAt", ["ownerTokenIdentifier", "startedAt"]),
 
   githubInstallations: defineTable({
     ownerTokenIdentifier: v.string(),

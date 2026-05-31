@@ -25,7 +25,8 @@
     "lint": "bun run typecheck && bun run typecheck:convex && eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test": "vitest run",
     "preview": "vite preview",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "report:user-costs": "bun scripts/reportUserCosts.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.81",

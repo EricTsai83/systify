@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { llmProviderValidator, type LlmProvider } from "./lib/llmProvider";
 import { assertOwnedBy } from "./lib/ownedDocs";
 
 type ArtifactKind = Doc<"artifacts">["kind"];
@@ -23,6 +24,23 @@ interface CreateArtifactArgs {
    * enforces folder existence, owner, and repository scope.
    */
   folderId?: Id<"artifactFolders">;
+  /**
+   * Provenance triple. Together with `alignedImportCommitSha`, these
+   * form the idempotency cache key for the System Design generator —
+   * see `convex/systemDesign.ts:findCachedArtifact`. Non-LLM
+   * artifacts (future user-authored, manual import) leave all three
+   * unset and never participate in the cache lookup.
+   */
+  generatedByProvider?: LlmProvider;
+  generatedByModel?: string;
+  promptVersion?: number;
+  /**
+   * Back-reference to the `systemDesignKindRuns` row that produced
+   * this artifact. Set by `linkKindRun` *after* both rows exist so
+   * write order doesn't matter — kindRunId can be patched in after
+   * the artifact is created.
+   */
+  kindRunId?: Id<"systemDesignKindRuns">;
 }
 
 /**
@@ -75,6 +93,10 @@ export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArt
     lastVerifiedAt: now,
     chunkingStatus: args.repositoryId ? "pending" : undefined,
     updatedAt: now,
+    generatedByProvider: args.generatedByProvider,
+    generatedByModel: args.generatedByModel,
+    promptVersion: args.promptVersion,
+    kindRunId: args.kindRunId,
   });
   if (args.repositoryId) {
     await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, { artifactId });
@@ -243,6 +265,10 @@ export const createArtifact = internalMutation({
     summary: v.string(),
     contentMarkdown: v.string(),
     folderId: v.optional(v.id("artifactFolders")),
+    generatedByProvider: v.optional(llmProviderValidator),
+    generatedByModel: v.optional(v.string()),
+    promptVersion: v.optional(v.number()),
+    kindRunId: v.optional(v.id("systemDesignKindRuns")),
   },
   handler: (ctx, args) => createArtifactInMutation(ctx, args),
 });
