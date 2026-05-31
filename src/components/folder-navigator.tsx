@@ -1,11 +1,10 @@
-import { memo, useMemo, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
   ArrowsClockwiseIcon,
   CaretDownIcon,
   CaretRightIcon,
   DotsThreeVerticalIcon,
-  FolderIcon,
   FolderPlusIcon,
   PencilSimpleIcon,
   PushPinIcon,
@@ -106,8 +105,22 @@ export function FolderNavigator({
 
   const [search, setSearch] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
+  // VS Code-style nested create: after `createFolder` returns we hand the
+  // tree two one-shot signals — `pendingExpand…` flips the new folder's
+  // parent open so the child can mount, and `pendingRename…` puts the new
+  // child into inline-rename mode so the user names it immediately. Each
+  // branch consumes its matching signal and clears it.
+  const [pendingExpandFolderId, setPendingExpandFolderId] = useState<FolderId | null>(null);
+  const [pendingRenameFolderId, setPendingRenameFolderId] = useState<FolderId | null>(null);
+  const consumePendingExpand = useCallback(() => setPendingExpandFolderId(null), []);
+  const consumePendingRename = useCallback(() => setPendingRenameFolderId(null), []);
 
   const tree = useMemo(() => buildFolderTree(folders ?? []), [folders]);
+
+  const selectedFolderName = useMemo(() => {
+    if (!selectedFolderId || !folders) return null;
+    return folders.find((folder) => folder._id === selectedFolderId)?.name ?? null;
+  }, [folders, selectedFolderId]);
 
   const artifactsByFolder = useMemo(() => {
     const map = new Map<string, NavigatorArtifact[]>();
@@ -152,13 +165,24 @@ export function FolderNavigator({
 
   const [isCreating, runCreateFolder] = useAsyncCallback(async () => {
     const baseName = "New folder";
+    const parentFolderId = selectedFolderId ?? undefined;
     setCreateError(null);
     try {
-      await createFolder({ repositoryId, name: baseName });
+      const newFolderId = await createFolder({ repositoryId, name: baseName, parentFolderId });
+      // Expand the parent (if any) so the new branch can actually mount, then
+      // hand selection to the new folder and pop it into rename mode so the
+      // next "+" press creates deeper and the user can name it inline.
+      if (parentFolderId) {
+        setPendingExpandFolderId(parentFolderId);
+      }
+      setPendingRenameFolderId(newFolderId);
+      onSelectFolder?.(newFolderId);
     } catch (error) {
       setCreateError(toUserErrorMessage(error, "Failed to create folder."));
     }
   });
+
+  const createButtonLabel = selectedFolderName ? `Create folder in ${selectedFolderName}` : "Create folder at root";
 
   return (
     <div className={cn("flex h-full min-h-0 flex-col", className)}>
@@ -174,7 +198,8 @@ export function FolderNavigator({
           variant="ghost"
           size="icon"
           className="h-8 w-8 shrink-0"
-          aria-label="Create folder"
+          aria-label={createButtonLabel}
+          title={createButtonLabel}
           disabled={isCreating}
           onClick={() => void runCreateFolder()}
         >
@@ -220,6 +245,10 @@ export function FolderNavigator({
                     filterArtifact={filterPredicate}
                     folderMatchesSearch={folderMatchesSearch}
                     isUnseen={isUnseen}
+                    pendingExpandFolderId={pendingExpandFolderId}
+                    pendingRenameFolderId={pendingRenameFolderId}
+                    onConsumePendingExpand={consumePendingExpand}
+                    onConsumePendingRename={consumePendingRename}
                   />
                 ))
             )}
@@ -285,6 +314,10 @@ function FolderTreeBranch({
   filterArtifact,
   folderMatchesSearch,
   isUnseen,
+  pendingExpandFolderId,
+  pendingRenameFolderId,
+  onConsumePendingExpand,
+  onConsumePendingRename,
 }: {
   repositoryId: RepositoryId;
   node: FolderTreeNode;
@@ -297,6 +330,10 @@ function FolderTreeBranch({
   filterArtifact: FilterFn;
   folderMatchesSearch: (node: FolderTreeNode) => boolean;
   isUnseen?: (artifact: NavigatorArtifact) => boolean;
+  pendingExpandFolderId: FolderId | null;
+  pendingRenameFolderId: FolderId | null;
+  onConsumePendingExpand: () => void;
+  onConsumePendingRename: () => void;
 }) {
   const [isOpen, setIsOpen] = useLocalStorageBoolean(
     `systify.folderNav.open.${repositoryId}.${node.id}`,
@@ -347,31 +384,62 @@ function FolderTreeBranch({
     }
   });
 
+  useEffect(() => {
+    if (pendingExpandFolderId !== (node.id as FolderId)) return;
+    setIsOpen(true);
+    onConsumePendingExpand();
+  }, [node.id, onConsumePendingExpand, pendingExpandFolderId, setIsOpen]);
+
+  useEffect(() => {
+    if (pendingRenameFolderId !== (node.id as FolderId)) return;
+    // Empty draft so the user types the name from scratch (VS Code parity).
+    // Blur or Escape keep the seeded "New folder" name — see `runRename`.
+    setDraftName("");
+    setIsRenaming(true);
+    onConsumePendingRename();
+  }, [node.id, onConsumePendingRename, pendingRenameFolderId]);
+
+  // Whole-row activation: clicking anywhere on the row toggles
+  // expand/collapse and selects the folder, so the caret no longer needs to
+  // be a separate hit target. Children that own their own click semantics
+  // (rename input, kebab) call `stopPropagation` so they don't double-fire.
+  const handleRowActivate = () => {
+    setIsOpen((open) => !open);
+    onSelectFolder?.(node.id as FolderId);
+  };
+
   return (
     <div>
       <div
+        role="button"
+        tabIndex={isRenaming ? -1 : 0}
+        aria-expanded={isOpen}
+        aria-label={node.name}
         className={cn(
-          "group flex items-center gap-1 px-1.5 py-1 text-[12px] hover:bg-muted/60",
-          isSelected ? "bg-muted/60" : "",
+          "group flex cursor-pointer items-center gap-1 px-1.5 py-1 text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+          isSelected ? "bg-primary/10 ring-1 ring-primary/40 hover:bg-primary/15" : "hover:bg-muted/60",
         )}
         style={{ paddingLeft: `${indent * 12 + 6}px` }}
+        onClick={handleRowActivate}
+        onKeyDown={(event) => {
+          if ((event.key === "Enter" || event.key === " ") && event.currentTarget === event.target) {
+            event.preventDefault();
+            handleRowActivate();
+          }
+        }}
       >
-        <button
-          type="button"
-          aria-label={isOpen ? "Collapse folder" : "Expand folder"}
-          className="text-muted-foreground transition-transform hover:text-foreground"
-          onClick={() => setIsOpen((open) => !open)}
-        >
+        <span aria-hidden className="text-muted-foreground">
           {isOpen ? <CaretDownIcon size={11} weight="bold" /> : <CaretRightIcon size={11} weight="bold" />}
-        </button>
-        <FolderIcon size={13} weight="duotone" className="shrink-0 text-muted-foreground" />
+        </span>
         {isRenaming ? (
           <Input
             autoFocus
             value={draftName}
             onChange={(event) => setDraftName(event.target.value)}
             onBlur={() => void runRename()}
+            onClick={(event) => event.stopPropagation()}
             onKeyDown={(event) => {
+              event.stopPropagation();
               if (event.key === "Enter") {
                 event.preventDefault();
                 void runRename();
@@ -384,14 +452,7 @@ function FolderTreeBranch({
             disabled={isRenamePending}
           />
         ) : (
-          <button
-            type="button"
-            className="flex flex-1 items-center justify-between gap-2 truncate text-left"
-            onClick={() => {
-              onSelectFolder?.(node.id as FolderId);
-              setIsOpen(true);
-            }}
-          >
+          <span className="flex flex-1 items-center justify-between gap-2 truncate text-left">
             <span className="truncate font-medium">{node.name}</span>
             <span className="flex shrink-0 items-center gap-1.5 text-[10px] tabular-nums text-muted-foreground">
               {isPinned ? (
@@ -399,7 +460,7 @@ function FolderTreeBranch({
               ) : null}
               {childCount}
             </span>
-          </button>
+          </span>
         )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -410,6 +471,7 @@ function FolderTreeBranch({
               className="h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100 data-[state=open]:opacity-100"
               aria-label="Folder actions"
               disabled={isRemovePending}
+              onClick={(event) => event.stopPropagation()}
             >
               <DotsThreeVerticalIcon size={13} weight="bold" />
             </Button>
@@ -460,6 +522,10 @@ function FolderTreeBranch({
                 filterArtifact={filterArtifact}
                 folderMatchesSearch={folderMatchesSearch}
                 isUnseen={isUnseen}
+                pendingExpandFolderId={pendingExpandFolderId}
+                pendingRenameFolderId={pendingRenameFolderId}
+                onConsumePendingExpand={onConsumePendingExpand}
+                onConsumePendingRename={onConsumePendingRename}
               />
             ))}
           {folderArtifacts.map((artifact) => {

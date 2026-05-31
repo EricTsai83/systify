@@ -1,3 +1,4 @@
+import { useCallback, useState } from "react";
 import { SparkleIcon } from "@phosphor-icons/react";
 import { FolderNavigator } from "@/components/folder-navigator";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,31 @@ export function LibraryTree({
   isUnseen?: (artifact: ArtifactListItem) => boolean;
   className?: string;
 }) {
+  // Uncontrolled fallback so "+ Create folder" can target whatever the user
+  // last clicked even when no parent lifts selection. Mirrors the pattern in
+  // `artifact-panel.tsx` — without it `selectedFolderId` stays null and every
+  // new folder lands at the root.
+  const [internalSelectedFolderId, setInternalSelectedFolderId] = useState<FolderId | null>(null);
+  // Reset on repo switch so a folder ID from the previous repo can't leak
+  // into the navigator. setState-during-render is React's recommended pattern
+  // for prop-driven resets.
+  const [trackedRepositoryId, setTrackedRepositoryId] = useState<RepositoryId>(repositoryId);
+  if (trackedRepositoryId !== repositoryId) {
+    setTrackedRepositoryId(repositoryId);
+    setInternalSelectedFolderId(null);
+  }
+  const isFolderSelectionControlled = selectedFolderId !== undefined;
+  const effectiveSelectedFolderId = isFolderSelectionControlled ? selectedFolderId : internalSelectedFolderId;
+  const handleSelectFolder = useCallback(
+    (folderId: FolderId | null) => {
+      if (!isFolderSelectionControlled) {
+        setInternalSelectedFolderId(folderId);
+      }
+      onSelectFolder?.(folderId);
+    },
+    [isFolderSelectionControlled, onSelectFolder],
+  );
+
   return (
     <div className={cn("flex h-full min-h-0 flex-col", className)}>
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
@@ -48,9 +74,9 @@ export function LibraryTree({
         repositoryId={repositoryId}
         artifacts={artifacts}
         selectedArtifactId={selectedArtifactId}
-        selectedFolderId={selectedFolderId ?? null}
+        selectedFolderId={effectiveSelectedFolderId}
         onSelectArtifact={onSelectArtifact}
-        onSelectFolder={onSelectFolder}
+        onSelectFolder={handleSelectFolder}
         isUnseen={isUnseen}
         className="min-h-0 flex-1 border-0"
       />

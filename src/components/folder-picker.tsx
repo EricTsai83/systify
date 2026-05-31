@@ -68,7 +68,15 @@ export function FolderPicker({ repositoryId, value, onChange, hint, className, d
     if (!name) return;
     setCreateError(null);
     try {
-      const folderId = await createFolder({ repositoryId, name });
+      // The currently picked folder doubles as the parent — "create under
+      // the thing I'm pointing at" matches the Navigator's selection-aware
+      // create. `null` (Repository root) means no parent, so it lands as a
+      // top-level folder.
+      const folderId = await createFolder({
+        repositoryId,
+        name,
+        parentFolderId: value ?? undefined,
+      });
       onChange(folderId);
       setNewFolderName("");
       setIsOpen(false);
