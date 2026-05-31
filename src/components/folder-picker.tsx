@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { CaretDownIcon, CheckIcon, FolderIcon, FolderPlusIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
+import { FOLDER_NAME_MAX_LENGTH } from "../../convex/lib/artifactFolderDefaults";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -61,11 +62,13 @@ export function FolderPicker({ repositoryId, value, onChange, hint, className, d
 
   const flat = useMemo(() => flattenFolderTree(buildFolderTree(folders ?? [])), [folders]);
   const selected = value ? flat.find((entry) => entry.id === value) : null;
+  const isNameTooLong = newFolderName.length > FOLDER_NAME_MAX_LENGTH;
 
   const [isCreating, runCreate] = useAsyncCallback(async () => {
     if (!repositoryId) return;
     const name = newFolderName.trim();
     if (!name) return;
+    if (name.length > FOLDER_NAME_MAX_LENGTH) return;
     setCreateError(null);
     try {
       // The currently picked folder doubles as the parent — "create under
@@ -139,11 +142,12 @@ export function FolderPicker({ repositoryId, value, onChange, hint, className, d
                 <Input
                   value={newFolderName}
                   onChange={(event) => setNewFolderName(event.target.value)}
+                  maxLength={FOLDER_NAME_MAX_LENGTH}
                   placeholder="New folder name"
                   className="h-8 flex-1 text-[12px]"
                   disabled={isCreating || !repositoryId}
                   onKeyDown={(event) => {
-                    if (event.key === "Enter") {
+                    if (event.key === "Enter" && !isNameTooLong) {
                       event.preventDefault();
                       void runCreate();
                     }
@@ -154,14 +158,20 @@ export function FolderPicker({ repositoryId, value, onChange, hint, className, d
                   variant="default"
                   size="sm"
                   className="h-8 gap-1"
-                  disabled={isCreating || !newFolderName.trim() || !repositoryId}
+                  disabled={isCreating || !newFolderName.trim() || !repositoryId || isNameTooLong}
                   onClick={() => void runCreate()}
                 >
                   <FolderPlusIcon size={13} weight="bold" />
                   {isCreating ? "Creating…" : "Create"}
                 </Button>
               </div>
-              {createError ? <p className="text-[11px] text-destructive">{createError}</p> : null}
+              {isNameTooLong ? (
+                <p className="text-[11px] text-destructive">
+                  Folder name must be at most {FOLDER_NAME_MAX_LENGTH} characters.
+                </p>
+              ) : createError ? (
+                <p className="text-[11px] text-destructive">{createError}</p>
+              ) : null}
             </div>
           </div>
         </PopoverContent>

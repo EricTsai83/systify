@@ -5,10 +5,10 @@ import { mutation, query } from "./_generated/server";
 import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
 import { assertOwnedBy, loadOwnedDoc, requireOwnedDoc } from "./lib/ownedDocs";
 import { replaceArtifactFolder } from "./lib/artifactWrites";
+import { FOLDER_NAME_MAX_LENGTH } from "./lib/artifactFolderDefaults";
 
 const FOLDERS_PER_REPO_LIMIT = 200;
 const ARTIFACTS_PER_FOLDER_LIMIT = 200;
-export const FOLDER_NAME_MAX_LENGTH = 80;
 const FOLDER_DESCRIPTION_MAX_LENGTH = 400;
 
 function normalizeFolderName(raw: string): string {

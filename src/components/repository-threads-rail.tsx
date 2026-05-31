@@ -63,6 +63,7 @@ function useThreadRename({
 
   return {
     isEditing: inline.isEditing,
+    isCommitting: inline.isCommitting,
     draft: inline.draft,
     setDraft: inline.setDraft,
     inputRef: inline.inputRef,
@@ -421,12 +422,21 @@ function ThreadItem({
   onError: (message: string | null) => void;
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
-  const { isEditing, draft, setDraft, inputRef, handleStartEdit, handleCommit, handleKeyDown, handleItemKeyDown } =
-    useThreadRename({
-      thread,
-      onError,
-      rowRef,
-    });
+  const {
+    isEditing,
+    isCommitting,
+    draft,
+    setDraft,
+    inputRef,
+    handleStartEdit,
+    handleCommit,
+    handleKeyDown,
+    handleItemKeyDown,
+  } = useThreadRename({
+    thread,
+    onError,
+    rowRef,
+  });
 
   const titleTextClass = threadTitleTextClass(compact);
   return (
@@ -439,6 +449,7 @@ function ThreadItem({
               value={draft}
               maxLength={MAX_RENAME_TITLE_LENGTH}
               aria-label="Rename thread"
+              disabled={isCommitting}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={handleKeyDown}
               onBlur={() => void handleCommit()}
@@ -608,12 +619,21 @@ function RepolessThreadItem({
   onError: (message: string | null) => void;
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
-  const { isEditing, draft, setDraft, inputRef, handleStartEdit, handleCommit, handleKeyDown, handleItemKeyDown } =
-    useThreadRename({
-      thread,
-      onError,
-      rowRef,
-    });
+  const {
+    isEditing,
+    isCommitting,
+    draft,
+    setDraft,
+    inputRef,
+    handleStartEdit,
+    handleCommit,
+    handleKeyDown,
+    handleItemKeyDown,
+  } = useThreadRename({
+    thread,
+    onError,
+    rowRef,
+  });
 
   const titleTextClass = threadTitleTextClass(false);
   return (
@@ -626,6 +646,7 @@ function RepolessThreadItem({
               value={draft}
               maxLength={MAX_RENAME_TITLE_LENGTH}
               aria-label="Rename thread"
+              disabled={isCommitting}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={handleKeyDown}
               onBlur={() => void handleCommit()}

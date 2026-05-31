@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "convex/react";
 import { BookOpenIcon, FolderIcon, PencilSimpleIcon, TrashIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
-import { FOLDER_NAME_MAX_LENGTH } from "../../convex/artifactFolders";
+import { FOLDER_NAME_MAX_LENGTH } from "../../convex/lib/artifactFolderDefaults";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";

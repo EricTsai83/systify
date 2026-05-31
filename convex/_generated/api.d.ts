@@ -43,6 +43,7 @@ import type * as http from "../http.js";
 import type * as imports from "../imports.js";
 import type * as importsNode from "../importsNode.js";
 import type * as lib_artifactChunking from "../lib/artifactChunking.js";
+import type * as lib_artifactFolderDefaults from "../lib/artifactFolderDefaults.js";
 import type * as lib_artifactRag from "../lib/artifactRag.js";
 import type * as lib_artifactView from "../lib/artifactView.js";
 import type * as lib_artifactWrites from "../lib/artifactWrites.js";
@@ -124,6 +125,7 @@ declare const fullApi: ApiFromModules<{
   imports: typeof imports;
   importsNode: typeof importsNode;
   "lib/artifactChunking": typeof lib_artifactChunking;
+  "lib/artifactFolderDefaults": typeof lib_artifactFolderDefaults;
   "lib/artifactRag": typeof lib_artifactRag;
   "lib/artifactView": typeof lib_artifactView;
   "lib/artifactWrites": typeof lib_artifactWrites;

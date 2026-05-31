@@ -14,7 +14,7 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
-import { FOLDER_NAME_MAX_LENGTH } from "../../convex/artifactFolders";
+import { FOLDER_NAME_MAX_LENGTH } from "../../convex/lib/artifactFolderDefaults";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -155,16 +155,18 @@ export function FolderNavigator({
   const effectiveSelectedArtifactId = selectedFolderId ? null : selectedArtifactId;
 
   // Reset selection on repo switch so a stale folder ID from the previous
-  // repo can't leak into the navigator. setState-during-render is React's
-  // recommended pattern for prop-driven resets. The block runs in both
-  // controlled and uncontrolled modes — the radix dispatcher routes through
-  // `onSelectFolder` when controlled and updates internal state otherwise,
-  // so the parent (if any) stays in sync.
-  const [trackedRepositoryId, setTrackedRepositoryId] = useState<RepositoryId>(repositoryId);
-  if (trackedRepositoryId !== repositoryId) {
-    setTrackedRepositoryId(repositoryId);
-    setSelectedFolderId(null);
-  }
+  // repo can't leak into the navigator. Runs in an effect rather than
+  // during render because the controlled `setSelectedFolderId` routes
+  // through the parent's `onSelectFolder`, and calling a parent callback
+  // synchronously during the child's render trips React's "Cannot update
+  // a component while rendering a different component" rule.
+  const prevRepositoryIdRef = useRef<RepositoryId>(repositoryId);
+  useEffect(() => {
+    if (prevRepositoryIdRef.current !== repositoryId) {
+      setSelectedFolderId(null);
+      prevRepositoryIdRef.current = repositoryId;
+    }
+  }, [repositoryId, setSelectedFolderId]);
 
   const [search, setSearch] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
