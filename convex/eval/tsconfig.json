@@ -1,0 +1,12 @@
+{
+  /* TypeScript project for the eval harness.
+   *
+   * convex/tsconfig.json deliberately excludes this directory so the eval
+   * CLI scripts are not picked up by the Convex deploy bundle. This sibling
+   * config typechecks the eval files in isolation and is referenced by
+   * eslint.config.js so the lint step can resolve eval test files.
+   */
+  "extends": "../tsconfig.json",
+  "include": ["./**/*"],
+  "exclude": []
+}

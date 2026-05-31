@@ -21,11 +21,10 @@
  * — Convex disallows queries / mutations inside a `"use node"` module.
  */
 
-import { openai } from "@ai-sdk/openai";
-import { generateText } from "ai";
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import { internalAction } from "../_generated/server";
+import { generateViaGateway } from "../lib/llmGateway";
 import { isDefaultTitle } from "../lib/threadDefaults";
 import { sanitizeTitle } from "../lib/titleSanitization";
 import { logErrorWithId } from "../lib/observability";
@@ -33,10 +32,14 @@ import type { TitleGenContext } from "./titles";
 
 /**
  * Cheapest tier that can still follow a "3–8 words, match the user's
- * language" instruction reliably. Single env knob colocated with the prompt
- * so a future swap to a smaller model is a one-line change.
+ * language" instruction reliably. Routed through the gateway so the catalog
+ * entry — and per-user fairness, retries, cost telemetry — apply uniformly.
+ * Title gen does not use tools, so the nano tier's `supportsTools: false`
+ * is by design here. Single knob colocated with the prompt so a future swap
+ * to a smaller model is a one-line change.
  */
-const TITLE_MODEL = "gpt-5-mini";
+const TITLE_PROVIDER = "openai" as const;
+const TITLE_MODEL = "gpt-5-nano";
 
 /**
  * Minimum trimmed length of the user's first message before we bother
@@ -100,13 +103,35 @@ export const generateThreadTitle = internalAction({
         return;
       }
 
-      const { text } = await generateText({
-        model: openai(TITLE_MODEL),
-        system: TITLE_SYSTEM_PROMPT,
-        prompt: buildTitlePrompt(titleContext),
+      const result = await generateViaGateway(
+        ctx,
+        {
+          provider: TITLE_PROVIDER,
+          modelName: TITLE_MODEL,
+          ownerTokenIdentifier: titleContext.thread.ownerTokenIdentifier,
+          capability: "discuss",
+          feature: "chat",
+          threadId: args.threadId,
+          messageId: args.userMessageId,
+        },
+        {
+          system: TITLE_SYSTEM_PROMPT,
+          prompt: buildTitlePrompt(titleContext),
+        },
+      );
+
+      // Settle against the daily cap regardless of whether the title
+      // sanitizer accepts the output — the LLM spend has already
+      // landed. `settleTitleGenCost` is idempotent on `undefined` /
+      // non-positive cost (pricing miss, heuristic), so no branching
+      // needed here.
+      await ctx.runMutation(internal.chat.titles.settleTitleGenCost, {
+        threadId: args.threadId,
+        costUsd: result.costUsd,
+        ownerTokenIdentifier: titleContext.thread.ownerTokenIdentifier,
       });
 
-      const sanitized = sanitizeTitle(text);
+      const sanitized = sanitizeTitle(result.text);
       if (!sanitized) {
         return;
       }

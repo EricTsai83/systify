@@ -3,7 +3,7 @@ import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
+import type { ChatMode, LlmProvider, RepositoryId, ThreadId } from "@/lib/types";
 
 /**
  * Owns the in-flight reply lifecycle (send, cancel) plus thread teardown.
@@ -26,6 +26,8 @@ export function useChatLifecycle({
   chatMode,
   groundLibrary,
   groundSandbox,
+  selectedProvider,
+  selectedModelName,
   clearChatInput,
   setActionError,
   setThreadToDelete,
@@ -44,6 +46,17 @@ export function useChatLifecycle({
    */
   groundLibrary?: boolean;
   groundSandbox?: boolean;
+  /**
+   * Composer-picked `(provider, modelName)`. Both must be supplied
+   * together to take effect; a half-set pair is dropped here so the
+   * send mutation never has to reject one (the mutation rejects
+   * half-pairs as well — this is defensive symmetry on the client).
+   *
+   * `null` means "no explicit pick" — the backend resolver falls
+   * through to `threads.defaultModelName` or the capability default.
+   */
+  selectedProvider?: LlmProvider | null;
+  selectedModelName?: string | null;
   clearChatInput: () => void;
   setActionError: (value: string | null) => void;
   setThreadToDelete: (value: ThreadId | null) => void;
@@ -69,6 +82,18 @@ export function useChatLifecycle({
                 groundSandbox: groundSandbox === true,
               }
             : {};
+        // Forward the picker pick to the send mutation only when BOTH
+        // halves are present. The mutation rejects half-pairs with
+        // `incomplete_model_pick`; we drop them here so an unmounted
+        // picker (e.g. on the repoless shell before catalog query
+        // resolves) doesn't fire a doomed send.
+        const modelArgs =
+          selectedProvider && selectedModelName
+            ? {
+                provider: selectedProvider,
+                modelName: selectedModelName,
+              }
+            : {};
         try {
           if (selectedThreadId) {
             await sendMessageMutation({
@@ -76,6 +101,7 @@ export function useChatLifecycle({
               content: chatInput,
               mode: chatMode,
               ...groundingArgs,
+              ...modelArgs,
             });
             clearChatInput();
             return;
@@ -89,6 +115,7 @@ export function useChatLifecycle({
             content: chatInput,
             mode: chatMode,
             ...groundingArgs,
+            ...modelArgs,
           });
           clearChatInput();
           onAfterCreateThread(result.threadId, result.mode);
@@ -101,6 +128,8 @@ export function useChatLifecycle({
         chatMode,
         groundLibrary,
         groundSandbox,
+        selectedProvider,
+        selectedModelName,
         clearChatInput,
         onAfterCreateThread,
         selectedThreadId,

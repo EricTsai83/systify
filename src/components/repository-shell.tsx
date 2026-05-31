@@ -25,7 +25,15 @@ import { useRepositoryLifecycle } from "@/hooks/use-repository-lifecycle";
 import { resolveEffectiveChatMode, useChatMode } from "@/hooks/use-service-mode";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
-import type { ArtifactId, ChatMode, RepositoryId, SandboxModeStatus, ThreadId, ThreadMode } from "@/lib/types";
+import type {
+  ArtifactId,
+  ChatMode,
+  LlmProvider,
+  RepositoryId,
+  SandboxModeStatus,
+  ThreadId,
+  ThreadMode,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_AUTHENTICATED_PATH,
@@ -108,6 +116,23 @@ export function RepositoryShell({
   );
   const setGroundSandbox = useCallback(
     (next: boolean) => setGroundingByThread((prev) => ({ ...prev, sandbox: next })),
+    [],
+  );
+  // Per-thread composer model pick. Mirrors the grounding state above:
+  // the shell tracks the `threadId` we last reset against, and the
+  // `useEffect` below re-seeds the pick when the URL thread changes
+  // (analogous to `groundingByThread` seeding from
+  // `capabilities.defaultGroundLibrary/Sandbox`).
+  const [modelByThread, setModelByThread] = useState<{
+    threadId: ThreadId | null;
+    provider: LlmProvider | null;
+    modelName: string | null;
+  }>({ threadId: null, provider: null, modelName: null });
+  const selectedProvider = modelByThread.provider;
+  const selectedModelName = modelByThread.modelName;
+  const setSelectedModel = useCallback(
+    (next: { provider: LlmProvider; modelName: string }) =>
+      setModelByThread((prev) => ({ ...prev, provider: next.provider, modelName: next.modelName })),
     [],
   );
   const [actionError, setActionError] = useState<string | null>(null);
@@ -398,6 +423,8 @@ export function RepositoryShell({
     chatMode,
     groundLibrary,
     groundSandbox,
+    selectedProvider,
+    selectedModelName,
     liveRepositoryIds,
     liveThreadIds,
     threadToDelete,
@@ -416,6 +443,21 @@ export function RepositoryShell({
       sandbox: urlThreadId === null ? false : capabilities.defaultGroundSandbox,
     });
   }, [urlThreadId, capabilities.defaultGroundLibrary, capabilities.defaultGroundSandbox, groundingByThread.threadId]);
+
+  useEffect(() => {
+    if (modelByThread.threadId === urlThreadId) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setModelByThread({
+      threadId: urlThreadId,
+      // Pre-fill from `threads.defaultModelName` so the picker shows
+      // the user's last pick when they reopen the thread. Inferring
+      // the provider from the locked side keeps the picker label
+      // stable even when the thread default model name doesn't match
+      // the locked provider (e.g. legacy threads with no lock yet).
+      provider: urlThreadId === null ? null : capabilities.lockedProvider,
+      modelName: urlThreadId === null ? null : capabilities.defaultModelName,
+    });
+  }, [urlThreadId, capabilities.defaultModelName, capabilities.lockedProvider, modelByThread.threadId]);
 
   const groundingState = availability?.grounding;
   useEffect(() => {
@@ -468,6 +510,10 @@ export function RepositoryShell({
       groundSandbox={groundSandbox}
       setGroundLibrary={setGroundLibrary}
       setGroundSandbox={setGroundSandbox}
+      selectedProvider={selectedProvider}
+      selectedModelName={selectedModelName}
+      setSelectedModel={setSelectedModel}
+      threadLockedProvider={capabilities.lockedProvider}
       grounding={availability?.grounding}
       onOpenGenerateSystemDesign={() => setIsGenerateDialogOpen(true)}
       isSending={isSending}

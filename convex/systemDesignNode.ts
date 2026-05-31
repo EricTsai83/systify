@@ -1,46 +1,68 @@
 "use node";
 
-import { openai } from "@ai-sdk/openai";
-import { generateText, stepCountIs } from "ai";
+import { APICallError, stepCountIs } from "ai";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
 import { createSandboxTools } from "./chat/sandboxTools";
-import { resolveModelForReply } from "./chat/modelSelection";
 import { getSandboxFsClient } from "./daytona";
+import { getCatalogEntry } from "./lib/llmCatalog";
+import { generateViaGateway, LlmRateLimitError } from "./lib/llmGateway";
+import type { LlmProvider, NormalizedUsage } from "./lib/llmProvider";
 import {
   ensureSandboxReady,
   type EnsureSandboxReadyResult,
   SandboxPreparationError,
   type SandboxPreparationStage,
 } from "./lib/sandboxLiveness";
-import { logErrorWithId, logInfo, logWarn } from "./lib/observability";
+import { emitMetric, logErrorWithId, logInfo, logWarn } from "./lib/observability";
+import { SYSTEM_DESIGN_KIND_TITLES, isSystemDesignKind, systemDesignKindValidator } from "./lib/systemDesign";
 import {
-  SYSTEM_DESIGN_KIND_TITLES,
-  isSystemDesignKind,
-  systemDesignKindValidator,
-  type SystemDesignKind,
-} from "./lib/systemDesign";
-
-const SYSTEM_DESIGN_STEP_BUDGET = 20;
+  budgetSuffix,
+  getKindRunConfig,
+  validateMermaidBlock,
+  validateRequiredSections,
+} from "./lib/systemDesignPrompts";
 
 /**
  * Library System Design generator.
  *
  * Every kind is LLM-backed: the action prepares a Daytona sandbox once via
- * `ensureSandboxReady`, then runs one `generateText` call per selected kind
- * against the sandbox-backed model with the same `read_file` / `list_dir` /
- * `run_shell` tool factory the chat-sandbox path uses. Kinds run serially to
- * honour the per-sandbox tool budget and the OpenAI rate limit; the job lease
- * is refreshed before each one so a long publication (e.g. all seven kinds
- * with high step budgets) does not trip the stale-recovery sweep while the
- * action is still making progress.
+ * `ensureSandboxReady`, then runs one `generateViaGateway` call per selected
+ * kind against the sandbox-backed model with the same `read_file` /
+ * `list_dir` / `run_shell` tool factory the chat-sandbox path uses. Kinds
+ * run serially to honour the per-sandbox tool budget and the gateway's
+ * per-user concurrency cap; the job lease is refreshed before each one so
+ * a long publication (e.g. all seven kinds with high step budgets) does
+ * not trip the stale-recovery sweep while the action is still making
+ * progress.
  *
- * Per-kind failures are isolated: the catch logs an errorId, records a
- * structured `kindFailures` entry, and the next kind continues. Progress
- * flows back through `updateGenerationProgress` after every kind completes
- * (success or fail). If sandbox preparation fails up front the whole run is
+ * **Per-kind lifecycle** (each pass through the for-loop):
+ *
+ *   1. Refresh lease.
+ *   2. Cache probe via `findCachedArtifact` keyed on
+ *      `(repo, kind, commit, provider, model, promptVersion)`. A hit
+ *      records a `cached_hit` kindRun and skips the LLM call entirely.
+ *   3. Sandbox-cost pre-check via `assertKindCostBudget`. Throws on
+ *      cap exhaustion; caught and recorded as `transport_rate_limit`.
+ *   4. `generateViaGateway` call. Provider dispatch, rate-limit acquire,
+ *      retry, normalized usage all happen inside the gateway.
+ *   5. Quality gate: section presence + (for `architecture_diagram`)
+ *      mermaid block presence. Rejection records `quality_rejected`.
+ *   6. Persist artifact + telemetry row in two mutations
+ *      (`persistGeneratedArtifact` then `recordKindRun`), then patch the
+ *      back-reference via `linkKindRun`.
+ *   7. Settlement of the day's sandbox cost cap rides inside
+ *      `recordKindRun` so the kindRun row and the cap decrement are
+ *      atomic.
+ *   8. Per-kind metrics (duration, cost, steps).
+ *
+ * Per-kind failures are isolated: the catch translates the error into a
+ * `failureReason` literal, records a structured `kindFailures` entry,
+ * and the loop continues to the next kind. Progress flows back through
+ * `updateGenerationProgress` after every kind completes (success, cache
+ * hit, or fail). If sandbox preparation fails up front the whole run is
  * failed with the structured `userFacingMessage` and no kinds run.
  */
 export const runSystemDesignGeneration = internalAction({
@@ -49,6 +71,15 @@ export const runSystemDesignGeneration = internalAction({
     repositoryId: v.id("repositories"),
     ownerTokenIdentifier: v.string(),
     selections: v.array(systemDesignKindValidator),
+    /**
+     * When `true`, skip the per-kind cache probe and re-run every
+     * selected kind through the LLM. The Generate dialog's "Regenerate
+     * even if cached" checkbox flips this on. Auto-resume from
+     * stale-recovery always passes `false` — the cache from the original
+     * attempt is intentionally trusted so resume only pays for the
+     * incomplete kinds.
+     */
+    forceRegenerate: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const start = (await ctx.runMutation(internal.systemDesign.markGenerationStarted, {
@@ -82,6 +113,14 @@ export const runSystemDesignGeneration = internalAction({
       });
       return;
     }
+
+    // Job-baked LLM pick. Pinned at request time so a resume picks up
+    // the same pair and the cache key (artifacts.generatedByProvider /
+    // generatedByModel) stays consistent across attempts.
+    const modelChoice = await ctx.runQuery(internal.systemDesign.getJobModelChoice, {
+      jobId: args.jobId,
+    });
+    const catalogEntry = getCatalogEntry(modelChoice.provider, modelChoice.modelName);
 
     // Every kind reads live source through the sandbox, so the run always
     // needs a ready sandbox. `ensureSandboxReady` probes / wakes / provisions
@@ -131,59 +170,249 @@ export const runSystemDesignGeneration = internalAction({
       throw error;
     }
 
+    const commitSha = context.repository.lastSyncedCommitSha;
+    const forceRegenerate = args.forceRegenerate ?? false;
+
     let completedCount = 0;
     let succeeded = 0;
     let failed = 0;
 
     // Kinds run serially: each one is a sandbox-backed LLM session, so running
     // them in parallel would contend on the per-sandbox tool budget and the
-    // OpenAI rate limit.
+    // gateway's per-user concurrency cap.
     for (const kind of selections) {
       // Refresh the running job's lease before each kind so a long multi-kind
       // publication does not overrun the lease window and trigger a spurious
       // stale-recovery while progress is still happening.
       await ctx.runMutation(internal.systemDesign.refreshGenerationLease, { jobId: args.jobId });
 
-      try {
-        const result = await generateLlm(kind, prepared, context.repository);
-        await ctx.runMutation(internal.systemDesign.persistGeneratedArtifact, {
+      const startedAt = Date.now();
+      const config = getKindRunConfig(kind);
+
+      emitMetric("systemdesign_kind_started", {
+        tags: {
+          kind,
+          provider: modelChoice.provider,
+          model: modelChoice.modelName,
+          prompt_version: config.promptVersion,
+        },
+        details: { jobId: args.jobId, repositoryId: args.repositoryId },
+      });
+
+      // ── 1. Cache probe ────────────────────────────────────────────────
+      let runStatus: Doc<"systemDesignKindRuns">["status"] = "failed";
+      let failureReason: ReturnType<typeof classifyLlmError> | undefined;
+      let artifactId: Id<"artifacts"> | undefined;
+      let usage: NormalizedUsage = {};
+      let costUsd: number | undefined;
+      let actualSteps = 0;
+      let outputCharLength = 0;
+      let missingSections: string[] | undefined;
+
+      if (!forceRegenerate && commitSha) {
+        const cached = await ctx.runQuery(internal.systemDesign.findCachedArtifact, {
           repositoryId: args.repositoryId,
-          ownerTokenIdentifier: args.ownerTokenIdentifier,
-          jobId: args.jobId,
           kind,
-          title: SYSTEM_DESIGN_KIND_TITLES[kind],
-          summary: result.summary,
-          contentMarkdown: result.contentMarkdown,
+          alignedImportCommitSha: commitSha,
+          generatedByProvider: modelChoice.provider,
+          generatedByModel: modelChoice.modelName,
+          promptVersion: config.promptVersion,
         });
-        succeeded += 1;
-      } catch (error) {
-        failed += 1;
-        const errorId = logErrorWithId("systemDesign", "kind_generation_failed", error, {
-          jobId: args.jobId,
-          repositoryId: args.repositoryId,
-          kind,
-        });
-        logWarn("systemDesign", "kind_skipped", {
-          jobId: args.jobId,
-          kind,
-          errorId,
-        });
-        const rawMessage = error instanceof Error ? error.message : String(error);
-        const reason: "live_source_unavailable" | "model_empty_output" | "other" =
-          error instanceof SandboxPreparationError
-            ? "live_source_unavailable"
-            : /empty document/i.test(rawMessage)
-              ? "model_empty_output"
-              : "other";
-        await ctx.runMutation(internal.systemDesign.recordKindFailure, {
-          jobId: args.jobId,
-          kind,
-          errorId,
-          message: rawMessage,
-          reason,
+        if (cached) {
+          runStatus = "cached_hit";
+          artifactId = cached._id;
+          outputCharLength = cached.contentMarkdown.length;
+          emitMetric("systemdesign_kind_cache_hit", {
+            tags: { kind, provider: modelChoice.provider, model: modelChoice.modelName },
+            details: { repositoryId: args.repositoryId, commitSha },
+          });
+        }
+      }
+
+      // ── 2. LLM call (skipped on cache hit) ────────────────────────────
+      if (runStatus !== "cached_hit") {
+        try {
+          await ctx.runMutation(internal.systemDesign.assertKindCostBudget, {
+            ownerTokenIdentifier: args.ownerTokenIdentifier,
+            repositoryId: args.repositoryId,
+          });
+
+          const result = await generateViaGateway(
+            ctx,
+            {
+              provider: modelChoice.provider,
+              modelName: modelChoice.modelName,
+              ownerTokenIdentifier: args.ownerTokenIdentifier,
+              capability: "sandbox",
+              feature: "system_design",
+              jobId: args.jobId,
+            },
+            {
+              system: config.prompt + budgetSuffix(config.stepBudget),
+              prompt: buildUserPrompt(context.repository),
+              tools: createSandboxTools(await getSandboxFsClient(prepared.remoteId), prepared.repoPath),
+              stopWhen: stepCountIs(config.stepBudget),
+              reasoningEffort: catalogEntry?.reasoningEffort,
+            },
+          );
+
+          usage = result.usage;
+          costUsd = result.costUsd;
+          actualSteps = result.steps.length;
+          const text = result.text.trim();
+          outputCharLength = text.length;
+
+          if (text.length === 0) {
+            runStatus = "failed";
+            failureReason = "model_empty_output";
+          } else {
+            const validation = validateRequiredSections(text, config.expectedSections);
+            const mermaidOk = kind !== "architecture_diagram" || validateMermaidBlock(text);
+            if (!validation.ok || !mermaidOk) {
+              runStatus = "quality_rejected";
+              failureReason = "output_quality";
+              missingSections = [...validation.missingSections];
+              if (!mermaidOk) {
+                missingSections.push("mermaid_block");
+              }
+            } else {
+              const persisted = (await ctx.runMutation(internal.systemDesign.persistGeneratedArtifact, {
+                repositoryId: args.repositoryId,
+                ownerTokenIdentifier: args.ownerTokenIdentifier,
+                jobId: args.jobId,
+                kind,
+                title: SYSTEM_DESIGN_KIND_TITLES[kind],
+                summary: extractSummary(text),
+                contentMarkdown: text,
+                alignedImportCommitSha: commitSha,
+                generatedByProvider: modelChoice.provider,
+                generatedByModel: modelChoice.modelName,
+                promptVersion: config.promptVersion,
+              })) as { artifactId: Id<"artifacts"> };
+              artifactId = persisted.artifactId;
+              runStatus = "succeeded";
+            }
+          }
+        } catch (error) {
+          runStatus = "failed";
+          failureReason = classifyLlmError(error);
+          const errorId = logErrorWithId("systemDesign", "kind_generation_failed", error, {
+            jobId: args.jobId,
+            repositoryId: args.repositoryId,
+            kind,
+            provider: modelChoice.provider,
+            modelName: modelChoice.modelName,
+            failureReason,
+          });
+          logWarn("systemDesign", "kind_skipped", {
+            jobId: args.jobId,
+            kind,
+            errorId,
+            failureReason,
+          });
+          const rawMessage = error instanceof Error ? error.message : String(error);
+          await ctx.runMutation(internal.systemDesign.recordKindFailure, {
+            jobId: args.jobId,
+            kind,
+            errorId,
+            message: rawMessage,
+            reason: failureReason,
+          });
+        }
+      }
+
+      const durationMs = Date.now() - startedAt;
+
+      // ── 3. Telemetry: kindRun row + cost settlement ───────────────────
+      const recorded = (await ctx.runMutation(internal.systemDesign.recordKindRun, {
+        ownerTokenIdentifier: args.ownerTokenIdentifier,
+        repositoryId: args.repositoryId,
+        jobId: args.jobId,
+        kind,
+        provider: modelChoice.provider,
+        modelName: modelChoice.modelName,
+        promptVersion: config.promptVersion,
+        alignedImportCommitSha: commitSha,
+        stepCap: config.stepBudget,
+        actualSteps,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cachedInputTokens: usage.cachedInputTokens,
+        cacheWriteTokens: usage.cacheWriteTokens,
+        reasoningTokens: usage.reasoningTokens,
+        totalCostUsd: costUsd,
+        durationMs,
+        status: runStatus,
+        failureReason,
+        outputCharLength: outputCharLength > 0 ? outputCharLength : undefined,
+        missingSections,
+        startedAt,
+      })) as { kindRunId: Id<"systemDesignKindRuns"> };
+
+      if (artifactId && runStatus !== "cached_hit") {
+        await ctx.runMutation(internal.systemDesign.linkKindRun, {
+          artifactId,
+          kindRunId: recorded.kindRunId,
         });
       }
 
+      // ── 4. Per-kind metrics ───────────────────────────────────────────
+      emitMetric("systemdesign_kind_duration_ms", {
+        value: durationMs,
+        tags: {
+          kind,
+          provider: modelChoice.provider,
+          model: modelChoice.modelName,
+          status: runStatus,
+        },
+        details: { jobId: args.jobId },
+      });
+      emitMetric("systemdesign_kind_steps_used", {
+        value: actualSteps,
+        tags: {
+          kind,
+          provider: modelChoice.provider,
+          model: modelChoice.modelName,
+          hit_budget: actualSteps >= config.stepBudget,
+        },
+        details: { jobId: args.jobId },
+      });
+      if (costUsd !== undefined) {
+        emitMetric("systemdesign_kind_cost_usd", {
+          value: costUsd,
+          tags: { kind, provider: modelChoice.provider, model: modelChoice.modelName },
+          details: { jobId: args.jobId },
+        });
+      }
+      if (usage.inputTokens !== undefined || usage.outputTokens !== undefined) {
+        emitMetric("systemdesign_kind_tokens", {
+          tags: { kind, provider: modelChoice.provider, model: modelChoice.modelName },
+          details: {
+            input: usage.inputTokens,
+            output: usage.outputTokens,
+            cached_input: usage.cachedInputTokens,
+            cache_write: usage.cacheWriteTokens,
+            reasoning: usage.reasoningTokens,
+          },
+        });
+      }
+      if (runStatus === "failed" || runStatus === "quality_rejected") {
+        emitMetric("systemdesign_kind_failed", {
+          tags: {
+            kind,
+            provider: modelChoice.provider,
+            model: modelChoice.modelName,
+            reason: failureReason ?? "unknown",
+          },
+          details: { jobId: args.jobId },
+        });
+      }
+
+      if (runStatus === "succeeded" || runStatus === "cached_hit") {
+        succeeded += 1;
+      } else {
+        failed += 1;
+      }
       completedCount += 1;
       await ctx.runMutation(internal.systemDesign.updateGenerationProgress, {
         jobId: args.jobId,
@@ -203,6 +432,8 @@ export const runSystemDesignGeneration = internalAction({
     logInfo("systemDesign", "generation_complete", {
       jobId: args.jobId,
       repositoryId: args.repositoryId,
+      provider: modelChoice.provider,
+      modelName: modelChoice.modelName,
       succeeded,
       failed,
       total: totalCount,
@@ -210,195 +441,62 @@ export const runSystemDesignGeneration = internalAction({
   },
 });
 
-const LLM_PROMPTS: Record<SystemDesignKind, string> = {
-  readme_summary: `You are summarising a software repository for an engineer who needs to
-understand the system at a design level. Use the sandbox tools (read_file,
-list_dir, run_shell) to locate and read the README (usually README.md /
-README.rst / README.txt at the repo root). If the README points to other
-docs (CONTRIBUTING, ARCHITECTURE, docs/), you may follow them for context,
-but ground the summary in what the project's own documentation states.
-Identify:
-
-- what the system is and the problem it exists to solve;
-- the services and capabilities it provides;
-- who its intended users / audience are;
-- the key operations and workflows those users perform;
-- notable constraints: licence, maturity (early-access / beta / archived),
-  and external services or accounts the user must provision to run it.
-
-Write a Markdown document titled "# README Summary" with these sections in
-order: 'Purpose', 'Services & Capabilities', 'Audience', 'Key Operations',
-'Notable Constraints', 'Source'. Under 'Source', cite the README (and any
-other doc you used) by file path in backticks. Stay faithful to what the
-documentation actually says — do not invent services, users, or operations.
-If the README is missing, empty, or boilerplate-only, say so explicitly in
-'Purpose' and write "Not documented." in the other sections rather than
-padding.`,
-  architecture_overview: `You are documenting the architecture of a software repository for a new
-engineer joining the team. Use the sandbox tools (read_file, list_dir,
-run_shell) to inspect the repository's structure and identify:
-
-- the overall shape of the system — its major components / modules /
-  services and how the codebase is organised;
-- what each major component is responsible for;
-- how a typical request or operation flows through the system;
-- the key boundaries and integrations — process boundaries, external
-  services, and how layers communicate;
-- the highest-signal files to read first.
-
-Write a Markdown document titled "# Architecture Overview" with these
-sections in order: 'System Shape', 'Components & Responsibilities', 'Data &
-Control Flow', 'Boundaries & Integrations', 'Where to Look First'. Cite
-concrete file paths in backticks. Be specific to this repository — do not
-invent components or describe a generic architecture. If the evidence for a
-section is thin, say what you could determine and what you could not rather
-than padding.`,
-  architecture_diagram: `You are drawing an architecture diagram of a software repository as a
-Mermaid graph for an engineer who needs to understand the system at a
-design level. Use the sandbox tools (read_file, list_dir, run_shell) to
-inspect the repository — directory layout, entry points, routing /
-controller / handler files, ORM / schema files, build & deploy config —
-and identify:
-
-- the major components / modules / services that make up the system;
-- how data and control flow between them (request paths, event paths,
-  background workers, queues);
-- external boundaries (third-party APIs, databases, queues, blob stores);
-- which components belong together logically (group them into subgraphs).
-
-Write a Markdown document titled "# Architecture Diagram" with these
-parts in order:
-
-1. A short (2–3 sentence) introduction stating what the diagram covers
-   and what it deliberately omits.
-2. A fenced \`\`\`mermaid code block containing a single \`graph TD\` or
-   \`graph LR\` diagram. The block must be valid Mermaid that parses on
-   its own.
-3. A 'Legend' section that briefly explains any subgraph groupings,
-   node styling, or non-obvious edge labels you used.
-4. A 'Reading guide' section that lists 3–8 highest-signal files (in
-   backticks) and notes which diagram node each one backs.
-
-Constraints on the Mermaid block:
-
-- Use unique alphanumeric node ids (e.g. \`api\`, \`worker_1\`) and put
-  the human label in quotes: \`api["API server"]\`.
-- Keep labels short (≤ 5 words). Move detail to the Legend or Reading
-  guide, not into the node.
-- Aim for 10–25 nodes. Under-detail beats hallucinated detail.
-- Group related components with \`subgraph\` blocks where it aids clarity.
-- Use solid arrows (\`-->\`) for in-process calls and dotted arrows
-  (\`-.->\`) for boundaries crossing into external services. Label edges
-  only when the flow is non-obvious.
-- Do not invent components, services, or integrations. Every node must
-  correspond to evidence you read in the source.
-
-If the evidence for a section is thin, say what you could determine and
-what you could not — do not pad the diagram with placeholder boxes.`,
-  data_model_overview: `You are documenting the data model of a software repository for a new
-engineer joining the team. Use the sandbox tools (read_file, list_dir,
-run_shell) to inspect the repository and identify:
-
-- the primary persistent data stores (databases, ORMs, schema files, migration
-  directories);
-- the major entities / tables / collections and how they relate;
-- non-obvious denormalisations, write paths, or invariants encoded in the code;
-- file paths (with line ranges if relevant) backing each claim.
-
-Write a Markdown document titled "# Data Model Overview" with these sections in
-order: 'Stores & Schemas', 'Entities & Relationships', 'Read & Write Paths',
-'Notable Invariants', 'Where to Look First (file references)'. Be specific.
-Cite concrete file paths in backticks. Do not invent: if information is not
-present in the source, say so. Avoid generic prose.`,
-  api_surface_overview: `You are documenting the externally-visible API surface (HTTP routes, RPC
-methods, GraphQL operations, public library entry points) of a software
-repository. Use sandbox tools to inspect routes, controllers, handlers, and
-exported modules. Identify:
-
-- request entry points and their dispatch path;
-- authentication / authorisation requirements per surface;
-- shape of inputs and outputs (link to validators or type files);
-- error envelopes;
-- file paths backing each claim.
-
-Write a Markdown document titled "# API Surface Overview" with sections:
-'Public Endpoints', 'Authentication & Authorisation', 'Request / Response
-Shapes', 'Error Handling', 'Where to Look First'. Cite concrete file paths in
-backticks. Do not invent endpoints — only document what the source actually
-exposes.`,
-  deployment_overview: `You are documenting how this repository is deployed and operated. Use the
-sandbox tools to inspect deployment configuration (Dockerfiles, CI files,
-Terraform, Convex / Vercel / similar service config). Identify:
-
-- the runtime targets (where it runs, what hosts it);
-- build and release pipeline (CI workflow files, deployment scripts);
-- environment variables and secrets management;
-- infrastructure dependencies (databases, queues, external services);
-- the file paths backing each claim.
-
-Write a Markdown document titled "# Deployment Overview" with sections:
-'Runtime Targets', 'Build & Release Pipeline', 'Environment & Secrets',
-'Infrastructure Dependencies', 'Where to Look First'. Cite file paths in
-backticks. If a section has no evidence in the source, say so explicitly
-rather than inventing content.`,
-  security_overview: `You are documenting the security posture of a software repository. Use the
-sandbox tools to inspect authentication code, authorisation checks, input
-validation, secrets handling, and any cryptographic operations. Identify:
-
-- how users authenticate;
-- where authorisation decisions live;
-- input validation strategy;
-- secrets storage and rotation;
-- known sensitive surfaces (PII, tokens, payment data);
-- gaps you can identify from the source (with file references).
-
-Write a Markdown document titled "# Security Overview" with sections:
-'Authentication', 'Authorisation', 'Input Validation', 'Secrets & Sensitive
-Data', 'Observed Gaps & Risks'. Cite file paths in backticks. Be conservative
-— only flag a gap if the evidence is in the source.`,
-  operations_overview: `You are documenting how this software is operated in production. Use the
-sandbox tools to inspect logging, metrics, tracing, alerting, dashboards,
-health checks, and run-books referenced in the source. Identify:
-
-- structured logging conventions;
-- metrics / tracing instrumentation;
-- alerts and on-call signals;
-- dashboards (if referenced in code or docs);
-- run-books and operational playbooks present in the repo;
-- file paths backing each claim.
-
-Write a Markdown document titled "# Operations Overview" with sections:
-'Logging', 'Metrics & Tracing', 'Alerting & On-Call', 'Dashboards & Run-Books',
-'Where to Look First'. Cite file paths in backticks. If the codebase does not
-emit metrics or has no run-books, say so directly rather than padding.`,
-};
-
-async function generateLlm(
-  kind: SystemDesignKind,
-  sandbox: { remoteId: string; repoPath: string },
-  repository: Doc<"repositories">,
-): Promise<{ contentMarkdown: string; summary: string }> {
-  // `sandbox` is the post-clone `EnsureSandboxReadyResult` projected to
-  // the two fields this function actually touches. Both are required
-  // strings in the source type, so no runtime presence guard is needed
-  // — the caller cannot reach this point without a ready sandbox.
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is not configured on the backend.");
+/**
+ * Map an LLM call exception into one of the structured
+ * `kindFailureReason` literals. Order matters:
+ *
+ *   1. `SandboxPreparationError` — should never reach here (caught
+ *      higher up) but kept defensively for safety.
+ *   2. `LlmRateLimitError` — gateway-level fairness denial (per-user
+ *      RPM or concurrency cap). Distinct from provider 429 but both
+ *      surface as `transport_rate_limit` in the kindRun row so the
+ *      banner copy works without sniffing the error class.
+ *   3. `APICallError` with 429 — provider rate-limited the call past
+ *      `withLlmRetry`'s ceiling.
+ *   4. `APICallError` other — provider returned a non-429 transport
+ *      fault (5xx, 4xx other than 429, network without status).
+ *   5. Legacy `empty document` substring — pre-PR-A2 callers threw
+ *      this on empty output; keep for backwards compatibility with
+ *      historical eval fixtures.
+ *   6. Default — `infra`. Convex / our-side bug; engineering alerted.
+ */
+function classifyLlmError(
+  error: unknown,
+):
+  | "live_source_unavailable"
+  | "model_empty_output"
+  | "transport_rate_limit"
+  | "transport_other"
+  | "output_quality"
+  | "infra" {
+  if (error instanceof SandboxPreparationError) {
+    return "live_source_unavailable";
   }
+  if (error instanceof LlmRateLimitError) {
+    return "transport_rate_limit";
+  }
+  if (error instanceof APICallError) {
+    if (error.statusCode === 429) {
+      return "transport_rate_limit";
+    }
+    return "transport_other";
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  if (/empty document/i.test(message)) {
+    return "model_empty_output";
+  }
+  return "infra";
+}
 
-  const client = await getSandboxFsClient(sandbox.remoteId);
-  const tools = createSandboxTools(client, sandbox.repoPath);
-
-  const modelChoice = resolveModelForReply({ mode: "discuss", groundSandbox: true });
-  // Appended once for every LLM kind so the per-kind prompts don't have to
-  // each restate the budget — keeps the limit in sync with
-  // `SYSTEM_DESIGN_STEP_BUDGET` and avoids drift.
-  const systemPrompt =
-    LLM_PROMPTS[kind] +
-    `\n\nYou have a hard limit of ${SYSTEM_DESIGN_STEP_BUDGET} sandbox tool calls. After at most ~6 tool calls, ` +
-    "start writing the document — partial coverage with citations is better than " +
-    "exhausting the budget on reads and producing nothing.";
-  const userPrompt = [
+/**
+ * Per-kind user-prompt shell. The system prompt carries the
+ * per-kind directive; this user prompt only supplies the repository
+ * identification + an opening instruction. The two are concatenated
+ * inside the gateway call so the model sees `system` and `prompt`
+ * the way AI SDK expects.
+ */
+function buildUserPrompt(repository: Doc<"repositories">): string {
+  return [
     `Repository: ${repository.sourceRepoFullName ?? "(unknown)"}`,
     repository.defaultBranch ? `Default branch: ${repository.defaultBranch}` : null,
     "",
@@ -407,29 +505,13 @@ async function generateLlm(
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
-
-  const completion = await generateText({
-    model: openai(modelChoice.name),
-    system: systemPrompt,
-    prompt: userPrompt,
-    providerOptions: modelChoice.reasoningEffort
-      ? { openai: { reasoningEffort: modelChoice.reasoningEffort } }
-      : undefined,
-    tools,
-    stopWhen: stepCountIs(SYSTEM_DESIGN_STEP_BUDGET),
-    maxRetries: 2,
-  });
-
-  const text = completion.text.trim();
-  if (text.length === 0) {
-    throw new Error("LLM returned an empty document.");
-  }
-  return {
-    contentMarkdown: text,
-    summary: extractSummary(text),
-  };
 }
 
+/**
+ * Extract a 1-line preview from a generated markdown document — first
+ * non-heading, non-blank line, capped at 280 characters. Falls back to
+ * a generic label so artifacts always have a summary.
+ */
 function extractSummary(markdown: string): string {
   const lines = markdown.split("\n");
   for (const line of lines) {
@@ -439,3 +521,10 @@ function extractSummary(markdown: string): string {
   }
   return "Generated by Library System Design.";
 }
+
+/**
+ * Type-only re-export for downstream eval / report callers that want
+ * to discriminate kindRun statuses without re-deriving the union from
+ * the schema document.
+ */
+export type { LlmProvider };

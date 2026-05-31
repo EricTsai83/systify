@@ -204,13 +204,14 @@ export const move = mutation({
 
 /**
  * Toggle a folder's pinned state. Pinning stamps `pinnedAt` with the
- * current wall-clock so the navigator can detect the pinned state and
- * surface pinned folders above the alphabetical tail. Unpinning drops the
- * field (patch with `pinnedAt: undefined`) so the folder falls back into
- * the regular alpha ordering.
+ * current wall-clock so the navigator can surface pinned folders in the
+ * "Pinned" section at the top. Unpinning drops the field.
  *
- * Mirrors `chat/threads.setThreadPinned` so the two pin features behave
- * identically from the user's perspective.
+ * Only root folders can be pinned — pinning a subfolder used to produce a
+ * confusing state where the row showed a pin icon and floated to the top
+ * of its siblings, but never appeared in the top-level "Pinned" section.
+ * Rather than promote subfolders out of their parent's subtree, we reject
+ * the call so the invariant is enforced server-side.
  */
 export const setPinned = mutation({
   args: {
@@ -221,6 +222,9 @@ export const setPinned = mutation({
     const { doc: folder } = await requireOwnedDoc(ctx, args.folderId, {
       notFoundMessage: "Folder not found.",
     });
+    if (folder.parentFolderId !== undefined) {
+      throw new Error("Only root folders can be pinned.");
+    }
     await ctx.db.patch(folder._id, {
       pinnedAt: args.pinned ? Date.now() : undefined,
     });

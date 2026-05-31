@@ -1,11 +1,11 @@
 "use node";
 
-import { openai } from "@ai-sdk/openai";
-import { embed } from "ai";
 import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
 import type { ArtifactChunkSearchHit } from "../artifactChunkStore";
+import { embedViaGateway, type LlmCallContext } from "./llmGateway";
+import { costUsdToCents } from "./llmPricing";
 import { logInfo, logWarn } from "./observability";
 
 const DEFAULT_RETRIEVAL_TOP_N = 8;
@@ -26,11 +26,25 @@ export interface RetrievedChunk {
 }
 
 type RetrieveArgs = {
+  /**
+   * Owner identity that drives per-user fairness in the gateway
+   * (RPM + concurrency buckets) and the per-user / per-repository
+   * daily-cap settlement after each embedding call.
+   */
+  ownerTokenIdentifier: string;
   repositoryId: Id<"repositories">;
   artifactScope?: Id<"artifacts">[];
   query: string;
   topN?: number;
   candidateK?: number;
+  /**
+   * Optional forensic anchors forwarded to the gateway's
+   * `LlmCallContext`. RAG retrieval runs inside the chat reply
+   * flow, so plumbing these lets the `llm_embedding_tokens_used`
+   * metric tie back to the message / thread that triggered it.
+   */
+  threadId?: Id<"threads">;
+  messageId?: Id<"messages">;
 };
 
 type RankedCandidate = ArtifactChunkSearchHit & {
@@ -132,11 +146,46 @@ async function retrieveLexical(
 }
 
 async function retrieveSemantic(ctx: ActionCtx, args: RetrieveArgs, candidateK: number): Promise<RetrievalHit[]> {
+  // `ARTIFACT_EMBEDDING_MODEL` is forwarded to the gateway, which
+  // validates the value against MODEL_CATALOG (`isValidPick`). An
+  // operator who overrides the env to a non-catalogued model gets a
+  // clear gateway-side error instead of an opaque SDK 4xx.
   const modelName = process.env.ARTIFACT_EMBEDDING_MODEL ?? DEFAULT_EMBEDDING_MODEL;
-  const { embedding } = await embed({
-    model: openai.embedding(modelName),
-    value: args.query,
-  });
+  const callCtx: LlmCallContext = {
+    provider: "openai",
+    modelName,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    capability: "embedding",
+    // RAG retrieval is invoked from the chat reply pipeline to ground
+    // assistant answers in library artifacts. The `chat` literal keeps
+    // the metric grouped with the same feature as the chat generation
+    // that triggered it; no new feature literal is warranted.
+    feature: "chat",
+    ...(args.threadId !== undefined ? { threadId: args.threadId } : {}),
+    ...(args.messageId !== undefined ? { messageId: args.messageId } : {}),
+  };
+  const { embeddings, costUsd } = await embedViaGateway(ctx, callCtx, { values: [args.query] });
+  const [embedding] = embeddings;
+  if (embedding === undefined) {
+    // Defensive: `embedMany` returns one vector per input, so a missing
+    // entry for a single-value batch implies an SDK contract change.
+    throw new Error("artifactRag: embedViaGateway returned zero embeddings for a one-value query");
+  }
+
+  // Per-query embedding spend is small but still routes through the
+  // same per-user / per-repository daily-cap buckets as generation —
+  // otherwise a noisy RAG-heavy session could outrun the cap silently.
+  // `settleSandboxDailyCost` (and the underlying `consumeSandboxDailyCost`
+  // helper) short-circuits on `cents <= 0`, so the pricing-miss path
+  // (catalog row without a price) settles to a no-op uniformly.
+  const settleCents = costUsdToCents(costUsd);
+  if (settleCents !== undefined && settleCents > 0) {
+    await ctx.runMutation(internal.lib.rateLimit.settleSandboxDailyCost, {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId: args.repositoryId,
+      cents: settleCents,
+    });
+  }
 
   const overfetchLimit = args.artifactScope && args.artifactScope.length > 0 ? candidateK * 4 : candidateK;
   const results = await ctx.vectorSearch("artifactChunks", "by_embedding", {

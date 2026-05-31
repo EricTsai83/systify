@@ -68,6 +68,19 @@ Capability-based model selection routes the reply based on the (mode, groundSand
 
 Each tier can be pinned via `OPENAI_MODEL_SANDBOX` / `OPENAI_MODEL_LIBRARY` / `OPENAI_MODEL_DISCUSS`. A global `OPENAI_MODEL` is the fallback when no per-capability override is set.
 
+## Per-Thread LLM Provider Lock
+
+Each chat thread is locked to a single LLM provider for the lifetime of the conversation. The lock is written on the **first message** through `chat.sendMessage` (or `sendMessageStartingNewThread`) and is immutable afterwards.
+
+- **What's locked**: `threads.lockedProvider` carries the provider literal (`openai` / `anthropic`). Once set, a send mutation whose picked provider disagrees is rejected with the structured `ConvexError` `{ code: "thread_provider_locked", ... }`.
+- **What's not locked**: model *tier* inside the locked provider. A user can freely switch `gpt-5 → gpt-5-mini` mid-thread; only the provider literal is fixed. `threads.defaultModelName` carries the user's most recent pick and pre-fills the composer's picker when they reopen the thread.
+- **Why backend-first**: the picker on the frontend filters the catalog by `lockedProvider` so a locked-out model is never offered, but the backend mutation is the source of truth. A frontend that bypassed the filter still cannot send under the wrong provider because the mutation rejects.
+- **Why locked at all**: provider responses differ in reasoning-block shape, prompt-caching semantics, and tool-call envelope. Mixing Anthropic and OpenAI turns inside one history would corrupt the running context for the next reply. The lock surfaces that constraint as a product invariant rather than a silent failure mode.
+
+Forking — letting a user branch a locked thread into a new thread that picks a different provider while keeping a back-pointer to the original — is reserved on `threads.forkedFromThreadId` for a future workflow; the column lands schema-side today so the addition is non-breaking when it ships.
+
+System Design generation jobs (`jobs.provider` / `jobs.modelName`) snapshot the same `(provider, model)` pair at job creation and bake it onto the row. A stale-recovery auto-resume re-enqueues with the same pair so the per-kind artifact cache key (`{commitSha, provider, model, promptVersion}`) stays consistent across resume boundaries.
+
 ## Data Model
 
 Library reads artifact metadata through a metadata-only query and fetches the markdown body only for the active editor tab. This keeps tree, tabs, and quick-open subscriptions small.

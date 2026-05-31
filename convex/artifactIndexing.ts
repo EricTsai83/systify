@@ -1,7 +1,5 @@
 "use node";
 
-import { openai } from "@ai-sdk/openai";
-import { embedMany } from "ai";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
@@ -12,8 +10,18 @@ import {
   DEFAULT_ARTIFACT_CHUNK_HARD_TOKEN_CAP,
   DEFAULT_ARTIFACT_CHUNK_SOFT_TOKEN_CAP,
 } from "./lib/artifactChunking";
+import { embedViaGateway } from "./lib/llmGateway";
+import { costUsdToCents } from "./lib/llmPricing";
 import { logInfo, logWarn } from "./lib/observability";
 
+/**
+ * Embedding model used for artifact chunk indexing. Must match a
+ * `provider: "openai"` `capability: "embedding"` entry in `MODEL_CATALOG`
+ * — the gateway refuses uncatalogued picks. `text-embedding-3-small` is
+ * the cheap default; operators can swap to `text-embedding-3-large` via
+ * `ARTIFACT_EMBEDDING_MODEL` for higher-quality vectors at ~6.5× the
+ * input rate (see `llmPricing.ts`).
+ */
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_EMBEDDING_BATCH_SIZE = 100;
 const FAILED_INDEXING_RETRY_BACKOFF_MS = 30 * 60_000;
@@ -70,7 +78,11 @@ export const reindexArtifact = internalAction({
     }
 
     try {
-      const embeddings = await embedArtifactChunks(chunks.map((chunk) => chunk.content));
+      const embeddings = await embedArtifactChunks(ctx, {
+        values: chunks.map((chunk) => chunk.content),
+        ownerTokenIdentifier: artifact.ownerTokenIdentifier,
+        repositoryId: artifact.repositoryId,
+      });
       await ctx.runMutation(internal.artifactChunkStore.batchSetEmbeddings, {
         artifactId: args.artifactId,
         artifactVersion,
@@ -147,21 +159,68 @@ async function reindexArtifactsWithConcurrency(ctx: ActionCtx, artifacts: Doc<"a
   }
 }
 
-async function embedArtifactChunks(values: string[]): Promise<number[][]> {
+/**
+ * Embed a list of chunk texts via the LLM gateway. Routes through
+ * `embedViaGateway` so the call inherits per-user RPM + concurrency
+ * fairness, retry, normalized usage, and cost telemetry — and the
+ * spend lands in the daily cap for the owning user / repository.
+ *
+ * Daily-cap settlement happens **per batch**. Settling once per
+ * gateway call (rather than once per artifact) bounds the worst-case
+ * overrun to a single batch's spend if the action crashes mid-loop —
+ * the already-charged batches are durably recorded, the un-attempted
+ * tail simply isn't charged. Aggregating cost across the whole
+ * artifact and settling at the end would leak whichever batches ran
+ * before the crash.
+ */
+async function embedArtifactChunks(
+  ctx: ActionCtx,
+  args: {
+    values: string[];
+    ownerTokenIdentifier: string;
+    repositoryId: Doc<"artifacts">["repositoryId"];
+  },
+): Promise<number[][]> {
   const modelName = process.env.ARTIFACT_EMBEDDING_MODEL ?? DEFAULT_EMBEDDING_MODEL;
   const batchSize = readNumberEnv("ARTIFACT_EMBEDDING_BATCH_SIZE", DEFAULT_EMBEDDING_BATCH_SIZE);
   const embeddings: number[][] = [];
-  for (let index = 0; index < values.length; index += batchSize) {
-    const batch = values.slice(index, index + batchSize);
-    const result = await embedMany({
-      model: openai.embedding(modelName),
-      values: batch,
-    });
+  for (let index = 0; index < args.values.length; index += batchSize) {
+    const batch = args.values.slice(index, index + batchSize);
+    const result = await embedViaGateway(
+      ctx,
+      {
+        provider: "openai",
+        modelName,
+        ownerTokenIdentifier: args.ownerTokenIdentifier,
+        capability: "embedding",
+        feature: "indexing",
+      },
+      { values: batch },
+    );
     embeddings.push(...result.embeddings);
+
+    // Settle the batch's spend against the daily cap. `costUsdToCents`
+    // returns `undefined` on pricing misses (model not in the table) —
+    // we skip the settlement in that case rather than guessing a
+    // number; the gateway already logged the spend via
+    // `llm_embedding_tokens_used` so the observability surface still
+    // sees the call, and the cap simply isn't decremented for an
+    // un-priced model.
+    const cents = costUsdToCents(result.costUsd);
+    if (cents !== undefined && cents > 0) {
+      await ctx.runMutation(internal.lib.rateLimit.settleSandboxDailyCost, {
+        ownerTokenIdentifier: args.ownerTokenIdentifier,
+        repositoryId: args.repositoryId ?? null,
+        cents,
+      });
+    }
+
     logInfo("artifactIndexing", "embedding_batch_completed", {
       model: modelName,
       batchSize: batch.length,
-      tokens: result.usage.tokens,
+      tokens: result.usage.inputTokens,
+      costUsd: result.costUsd,
+      settledCents: cents,
     });
   }
   return embeddings;

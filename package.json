@@ -25,9 +25,15 @@
     "lint": "bun run typecheck && bun run typecheck:convex && eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "test": "vitest run",
     "preview": "vite preview",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "report:user-costs": "bun scripts/reportUserCosts.ts",
+    "report:system-design": "bun scripts/reportSystemDesign.ts",
+    "eval:system-design": "bun scripts/evalSystemDesign.ts",
+    "eval:report": "bun scripts/evalReport.ts",
+    "eval:diff": "bun scripts/evalDiff.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.81",
     "@ai-sdk/openai": "^3.0.53",
     "@base-ui/react": "^1.5.0",
     "@convex-dev/rate-limiter": "^0.3.2",

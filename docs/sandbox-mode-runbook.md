@@ -20,6 +20,16 @@ Metric names use the `sandbox_*` prefix; `tags.mode` carries the DB literal (`"d
 
 These two metric streams plus the existing `[chat] …` debug logs are the only data sources this runbook references. If your downstream logging pipeline supports it, group `tags.*` fields as dimensions — every dashboard recipe in this document filters on a `tags.*` value.
 
+### How this interacts with System Design generation
+
+System Design generation now uses live sandbox grounding for LLM-backed kinds (architecture diagram, data model overview, etc.). Each kind that needs source-code introspection calls `ensureSandboxReady` (`convex/systemDesign.ts`) which provisions a Daytona sandbox if one isn't running. Sandbox lifecycle / cost / tool-error / latency symptoms surface in the SAME metric streams (`sandbox_session_finished`, `sandbox_tool_invoked`) — distinguishable by feature tag.
+
+An incident affecting Daytona (Incident 1 in this runbook) blocks System Design generation entirely: the kind fails with `failureReason: "live_source_unavailable"` or `"infra"`; the job's auto-resume re-tries on the next stale-recovery sweep. The same `SANDBOX_DAILY_CAP_PER_USER_USD=0` mitigation that gates new sandbox-grounded chat also gates new System Design generation requests via the same cost-cap check.
+
+Cost-spike symptoms (Incident 2) may now include System Design generation runs. Filter `sandbox_session_finished` events on feature tag to separate chat from `system_design`. Per-kind cost shows up additionally in `systemDesignKindRuns.totalCostUsd` — `bun run report:user-costs` surfaces per-user totals; `bun run report:system-design` surfaces per-kind aggregates.
+
+Cross-reference `docs/architecture/system-design-generation.md` for the full kind lifecycle and failure taxonomy.
+
 ## Quick reference: taking Sandbox grounding offline
 
 Sandbox grounding does not have an env-var kill switch. If you need to disable it during an active incident:

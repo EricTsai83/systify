@@ -1,24 +1,15 @@
 /**
  * Model resolver behavior tests.
  *
- * Pin the three resolution layers (capability-specific override →
- * `OPENAI_MODEL` → hard-coded default) plus a contract guard that the
- * defaults stay paired with the pricing table — without that guard a
- * default that drifts off the pricing table silently bypasses the daily
- * cost cap.
- *
- * Env handling follows the existing convention (e.g. `daytona.test.ts`,
- * `rateLimit.test.ts`): explicit save / restore around each test. Vitest's
- * `vi.stubEnv` would also work, but the in-tree convention is direct
- * assignment so this file matches the rest.
+ * Pin the three resolution layers (per-message override → thread default
+ * → capability default) plus a contract guard that the defaults stay
+ * paired with the pricing table — without that guard a default that
+ * drifts off the pricing table silently bypasses the daily cost cap.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { describe, expect, test } from "vitest";
 import { pickCapability, resolveModelForReply, type ModelCapability } from "./modelSelection";
-import { estimateCostUsd } from "../lib/openaiPricing";
-
-const CAPABILITY_ENV_VARS = ["OPENAI_MODEL_SANDBOX", "OPENAI_MODEL_LIBRARY", "OPENAI_MODEL_DISCUSS"] as const;
-const ALL_ENV_VARS = [...CAPABILITY_ENV_VARS, "OPENAI_MODEL"] as const;
+import { estimateCostUsd } from "../lib/llmPricing";
 
 describe("pickCapability", () => {
   test("maps sandbox-grounded Discuss onto the sandbox tier", () => {
@@ -39,89 +30,77 @@ describe("pickCapability", () => {
 });
 
 describe("resolveModelForReply", () => {
-  // Snapshot the env vars the resolver consults so tests can mutate
-  // freely and we restore the operator's actual values after the suite.
-  // Saving once in `beforeEach` (not at module load) keeps the snapshot
-  // valid even when the tests run interleaved with other suites that
-  // mutate `process.env`.
-  const original: Partial<Record<(typeof ALL_ENV_VARS)[number], string | undefined>> = {};
-
-  beforeEach(() => {
-    for (const key of ALL_ENV_VARS) {
-      original[key] = process.env[key];
-      delete process.env[key];
-    }
+  test("falls back to gpt-5 for sandbox-grounded Discuss when no override / thread default is provided", () => {
+    const choice = resolveModelForReply({ mode: "discuss", groundSandbox: true });
+    expect(choice.provider).toBe("openai");
+    expect(choice.modelName).toBe("gpt-5");
+    expect(choice.capability).toBe("sandbox");
   });
 
-  afterEach(() => {
-    for (const key of ALL_ENV_VARS) {
-      const value = original[key];
-      if (value === undefined) {
-        delete process.env[key];
-      } else {
-        process.env[key] = value;
-      }
-    }
-  });
-
-  test("falls back to gpt-5 for sandbox-grounded Discuss when no env vars are set", () => {
-    expect(resolveModelForReply({ mode: "discuss", groundSandbox: true }).name).toBe("gpt-5");
-  });
-
-  test("falls back to gpt-5-mini for library and ungrounded discuss when no env vars are set", () => {
+  test("falls back to gpt-5-mini for library and ungrounded discuss when no override / thread default is provided", () => {
     // Library and ungrounded Discuss are text-only single-step replies;
     // the mini tier is the cheaper / lower-latency choice and matches
     // the rollout narrative documented in the resolver itself.
-    expect(resolveModelForReply({ mode: "library", groundSandbox: false }).name).toBe("gpt-5-mini");
-    expect(resolveModelForReply({ mode: "discuss", groundSandbox: false }).name).toBe("gpt-5-mini");
+    expect(resolveModelForReply({ mode: "library", groundSandbox: false }).modelName).toBe("gpt-5-mini");
+    expect(resolveModelForReply({ mode: "discuss", groundSandbox: false }).modelName).toBe("gpt-5-mini");
   });
 
-  test("uses the capability-specific override when set", () => {
-    process.env.OPENAI_MODEL_SANDBOX = "gpt-5-nano";
-    process.env.OPENAI_MODEL_LIBRARY = "gpt-4o-mini";
-    process.env.OPENAI_MODEL_DISCUSS = "gpt-4.1-mini";
-
-    expect(resolveModelForReply({ mode: "discuss", groundSandbox: true }).name).toBe("gpt-5-nano");
-    expect(resolveModelForReply({ mode: "library", groundSandbox: false }).name).toBe("gpt-4o-mini");
-    expect(resolveModelForReply({ mode: "discuss", groundSandbox: false }).name).toBe("gpt-4.1-mini");
+  test("explicit per-message override wins over thread default and capability default", () => {
+    const choice = resolveModelForReply({
+      mode: "discuss",
+      groundSandbox: false,
+      overrideProvider: "anthropic",
+      overrideModelName: "claude-haiku-4-5",
+      threadDefaultModelName: "gpt-5",
+    });
+    expect(choice.provider).toBe("anthropic");
+    expect(choice.modelName).toBe("claude-haiku-4-5");
   });
 
-  test("falls back to OPENAI_MODEL when capability-specific override is unset", () => {
-    // Global pin path for operators who set `OPENAI_MODEL` instead of the
-    // capability-specific variables. The resolver must use that value
-    // for every capability (the operator's intent was a global pin, not
-    // a per-capability choice).
-    process.env.OPENAI_MODEL = "gpt-4.1";
-
-    expect(resolveModelForReply({ mode: "discuss", groundSandbox: true }).name).toBe("gpt-4.1");
-    expect(resolveModelForReply({ mode: "library", groundSandbox: false }).name).toBe("gpt-4.1");
-    expect(resolveModelForReply({ mode: "discuss", groundSandbox: false }).name).toBe("gpt-4.1");
+  test("half-set override (model name only, no provider) is ignored and falls through", () => {
+    const choice = resolveModelForReply({
+      mode: "discuss",
+      groundSandbox: false,
+      overrideModelName: "claude-haiku-4-5",
+    });
+    expect(choice.provider).toBe("openai");
+    expect(choice.modelName).toBe("gpt-5-mini");
   });
 
-  test("capability-specific override takes precedence over the global OPENAI_MODEL", () => {
-    process.env.OPENAI_MODEL = "gpt-4.1";
-    process.env.OPENAI_MODEL_SANDBOX = "gpt-5";
-
-    expect(resolveModelForReply({ mode: "discuss", groundSandbox: true }).name).toBe("gpt-5");
-    // Capabilities without their own override fall through to the global
-    // var; the override is per-capability, not all-or-nothing.
-    expect(resolveModelForReply({ mode: "library", groundSandbox: false }).name).toBe("gpt-4.1");
-    expect(resolveModelForReply({ mode: "discuss", groundSandbox: false }).name).toBe("gpt-4.1");
+  test("override that is not in the catalog falls through to the next layer", () => {
+    // Out-of-band catalog narrowing while a thread is running could leave
+    // a persisted picker pick that no longer matches; the resolver
+    // degrades to the thread default rather than handing the gateway a
+    // bad pair.
+    const choice = resolveModelForReply({
+      mode: "discuss",
+      groundSandbox: false,
+      overrideProvider: "openai",
+      overrideModelName: "gpt-3.5-imaginary",
+      threadDefaultModelName: "claude-sonnet-4-6",
+    });
+    expect(choice.provider).toBe("anthropic");
+    expect(choice.modelName).toBe("claude-sonnet-4-6");
   });
 
-  test("ignores empty strings and whitespace-only env values", () => {
-    // An empty value (or one accidentally set to whitespace via shell
-    // copy-paste) must fall through to the next layer rather than
-    // route the model to a literal empty string — that would fail at
-    // the AI SDK boundary with a confusing error.
-    process.env.OPENAI_MODEL_SANDBOX = "";
-    process.env.OPENAI_MODEL = "   \t  ";
-    expect(resolveModelForReply({ mode: "discuss", groundSandbox: true }).name).toBe("gpt-5");
+  test("thread default inferred via catalog lookup when no override is set", () => {
+    const choice = resolveModelForReply({
+      mode: "discuss",
+      groundSandbox: false,
+      threadDefaultModelName: "claude-haiku-4-5",
+    });
+    expect(choice.provider).toBe("anthropic");
+    expect(choice.modelName).toBe("claude-haiku-4-5");
   });
 
-  test("trims surrounding whitespace from env values", () => {
-    process.env.OPENAI_MODEL_SANDBOX = "  gpt-5-nano  ";
-    expect(resolveModelForReply({ mode: "discuss", groundSandbox: true }).name).toBe("gpt-5-nano");
+  test("thread default with unknown model name falls through to capability default", () => {
+    const choice = resolveModelForReply({
+      mode: "discuss",
+      groundSandbox: false,
+      threadDefaultModelName: "deprecated-model-name",
+    });
+    expect(choice.provider).toBe("openai");
+    expect(choice.modelName).toBe("gpt-5-mini");
   });
 
   test("each capability default exists in the pricing table (cost cap accuracy)", () => {
@@ -138,43 +117,34 @@ describe("resolveModelForReply", () => {
       ];
     for (const { capability, args } of cases) {
       const choice = resolveModelForReply(args);
-      const cost = estimateCostUsd(choice.name, 1, 1);
-      expect(cost, `pricing missing for default model ${choice.name} (capability: ${capability})`).not.toBeUndefined();
+      const cost = estimateCostUsd(choice.provider, choice.modelName, { inputTokens: 1, outputTokens: 1 });
+      expect(
+        cost,
+        `pricing missing for default model ${choice.provider}:${choice.modelName} (capability: ${capability})`,
+      ).not.toBeUndefined();
     }
   });
 
   test("attaches per-model reasoning effort to the default gpt-5 / gpt-5-mini choices", () => {
-    // `MODEL_REASONING_DEFAULT` keys reasoning effort by *model*, not by
-    // capability tier. Sandbox-grounded Discuss (gpt-5) should get
-    // "medium" — matching OpenAI's API default — while library /
-    // ungrounded discuss (gpt-5-mini) should get the lighter "low".
+    // The catalog keys reasoning effort by model entry, not capability
+    // tier. Sandbox-grounded Discuss (gpt-5) should get "medium" —
+    // matching OpenAI's API default — while library / ungrounded discuss
+    // (gpt-5-mini) should get the lighter "low".
     expect(resolveModelForReply({ mode: "discuss", groundSandbox: true }).reasoningEffort).toBe("medium");
     expect(resolveModelForReply({ mode: "library", groundSandbox: false }).reasoningEffort).toBe("low");
     expect(resolveModelForReply({ mode: "discuss", groundSandbox: false }).reasoningEffort).toBe("low");
   });
 
-  test("returns reasoningEffort=undefined when the model isn't in the reasoning table", () => {
-    // Pointing a tier at a non-reasoning model (gpt-4o) is the documented
-    // way operators turn reasoning off at runtime — the resolver must
-    // surface `undefined` so `providerOptions` stays unset and OpenAI
-    // runs without `reasoningEffort`. Confirms the env-override path is
-    // the canonical "off switch" the plan describes.
-    process.env.OPENAI_MODEL_DISCUSS = "gpt-4o";
-    const choice = resolveModelForReply({ mode: "discuss", groundSandbox: false });
-    expect(choice.name).toBe("gpt-4o");
+  test("returns reasoningEffort=undefined when the picked model isn't a reasoning model", () => {
+    // Anthropic catalog entries don't carry an OpenAI-shaped
+    // `reasoningEffort` today — the picker just exposes them and the
+    // gateway omits the provider option cleanly.
+    const choice = resolveModelForReply({
+      mode: "discuss",
+      groundSandbox: false,
+      overrideProvider: "anthropic",
+      overrideModelName: "claude-haiku-4-5",
+    });
     expect(choice.reasoningEffort).toBeUndefined();
-  });
-
-  test("applies family-level reasoning defaults to pinned snapshot names", () => {
-    // Operators commonly pin a dated snapshot like `gpt-5-2026-01-15` to
-    // freeze behavior. Exact-id lookup would silently drop reasoning for
-    // these; the resolver must match on the family prefix so reasoning
-    // stays on at the family's default effort. Longest prefix wins so
-    // `gpt-5-mini-*` snapshots resolve to the mini row, not the gpt-5
-    // row above it.
-    process.env.OPENAI_MODEL_SANDBOX = "gpt-5-2026-01-15";
-    expect(resolveModelForReply({ mode: "discuss", groundSandbox: true }).reasoningEffort).toBe("medium");
-    process.env.OPENAI_MODEL_DISCUSS = "gpt-5-mini-2026-01-15";
-    expect(resolveModelForReply({ mode: "discuss", groundSandbox: false }).reasoningEffort).toBe("low");
   });
 });

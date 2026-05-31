@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -12,7 +12,7 @@ import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-th
 import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
-import type { ChatMode, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
+import type { ChatMode, LlmProvider, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { DEFAULT_AUTHENTICATED_PATH, modeAwareThreadPath, repolessThreadPath, repositoryPath } from "@/route-paths";
 
 /**
@@ -58,6 +58,32 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
 
   const chatMode: ChatMode = "discuss";
 
+  // Per-thread composer model pick. Mirrors the RepositoryShell's
+  // pattern so reopening a repoless thread restores the user's last
+  // pick from `threads.defaultModelName`.
+  const [modelByThread, setModelByThread] = useState<{
+    threadId: ThreadId | null;
+    provider: LlmProvider | null;
+    modelName: string | null;
+  }>({ threadId: null, provider: null, modelName: null });
+  const selectedProvider = modelByThread.provider;
+  const selectedModelName = modelByThread.modelName;
+  const setSelectedModel = useCallback(
+    (next: { provider: LlmProvider; modelName: string }) =>
+      setModelByThread((prev) => ({ ...prev, provider: next.provider, modelName: next.modelName })),
+    [],
+  );
+
+  useEffect(() => {
+    if (modelByThread.threadId === urlThreadId) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setModelByThread({
+      threadId: urlThreadId,
+      provider: urlThreadId === null ? null : capabilities.lockedProvider,
+      modelName: urlThreadId === null ? null : capabilities.defaultModelName,
+    });
+  }, [urlThreadId, capabilities.defaultModelName, capabilities.lockedProvider, modelByThread.threadId]);
+
   const recentThreadIds = useRecentThreads(urlThreadId);
   useWarmThreadSubscriptions(recentThreadIds);
 
@@ -77,6 +103,8 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       urlThreadId,
       repositoryId: null,
       chatMode,
+      selectedProvider,
+      selectedModelName,
       liveRepositoryIds,
       liveThreadIds,
       threadToDelete,
@@ -159,6 +187,10 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
             groundSandbox={false}
             setGroundLibrary={() => {}}
             setGroundSandbox={() => {}}
+            selectedProvider={selectedProvider}
+            selectedModelName={selectedModelName}
+            setSelectedModel={setSelectedModel}
+            threadLockedProvider={capabilities.lockedProvider}
             grounding={undefined}
             isSending={isSending}
             onSendMessage={handleSendMessage}

@@ -10,9 +10,27 @@ import { Progress } from "@/components/ui/progress";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
 
+/**
+ * Failure reason copy. `transport_rate_limit` distinguishes "provider
+ * told us to slow down" from generic transport errors so users know
+ * waiting (rather than fiddling with selections) is the right response.
+ * `output_quality` covers the post-generation quality-gate rejects
+ * (missing required sections / Mermaid block) — surfacing them is
+ * useful because rerunning often succeeds once the model retries.
+ * `transport_other` is the catch-all for non-rate-limit transport
+ * faults (network / 5xx / SDK), and `infra` is the our-side bug bucket
+ * the operator should already be aware of.
+ */
 const REASON_TEXT_ALL_LIVE_SOURCE =
   "Live access to the repository wasn't available when this ran. The next attempt will prepare it first.";
 const REASON_TEXT_ALL_EMPTY = "The model didn't produce a complete document. The next attempt may succeed.";
+const REASON_TEXT_ALL_RATE_LIMIT =
+  "The provider rate-limited the run. Wait a couple of minutes and the next attempt should go through.";
+const REASON_TEXT_ALL_QUALITY =
+  "Some documents came back without the required sections. Retrying usually fixes this — open the details if it persists.";
+const REASON_TEXT_ALL_TRANSPORT =
+  "A transport error stopped the run (network / provider 5xx). The error id is in the log if you need to report it.";
+const REASON_TEXT_ALL_INFRA = "An internal error stopped the run. Engineering has been notified — retry to try again.";
 const REASON_TEXT_MIXED = "Some documents couldn't be generated. The next attempt will retry the failed ones.";
 const REASON_TEXT_FALLBACK = "Something stopped the run before it finished. The next attempt will start a fresh one.";
 
@@ -102,10 +120,31 @@ type FailureDescriptor = {
   selections: SystemDesignKind[];
 };
 
+/**
+ * Failure reason union as it appears on `jobs.kindFailures[].reason`.
+ * Mirrors the schema validator in `convex/schema.ts` (`kindFailureReason`).
+ */
+type FailureReason =
+  | "live_source_unavailable"
+  | "model_empty_output"
+  | "transport_rate_limit"
+  | "transport_other"
+  | "output_quality"
+  | "infra";
+
+const REASON_TEXT_BY_KIND: Record<FailureReason, string> = {
+  live_source_unavailable: REASON_TEXT_ALL_LIVE_SOURCE,
+  model_empty_output: REASON_TEXT_ALL_EMPTY,
+  transport_rate_limit: REASON_TEXT_ALL_RATE_LIMIT,
+  output_quality: REASON_TEXT_ALL_QUALITY,
+  transport_other: REASON_TEXT_ALL_TRANSPORT,
+  infra: REASON_TEXT_ALL_INFRA,
+};
+
 function describeFailures(job: Doc<"jobs">): FailureDescriptor | null {
   const kindFailures = (job.kindFailures ?? []) as ReadonlyArray<{
     kind: SystemDesignKind;
-    reason?: "live_source_unavailable" | "model_empty_output" | "other";
+    reason?: FailureReason;
   }>;
 
   const persistedSelections = job.selections ?? [];
@@ -135,15 +174,13 @@ function describeFailures(job: Doc<"jobs">): FailureDescriptor | null {
   if (kindFailures.length === 0) {
     reasonText = job.errorMessage && job.errorMessage.trim() ? job.errorMessage : REASON_TEXT_FALLBACK;
   } else {
-    const reasons = new Set(kindFailures.map((failure) => failure.reason ?? "other"));
-    if (reasons.size === 1) {
-      if (reasons.has("live_source_unavailable")) {
-        reasonText = REASON_TEXT_ALL_LIVE_SOURCE;
-      } else if (reasons.has("model_empty_output")) {
-        reasonText = REASON_TEXT_ALL_EMPTY;
-      } else {
-        reasonText = REASON_TEXT_FALLBACK;
-      }
+    const reasons = Array.from(
+      new Set<FailureReason | undefined>(kindFailures.map((failure) => failure.reason)),
+    ).filter((reason): reason is FailureReason => reason !== undefined);
+    if (reasons.length === 1) {
+      reasonText = REASON_TEXT_BY_KIND[reasons[0]] ?? REASON_TEXT_FALLBACK;
+    } else if (reasons.length === 0) {
+      reasonText = REASON_TEXT_FALLBACK;
     } else {
       reasonText = REASON_TEXT_MIXED;
     }
@@ -166,7 +203,17 @@ function FailureBanner({ repositoryId, job }: { repositoryId: Id<"repositories">
     if (!descriptor) return;
     setSubmitError(null);
     try {
-      await requestGeneration({ repositoryId, selections: descriptor.selections });
+      // Preserve the original job's (provider, model) so the retry runs
+      // against the same pair the user picked the first time. Both
+      // fields travel together — when either is missing on a legacy job
+      // row, omit both and let the mutation fall back to the System
+      // Design defaults.
+      const samePick = job.provider !== undefined && job.modelName !== undefined;
+      await requestGeneration({
+        repositoryId,
+        selections: descriptor.selections,
+        ...(samePick ? { provider: job.provider, modelName: job.modelName } : {}),
+      });
     } catch (err) {
       setSubmitError(toUserErrorMessage(err, "Couldn't start the run. Try again."));
     }

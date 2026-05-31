@@ -4,6 +4,7 @@ import type { QueryCtx } from "../_generated/server";
 import { internalQuery } from "../_generated/server";
 import { resolveDiscussGrounding } from "../lib/chatMode";
 import { MAX_CONTEXT_MESSAGES } from "../lib/constants";
+import type { LlmProvider } from "../lib/llmProvider";
 import type { ExtendedChatMode } from "./prompting";
 
 export type ReplyContext = {
@@ -32,6 +33,18 @@ export type ReplyContext = {
    */
   groundLibrary: boolean;
   groundSandbox: boolean;
+  /**
+   * Provider + model the user picked at send time (`messages.provider /
+   * messages.modelName` on the queued user message). Anchored to the
+   * queued message so the action uses the same pair the user picked
+   * even if a later send into the same thread chose a different model.
+   *
+   * Optional because pre-PR-A3 messages have neither field — the action
+   * falls back to the capability default via `resolveModelForReply`
+   * when both are absent.
+   */
+  provider?: LlmProvider;
+  modelName?: string;
   repositoryId?: Id<"repositories">;
   repositorySummary?: string;
   readmeSummary?: string;
@@ -266,6 +279,8 @@ export const getReplyContext = internalQuery({
         mode: effectiveMode,
         groundLibrary,
         groundSandbox,
+        provider: userMessage.provider,
+        modelName: userMessage.modelName,
         repositoryId: undefined,
         repositorySummary: undefined,
         readmeSummary: undefined,
@@ -338,6 +353,8 @@ export const getReplyContext = internalQuery({
       mode: effectiveMode,
       groundLibrary,
       groundSandbox,
+      provider: userMessage.provider,
+      modelName: userMessage.modelName,
       repositoryId: repository._id,
       repositorySummary: repository.summary,
       readmeSummary: repository.readmeSummary,

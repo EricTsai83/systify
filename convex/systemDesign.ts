@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
@@ -17,17 +17,65 @@ import { createArtifactInMutation, deleteArtifactInternal } from "./artifactStor
 import {
   completeRunningJob,
   failRunningJob,
+  failStaleActiveJob,
+  isJobStaleAndRecoverable,
   markQueuedJobRunning,
   refreshRunningJobLease,
-  runStaleJobRecovery,
   updateRunningJobProgress,
 } from "./lib/jobs";
 import {
+  assertSandboxDailyCostBudget,
   consumeDaytonaGlobalRateLimit,
+  consumeSandboxDailyCost,
   consumeSystemDesignRateLimit,
+  getSandboxReplyEstimateCents,
   SYSTEM_DESIGN_JOB_LEASE_MS,
 } from "./lib/rateLimit";
-import { logWarn } from "./lib/observability";
+import { isValidPick, listPickableModels } from "./lib/llmCatalog";
+import { llmProviderValidator, type LlmProvider } from "./lib/llmProvider";
+import { costUsdToCents } from "./lib/llmPricing";
+import { logInfo, logWarn } from "./lib/observability";
+import { SYSTEM_DESIGN_PROMPT_VERSIONS } from "./lib/systemDesignPrompts";
+
+/**
+ * Default LLM pick for System Design jobs when the caller does not
+ * specify one. Pinned to the sandbox-capable tier of the catalog
+ * because every System Design kind drives sandbox tools — switching
+ * a non-tool model in here would silently break the generator.
+ *
+ * Multi-provider model selection through the dialog lands in PR-A3.
+ * Until then, every job uses these defaults; the values still flow
+ * through the gateway (rate limits, retry, telemetry) exactly like
+ * a user-picked pair would.
+ */
+const DEFAULT_SYSTEM_DESIGN_PROVIDER: LlmProvider = "openai";
+const DEFAULT_SYSTEM_DESIGN_MODEL = "gpt-5";
+
+/**
+ * Loop guard for the stale-recovery auto-resume path. A System Design
+ * job that overruns its lease with partial progress (some kinds
+ * completed, some not) is re-enqueued up to this many times before
+ * the recovery gives up and marks the job failed. Two attempts is
+ * empirically enough to absorb a single bad sandbox / one transient
+ * provider outage; anything more is signal of a deeper bug worth
+ * surfacing as a failure rather than absorbing as retries.
+ */
+const MAX_RESUME_ATTEMPTS = 2;
+
+/**
+ * Status set treated as "this kind is done, no need to re-run on
+ * resume". `quality_rejected` is included because re-running the same
+ * (prompt, model, commit) is overwhelmingly likely to reproduce the
+ * same reject — the user has to bump promptVersion or pick a different
+ * model to break out of the loop. `failed` is intentionally absent
+ * so a transient transport blip on attempt N gets another shot on
+ * attempt N+1.
+ */
+const KIND_RUN_TERMINAL_STATUSES = new Set<Doc<"systemDesignKindRuns">["status"]>([
+  "succeeded",
+  "cached_hit",
+  "quality_rejected",
+]);
 
 /**
  * Library System Design generation entry point.
@@ -46,6 +94,23 @@ export const requestSystemDesignGeneration = mutation({
   args: {
     repositoryId: v.id("repositories"),
     selections: v.array(systemDesignKindValidator),
+    /**
+     * Multi-provider LLM pick. Both args travel together — supplying
+     * one without the other throws. When neither is set, the job
+     * falls back to {@link DEFAULT_SYSTEM_DESIGN_PROVIDER} /
+     * {@link DEFAULT_SYSTEM_DESIGN_MODEL}.
+     */
+    provider: v.optional(llmProviderValidator),
+    modelName: v.optional(v.string()),
+    /**
+     * When `true`, the per-kind cache lookup is skipped and the
+     * generator re-runs every selected kind. Set by the Generate
+     * dialog's "Regenerate even if cached" checkbox. Does NOT bypass
+     * the active-job dedup (a regenerate while another job is in
+     * flight returns that job's id) — the user's intent is "make the
+     * new artifact land", not "spawn a parallel job".
+     */
+    forceRegenerate: v.optional(v.boolean()),
   },
   handler: async (ctx, args): Promise<{ jobId: Id<"jobs"> }> => {
     const { identity, repository } = await requireActiveRepositoryForViewer(ctx, {
@@ -62,6 +127,24 @@ export const requestSystemDesignGeneration = mutation({
       throw new Error("Select at least one document to generate.");
     }
 
+    // Pick + validate the (provider, model) pair. Default to the
+    // catalog's sandbox-capable tier when the caller doesn't specify
+    // — PR-A3 wires this to the dialog's picker.
+    const provider = args.provider ?? DEFAULT_SYSTEM_DESIGN_PROVIDER;
+    const modelName = args.modelName ?? DEFAULT_SYSTEM_DESIGN_MODEL;
+    if ((args.provider === undefined) !== (args.modelName === undefined)) {
+      throw new ConvexError({
+        code: "invalid_model_pick",
+        message: "provider and modelName must be supplied together.",
+      });
+    }
+    if (!isValidPick(provider, modelName)) {
+      throw new ConvexError({
+        code: "invalid_model_pick",
+        message: `Unsupported model selection: ${provider}:${modelName}`,
+      });
+    }
+
     const now = Date.now();
 
     // Every System Design kind is LLM-backed and reads live source through a
@@ -72,6 +155,13 @@ export const requestSystemDesignGeneration = mutation({
     // patches the new row's id onto downstream artifact records.
     const sandboxId: Id<"sandboxes"> | undefined = repository.latestSandboxId ?? undefined;
 
+    // Per-repository dedup: only one active System Design job per
+    // repository at a time. Two concurrent triggers against the same
+    // repo (e.g. two browser tabs) collapse to the first job's id.
+    // Cross-user collisions are not possible today — each repository
+    // belongs to exactly one owner — but the scope key uses
+    // repository rather than user so a future shared-repo model
+    // inherits this dedup automatically.
     const activeJob = await findActiveLibrarySystemDesignJob(ctx, repository._id, now);
     if (activeJob) {
       return { jobId: activeJob._id };
@@ -101,11 +191,20 @@ export const requestSystemDesignGeneration = mutation({
       leaseMs: SYSTEM_DESIGN_JOB_LEASE_MS,
     });
 
+    // Bake provider/model onto the job row so a stale-recovery auto-resume
+    // picks up the same pair without rederiving from defaults — keeps
+    // the cache key consistent across resume boundaries.
+    await ctx.db.patch(jobId, {
+      provider,
+      modelName,
+    });
+
     await ctx.scheduler.runAfter(0, internal.systemDesignNode.runSystemDesignGeneration, {
       jobId,
       repositoryId: repository._id,
       ownerTokenIdentifier: identity.tokenIdentifier,
       selections: uniqueSelections,
+      forceRegenerate: args.forceRegenerate ?? false,
     });
 
     return { jobId };
@@ -251,15 +350,27 @@ export const updateGenerationProgress = internalMutation({
   },
 });
 
+/**
+ * Mutation arg validator for the per-kind failure recorder. Mirrors
+ * the schema's `kindFailureReason` union — keep them in sync. New
+ * literals added here must also be added in `convex/schema.ts`.
+ */
+const recordKindFailureReason = v.union(
+  v.literal("live_source_unavailable"),
+  v.literal("model_empty_output"),
+  v.literal("transport_rate_limit"),
+  v.literal("transport_other"),
+  v.literal("output_quality"),
+  v.literal("infra"),
+);
+
 export const recordKindFailure = internalMutation({
   args: {
     jobId: v.id("jobs"),
     kind: systemDesignKindValidator,
     errorId: v.string(),
     message: v.string(),
-    reason: v.optional(
-      v.union(v.literal("live_source_unavailable"), v.literal("model_empty_output"), v.literal("other")),
-    ),
+    reason: v.optional(recordKindFailureReason),
   },
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
@@ -318,19 +429,117 @@ export const failGeneration = internalMutation({
 const STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE =
   "The System Design generation stalled and was automatically marked as failed.";
 
+const STALE_SYSTEM_DESIGN_RESUME_EXHAUSTED_MESSAGE =
+  "The System Design generation stalled repeatedly and was marked as failed after exhausting resume attempts.";
+
 /**
  * Background stale-job recovery for System Design generation. Called by
  * `opsNode.recoverStaleInteractiveJobs` when a `system_design`-kind job
  * has overrun its lease.
+ *
+ * Distinguishes between two outcomes:
+ *
+ *   1. **Auto-resume** — the job has partial progress (some kinds
+ *      already covered by terminal `systemDesignKindRuns` rows) AND
+ *      its `resumeAttempts` counter is still under
+ *      {@link MAX_RESUME_ATTEMPTS}. The mutation patches the row back
+ *      to `queued`, bumps the resume counter and lease, and re-enqueues
+ *      the Node action. The action's per-kind cache lookup
+ *      (`findCachedArtifact`) will skip already-succeeded kinds and
+ *      only re-run the remainder, so a 7-kind job that lost the action
+ *      after kind 4 only pays for kinds 5–7 on resume.
+ *
+ *   2. **Mark failed** — either every selected kind already has a
+ *      terminal kindRun (no progress *to* resume — something fired
+ *      `completeGeneration` for some kinds but never closed the job),
+ *      or `resumeAttempts >= MAX_RESUME_ATTEMPTS` (loop-guard: a job
+ *      that keeps stalling is signal of a deeper bug, surface it
+ *      rather than absorbing forever).
  */
 export const recoverStaleSystemDesignJob = internalMutation({
   args: { jobId: v.id("jobs") },
-  handler: async (ctx, args) => {
-    await runStaleJobRecovery(ctx, {
-      jobId: args.jobId,
-      expectedKind: "system_design",
-      errorMessage: STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE,
+  handler: async (ctx, args): Promise<{ recovered: boolean; resumed: boolean }> => {
+    const now = Date.now();
+    const job = await ctx.db.get(args.jobId);
+    if (!isJobStaleAndRecoverable(job, now, { expectedKind: "system_design" })) {
+      return { recovered: false, resumed: false };
+    }
+
+    const selections = (job.selections ?? []) as SystemDesignKind[];
+    if (selections.length === 0 || !job.repositoryId) {
+      // Defensive: a system_design job without selections / repositoryId
+      // is malformed (the request mutation rejects both). Fall straight
+      // through to fail recovery — there's no work to resume.
+      const failed = await failStaleActiveJob(ctx, {
+        jobId: args.jobId,
+        expectedKind: "system_design",
+        now,
+        errorMessage: STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE,
+      });
+      return { recovered: failed !== null, resumed: false };
+    }
+
+    const kindRuns = await ctx.db
+      .query("systemDesignKindRuns")
+      .withIndex("by_jobId", (q) => q.eq("jobId", args.jobId))
+      .collect();
+    const completedKinds = new Set<SystemDesignKind>(
+      kindRuns.filter((row) => KIND_RUN_TERMINAL_STATUSES.has(row.status)).map((row) => row.kind as SystemDesignKind),
+    );
+    const remaining = selections.filter((kind) => !completedKinds.has(kind));
+
+    const resumeAttempts = job.resumeAttempts ?? 0;
+    const canResume = remaining.length > 0 && resumeAttempts < MAX_RESUME_ATTEMPTS;
+    if (!canResume) {
+      const errorMessage =
+        resumeAttempts >= MAX_RESUME_ATTEMPTS
+          ? STALE_SYSTEM_DESIGN_RESUME_EXHAUSTED_MESSAGE
+          : STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE;
+      const failed = await failStaleActiveJob(ctx, {
+        jobId: args.jobId,
+        expectedKind: "system_design",
+        now,
+        errorMessage,
+      });
+      logInfo("systemDesign", "stale_recovery_failed", {
+        jobId: args.jobId,
+        repositoryId: job.repositoryId,
+        resumeAttempts,
+        remainingCount: remaining.length,
+        reason: resumeAttempts >= MAX_RESUME_ATTEMPTS ? "resume_exhausted" : "no_progress",
+      });
+      return { recovered: failed !== null, resumed: false };
+    }
+
+    // Resume: patch back to queued so the action's transition guard
+    // succeeds, bump resume counter + lease, and re-enqueue. The
+    // forwarded `forceRegenerate` is `false` — the cache from the
+    // original attempt is intentionally trusted (kinds that completed
+    // hit cache on resume).
+    await ctx.db.patch(args.jobId, {
+      status: "queued",
+      stage: `resuming (attempt ${resumeAttempts + 1})`,
+      progress: kindRuns.length === 0 ? 0 : Math.min(1, completedKinds.size / selections.length),
+      resumeAttempts: resumeAttempts + 1,
+      leaseExpiresAt: now + SYSTEM_DESIGN_JOB_LEASE_MS,
+      // Clear the previous attempt's transient error message; resume
+      // is taking another swing.
+      errorMessage: undefined,
     });
+    await ctx.scheduler.runAfter(0, internal.systemDesignNode.runSystemDesignGeneration, {
+      jobId: args.jobId,
+      repositoryId: job.repositoryId,
+      ownerTokenIdentifier: job.ownerTokenIdentifier,
+      selections,
+      forceRegenerate: false,
+    });
+    logInfo("systemDesign", "stale_recovery_resumed", {
+      jobId: args.jobId,
+      repositoryId: job.repositoryId,
+      resumeAttempts: resumeAttempts + 1,
+      remainingCount: remaining.length,
+    });
+    return { recovered: true, resumed: true };
   },
 });
 
@@ -372,6 +581,14 @@ export const persistGeneratedArtifact = internalMutation({
     summary: v.string(),
     contentMarkdown: v.string(),
     alignedImportCommitSha: v.optional(v.string()),
+    /**
+     * Provenance triple — together with `alignedImportCommitSha`,
+     * forms the cache key the next generation run will probe via
+     * `findCachedArtifact`.
+     */
+    generatedByProvider: v.optional(llmProviderValidator),
+    generatedByModel: v.optional(v.string()),
+    promptVersion: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<{ artifactId: Id<"artifacts"> }> => {
     const folderKey = SYSTEM_DESIGN_KIND_TO_FOLDER[args.kind as SystemDesignKind];
@@ -424,9 +641,325 @@ export const persistGeneratedArtifact = internalMutation({
       contentMarkdown: args.contentMarkdown,
       folderId: targetFolder._id,
       alignedImportCommitSha: args.alignedImportCommitSha,
+      generatedByProvider: args.generatedByProvider,
+      generatedByModel: args.generatedByModel,
+      promptVersion: args.promptVersion,
     });
 
     return { artifactId };
+  },
+});
+
+/**
+ * Mutation arg validator for the `recordKindRun` insert. Mirrors the
+ * schema's `kindRunStatus` union — keep them in sync.
+ */
+const recordKindRunStatus = v.union(
+  v.literal("succeeded"),
+  v.literal("failed"),
+  v.literal("cached_hit"),
+  v.literal("quality_rejected"),
+);
+
+/**
+ * Idempotency cache probe. Returns the most-recent artifact matching
+ * the full `(repositoryId, kind, commitSha, provider, model,
+ * promptVersion)` tuple, or `null` when no match exists.
+ *
+ * Read scope is bounded by `by_repositoryId_and_kind`: typical
+ * (repo, kind) slices hold ≤ 1 artifact at any time because
+ * `persistGeneratedArtifact` deletes the previous artifact when the
+ * regeneration overwrites it. The collect-and-filter pattern stays
+ * cheap and avoids a six-field index that would be a maintenance
+ * burden for every future cache-key change.
+ *
+ * Returns the *most recent* match (descending `_creationTime`) so a
+ * race between concurrent regenerations resolves consistently — the
+ * later writer wins.
+ */
+export const findCachedArtifact = internalQuery({
+  args: {
+    repositoryId: v.id("repositories"),
+    kind: systemDesignKindValidator,
+    alignedImportCommitSha: v.string(),
+    generatedByProvider: llmProviderValidator,
+    generatedByModel: v.string(),
+    promptVersion: v.number(),
+  },
+  handler: async (ctx, args): Promise<Doc<"artifacts"> | null> => {
+    const candidates = await ctx.db
+      .query("artifacts")
+      .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", args.repositoryId).eq("kind", args.kind))
+      .order("desc")
+      .collect();
+    for (const candidate of candidates) {
+      if (
+        candidate.alignedImportCommitSha === args.alignedImportCommitSha &&
+        candidate.generatedByProvider === args.generatedByProvider &&
+        candidate.generatedByModel === args.generatedByModel &&
+        candidate.promptVersion === args.promptVersion
+      ) {
+        return candidate;
+      }
+    }
+    return null;
+  },
+});
+
+/**
+ * Read the LLM provider + model the job was created against. The
+ * row is patched once at request time and never updated, so a
+ * stale-recovery resume picks up the same pair. Falls back to the
+ * System Design defaults when the row is somehow missing them
+ * (pre-PR-A2 rows, manual mutation) — non-fatal but logged.
+ */
+export const getJobModelChoice = internalQuery({
+  args: { jobId: v.id("jobs") },
+  handler: async (ctx, args): Promise<{ provider: LlmProvider; modelName: string }> => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job) {
+      throw new Error(`Job ${args.jobId} not found while resolving model choice.`);
+    }
+    if (job.provider && job.modelName) {
+      return { provider: job.provider, modelName: job.modelName };
+    }
+    logWarn("systemDesign", "job_missing_model_choice", {
+      jobId: args.jobId,
+      provider: job.provider ?? null,
+      modelName: job.modelName ?? null,
+      hint: "Falling back to System Design defaults — expected for pre-PR-A2 jobs only.",
+    });
+    return { provider: DEFAULT_SYSTEM_DESIGN_PROVIDER, modelName: DEFAULT_SYSTEM_DESIGN_MODEL };
+  },
+});
+
+/**
+ * Per-kind sandbox-cost pre-check. Throws the structured
+ * `SANDBOX_DAILY_CAP_EXCEEDED` / `SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED`
+ * ConvexError when either cap would not have room for the kind's
+ * projected cost. Action callers catch and record the kind as
+ * failed with `transport_rate_limit` so a multi-kind job that runs
+ * past the cap fails cleanly rather than crashes.
+ *
+ * Uses the existing chat-reply estimate (`getSandboxReplyEstimateCents`)
+ * which sits at $0.10 by default — System Design kinds with full tool
+ * loops can exceed that, but the estimate's role is "is the bucket
+ * obviously empty?" not "exactly what will this cost". Settlement on
+ * `recordKindRun` charges the actual cost.
+ */
+export const assertKindCostBudget = internalMutation({
+  args: {
+    ownerTokenIdentifier: v.string(),
+    repositoryId: v.id("repositories"),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    await assertSandboxDailyCostBudget(ctx, {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId: args.repositoryId,
+      estimateCents: getSandboxReplyEstimateCents(),
+    });
+  },
+});
+
+/**
+ * Append a per-kind run row and settle daily-cap accounting in one
+ * atomic mutation. Settlement uses the post-call `totalCostUsd` from
+ * the gateway (not the pre-check estimate), so the daily cap reflects
+ * actual spend.
+ *
+ * `cents <= 0` short-circuits the cap settle (heuristic / unknown
+ * cost paths) — `consumeSandboxDailyCost` is idempotent on
+ * non-positive amounts.
+ */
+export const recordKindRun = internalMutation({
+  args: {
+    ownerTokenIdentifier: v.string(),
+    repositoryId: v.id("repositories"),
+    jobId: v.id("jobs"),
+    kind: systemDesignKindValidator,
+    provider: llmProviderValidator,
+    modelName: v.string(),
+    promptVersion: v.number(),
+    alignedImportCommitSha: v.optional(v.string()),
+    stepCap: v.number(),
+    actualSteps: v.number(),
+    inputTokens: v.optional(v.number()),
+    outputTokens: v.optional(v.number()),
+    cachedInputTokens: v.optional(v.number()),
+    cacheWriteTokens: v.optional(v.number()),
+    reasoningTokens: v.optional(v.number()),
+    totalCostUsd: v.optional(v.number()),
+    durationMs: v.number(),
+    status: recordKindRunStatus,
+    failureReason: v.optional(recordKindFailureReason),
+    outputCharLength: v.optional(v.number()),
+    missingSections: v.optional(v.array(v.string())),
+    startedAt: v.number(),
+  },
+  handler: async (ctx, args): Promise<{ kindRunId: Id<"systemDesignKindRuns"> }> => {
+    const kindRunId = await ctx.db.insert("systemDesignKindRuns", {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId: args.repositoryId,
+      jobId: args.jobId,
+      kind: args.kind,
+      provider: args.provider,
+      modelName: args.modelName,
+      promptVersion: args.promptVersion,
+      alignedImportCommitSha: args.alignedImportCommitSha,
+      stepCap: args.stepCap,
+      actualSteps: args.actualSteps,
+      inputTokens: args.inputTokens,
+      outputTokens: args.outputTokens,
+      cachedInputTokens: args.cachedInputTokens,
+      cacheWriteTokens: args.cacheWriteTokens,
+      reasoningTokens: args.reasoningTokens,
+      totalCostUsd: args.totalCostUsd,
+      durationMs: args.durationMs,
+      status: args.status,
+      failureReason: args.failureReason,
+      outputCharLength: args.outputCharLength,
+      missingSections: args.missingSections,
+      startedAt: args.startedAt,
+    });
+
+    // Daily cap settlement. `cached_hit` rows have no incremental
+    // spend (the artifact was already paid for). Non-positive costs
+    // (heuristic, pricing miss) short-circuit inside
+    // `consumeSandboxDailyCost`.
+    const settleCents = args.status === "cached_hit" ? undefined : costUsdToCents(args.totalCostUsd);
+    if (settleCents !== undefined && settleCents > 0) {
+      await consumeSandboxDailyCost(ctx, {
+        ownerTokenIdentifier: args.ownerTokenIdentifier,
+        repositoryId: args.repositoryId,
+        cents: settleCents,
+      });
+    }
+
+    return { kindRunId };
+  },
+});
+
+/**
+ * Patch a previously-created artifact with the back-reference to its
+ * originating `systemDesignKindRuns` row. Split out from
+ * `persistGeneratedArtifact` because the kindRun is recorded AFTER
+ * the artifact is written (so analytics see the artifact's success
+ * before pulling the run trace).
+ */
+export const linkKindRun = internalMutation({
+  args: {
+    artifactId: v.id("artifacts"),
+    kindRunId: v.id("systemDesignKindRuns"),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    const artifact = await ctx.db.get(args.artifactId);
+    if (!artifact) {
+      return;
+    }
+    await ctx.db.patch(args.artifactId, { kindRunId: args.kindRunId });
+    await ctx.db.patch(args.kindRunId, { artifactId: args.artifactId });
+  },
+});
+
+/**
+ * Catalog passthrough — exposes the model picker to the frontend
+ * without leaking the gateway internals. Filters via
+ * `listPickableModels` (drops internal-only entries) and optionally
+ * scopes by capability tier so the System Design dialog only shows
+ * sandbox-capable models.
+ */
+export const listAvailableModels = query({
+  args: {
+    capability: v.optional(v.union(v.literal("sandbox"), v.literal("library"), v.literal("discuss"))),
+  },
+  handler: async (
+    _ctx,
+    args,
+  ): Promise<
+    ReadonlyArray<{
+      provider: LlmProvider;
+      modelName: string;
+      displayName: string;
+      capability: "sandbox" | "library" | "discuss";
+      supportsTools: boolean;
+      contextWindow: number;
+    }>
+  > => {
+    return listPickableModels({ capability: args.capability }).map((entry) => ({
+      provider: entry.provider,
+      modelName: entry.modelName,
+      displayName: entry.displayName,
+      // `listPickableModels` filters to `userPickable: true` entries; the
+      // catalog only marks generation-tier rows as pickable, so this
+      // cast preserves the documented narrower return type without a
+      // runtime check.
+      capability: entry.capability as "sandbox" | "library" | "discuss",
+      supportsTools: entry.supportsTools,
+      contextWindow: entry.contextWindow,
+    }));
+  },
+});
+
+/**
+ * UI helper: given a planned (selections, provider, model) tuple,
+ * return how many of the selected kinds already have a fresh cached
+ * artifact aligned to the repository's last imported commit. Drives
+ * the "5 of 7 already cached on this commit" preview in the Generate
+ * dialog.
+ *
+ * Conservative: a kind whose `alignedImportCommitSha` is missing or
+ * does not match the repo's `lastSyncedCommitSha` is treated as
+ * "would regenerate" — the preview never under-reports cost.
+ */
+export const getCachedSelectionStatus = query({
+  args: {
+    repositoryId: v.id("repositories"),
+    selections: v.array(systemDesignKindValidator),
+    provider: v.optional(llmProviderValidator),
+    modelName: v.optional(v.string()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    total: number;
+    cachedKinds: SystemDesignKind[];
+    pendingKinds: SystemDesignKind[];
+  }> => {
+    const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    const provider = args.provider ?? DEFAULT_SYSTEM_DESIGN_PROVIDER;
+    const modelName = args.modelName ?? DEFAULT_SYSTEM_DESIGN_MODEL;
+    const commitSha = repository?.lastSyncedCommitSha;
+    if (!repository || !commitSha) {
+      return {
+        total: args.selections.length,
+        cachedKinds: [],
+        pendingKinds: [...args.selections] as SystemDesignKind[],
+      };
+    }
+    const cachedKinds: SystemDesignKind[] = [];
+    const pendingKinds: SystemDesignKind[] = [];
+    for (const kind of args.selections as SystemDesignKind[]) {
+      const promptVersion = SYSTEM_DESIGN_PROMPT_VERSIONS[kind];
+      const candidates = await ctx.db
+        .query("artifacts")
+        .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", args.repositoryId).eq("kind", kind))
+        .order("desc")
+        .collect();
+      const cached = candidates.find(
+        (candidate) =>
+          candidate.alignedImportCommitSha === commitSha &&
+          candidate.generatedByProvider === provider &&
+          candidate.generatedByModel === modelName &&
+          candidate.promptVersion === promptVersion,
+      );
+      if (cached) {
+        cachedKinds.push(kind);
+      } else {
+        pendingKinds.push(kind);
+      }
+    }
+    return { total: args.selections.length, cachedKinds, pendingKinds };
   },
 });
 

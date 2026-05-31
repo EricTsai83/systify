@@ -357,7 +357,7 @@ function CopyMessageAction({ content }: { content: string }) {
  *   2. `~$0.03 · 1.2k tokens` — full info minus tool calls (discuss /
  *      docs replies have no tools by design).
  *   3. `1.2k tokens · 5 tools` — pricing miss (model not in
- *      `openaiPricing.ts`); we still show what we know.
+ *      `llmPricing.ts`); we still show what we know.
  *   4. `1.2k tokens` — discuss/docs reply for a model we don't price.
  *   5. `null` — heuristic reply (no cost, no tokens). Skips the ticker
  *      entirely so the user isn't shown an empty "—" line.

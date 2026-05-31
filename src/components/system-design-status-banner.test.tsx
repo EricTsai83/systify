@@ -174,6 +174,115 @@ describe("SystemDesignStatusBanner", () => {
     expect(screen.getByText(/The model didn't produce a complete document/)).toBeInTheDocument();
   });
 
+  test("maps transport_rate_limit to the rate-limit reason text", () => {
+    setJob(
+      makeJob({
+        status: "completed",
+        stage: "completed",
+        progress: 1,
+        selections: ["api_surface_overview"],
+        kindFailures: [
+          {
+            kind: "api_surface_overview",
+            errorId: "err_rl",
+            message: "Provider 429: retry-after 30s.",
+            reason: "transport_rate_limit",
+          },
+        ],
+      }),
+    );
+    setMutation(async () => undefined);
+    render(<SystemDesignStatusBanner repositoryId={repositoryId} />);
+    expect(screen.getByText(/provider rate-limited/i)).toBeInTheDocument();
+  });
+
+  test("maps output_quality to the quality-gate reason text", () => {
+    setJob(
+      makeJob({
+        status: "completed",
+        stage: "completed",
+        progress: 1,
+        selections: ["architecture_diagram"],
+        kindFailures: [
+          {
+            kind: "architecture_diagram",
+            errorId: "err_q",
+            message: "Missing sections: components, mermaid_block.",
+            reason: "output_quality",
+          },
+        ],
+      }),
+    );
+    setMutation(async () => undefined);
+    render(<SystemDesignStatusBanner repositoryId={repositoryId} />);
+    expect(screen.getByText(/without the required sections/i)).toBeInTheDocument();
+  });
+
+  test("maps transport_other to the generic transport reason text", () => {
+    setJob(
+      makeJob({
+        status: "completed",
+        stage: "completed",
+        progress: 1,
+        selections: ["security_overview"],
+        kindFailures: [
+          {
+            kind: "security_overview",
+            errorId: "err_t",
+            message: "fetch failed: ENETDOWN.",
+            reason: "transport_other",
+          },
+        ],
+      }),
+    );
+    setMutation(async () => undefined);
+    render(<SystemDesignStatusBanner repositoryId={repositoryId} />);
+    expect(screen.getByText(/transport error stopped the run/i)).toBeInTheDocument();
+  });
+
+  test("maps infra to the engineering-notified reason text", () => {
+    setJob(
+      makeJob({
+        status: "completed",
+        stage: "completed",
+        progress: 1,
+        selections: ["operations_overview"],
+        kindFailures: [
+          {
+            kind: "operations_overview",
+            errorId: "err_i",
+            message: "ConvexError: schema validation failed.",
+            reason: "infra",
+          },
+        ],
+      }),
+    );
+    setMutation(async () => undefined);
+    render(<SystemDesignStatusBanner repositoryId={repositoryId} />);
+    expect(screen.getByText(/internal error stopped the run/i)).toBeInTheDocument();
+  });
+
+  test("kindFailure without a reason falls back to the generic copy", () => {
+    setJob(
+      makeJob({
+        status: "completed",
+        stage: "completed",
+        progress: 1,
+        selections: ["deployment_overview"],
+        kindFailures: [
+          {
+            kind: "deployment_overview",
+            errorId: "err_legacy",
+            message: "Row with no structured reason.",
+          },
+        ],
+      }),
+    );
+    setMutation(async () => undefined);
+    render(<SystemDesignStatusBanner repositoryId={repositoryId} />);
+    expect(screen.getByText(/something stopped the run/i)).toBeInTheDocument();
+  });
+
   test("aggregates mixed reasons under the mixed-reason text", () => {
     setJob(
       makeJob({
