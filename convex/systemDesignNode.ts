@@ -349,7 +349,7 @@ export const runSystemDesignGeneration = internalAction({
         startedAt,
       })) as { kindRunId: Id<"systemDesignKindRuns"> };
 
-      if (artifactId) {
+      if (artifactId && runStatus !== "cached_hit") {
         await ctx.runMutation(internal.systemDesign.linkKindRun, {
           artifactId,
           kindRunId: recorded.kindRunId,

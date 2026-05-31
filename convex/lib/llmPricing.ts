@@ -172,8 +172,13 @@ export function estimateCostUsd(provider: LlmProvider, modelName: string, usage:
   if (outputTokens !== undefined) {
     cost += (outputTokens / 1_000_000) * pricing.outputPerMillion;
   }
-  if (cachedInputTokens !== undefined && pricing.cacheReadPerMillion !== undefined) {
-    cost += (cachedInputTokens / 1_000_000) * pricing.cacheReadPerMillion;
+  if (cachedInputTokens !== undefined) {
+    // Fall back to the full input rate when the model does not declare
+    // a dedicated cache-read tier — matches the LlmPricing contract
+    // documented on `cacheReadPerMillion` ("the math treats
+    // `cachedInputTokens` as fully-billed input in that case").
+    const cachedRate = pricing.cacheReadPerMillion ?? pricing.inputPerMillion;
+    cost += (cachedInputTokens / 1_000_000) * cachedRate;
   }
   if (cacheWriteTokens !== undefined && pricing.cacheWritePerMillion !== undefined) {
     cost += (cacheWriteTokens / 1_000_000) * pricing.cacheWritePerMillion;

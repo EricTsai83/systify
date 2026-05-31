@@ -134,6 +134,16 @@ export function resolveModelForReply(args: {
    * alongside the default model name.
    */
   threadDefaultModelName?: string;
+  /**
+   * `threads.lockedProvider` for the thread being replied into. When
+   * set, the capability-default fallback picks from this provider's
+   * catalog entries instead of {@link DEFAULT_PICK_BY_CAPABILITY} —
+   * otherwise a stale `threadDefaultModelName` (catalog narrowed) on a
+   * lock-anthropic thread would land on the openai default and
+   * `sendMessage` would reject with `thread_provider_locked` for a
+   * fallback the user never picked.
+   */
+  lockedProvider?: LlmProvider;
 }): ModelChoice {
   const capability = pickCapability(args);
 
@@ -167,8 +177,24 @@ export function resolveModelForReply(args: {
   }
 
   // 3. Capability default. The hard-coded fallback pairing is pinned
-  // against the pricing table by the unit test below.
+  // against the pricing table by the unit test below. When the thread
+  // is locked to a different provider, prefer that provider's
+  // capability-tier entry so the resolved pick survives the
+  // lock check in `sendMessage`.
   const fallback = DEFAULT_PICK_BY_CAPABILITY[capability];
+  if (args.lockedProvider !== undefined && args.lockedProvider !== fallback.provider) {
+    const lockedFallback = MODEL_CATALOG.find(
+      (entry) => entry.provider === args.lockedProvider && entry.capability === capability,
+    );
+    if (lockedFallback) {
+      return {
+        provider: lockedFallback.provider,
+        modelName: lockedFallback.modelName,
+        reasoningEffort: lockedFallback.reasoningEffort,
+        capability,
+      };
+    }
+  }
   const fallbackEntry = getCatalogEntry(fallback.provider, fallback.modelName);
   return {
     provider: fallback.provider,

@@ -711,6 +711,19 @@ export const generateAssistantReply = internalAction({
         },
       );
 
+      // Cancel-during-gateway tear-down. The poll keeps running while
+      // the gateway call is in flight; if it flipped `wasCancelled` or
+      // `generationAborted` between the pre-context guard above and
+      // here, `stream` was `undefined` at the poll tick so its
+      // `stream?.abort()` no-op'd. Now that the handle is assigned,
+      // tear down the provider connection immediately so the SSE
+      // doesn't stay open across the for-await iterator's natural
+      // teardown — the in-loop `break` and post-loop finalize already
+      // handle the lifecycle row, so we just need the network close.
+      if (wasCancelled || generationAborted) {
+        stream.abort();
+      }
+
       // We always iterate `fullStream` — it is a strict superset of
       // `textStream` (every text chunk shows up as a `text-delta` event).
       // Sandbox-mode replies additionally surface `tool-call` /

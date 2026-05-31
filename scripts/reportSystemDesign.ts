@@ -140,8 +140,8 @@ async function main(): Promise<void> {
   const queryArgs: Record<string, unknown> = {};
   if (days) {
     const parsed = Number(days);
-    if (!Number.isFinite(parsed) || parsed <= 0) {
-      console.error(`Invalid --days="${days}" — expected a positive number.`);
+    if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+      console.error(`Invalid --days="${days}" — expected a positive integer.`);
       process.exit(2);
     }
     queryArgs.windowDays = parsed;

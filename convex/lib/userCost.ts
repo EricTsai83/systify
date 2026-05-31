@@ -211,6 +211,8 @@ export const getUserCostBreakdown = internalQuery({
         usd: message.estimatedCostUsd,
         inputTokens: message.estimatedInputTokens,
         outputTokens: message.estimatedOutputTokens,
+        cachedInputTokens: message.estimatedCachedInputTokens,
+        reasoningTokens: message.estimatedReasoningTokens,
       };
       // Skip rows with no recordable cost / tokens — heuristic replies
       // and library-mode rows that never went through pricing.
@@ -224,12 +226,11 @@ export const getUserCostBreakdown = internalQuery({
       addToBucket(total, payload);
       addToBucket(byFeature.chat, payload);
       addToBucket(bucketForDay(utcDayKey(message._creationTime)), payload);
-      // PR-A3 will add `messages.provider` / `messages.modelName`. When
-      // those columns land, this loop should fold each chat row into
-      // the provider / model buckets the same way the System Design
-      // loop above does. Until then, chat rows only contribute to the
-      // total / feature / day rollups — `byProvider` and `byModel`
-      // reflect System Design spend exclusively.
+      if (message.provider && message.modelName) {
+        addToBucket(byProvider[message.provider], payload);
+        const modelKey = `${message.provider}:${message.modelName}`;
+        addToBucket(byModel[modelKey], payload);
+      }
     }
 
     const byDay: UserCostBreakdown["byDay"] = Array.from(dayMap.entries())

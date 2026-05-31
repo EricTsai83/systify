@@ -228,9 +228,20 @@ function extractRetryAfterMs(error: unknown): number | null {
   for (const name of RETRY_AFTER_HEADER_NAMES) {
     const raw = headerMap[name];
     if (typeof raw !== "string" || raw.length === 0) continue;
+
+    // Try numeric seconds first (common case)
     const seconds = Number.parseFloat(raw);
     if (Number.isFinite(seconds) && seconds > 0) {
       return Math.min(Math.ceil(seconds * 1000), MAX_DELAY_MS);
+    }
+
+    // Try RFC3339 timestamp (Anthropic ratelimit reset headers)
+    const timestamp = Date.parse(raw);
+    if (Number.isFinite(timestamp)) {
+      const delayMs = timestamp - Date.now();
+      if (delayMs > 0) {
+        return Math.min(delayMs, MAX_DELAY_MS);
+      }
     }
   }
   return null;

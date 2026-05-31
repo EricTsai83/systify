@@ -388,13 +388,17 @@ export const sendMessage = mutation({
     // override → thread default → capability default cascade. The
     // resolved provider is what we enforce the lock against — picking
     // a non-locked-provider model returns the failed pick verbatim so
-    // the error message is precise.
+    // the error message is precise. The capability-default layer also
+    // gets the lock so a thread whose persisted `defaultModelName`
+    // drifted out of the catalog still falls back to its own
+    // provider's tier instead of the global openai default.
     const resolved = resolveModelForReply({
       mode,
       groundSandbox,
       overrideProvider: args.provider,
       overrideModelName: args.modelName,
       threadDefaultModelName: thread.defaultModelName,
+      lockedProvider: thread.lockedProvider,
     });
 
     if (thread.lockedProvider !== undefined && thread.lockedProvider !== resolved.provider) {

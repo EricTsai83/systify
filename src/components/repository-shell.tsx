@@ -127,7 +127,7 @@ export function RepositoryShell({
     threadId: ThreadId | null;
     provider: LlmProvider | null;
     modelName: string | null;
-  }>({ threadId: urlThreadId, provider: null, modelName: null });
+  }>({ threadId: null, provider: null, modelName: null });
   const selectedProvider = modelByThread.provider;
   const selectedModelName = modelByThread.modelName;
   const setSelectedModel = useCallback(

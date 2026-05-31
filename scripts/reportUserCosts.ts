@@ -64,7 +64,12 @@ function dateToMs(yyyymmdd: string): number {
   if (!Number.isFinite(yyyy) || !Number.isFinite(mm) || !Number.isFinite(dd)) {
     throw new Error(`Invalid date "${yyyymmdd}" — expected YYYY-MM-DD.`);
   }
-  return Date.UTC(yyyy, mm - 1, dd);
+  const ms = Date.UTC(yyyy, mm - 1, dd);
+  const date = new Date(ms);
+  if (date.getUTCFullYear() !== yyyy || date.getUTCMonth() + 1 !== mm || date.getUTCDate() !== dd) {
+    throw new Error(`Invalid date "${yyyymmdd}" — expected YYYY-MM-DD.`);
+  }
+  return ms;
 }
 
 function formatUsd(usd: number): string {
@@ -156,7 +161,7 @@ async function main(): Promise<void> {
     printBucket(model, bucket);
   }
   if (modelEntries.length === 0) {
-    console.log("  (no System Design runs in window)");
+    console.log("  (no runs in window)");
   }
   console.log("");
 
