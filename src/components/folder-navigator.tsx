@@ -75,17 +75,23 @@ type FolderNavigatorProps = {
 };
 
 /**
- * Tree-shaped artifact navigator. Two logical sections at the root:
+ * Tree-shaped artifact navigator. Three logical sections at the root:
  *
- *   1. **Folders** — every folder for the repo, including the seeded
- *      System Design folders (Overview, Architecture, …) that carry a
- *      `systemKey`. Seeded folders default-expanded; user-created folders
- *      start collapsed. Each folder header shows the folder name (plus a
- *      pin marker when pinned) and a kebab / right-click menu with pin /
- *      rename / delete-and-move-contents-up. Children are nested folders
- *      and any artifact placed via `folderId`.
+ *   1. **Pinned** — root-level folders the user has pinned, surfaced as
+ *      their own band at the top for quick access. Each pinned folder
+ *      still renders its full subtree (unpinned descendants included);
+ *      a pinned sub-folder of an unpinned parent stays under that parent
+ *      in section 2, since root placement is the only thing pinning
+ *      moves. Hidden entirely when nothing is pinned.
  *
- *   2. **Repository root** — artifacts with no `folderId`. The name mirrors
+ *   2. **Folders** — every other folder for the repo, including the
+ *      seeded System Design folders (Overview, Architecture, …) that
+ *      carry a `systemKey`. Seeded folders default-expanded; user-created
+ *      folders start collapsed. Each folder header carries a kebab /
+ *      right-click menu with pin / rename / delete-and-move-contents-up.
+ *      Children are nested folders and any artifact placed via `folderId`.
+ *
+ *   3. **Repository root** — artifacts with no `folderId`. The name mirrors
  *      the FolderPicker's "Repository root" option so the same destination
  *      reads the same way on both surfaces. Typical contents are
  *      `+ Generate`-produced artifacts the user left at root, plus legacy
@@ -173,6 +179,13 @@ export function FolderNavigator({
   const consumePendingRename = useCallback(() => setPendingRenameFolderId(null), []);
 
   const tree = useMemo(() => buildFolderTree(folders ?? []), [folders]);
+
+  // Split root-level folders into a Pinned section (top) and a Folders
+  // section (everything else). Sub-folder pin state is preserved in the
+  // data but doesn't promote the sub-folder out of its parent's subtree —
+  // root placement is the only thing that changes visually.
+  const pinnedRoots = useMemo(() => tree.filter((node) => node.pinnedAt !== undefined), [tree]);
+  const unpinnedRoots = useMemo(() => tree.filter((node) => node.pinnedAt === undefined), [tree]);
 
   const selectedFolderName = useMemo(() => {
     if (!selectedFolderId || !folders) return null;
@@ -283,13 +296,9 @@ export function FolderNavigator({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-3">
-          <NavigatorSection title="Folders" description="Group artifacts by feature, decision, or subsystem.">
-            {tree.length === 0 ? (
-              <p className="px-1 text-[11px] text-muted-foreground/80">
-                No folders yet. Click the folder-plus icon above to create one.
-              </p>
-            ) : (
-              tree
+          {pinnedRoots.length > 0 ? (
+            <NavigatorSection title="Pinned">
+              {pinnedRoots
                 .filter((node) => folderMatchesSearch(node))
                 .map((node) => (
                   <FolderTreeBranch
@@ -310,9 +319,42 @@ export function FolderNavigator({
                     onConsumePendingExpand={consumePendingExpand}
                     onConsumePendingRename={consumePendingRename}
                   />
-                ))
-            )}
-          </NavigatorSection>
+                ))}
+            </NavigatorSection>
+          ) : null}
+
+          {tree.length === 0 || unpinnedRoots.length > 0 ? (
+            <NavigatorSection title="Folders" description="Group artifacts by feature, decision, or subsystem.">
+              {tree.length === 0 ? (
+                <p className="px-1 text-[11px] text-muted-foreground/80">
+                  No folders yet. Click the folder-plus icon above to create one.
+                </p>
+              ) : (
+                unpinnedRoots
+                  .filter((node) => folderMatchesSearch(node))
+                  .map((node) => (
+                    <FolderTreeBranch
+                      key={node.id}
+                      repositoryId={repositoryId}
+                      node={node}
+                      artifactsByFolder={artifactsByFolder}
+                      indent={0}
+                      selectedArtifactId={effectiveSelectedArtifactId}
+                      selectedFolderId={selectedFolderId}
+                      onSelectArtifact={handleSelectArtifact}
+                      onSelectFolder={setSelectedFolderId}
+                      filterArtifact={filterPredicate}
+                      folderMatchesSearch={folderMatchesSearch}
+                      isUnseen={isUnseen}
+                      pendingExpandFolderId={pendingExpandFolderId}
+                      pendingRenameFolderId={pendingRenameFolderId}
+                      onConsumePendingExpand={consumePendingExpand}
+                      onConsumePendingRename={consumePendingRename}
+                    />
+                  ))
+              )}
+            </NavigatorSection>
+          ) : null}
 
           {uncategorizedArtifacts.length > 0 ? (
             <NavigatorSection
@@ -346,14 +388,14 @@ function NavigatorSection({
   children,
 }: {
   title: string;
-  description: string;
+  description?: string;
   children: ReactNode;
 }) {
   return (
     <section className="flex flex-col gap-1.5">
       <div className="px-1">
         <h3 className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{title}</h3>
-        <p className="text-[10px] text-muted-foreground/70">{description}</p>
+        {description ? <p className="text-[10px] text-muted-foreground/70">{description}</p> : null}
       </div>
       <div className="flex flex-col gap-1">{children}</div>
     </section>
@@ -548,7 +590,7 @@ function FolderTreeBranch({
               <span className="flex flex-1 items-center justify-between gap-2 truncate text-left">
                 <span className="truncate font-medium">{node.name}</span>
                 {isPinned ? (
-                  <PushPinIcon size={10} weight="fill" aria-label="Pinned" className="shrink-0 text-muted-foreground" />
+                  <PushPinIcon size={14} weight="fill" aria-label="Pinned" className="shrink-0 text-muted-foreground" />
                 ) : null}
               </span>
             )}
