@@ -269,14 +269,23 @@ function capSummary(value: string): string {
 }
 
 /**
- * Cost telemetry grouped together because the three fields always arrive
- * together or all arrive missing. Splitting them per-field would invite
- * partial-combination callers ("tokens but no cost") that the upstream
- * `estimateCostUsd` never produces.
+ * Cost telemetry grouped together because the fields always arrive
+ * together (or all arrive missing). Splitting them per-field would
+ * invite partial-combination callers ("tokens but no cost") that the
+ * upstream `estimateCostUsd` never produces.
+ *
+ * `cachedInputTokens` / `reasoningTokens` are NormalizedUsage slices the
+ * gateway surfaces — they are optional because not every model emits
+ * them. Persisted as `estimatedCachedInputTokens` /
+ * `estimatedReasoningTokens` on the message row so the per-user cost
+ * rollup (`convex/lib/userCost.ts`) can attribute cache savings and
+ * reasoning spend without re-deriving from the raw provider metadata.
  */
 type TerminalUsage = {
   inputTokens?: number;
   outputTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
   costUsd?: number;
 };
 
@@ -482,6 +491,8 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
           errorMessage: undefined,
           estimatedInputTokens: outcome.usage?.inputTokens,
           estimatedOutputTokens: outcome.usage?.outputTokens,
+          estimatedCachedInputTokens: outcome.usage?.cachedInputTokens,
+          estimatedReasoningTokens: outcome.usage?.reasoningTokens,
           estimatedCostUsd: outcome.usage?.costUsd,
           citationMap: outcome.citationMap,
           toolCalls: persistedToolCalls,
@@ -544,6 +555,8 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
             // reported" case.
             estimatedInputTokens: outcome.usage?.inputTokens ?? message.estimatedInputTokens,
             estimatedOutputTokens: outcome.usage?.outputTokens ?? message.estimatedOutputTokens,
+            estimatedCachedInputTokens: outcome.usage?.cachedInputTokens ?? message.estimatedCachedInputTokens,
+            estimatedReasoningTokens: outcome.usage?.reasoningTokens ?? message.estimatedReasoningTokens,
             estimatedCostUsd: outcome.usage?.costUsd ?? message.estimatedCostUsd,
           });
         } else {
@@ -598,6 +611,8 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
             reasoningDurationMs: reasoning.reasoningDurationMs,
             estimatedInputTokens: outcome.usage?.inputTokens ?? message.estimatedInputTokens,
             estimatedOutputTokens: outcome.usage?.outputTokens ?? message.estimatedOutputTokens,
+            estimatedCachedInputTokens: outcome.usage?.cachedInputTokens ?? message.estimatedCachedInputTokens,
+            estimatedReasoningTokens: outcome.usage?.reasoningTokens ?? message.estimatedReasoningTokens,
             estimatedCostUsd: outcome.usage?.costUsd ?? message.estimatedCostUsd,
           });
         } else {
@@ -1112,6 +1127,16 @@ export const finalizeAssistantReply = internalMutation({
     finalDelta: v.string(),
     inputTokens: v.optional(v.number()),
     outputTokens: v.optional(v.number()),
+    /**
+     * Cache + reasoning slices of the normalized usage produced by the
+     * gateway. Persisted on `messages.estimatedCachedInputTokens /
+     * estimatedReasoningTokens` so the per-user cost rollup can
+     * attribute cache savings and reasoning spend independently of the
+     * core input/output totals. Optional because not every model emits
+     * the slices; the rollup treats absence as zero.
+     */
+    cachedInputTokens: v.optional(v.number()),
+    reasoningTokens: v.optional(v.number()),
     costUsd: v.optional(v.number()),
     /**
      * Citation map: numbered `[A#] → artifactId` entries for the artifacts
@@ -1140,6 +1165,8 @@ export const finalizeAssistantReply = internalMutation({
       usage: {
         inputTokens: args.inputTokens,
         outputTokens: args.outputTokens,
+        cachedInputTokens: args.cachedInputTokens,
+        reasoningTokens: args.reasoningTokens,
         costUsd: args.costUsd,
       },
       citationMap: args.citationMap,
@@ -1161,6 +1188,8 @@ export const failAssistantReply = internalMutation({
      */
     inputTokens: v.optional(v.number()),
     outputTokens: v.optional(v.number()),
+    cachedInputTokens: v.optional(v.number()),
+    reasoningTokens: v.optional(v.number()),
     costUsd: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -1173,6 +1202,8 @@ export const failAssistantReply = internalMutation({
       usage: {
         inputTokens: args.inputTokens,
         outputTokens: args.outputTokens,
+        cachedInputTokens: args.cachedInputTokens,
+        reasoningTokens: args.reasoningTokens,
         costUsd: args.costUsd,
       },
     });
@@ -1266,6 +1297,8 @@ export const markAssistantReplyCancelled = internalMutation({
      */
     inputTokens: v.optional(v.number()),
     outputTokens: v.optional(v.number()),
+    cachedInputTokens: v.optional(v.number()),
+    reasoningTokens: v.optional(v.number()),
     costUsd: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
@@ -1278,6 +1311,8 @@ export const markAssistantReplyCancelled = internalMutation({
       usage: {
         inputTokens: args.inputTokens,
         outputTokens: args.outputTokens,
+        cachedInputTokens: args.cachedInputTokens,
+        reasoningTokens: args.reasoningTokens,
         costUsd: args.costUsd,
       },
     });

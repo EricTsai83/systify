@@ -3,7 +3,7 @@ import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { getDefaultThreadMode, type ChatMode } from "../../convex/lib/chatMode";
 import type { ChatModeResolution } from "../../convex/lib/chatEligibility";
-import type { RepositoryId, SandboxModeStatus, ThreadId } from "@/lib/types";
+import type { LlmProvider, RepositoryId, SandboxModeStatus, ThreadId } from "@/lib/types";
 
 type ChatModeVerdicts = ChatModeResolution["modes"];
 
@@ -79,6 +79,20 @@ export interface ThreadCapabilities {
    */
   defaultGroundLibrary: boolean;
   defaultGroundSandbox: boolean;
+  /**
+   * Provider this thread is locked to (set on the thread's first send and
+   * immutable thereafter), or `null` for fresh threads. The composer's
+   * model picker hides the locked-out provider's options when this is
+   * set and renders a lock pill alongside the trigger.
+   */
+  lockedProvider: LlmProvider | null;
+  /**
+   * Last model the user picked for this thread, refreshed on every
+   * send. Pre-fills the composer picker when a thread is reopened.
+   * `null` for fresh threads — the resolver falls back to the
+   * capability default in that case.
+   */
+  defaultModelName: string | null;
 }
 
 /**
@@ -108,6 +122,8 @@ const NO_THREAD_CAPABILITIES: ThreadCapabilities = {
   sandboxIsActivatable: false,
   defaultGroundLibrary: false,
   defaultGroundSandbox: false,
+  lockedProvider: null,
+  defaultModelName: null,
 };
 
 const NO_THREAD_LOADING_CAPABILITIES: ThreadCapabilities = {
@@ -172,6 +188,8 @@ export function useThreadCapabilities(threadId: ThreadId | null): ThreadCapabili
     sandboxIsActivatable: ctx.sandboxIsActivatable,
     defaultGroundLibrary: ctx.thread.defaultGroundLibrary ?? false,
     defaultGroundSandbox: ctx.thread.defaultGroundSandbox ?? false,
+    lockedProvider: ctx.thread.lockedProvider ?? null,
+    defaultModelName: ctx.thread.defaultModelName ?? null,
   };
 }
 

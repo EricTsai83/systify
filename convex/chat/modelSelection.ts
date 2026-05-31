@@ -1,166 +1,90 @@
 /**
- * Capability-keyed OpenAI model selection.
+ * Resolve `(provider, modelName)` for a single chat reply.
  *
- * Every reply path reaches the model through this resolver so the choice of
- * underlying model (and therefore the price tier and reasoning strength)
- * stays out of `generation.ts`'s control flow. The resolver keys on a
- * capability tier rather than the mode literal because two replies in the
- * same mode can need very different tiers — a Sandbox-grounded Discuss
- * reply drives tool use, while an ungrounded Discuss reply is a
- * single-step text completion.
+ * The resolver is a thin pass-through. It runs after `chat.send.sendMessage`
+ * has already validated the user's pick against {@link MODEL_CATALOG} and
+ * enforced the thread provider lock; this module's job is only to
+ * collapse the (per-message override, thread default, capability default)
+ * triple into a single `ModelChoice`. The picker UI, the lock
+ * enforcement, and the env-driven operator escape hatch all live
+ * elsewhere:
  *
- * Capability tiers:
- *
- *   - `sandbox` — tool-using replies. Sandbox-grounded Discuss + the
- *                 system design generator. Default `gpt-5` because tool
- *                 trajectories benefit from stronger reasoning.
- *   - `library` — RAG over user artifacts. Default `gpt-5-mini`.
- *   - `discuss` — ungrounded text replies. Default `gpt-5-mini`.
+ *   - The picker UI lives in `src/components/ai-elements/prompt-input-model-picker.tsx`.
+ *   - The lock enforcement lives in `chat/send.ts:sendMessage`.
+ *   - Operator overrides land in {@link MODEL_CATALOG} (add an entry) or via
+ *     the future per-user policy table — not via env vars here.
  *
  * Resolution order (first defined wins):
  *
- *   1. Capability-specific override env var — `OPENAI_MODEL_SANDBOX`,
- *      `OPENAI_MODEL_LIBRARY`, `OPENAI_MODEL_DISCUSS`. Lets an operator
- *      pin a tier independently per capability (e.g. test a new model in
- *      sandbox without changing discuss/library spend) without code
- *      changes.
- *   2. Global override — `OPENAI_MODEL`. Single env var that applies to
- *      every capability; kept so an operator who wants one tier across
- *      the board can set it once instead of three times. The per-
- *      capability override above wins when both are set.
- *   3. Per-capability hard-coded default. Sized so `OPENAI_API_KEY`
- *      alone is enough for the system to "just work".
+ *   1. **Per-message override.** `overrideProvider + overrideModelName`
+ *      come from the queued user message (`messages.provider /
+ *      messages.modelName`). These are what the user explicitly picked in
+ *      the composer for *this* send. Already validated by the send
+ *      mutation; we revalidate here so an out-of-band rewrite (catalog
+ *      narrowed while a thread was running) degrades to the default
+ *      rather than producing an `LlmGateway` failure later.
  *
- * The defaults below match the pricing table snapshot in
- * `convex/lib/llmPricing.ts`. The pairing matters: an unknown model
- * silently produces `costUsd === undefined` from `estimateCostUsd`,
- * which the daily-cap settlement treats as "no cost recorded" — so a
- * default that drifts out of the pricing table would let users spend
- * without ever charging the cap. The colocated test in
- * `modelSelection.test.ts` asserts the pricing/default pairing.
+ *   2. **Thread default.** `threadDefaultModelName` is
+ *      `threads.defaultModelName`, refreshed on every send. Only consulted
+ *      when no per-message override exists; the provider is inferred via
+ *      catalog lookup. Lets a re-opened thread restore the user's last
+ *      pick without forcing them to re-select.
  *
- * Lives in its own module (rather than inlined in `generation.ts`) for
- * three reasons:
+ *   3. **Capability default.** Falls back to a hard-coded
+ *      {@link DEFAULT_PICK_BY_CAPABILITY} entry sized so a fresh install
+ *      with `OPENAI_API_KEY` set just works. Defaults are OpenAI today
+ *      (Anthropic is reachable via explicit pick) because the bootstrap
+ *      docs only mandate `OPENAI_API_KEY`.
  *
- *   - It is a pure, env-driven function: testable without any Convex
- *     runtime, and we want to pin the resolution order with table-driven
- *     unit tests.
- *   - Both the success path (`replyContext.mode` known) and the failure
- *     path (catch block, possibly before `replyContext` resolved) need
- *     the same model-name shape, so centralizing keeps them consistent.
- *   - Future per-repository / per-user model overrides hook into this
- *     resolver rather than pollute `generation.ts` with conditional
- *     model selection.
+ * The returned `reasoningEffort` is the catalog entry's per-model default;
+ * `undefined` for non-reasoning models so the gateway can omit the
+ * provider-specific reasoning knob cleanly.
  */
 
 import type { ChatMode } from "../lib/chatMode";
-import type { ModelCapability, ReasoningEffort } from "../lib/llmCatalog";
+import { getCatalogEntry, MODEL_CATALOG, type ModelCapability, type ReasoningEffort } from "../lib/llmCatalog";
+import type { LlmProvider } from "../lib/llmProvider";
 
-// Re-exported so existing call sites do not have to chase the new
-// canonical location at the same time the catalog lands. Pure type
-// re-export — at runtime, nothing changes.
+// Re-exported for the chat / generation call sites so they don't have to
+// chase the canonical location at the same time the multi-provider
+// catalog lands.
 export type { ModelCapability, ReasoningEffort };
 
 /**
- * Resolver output. Carries the picked model name alongside its reasoning
- * capability so `streamText` can wire `providerOptions` without re-deriving
- * the effort from the model name.
+ * Resolved pick handed to {@link generateViaGateway} / {@link streamViaGateway}.
+ * Carries the picked `(provider, modelName)` pair alongside its catalog-
+ * derived `reasoningEffort` and the `capability` tier we routed against so
+ * the gateway can wire `providerOptions` without re-deriving either.
  */
 export type ModelChoice = {
-  name: string;
-  /** Undefined when the model doesn't support reasoning. */
+  provider: LlmProvider;
+  modelName: string;
+  /** `undefined` for non-reasoning models — gateway omits the provider-specific knob. */
   reasoningEffort: ReasoningEffort | undefined;
-};
-
-const DEFAULT_MODEL_BY_CAPABILITY: Record<ModelCapability, string> = {
-  sandbox: "gpt-5",
-  library: "gpt-5-mini",
-  discuss: "gpt-5-mini",
+  capability: ModelCapability;
 };
 
 /**
- * Per-model-family reasoning default. Keys are family prefixes; a model
- * matches if its name equals the key OR begins with `<key>-` (boundary at
- * hyphen so `gpt-5` doesn't match a hypothetical `gpt-50`). Longest
- * matching prefix wins, so `gpt-5-mini-2026-01-15` resolves to the
- * `gpt-5-mini` row rather than the `gpt-5` row. A model that doesn't
- * match any prefix has no reasoning support — adding a new reasoning-
- * capable family means adding it here in the same change that introduces
- * it to the pricing table (`convex/lib/llmPricing.ts`).
+ * Capability → `(provider, model)` default. The pricing-coverage test in
+ * `modelSelection.test.ts` pins this pairing — every default here must
+ * have a catalog entry AND a pricing row, otherwise the daily cost cap
+ * settlement silently degrades to "no cost recorded" (`estimateCostUsd`
+ * returns `undefined` for unknown pairs).
  *
- * Family matching (not exact id) so operator-pinned snapshot names like
- * `gpt-5-2026-01-15` keep the family's reasoning default instead of
- * silently degrading to no reasoning at all.
- *
- * Defaults are chosen per-family, NOT per-tier:
- *   - `gpt-5`      → `medium` — matches OpenAI's API default; the
- *                    sandbox tier uses this family and tool trajectories
- *                    (plan → call → re-plan) benefit from real thought.
- *   - `gpt-5-mini` → `low`    — the lighter tier used for library + discuss;
- *                    fast text replies don't justify deeper effort.
- *
- * To change a default permanently, edit this table — the diff is the
- * audit trail. To suppress reasoning for one tier at runtime, point
- * that tier at a non-reasoning model via `OPENAI_MODEL_<TIER>`.
+ * Defaults are OpenAI because `OPENAI_API_KEY` is the only env var the
+ * bootstrap docs require; Anthropic is opt-in via the composer picker.
  */
-const MODEL_REASONING_DEFAULT: Record<string, ReasoningEffort> = {
-  "gpt-5": "medium",
-  "gpt-5-mini": "low",
+const DEFAULT_PICK_BY_CAPABILITY: Record<ModelCapability, { provider: LlmProvider; modelName: string }> = {
+  sandbox: { provider: "openai", modelName: "gpt-5" },
+  library: { provider: "openai", modelName: "gpt-5-mini" },
+  discuss: { provider: "openai", modelName: "gpt-5-mini" },
 };
 
 /**
- * Resolve a model name to its family's reasoning effort. Longest matching
- * prefix wins so `gpt-5-mini-2026-01-15` lands on `gpt-5-mini` rather than
- * `gpt-5`. Returns `undefined` when no family matches — the caller treats
- * that as "non-reasoning model" and omits `providerOptions.openai.reasoningEffort`.
- */
-function resolveReasoningEffort(modelName: string): ReasoningEffort | undefined {
-  let bestKey: string | undefined;
-  let bestEffort: ReasoningEffort | undefined;
-  for (const [key, effort] of Object.entries(MODEL_REASONING_DEFAULT)) {
-    if (modelName === key || modelName.startsWith(`${key}-`)) {
-      if (bestKey === undefined || key.length > bestKey.length) {
-        bestKey = key;
-        bestEffort = effort;
-      }
-    }
-  }
-  return bestEffort;
-}
-
-/**
- * Capability → capability-specific override env var name. Kept as a typed
- * `Record<ModelCapability, string>` so adding a new capability literal
- * forces a compile error here.
- */
-const CAPABILITY_ENV_VAR: Record<ModelCapability, string> = {
-  sandbox: "OPENAI_MODEL_SANDBOX",
-  library: "OPENAI_MODEL_LIBRARY",
-  discuss: "OPENAI_MODEL_DISCUSS",
-};
-
-/**
- * Read an env var with the trim-or-undefined shape every env knob expects.
- * A missing variable, an empty string, or a whitespace-only string all
- * produce `undefined` so the resolver can fall through to the next layer
- * instead of selecting an empty model name (which would fail at the AI
- * SDK boundary with a confusing "model: '' not found" error).
- */
-function readEnv(name: string): string | undefined {
-  const raw = process.env[name];
-  if (typeof raw !== "string") {
-    return undefined;
-  }
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
-/**
- * Map a (mode, groundSandbox) pair to its capability tier. Sandbox
- * grounding wins over the underlying mode because the tool-use
- * trajectory is the dominant cost signal — a sandbox-grounded Discuss
- * reply lands on the heavier `sandbox` tier regardless of the surface
- * name.
+ * Map a `(mode, groundSandbox)` pair to its capability tier. Sandbox
+ * grounding wins over the underlying mode because the tool-use trajectory
+ * is the dominant cost signal — a sandbox-grounded Discuss reply lands on
+ * the heavier `sandbox` tier regardless of the surface name.
  */
 export function pickCapability(args: { mode: ChatMode; groundSandbox: boolean }): ModelCapability {
   if (args.groundSandbox) {
@@ -170,28 +94,86 @@ export function pickCapability(args: { mode: ChatMode; groundSandbox: boolean })
 }
 
 /**
- * Resolve the OpenAI model identifier to use for a single reply.
+ * Find any catalog entry by `modelName` alone, regardless of provider.
  *
- * Pure function over `process.env` and the
- * {@link DEFAULT_MODEL_BY_CAPABILITY} table. Safe to call from both the
- * success path (during `streamText` setup) and the catch path (when
- * reading partial usage post-throw): the result is deterministic for a
- * given env snapshot and never throws — a missing API key is detected
- * upstream by `generation.ts` before this resolver is ever consulted.
+ * Used by the thread-default resolution layer where the persisted column
+ * is `threads.defaultModelName` (no provider). Model names are unique
+ * across providers in the current catalog (no `claude-mini` overlapping
+ * `gpt-mini`), so the first match is unambiguous.
  *
- * The returned `reasoningEffort` is keyed off the *resolved* model name,
- * not the capability tier — picking `gpt-5` always means "reasoning at
- * the gpt-5 default effort", and overriding the env to a non-reasoning
- * model (`OPENAI_MODEL_DISCUSS=gpt-4o`) returns `undefined` so the
- * generation path can omit `providerOptions.openai.reasoningEffort`
- * entirely. See {@link MODEL_REASONING_DEFAULT} for the per-model table.
+ * Returns `undefined` if the model name doesn't appear in the catalog —
+ * the caller falls through to the capability default in that case.
  */
-export function resolveModelForReply(args: { mode: ChatMode; groundSandbox: boolean }): ModelChoice {
+function findCatalogEntryByModelName(modelName: string) {
+  return MODEL_CATALOG.find((entry) => entry.modelName === modelName);
+}
+
+/**
+ * Resolve the model pick for a single reply.
+ *
+ * Total function: always returns a valid `ModelChoice` even when every
+ * input source is missing or mismatched against the catalog. The fallback
+ * to {@link DEFAULT_PICK_BY_CAPABILITY} guarantees we never hand the
+ * gateway an unknown `(provider, modelName)` pair.
+ */
+export function resolveModelForReply(args: {
+  mode: ChatMode;
+  groundSandbox: boolean;
+  /**
+   * Per-message override from the queued user message
+   * (`messages.provider` / `messages.modelName`). Both fields must be
+   * present together to take effect — a half-set pair falls through to
+   * the next layer.
+   */
+  overrideProvider?: LlmProvider;
+  overrideModelName?: string;
+  /**
+   * Thread's last-picked model name (`threads.defaultModelName`). Only
+   * consulted when no per-message override exists; provider is inferred
+   * via catalog lookup so we never have to persist provider redundantly
+   * alongside the default model name.
+   */
+  threadDefaultModelName?: string;
+}): ModelChoice {
   const capability = pickCapability(args);
-  const override = readEnv(CAPABILITY_ENV_VAR[capability]);
-  const name = override ?? readEnv("OPENAI_MODEL") ?? DEFAULT_MODEL_BY_CAPABILITY[capability];
+
+  // 1. Explicit per-message override. Already validated by the send
+  // mutation; re-validate here so an out-of-band catalog change degrades
+  // to the default rather than reaching the gateway with an unknown pair.
+  if (args.overrideProvider !== undefined && args.overrideModelName !== undefined) {
+    const entry = getCatalogEntry(args.overrideProvider, args.overrideModelName);
+    if (entry) {
+      return {
+        provider: entry.provider,
+        modelName: entry.modelName,
+        reasoningEffort: entry.reasoningEffort,
+        capability,
+      };
+    }
+  }
+
+  // 2. Thread default. Looked up by model name alone — provider is
+  // inferred from the catalog so we don't have to persist it redundantly.
+  if (args.threadDefaultModelName !== undefined) {
+    const entry = findCatalogEntryByModelName(args.threadDefaultModelName);
+    if (entry) {
+      return {
+        provider: entry.provider,
+        modelName: entry.modelName,
+        reasoningEffort: entry.reasoningEffort,
+        capability,
+      };
+    }
+  }
+
+  // 3. Capability default. The hard-coded fallback pairing is pinned
+  // against the pricing table by the unit test below.
+  const fallback = DEFAULT_PICK_BY_CAPABILITY[capability];
+  const fallbackEntry = getCatalogEntry(fallback.provider, fallback.modelName);
   return {
-    name,
-    reasoningEffort: resolveReasoningEffort(name),
+    provider: fallback.provider,
+    modelName: fallback.modelName,
+    reasoningEffort: fallbackEntry?.reasoningEffort,
+    capability,
   };
 }

@@ -72,17 +72,27 @@ describe("validateRequiredSections", () => {
   });
 
   it("tolerates trailing punctuation and casing variations", () => {
-    const markdown = ["## purpose:", "## SERVICES & CAPABILITIES", "## audience.", "## key operations", "## notable constraints", "## source"].join(
-      "\n",
-    );
+    const markdown = [
+      "## purpose:",
+      "## SERVICES & CAPABILITIES",
+      "## audience.",
+      "## key operations",
+      "## notable constraints",
+      "## source",
+    ].join("\n");
     const result = validateRequiredSections(markdown, EXPECTED_SECTIONS.readme_summary);
     expect(result.ok).toBe(true);
   });
 
   it("accepts ### in addition to ## as heading levels", () => {
-    const markdown = ["### Purpose", "### Services & Capabilities", "### Audience", "### Key Operations", "### Notable Constraints", "### Source"].join(
-      "\n",
-    );
+    const markdown = [
+      "### Purpose",
+      "### Services & Capabilities",
+      "### Audience",
+      "### Key Operations",
+      "### Notable Constraints",
+      "### Source",
+    ].join("\n");
     const result = validateRequiredSections(markdown, EXPECTED_SECTIONS.readme_summary);
     expect(result.ok).toBe(true);
   });

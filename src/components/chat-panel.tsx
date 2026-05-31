@@ -20,9 +20,21 @@ import { MessageBubble } from "@/components/chat-message";
 import { MODE_EXAMPLES } from "@/components/chat-modes";
 import { GroundingToggleBar, type GroundingAxisLike } from "@/components/grounding-toggle-bar";
 import { ModeExamples } from "@/components/mode-examples";
+import {
+  PromptInputModelPicker,
+  type PromptInputModelPickerValue,
+} from "@/components/ai-elements/prompt-input-model-picker";
 import { SandboxActivityPill } from "@/components/sandbox-activity-pill";
 import { Button } from "@/components/ui/button";
-import type { ActiveMessageStream, ArtifactId, ChatMode, RepositoryId, SandboxModeStatus, ThreadId } from "@/lib/types";
+import type {
+  ActiveMessageStream,
+  ArtifactId,
+  ChatMode,
+  LlmProvider,
+  RepositoryId,
+  SandboxModeStatus,
+  ThreadId,
+} from "@/lib/types";
 
 type ChatPanelProps = {
   selectedThreadId: ThreadId | null;
@@ -47,6 +59,26 @@ type ChatPanelProps = {
   groundSandbox: boolean;
   setGroundLibrary: (v: boolean) => void;
   setGroundSandbox: (v: boolean) => void;
+  /**
+   * Composer model picker state. `selectedProvider` + `selectedModelName`
+   * are the current pair the picker is rendering; `setSelectedModel`
+   * fires when the user picks a new entry. The shell owns the actual
+   * state (so it can pre-fill from `thread.defaultModelName` on thread
+   * switches) and passes it through.
+   *
+   * `threadLockedProvider` mirrors `threads.lockedProvider` from the
+   * thread-context query. When set, the picker hides the other
+   * provider's group and renders the lock pill.
+   *
+   * All four are optional so unit-test renders / headless callers can
+   * mount `ChatPanel` without threading picker state through. The
+   * picker is hidden when `setSelectedModel` is omitted — that's the
+   * single signal "this caller does not own picker state".
+   */
+  selectedProvider?: LlmProvider | null;
+  selectedModelName?: string | null;
+  setSelectedModel?: (next: PromptInputModelPickerValue) => void;
+  threadLockedProvider?: LlmProvider | null;
   /**
    * Per-axis availability verdict from `repositoryModeEligibility.evaluate`.
    * Mirrors the structured shape the eligibility module exposes, but typed
@@ -210,6 +242,10 @@ export function ChatPanel({
   groundSandbox,
   setGroundLibrary,
   setGroundSandbox,
+  selectedProvider = null,
+  selectedModelName = null,
+  setSelectedModel,
+  threadLockedProvider = null,
   grounding,
   onOpenGenerateSystemDesign,
   isSending,
@@ -494,6 +530,35 @@ export function ChatPanel({
                     <FileTextIcon size={14} weight="bold" />
                     <span className="hidden sm:inline">Artifacts</span>
                   </Button>
+                ) : null}
+                {/*
+                 * Model picker. Mounted left of the grounding toggles
+                 * so the heaviest UX decision (which LLM provider) sits
+                 * before the lighter toggles. Hidden in read-only
+                 * surfaces (archived repository) because the user
+                 * cannot send a message anyway. Also hidden when the
+                 * caller did not wire `setSelectedModel` — that's the
+                 * signal a unit-test / headless render is using
+                 * `ChatPanel` without picker state.
+                 */}
+                {!isReadOnly && setSelectedModel ? (
+                  <PromptInputModelPicker
+                    value={
+                      selectedProvider && selectedModelName
+                        ? { provider: selectedProvider, modelName: selectedModelName }
+                        : null
+                    }
+                    onChange={setSelectedModel}
+                    threadLockedProvider={threadLockedProvider}
+                    // Capability filter mirrors the chat composer's
+                    // surface. The picker still lets users pick
+                    // sandbox-tier models inside the discuss surface
+                    // because the catalog's `discuss` group includes
+                    // tool-capable entries — sandbox grounding kicks
+                    // them up to the sandbox capability inside the
+                    // resolver, not via the picker filter.
+                    capability="discuss"
+                  />
                 ) : null}
                 {chatMode === "discuss" ? (
                   <GroundingToggleBar

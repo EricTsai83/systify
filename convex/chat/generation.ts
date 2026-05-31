@@ -7,28 +7,32 @@
  * access (which depends on Node built-ins like `axios`) to wire up the
  * `read_file` / `list_dir` tools. Discuss / docs replies go through the
  * same code path; the only "cost" of running in Node is bundle size,
- * which is dominated by the AI SDK and OpenAI provider regardless.
+ * which is dominated by the AI SDK runtime regardless.
  *
  * The action splits into two stream paths:
  *
  *   1. **Tool-driven sandbox path.** When `replyContext.sandboxTooling` is
- *      populated *and* `OPENAI_API_KEY` is set, we hand `streamText` a
- *      `ToolSet` from `createSandboxTools(...)` and a `stopWhen` step
- *      budget. We iterate `response.fullStream` so we can react to both
- *      `text-delta` (append to the streaming buffer) and the various
- *      tool events (logged for telemetry, turned into a persisted trace
- *      and a live ticker).
+ *      populated *and* an API key for the picked provider is set, we hand
+ *      the gateway a `ToolSet` from `createSandboxTools(...)` and a
+ *      `stopWhen` step budget. We iterate the gateway's `fullStream` so
+ *      we can react to both `text-delta` (append to the streaming
+ *      buffer) and the various tool events (logged for telemetry, turned
+ *      into a persisted trace and a live ticker).
  *
  *   2. **Text-only path.** Library replies and ungrounded Discuss replies
- *      use the same shape: a plain `streamText` over `textStream`, no
- *      tools. The deltas flow through the same character-budget flush.
+ *      use the same shape: a plain gateway call with no tools. The
+ *      deltas flow through the same character-budget flush.
  *
- * One uniform finalize: regardless of which path ran, we collect usage,
- * compute cost, and persist via `finalizeAssistantReply`.
+ * One uniform finalize: regardless of which path ran, we collect usage
+ * from the gateway's `finalUsage` / `finalCostUsd` promises and persist
+ * via `finalizeAssistantReply`.
+ *
+ * Provider routing lives entirely inside `llmGateway`. This file holds
+ * no `@ai-sdk/openai` / `@ai-sdk/anthropic` imports — the provider-
+ * isolation test (`llmGateway.test.ts`) enforces that invariant.
  */
 
-import { openai } from "@ai-sdk/openai";
-import { stepCountIs, streamText, type ToolSet } from "ai";
+import { stepCountIs, type ToolSet } from "ai";
 import { v } from "convex/values";
 import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
@@ -37,7 +41,9 @@ import { getSandboxFsClient } from "../daytona";
 import { verifyAndSyncSandbox, SandboxPreparationError } from "../lib/sandboxLiveness";
 import { STREAM_FLUSH_THRESHOLD } from "../lib/constants";
 import { emitMetric, logInfo, logWarn } from "../lib/observability";
-import { estimateCostUsd } from "../lib/llmPricing";
+import { LlmRateLimitError, streamViaGateway, type LlmStreamResult } from "../lib/llmGateway";
+import type { LlmProvider } from "../lib/llmProvider";
+import { hasProviderApiKey } from "../lib/providerEnv";
 import type { ReplyContext } from "./context";
 import { resolveModelForReply } from "./modelSelection";
 import {
@@ -297,53 +303,59 @@ export const generateAssistantReply = internalAction({
       }
     };
 
-    // `streamText` response is hoisted so every exit path (success
-    // / cancel / fail / aborted) can read `response.totalUsage` to harvest
-    // the partial token usage and cost. Cancelled and failed replies still
-    // incur cost from OpenAI (provider-side billing happens on each token
-    // generated, not on stream completion), so settling that partial cost
-    // is the only way to keep the daily cap honest.
+    // Gateway stream handle. Hoisted so every exit path (success /
+    // cancel / fail / aborted) can settle `finalUsage` / `finalCostUsd`
+    // to harvest partial token usage and cost. Cancelled and failed
+    // replies still incur upstream provider spend (billing happens
+    // per-token, not on stream completion), so settling that partial
+    // cost is the only way to keep the daily cap honest.
     //
-    // `undefined` until `streamText` is invoked, so the heuristic-path
-    // fast exits and the cancel-before-streamText fast exits don't try to
-    // extract usage from a non-existent stream.
-    let streamResponse: ReturnType<typeof streamText> | undefined;
+    // `undefined` until the gateway is invoked, so heuristic-path fast
+    // exits and cancel-before-stream fast exits don't try to settle a
+    // non-existent stream.
+    let stream: LlmStreamResult | undefined;
 
-    // Model name is hoisted for the same reason as `streamResponse`:
-    // the catch block needs to feed the post-throw cost extractor the same
-    // model the stream actually ran on, otherwise a typo in the per-mode env
-    // var (resolved on the success path) would diverge from the global
-    // default the catch path falls back to. `undefined` before
-    // `resolveModelForReply` runs — `extractStreamUsage` short-circuits on
-    // `streamResponse === undefined` so the model name is moot in that
-    // case.
+    // Picked `(provider, modelName)` hoisted for the same reason as
+    // `stream`: the catch block needs to know which pair produced the
+    // partial usage so the post-throw cost log is correctly tagged.
+    // Both remain `undefined` before `resolveModelForReply` runs (e.g.
+    // when the catch lands on a `getReplyContext` throw); the usage
+    // extractor short-circuits to an empty payload in that case so the
+    // moot fallback never reaches the daily-cap settlement.
+    let provider: LlmProvider | undefined;
     let modelName: string | undefined;
 
     // Cancellation control plane.
     //
-    // The AI SDK's `streamText` accepts an `abortSignal`. When the signal
-    // fires the underlying HTTP/SSE request is torn down and `fullStream`
-    // either ends naturally (for clean abort points) or throws a
-    // `DOMException`-shaped abort error from the for-await iterator. We
-    // wrap that in a single boolean (`wasCancelled`) plus a controller so
-    // every exit path (loop break, thrown abort, post-loop finalize) can
-    // route through the `markAssistantReplyCancelled` finalize variant
-    // instead of the failure path.
+    // The gateway's `LlmStreamResult.abort()` tears down the underlying
+    // HTTP/SSE request. When it fires, `fullStream` either ends
+    // naturally (for clean abort points) or throws an abort error from
+    // the for-await iterator. We wrap that in a single boolean
+    // (`wasCancelled`) so every exit path (loop break, thrown abort,
+    // post-loop finalize) can route through the
+    // `markAssistantReplyCancelled` finalize variant instead of the
+    // failure path.
     //
     // Why we don't just check the cancel flag from inside the for-await
     // body: a long text-deltaless stretch (e.g. a 30 s tool call) would
     // never observe the flag because no event fires. The polling task is
     // independent of the stream loop and runs every
     // `CANCELLATION_POLL_INTERVAL_MS` regardless of stream activity, so
-    // user clicks Stop → poll catches cancelled → controller.abort() →
-    // streamText tears down → for-await exits, all without depending on
-    // the model emitting another delta first.
-    const cancellationController = new AbortController();
+    // user clicks Stop → poll catches cancelled → `stream.abort()` →
+    // gateway tears down → for-await exits, all without depending on
+    // the model emitting another delta first. Before `stream` is
+    // created, the poll just sets `wasCancelled` and the action's first
+    // post-context check picks it up.
     let wasCancelled = false;
     let cancellationReason: string | undefined;
     let pollHandle: ReturnType<typeof setTimeout> | undefined;
     let pollingStopped = false;
     let generationAborted = false;
+    // NB: `stream` is captured by `runPollTick` below. Reading it on each
+    // tick (vs binding once at scheduling) is what makes the
+    // poll-before-stream-creation window correct — early ticks see
+    // `stream === undefined` and skip the abort, later ticks see the
+    // assigned handle and tear down the underlying SSE.
 
     /**
      * Self-rescheduling poll. We use `setTimeout` instead of `setInterval`
@@ -371,7 +383,12 @@ export const generateAssistantReply = internalAction({
         if (status.cancelled) {
           wasCancelled = true;
           cancellationReason = "Cancelled by user.";
-          cancellationController.abort();
+          // Best-effort tear-down. `stream` is `undefined` if the cancel
+          // landed before the gateway returned; the post-context
+          // `wasCancelled` checks handle that fast-exit path. Once
+          // assigned, `.abort()` synchronously cancels the underlying
+          // SSE so the for-await iterator exits within one tick.
+          stream?.abort();
           return;
         }
         if (status.jobMissing) {
@@ -382,7 +399,7 @@ export const generateAssistantReply = internalAction({
           // so the for-await iterator exits cleanly.
           generationAborted = true;
           pollingStopped = true;
-          cancellationController.abort();
+          stream?.abort();
           return;
         }
       } catch (error) {
@@ -451,9 +468,23 @@ export const generateAssistantReply = internalAction({
       const citationMap = buildCitationMap(groundedReplyContext);
       const persistedCitationMap = citationMap.length > 0 ? citationMap : undefined;
 
-      if (!process.env.OPENAI_API_KEY) {
+      // Resolve the picked `(provider, modelName)` pair early so the
+      // heuristic-fallback decision below can branch on the *picked*
+      // provider's API key — Claude users with `ANTHROPIC_API_KEY` set
+      // (but no `OPENAI_API_KEY`) should still get LLM-powered replies.
+      const modelChoice = resolveModelForReply({
+        mode: replyContext.mode,
+        groundSandbox: groundedReplyContext.groundSandbox,
+        overrideProvider: replyContext.provider,
+        overrideModelName: replyContext.modelName,
+      });
+      provider = modelChoice.provider;
+      modelName = modelChoice.modelName;
+      telemetry.modelName = modelName;
+
+      if (!hasProviderApiKey(provider)) {
         // The heuristic path produces its full answer synchronously, so
-        // there is no streamText to abort. We still honor a cancellation
+        // there is no LLM stream to abort. We still honor a cancellation
         // that arrived between `markAssistantReplyRunning` and this point —
         // the user could have clicked Stop while the context query ran —
         // by checking the polled flag. Cooperative either way: if cancel
@@ -495,17 +526,6 @@ export const generateAssistantReply = internalAction({
         return;
       }
 
-      // Pick the model based on the reply's capability requirements. The
-      // sandbox-grounded Discuss path is the heaviest (tool use) and stays on
-      // the full GPT-5 tier; library / ungrounded discuss stay on the mini tier.
-      // The resolver also reports a per-model `reasoningEffort` so reasoning-
-      // capable models opt into extended thinking automatically.
-      const modelChoice = resolveModelForReply({
-        mode: replyContext.mode,
-        groundSandbox: groundedReplyContext.groundSandbox,
-      });
-      modelName = modelChoice.name;
-      telemetry.modelName = modelName;
       const systemPrompt = buildSystemPrompt(groundedReplyContext.mode, {
         groundLibrary: groundedReplyContext.groundLibrary,
         groundSandbox: groundedReplyContext.groundSandbox,
@@ -597,12 +617,12 @@ export const generateAssistantReply = internalAction({
       //     in-process state is the source of truth for the run.
       const toolCallMap = new Map<string, { toolName: string; inputSummary: string; startedAt: number }>();
 
-      // Cancel-before-streamText fast path. The polling task can
-      // flip `wasCancelled` any time after `markAssistantReplyRunning`
+      // Cancel-before-gateway fast path. The polling task can flip
+      // `wasCancelled` any time after `markAssistantReplyRunning`
       // committed; if it already did, skip the upstream fetch entirely
-      // (no point hitting OpenAI just to immediately abort) and route to
-      // the cancel finalize variant. `pendingDelta` is empty at this
-      // point so the partial-content branch is a no-op.
+      // (no point invoking the gateway just to immediately abort) and
+      // route to the cancel finalize variant. `pendingDelta` is empty
+      // at this point so the partial-content branch is a no-op.
       if (wasCancelled) {
         // If the job row was also deleted (generationAborted), skip the
         // cancel mutation — patching the missing job would only throw.
@@ -620,87 +640,88 @@ export const generateAssistantReply = internalAction({
         return;
       }
       // Mirror of the streaming-path short-circuit: bail out before
-      // hitting OpenAI if the job row was already deleted under us. The
-      // for-await loop would otherwise tear down on the first event due
-      // to the abort signal, but skipping the call entirely saves a
-      // pointless upstream fetch.
+      // invoking the gateway if the job row was already deleted under
+      // us. The for-await loop would otherwise tear down on the first
+      // event after the next poll fires `stream.abort()`, but skipping
+      // the call entirely saves a pointless upstream fetch.
       if (generationAborted) {
         emitSessionExit("aborted_orphan");
         return;
       }
 
-      streamResponse = streamText({
-        model: openai(modelName),
-        system: systemPrompt,
-        prompt: userPromptText,
-        // Opt-in reasoning effort, keyed off the resolved model in
-        // `modelSelection.ts`. `undefined` for non-reasoning models means
-        // `providerOptions` is left unset and OpenAI behaves identically
-        // to today; reasoning-capable models (`gpt-5*`) get extended
-        // thinking at the per-model default effort.
-        providerOptions: modelChoice.reasoningEffort
-          ? { openai: { reasoningEffort: modelChoice.reasoningEffort } }
-          : undefined,
-        // `tools` is an optional positional argument in the AI SDK; when
-        // undefined the model behaves exactly like the previous text-only
-        // streamText call. `stopWhen` is only meaningful when tools are
-        // present — without tools the model produces a single step and the
-        // budget never fires — but passing it unconditionally keeps the
-        // call shape uniform across paths.
-        tools: sandboxTools,
-        stopWhen: stepCountIs(SANDBOX_STEP_BUDGET),
-        // Surface the per-step budget consumption to the model so it can
-        // self-pace mid-flight ("3 of 8 tool steps remain;
-        // wrap up if your evidence is sufficient"). Only attached on the
-        // tool-driven path: discuss / library replies are single-step
-        // text-only and would never reach `prepareStep`'s second
-        // invocation.
-        //
-        // Step 0 reuses the outer `system` prompt verbatim (returning
-        // `undefined`) so we don't lengthen the *first* request — the
-        // base sandbox prompt already advertises the 8-step ceiling.
-        // From step 1 onward we override the system with a short
-        // suffix so the model sees a fresh budget read on each turn.
-        //
-        // The override re-includes the entire base prompt because the
-        // SDK's `system` field is *replace*, not *append*. Without
-        // re-sending it the model would lose every instruction the
-        // base prompt established (citation contract, tool semantics,
-        // network ban) for the rest of the reply — a much worse
-        // regression than the few hundred tokens of repeated context
-        // we save. The mini overhead is amortized across the long-
-        // tail steps that benefit most from the budget cue.
-        prepareStep: sandboxTools
-          ? ({ stepNumber }) => {
-              if (stepNumber === 0) {
-                return undefined;
+      stream = await streamViaGateway(
+        ctx,
+        {
+          // Read from `modelChoice` (not the hoisted `provider` /
+          // `modelName` vars) so TS narrowing survives the awaits
+          // between `resolveModelForReply` and the gateway call. The
+          // hoisted vars exist only so the catch block can hand the
+          // same pair to `readGatewayUsage` for partial-cost recovery.
+          provider: modelChoice.provider,
+          modelName: modelChoice.modelName,
+          ownerTokenIdentifier: groundedReplyContext.ownerTokenIdentifier,
+          capability: modelChoice.capability,
+          feature: "chat",
+          threadId: args.threadId,
+          messageId: args.assistantMessageId,
+        },
+        {
+          system: systemPrompt,
+          prompt: userPromptText,
+          // `tools` and `stopWhen` are forwarded unchanged. `stopWhen`
+          // is only meaningful when tools are present — without tools
+          // the model produces a single step and the budget never
+          // fires — but passing it unconditionally keeps the call shape
+          // uniform across paths.
+          tools: sandboxTools,
+          stopWhen: stepCountIs(SANDBOX_STEP_BUDGET),
+          reasoningEffort: modelChoice.reasoningEffort,
+          // Surface the per-step budget consumption to the model so it
+          // can self-pace mid-flight ("3 of 8 tool steps remain; wrap
+          // up if your evidence is sufficient"). Only attached on the
+          // tool-driven path: discuss / library replies are
+          // single-step text-only and would never reach
+          // `prepareStep`'s second invocation.
+          //
+          // Step 0 reuses the outer `system` prompt verbatim (returning
+          // `undefined`) so we don't lengthen the *first* request — the
+          // base sandbox prompt already advertises the 8-step ceiling.
+          // From step 1 onward we override the system with a short
+          // suffix so the model sees a fresh budget read on each turn.
+          //
+          // The override re-includes the entire base prompt because the
+          // SDK's `system` field is *replace*, not *append*. Without
+          // re-sending it the model would lose every instruction the
+          // base prompt established (citation contract, tool semantics,
+          // network ban) for the rest of the reply — a much worse
+          // regression than the few hundred tokens of repeated context
+          // we save. The mini overhead is amortized across the long-
+          // tail steps that benefit most from the budget cue.
+          prepareStep: sandboxTools
+            ? ({ stepNumber }) => {
+                if (stepNumber === 0) {
+                  return undefined;
+                }
+                const remaining = SANDBOX_STEP_BUDGET - stepNumber;
+                return {
+                  system: `${systemPrompt}\n\n[Tool-budget reminder: you have used ${stepNumber} of ${SANDBOX_STEP_BUDGET} tool steps; ${remaining} remain. If your evidence is already sufficient, write the final answer now instead of taking another tool step.]`,
+                };
               }
-              const remaining = SANDBOX_STEP_BUDGET - stepNumber;
-              return {
-                system: `${systemPrompt}\n\n[Tool-budget reminder: you have used ${stepNumber} of ${SANDBOX_STEP_BUDGET} tool steps; ${remaining} remain. If your evidence is already sufficient, write the final answer now instead of taking another tool step.]`,
-              };
-            }
-          : undefined,
-        // Wire the cancellation controller into the SDK so a
-        // poll-detected cancel actively tears down the underlying HTTP
-        // request. Without this we'd still observe `wasCancelled === true`
-        // post-loop, but the SSE connection would keep streaming bytes
-        // (and burning tokens) until the model finished naturally.
-        abortSignal: cancellationController.signal,
-      });
-      const response = streamResponse;
+            : undefined,
+        },
+      );
 
       // We always iterate `fullStream` — it is a strict superset of
       // `textStream` (every text chunk shows up as a `text-delta` event).
       // Sandbox-mode replies additionally surface `tool-call` /
       // `tool-result` / `tool-error` events here; these are persisted
       // into messageToolCallEvents for the live ticker and trace UI.
-      for await (const part of response.fullStream) {
+      for await (const part of stream.fullStream) {
         // Short-circuit before processing any further events.
-        // Two reasons we still need this even though we passed
-        // `abortSignal` to streamText:
+        // Two reasons we still need this even though `stream.abort()`
+        // already tore down the underlying SSE:
         //   1. The SDK / underlying provider may keep emitting buffered
-        //      events for a brief window after `controller.abort()` fires.
+        //      events for a brief window after the abort fires.
         //      Honoring the flag immediately means we stop *persisting*
         //      those events (no more `appendAssistantToolCallEvent`
         //      writes) the moment the poll catches the cancel.
@@ -1001,20 +1022,21 @@ export const generateAssistantReply = internalAction({
       // Extract usage *before* branching on cancel/success so
       // the partial-cost telemetry is available to both the cancel
       // finalize variant and the success finalize. A cancelled stream
-      // can still produce a `totalUsage` resolution if the upstream sent
-      // its final usage frame before the abort signal tore down the
-      // connection; degrading silently to undefined when it didn't is
-      // the right behavior (we charge what we know about; partial-pretty-
-      // good > none-at-all for the daily cap).
-      const usage = await extractStreamUsage(streamResponse, {
+      // can still produce a usage resolution if the upstream sent its
+      // final usage frame before the abort tore down the connection;
+      // degrading silently to undefined when it didn't is the right
+      // behaviour (we charge what we know about; partial-pretty-good >
+      // none-at-all for the daily cap).
+      const usage = await readGatewayUsage(stream, {
+        provider,
         modelName,
         assistantMessageId: args.assistantMessageId,
         jobId: args.jobId,
       });
 
       // If the loop exited because cancellation fired (either
-      // through the in-loop `break` or because the abortSignal made
-      // fullStream end early), route to the cancel finalize variant
+      // through the in-loop `break` or because the abort tore the
+      // fullStream down early), route to the cancel finalize variant
       // instead of the normal one. Persisting whatever was already
       // streamed gives the user the partial reply they intentionally
       // interrupted to see, plus the partial cost so the daily cap
@@ -1029,6 +1051,8 @@ export const generateAssistantReply = internalAction({
             reason: cancellationReason,
             inputTokens: usage.inputTokens,
             outputTokens: usage.outputTokens,
+            cachedInputTokens: usage.cachedInputTokens,
+            reasoningTokens: usage.reasoningTokens,
             costUsd: usage.costUsd,
           });
           emitSessionExit("cancelled", usage);
@@ -1051,24 +1075,23 @@ export const generateAssistantReply = internalAction({
         finalDelta: pendingDelta,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
+        cachedInputTokens: usage.cachedInputTokens,
+        reasoningTokens: usage.reasoningTokens,
         costUsd: usage.costUsd,
         citationMap: persistedCitationMap,
       });
       emitSessionExit("completed", usage);
     } catch (error) {
-      // Even on the error path, try to extract whatever usage the SDK
+      // Even on the error path, try to read whatever usage the gateway
       // already accumulated before the throw. Some errors fire
       // mid-stream (e.g. provider rate-limit kicking in after the model
       // produced 200 tokens) and the partial cost is real spend that
-      // should count against the daily cap.
+      // should count against the daily cap. `provider` / `modelName`
+      // remain `undefined` when the catch lands before
+      // `resolveModelForReply` ran; `readGatewayUsage` short-circuits to
+      // `{}` in that case because `stream` is also `undefined`, so the
+      // missing context is moot.
       //
-      // `modelName` is the same per-mode pick the success path used.
-      // The fallback only fires when the catch lands before
-      // `resolveModelForReply` ever ran (e.g. `getReplyContext` threw),
-      // in which case `streamResponse` is also `undefined` and
-      // `extractStreamUsage` short-circuits to `{}` — so the fallback
-      // string is moot at runtime, just there to satisfy the helper's
-      // `string` parameter type.
       // Force any reasoning delta still buffered. Mirrors the success
       // path so partial reasoning surfaces on failures and cancellations
       // alike. `try`-wrapped because the catch is also reached on
@@ -1086,15 +1109,16 @@ export const generateAssistantReply = internalAction({
         }
       }
 
-      const usage = await extractStreamUsage(streamResponse, {
-        modelName: modelName ?? "gpt-5-mini",
+      const usage = await readGatewayUsage(stream, {
+        provider,
+        modelName,
         assistantMessageId: args.assistantMessageId,
         jobId: args.jobId,
       });
 
-      // Abort-induced exceptions land here too: streamText
-      // surfaces a `DOMException`/`AbortError` once the SSE tear-down
-      // bubbles back through `fullStream`. Distinguishing them via the
+      // Abort-induced exceptions land here too: the gateway re-throws
+      // the underlying SDK abort error once the SSE tear-down bubbles
+      // back through `fullStream`. Distinguishing them via the
       // `wasCancelled` flag (rather than sniffing `error.name`) keeps the
       // logic decoupled from undici / AI SDK error-shape internals — if
       // the poll already saw the cancel and set the flag, we know the
@@ -1109,6 +1133,8 @@ export const generateAssistantReply = internalAction({
             reason: cancellationReason,
             inputTokens: usage.inputTokens,
             outputTokens: usage.outputTokens,
+            cachedInputTokens: usage.cachedInputTokens,
+            reasoningTokens: usage.reasoningTokens,
             costUsd: usage.costUsd,
           });
           emitSessionExit("cancelled", usage);
@@ -1122,13 +1148,28 @@ export const generateAssistantReply = internalAction({
         emitSessionExit("aborted_orphan", usage);
         return;
       }
+      // Gateway-level rate limit denials (per-user RPM / concurrency)
+      // surface here as `LlmRateLimitError`. Funnel them through the
+      // same `failAssistantReply` path the model errors take but with
+      // a user-facing message that explains the cause and (when
+      // applicable) the retry hint. Provider 429s are absorbed by
+      // `withLlmRetry` inside the gateway and either retry to success
+      // or re-throw as a plain `APICallError`.
+      const errorMessage =
+        error instanceof LlmRateLimitError
+          ? formatRateLimitError(error)
+          : error instanceof Error
+            ? error.message
+            : "Unknown assistant error";
       await ctx.runMutation(internal.chat.streaming.failAssistantReply, {
         assistantMessageId: args.assistantMessageId,
         jobId: args.jobId,
-        errorMessage: error instanceof Error ? error.message : "Unknown assistant error",
+        errorMessage,
         finalDelta: pendingDelta,
         inputTokens: usage.inputTokens,
         outputTokens: usage.outputTokens,
+        cachedInputTokens: usage.cachedInputTokens,
+        reasoningTokens: usage.reasoningTokens,
         costUsd: usage.costUsd,
       });
       emitSessionExit("failed", usage);
@@ -1148,7 +1189,7 @@ export const generateAssistantReply = internalAction({
 
 /**
  * Resolve a Daytona-backed `SandboxFsClient` and wrap it in the AI SDK
- * `ToolSet` shape `streamText` expects.
+ * `ToolSet` shape the gateway expects.
  *
  * Failures here (Daytona unreachable, sandbox archived between context
  * load and tool wiring, missing API key) bubble out and abort the entire
@@ -1163,49 +1204,82 @@ async function buildSandboxTools(sandboxTooling: NonNullable<ReplyContext["sandb
 }
 
 /**
- * Extract `inputTokens` / `outputTokens` / `costUsd` from a
- * (possibly aborted, possibly partial) `streamText` response.
+ * Shape consumed by the finalize / fail / cancel mutations and by the
+ * session metric. Mirrors {@link NormalizedUsage} + the gateway's
+ * `finalCostUsd`. Optional everywhere because partial / aborted streams
+ * can leave any subset of the fields unresolved.
+ */
+type GatewayUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
+  costUsd?: number;
+};
+
+/**
+ * Read normalized usage + cost from a (possibly aborted, possibly
+ * partial) gateway stream. Returns an empty payload when:
  *
- * Returns all three as `undefined` when:
- *
- *   - `response` is undefined (fast-exit paths that never invoked
- *     `streamText`, e.g. heuristic mode or cancel-before-streamText);
- *   - `response.totalUsage` rejects (the SDK closed the stream before
- *     the upstream produced its final usage frame, common with
- *     mid-stream aborts);
- *   - the model's reported tokens or our pricing snapshot is missing.
+ *   - `stream` is undefined (fast-exit paths that never invoked the
+ *     gateway, e.g. heuristic mode or cancel-before-stream);
+ *   - either `finalUsage` or `finalCostUsd` rejects (the SDK closed the
+ *     stream before the upstream produced its final usage frame, common
+ *     with mid-stream aborts).
  *
  * Logging at WARN preserves the prior behavior where unavailable usage
  * is observable in dashboards but not user-facing — the user already
  * sees the (un)cost ticker, so the warning is for ops dashboards only.
  *
  * Crucially, this never throws: every settle / finalize call site can
- * `await` the helper without its own try/catch, keeping the caller's
- * control flow flat and making the cost-extraction concern a single
- * point of change for future telemetry / pricing additions.
+ * `await` the helper without its own try/catch.
  */
-async function extractStreamUsage(
-  response: ReturnType<typeof streamText> | undefined,
-  context: { modelName: string; assistantMessageId: string; jobId: string },
-): Promise<{ inputTokens?: number; outputTokens?: number; costUsd?: number }> {
-  if (!response) {
+async function readGatewayUsage(
+  stream: LlmStreamResult | undefined,
+  context: {
+    provider: LlmProvider | undefined;
+    modelName: string | undefined;
+    assistantMessageId: string;
+    jobId: string;
+  },
+): Promise<GatewayUsage> {
+  if (!stream) {
     return {};
   }
   try {
-    const usage = await response.totalUsage;
-    const inputTokens = usage.inputTokens;
-    const outputTokens = usage.outputTokens;
-    // Chat path is OpenAI-only today (multi-provider routing lands in PR-A3);
-    // hard-code provider here until `resolveModelForReply` returns it.
-    const costUsd = estimateCostUsd("openai", context.modelName, { inputTokens, outputTokens });
-    return { inputTokens, outputTokens, costUsd };
+    const [usage, costUsd] = await Promise.all([stream.finalUsage, stream.finalCostUsd]);
+    return {
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cachedInputTokens: usage.cachedInputTokens,
+      reasoningTokens: usage.reasoningTokens,
+      costUsd,
+    };
   } catch (error) {
     logWarn("chat", "assistant_reply_usage_unavailable", {
       assistantMessageId: context.assistantMessageId,
       jobId: context.jobId,
+      provider: context.provider,
       model: context.modelName,
       error: error instanceof Error ? error.message : String(error),
     });
     return {};
+  }
+}
+
+/**
+ * Surface a gateway-level rate-limit denial to the user as a single
+ * sentence the chat bubble can render verbatim. Distinct from a
+ * provider 429 (which `withLlmRetry` handles inside the gateway):
+ * those don't reach the action; only the gateway's per-user RPM and
+ * concurrency limits surface here.
+ */
+function formatRateLimitError(error: LlmRateLimitError): string {
+  const retrySeconds = Math.max(1, Math.round(error.retryAfterMs / 1000));
+  switch (error.code) {
+    case "requests_per_minute_exceeded":
+      return `Too many recent requests. Please wait about ${retrySeconds}s and try again.`;
+    case "concurrency_exceeded":
+      return "Too many active replies. Close another conversation or wait for the current ones to finish.";
   }
 }

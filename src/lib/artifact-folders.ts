@@ -4,8 +4,10 @@
  * narrow so the consumer doesn't accidentally treat a folder as an
  * artifact (or vice versa) and end up clicking the wrong navigation path.
  * Seeded System Design folders carry `systemKey` for stable lookup after rename.
- * `pinnedAt` is the wall-clock at which the user pinned this folder; the
- * navigator floats pinned folders above the alphabetical tail.
+ * `pinnedAt` is the wall-clock at which the user pinned this folder; only
+ * root folders may be pinned and the navigator surfaces them in a top-level
+ * "Pinned" section. Subfolders with a stale `pinnedAt` from legacy data are
+ * ignored — see `buildFolderTree` for the sort rule.
  */
 export type FolderTreeNode = {
   id: string;
@@ -54,19 +56,23 @@ export function buildFolderTree(folders: ReadonlyArray<FolderTreeInput>): Folder
     }
   }
 
-  // Pinned folders float to the top of each sibling group; within the
-  // pinned and unpinned partitions, siblings sort alphabetically by name.
-  const compare = (a: FolderTreeNode, b: FolderTreeNode) => {
+  // Only ROOT folders honour `pinnedAt` (pinned siblings float above the
+  // alphabetical tail). Subfolders sort by name regardless of any legacy
+  // `pinnedAt` value — keeping the rule root-only avoids the prior UX
+  // confusion where a pinned subfolder floated to the top of its siblings
+  // without ever showing up in the top-level Pinned section.
+  const compareRoots = (a: FolderTreeNode, b: FolderTreeNode) => {
     const aPinned = a.pinnedAt !== undefined;
     const bPinned = b.pinnedAt !== undefined;
     if (aPinned !== bPinned) return aPinned ? -1 : 1;
     return a.name.localeCompare(b.name);
   };
+  const compareByName = (a: FolderTreeNode, b: FolderTreeNode) => a.name.localeCompare(b.name);
   const sortChildren = (node: FolderTreeNode) => {
-    node.children.sort(compare);
+    node.children.sort(compareByName);
     node.children.forEach(sortChildren);
   };
-  roots.sort(compare);
+  roots.sort(compareRoots);
   roots.forEach(sortChildren);
 
   return roots;

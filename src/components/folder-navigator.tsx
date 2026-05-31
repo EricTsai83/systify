@@ -79,16 +79,17 @@ type FolderNavigatorProps = {
  *
  *   1. **Pinned** — root-level folders the user has pinned, surfaced as
  *      their own band at the top for quick access. Each pinned folder
- *      still renders its full subtree (unpinned descendants included);
- *      a pinned sub-folder of an unpinned parent stays under that parent
- *      in section 2, since root placement is the only thing pinning
- *      moves. Hidden entirely when nothing is pinned.
+ *      still renders its full subtree (unpinned descendants included).
+ *      Only root folders can be pinned: subfolders hide the Pin/Unpin
+ *      affordance and the backend rejects subfolder calls so the section
+ *      only ever contains roots. Hidden entirely when nothing is pinned.
  *
  *   2. **Folders** — every other folder for the repo, including the
  *      seeded System Design folders (Overview, Architecture, …) that
  *      carry a `systemKey`. Seeded folders default-expanded; user-created
- *      folders start collapsed. Each folder header carries a kebab /
- *      right-click menu with pin / rename / delete-and-move-contents-up.
+ *      folders start collapsed. Each root folder's header carries a
+ *      kebab / right-click menu with pin / rename / delete-and-move-
+ *      contents-up; subfolder rows expose rename + delete only.
  *      Children are nested folders and any artifact placed via `folderId`.
  *
  *   3. **Repository root** — artifacts with no `folderId`. The name mirrors
@@ -455,7 +456,12 @@ function FolderTreeBranch({
   const rowRef = useRef<HTMLDivElement>(null);
   const folderArtifacts = artifactsByFolder.get(node.id) ?? EMPTY_ARTIFACTS;
   const isSelected = selectedFolderId === (node.id as FolderId);
-  const isPinned = node.pinnedAt !== undefined;
+  // Pinning is a root-only affordance: subfolders ignore `pinnedAt` (the
+  // backend also rejects pinning subfolders) so the navigator only surfaces
+  // the pin icon and Pin/Unpin menu items when `indent === 0`. Legacy
+  // `pinnedAt` values on subfolders are tolerated but invisible.
+  const canPin = indent === 0;
+  const isPinned = canPin && node.pinnedAt !== undefined;
 
   const {
     isEditing: isInlineEditing,
@@ -611,17 +617,19 @@ function FolderTreeBranch({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => void runTogglePin()} disabled={isPinPending}>
-                  {isPinned ? (
-                    <>
-                      <PushPinSlashIcon size={12} weight="bold" /> Unpin
-                    </>
-                  ) : (
-                    <>
-                      <PushPinIcon size={12} weight="bold" /> Pin to top
-                    </>
-                  )}
-                </DropdownMenuItem>
+                {canPin ? (
+                  <DropdownMenuItem onClick={() => void runTogglePin()} disabled={isPinPending}>
+                    {isPinned ? (
+                      <>
+                        <PushPinSlashIcon size={12} weight="bold" /> Unpin
+                      </>
+                    ) : (
+                      <>
+                        <PushPinIcon size={12} weight="bold" /> Pin to top
+                      </>
+                    )}
+                  </DropdownMenuItem>
+                ) : null}
                 <DropdownMenuItem
                   onClick={() => {
                     setWasJustCreated(false);
@@ -640,17 +648,19 @@ function FolderTreeBranch({
         </ContextMenuTrigger>
         <ContextMenuContent>
           <ContextMenuGroup>
-            <ContextMenuItem onClick={() => void runTogglePin()} disabled={isPinPending}>
-              {isPinned ? (
-                <>
-                  <PushPinSlashIcon weight="bold" /> Unpin
-                </>
-              ) : (
-                <>
-                  <PushPinIcon weight="bold" /> Pin to top
-                </>
-              )}
-            </ContextMenuItem>
+            {canPin ? (
+              <ContextMenuItem onClick={() => void runTogglePin()} disabled={isPinPending}>
+                {isPinned ? (
+                  <>
+                    <PushPinSlashIcon weight="bold" /> Unpin
+                  </>
+                ) : (
+                  <>
+                    <PushPinIcon weight="bold" /> Pin to top
+                  </>
+                )}
+              </ContextMenuItem>
+            ) : null}
             <ContextMenuItem
               onClick={() => {
                 setWasJustCreated(false);

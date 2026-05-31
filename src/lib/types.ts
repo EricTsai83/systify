@@ -1,5 +1,7 @@
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import type { ChatMode } from "../../convex/lib/chatMode";
+import type { ModelCapability, ModelCatalogEntry, ReasoningEffort } from "../../convex/lib/llmCatalog";
+import type { LlmProvider } from "../../convex/lib/llmProvider";
 
 export type RepositoryId = Id<"repositories">;
 export type ThreadId = Id<"threads">;
@@ -61,6 +63,14 @@ export type ArtifactListItem = Pick<
  * for the type.
  */
 export type { ChatMode };
+
+/**
+ * LLM provider + catalog types shared by the composer model picker, the
+ * chat lifecycle hooks, and the shells that own picker state. Re-exported
+ * from the backend modules so frontend imports do not have to reach into
+ * `convex/lib/*` directly.
+ */
+export type { LlmProvider, ModelCapability, ModelCatalogEntry, ReasoningEffort };
 
 export type ActiveMessageStream = {
   assistantMessageId: MessageId;

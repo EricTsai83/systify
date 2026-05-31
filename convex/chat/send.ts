@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import type { MutationCtx } from "../_generated/server";
@@ -7,6 +7,8 @@ import { assertRepositoryModeEligible } from "../repositoryModeEligibility";
 import { requireViewerIdentity } from "../lib/auth";
 import { chatModeValidator, resolveDiscussGrounding, type ChatMode } from "../lib/chatMode";
 import { enqueueJob, findActiveJob } from "../lib/jobs";
+import { isValidPick } from "../lib/llmCatalog";
+import { llmProviderValidator, type LlmProvider } from "../lib/llmProvider";
 import { requireActiveRepositoryForViewer } from "../lib/repositoryAccess";
 import { requireOwnedDoc } from "../lib/ownedDocs";
 import { NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
@@ -17,6 +19,7 @@ import {
   getLeaseRetryAfterMs,
   throwOperationAlreadyInProgress,
 } from "../lib/rateLimit";
+import { resolveModelForReply } from "./modelSelection";
 
 async function getActiveChatJobForThread(ctx: MutationCtx, threadId: Id<"threads">, now: number) {
   return await findActiveJob(ctx, {
@@ -39,6 +42,15 @@ async function insertChatTurn(
      */
     groundLibrary?: boolean;
     groundSandbox?: boolean;
+    /**
+     * Resolved `(provider, modelName)` pair for this reply. Pinned on both
+     * the user and the assistant message at insertion time so a later
+     * picker change in the composer cannot retroactively re-attribute
+     * an already-finished turn. The thread's `lockedProvider` /
+     * `defaultModelName` patches happen alongside the message inserts.
+     */
+    provider: LlmProvider;
+    modelName: string;
     trimmedContent: string;
     ownerTokenIdentifier: string;
     now: number;
@@ -73,6 +85,8 @@ async function insertChatTurn(
     // doc bytes on every legacy-equivalent turn.
     ...(args.groundLibrary === true ? { groundLibrary: true } : {}),
     ...(args.groundSandbox === true ? { groundSandbox: true } : {}),
+    provider: args.provider,
+    modelName: args.modelName,
   });
 
   const assistantMessageId = await ctx.db.insert("messages", {
@@ -86,6 +100,8 @@ async function insertChatTurn(
     content: "",
     ...(args.groundLibrary === true ? { groundLibrary: true } : {}),
     ...(args.groundSandbox === true ? { groundSandbox: true } : {}),
+    provider: args.provider,
+    modelName: args.modelName,
   });
 
   await ctx.db.insert("messageStreams", {
@@ -103,13 +119,16 @@ async function insertChatTurn(
 
   // Update thread defaults so the composer pre-fills the toggles with the
   // user's most recent preference on the next visit. Library-mode turns
-  // skip this — the thread's grounding defaults are a Discuss-only concept.
+  // skip the grounding defaults — those are a Discuss-only concept — but
+  // the model picker default is set on every send regardless of mode.
   const threadPatch: {
     mode: ChatMode;
     lastMessageAt: number;
     sandboxSessionId?: Id<"sandboxSessions">;
     defaultGroundLibrary?: boolean;
     defaultGroundSandbox?: boolean;
+    lockedProvider?: LlmProvider;
+    defaultModelName?: string;
   } = {
     mode: args.mode,
     lastMessageAt: args.now,
@@ -119,6 +138,16 @@ async function insertChatTurn(
     threadPatch.defaultGroundLibrary = args.groundLibrary === true;
     threadPatch.defaultGroundSandbox = args.groundSandbox === true;
   }
+  // First message in the thread locks the provider; thereafter
+  // `sendMessage` rejects mismatched picks before reaching this helper
+  // so the patch is a no-op on subsequent turns.
+  if (args.thread.lockedProvider === undefined) {
+    threadPatch.lockedProvider = args.provider;
+  }
+  // Always refresh `defaultModelName` so reopening the thread restores
+  // the user's last pick — within the locked provider the user can
+  // switch tier freely (e.g. gpt-5 ↔ gpt-5-mini).
+  threadPatch.defaultModelName = args.modelName;
   await ctx.db.patch(args.thread._id, threadPatch);
 
   await ctx.scheduler.runAfter(0, internal.chat.generation.generateAssistantReply, {
@@ -164,6 +193,18 @@ export const sendMessageStartingNewThread = mutation({
      */
     groundLibrary: v.optional(v.boolean()),
     groundSandbox: v.optional(v.boolean()),
+    /**
+     * Composer-picked `(provider, modelName)` pair. Both must be present
+     * together to take effect; a half-set pair (provider but no model,
+     * or vice versa) is rejected so the resolver never has to silently
+     * fall back when the user thought they picked something.
+     *
+     * Validated against {@link MODEL_CATALOG} before any side-effect lands.
+     * Once persisted, the assistant reply is attributed to this pair on
+     * `messages.provider` / `messages.modelName`.
+     */
+    provider: v.optional(llmProviderValidator),
+    modelName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -191,6 +232,29 @@ export const sendMessageStartingNewThread = mutation({
       groundSandbox: args.groundSandbox === true,
     });
 
+    const groundLibrary = args.groundLibrary === true;
+    const groundSandbox = args.groundSandbox === true;
+
+    // Validate the picker pick (if both pieces present) and resolve the
+    // effective `(provider, modelName)` for this reply. A brand-new
+    // thread has no `lockedProvider` yet — the resolved pick becomes the
+    // lock once `insertChatTurn` patches the thread row below. A
+    // half-set pair is rejected up front so the resolver never has to
+    // distinguish "intentional half-pick" from "missing arg".
+    assertCompletePickerPair(args);
+    if (args.provider !== undefined && args.modelName !== undefined && !isValidPick(args.provider, args.modelName)) {
+      throw new ConvexError({
+        code: "unsupported_model",
+        message: `Unsupported model selection: ${args.provider}:${args.modelName}.`,
+      });
+    }
+    const resolved = resolveModelForReply({
+      mode: args.mode,
+      groundSandbox,
+      overrideProvider: args.provider,
+      overrideModelName: args.modelName,
+    });
+
     const now = Date.now();
 
     await consumeChatRateLimit(ctx, identity.tokenIdentifier);
@@ -206,8 +270,8 @@ export const sendMessageStartingNewThread = mutation({
       lastMessageAt: now,
       ...(args.mode === "discuss"
         ? {
-            defaultGroundLibrary: args.groundLibrary === true,
-            defaultGroundSandbox: args.groundSandbox === true,
+            defaultGroundLibrary: groundLibrary,
+            defaultGroundSandbox: groundSandbox,
           }
         : {}),
     });
@@ -215,7 +279,7 @@ export const sendMessageStartingNewThread = mutation({
     const thread = (await ctx.db.get(threadId))!;
 
     let sandboxSessionId: Id<"sandboxSessions"> | undefined;
-    if (args.groundSandbox === true) {
+    if (groundSandbox) {
       sandboxSessionId = await ctx.runMutation(internal.sandboxSessions.ensureSandboxSessionForThread, {
         threadId,
       });
@@ -225,8 +289,10 @@ export const sendMessageStartingNewThread = mutation({
       thread,
       repository,
       mode: args.mode,
-      groundLibrary: args.groundLibrary,
-      groundSandbox: args.groundSandbox,
+      groundLibrary,
+      groundSandbox,
+      provider: resolved.provider,
+      modelName: resolved.modelName,
       trimmedContent,
       ownerTokenIdentifier: identity.tokenIdentifier,
       now,
@@ -254,6 +320,22 @@ export const sendMessage = mutation({
      */
     groundLibrary: v.optional(v.boolean()),
     groundSandbox: v.optional(v.boolean()),
+    /**
+     * Composer-picked `(provider, modelName)`. Both must be present
+     * together. The mutation rejects:
+     *
+     *   - Half-set pairs (only one field provided).
+     *   - Picks not in {@link MODEL_CATALOG}.
+     *   - Picks whose provider differs from this thread's
+     *     `lockedProvider` (`thread_provider_locked` ConvexError) —
+     *     the frontend mirrors this constraint by hiding the
+     *     locked-out provider's options in the picker.
+     *
+     * Switching model tier *within* the locked provider (gpt-5 ↔ gpt-5-mini)
+     * is always allowed.
+     */
+    provider: v.optional(llmProviderValidator),
+    modelName: v.optional(v.string()),
   },
   handler: async (
     ctx,
@@ -292,6 +374,38 @@ export const sendMessage = mutation({
       groundSandbox,
     });
 
+    // Validate the picker pair (catalog membership + half-pair shape)
+    // BEFORE resolving so the resolver only ever sees a clean override.
+    assertCompletePickerPair(args);
+    if (args.provider !== undefined && args.modelName !== undefined && !isValidPick(args.provider, args.modelName)) {
+      throw new ConvexError({
+        code: "unsupported_model",
+        message: `Unsupported model selection: ${args.provider}:${args.modelName}.`,
+      });
+    }
+
+    // Resolve the effective `(provider, modelName)` pair using the
+    // override → thread default → capability default cascade. The
+    // resolved provider is what we enforce the lock against — picking
+    // a non-locked-provider model returns the failed pick verbatim so
+    // the error message is precise.
+    const resolved = resolveModelForReply({
+      mode,
+      groundSandbox,
+      overrideProvider: args.provider,
+      overrideModelName: args.modelName,
+      threadDefaultModelName: thread.defaultModelName,
+    });
+
+    if (thread.lockedProvider !== undefined && thread.lockedProvider !== resolved.provider) {
+      throw new ConvexError({
+        code: "thread_provider_locked",
+        lockedProvider: thread.lockedProvider,
+        attemptedProvider: resolved.provider,
+        message: `This thread is locked to ${thread.lockedProvider}. Start a new chat to use ${resolved.provider}.`,
+      });
+    }
+
     const trimmedContent = args.content.trim();
     if (!trimmedContent) {
       throw new Error("Message content cannot be empty.");
@@ -324,6 +438,8 @@ export const sendMessage = mutation({
       mode,
       groundLibrary,
       groundSandbox,
+      provider: resolved.provider,
+      modelName: resolved.modelName,
       trimmedContent,
       ownerTokenIdentifier: identity.tokenIdentifier,
       now,
@@ -331,3 +447,21 @@ export const sendMessage = mutation({
     });
   },
 });
+
+/**
+ * Reject the half-pair case where exactly one of `provider` / `modelName`
+ * was supplied. We could silently ignore the orphaned field, but doing
+ * so masks a real bug at the call site — usually the composer wired up
+ * one half of the picker without the other. Failing loudly here keeps
+ * the contract honest at the API boundary.
+ */
+function assertCompletePickerPair(args: { provider?: LlmProvider; modelName?: string }): void {
+  const hasProvider = args.provider !== undefined;
+  const hasModelName = args.modelName !== undefined;
+  if (hasProvider !== hasModelName) {
+    throw new ConvexError({
+      code: "incomplete_model_pick",
+      message: "Both provider and modelName must be supplied together, or both omitted.",
+    });
+  }
+}

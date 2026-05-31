@@ -93,6 +93,18 @@ export interface LlmCallContext {
 }
 
 /**
+ * Per-step hook passed through to `streamText` / `generateText`. The chat
+ * path uses this to inject a "you have X of N tool steps left" reminder
+ * into the system prompt of every step after the first; other call sites
+ * leave it unset.
+ *
+ * Defined as a narrow callback type (rather than re-exporting the AI
+ * SDK's `PrepareStepCallback`) so non-gateway call sites don't have to
+ * import the SDK to pass this through.
+ */
+export type PrepareStepCallback = (args: { stepNumber: number }) => { system?: string } | undefined;
+
+/**
  * Arguments forwarded to the SDK call. `reasoningEffort` is a
  * gateway-level knob that the dispatch wires into provider-specific
  * `providerOptions` so callers don't have to know per-provider
@@ -105,6 +117,13 @@ export interface LlmGenerateArgs {
   stopWhen?: StopCondition<ToolSet>;
   providerOptions?: ProviderOptions;
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Optional per-step prompt rewrite. Mirrors the AI SDK's
+   * `prepareStep` shape — `undefined` return keeps the outer `system`
+   * prompt verbatim. The chat path uses this to insert a tool-budget
+   * reminder; system design and eval paths leave it unset.
+   */
+  prepareStep?: PrepareStepCallback;
 }
 
 /**
@@ -272,6 +291,7 @@ export async function streamViaGateway(
       prompt: args.prompt,
       ...(args.tools ? { tools: args.tools } : {}),
       ...(args.stopWhen ? { stopWhen: args.stopWhen } : {}),
+      ...(args.prepareStep ? { prepareStep: args.prepareStep } : {}),
       providerOptions: buildProviderOptions(callCtx.provider, args),
       abortSignal: abortController.signal,
       maxRetries: 0,
