@@ -25,3 +25,7 @@ dist-ssr
 .env
 
 .claude/settings.local.json
+
+# Local eval harness output (System Design eval JSONL records).
+# Operator-only; never committed.
+eval-results/

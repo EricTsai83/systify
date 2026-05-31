@@ -353,16 +353,27 @@ export function validateRequiredSections(
   markdown: string,
   expected: ReadonlyArray<string>,
 ): { ok: boolean; missingSections: string[] } {
-  const headingKeys = new Set<string>();
+  const headings: { key: string; index: number }[] = [];
   for (const line of markdown.split("\n")) {
     if (line.startsWith("## ") || line.startsWith("### ")) {
-      headingKeys.add(normalizeHeading(line.replace(/^#+\s+/, "")));
+      headings.push({
+        key: normalizeHeading(line.replace(/^#+\s+/, "")),
+        index: headings.length,
+      });
     }
   }
+
   const missingSections: string[] = [];
+  let lastIndex = -1;
   for (const section of expected) {
-    if (!headingKeys.has(normalizeHeading(section))) {
+    const normalized = normalizeHeading(section);
+    const heading = headings.find((h) => h.key === normalized);
+    if (!heading) {
       missingSections.push(section);
+    } else if (heading.index <= lastIndex) {
+      missingSections.push(section);
+    } else {
+      lastIndex = heading.index;
     }
   }
   return { ok: missingSections.length === 0, missingSections };
