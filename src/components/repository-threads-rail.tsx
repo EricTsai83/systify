@@ -463,7 +463,7 @@ function ThreadItem({
           <div className="min-w-0 flex-1">
             <p
               onDoubleClick={handleStartEdit}
-              className={cn("cursor-text truncate font-medium text-foreground", titleTextClass)}
+              className={cn("cursor-pointer truncate font-medium text-foreground", titleTextClass)}
             >
               {thread.title}
             </p>
@@ -649,7 +649,7 @@ function RepolessThreadItem({
           <div className="min-w-0 flex-1">
             <p
               onDoubleClick={handleStartEdit}
-              className={cn("cursor-text truncate font-medium text-foreground", titleTextClass)}
+              className={cn("cursor-pointer truncate font-medium text-foreground", titleTextClass)}
             >
               {thread.title}
             </p>
