@@ -35,6 +35,7 @@ import type * as crons from "../crons.js";
 import type * as daytona from "../daytona.js";
 import type * as daytonaWebhooks from "../daytonaWebhooks.js";
 import type * as daytonaWebhooksNode from "../daytonaWebhooksNode.js";
+import type * as eval_systemDesign_report from "../eval/systemDesign/report.js";
 import type * as github from "../github.js";
 import type * as githubAppNode from "../githubAppNode.js";
 import type * as githubCheck from "../githubCheck.js";
@@ -126,6 +127,7 @@ declare const fullApi: ApiFromModules<{
   daytona: typeof daytona;
   daytonaWebhooks: typeof daytonaWebhooks;
   daytonaWebhooksNode: typeof daytonaWebhooksNode;
+  "eval/systemDesign/report": typeof eval_systemDesign_report;
   github: typeof github;
   githubAppNode: typeof githubAppNode;
   githubCheck: typeof githubCheck;

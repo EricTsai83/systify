@@ -125,11 +125,18 @@ export function PromptInputModelPicker({
   // catalog narrows downstream via `useMemo`.
   const catalogEntries = useQuery(api.llmCatalog.listPickableModels, capability !== undefined ? { capability } : {});
 
+  // `useQuery` returns either `undefined` (loading) or the typed array
+  // in production. Guard with `Array.isArray` so a misbehaving mock /
+  // a future projection change can't crash the picker on a non-array
+  // payload — fall back to "no models available" instead. Memoize so
+  // the identity-stable fallback array doesn't fire downstream
+  // `useMemo` invalidations every render.
+  const safeCatalog = useMemo(() => (Array.isArray(catalogEntries) ? catalogEntries : []), [catalogEntries]);
   const visibleEntries = useMemo(() => {
-    if (!catalogEntries) return [];
-    if (!threadLockedProvider) return catalogEntries;
-    return catalogEntries.filter((entry) => entry.provider === threadLockedProvider);
-  }, [catalogEntries, threadLockedProvider]);
+    if (safeCatalog.length === 0) return [];
+    if (!threadLockedProvider) return safeCatalog;
+    return safeCatalog.filter((entry) => entry.provider === threadLockedProvider);
+  }, [safeCatalog, threadLockedProvider]);
 
   const groupedByProvider = useMemo(() => groupByProvider(visibleEntries), [visibleEntries]);
 
@@ -141,9 +148,9 @@ export function PromptInputModelPicker({
   // dropped from the catalog mid-session.
   const currentDisplayName = useMemo(() => {
     if (!value) return undefined;
-    const entry = catalogEntries?.find((e) => e.provider === value.provider && e.modelName === value.modelName);
+    const entry = safeCatalog.find((e) => e.provider === value.provider && e.modelName === value.modelName);
     return entry?.displayName ?? value.modelName;
-  }, [catalogEntries, value]);
+  }, [safeCatalog, value]);
 
   const handleValueChange = (next: string) => {
     const picked = fromCompositeKey(next);

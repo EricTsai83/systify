@@ -26,7 +26,8 @@
     "test": "vitest run",
     "preview": "vite preview",
     "format": "prettier --write .",
-    "report:user-costs": "bun scripts/reportUserCosts.ts"
+    "report:user-costs": "bun scripts/reportUserCosts.ts",
+    "report:system-design": "bun scripts/reportSystemDesign.ts"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.81",

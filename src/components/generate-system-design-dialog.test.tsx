@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { getFunctionName } from "convex/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { GenerateSystemDesignDialog } from "./generate-system-design-dialog";
 import type { RepositoryId } from "@/lib/types";
@@ -14,6 +15,20 @@ vi.mock("convex/react", () => ({
   useMutation: useMutationMock,
   useQuery: useQueryMock,
 }));
+
+/**
+ * Convex's codegen exposes `getFunctionName(query)` as the canonical way
+ * to identify a query reference at runtime. We use it to route a single
+ * `useQuery` mock to per-query stubs (active job vs. cached status vs.
+ * the picker's catalog).
+ */
+function queryName(query: unknown): string {
+  try {
+    return getFunctionName(query as Parameters<typeof getFunctionName>[0]);
+  } catch {
+    return "";
+  }
+}
 
 beforeEach(() => {
   useMutationMock.mockReset();
@@ -34,10 +49,14 @@ describe("GenerateSystemDesignDialog", () => {
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
     // The publication opts the user in to the full set — all eight documents
-    // start checked.
-    const checkboxes = screen.getAllByRole("checkbox");
-    expect(checkboxes).toHaveLength(8);
-    for (const checkbox of checkboxes) {
+    // start checked. We filter by the catalog id prefix so the
+    // "Regenerate even if cached" toggle (a separate checkbox in the same
+    // dialog) doesn't get folded into the assertion.
+    const selectionCheckboxes = screen
+      .getAllByRole("checkbox")
+      .filter((checkbox) => checkbox.id.startsWith("gen-") && checkbox.id !== "gen-force-regenerate");
+    expect(selectionCheckboxes).toHaveLength(8);
+    for (const checkbox of selectionCheckboxes) {
       expect(checkbox).toBeChecked();
     }
   });
@@ -97,7 +116,7 @@ describe("GenerateSystemDesignDialog", () => {
     expect(generateBtn).toBeDisabled();
   });
 
-  test("submits the full default selection and closes dialog on success", async () => {
+  test("submits the full default selection with the default model pick and closes dialog on success", async () => {
     useQueryMock.mockReturnValue(null);
     const requestGeneration = vi.fn().mockResolvedValue({ jobId: "job_1" });
     useMutationMock.mockReturnValue(requestGeneration);
@@ -121,9 +140,74 @@ describe("GenerateSystemDesignDialog", () => {
           "security_overview",
           "operations_overview",
         ],
+        provider: "openai",
+        modelName: "gpt-5",
+        // `forceRegenerate` defaults to `undefined` (not `false`) so the
+        // backend treats the field as omitted rather than explicit-off.
+        forceRegenerate: undefined,
       });
       expect(onOpenChange).toHaveBeenCalledWith(false);
     });
+  });
+
+  test("submits with forceRegenerate=true when the user toggles the checkbox", async () => {
+    useQueryMock.mockReturnValue(null);
+    const requestGeneration = vi.fn().mockResolvedValue({ jobId: "job_1" });
+    useMutationMock.mockReturnValue(requestGeneration);
+
+    render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Regenerate even if cached/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Generate selected/i }));
+
+    await waitFor(() => {
+      expect(requestGeneration).toHaveBeenCalledWith(
+        expect.objectContaining({
+          forceRegenerate: true,
+        }),
+      );
+    });
+  });
+
+  test("renders the cache hint when getCachedSelectionStatus reports cached kinds", () => {
+    // Three queries fire here — `getActiveSystemDesignJob` (no job),
+    // `getCachedSelectionStatus`, and the picker's `listPickableModels`.
+    // Route via `getFunctionName` so the cache hint test is robust to
+    // additional queries landing in the dialog later.
+    useQueryMock.mockImplementation((query: unknown) => {
+      const name = queryName(query);
+      if (name.endsWith("getCachedSelectionStatus")) {
+        return {
+          total: 8,
+          cachedKinds: ["readme_summary", "architecture_overview", "data_model_overview"],
+          pendingKinds: [
+            "architecture_diagram",
+            "api_surface_overview",
+            "deployment_overview",
+            "security_overview",
+            "operations_overview",
+          ],
+        };
+      }
+      if (name.endsWith("listPickableModels")) {
+        return [
+          {
+            provider: "openai",
+            modelName: "gpt-5",
+            displayName: "GPT-5",
+            capability: "sandbox",
+            supportsTools: true,
+            contextWindow: 200_000,
+          },
+        ];
+      }
+      return null;
+    });
+    useMutationMock.mockReturnValue(vi.fn());
+
+    render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
+
+    expect(screen.getByText(/3 of 8 selected documents already exist for this commit and model/i)).toBeInTheDocument();
   });
 
   test("shows error message on submission failure", async () => {
