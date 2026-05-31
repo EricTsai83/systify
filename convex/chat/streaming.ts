@@ -3,7 +3,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { type MutationCtx, internalMutation, internalQuery, query } from "../_generated/server";
 import { loadOwnedDoc, requireOwnedDoc } from "../lib/ownedDocs";
 import { CHAT_JOB_LEASE_MS, consumeSandboxDailyCost } from "../lib/rateLimit";
-import { costUsdToCents } from "../lib/openaiPricing";
+import { costUsdToCents } from "../lib/llmPricing";
 import { logInfo, logWarn } from "../lib/observability";
 import {
   MAX_LIVE_REASONING_CHARS,

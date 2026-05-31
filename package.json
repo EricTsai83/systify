@@ -28,6 +28,7 @@
     "format": "prettier --write ."
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.81",
     "@ai-sdk/openai": "^3.0.53",
     "@base-ui/react": "^1.5.0",
     "@convex-dev/rate-limiter": "^0.3.2",

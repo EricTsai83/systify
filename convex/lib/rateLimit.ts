@@ -1,7 +1,7 @@
 import { DAY, HOUR, MINUTE, RateLimiter } from "@convex-dev/rate-limiter";
-import { ConvexError } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { components } from "../_generated/api";
-import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { internalMutation, type MutationCtx, type QueryCtx } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 import { logInfo, logWarn } from "./observability";
 
@@ -12,7 +12,9 @@ export type RateLimitBucket =
   | "chatRequestsGlobal"
   | "daytonaRequestsGlobal"
   | "sandboxCostUsdPerUserDaily"
-  | "sandboxCostUsdPerRepositoryDaily";
+  | "sandboxCostUsdPerRepositoryDaily"
+  | "llmRequestsPerUserPerMinute"
+  | "llmConcurrentCallsPerUser";
 
 export type InFlightBucket = "repositoryImportInFlight" | "repositorySystemDesignInFlight" | "threadChatInFlight";
 
@@ -44,6 +46,8 @@ const RATE_LIMIT_MESSAGES: Record<RateLimitBucket, string> = {
   daytonaRequestsGlobal: "Analysis capacity is temporarily full. Please retry later.",
   sandboxCostUsdPerUserDaily: "Daily sandbox spend cap reached. Resets at midnight UTC.",
   sandboxCostUsdPerRepositoryDaily: "Repository daily sandbox spend cap reached. Resets at midnight UTC.",
+  llmRequestsPerUserPerMinute: "Too many LLM requests per minute. Please wait and retry.",
+  llmConcurrentCallsPerUser: "Too many concurrent LLM calls. Close one and retry.",
 };
 
 const DEFAULT_IMPORTS_PER_HOUR = 5;
@@ -53,6 +57,34 @@ const DEFAULT_CHAT_BURST_CAPACITY = 6;
 const DEFAULT_GLOBAL_CHAT_PER_MINUTE = 300;
 const DEFAULT_GLOBAL_CHAT_BURST_CAPACITY = 60;
 const DEFAULT_DAYTONA_GLOBAL_PER_HOUR = 30;
+
+/**
+ * Per-user LLM-call fairness defaults.
+ *
+ * Both buckets sit OUTSIDE the provider's own rate limiting — provider
+ * 429s are still the gateway's `withLlmRetry`'s job. These exist to
+ * stop one user monopolising provider quota when multiple users share
+ * the deployment.
+ *
+ * Defaults are loose enough that a single-user deployment never sees
+ * an effective limit:
+ *
+ *   - **60 requests / minute / user** ≫ a real user's natural rate.
+ *     A System Design job fires ~7 LLM calls over ~10 minutes
+ *     (~0.7/min); chat tops out at maybe 1 message every few seconds
+ *     at peak (~30/min). Multi-tab abuse (10 tabs × 6 msg/min each)
+ *     would hit the cap; normal usage doesn't get close.
+ *   - **5 concurrent calls / user** ≫ a real user's natural
+ *     concurrency. 5 tabs / panels open simultaneously is plenty;
+ *     opening 10 to monopolise the gateway is the bug we guard
+ *     against.
+ *
+ * To tighten for multi-user joins, set `LLM_REQUESTS_PER_USER_PER_MINUTE`
+ * / `LLM_CONCURRENT_CALLS_PER_USER` via `bunx convex env set` — no
+ * schema or code change needed.
+ */
+const DEFAULT_LLM_REQUESTS_PER_USER_PER_MINUTE = 60;
+const DEFAULT_LLM_CONCURRENT_CALLS_PER_USER = 5;
 
 /**
  * Daily spend caps for sandbox-mode replies, denominated in **cents** so
@@ -184,6 +216,17 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
     period: HOUR,
     shards: 10,
   },
+  // LLM fairness buckets (`llmRequestsPerUserPerMinute`,
+  // `llmConcurrentCallsPerUser`) are deliberately NOT registered
+  // here. Same reason as the sandbox cost buckets below — we use
+  // the inline-config pattern so env vars like
+  // `LLM_REQUESTS_PER_USER_PER_MINUTE` and
+  // `LLM_CONCURRENT_CALLS_PER_USER` can be changed at deploy time
+  // (or in tests) without bouncing the runtime. Static config
+  // captures values at module load and is then immutable. See
+  // `getLlmRequestsPerMinuteConfig` / `getLlmConcurrencyConfig`
+  // and `acquireLlmRequestRateSlot` /
+  // `acquireLlmConcurrencySlot` below.
   // Sandbox cost buckets (`sandboxCostUsdPerUserDaily`,
   // `sandboxCostUsdPerRepositoryDaily`) are deliberately *not* registered
   // here. They use the inline-config pattern (config supplied per
@@ -567,3 +610,162 @@ export async function consumeSandboxDailyCost(
     await consumeSandboxBucket(ctx, SANDBOX_REPOSITORY_COST_BUCKET, repositoryCostKey(args.repositoryId), args.cents);
   }
 }
+
+// ===========================================================================
+// LLM fairness buckets (per-user RPM + per-user concurrency).
+//
+// These DO NOT throw — the gateway maps a denied acquire into its own
+// `LlmRateLimitError` so the frontend can branch on the discriminated
+// `code` instead of sniffing `ConvexError.data.bucket`. The internal
+// mutations wrap the helpers so the gateway action can call them via
+// `ctx.runMutation(internal.lib.rateLimit.acquireLlmRequestSlot, …)`.
+// ===========================================================================
+
+export type LlmRateLimitStatus = { ok: true } | { ok: false; retryAfterMs: number };
+
+/**
+ * Per-user LLM request-rate cap. Token bucket so bursts (a few
+ * messages in quick succession) are accepted up to `capacity`,
+ * then the bucket refills at `rate` per minute. Counting requests
+ * is exact — no estimation — which is why this is the layer where
+ * we enforce per-user fairness instead of attempting per-user TPM
+ * (provider TPM stays the provider's concern, handled by
+ * `withLlmRetry` reading `Retry-After`).
+ *
+ * Read fresh each call so env-var changes (deploy, test) take
+ * effect without restart — same pattern as the sandbox cost caps.
+ */
+function getLlmRequestsPerMinuteConfig() {
+  const rate = readPositiveIntEnv("LLM_REQUESTS_PER_USER_PER_MINUTE", DEFAULT_LLM_REQUESTS_PER_USER_PER_MINUTE);
+  const capacity = readPositiveIntEnv("LLM_REQUESTS_PER_USER_PER_MINUTE_BURST", rate);
+  return {
+    kind: "token bucket" as const,
+    rate,
+    period: MINUTE,
+    capacity,
+  };
+}
+
+/**
+ * Per-user LLM-call concurrency cap, modelled as a fixed window
+ * with capacity = max-concurrent and a long `period` so the
+ * scheduled refill rarely fires before a paired release reaches
+ * the gateway. The gateway acquires 1 token on entry
+ * (`count: 1`) and refunds it on exit (`count: -1`) inside a
+ * `finally` block — see `acquireLlmConcurrencySlot` /
+ * `releaseLlmConcurrencySlot`.
+ *
+ * The HOUR period bounds slot leaks. If an action crashes between
+ * acquire and release (process kill, deploy mid-stream), the
+ * leaked slot resets at the next window boundary — worst case the
+ * user's effective concurrency drops by 1 for up to an hour.
+ * Acceptable at current scale; revisit when
+ * `llm_concurrency_acquired` shows slots not returning after
+ * expected releases.
+ */
+function getLlmConcurrencyConfig() {
+  const cap = readPositiveIntEnv("LLM_CONCURRENT_CALLS_PER_USER", DEFAULT_LLM_CONCURRENT_CALLS_PER_USER);
+  return {
+    kind: "fixed window" as const,
+    rate: cap,
+    period: HOUR,
+    capacity: cap,
+  };
+}
+
+/**
+ * Try to take one slot from the per-user RPM bucket. Non-throwing.
+ * Returns `{ ok: true }` on success, `{ ok: false, retryAfterMs }` on
+ * denial — the caller (gateway) maps the latter into its discriminated
+ * error class.
+ */
+export async function acquireLlmRequestRateSlot(
+  ctx: MutationCtx,
+  ownerTokenIdentifier: string,
+): Promise<LlmRateLimitStatus> {
+  const status = await rateLimiter.limit(ctx, "llmRequestsPerUserPerMinute", {
+    key: ownerTokenIdentifier,
+    config: getLlmRequestsPerMinuteConfig(),
+  });
+  if (status.ok) {
+    return { ok: true };
+  }
+  return { ok: false, retryAfterMs: Math.max(1, Math.ceil(status.retryAfter ?? 0)) };
+}
+
+/**
+ * Try to take one slot from the per-user concurrency bucket.
+ * Non-throwing. Counterpart: `releaseLlmConcurrencySlot`.
+ *
+ * Acquire consumes 1 token (`count: 1`); release refunds 1
+ * (`count: -1`).
+ */
+export async function acquireLlmConcurrencySlot(
+  ctx: MutationCtx,
+  ownerTokenIdentifier: string,
+): Promise<LlmRateLimitStatus> {
+  const status = await rateLimiter.limit(ctx, "llmConcurrentCallsPerUser", {
+    key: ownerTokenIdentifier,
+    count: 1,
+    config: getLlmConcurrencyConfig(),
+  });
+  if (status.ok) {
+    return { ok: true };
+  }
+  return { ok: false, retryAfterMs: Math.max(1, Math.ceil(status.retryAfter ?? 0)) };
+}
+
+/**
+ * Refund one slot to the per-user concurrency bucket. Always
+ * succeeds — refunding a token cannot fail the limit check
+ * (negative count never drives `value` below zero, only above the
+ * cap on overshoot, which only happens if the caller has bugs in
+ * acquire / release pairing).
+ *
+ * The `value` field can exceed `capacity` if the caller releases
+ * more than it acquired (a bug). The cap restores at the next
+ * window boundary; we do NOT log on overshoot because spotting the
+ * pairing bug is the gateway's job, not the rate limiter's.
+ */
+export async function releaseLlmConcurrencySlot(ctx: MutationCtx, ownerTokenIdentifier: string): Promise<void> {
+  await rateLimiter.limit(ctx, "llmConcurrentCallsPerUser", {
+    key: ownerTokenIdentifier,
+    count: -1,
+    config: getLlmConcurrencyConfig(),
+  });
+}
+
+/**
+ * Action-callable internal mutation wrapping `acquireLlmRequestRateSlot`.
+ * The gateway action calls this via `ctx.runMutation` because rate
+ * limiter writes need a `MutationCtx`.
+ */
+export const acquireLlmRequestSlot = internalMutation({
+  args: { ownerTokenIdentifier: v.string() },
+  handler: async (ctx, args): Promise<LlmRateLimitStatus> => {
+    return await acquireLlmRequestRateSlot(ctx, args.ownerTokenIdentifier);
+  },
+});
+
+/**
+ * Action-callable internal mutation wrapping `acquireLlmConcurrencySlot`.
+ */
+export const acquireLlmConcurrency = internalMutation({
+  args: { ownerTokenIdentifier: v.string() },
+  handler: async (ctx, args): Promise<LlmRateLimitStatus> => {
+    return await acquireLlmConcurrencySlot(ctx, args.ownerTokenIdentifier);
+  },
+});
+
+/**
+ * Action-callable internal mutation wrapping `releaseLlmConcurrencySlot`.
+ * Returns `null` — release is fire-and-forget; the gateway does not
+ * wait on a status.
+ */
+export const releaseLlmConcurrency = internalMutation({
+  args: { ownerTokenIdentifier: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    await releaseLlmConcurrencySlot(ctx, args.ownerTokenIdentifier);
+    return null;
+  },
+});

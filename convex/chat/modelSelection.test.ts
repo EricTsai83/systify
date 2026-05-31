@@ -15,7 +15,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { pickCapability, resolveModelForReply, type ModelCapability } from "./modelSelection";
-import { estimateCostUsd } from "../lib/openaiPricing";
+import { estimateCostUsd } from "../lib/llmPricing";
 
 const CAPABILITY_ENV_VARS = ["OPENAI_MODEL_SANDBOX", "OPENAI_MODEL_LIBRARY", "OPENAI_MODEL_DISCUSS"] as const;
 const ALL_ENV_VARS = [...CAPABILITY_ENV_VARS, "OPENAI_MODEL"] as const;
@@ -138,7 +138,7 @@ describe("resolveModelForReply", () => {
       ];
     for (const { capability, args } of cases) {
       const choice = resolveModelForReply(args);
-      const cost = estimateCostUsd(choice.name, 1, 1);
+      const cost = estimateCostUsd("openai", choice.name, { inputTokens: 1, outputTokens: 1 });
       expect(cost, `pricing missing for default model ${choice.name} (capability: ${capability})`).not.toBeUndefined();
     }
   });

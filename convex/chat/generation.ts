@@ -37,7 +37,7 @@ import { getSandboxFsClient } from "../daytona";
 import { verifyAndSyncSandbox, SandboxPreparationError } from "../lib/sandboxLiveness";
 import { STREAM_FLUSH_THRESHOLD } from "../lib/constants";
 import { emitMetric, logInfo, logWarn } from "../lib/observability";
-import { estimateCostUsd } from "../lib/openaiPricing";
+import { estimateCostUsd } from "../lib/llmPricing";
 import type { ReplyContext } from "./context";
 import { resolveModelForReply } from "./modelSelection";
 import {
@@ -1195,7 +1195,9 @@ async function extractStreamUsage(
     const usage = await response.totalUsage;
     const inputTokens = usage.inputTokens;
     const outputTokens = usage.outputTokens;
-    const costUsd = estimateCostUsd(context.modelName, inputTokens, outputTokens);
+    // Chat path is OpenAI-only today (multi-provider routing lands in PR-A3);
+    // hard-code provider here until `resolveModelForReply` returns it.
+    const costUsd = estimateCostUsd("openai", context.modelName, { inputTokens, outputTokens });
     return { inputTokens, outputTokens, costUsd };
   } catch (error) {
     logWarn("chat", "assistant_reply_usage_unavailable", {

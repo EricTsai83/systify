@@ -32,7 +32,7 @@
  *      alone is enough for the system to "just work".
  *
  * The defaults below match the pricing table snapshot in
- * `convex/lib/openaiPricing.ts`. The pairing matters: an unknown model
+ * `convex/lib/llmPricing.ts`. The pairing matters: an unknown model
  * silently produces `costUsd === undefined` from `estimateCostUsd`,
  * which the daily-cap settlement treats as "no cost recorded" — so a
  * default that drifts out of the pricing table would let users spend
@@ -54,20 +54,12 @@
  */
 
 import type { ChatMode } from "../lib/chatMode";
+import type { ModelCapability, ReasoningEffort } from "../lib/llmCatalog";
 
-/**
- * Capability tiers the resolver routes replies through. Distinct from
- * {@link ChatMode} because the (mode, groundSandbox) pair maps onto these
- * tiers — sandbox-grounded Discuss and the system design generator both
- * land on `sandbox` even though their `mode` differs.
- */
-export type ModelCapability = "sandbox" | "library" | "discuss";
-
-/**
- * OpenAI reasoning effort knob. Mirrors the provider's accepted values for
- * `providerOptions.openai.reasoningEffort`.
- */
-export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+// Re-exported so existing call sites do not have to chase the new
+// canonical location at the same time the catalog lands. Pure type
+// re-export — at runtime, nothing changes.
+export type { ModelCapability, ReasoningEffort };
 
 /**
  * Resolver output. Carries the picked model name alongside its reasoning
@@ -94,7 +86,7 @@ const DEFAULT_MODEL_BY_CAPABILITY: Record<ModelCapability, string> = {
  * `gpt-5-mini` row rather than the `gpt-5` row. A model that doesn't
  * match any prefix has no reasoning support — adding a new reasoning-
  * capable family means adding it here in the same change that introduces
- * it to the pricing table (`convex/lib/openaiPricing.ts`).
+ * it to the pricing table (`convex/lib/llmPricing.ts`).
  *
  * Family matching (not exact id) so operator-pinned snapshot names like
  * `gpt-5-2026-01-15` keep the family's reasoning default instead of

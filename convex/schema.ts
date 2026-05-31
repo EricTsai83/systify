@@ -32,11 +32,39 @@ const jobKind = v.union(
  * Structured failure categorisation for per-kind System Design failures.
  * Drives banner copy in `system-design-status-banner.tsx` without
  * regex-matching the raw `message`. Optional so rows without a reason
- * category fall through to the `other` branch in the UI.
+ * category fall through to the `transport_other` branch in the UI.
+ *
+ * Failure taxonomy:
+ *   - `live_source_unavailable` — the live tree (sandbox / repo files) the
+ *      kind needs to read was missing or unreachable.
+ *   - `model_empty_output` — the LLM returned no usable text.
+ *   - `transport_rate_limit` — provider 429 or gateway RPM / concurrency
+ *      acquire that the retry layer exhausted.
+ *   - `transport_other` — transport-level error (network / 5xx / SDK)
+ *      that isn't a rate limit. This is the catch-all for
+ *      provider-layer faults.
+ *   - `output_quality` — LLM produced text, but quality-gates rejected it
+ *      (missing required sections, missing Mermaid block, …).
+ *   - `infra` — Convex-level / our-side bug surfaced into the kind loop
+ *      (mutation error, action crash, schema validation, …). Engineering
+ *      alerted.
+ *
+ * Migration note (widen-backfill-narrow): `other` is retained as a
+ * temporary literal during the rollout window. Once the backfill
+ * `rewriteLegacyKindFailureReason` has rewritten every `other` row to
+ * `transport_other` and the operator has confirmed zero remaining
+ * `other` rows in production, a follow-up commit will drop `other`
+ * from this union. Do NOT write `other` from new code paths — the
+ * retain-window is read-only.
  */
 const kindFailureReason = v.union(
   v.literal("live_source_unavailable"),
   v.literal("model_empty_output"),
+  v.literal("transport_rate_limit"),
+  v.literal("transport_other"),
+  v.literal("output_quality"),
+  v.literal("infra"),
+  // Retained during widen-backfill-narrow rollout; dropped in a follow-up commit.
   v.literal("other"),
 );
 
@@ -663,7 +691,7 @@ export default defineSchema({
     /**
      * Per-message cost estimate in USD, computed from the model's reported
      * usage and a snapshot pricing table at finalize time
-     * (`convex/lib/openaiPricing.ts`). Used by:
+     * (`convex/lib/llmPricing.ts`). Used by:
      *
      *   1. The chat bubble cost-ticker ("~$0.03 (1.2k tokens, 5 tools)")
      *      so the user can correlate spend to specific replies.
