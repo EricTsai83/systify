@@ -36,7 +36,7 @@ import { useMemo } from "react";
 import { LockSimpleIcon } from "@phosphor-icons/react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
-import type { LlmProvider, ModelCapability, ModelCatalogEntry } from "@/lib/types";
+import type { LlmProvider, ModelCatalogEntry, UserPickableCapability } from "@/lib/types";
 import {
   PromptInputHoverCard,
   PromptInputHoverCardContent,
@@ -80,7 +80,7 @@ export interface PromptInputModelPickerProps {
    * composer passes `"discuss"`; the standalone System Design dialog
    * (future PR-B) passes `"sandbox"`.
    */
-  capability?: ModelCapability;
+  capability?: UserPickableCapability;
   /**
    * Disables the trigger entirely. Mirrors the disabled state of the
    * grounding toggles so the whole composer toolbar flips read-only

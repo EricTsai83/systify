@@ -611,6 +611,32 @@ export async function consumeSandboxDailyCost(
   }
 }
 
+/**
+ * Action-callable internal mutation wrapping `consumeSandboxDailyCost`.
+ * Used by background actions (e.g. `artifactIndexing` embedding batches)
+ * that produce cost outside a mutation context and need to settle the
+ * daily cap via `ctx.runMutation`. Mutation-context call sites
+ * (`chat/streaming`, `systemDesign`) still call the bare helper directly.
+ *
+ * Idempotent on non-positive `cents` — the underlying helper short-circuits
+ * so callers can pass the raw `costUsdToCents` output without branching.
+ */
+export const settleSandboxDailyCost = internalMutation({
+  args: {
+    ownerTokenIdentifier: v.string(),
+    repositoryId: v.union(v.id("repositories"), v.null()),
+    cents: v.number(),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    await consumeSandboxDailyCost(ctx, {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId: args.repositoryId,
+      cents: args.cents,
+    });
+    return null;
+  },
+});
+
 // ===========================================================================
 // LLM fairness buckets (per-user RPM + per-user concurrency).
 //

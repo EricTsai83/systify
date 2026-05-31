@@ -127,6 +127,21 @@ const PRICING: Record<string, LlmPricing> = {
     cacheReadPerMillion: 0.08,
     cacheWritePerMillion: 1,
   },
+  // === OpenAI embeddings === Input-only pricing — embedding APIs
+  // return a vector, not generated tokens, so `outputPerMillion`
+  // sits at 0. `estimateCostUsd` charges the `outputTokens / 1e6
+  // * 0` line cleanly when the gateway passes
+  // `{ outputTokens: 0 }`; the embed call sites never pass
+  // `cachedInputTokens` / `cacheWriteTokens` / `reasoningTokens`,
+  // so those lines naturally short-circuit to zero.
+  "openai:text-embedding-3-small": {
+    inputPerMillion: 0.02,
+    outputPerMillion: 0,
+  },
+  "openai:text-embedding-3-large": {
+    inputPerMillion: 0.13,
+    outputPerMillion: 0,
+  },
 };
 
 function pricingKey(provider: LlmProvider, modelName: string): string {

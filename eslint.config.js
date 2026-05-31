@@ -81,7 +81,7 @@ export default defineConfig([
         ...globals.node,
       },
       parserOptions: {
-        project: ["./convex/tsconfig.json"],
+        project: ["./convex/tsconfig.json", "./convex/eval/tsconfig.json"],
       },
     },
     rules: {

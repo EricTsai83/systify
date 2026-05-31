@@ -36,12 +36,14 @@
 import { anthropic } from "@ai-sdk/anthropic";
 import { openai } from "@ai-sdk/openai";
 import {
+  type EmbeddingModel,
   type GenerateTextResult,
   type StepResult,
   type StopCondition,
   type StreamTextResult,
   type TextStreamPart,
   type ToolSet,
+  embedMany,
   generateText,
   streamText,
 } from "ai";
@@ -86,7 +88,7 @@ export interface LlmCallContext {
   modelName: string;
   ownerTokenIdentifier: string;
   capability: ModelCapability;
-  feature: "chat" | "system_design" | "eval_judge";
+  feature: "chat" | "system_design" | "eval_judge" | "indexing";
   jobId?: Id<"jobs">;
   threadId?: Id<"threads">;
   messageId?: Id<"messages">;
@@ -182,6 +184,118 @@ export class LlmRateLimitError extends Error {
   ) {
     super(`LLM rate limit: ${code} (retry after ${retryAfterMs}ms)`);
     this.name = "LlmRateLimitError";
+  }
+}
+
+/**
+ * Provider-agnostic embedding-usage shape. The AI SDK's
+ * `EmbeddingModelUsage` exposes a single `tokens: number` field —
+ * embeddings have no notion of input/output split, cache tiers, or
+ * reasoning. We map that into `inputTokens` so the same
+ * `estimateCostUsd` math (and any future cost dashboard) treats
+ * embedding spend as input-only by construction.
+ */
+export interface NormalizedEmbeddingUsage {
+  inputTokens: number;
+}
+
+/**
+ * Arguments forwarded to the embedding SDK call. Mirrors the AI
+ * SDK's `embedMany` shape — we always batch through `embedMany`
+ * (even for a single value) so the call site doesn't have to branch
+ * between `embed` and `embedMany`, and so per-batch usage settles
+ * once per gateway invocation.
+ */
+export interface LlmEmbedArgs {
+  values: string[];
+}
+
+/**
+ * Unified embedding result. `embeddings` preserves the input order —
+ * `embeddings[i]` is the vector for `args.values[i]`. `usage` is
+ * the total tokens consumed across the batch; `costUsd` is computed
+ * via `estimateCostUsd` against the catalogued model's input rate.
+ */
+export interface LlmEmbedResult {
+  embeddings: number[][];
+  usage: NormalizedEmbeddingUsage;
+  costUsd: number | undefined;
+}
+
+/**
+ * Batch embedding via the gateway. Mirrors `generateViaGateway`'s
+ * 9-step internal flow (catalog validation → RPM acquire →
+ * concurrency acquire → withLlmRetry-wrapped SDK call → usage
+ * normalization → cost compute → metric emit → slot release in
+ * finally → return).
+ *
+ * The `callCtx.capability` MUST be `"embedding"` — embedding
+ * models are gated behind the dedicated capability so a generate
+ * call site cannot accidentally route here, and so the catalog's
+ * embedding-tier entries refuse a stray generation request.
+ *
+ * Throws `LlmRateLimitError` on gateway-level fairness denial.
+ * Throws the original AI SDK / provider error after retry
+ * exhaustion (`withLlmRetry` re-throws on terminal failure).
+ */
+export async function embedViaGateway(
+  ctx: ActionCtx,
+  callCtx: LlmCallContext,
+  args: LlmEmbedArgs,
+): Promise<LlmEmbedResult> {
+  assertCatalogPick(callCtx);
+  assertEmbeddingCapability(callCtx);
+  await acquireRpmOrThrow(ctx, callCtx);
+  await acquireConcurrencyOrThrow(ctx, callCtx);
+  try {
+    const result = await withLlmRetry(
+      () =>
+        embedMany({
+          model: getSdkEmbeddingModel(callCtx.provider, callCtx.modelName),
+          values: args.values,
+          // Wrapper owns retries — see `withLlmRetry` contract.
+          maxRetries: 0,
+        }),
+      {
+        operation: `${callCtx.feature}.embed`,
+        provider: callCtx.provider,
+        modelName: callCtx.modelName,
+        resourceId: callCtx.jobId ?? callCtx.messageId ?? callCtx.threadId,
+      },
+    );
+    const usage: NormalizedEmbeddingUsage = { inputTokens: result.usage.tokens };
+    // Reuse the generation cost calculator: embedding rows have
+    // `outputPerMillion: 0` so passing `{ inputTokens, outputTokens: 0 }`
+    // produces the correct input-only cost in one line.
+    const costUsd = estimateCostUsd(callCtx.provider, callCtx.modelName, {
+      inputTokens: usage.inputTokens,
+      outputTokens: 0,
+    });
+    emitMetric("llm_embedding_tokens_used", {
+      value: usage.inputTokens,
+      tags: {
+        provider: callCtx.provider,
+        model: callCtx.modelName,
+        feature: callCtx.feature,
+      },
+      details: {
+        ownerTokenIdentifier: callCtx.ownerTokenIdentifier,
+        inputTokens: usage.inputTokens,
+        batchSize: args.values.length,
+      },
+    });
+    // Vercel AI SDK's `embedMany` returns `embeddings: Embedding[]`,
+    // where each Embedding is a readonly number[]. Spread into a
+    // mutable shape so callers can persist without further coercion.
+    return {
+      embeddings: result.embeddings.map((embedding) => [...embedding]),
+      usage,
+      costUsd,
+    };
+  } finally {
+    // MUST run on every exit path — including `withLlmRetry`
+    // exhaustion — otherwise the slot leaks for up to HOUR.
+    await releaseConcurrencyBestEffort(ctx, callCtx);
   }
 }
 
@@ -377,6 +491,21 @@ function assertCatalogPick(callCtx: LlmCallContext): void {
   }
 }
 
+/**
+ * Guard `embedViaGateway` so a generate-tier model can never be
+ * dispatched through the embedding path (and vice-versa: a generate
+ * call site cannot mistakenly route an embedding model through
+ * `generateViaGateway` — that would fail at the SDK boundary, but
+ * this guard surfaces the bug at the gateway with a clear error).
+ */
+function assertEmbeddingCapability(callCtx: LlmCallContext): void {
+  if (callCtx.capability !== "embedding") {
+    throw new Error(
+      `LlmGateway.embedViaGateway: capability must be "embedding" (got "${callCtx.capability}") for ${callCtx.provider}:${callCtx.modelName}`,
+    );
+  }
+}
+
 async function acquireRpmOrThrow(ctx: ActionCtx, callCtx: LlmCallContext): Promise<void> {
   const status = await ctx.runMutation(internal.lib.rateLimit.acquireLlmRequestSlot, {
     ownerTokenIdentifier: callCtx.ownerTokenIdentifier,
@@ -452,6 +581,26 @@ function getSdkModel(provider: LlmProvider, modelName: string) {
       return openai(modelName);
     case "anthropic":
       return anthropic(modelName);
+  }
+}
+
+/**
+ * Per-provider embedding-model handle. Anthropic does NOT publish
+ * an embedding API today — the catalog refuses to register an
+ * embedding entry under `anthropic`, so this branch is unreachable
+ * via valid catalog picks. The explicit throw documents the
+ * boundary so a future "anthropic adds embeddings" change surfaces
+ * here, not as a cryptic SDK error.
+ */
+function getSdkEmbeddingModel(provider: LlmProvider, modelName: string): EmbeddingModel {
+  switch (provider) {
+    case "openai":
+      return openai.embedding(modelName);
+    case "anthropic":
+      throw new Error(
+        `LlmGateway: provider "anthropic" does not support embeddings (model ${modelName}); ` +
+          "no Anthropic embedding API is currently published.",
+      );
   }
 }
 

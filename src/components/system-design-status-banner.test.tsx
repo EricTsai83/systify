@@ -262,7 +262,7 @@ describe("SystemDesignStatusBanner", () => {
     expect(screen.getByText(/internal error stopped the run/i)).toBeInTheDocument();
   });
 
-  test("legacy 'other' reason falls back to the transport copy", () => {
+  test("kindFailure without a reason falls back to the generic copy", () => {
     setJob(
       makeJob({
         status: "completed",
@@ -273,15 +273,14 @@ describe("SystemDesignStatusBanner", () => {
           {
             kind: "deployment_overview",
             errorId: "err_legacy",
-            message: "Pre-rollout 'other' row.",
-            reason: "other",
+            message: "Row with no structured reason.",
           },
         ],
       }),
     );
     setMutation(async () => undefined);
     render(<SystemDesignStatusBanner repositoryId={repositoryId} />);
-    expect(screen.getByText(/transport error stopped the run/i)).toBeInTheDocument();
+    expect(screen.getByText(/something stopped the run/i)).toBeInTheDocument();
   });
 
   test("aggregates mixed reasons under the mixed-reason text", () => {

@@ -42,26 +42,36 @@
  */
 
 import type { ChatMode } from "../lib/chatMode";
-import { getCatalogEntry, MODEL_CATALOG, type ModelCapability, type ReasoningEffort } from "../lib/llmCatalog";
+import {
+  getCatalogEntry,
+  MODEL_CATALOG,
+  type ModelCapability,
+  type ReasoningEffort,
+  type UserPickableCapability,
+} from "../lib/llmCatalog";
 import type { LlmProvider } from "../lib/llmProvider";
 
 // Re-exported for the chat / generation call sites so they don't have to
 // chase the canonical location at the same time the multi-provider
 // catalog lands.
-export type { ModelCapability, ReasoningEffort };
+export type { ModelCapability, ReasoningEffort, UserPickableCapability };
 
 /**
  * Resolved pick handed to {@link generateViaGateway} / {@link streamViaGateway}.
  * Carries the picked `(provider, modelName)` pair alongside its catalog-
  * derived `reasoningEffort` and the `capability` tier we routed against so
  * the gateway can wire `providerOptions` without re-deriving either.
+ *
+ * `capability` is the user-facing tier (`sandbox` / `library` / `discuss`)
+ * — embedding picks are dispatched separately via `embedViaGateway` and
+ * never flow through this type.
  */
 export type ModelChoice = {
   provider: LlmProvider;
   modelName: string;
   /** `undefined` for non-reasoning models — gateway omits the provider-specific knob. */
   reasoningEffort: ReasoningEffort | undefined;
-  capability: ModelCapability;
+  capability: UserPickableCapability;
 };
 
 /**
@@ -74,7 +84,7 @@ export type ModelChoice = {
  * Defaults are OpenAI because `OPENAI_API_KEY` is the only env var the
  * bootstrap docs require; Anthropic is opt-in via the composer picker.
  */
-const DEFAULT_PICK_BY_CAPABILITY: Record<ModelCapability, { provider: LlmProvider; modelName: string }> = {
+const DEFAULT_PICK_BY_CAPABILITY: Record<UserPickableCapability, { provider: LlmProvider; modelName: string }> = {
   sandbox: { provider: "openai", modelName: "gpt-5" },
   library: { provider: "openai", modelName: "gpt-5-mini" },
   discuss: { provider: "openai", modelName: "gpt-5-mini" },
@@ -86,7 +96,7 @@ const DEFAULT_PICK_BY_CAPABILITY: Record<ModelCapability, { provider: LlmProvide
  * is the dominant cost signal — a sandbox-grounded Discuss reply lands on
  * the heavier `sandbox` tier regardless of the surface name.
  */
-export function pickCapability(args: { mode: ChatMode; groundSandbox: boolean }): ModelCapability {
+export function pickCapability(args: { mode: ChatMode; groundSandbox: boolean }): UserPickableCapability {
   if (args.groundSandbox) {
     return "sandbox";
   }

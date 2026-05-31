@@ -34,8 +34,25 @@ import type { LlmProvider } from "./llmProvider";
  * Capability tier. Routes the model picker and the future
  * thread-level capability default — a "sandbox-capable" reply needs
  * a tool-using tier; a discuss reply does not.
+ *
+ * `embedding` covers vector-embedding models used by the artifact
+ * RAG / indexing flows. Embedding entries are never `userPickable`
+ * (the composer picker filters them out) but the gateway routes
+ * them through the same fairness / cost surface as generation calls
+ * via `embedViaGateway`.
  */
-export type ModelCapability = "sandbox" | "library" | "discuss";
+export type ModelCapability = "sandbox" | "library" | "discuss" | "embedding";
+
+/**
+ * User-facing subset of {@link ModelCapability} — the tiers a human
+ * actually picks in the composer / Generate dialog. Excludes
+ * `embedding`, which is dispatched only by backend RAG / indexing
+ * flows. The picker UI, the chat-mode → capability map, and the
+ * public `listPickableModels` query all key on this narrower union
+ * so a stray `embedding` capability can't leak into a surface that
+ * doesn't expect it.
+ */
+export type UserPickableCapability = Exclude<ModelCapability, "embedding">;
 
 /**
  * OpenAI reasoning effort knob. Mirrors the provider's accepted
@@ -152,6 +169,33 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     contextWindow: 200_000,
     userPickable: true,
   },
+  // === OpenAI embeddings === Wired into the artifact indexing /
+  // RAG retrieval flows via `embedViaGateway`. `userPickable: false`
+  // — the composer picker hides the embedding tier; only the
+  // backend gateway dispatches to these entries.
+  //
+  // `contextWindow` reflects OpenAI's per-request input token cap
+  // for the embedding endpoint (8192 for `text-embedding-3-*`),
+  // not a conversational context — informational here, not
+  // enforced by the gateway.
+  {
+    provider: "openai",
+    modelName: "text-embedding-3-small",
+    displayName: "OpenAI Embedding 3 (small)",
+    capability: "embedding",
+    supportsTools: false,
+    contextWindow: 8_192,
+    userPickable: false,
+  },
+  {
+    provider: "openai",
+    modelName: "text-embedding-3-large",
+    displayName: "OpenAI Embedding 3 (large)",
+    capability: "embedding",
+    supportsTools: false,
+    contextWindow: 8_192,
+    userPickable: false,
+  },
 ];
 
 /**
@@ -183,7 +227,7 @@ export function getCatalogEntry(provider: LlmProvider, modelName: string): Model
  */
 export function listPickableModels(opts?: {
   provider?: LlmProvider;
-  capability?: ModelCapability;
+  capability?: UserPickableCapability;
 }): ModelCatalogEntry[] {
   return MODEL_CATALOG.filter((entry) => {
     if (!entry.userPickable) return false;

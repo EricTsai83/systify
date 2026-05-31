@@ -6,7 +6,13 @@ import { APICallError } from "ai";
 
 import schema from "./schema";
 import rateLimiterTestHelper from "@convex-dev/rate-limiter/test";
-import { LlmRateLimitError, TEST_INTERNALS, generateViaGateway, type LlmCallContext } from "./lib/llmGateway";
+import {
+  LlmRateLimitError,
+  TEST_INTERNALS,
+  embedViaGateway,
+  generateViaGateway,
+  type LlmCallContext,
+} from "./lib/llmGateway";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -20,10 +26,15 @@ function createTestHarness() {
 // the factory spies have to live inside a `vi.hoisted` block —
 // otherwise they're undefined when the mocked module is first
 // resolved.
-const { openaiFactory, anthropicFactory } = vi.hoisted(() => {
-  const openaiFactory = vi.fn(() => ({ id: "mock-openai" }) as unknown as never);
+const { openaiFactory, openaiEmbeddingFactory, anthropicFactory } = vi.hoisted(() => {
+  const openaiEmbeddingFactory = vi.fn(() => ({ id: "mock-openai-embedding" }) as unknown as never);
+  const openaiFactoryFn = vi.fn(() => ({ id: "mock-openai" }) as unknown as never);
+  // The OpenAI provider entry is callable AND exposes `.embedding(...)`.
+  // Match that shape so `openai(modelName)` and `openai.embedding(modelName)`
+  // both route through the hoisted spies.
+  const openaiFactory = Object.assign(openaiFactoryFn, { embedding: openaiEmbeddingFactory });
   const anthropicFactory = vi.fn(() => ({ id: "mock-anthropic" }) as unknown as never);
-  return { openaiFactory, anthropicFactory };
+  return { openaiFactory, openaiEmbeddingFactory, anthropicFactory };
 });
 
 vi.mock("@ai-sdk/openai", () => ({
@@ -34,24 +45,27 @@ vi.mock("@ai-sdk/anthropic", () => ({
   anthropic: anthropicFactory,
 }));
 
-// `generateText` / `streamText` are mocked at the module level so
-// each test can swap the resolved/rejected value without
-// re-wiring. Tests use `vi.mocked(generateText)` to control behavior.
+// `generateText` / `streamText` / `embedMany` are mocked at the
+// module level so each test can swap the resolved/rejected value
+// without re-wiring. Tests use `vi.mocked(...)` to control behavior.
 vi.mock("ai", async (importOriginal) => {
   const actual = await importOriginal<typeof import("ai")>();
   return {
     ...actual,
     generateText: vi.fn(),
     streamText: vi.fn(),
+    embedMany: vi.fn(),
   };
 });
 
-import { generateText } from "ai";
+import { embedMany, generateText } from "ai";
 
 beforeEach(() => {
   openaiFactory.mockClear();
+  openaiEmbeddingFactory.mockClear();
   anthropicFactory.mockClear();
   vi.mocked(generateText).mockReset();
+  vi.mocked(embedMany).mockReset();
 });
 
 afterEach(() => {
@@ -321,5 +335,84 @@ describe("generateViaGateway — RPM denial (#6)", () => {
       expect(e.code).toBe("requests_per_minute_exceeded");
       expect(e.retryAfterMs).toBeGreaterThan(0);
     }
+  });
+});
+
+// =====================================================================
+// embedViaGateway — provider dispatch + cost calculation
+// =====================================================================
+
+function buildOkEmbedResult(values: string[], embedding: number[] = [0.1, 0.2, 0.3], tokens = 42) {
+  return {
+    embeddings: values.map(() => embedding),
+    values,
+    usage: { tokens },
+    providerMetadata: undefined,
+    response: { id: "embed_resp_1", timestamp: new Date(0), modelId: "mock" },
+  } as unknown as Awaited<ReturnType<typeof embedMany>>;
+}
+
+function buildEmbedCallCtx(overrides?: Partial<LlmCallContext>): LlmCallContext {
+  return {
+    provider: "openai",
+    modelName: "text-embedding-3-small",
+    ownerTokenIdentifier: "user|embed-test",
+    capability: "embedding",
+    feature: "system_design",
+    ...overrides,
+  };
+}
+
+describe("embedViaGateway — happy path", () => {
+  test("routes to openai.embedding(modelName) and returns vectors + cost", async () => {
+    const values = ["chunk-a", "chunk-b"];
+    vi.mocked(embedMany).mockResolvedValueOnce(buildOkEmbedResult(values, [0.5, -0.5], 1_000_000));
+
+    const t = createTestHarness();
+    const result = await t.action(async (ctx) => embedViaGateway(ctx, buildEmbedCallCtx(), { values }));
+
+    expect(openaiEmbeddingFactory).toHaveBeenCalledWith("text-embedding-3-small");
+    expect(anthropicFactory).not.toHaveBeenCalled();
+    expect(result.embeddings).toHaveLength(2);
+    expect(result.embeddings[0]).toEqual([0.5, -0.5]);
+    expect(result.usage.inputTokens).toBe(1_000_000);
+    // 1M input @ $0.02 = $0.02
+    expect(result.costUsd).toBeCloseTo(0.02);
+  });
+
+  test("rejects when capability is not 'embedding' (guards generate-only models)", async () => {
+    const t = createTestHarness();
+    await expect(
+      t.action(async (ctx) =>
+        embedViaGateway(
+          ctx,
+          buildEmbedCallCtx({
+            provider: "openai",
+            modelName: "text-embedding-3-small",
+            capability: "discuss",
+          }),
+          { values: ["x"] },
+        ),
+      ),
+    ).rejects.toThrow(/capability must be "embedding"/);
+    // SDK never reached because capability assertion fails first.
+    expect(vi.mocked(embedMany)).not.toHaveBeenCalled();
+    expect(openaiEmbeddingFactory).not.toHaveBeenCalled();
+  });
+
+  test("rejects an anthropic embedding pick with a clear error", async () => {
+    const t = createTestHarness();
+    // Anthropic has no catalogued embedding entry — the catalog guard
+    // fires first, before we get a chance to surface the
+    // "no embedding API" message. Either error is acceptable; the
+    // important thing is the SDK is never invoked.
+    await expect(
+      t.action(async (ctx) =>
+        embedViaGateway(ctx, buildEmbedCallCtx({ provider: "anthropic", modelName: "text-embedding-3-small" }), {
+          values: ["x"],
+        }),
+      ),
+    ).rejects.toThrow();
+    expect(vi.mocked(embedMany)).not.toHaveBeenCalled();
   });
 });

@@ -20,10 +20,6 @@ import { toUserErrorMessage } from "@/lib/errors";
  * `transport_other` is the catch-all for non-rate-limit transport
  * faults (network / 5xx / SDK), and `infra` is the our-side bug bucket
  * the operator should already be aware of.
- *
- * Legacy `other` rows (pre-widen-backfill-narrow) map to
- * `transport_other` copy since the original "other" category was
- * dominated by transport noise.
  */
 const REASON_TEXT_ALL_LIVE_SOURCE =
   "Live access to the repository wasn't available when this ran. The next attempt will prepare it first.";
@@ -126,10 +122,7 @@ type FailureDescriptor = {
 
 /**
  * Failure reason union as it appears on `jobs.kindFailures[].reason`.
- * Wider than the validator-narrow writer set (`recordKindFailureReason`
- * in `convex/systemDesign.ts`) because legacy rows from before the
- * widen-backfill-narrow rollout may still carry `"other"`. New writes
- * never produce `"other"`.
+ * Mirrors the schema validator in `convex/schema.ts` (`kindFailureReason`).
  */
 type FailureReason =
   | "live_source_unavailable"
@@ -137,8 +130,7 @@ type FailureReason =
   | "transport_rate_limit"
   | "transport_other"
   | "output_quality"
-  | "infra"
-  | "other";
+  | "infra";
 
 const REASON_TEXT_BY_KIND: Record<FailureReason, string> = {
   live_source_unavailable: REASON_TEXT_ALL_LIVE_SOURCE,
@@ -146,9 +138,6 @@ const REASON_TEXT_BY_KIND: Record<FailureReason, string> = {
   transport_rate_limit: REASON_TEXT_ALL_RATE_LIMIT,
   output_quality: REASON_TEXT_ALL_QUALITY,
   transport_other: REASON_TEXT_ALL_TRANSPORT,
-  // Legacy rows: surface as transport_other since pre-rollout
-  // "other" was overwhelmingly transport noise.
-  other: REASON_TEXT_ALL_TRANSPORT,
   infra: REASON_TEXT_ALL_INFRA,
 };
 
@@ -185,9 +174,13 @@ function describeFailures(job: Doc<"jobs">): FailureDescriptor | null {
   if (kindFailures.length === 0) {
     reasonText = job.errorMessage && job.errorMessage.trim() ? job.errorMessage : REASON_TEXT_FALLBACK;
   } else {
-    const reasons = Array.from(new Set<FailureReason>(kindFailures.map((failure) => failure.reason ?? "other")));
+    const reasons = Array.from(
+      new Set<FailureReason | undefined>(kindFailures.map((failure) => failure.reason)),
+    ).filter((reason): reason is FailureReason => reason !== undefined);
     if (reasons.length === 1) {
       reasonText = REASON_TEXT_BY_KIND[reasons[0]] ?? REASON_TEXT_FALLBACK;
+    } else if (reasons.length === 0) {
+      reasonText = REASON_TEXT_FALLBACK;
     } else {
       reasonText = REASON_TEXT_MIXED;
     }

@@ -354,11 +354,6 @@ export const updateGenerationProgress = internalMutation({
  * Mutation arg validator for the per-kind failure recorder. Mirrors
  * the schema's `kindFailureReason` union — keep them in sync. New
  * literals added here must also be added in `convex/schema.ts`.
- *
- * `other` stays during the widen-backfill-narrow rollout in PR-A1's
- * follow-up commit; new write paths should pick one of the more
- * specific reasons (`transport_rate_limit`, `transport_other`,
- * `output_quality`, `infra`).
  */
 const recordKindFailureReason = v.union(
   v.literal("live_source_unavailable"),
@@ -367,7 +362,6 @@ const recordKindFailureReason = v.union(
   v.literal("transport_other"),
   v.literal("output_quality"),
   v.literal("infra"),
-  v.literal("other"),
 );
 
 export const recordKindFailure = internalMutation({
@@ -895,7 +889,11 @@ export const listAvailableModels = query({
       provider: entry.provider,
       modelName: entry.modelName,
       displayName: entry.displayName,
-      capability: entry.capability,
+      // `listPickableModels` filters to `userPickable: true` entries; the
+      // catalog only marks generation-tier rows as pickable, so this
+      // cast preserves the documented narrower return type without a
+      // runtime check.
+      capability: entry.capability as "sandbox" | "library" | "discuss",
       supportsTools: entry.supportsTools,
       contextWindow: entry.contextWindow,
     }));

@@ -49,14 +49,6 @@ const jobKind = v.union(
  *   - `infra` — Convex-level / our-side bug surfaced into the kind loop
  *      (mutation error, action crash, schema validation, …). Engineering
  *      alerted.
- *
- * Migration note (widen-backfill-narrow): `other` is retained as a
- * temporary literal during the rollout window. Once the backfill
- * `rewriteLegacyKindFailureReason` has rewritten every `other` row to
- * `transport_other` and the operator has confirmed zero remaining
- * `other` rows in production, a follow-up commit will drop `other`
- * from this union. Do NOT write `other` from new code paths — the
- * retain-window is read-only.
  */
 const kindFailureReason = v.union(
   v.literal("live_source_unavailable"),
@@ -65,8 +57,6 @@ const kindFailureReason = v.union(
   v.literal("transport_other"),
   v.literal("output_quality"),
   v.literal("infra"),
-  // Retained during widen-backfill-narrow rollout; dropped in a follow-up commit.
-  v.literal("other"),
 );
 
 /**

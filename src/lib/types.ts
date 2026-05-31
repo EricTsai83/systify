@@ -1,6 +1,11 @@
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import type { ChatMode } from "../../convex/lib/chatMode";
-import type { ModelCapability, ModelCatalogEntry, ReasoningEffort } from "../../convex/lib/llmCatalog";
+import type {
+  ModelCapability,
+  ModelCatalogEntry,
+  ReasoningEffort,
+  UserPickableCapability,
+} from "../../convex/lib/llmCatalog";
 import type { LlmProvider } from "../../convex/lib/llmProvider";
 
 export type RepositoryId = Id<"repositories">;
@@ -70,7 +75,7 @@ export type { ChatMode };
  * from the backend modules so frontend imports do not have to reach into
  * `convex/lib/*` directly.
  */
-export type { LlmProvider, ModelCapability, ModelCatalogEntry, ReasoningEffort };
+export type { LlmProvider, ModelCapability, ModelCatalogEntry, ReasoningEffort, UserPickableCapability };
 
 export type ActiveMessageStream = {
   assistantMessageId: MessageId;

@@ -32,6 +32,25 @@ describe("MODEL_CATALOG", () => {
       expect(pricedKeys.has(key), `catalog entry ${key} has no pricing row in llmPricing.ts`).toBe(true);
     }
   });
+
+  test("embedding-capability entries never claim tool support and are not user-pickable", () => {
+    // Embedding models cannot run tools (they only return vectors)
+    // and are routed via the backend `embedViaGateway` — surfacing
+    // them in the composer picker would just confuse the user.
+    // Pin both invariants so a future catalog edit can't accidentally
+    // expose an embedding row in the model picker.
+    const embeddingEntries = MODEL_CATALOG.filter((entry) => entry.capability === "embedding");
+    expect(embeddingEntries.length).toBeGreaterThan(0);
+    for (const entry of embeddingEntries) {
+      expect(
+        entry.supportsTools,
+        `embedding entry ${entry.provider}:${entry.modelName} must not claim tool support`,
+      ).toBe(false);
+      expect(entry.userPickable, `embedding entry ${entry.provider}:${entry.modelName} must not be user-pickable`).toBe(
+        false,
+      );
+    }
+  });
 });
 
 describe("getCatalogEntry", () => {

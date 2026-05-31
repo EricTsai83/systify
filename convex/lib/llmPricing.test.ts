@@ -77,6 +77,22 @@ describe("estimateCostUsd", () => {
     // The gpt-5 entry lives under openai: — looking it up under anthropic: misses.
     expect(estimateCostUsd("anthropic", "gpt-5", { inputTokens: 1, outputTokens: 1 })).toBeUndefined();
   });
+
+  test("OpenAI text-embedding-3-small prices input-only at $0.02/M", () => {
+    // 1M input tokens @ $0.02 + 0 output @ $0 = $0.02 exactly.
+    // Embedding rows carry `outputPerMillion: 0` so passing
+    // `outputTokens: 0` from `embedViaGateway` lands a clean
+    // input-only cost without a special path in `estimateCostUsd`.
+    expect(
+      estimateCostUsd("openai", "text-embedding-3-small", { inputTokens: 1_000_000, outputTokens: 0 }),
+    ).toBeCloseTo(0.02);
+  });
+
+  test("OpenAI text-embedding-3-large prices input-only at $0.13/M", () => {
+    expect(
+      estimateCostUsd("openai", "text-embedding-3-large", { inputTokens: 1_000_000, outputTokens: 0 }),
+    ).toBeCloseTo(0.13);
+  });
 });
 
 describe("getPricing", () => {
