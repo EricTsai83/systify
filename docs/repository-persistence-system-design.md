@@ -203,13 +203,13 @@ The active-repository pointer is only one of several localStorage entries
 scoped to a repository — the Library tab strip
 (`systify.library.tabs.{repoId}`), the Ask tab strip
 (`systify.library.askTabs.{repoId}`), the composer draft for a repository
-(`systify.composer.draft.repository.{repoId}`), and the folder navigator's
+(`systify.composer.draft.repository.{repoId}.discuss`), and the folder navigator's
 per-node open state (`systify.folderNav.open.{repoId}.{nodeId}`) are also
 keyed by id. When the owning repository is deleted, those keys would
 otherwise accumulate in the user's browser indefinitely.
 
-`useStorageGC` (in `src/hooks/use-storage-gc.ts`) is mounted by
-`RepositoryShell` and sweeps the prefixes against the live id set coming
+`useStorageGC` (in `src/hooks/use-storage-gc.ts`) is mounted on the shared
+repository lifecycle mount and sweeps the prefixes against the live id set coming
 from `listAllOwnerRepositoryIds` (the *complete* owned set, capped at
 1000) — not the `listRepositoriesForSwitcher` query that powers the
 sidebar dropdown. The shell wires this up explicitly with an inline

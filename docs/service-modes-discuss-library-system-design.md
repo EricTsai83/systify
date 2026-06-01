@@ -11,7 +11,7 @@ Systify exposes two top-level chat modes plus a background generator:
 - **`library`** — read-mostly artifact reader with an always-visible **Ask** panel running chunked-RAG over the repository's artifacts.
 - **System Design generation** — background sandbox-backed job that writes the starter set of 8 System Design artifacts (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`) into the Library for later citation. Every kind is LLM-backed — the generator opens a Daytona sandbox for every kind, including `architecture_diagram`, which carries an additional `validateMermaidBlock` quality gate so the published markdown is guaranteed to contain a parseable Mermaid block.
 
-`discuss` is the canonical default mode; `library` requires an attached repository.
+When a repository is attached, `library` becomes the default mode; otherwise `discuss` is the default.
 
 ## Routing Model
 
@@ -58,9 +58,9 @@ Per-thread defaults live on `threads.defaultGroundLibrary` and `threads.defaultG
 
 Capability-based model selection routes the reply based on the (mode, groundSandbox) pair:
 
-- `groundSandbox: true` → `sandbox` tier (default `gpt-5`) — tool-using replies benefit from stronger reasoning.
-- `mode: "library"` → `library` tier (default `gpt-5-mini`).
-- otherwise → `discuss` tier (default `gpt-5-mini`).
+- `groundSandbox: true` → `sandbox` tier — tool-using replies benefit from stronger reasoning.
+- `mode: "library"` → `library` tier.
+- otherwise → `discuss` tier.
 
 Within each tier the per-reply `(provider, modelName)` pair is collapsed by the 3-tier resolver in `convex/chat/modelSelection.ts:9-15`, which explicitly disclaims env-var overrides:
 

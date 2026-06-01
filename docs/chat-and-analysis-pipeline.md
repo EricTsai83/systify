@@ -125,7 +125,9 @@ This is a bounded retrieval layer whose main goals are:
 
 - reducing prompt size
 - improving answer focus
-- keeping read cost bounded without introducing embeddings yet
+- keeping read cost bounded
+
+The candidate pool uses vector retrieval via `artifactChunks.by_embedding` and the embed-gateway for relevance filtering when embeddings are available.
 
 ### 5. Generate the answer
 
@@ -252,7 +254,7 @@ Library System Design produces up to eight LLM-backed artifact kinds: `readme_su
 4. **Rate limiting** — consumes the per-owner `systemDesignRequests` bucket (10/hour by default) and the global `daytonaRequestsGlobal` bucket.
 5. **Folder seeding** — `ensureSystemDesignFolders` is idempotent and creates the default System Design folder tree if it does not already exist.
 
-Sandbox readiness is **not** checked up front in the mutation. The repository's sandbox status helpers `getRepositorySandboxStatus` / `requireRepositorySandbox` describe the latest sandbox row, but the actual provisioning happens lazily inside the Node action: `runSystemDesignGeneration` calls `ensureSandboxReady` (see `convex/systemDesignNode.ts:140-156`), and if that throws a `SandboxPreparationError`, the job is marked failed with the helper's user-facing message instead of being rejected pre-insert.
+Sandbox readiness is **not** checked up front in the mutation. The repository's sandbox status helpers `getRepositorySandboxStatus` / `requireRepositorySandbox` describe the latest sandbox row but do not trigger provisioning; the actual provisioning happens lazily inside the Node action: `runSystemDesignGeneration` calls `ensureSandboxReady` (see `convex/systemDesignNode.ts`), and if that throws a `SandboxPreparationError`, the job is marked failed with the helper's user-facing message instead of being rejected pre-insert.
 
 ### 2. Create the job
 
@@ -287,7 +289,7 @@ Two distinct surfaces depend on a live Daytona sandbox: sandbox-grounded Discuss
 - has failed
 - is missing required remote path information
 
-then Sandbox grounding is unavailable and `requestSystemDesignGeneration` rejects the request with the helper's user-facing message.
+then Sandbox grounding is unavailable for chat. `getRepositorySandboxStatus` / `requireRepositorySandbox` report the latest sandbox row but do **not** provision — they only describe state. System Design generation does not pre-check sandbox readiness in `requestSystemDesignGeneration`; provisioning happens lazily inside the Node action via `ensureSandboxReady`, and a `SandboxPreparationError` there fails the queued job with the helper's user-facing message rather than rejecting at insert.
 
 The frontend uses this state to tell the user to:
 

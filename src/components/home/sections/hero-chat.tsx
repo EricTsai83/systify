@@ -185,7 +185,7 @@ function ChatTopBar() {
       <div className="ml-auto flex shrink-0 items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
         <span className="hidden items-center gap-1 sm:inline-flex">
           <ArrowsClockwiseIcon weight="bold" className="size-3" />
-          synced 14s ago
+          synced 14m ago
         </span>
         <DotsThreeVerticalIcon weight="bold" className="size-3.5 text-muted-foreground/60" />
       </div>
