@@ -150,6 +150,78 @@ afterEach(() => {
 });
 
 describe("ChatPanel streaming rendering", () => {
+  test("hides Discuss grounding toggles when the shell disables them", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={null}
+        messages={undefined}
+        activeMessageStream={undefined}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={{
+          library: { enabled: true },
+          sandbox: { enabled: true },
+        }}
+        showGroundingToggles={false}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={null}
+        isSyncing={false}
+        onSync={vi.fn()}
+        hasAttachedRepository={false}
+      />,
+    );
+
+    expect(screen.queryByTestId("grounding-toggle-library")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("grounding-toggle-sandbox")).not.toBeInTheDocument();
+  });
+
+  test("does not capability-filter the chat model picker", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={null}
+        messages={undefined}
+        activeMessageStream={undefined}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        selectedProvider={null}
+        selectedModelName={null}
+        setSelectedModel={vi.fn()}
+        grounding={undefined}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={null}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(
+      vi
+        .mocked(useQuery)
+        .mock.calls.some(
+          ([query, args]) =>
+            queryName(query)?.endsWith("llmCatalog:listPickableModels") &&
+            typeof args === "object" &&
+            args !== null &&
+            !Array.isArray(args) &&
+            Object.keys(args).length === 0,
+        ),
+    ).toBe(true);
+  });
+
   test("ChatContainer owns message and active-stream subscriptions for the selected thread", () => {
     // Paginated message subscription. The server returns pages in
     // newest-first order; `ChatContainer` reverses the flattened result

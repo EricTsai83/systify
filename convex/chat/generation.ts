@@ -477,6 +477,7 @@ export const generateAssistantReply = internalAction({
         groundSandbox: groundedReplyContext.groundSandbox,
         overrideProvider: replyContext.provider,
         overrideModelName: replyContext.modelName,
+        overrideReasoningEffort: replyContext.reasoningEffort,
       });
       provider = modelChoice.provider;
       modelName = modelChoice.modelName;

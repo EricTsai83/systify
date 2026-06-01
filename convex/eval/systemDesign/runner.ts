@@ -34,7 +34,7 @@ import type { Doc } from "../../_generated/dataModel";
 import { internalAction } from "../../_generated/server";
 import { createSandboxTools } from "../../chat/sandboxTools";
 import { getSandboxFsClient } from "../../daytona";
-import { getCatalogEntry, isValidPick } from "../../lib/llmCatalog";
+import { getCatalogEntry, isValidPick, ROLE_MODELS } from "../../lib/llmCatalog";
 import { generateViaGateway, LlmRateLimitError } from "../../lib/llmGateway";
 import { llmProviderValidator, type NormalizedUsage } from "../../lib/llmProvider";
 import { ensureSandboxReady, type EnsureSandboxReadyResult, SandboxPreparationError } from "../../lib/sandboxLiveness";
@@ -83,8 +83,8 @@ export const runEval = internalAction({
     rubrics: v.optional(v.record(v.string(), v.string())),
   },
   handler: async (ctx, args): Promise<{ records: EvalRunRecord[]; skipped: SkippedEntry[] }> => {
-    const provider = args.provider ?? "openai";
-    const modelName = args.modelName ?? "gpt-5";
+    const provider = args.provider ?? ROLE_MODELS.defaultSystemDesign.provider;
+    const modelName = args.modelName ?? ROLE_MODELS.defaultSystemDesign.modelName;
     if (!isValidPick(provider, modelName)) {
       throw new Error(`runEval: unsupported model pick ${provider}:${modelName}`);
     }

@@ -2,15 +2,12 @@
  * Resolve `(provider, modelName)` for a single chat reply.
  *
  * The resolver is a thin pass-through. It runs after `chat.send.sendMessage`
- * has already validated the user's pick against {@link MODEL_CATALOG} and
- * enforced the thread provider lock; this module's job is only to
- * collapse the (per-message override, thread default, capability default)
- * triple into a single `ModelChoice`. The picker UI, the lock
- * enforcement, and the env-driven operator escape hatch all live
- * elsewhere:
+ * has already validated the user's pick against {@link MODEL_CATALOG}; this
+ * module's job is only to collapse the (per-message override, thread default,
+ * capability default) triple into a single `ModelChoice`. The picker UI and
+ * the env-driven operator escape hatch live elsewhere:
  *
  *   - The picker UI lives in `src/components/ai-elements/prompt-input-model-picker.tsx`.
- *   - The lock enforcement lives in `chat/send.ts:sendMessage`.
  *   - Operator overrides land in {@link MODEL_CATALOG} (add an entry) or via
  *     the future per-user policy table — not via env vars here.
  *
@@ -45,6 +42,7 @@ import type { ChatMode } from "../lib/chatMode";
 import {
   getCatalogEntry,
   MODEL_CATALOG,
+  ROLE_MODELS,
   type ModelCapability,
   type ReasoningEffort,
   type UserPickableCapability,
@@ -75,19 +73,20 @@ export type ModelChoice = {
 };
 
 /**
- * Capability → `(provider, model)` default. The pricing-coverage test in
- * `modelSelection.test.ts` pins this pairing — every default here must
- * have a catalog entry AND a pricing row, otherwise the daily cost cap
- * settlement silently degrades to "no cost recorded" (`estimateCostUsd`
- * returns `undefined` for unknown pairs).
+ * Capability → `(provider, model)` default. Derived from {@link ROLE_MODELS}
+ * to ensure the pricing-coverage test in `modelSelection.test.ts` stays
+ * in sync with the catalog. Every default here must have a catalog entry
+ * AND a pricing row, otherwise the daily cost cap settlement silently
+ * degrades to "no cost recorded" (`estimateCostUsd` returns `undefined`
+ * for unknown pairs).
  *
  * Defaults are OpenAI because `OPENAI_API_KEY` is the only env var the
  * bootstrap docs require; Anthropic is opt-in via the composer picker.
  */
 const DEFAULT_PICK_BY_CAPABILITY: Record<UserPickableCapability, { provider: LlmProvider; modelName: string }> = {
-  sandbox: { provider: "openai", modelName: "gpt-5" },
-  library: { provider: "openai", modelName: "gpt-5-mini" },
-  discuss: { provider: "openai", modelName: "gpt-5-mini" },
+  sandbox: ROLE_MODELS.defaultSandbox,
+  library: ROLE_MODELS.defaultLibrary,
+  discuss: ROLE_MODELS.defaultDiscuss,
 };
 
 /**
@@ -138,6 +137,16 @@ export function resolveModelForReply(args: {
   overrideProvider?: LlmProvider;
   overrideModelName?: string;
   /**
+   * Per-message reasoning-effort override from the queued user message
+   * (`messages.reasoningEffort`). When set on a `supportsReasoning`
+   * model it wins over the catalog entry's default — the user picked
+   * an intensity for *this* send. A reasoning override on a non-
+   * reasoning model is dropped (the catalog entry's `undefined`
+   * default stays in effect) so the gateway doesn't smuggle a knob
+   * the provider would reject.
+   */
+  overrideReasoningEffort?: ReasoningEffort;
+  /**
    * Thread's last-picked model name (`threads.defaultModelName`). Only
    * consulted when no per-message override exists; provider is inferred
    * via catalog lookup so we never have to persist provider redundantly
@@ -145,17 +154,22 @@ export function resolveModelForReply(args: {
    */
   threadDefaultModelName?: string;
   /**
-   * `threads.lockedProvider` for the thread being replied into. When
-   * set, the capability-default fallback picks from this provider's
-   * catalog entries instead of {@link DEFAULT_PICK_BY_CAPABILITY} —
-   * otherwise a stale `threadDefaultModelName` (catalog narrowed) on a
-   * lock-anthropic thread would land on the openai default and
-   * `sendMessage` would reject with `thread_provider_locked` for a
-   * fallback the user never picked.
+   * `threads.lockedProvider` for the thread being replied into. When set,
+   * the capability-default fallback picks from this provider's catalog
+   * entries instead of {@link DEFAULT_PICK_BY_CAPABILITY} so provider-level
+   * cached thread context stays coherent.
    */
   lockedProvider?: LlmProvider;
 }): ModelChoice {
   const capability = pickCapability(args);
+
+  // Per-message override of reasoning effort. Applied at every layer
+  // exit so the user's per-send intent survives whichever
+  // (provider, model) ends up resolved. Dropped silently on a
+  // non-reasoning model — the gateway would otherwise reject the
+  // option as unknown.
+  const applyReasoningOverride = (catalogDefault: ReasoningEffort | undefined, supportsReasoning: boolean) =>
+    supportsReasoning && args.overrideReasoningEffort !== undefined ? args.overrideReasoningEffort : catalogDefault;
 
   // 1. Explicit per-message override. Already validated by the send
   // mutation; re-validate here so an out-of-band catalog change degrades
@@ -166,7 +180,7 @@ export function resolveModelForReply(args: {
       return {
         provider: entry.provider,
         modelName: entry.modelName,
-        reasoningEffort: entry.reasoningEffort,
+        reasoningEffort: applyReasoningOverride(entry.reasoningEffort, entry.supportsReasoning),
         capability,
       };
     }
@@ -180,17 +194,16 @@ export function resolveModelForReply(args: {
       return {
         provider: entry.provider,
         modelName: entry.modelName,
-        reasoningEffort: entry.reasoningEffort,
+        reasoningEffort: applyReasoningOverride(entry.reasoningEffort, entry.supportsReasoning),
         capability,
       };
     }
   }
 
   // 3. Capability default. The hard-coded fallback pairing is pinned
-  // against the pricing table by the unit test below. When the thread
-  // is locked to a different provider, prefer that provider's
-  // capability-tier entry so the resolved pick survives the
-  // lock check in `sendMessage`.
+  // against the pricing table by the unit test below. When the thread is
+  // locked to a different provider, prefer that provider's capability-tier
+  // entry so the resolved pick survives the lock check in `sendMessage`.
   const fallback = DEFAULT_PICK_BY_CAPABILITY[capability];
   if (args.lockedProvider !== undefined && args.lockedProvider !== fallback.provider) {
     const lockedFallback = MODEL_CATALOG.find(
@@ -200,7 +213,7 @@ export function resolveModelForReply(args: {
       return {
         provider: lockedFallback.provider,
         modelName: lockedFallback.modelName,
-        reasoningEffort: lockedFallback.reasoningEffort,
+        reasoningEffort: applyReasoningOverride(lockedFallback.reasoningEffort, lockedFallback.supportsReasoning),
         capability,
       };
     }
@@ -209,7 +222,7 @@ export function resolveModelForReply(args: {
   return {
     provider: fallback.provider,
     modelName: fallback.modelName,
-    reasoningEffort: fallbackEntry?.reasoningEffort,
+    reasoningEffort: applyReasoningOverride(fallbackEntry?.reasoningEffort, fallbackEntry?.supportsReasoning ?? false),
     capability,
   };
 }

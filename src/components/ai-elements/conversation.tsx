@@ -2,7 +2,6 @@
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { ArrowDownIcon } from "lucide-react";
 import { createContext, useContext, type ComponentProps, type ReactNode } from "react";
 import type { UseChatScrollResult } from "./use-chat-scroll";
 
@@ -138,14 +137,14 @@ export const ConversationScrollButton = ({ className, ...props }: ConversationSc
   if (isAtBottom) return null;
   return (
     <Button
-      className={cn("absolute bottom-4 left-[50%] translate-x-[-50%]", className)}
+      className={cn("absolute bottom-2 left-[50%] translate-x-[-50%]", className)}
       onClick={scrollToBottom}
-      size="icon"
+      size="xs"
       type="button"
-      variant="outline"
+      variant="secondary"
       {...props}
     >
-      <ArrowDownIcon className="size-4" />
+      Scroll to bottom
     </Button>
   );
 };

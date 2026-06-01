@@ -17,9 +17,11 @@ import {
   PromptInputModelPicker,
   type PromptInputModelPickerValue,
 } from "@/components/ai-elements/prompt-input-model-picker";
+import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-input-reasoning-picker";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { RepositoryId } from "@/lib/types";
+import type { ReasoningEffort, RepositoryId } from "@/lib/types";
 
 /**
  * The checklist the Generate System Design dialog renders. Order and labels
@@ -87,19 +89,6 @@ const CATALOG: ReadonlyArray<{
 
 type Kind = (typeof CATALOG)[number]["kind"];
 
-/**
- * Default LLM pick the dialog opens with. Mirrors `DEFAULT_SYSTEM_DESIGN_*`
- * in `convex/systemDesign.ts` so the cache preview's "would skip N kinds"
- * answer matches what the backend would actually do on submit before the
- * user touches the picker. Kept in sync by hand: both places must point
- * at a sandbox-capable catalog entry — every kind drives sandbox tools, so
- * picking a non-tool model here would silently break generation.
- */
-const DEFAULT_MODEL_PICK: PromptInputModelPickerValue = {
-  provider: "openai",
-  modelName: "gpt-5",
-};
-
 export function GenerateSystemDesignDialog({
   open,
   onOpenChange,
@@ -115,7 +104,16 @@ export function GenerateSystemDesignDialog({
   // Every document is worth generating, so the publication defaults to the
   // full set — the user unticks what they don't want rather than opting in.
   const [selected, setSelected] = useState<Set<Kind>>(() => new Set(CATALOG.map((item) => item.kind)));
-  const [modelPick, setModelPick] = useState<PromptInputModelPickerValue>(DEFAULT_MODEL_PICK);
+  // Default model resolves through the same cascade the dialog used
+  // to hardcode: capability default sourced from `ROLE_MODELS` on the
+  // server. `useDefaultModelPick` returns `undefined` while loading
+  // so the picker shows its placeholder for one paint instead of
+  // flashing a stale default.
+  const defaultPick = useDefaultModelPick({ capability: "sandbox" });
+  const [userPick, setUserPick] = useState<PromptInputModelPickerValue | null>(null);
+  const modelPick: PromptInputModelPickerValue | null = userPick ?? defaultPick ?? null;
+  const setModelPick = (next: PromptInputModelPickerValue) => setUserPick(next);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort | null>(null);
   const [forceRegenerate, setForceRegenerate] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [previousOpen, setPreviousOpen] = useState(open);
@@ -132,7 +130,7 @@ export function GenerateSystemDesignDialog({
   const selectionsArray = useMemo(() => Array.from(selected), [selected]);
   const cachedStatus = useQuery(
     api.systemDesign.getCachedSelectionStatus,
-    selectionsArray.length === 0
+    selectionsArray.length === 0 || !modelPick
       ? "skip"
       : {
           repositoryId,
@@ -158,12 +156,21 @@ export function GenerateSystemDesignDialog({
       setError("Select at least one document to generate.");
       return;
     }
+    if (!modelPick) {
+      // `useDefaultModelPick` returns undefined until the catalog
+      // query resolves. The submit button is disabled in that
+      // window, but guard the call site too so the mutation never
+      // receives a half-set picker pair.
+      setError("Loading models — try again in a moment.");
+      return;
+    }
     try {
       await requestGeneration({
         repositoryId,
         selections,
         provider: modelPick.provider,
         modelName: modelPick.modelName,
+        ...(reasoningEffort !== null ? { reasoningEffort } : {}),
         forceRegenerate: forceRegenerate || undefined,
       });
       onOpenChange(false);
@@ -201,12 +208,21 @@ export function GenerateSystemDesignDialog({
 
         <div className="flex items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5">
           <span className="text-[11px] font-medium text-muted-foreground">Model</span>
-          <PromptInputModelPicker
-            value={modelPick}
-            onChange={setModelPick}
-            capability="sandbox"
-            disabled={isSubmitting || jobInProgress}
-          />
+          <div className="flex items-center gap-1">
+            <PromptInputModelPicker
+              value={modelPick}
+              onChange={setModelPick}
+              capability="sandbox"
+              disabled={isSubmitting || jobInProgress}
+            />
+            <PromptInputReasoningPicker
+              value={reasoningEffort}
+              onChange={setReasoningEffort}
+              provider={modelPick?.provider}
+              modelName={modelPick?.modelName}
+              disabled={isSubmitting || jobInProgress}
+            />
+          </div>
         </div>
 
         {jobInProgress ? (

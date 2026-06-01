@@ -7,7 +7,7 @@ import { assertRepositoryModeEligible } from "../repositoryModeEligibility";
 import { requireViewerIdentity } from "../lib/auth";
 import { chatModeValidator, resolveDiscussGrounding, type ChatMode } from "../lib/chatMode";
 import { enqueueJob, findActiveJob } from "../lib/jobs";
-import { isValidPick } from "../lib/llmCatalog";
+import { isValidPick, reasoningEffortValidator, type ReasoningEffort } from "../lib/llmCatalog";
 import { llmProviderValidator, type LlmProvider } from "../lib/llmProvider";
 import { requireActiveRepositoryForViewer } from "../lib/repositoryAccess";
 import { requireOwnedDoc } from "../lib/ownedDocs";
@@ -51,6 +51,14 @@ async function insertChatTurn(
      */
     provider: LlmProvider;
     modelName: string;
+    /**
+     * Per-message reasoning effort override resolved upstream. When
+     * present, persisted on both message rows so the generation action
+     * reads it off the assistant placeholder (mirroring the
+     * provider / modelName / grounding pattern). `undefined` falls
+     * through to the catalog entry's default at gateway time.
+     */
+    reasoningEffort?: ReasoningEffort;
     trimmedContent: string;
     ownerTokenIdentifier: string;
     now: number;
@@ -87,6 +95,7 @@ async function insertChatTurn(
     ...(args.groundSandbox === true ? { groundSandbox: true } : {}),
     provider: args.provider,
     modelName: args.modelName,
+    ...(args.reasoningEffort !== undefined ? { reasoningEffort: args.reasoningEffort } : {}),
   });
 
   const assistantMessageId = await ctx.db.insert("messages", {
@@ -102,6 +111,7 @@ async function insertChatTurn(
     ...(args.groundSandbox === true ? { groundSandbox: true } : {}),
     provider: args.provider,
     modelName: args.modelName,
+    ...(args.reasoningEffort !== undefined ? { reasoningEffort: args.reasoningEffort } : {}),
   });
 
   await ctx.db.insert("messageStreams", {
@@ -145,8 +155,7 @@ async function insertChatTurn(
     threadPatch.lockedProvider = args.provider;
   }
   // Always refresh `defaultModelName` so reopening the thread restores
-  // the user's last pick — within the locked provider the user can
-  // switch tier freely (e.g. gpt-5 ↔ gpt-5-mini).
+  // the user's last pick within the locked provider.
   threadPatch.defaultModelName = args.modelName;
   await ctx.db.patch(args.thread._id, threadPatch);
 
@@ -205,6 +214,11 @@ export const sendMessageStartingNewThread = mutation({
      */
     provider: v.optional(llmProviderValidator),
     modelName: v.optional(v.string()),
+    /**
+     * Per-message reasoning effort override. When set, overrides the
+     * catalog entry's default for this message only.
+     */
+    reasoningEffort: v.optional(reasoningEffortValidator),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -238,9 +252,9 @@ export const sendMessageStartingNewThread = mutation({
     // Validate the picker pick (if both pieces present) and resolve the
     // effective `(provider, modelName)` for this reply. A brand-new
     // thread has no `lockedProvider` yet — the resolved pick becomes the
-    // lock once `insertChatTurn` patches the thread row below. A
-    // half-set pair is rejected up front so the resolver never has to
-    // distinguish "intentional half-pick" from "missing arg".
+    // lock once `insertChatTurn` patches the thread row below. A half-set
+    // pair is rejected up front so the resolver never has to distinguish
+    // "intentional half-pick" from "missing arg".
     assertCompletePickerPair(args);
     if (args.provider !== undefined && args.modelName !== undefined && !isValidPick(args.provider, args.modelName)) {
       throw new ConvexError({
@@ -253,6 +267,7 @@ export const sendMessageStartingNewThread = mutation({
       groundSandbox,
       overrideProvider: args.provider,
       overrideModelName: args.modelName,
+      overrideReasoningEffort: args.reasoningEffort,
     });
 
     const now = Date.now();
@@ -293,6 +308,7 @@ export const sendMessageStartingNewThread = mutation({
       groundSandbox,
       provider: resolved.provider,
       modelName: resolved.modelName,
+      reasoningEffort: resolved.reasoningEffort,
       trimmedContent,
       ownerTokenIdentifier: identity.tokenIdentifier,
       now,
@@ -327,15 +343,19 @@ export const sendMessage = mutation({
      *   - Half-set pairs (only one field provided).
      *   - Picks not in {@link MODEL_CATALOG}.
      *   - Picks whose provider differs from this thread's
-     *     `lockedProvider` (`thread_provider_locked` ConvexError) —
-     *     the frontend mirrors this constraint by hiding the
-     *     locked-out provider's options in the picker.
+     *     `lockedProvider` (`thread_provider_locked` ConvexError) — the
+     *     frontend mirrors this constraint by hiding the locked-out
+     *     provider's options in the picker.
      *
-     * Switching model tier *within* the locked provider (gpt-5 ↔ gpt-5-mini)
-     * is always allowed.
+     * Switching model tier within the locked provider is always allowed.
      */
     provider: v.optional(llmProviderValidator),
     modelName: v.optional(v.string()),
+    /**
+     * Per-message reasoning effort override. When set, overrides the
+     * catalog entry's default for this message only.
+     */
+    reasoningEffort: v.optional(reasoningEffortValidator),
   },
   handler: async (
     ctx,
@@ -386,17 +406,18 @@ export const sendMessage = mutation({
 
     // Resolve the effective `(provider, modelName)` pair using the
     // override → thread default → capability default cascade. The
-    // resolved provider is what we enforce the lock against — picking
-    // a non-locked-provider model returns the failed pick verbatim so
-    // the error message is precise. The capability-default layer also
-    // gets the lock so a thread whose persisted `defaultModelName`
-    // drifted out of the catalog still falls back to its own
-    // provider's tier instead of the global openai default.
+    // resolved provider is what we enforce the lock against — picking a
+    // non-locked-provider model returns the failed pick verbatim so the
+    // error message is precise. The capability-default layer also gets the
+    // lock so a thread whose persisted `defaultModelName` drifted out of
+    // the catalog still falls back to its own provider's tier instead of
+    // the global openai default.
     const resolved = resolveModelForReply({
       mode,
       groundSandbox,
       overrideProvider: args.provider,
       overrideModelName: args.modelName,
+      overrideReasoningEffort: args.reasoningEffort,
       threadDefaultModelName: thread.defaultModelName,
       lockedProvider: thread.lockedProvider,
     });
@@ -444,6 +465,7 @@ export const sendMessage = mutation({
       groundSandbox,
       provider: resolved.provider,
       modelName: resolved.modelName,
+      reasoningEffort: resolved.reasoningEffort,
       trimmedContent,
       ownerTokenIdentifier: identity.tokenIdentifier,
       now,

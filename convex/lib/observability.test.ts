@@ -87,13 +87,13 @@ describe("emitMetric", () => {
     // `details.metric` can never overwrite the envelope's metric name.
     emitMetric("sandbox_session_finished", {
       tags: { mode: "discuss" },
-      details: { jobId: "j_xyz", model: "gpt-5" },
+      details: { jobId: "j_xyz", model: "gpt-5.5" },
     });
     const [, payload] = logSpy.mock.calls[0];
     expect(payload).toMatchObject({
       metric: "sandbox_session_finished",
       tags: { mode: "discuss" },
-      details: { jobId: "j_xyz", model: "gpt-5" },
+      details: { jobId: "j_xyz", model: "gpt-5.5" },
     });
   });
 

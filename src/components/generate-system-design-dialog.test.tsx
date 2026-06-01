@@ -117,7 +117,18 @@ describe("GenerateSystemDesignDialog", () => {
   });
 
   test("submits the full default selection with the default model pick and closes dialog on success", async () => {
-    useQueryMock.mockReturnValue(null);
+    // The dialog's default model now resolves through
+    // `useDefaultModelPick(api.llmCatalog.getDefaultModelPick)` rather
+    // than a hardcoded literal. Stub that query so the submit button
+    // can fire with a non-null pair without needing to mount the full
+    // picker.
+    useQueryMock.mockImplementation((query: unknown) => {
+      const name = queryName(query);
+      if (name.endsWith("getDefaultModelPick")) {
+        return { provider: "openai", modelName: "gpt-5.5" };
+      }
+      return null;
+    });
     const requestGeneration = vi.fn().mockResolvedValue({ jobId: "job_1" });
     useMutationMock.mockReturnValue(requestGeneration);
 
@@ -141,7 +152,7 @@ describe("GenerateSystemDesignDialog", () => {
           "operations_overview",
         ],
         provider: "openai",
-        modelName: "gpt-5",
+        modelName: "gpt-5.5",
         // `forceRegenerate` defaults to `undefined` (not `false`) so the
         // backend treats the field as omitted rather than explicit-off.
         forceRegenerate: undefined,
@@ -151,7 +162,13 @@ describe("GenerateSystemDesignDialog", () => {
   });
 
   test("submits with forceRegenerate=true when the user toggles the checkbox", async () => {
-    useQueryMock.mockReturnValue(null);
+    useQueryMock.mockImplementation((query: unknown) => {
+      const name = queryName(query);
+      if (name.endsWith("getDefaultModelPick")) {
+        return { provider: "openai", modelName: "gpt-5.5" };
+      }
+      return null;
+    });
     const requestGeneration = vi.fn().mockResolvedValue({ jobId: "job_1" });
     useMutationMock.mockReturnValue(requestGeneration);
 
@@ -193,13 +210,18 @@ describe("GenerateSystemDesignDialog", () => {
         return [
           {
             provider: "openai",
-            modelName: "gpt-5",
-            displayName: "GPT-5",
+            modelName: "gpt-5.5",
+            displayName: "GPT-5.5",
             capability: "sandbox",
+            supportsReasoning: true,
             supportsTools: true,
             contextWindow: 200_000,
+            userPickable: true,
           },
         ];
+      }
+      if (name.endsWith("getDefaultModelPick")) {
+        return { provider: "openai", modelName: "gpt-5.5" };
       }
       return null;
     });
@@ -211,7 +233,13 @@ describe("GenerateSystemDesignDialog", () => {
   });
 
   test("shows error message on submission failure", async () => {
-    useQueryMock.mockReturnValue(null);
+    useQueryMock.mockImplementation((query: unknown) => {
+      const name = queryName(query);
+      if (name.endsWith("getDefaultModelPick")) {
+        return { provider: "openai", modelName: "gpt-5.5" };
+      }
+      return null;
+    });
     const requestGeneration = vi.fn().mockRejectedValue(new Error("Network error"));
     useMutationMock.mockReturnValue(requestGeneration);
 
@@ -230,7 +258,13 @@ describe("GenerateSystemDesignDialog", () => {
   });
 
   test("clears error state when dialog closes and reopens", async () => {
-    useQueryMock.mockReturnValue(null);
+    useQueryMock.mockImplementation((query: unknown) => {
+      const name = queryName(query);
+      if (name.endsWith("getDefaultModelPick")) {
+        return { provider: "openai", modelName: "gpt-5.5" };
+      }
+      return null;
+    });
     const requestGeneration = vi.fn().mockRejectedValue(new Error("Network error"));
     useMutationMock.mockReturnValue(requestGeneration);
 

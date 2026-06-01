@@ -2,6 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { chatModeValidator } from "./lib/chatMode";
 import { llmProviderValidator } from "./lib/llmProvider";
+import { reasoningEffortValidator } from "./lib/llmCatalog";
 import { systemDesignKindValidator } from "./lib/systemDesign";
 
 const repositoryStatus = v.union(
@@ -368,6 +369,13 @@ export default defineSchema({
     provider: v.optional(llmProviderValidator),
     modelName: v.optional(v.string()),
     /**
+     * Optional reasoning-effort override picked at request time. Pinned
+     * onto the job alongside provider/modelName so a stale-recovery
+     * resume preserves the user's intent. Absent on chat jobs (those
+     * carry per-message overrides on `messages.reasoningEffort`).
+     */
+    reasoningEffort: v.optional(reasoningEffortValidator),
+    /**
      * Auto-resume counter for System Design jobs. Incremented each time
      * `recoverStaleSystemDesignJob` re-enqueues a stale-but-recoverable
      * job (partial progress, some kinds still un-cached). Bounded by
@@ -733,27 +741,16 @@ export default defineSchema({
      */
     userEditedTitle: v.optional(v.boolean()),
     /**
-     * Provider lock written on the FIRST assistant reply in a thread and
+     * Provider lock written on the first assistant reply in a thread and
      * immutable thereafter. Once a thread has held a turn with OpenAI we
      * refuse to mix Anthropic into the same conversation history (and vice
-     * versa) — provider responses differ in reasoning-block shape, prompt-
-     * caching semantics, and tool-call envelope, so switching mid-thread
-     * would corrupt the running context. Enforcement is backend-first:
-     * `chat.send.sendMessage` rejects mismatched picks with
-     * `thread_provider_locked` and the picker hides the locked-out
-     * provider's models on the frontend.
-     *
-     * Optional because legacy threads (pre-PR-A3) and brand-new unsent
-     * threads have no lock yet. The lock is set the first time a message
-     * is sent through the multi-provider send path.
+     * versa) so provider-level cached thread context stays coherent.
      */
     lockedProvider: v.optional(llmProviderValidator),
     /**
      * Last picked model name for this thread. Updated on every send so the
      * composer pre-fills the picker with the user's most recent choice
-     * when they reopen the thread. Distinct from `lockedProvider`: the
-     * user can switch *model tier* freely within the locked provider
-     * (gpt-5 ↔ gpt-5-mini); only the provider literal is immutable.
+     * when they reopen the thread.
      */
     defaultModelName: v.optional(v.string()),
     /**
@@ -837,6 +834,13 @@ export default defineSchema({
      */
     estimatedCachedInputTokens: v.optional(v.number()),
     estimatedReasoningTokens: v.optional(v.number()),
+    /**
+     * Per-message reasoning effort override. When set, this takes
+     * precedence over the catalog entry's default `reasoningEffort`.
+     * Used to let users adjust reasoning intensity for individual
+     * messages without changing the model or thread default.
+     */
+    reasoningEffort: v.optional(reasoningEffortValidator),
     /**
      * Per-message cost estimate in USD, computed from the model's reported
      * usage and a snapshot pricing table at finalize time

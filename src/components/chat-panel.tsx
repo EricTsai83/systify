@@ -24,6 +24,7 @@ import {
   PromptInputModelPicker,
   type PromptInputModelPickerValue,
 } from "@/components/ai-elements/prompt-input-model-picker";
+import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-input-reasoning-picker";
 import { SandboxActivityPill } from "@/components/sandbox-activity-pill";
 import { Button } from "@/components/ui/button";
 import type {
@@ -31,6 +32,7 @@ import type {
   ArtifactId,
   ChatMode,
   LlmProvider,
+  ReasoningEffort,
   RepositoryId,
   SandboxModeStatus,
   ThreadId,
@@ -67,8 +69,8 @@ type ChatPanelProps = {
    * switches) and passes it through.
    *
    * `threadLockedProvider` mirrors `threads.lockedProvider` from the
-   * thread-context query. When set, the picker hides the other
-   * provider's group and renders the lock pill.
+   * thread-context query. When set, the picker hides the other provider's
+   * group and renders the lock pill.
    *
    * All four are optional so unit-test renders / headless callers can
    * mount `ChatPanel` without threading picker state through. The
@@ -78,6 +80,17 @@ type ChatPanelProps = {
   selectedProvider?: LlmProvider | null;
   selectedModelName?: string | null;
   setSelectedModel?: (next: PromptInputModelPickerValue) => void;
+  /**
+   * Per-message reasoning-effort override. The picker shows only when
+   * the selected model's catalog entry supports reasoning. `null`
+   * means "fall back to catalog default" — the gateway threads that
+   * cascade for us.
+   *
+   * As with the model picker, the shell owns the state; the picker
+   * resets between sends unless the shell chooses to remember it.
+   */
+  selectedReasoningEffort?: ReasoningEffort | null;
+  setSelectedReasoningEffort?: (next: ReasoningEffort) => void;
   threadLockedProvider?: LlmProvider | null;
   /**
    * Per-axis availability verdict from `repositoryModeEligibility.evaluate`.
@@ -92,6 +105,12 @@ type ChatPanelProps = {
       }
     | null
     | undefined;
+  /**
+   * Whether to show Discuss grounding controls. Repoless `/chat` routes are
+   * Discuss-only but have no repository context, so Library/Sandbox controls
+   * would be permanently unusable there.
+   */
+  showGroundingToggles?: boolean;
   /** Fires when the user clicks the Library "Generate System Design" CTA. */
   onOpenGenerateSystemDesign?: () => void;
   isSending: boolean;
@@ -245,8 +264,11 @@ export function ChatPanel({
   selectedProvider = null,
   selectedModelName = null,
   setSelectedModel,
+  selectedReasoningEffort = null,
+  setSelectedReasoningEffort,
   threadLockedProvider = null,
   grounding,
+  showGroundingToggles = chatMode === "discuss",
   onOpenGenerateSystemDesign,
   isSending,
   onSendMessage,
@@ -447,7 +469,7 @@ export function ChatPanel({
         // column owns its own max-w-3xl gutter.
         <Conversation scroll={conversationScroll} className="flex-1 min-h-0">
           <ConversationContent
-            className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6"
+            className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pb-6 pt-10"
             showLoadOlderSentinel={canLoadOlderMessages}
           >
             {sandboxPill}
@@ -550,17 +572,17 @@ export function ChatPanel({
                     }
                     onChange={setSelectedModel}
                     threadLockedProvider={threadLockedProvider}
-                    // Capability filter mirrors the chat composer's
-                    // surface. The picker still lets users pick
-                    // sandbox-tier models inside the discuss surface
-                    // because the catalog's `discuss` group includes
-                    // tool-capable entries — sandbox grounding kicks
-                    // them up to the sandbox capability inside the
-                    // resolver, not via the picker filter.
-                    capability="discuss"
                   />
                 ) : null}
-                {chatMode === "discuss" ? (
+                {!isReadOnly && setSelectedReasoningEffort ? (
+                  <PromptInputReasoningPicker
+                    value={selectedReasoningEffort}
+                    onChange={setSelectedReasoningEffort}
+                    provider={selectedProvider ?? undefined}
+                    modelName={selectedModelName ?? undefined}
+                  />
+                ) : null}
+                {showGroundingToggles && chatMode === "discuss" ? (
                   <GroundingToggleBar
                     groundLibrary={groundLibrary}
                     groundSandbox={groundSandbox}
