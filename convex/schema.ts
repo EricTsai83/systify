@@ -779,6 +779,19 @@ export default defineSchema({
       "repositoryId",
       "lastMessageAt",
     ])
+    /**
+     * Repoless-thread pinned range read. Mirrors the
+     * `by_ownerTokenIdentifier_repoless_and_lastMessageAt` shape but trades
+     * `lastMessageAt` for `pinnedAt` so the repoless-shell "Chats" rail can
+     * surface a Pinned section without scanning the recent slice and
+     * filtering. Range over `.eq("repositoryId", undefined).gt("pinnedAt", 0)`
+     * to read only the pinned-repoless rows in descending pin recency.
+     */
+    .index("by_ownerTokenIdentifier_repoless_and_pinnedAt", [
+      "ownerTokenIdentifier",
+      "repositoryId",
+      "pinnedAt",
+    ])
     .index("by_repositoryId_and_pinnedAt", ["repositoryId", "pinnedAt"])
     .index("by_repositoryId_and_mode", ["repositoryId", "mode"])
     .index("by_repositoryId_mode_and_lastMessageAt", ["repositoryId", "mode", "lastMessageAt"])

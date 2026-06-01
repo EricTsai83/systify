@@ -76,22 +76,37 @@ export const listThreads = query({
 /**
  * Repoless threads — chats not bound to any repository, surfaced in the
  * repoless shell's "Chats" sidebar section. Always Discuss mode by
- * construction (Library requires an attached repository). The
- * `by_ownerTokenIdentifier_repoless_and_lastMessageAt` index pins
- * `repositoryId === undefined` so the range read scans only the repoless
- * slice instead of filtering the whole owner table.
+ * construction (Library requires an attached repository).
+ *
+ * Two range reads merged: pinned-first via
+ * `by_ownerTokenIdentifier_repoless_and_pinnedAt` (ordered by pin recency),
+ * then the rest via `by_ownerTokenIdentifier_repoless_and_lastMessageAt`.
+ * Pinned rows survive even when 20+ more recent unpinned threads exist —
+ * matches `listThreads`' repo-bound merge behavior.
+ *
+ * Both indexes pin `repositoryId === undefined` so the range scans only
+ * the repoless slice instead of filtering the whole owner table.
  */
 export const listRepolessThreads = query({
   args: {},
   handler: async (ctx) => {
     const identity = await requireViewerIdentity(ctx);
-    return await ctx.db
+    const pinned = await ctx.db
+      .query("threads")
+      .withIndex("by_ownerTokenIdentifier_repoless_and_pinnedAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("repositoryId", undefined).gt("pinnedAt", 0),
+      )
+      .order("desc")
+      .take(20);
+    const recent = await ctx.db
       .query("threads")
       .withIndex("by_ownerTokenIdentifier_repoless_and_lastMessageAt", (q) =>
         q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("repositoryId", undefined),
       )
       .order("desc")
       .take(20);
+    const pinnedIds = new Set(pinned.map((thread) => thread._id));
+    return [...pinned, ...recent.filter((thread) => !pinnedIds.has(thread._id))];
   },
 });
 

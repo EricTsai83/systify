@@ -1,10 +1,34 @@
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { GlobeIcon, LockIcon, PlusIcon, PushPinIcon, TrashIcon } from "@phosphor-icons/react";
+import {
+  DotsThreeVerticalIcon,
+  GlobeIcon,
+  LockIcon,
+  PencilSimpleIcon,
+  PlusIcon,
+  PushPinIcon,
+  PushPinSlashIcon,
+  TrashIcon,
+} from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { MAX_RENAME_TITLE_LENGTH } from "../../convex/lib/threadDefaults";
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuGroup,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useInlineRename } from "@/hooks/use-inline-rename";
@@ -440,77 +464,129 @@ function ThreadItem({
 
   const titleTextClass = threadTitleTextClass(compact);
   return (
-    <div ref={rowRef} className="group relative">
-      {isEditing ? (
-        <EditableRowFrame className={cn("py-1.5 pr-16", compact && "py-1")}>
-          <div className="min-w-0 flex-1">
-            <input
-              ref={inputRef}
-              value={draft}
-              maxLength={MAX_RENAME_TITLE_LENGTH}
-              aria-label="Rename thread"
-              disabled={isCommitting}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onBlur={() => void handleCommit()}
-              className={cn(
-                "m-0 block w-full truncate border-0 bg-transparent p-0 font-medium text-foreground outline-none ring-0",
-                titleTextClass,
-              )}
-            />
-            <ThreadRepoBadge repository={repository} />
-          </div>
-        </EditableRowFrame>
-      ) : (
-        <SidebarMenuButton
-          selected={isSelected}
-          onClick={() => onSelectThread(thread._id, thread.mode)}
-          onMouseEnter={() => onPrewarmThread(thread._id)}
-          onFocus={() => onPrewarmThread(thread._id)}
-          onKeyDown={handleItemKeyDown}
-          aria-keyshortcuts="F2"
-          className={cn("py-1.5 pr-16", compact && "py-1")}
-        >
-          <div className="min-w-0 flex-1">
-            <p
-              onDoubleClick={handleStartEdit}
-              className={cn("cursor-pointer truncate font-medium text-foreground", titleTextClass)}
+    <ContextMenu>
+      <ContextMenuTrigger asChild disabled={isEditing}>
+        <div ref={rowRef} className="group relative">
+          {isEditing ? (
+            <EditableRowFrame className={cn("py-1.5 pr-16", compact && "py-1")}>
+              <div className="min-w-0 flex-1">
+                <input
+                  ref={inputRef}
+                  value={draft}
+                  maxLength={MAX_RENAME_TITLE_LENGTH}
+                  aria-label="Rename thread"
+                  disabled={isCommitting}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onBlur={() => void handleCommit()}
+                  className={cn(
+                    "m-0 block w-full truncate border-0 bg-transparent p-0 font-medium text-foreground outline-none ring-0",
+                    titleTextClass,
+                  )}
+                />
+                <ThreadRepoBadge repository={repository} />
+              </div>
+            </EditableRowFrame>
+          ) : (
+            <SidebarMenuButton
+              selected={isSelected}
+              onClick={() => onSelectThread(thread._id, thread.mode)}
+              onMouseEnter={() => onPrewarmThread(thread._id)}
+              onFocus={() => onPrewarmThread(thread._id)}
+              onKeyDown={handleItemKeyDown}
+              aria-keyshortcuts="F2"
+              className={cn("py-1.5 pr-16", compact && "py-1")}
             >
-              {thread.title}
-            </p>
-            <ThreadRepoBadge repository={repository} />
-          </div>
-        </SidebarMenuButton>
-      )}
-      <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
-        <Button
-          variant="ghost"
-          size="icon"
-          className={cn(
-            "pointer-events-auto h-6 w-6 transition-opacity focus-visible:opacity-100 group-hover:opacity-100",
-            isPinned
-              ? "text-foreground opacity-100 hover:text-muted-foreground"
-              : "text-muted-foreground opacity-0 hover:text-foreground",
+              <div className="min-w-0 flex-1">
+                <p
+                  onDoubleClick={handleStartEdit}
+                  className={cn("cursor-pointer truncate font-medium text-foreground", titleTextClass)}
+                >
+                  {thread.title}
+                </p>
+                <ThreadRepoBadge repository={repository} />
+              </div>
+            </SidebarMenuButton>
           )}
-          onClick={() => onTogglePin(thread._id, !isPinned)}
-          aria-label={isPinned ? "Unpin thread" : "Pin thread"}
-          aria-pressed={isPinned}
-          title={isPinned ? "Unpin thread" : "Pin thread"}
-        >
-          <PushPinIcon size={13} weight={isPinned ? "fill" : "regular"} />
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-          onClick={() => onDeleteThread(thread._id)}
-          aria-label="Delete thread"
-          title="Delete thread"
-        >
-          <TrashIcon size={13} weight="bold" />
-        </Button>
-      </div>
-    </div>
+          <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "pointer-events-auto h-6 w-6 transition-opacity focus-visible:opacity-100 group-hover:opacity-100",
+                isPinned
+                  ? "text-foreground opacity-100 hover:text-muted-foreground"
+                  : "text-muted-foreground opacity-0 hover:text-foreground",
+              )}
+              onClick={() => onTogglePin(thread._id, !isPinned)}
+              aria-label={isPinned ? "Unpin thread" : "Pin thread"}
+              aria-pressed={isPinned}
+              title={isPinned ? "Unpin thread" : "Pin thread"}
+            >
+              <PushPinIcon size={13} weight={isPinned ? "fill" : "regular"} />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                  aria-label="Thread actions"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <DotsThreeVerticalIcon size={13} weight="bold" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => onTogglePin(thread._id, !isPinned)}>
+                  {isPinned ? (
+                    <>
+                      <PushPinSlashIcon size={12} weight="bold" /> Unpin
+                    </>
+                  ) : (
+                    <>
+                      <PushPinIcon size={12} weight="bold" /> Pin to top
+                    </>
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleStartEdit}>
+                  <PencilSimpleIcon size={12} weight="bold" /> Rename
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => onDeleteThread(thread._id)} className="text-destructive">
+                  <TrashIcon size={12} weight="bold" /> Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuGroup>
+          <ContextMenuItem onClick={() => onTogglePin(thread._id, !isPinned)}>
+            {isPinned ? (
+              <>
+                <PushPinSlashIcon weight="bold" /> Unpin
+              </>
+            ) : (
+              <>
+                <PushPinIcon weight="bold" /> Pin to top
+              </>
+            )}
+          </ContextMenuItem>
+          <ContextMenuItem onClick={handleStartEdit}>
+            <PencilSimpleIcon weight="bold" /> Rename
+          </ContextMenuItem>
+        </ContextMenuGroup>
+        <ContextMenuSeparator />
+        <ContextMenuGroup>
+          <ContextMenuItem variant="destructive" onClick={() => onDeleteThread(thread._id)}>
+            <TrashIcon weight="bold" /> Delete
+          </ContextMenuItem>
+        </ContextMenuGroup>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
 
@@ -554,6 +630,20 @@ export function RepolessChatsRail({
 }) {
   const threads = useQuery(api.chat.threads.listRepolessThreads, {});
   const prewarmThread = usePrewarmThread();
+  const setThreadPinnedMutation = useMutation(api.chat.threads.setThreadPinned);
+
+  const handleTogglePin = useCallback(
+    (threadId: ThreadId, pinned: boolean) => {
+      onError(null);
+      void setThreadPinnedMutation({ threadId, pinned }).catch((error) => {
+        onError(toUserErrorMessage(error, pinned ? "Failed to pin thread." : "Failed to unpin thread."));
+      });
+    },
+    [setThreadPinnedMutation, onError],
+  );
+
+  const pinnedThreads = useMemo(() => threads?.filter((thread) => Boolean(thread.pinnedAt)) ?? [], [threads]);
+  const otherThreads = useMemo(() => threads?.filter((thread) => !thread.pinnedAt) ?? [], [threads]);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -573,31 +663,59 @@ export function RepolessChatsRail({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
-        <div className="flex flex-col">
-          <div className="flex items-center gap-1 px-1 pb-1">
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Chats</p>
+        {threads === undefined ? null : (
+          <div className="flex flex-col">
+            {pinnedThreads.length > 0 && (
+              <div className="flex flex-col gap-1 pb-3">
+                <div className="flex items-center gap-1 px-1 pb-1 text-muted-foreground">
+                  <PushPinIcon size={10} weight="fill" className="shrink-0" />
+                  <p className="text-[11px] font-semibold uppercase tracking-wider">Pinned</p>
+                </div>
+                <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-300 ease-out">
+                  {pinnedThreads.map((thread) => (
+                    <RepolessThreadItem
+                      key={thread._id}
+                      thread={thread}
+                      isSelected={selectedThreadId === thread._id}
+                      isPinned
+                      onSelectThread={onSelectThread}
+                      onPrewarmThread={prewarmThread}
+                      onDeleteThread={onDeleteThread}
+                      onTogglePin={handleTogglePin}
+                      onError={onError}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            {(otherThreads.length > 0 || pinnedThreads.length === 0) && (
+              <div className="flex flex-col gap-1">
+                <div className="flex items-center gap-1 px-1 pb-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Chats</p>
+                </div>
+                {otherThreads.length === 0 ? (
+                  <p className="px-1 text-xs text-muted-foreground">No conversations yet. Start one above.</p>
+                ) : (
+                  <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-300 ease-out">
+                    {otherThreads.map((thread) => (
+                      <RepolessThreadItem
+                        key={thread._id}
+                        thread={thread}
+                        isSelected={selectedThreadId === thread._id}
+                        isPinned={false}
+                        onSelectThread={onSelectThread}
+                        onPrewarmThread={prewarmThread}
+                        onDeleteThread={onDeleteThread}
+                        onTogglePin={handleTogglePin}
+                        onError={onError}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
-          {threads === undefined ? null : threads.length === 0 ? (
-            <p className="px-1 text-xs text-muted-foreground">No conversations yet. Start one above.</p>
-          ) : (
-            <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-300 ease-out">
-              {threads.map((thread) => {
-                const isSelected = selectedThreadId === thread._id;
-                return (
-                  <RepolessThreadItem
-                    key={thread._id}
-                    thread={thread}
-                    isSelected={isSelected}
-                    onSelectThread={onSelectThread}
-                    onPrewarmThread={prewarmThread}
-                    onDeleteThread={onDeleteThread}
-                    onError={onError}
-                  />
-                );
-              })}
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
@@ -606,16 +724,20 @@ export function RepolessChatsRail({
 function RepolessThreadItem({
   thread,
   isSelected,
+  isPinned,
   onSelectThread,
   onPrewarmThread,
   onDeleteThread,
+  onTogglePin,
   onError,
 }: {
   thread: Doc<"threads">;
   isSelected: boolean;
+  isPinned: boolean;
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onPrewarmThread: (id: ThreadId) => void;
   onDeleteThread: (id: ThreadId) => void;
+  onTogglePin: (id: ThreadId, pinned: boolean) => void;
   onError: (message: string | null) => void;
 }) {
   const rowRef = useRef<HTMLDivElement>(null);
@@ -637,58 +759,126 @@ function RepolessThreadItem({
 
   const titleTextClass = threadTitleTextClass(false);
   return (
-    <div ref={rowRef} className="group relative">
-      {isEditing ? (
-        <EditableRowFrame className="py-1.5 pr-10">
-          <div className="min-w-0 flex-1">
-            <input
-              ref={inputRef}
-              value={draft}
-              maxLength={MAX_RENAME_TITLE_LENGTH}
-              aria-label="Rename thread"
-              disabled={isCommitting}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onBlur={() => void handleCommit()}
-              className={cn(
-                "m-0 block w-full truncate border-0 bg-transparent p-0 font-medium text-foreground outline-none ring-0",
-                titleTextClass,
-              )}
-            />
-          </div>
-        </EditableRowFrame>
-      ) : (
-        <SidebarMenuButton
-          selected={isSelected}
-          onClick={() => onSelectThread(thread._id, thread.mode)}
-          onMouseEnter={() => onPrewarmThread(thread._id)}
-          onFocus={() => onPrewarmThread(thread._id)}
-          onKeyDown={handleItemKeyDown}
-          aria-keyshortcuts="F2"
-          className="py-1.5 pr-10"
-        >
-          <div className="min-w-0 flex-1">
-            <p
-              onDoubleClick={handleStartEdit}
-              className={cn("cursor-pointer truncate font-medium text-foreground", titleTextClass)}
+    <ContextMenu>
+      <ContextMenuTrigger asChild disabled={isEditing}>
+        <div ref={rowRef} className="group relative">
+          {isEditing ? (
+            <EditableRowFrame className="py-1.5 pr-16">
+              <div className="min-w-0 flex-1">
+                <input
+                  ref={inputRef}
+                  value={draft}
+                  maxLength={MAX_RENAME_TITLE_LENGTH}
+                  aria-label="Rename thread"
+                  disabled={isCommitting}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  onBlur={() => void handleCommit()}
+                  className={cn(
+                    "m-0 block w-full truncate border-0 bg-transparent p-0 font-medium text-foreground outline-none ring-0",
+                    titleTextClass,
+                  )}
+                />
+              </div>
+            </EditableRowFrame>
+          ) : (
+            <SidebarMenuButton
+              selected={isSelected}
+              onClick={() => onSelectThread(thread._id, thread.mode)}
+              onMouseEnter={() => onPrewarmThread(thread._id)}
+              onFocus={() => onPrewarmThread(thread._id)}
+              onKeyDown={handleItemKeyDown}
+              aria-keyshortcuts="F2"
+              className="py-1.5 pr-16"
             >
-              {thread.title}
-            </p>
+              <div className="min-w-0 flex-1">
+                <p
+                  onDoubleClick={handleStartEdit}
+                  className={cn("cursor-pointer truncate font-medium text-foreground", titleTextClass)}
+                >
+                  {thread.title}
+                </p>
+              </div>
+            </SidebarMenuButton>
+          )}
+          <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="icon"
+              className={cn(
+                "pointer-events-auto h-6 w-6 transition-opacity focus-visible:opacity-100 group-hover:opacity-100",
+                isPinned
+                  ? "text-foreground opacity-100 hover:text-muted-foreground"
+                  : "text-muted-foreground opacity-0 hover:text-foreground",
+              )}
+              onClick={() => onTogglePin(thread._id, !isPinned)}
+              aria-label={isPinned ? "Unpin thread" : "Pin thread"}
+              aria-pressed={isPinned}
+              title={isPinned ? "Unpin thread" : "Pin thread"}
+            >
+              <PushPinIcon size={13} weight={isPinned ? "fill" : "regular"} />
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
+                  aria-label="Thread actions"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <DotsThreeVerticalIcon size={13} weight="bold" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => onTogglePin(thread._id, !isPinned)}>
+                  {isPinned ? (
+                    <>
+                      <PushPinSlashIcon size={12} weight="bold" /> Unpin
+                    </>
+                  ) : (
+                    <>
+                      <PushPinIcon size={12} weight="bold" /> Pin to top
+                    </>
+                  )}
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={handleStartEdit}>
+                  <PencilSimpleIcon size={12} weight="bold" /> Rename
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={() => onDeleteThread(thread._id)} className="text-destructive">
+                  <TrashIcon size={12} weight="bold" /> Delete
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
-        </SidebarMenuButton>
-      )}
-      <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-          onClick={() => onDeleteThread(thread._id)}
-          aria-label="Delete thread"
-          title="Delete thread"
-        >
-          <TrashIcon size={13} weight="bold" />
-        </Button>
-      </div>
-    </div>
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuGroup>
+          <ContextMenuItem onClick={() => onTogglePin(thread._id, !isPinned)}>
+            {isPinned ? (
+              <>
+                <PushPinSlashIcon weight="bold" /> Unpin
+              </>
+            ) : (
+              <>
+                <PushPinIcon weight="bold" /> Pin to top
+              </>
+            )}
+          </ContextMenuItem>
+          <ContextMenuItem onClick={handleStartEdit}>
+            <PencilSimpleIcon weight="bold" /> Rename
+          </ContextMenuItem>
+        </ContextMenuGroup>
+        <ContextMenuSeparator />
+        <ContextMenuGroup>
+          <ContextMenuItem variant="destructive" onClick={() => onDeleteThread(thread._id)}>
+            <TrashIcon weight="bold" /> Delete
+          </ContextMenuItem>
+        </ContextMenuGroup>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 }
