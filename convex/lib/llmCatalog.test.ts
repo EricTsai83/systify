@@ -97,6 +97,7 @@ describe("getCatalogEntry", () => {
 describe("isValidPick", () => {
   test("true for catalogued pairs", () => {
     expect(isValidPick("openai", "gpt-5.5")).toBe(true);
+    expect(isValidPick("anthropic", "claude-opus-4-8")).toBe(true);
     expect(isValidPick("anthropic", "claude-opus-4-7")).toBe(true);
   });
 

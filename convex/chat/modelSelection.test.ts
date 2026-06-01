@@ -135,10 +135,10 @@ describe("resolveModelForReply", () => {
     expect(resolveModelForReply({ mode: "discuss", groundSandbox: false }).reasoningEffort).toBe("low");
   });
 
-  test("returns reasoningEffort=undefined when the picked model isn't a reasoning model", () => {
-    // Haiku 4.5 (`supportsReasoning: false`) — the picker hides the
-    // effort control on this model, and the resolver carries
-    // `undefined` so the gateway never wires a thinking budget.
+  test("returns reasoningEffort=undefined when a reasoning model has no catalog default and no override", () => {
+    // Anthropic reasoning models expose the user-facing override but
+    // do not carry an OpenAI-shaped catalog default. Without an
+    // explicit user pick, the gateway should omit provider options.
     const choice = resolveModelForReply({
       mode: "discuss",
       groundSandbox: false,
@@ -159,10 +159,7 @@ describe("resolveModelForReply", () => {
     expect(choice.reasoningEffort).toBe("high");
   });
 
-  test("per-message reasoning override is dropped on a non-reasoning model", () => {
-    // Haiku 4.5 carries `supportsReasoning: false` — the resolver
-    // drops the override so the gateway can't smuggle a thinking
-    // budget into a request the provider would reject.
+  test("per-message reasoning override applies on Anthropic reasoning models", () => {
     const choice = resolveModelForReply({
       mode: "discuss",
       groundSandbox: false,
@@ -170,17 +167,17 @@ describe("resolveModelForReply", () => {
       overrideModelName: "claude-haiku-4-5",
       overrideReasoningEffort: "high",
     });
-    expect(choice.reasoningEffort).toBeUndefined();
+    expect(choice.reasoningEffort).toBe("high");
   });
 
   test("per-message reasoning override applies on capability-default fallbacks too", () => {
     const choice = resolveModelForReply({
       mode: "discuss",
       groundSandbox: false,
-      overrideReasoningEffort: "minimal",
+      overrideReasoningEffort: "none",
     });
     expect(choice.provider).toBe("openai");
     expect(choice.modelName).toBe("gpt-5.4-mini");
-    expect(choice.reasoningEffort).toBe("minimal");
+    expect(choice.reasoningEffort).toBe("none");
   });
 });

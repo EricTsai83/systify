@@ -2,27 +2,14 @@
 
 /**
  * Composer model picker. Composes the existing
- * `PromptInputSelect` family from `prompt-input.tsx` into a feature-
- * specific control the chat composer renders alongside the grounding
- * toggles.
+ * `PromptInputSelect` family from `prompt-input.tsx` into a feature-specific
+ * control the chat composer renders alongside the grounding toggles.
  *
- * Public API kept minimal: the picker takes the current `(provider,
- * modelName)` pair as a single `value` object, fires the same shape
- * on `onChange`, and accepts a thread-level `lockedProvider` to drive
- * the per-thread "locked to X" pill plus the cross-provider filter.
+ * Public API kept minimal: the picker takes the current `(provider, modelName)`
+ * pair as a single `value` object and fires the same shape on `onChange`.
  * The component is dumb — every catalog read goes through Convex's
- * `useQuery(api.llmCatalog.listPickableModels, ...)` so a future
- * per-user policy change lands without a UI rewrite.
- *
- * Lock semantics:
- *
- *   - When `threadLockedProvider` is `undefined`, the picker surfaces
- *     every catalog group; the user is choosing for the first time and
- *     the first send will set the thread's lock.
- *   - When `threadLockedProvider` is set, we hide the other provider's
- *     group entirely (the backend would reject those picks anyway
- *     with `thread_provider_locked`) and render a small `<HoverCard>`
- *     pill next to the trigger explaining why the choice is narrowed.
+ * `useQuery(api.llmCatalog.listPickableModels, ...)` so a future per-user
+ * policy change lands without a UI rewrite.
  *
  * The composite key (`provider:modelName`) used by the underlying
  * `<Select>` element is purely a UI-internal serialization — the
@@ -70,15 +57,14 @@ export interface PromptInputModelPickerProps {
    */
   onChange: (next: PromptInputModelPickerValue) => void;
   /**
-   * Provider this thread is locked to, if any. Hides the other
-   * provider's group from the dropdown and renders the lock pill
-   * alongside the trigger.
+   * Provider this thread is locked to, if any. Hides the other provider's
+   * group from the dropdown and renders the lock pill alongside the trigger.
    */
   threadLockedProvider?: LlmProvider | null;
   /**
-   * Capability filter forwarded to `listPickableModels`. The Discuss
-   * composer passes `"discuss"`; the standalone System Design dialog
-   * (future PR-B) passes `"sandbox"`.
+   * Capability filter forwarded to `listPickableModels`. Chat composers omit
+   * it so every user-pickable model is visible; tool-specific surfaces such
+   * as Generate System Design pass `"sandbox"`.
    */
   capability?: UserPickableCapability;
   /**

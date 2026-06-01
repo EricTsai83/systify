@@ -80,10 +80,8 @@ export interface ThreadCapabilities {
   defaultGroundLibrary: boolean;
   defaultGroundSandbox: boolean;
   /**
-   * Provider this thread is locked to (set on the thread's first send and
-   * immutable thereafter), or `null` for fresh threads. The composer's
-   * model picker hides the locked-out provider's options when this is
-   * set and renders a lock pill alongside the trigger.
+   * Legacy provider marker on older threads. New sends no longer enforce
+   * provider locking; the composer can switch providers on any turn.
    */
   lockedProvider: LlmProvider | null;
   /**

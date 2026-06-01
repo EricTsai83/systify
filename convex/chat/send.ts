@@ -46,8 +46,8 @@ async function insertChatTurn(
      * Resolved `(provider, modelName)` pair for this reply. Pinned on both
      * the user and the assistant message at insertion time so a later
      * picker change in the composer cannot retroactively re-attribute
-     * an already-finished turn. The thread's `lockedProvider` /
-     * `defaultModelName` patches happen alongside the message inserts.
+     * an already-finished turn. The thread's `defaultModelName` patch
+     * happens alongside the message inserts.
      */
     provider: LlmProvider;
     modelName: string;
@@ -137,7 +137,6 @@ async function insertChatTurn(
     sandboxSessionId?: Id<"sandboxSessions">;
     defaultGroundLibrary?: boolean;
     defaultGroundSandbox?: boolean;
-    lockedProvider?: LlmProvider;
     defaultModelName?: string;
   } = {
     mode: args.mode,
@@ -148,15 +147,8 @@ async function insertChatTurn(
     threadPatch.defaultGroundLibrary = args.groundLibrary === true;
     threadPatch.defaultGroundSandbox = args.groundSandbox === true;
   }
-  // First message in the thread locks the provider; thereafter
-  // `sendMessage` rejects mismatched picks before reaching this helper
-  // so the patch is a no-op on subsequent turns.
-  if (args.thread.lockedProvider === undefined) {
-    threadPatch.lockedProvider = args.provider;
-  }
   // Always refresh `defaultModelName` so reopening the thread restores
-  // the user's last pick — within the locked provider the user can
-  // switch tier freely (e.g. gpt-5 ↔ gpt-5-mini).
+  // the user's last pick.
   threadPatch.defaultModelName = args.modelName;
   await ctx.db.patch(args.thread._id, threadPatch);
 
@@ -252,10 +244,9 @@ export const sendMessageStartingNewThread = mutation({
 
     // Validate the picker pick (if both pieces present) and resolve the
     // effective `(provider, modelName)` for this reply. A brand-new
-    // thread has no `lockedProvider` yet — the resolved pick becomes the
-    // lock once `insertChatTurn` patches the thread row below. A
-    // half-set pair is rejected up front so the resolver never has to
-    // distinguish "intentional half-pick" from "missing arg".
+    // thread has no default model yet. A half-set pair is rejected up
+    // front so the resolver never has to distinguish "intentional
+    // half-pick" from "missing arg".
     assertCompletePickerPair(args);
     if (args.provider !== undefined && args.modelName !== undefined && !isValidPick(args.provider, args.modelName)) {
       throw new ConvexError({
@@ -343,13 +334,10 @@ export const sendMessage = mutation({
      *
      *   - Half-set pairs (only one field provided).
      *   - Picks not in {@link MODEL_CATALOG}.
-     *   - Picks whose provider differs from this thread's
-     *     `lockedProvider` (`thread_provider_locked` ConvexError) —
-     *     the frontend mirrors this constraint by hiding the
-     *     locked-out provider's options in the picker.
-     *
-     * Switching model tier *within* the locked provider (gpt-5 ↔ gpt-5-mini)
-     * is always allowed.
+     * Switching provider and model tier is allowed on every turn. The
+     * chosen pair is persisted on the message rows, and the thread's
+     * `defaultModelName` is refreshed so reopening the thread restores the
+     * last pick.
      */
     provider: v.optional(llmProviderValidator),
     modelName: v.optional(v.string()),
@@ -407,13 +395,7 @@ export const sendMessage = mutation({
     }
 
     // Resolve the effective `(provider, modelName)` pair using the
-    // override → thread default → capability default cascade. The
-    // resolved provider is what we enforce the lock against — picking
-    // a non-locked-provider model returns the failed pick verbatim so
-    // the error message is precise. The capability-default layer also
-    // gets the lock so a thread whose persisted `defaultModelName`
-    // drifted out of the catalog still falls back to its own
-    // provider's tier instead of the global openai default.
+    // override → thread default → capability default cascade.
     const resolved = resolveModelForReply({
       mode,
       groundSandbox,
@@ -421,17 +403,7 @@ export const sendMessage = mutation({
       overrideModelName: args.modelName,
       overrideReasoningEffort: args.reasoningEffort,
       threadDefaultModelName: thread.defaultModelName,
-      lockedProvider: thread.lockedProvider,
     });
-
-    if (thread.lockedProvider !== undefined && thread.lockedProvider !== resolved.provider) {
-      throw new ConvexError({
-        code: "thread_provider_locked",
-        lockedProvider: thread.lockedProvider,
-        attemptedProvider: resolved.provider,
-        message: `This thread is locked to ${thread.lockedProvider}. Start a new chat to use ${resolved.provider}.`,
-      });
-    }
 
     const trimmedContent = args.content.trim();
     if (!trimmedContent) {

@@ -205,15 +205,13 @@ export function LibraryAskPanel({
   // (`activeThreadProbe.defaultModelName`) or the capability default
   // sourced from `ROLE_MODELS`. The thread-scoped `modelByThread`
   // local state captures the user's explicit pick on top of that.
-  const lockedProvider = activeThreadProbe?.lockedProvider ?? null;
   const defaultModelName = activeThreadProbe?.defaultModelName ?? null;
   const defaultModelPick = useDefaultModelPick({
     capability: "library",
-    threadLockedProvider: lockedProvider,
     threadDefaultModelName: defaultModelName,
   });
   const userPickedModel = modelByThread.threadId === threadId ? modelByThread : null;
-  const selectedProvider = userPickedModel?.provider ?? defaultModelPick?.provider ?? lockedProvider ?? null;
+  const selectedProvider = userPickedModel?.provider ?? defaultModelPick?.provider ?? null;
   const selectedModelName = userPickedModel?.modelName ?? defaultModelPick?.modelName ?? defaultModelName ?? null;
   const selectedReasoningEffort = reasoningByThread.threadId === threadId ? reasoningByThread.effort : null;
 
@@ -456,12 +454,9 @@ export function LibraryAskPanel({
                * Library Ask model picker. Hidden while the composer
                * is locked (no artifacts) — the user can't send
                * anyway, and the picker dropdown would just clutter
-               * the locked-state hint. `capability="library"` scopes
-               * the catalog to RAG-tier models; `threadLockedProvider`
-               * mirrors the thread's `lockedProvider` so reopening a
-               * thread that already replied hides the other provider's
-               * group (the mutation would reject those picks with
-               * `thread_provider_locked`).
+               * the locked-state hint. Library Ask intentionally shows
+               * every user-pickable chat model; the backend validates
+               * the picked pair before queueing the reply.
                */}
               {!isLocked ? (
                 <PromptInputModelPicker
@@ -471,8 +466,6 @@ export function LibraryAskPanel({
                       : null
                   }
                   onChange={setSelectedModel}
-                  threadLockedProvider={lockedProvider}
-                  capability="library"
                 />
               ) : null}
               {!isLocked ? (

@@ -530,6 +530,7 @@ export function RepositoryShell({
       setSelectedReasoningEffort={setSelectedReasoningEffort}
       threadLockedProvider={capabilities.lockedProvider}
       grounding={availability?.grounding}
+      showGroundingToggles
       onOpenGenerateSystemDesign={() => setIsGenerateDialogOpen(true)}
       isSending={isSending}
       onSendMessage={handleSendMessage}

@@ -741,27 +741,17 @@ export default defineSchema({
      */
     userEditedTitle: v.optional(v.boolean()),
     /**
-     * Provider lock written on the FIRST assistant reply in a thread and
-     * immutable thereafter. Once a thread has held a turn with OpenAI we
-     * refuse to mix Anthropic into the same conversation history (and vice
-     * versa) — provider responses differ in reasoning-block shape, prompt-
-     * caching semantics, and tool-call envelope, so switching mid-thread
-     * would corrupt the running context. Enforcement is backend-first:
-     * `chat.send.sendMessage` rejects mismatched picks with
-     * `thread_provider_locked` and the picker hides the locked-out
-     * provider's models on the frontend.
-     *
-     * Optional because legacy threads (pre-PR-A3) and brand-new unsent
-     * threads have no lock yet. The lock is set the first time a message
-     * is sent through the multi-provider send path.
+     * Legacy provider marker from the earlier provider-locking model.
+     * New sends no longer write or enforce it; messages carry their own
+     * provider/model attribution, and the composer can switch providers on
+     * any turn. Optional because old threads may still have the field while
+     * new threads generally do not.
      */
     lockedProvider: v.optional(llmProviderValidator),
     /**
      * Last picked model name for this thread. Updated on every send so the
      * composer pre-fills the picker with the user's most recent choice
-     * when they reopen the thread. Distinct from `lockedProvider`: the
-     * user can switch *model tier* freely within the locked provider
-     * (gpt-5 ↔ gpt-5-mini); only the provider literal is immutable.
+     * when they reopen the thread.
      */
     defaultModelName: v.optional(v.string()),
     /**

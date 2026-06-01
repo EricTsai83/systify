@@ -154,10 +154,10 @@ describe("TEST_INTERNALS.buildProviderOptions", () => {
   });
 
   test("Anthropic reasoning model: reasoningEffort maps to a thinking-budget token count", () => {
-    // Claude Opus 4.7 (`supportsReasoning: true`) — effort maps
+    // Claude Opus 4.8 (`supportsReasoning: true`) — effort maps
     // to the budget table in `buildProviderOptions`:
-    // minimal=1024, low=5000, medium=16000, high=32000.
-    const opts = TEST_INTERNALS.buildProviderOptions("anthropic", "claude-opus-4-7", {
+    // low=5000, medium=16000, high=32000, xhigh=64000.
+    const opts = TEST_INTERNALS.buildProviderOptions("anthropic", "claude-opus-4-8", {
       system: "s",
       prompt: "p",
       reasoningEffort: "high",
@@ -167,27 +167,25 @@ describe("TEST_INTERNALS.buildProviderOptions", () => {
     });
   });
 
-  test("Anthropic non-reasoning model (Haiku 4.5): reasoningEffort is dropped", () => {
-    // Haiku 4.5 (`supportsReasoning: false`) — never gets a
-    // thinking budget regardless of what the caller passes. Catches
-    // a class of bugs where a stale effort from a prior message
-    // leaks into a model that would reject the option.
+  test("Anthropic reasoning model: none effort disables thinking", () => {
     const opts = TEST_INTERNALS.buildProviderOptions("anthropic", "claude-haiku-4-5", {
       system: "s",
       prompt: "p",
-      reasoningEffort: "high",
-    });
-    expect(opts).toBeUndefined();
-  });
-
-  test("Anthropic reasoning model: minimal effort hits the API floor (1024)", () => {
-    const opts = TEST_INTERNALS.buildProviderOptions("anthropic", "claude-opus-4-7", {
-      system: "s",
-      prompt: "p",
-      reasoningEffort: "minimal",
+      reasoningEffort: "none",
     });
     expect(opts).toEqual({
-      anthropic: { thinking: { type: "enabled", budgetTokens: 1_024 } },
+      anthropic: { thinking: { type: "disabled" } },
+    });
+  });
+
+  test("Anthropic reasoning model: xhigh effort maps to the largest budget", () => {
+    const opts = TEST_INTERNALS.buildProviderOptions("anthropic", "claude-opus-4-8", {
+      system: "s",
+      prompt: "p",
+      reasoningEffort: "xhigh",
+    });
+    expect(opts).toEqual({
+      anthropic: { thinking: { type: "enabled", budgetTokens: 64_000 } },
     });
   });
 
@@ -256,12 +254,12 @@ describe("generateViaGateway — provider dispatch (#1)", () => {
     vi.mocked(generateText).mockResolvedValueOnce(buildOkGenerateResult());
     const t = createTestHarness();
     await t.action(async (ctx) => {
-      await generateViaGateway(ctx, buildCallCtx({ provider: "anthropic", modelName: "claude-opus-4-7" }), {
+      await generateViaGateway(ctx, buildCallCtx({ provider: "anthropic", modelName: "claude-opus-4-8" }), {
         system: "s",
         prompt: "p",
       });
     });
-    expect(anthropicFactory).toHaveBeenCalledWith("claude-opus-4-7");
+    expect(anthropicFactory).toHaveBeenCalledWith("claude-opus-4-8");
     expect(openaiFactory).not.toHaveBeenCalled();
   });
 

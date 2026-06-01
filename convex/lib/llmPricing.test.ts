@@ -31,16 +31,16 @@ describe("estimateCostUsd", () => {
   });
 
   test("OpenAI gpt-5.4-mini discuss / library tier prices correctly", () => {
-    // 1M input @ $0.25 + 1M output @ $2 = $2.25
+    // 1M input @ $0.75 + 1M output @ $4.50 = $5.25
     expect(estimateCostUsd("openai", "gpt-5.4-mini", { inputTokens: 1_000_000, outputTokens: 1_000_000 })).toBeCloseTo(
-      2.25,
+      5.25,
     );
   });
 
-  test("Anthropic Opus 4.7 prices correctly", () => {
+  test("Anthropic Opus 4.8 prices correctly", () => {
     // 1M input @ $5 + 1M output @ $25 = $30
     expect(
-      estimateCostUsd("anthropic", "claude-opus-4-7", { inputTokens: 1_000_000, outputTokens: 1_000_000 }),
+      estimateCostUsd("anthropic", "claude-opus-4-8", { inputTokens: 1_000_000, outputTokens: 1_000_000 }),
     ).toBeCloseTo(30);
   });
 
@@ -54,10 +54,10 @@ describe("estimateCostUsd", () => {
     expect(cost).toBeCloseTo(16.65);
   });
 
-  test("cacheWriteTokens are billed at the premium write tier (Anthropic Opus 4.7)", () => {
+  test("cacheWriteTokens are billed at the premium write tier (Anthropic Opus 4.8)", () => {
     // 1M cache write @ $6.25 + 0M input + 0M output = $6.25
     expect(
-      estimateCostUsd("anthropic", "claude-opus-4-7", {
+      estimateCostUsd("anthropic", "claude-opus-4-8", {
         inputTokens: 0,
         outputTokens: 0,
         cacheWriteTokens: 1_000_000,

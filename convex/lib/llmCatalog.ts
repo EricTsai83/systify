@@ -63,12 +63,13 @@ export type UserPickableCapability = Exclude<ModelCapability, "embedding">;
 
 /**
  * Reasoning effort knob. OpenAI consumes this directly as
- * `providerOptions.openai.reasoningEffort`. Anthropic maps it to a
- * thinking-budget token count in `buildProviderOptions`. The
- * per-message override flows through `messages.reasoningEffort` and
+ * `providerOptions.openai.reasoningEffort`. Anthropic maps `none`
+ * to disabled thinking and the remaining values to thinking-budget
+ * token counts in `buildProviderOptions`. The per-message override
+ * flows through `messages.reasoningEffort` and
  * `LlmGenerateArgs.reasoningEffort`.
  */
-export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
 
 /**
  * Convex validator for {@link ReasoningEffort}. Exported so the
@@ -77,16 +78,17 @@ export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
  * still compiles against the same literal set.
  */
 export const reasoningEffortValidator = v.union(
-  v.literal("minimal"),
+  v.literal("none"),
   v.literal("low"),
   v.literal("medium"),
   v.literal("high"),
+  v.literal("xhigh"),
 );
 
 export interface ModelCatalogEntry {
   provider: LlmProvider;
   /**
-   * Provider-native model identifier (`gpt-5.5`, `claude-opus-4-7`, …).
+   * Provider-native model identifier (`gpt-5.5`, `claude-opus-4-8`, …).
    * Persisted to `messages.modelName`, `threads.defaultModelName`,
    * `jobs.modelName`. Never rename a value — only add new ones.
    */
@@ -150,11 +152,10 @@ export interface ModelCatalogEntry {
 export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
   // === OpenAI === GPT-5 family.
   //
-  // GPT-5.5 is the latest sandbox-tier model; the family does not (yet)
-  // publish a 5.5 mini — GPT-5.4 Mini remains the cheapest reasoning-
-  // capable tier the picker surfaces. GPT-5.4 Nano stays internal-only
+  // GPT-5.5 is the latest sandbox-tier model; GPT-5.4 Mini remains
+  // the fastest user-pickable small reasoning tier. GPT-5.4 Nano stays internal-only
   // (`userPickable: false`) because the picker should not surface a
-  // model that drops tool support.
+  // model optimized for lightweight internal utility work.
   {
     provider: "openai",
     modelName: "gpt-5.5",
@@ -163,7 +164,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     reasoningEffort: "medium",
     supportsReasoning: true,
     supportsTools: true,
-    contextWindow: 200_000,
+    contextWindow: 1_050_000,
     userPickable: true,
   },
   {
@@ -174,7 +175,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     reasoningEffort: "low",
     supportsReasoning: true,
     supportsTools: true,
-    contextWindow: 200_000,
+    contextWindow: 400_000,
     userPickable: true,
   },
   {
@@ -182,19 +183,29 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     modelName: "gpt-5.4-nano",
     displayName: "GPT-5.4 Nano",
     capability: "discuss",
-    // The nano tier intentionally drops tool support; we keep it
-    // for ultra-cheap eval-judge and lightweight discuss flows.
-    supportsReasoning: false,
-    supportsTools: false,
-    contextWindow: 128_000,
+    // The nano tier is kept internal-only for ultra-cheap eval-judge
+    // and lightweight title-generation flows.
+    supportsReasoning: true,
+    supportsTools: true,
+    contextWindow: 400_000,
     userPickable: false,
   },
   // === Anthropic === Claude 4 family.
   //
-  // Opus 4.7 supports extended thinking; Haiku 4.5 does not. The
+  // Opus 4.8 and Haiku 4.5 support extended thinking. The
   // `supportsReasoning` flag drives both the picker's reasoning-
   // effort visibility and the gateway's Anthropic thinking-budget
   // wiring.
+  {
+    provider: "anthropic",
+    modelName: "claude-opus-4-8",
+    displayName: "Claude Opus 4.8",
+    capability: "sandbox",
+    supportsReasoning: true,
+    supportsTools: true,
+    contextWindow: 1_000_000,
+    userPickable: true,
+  },
   {
     provider: "anthropic",
     modelName: "claude-opus-4-7",
@@ -203,14 +214,14 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     supportsReasoning: true,
     supportsTools: true,
     contextWindow: 200_000,
-    userPickable: true,
+    userPickable: false,
   },
   {
     provider: "anthropic",
     modelName: "claude-haiku-4-5",
     displayName: "Claude Haiku 4.5",
     capability: "discuss",
-    supportsReasoning: false,
+    supportsReasoning: true,
     supportsTools: true,
     contextWindow: 200_000,
     userPickable: true,
@@ -263,9 +274,7 @@ export function getCatalogEntry(provider: LlmProvider, modelName: string): Model
  * Filter the catalog to entries the picker should surface. Both
  * filters compose:
  *
- *   - `provider` — used by the composer when the thread is locked
- *     to a provider (`threads.lockedProvider`). Filters out the
- *     other provider's group entirely.
+ *   - `provider` — reserved for future per-provider policy surfaces.
  *   - `capability` — used by surfaces that only support a tier
  *     (e.g. the standalone System Design dialog shows `sandbox`-
  *     tier models because the generator drives tool use).

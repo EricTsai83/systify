@@ -614,17 +614,18 @@ function getSdkEmbeddingModel(provider: LlmProvider, modelName: string): Embeddi
  * here rather than passed through to the SDK — the catalog entry's
  * `supportsReasoning: false` is the source of truth. This means:
  *
- *   - Haiku 4.5 (`supportsReasoning: false`) silently ignores any
- *     `reasoningEffort` the caller passes; no provider rejection.
+ *   - A catalog entry with `supportsReasoning: false` silently
+ *     ignores any `reasoningEffort` the caller passes; no provider
+ *     rejection.
  *   - A future catalog edit that flips a model to reasoning-capable
  *     starts honouring the existing override automatically.
  */
-const ANTHROPIC_THINKING_BUDGET_TOKENS: Record<ReasoningEffort, number> = {
+const ANTHROPIC_THINKING_BUDGET_TOKENS: Record<Exclude<ReasoningEffort, "none">, number> = {
   // Anthropic's API minimum thinking budget is 1024 tokens.
-  minimal: 1024,
   low: 5_000,
   medium: 16_000,
   high: 32_000,
+  xhigh: 64_000,
 };
 
 function buildProviderOptions(
@@ -645,6 +646,10 @@ function buildProviderOptions(
         }
         case "anthropic": {
           const existing = (merged.anthropic as Record<string, unknown>) ?? {};
+          if (args.reasoningEffort === "none") {
+            merged.anthropic = { ...existing, thinking: { type: "disabled" } };
+            break;
+          }
           merged.anthropic = {
             ...existing,
             thinking: {

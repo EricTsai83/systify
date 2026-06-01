@@ -13,20 +13,20 @@
  *     conversation; the picker resets to the catalog default (or the
  *     last picked override) between sends.
  *   - Hidden entirely when the picked model's catalog entry carries
- *     `supportsReasoning: false` — Anthropic Haiku 4.5 (no extended
- *     thinking) is the current example. Hiding the control rather
+ *     `supportsReasoning: false` — embedding and future non-reasoning
+ *     entries are the expected examples. Hiding the control rather
  *     than disabling it avoids a dangling knob the gateway would
  *     silently drop.
  *
  * Label vocabulary is provider-native:
  *
- *   - OpenAI models: `Minimal / Low / Medium / High` — these match
+ *   - OpenAI models: `None / Low / Medium / High / XHigh` — these match
  *     the provider's API enum so a user familiar with the OpenAI
  *     console finds the familiar names.
- *   - Anthropic models: `Quick / Standard / Extended / Deep` — the
- *     control still stores the normalized `"minimal" | ...` value;
+ *   - Anthropic models: `Off / Standard / Extended / Deep / Max` — the
+ *     control still stores the normalized `"none" | ...` value;
  *     the label just reflects how that maps to an Anthropic thinking
- *     budget (1K / 5K / 16K / 32K tokens; the actual budget is wired
+ *     budget (disabled / 5K / 16K / 32K / 64K tokens; the actual budget is wired
  *     in `buildProviderOptions`).
  *
  * The component is dumb: every catalog read goes through
@@ -75,13 +75,14 @@ export interface PromptInputReasoningPickerProps {
   className?: string;
 }
 
-const EFFORTS: readonly ReasoningEffort[] = ["minimal", "low", "medium", "high"];
+const EFFORTS: readonly ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh"];
 
 const OPENAI_LABELS: Record<ReasoningEffort, string> = {
-  minimal: "Minimal",
+  none: "None",
   low: "Low",
   medium: "Medium",
   high: "High",
+  xhigh: "XHigh",
 };
 
 // Anthropic publishes thinking as a token budget rather than an
@@ -89,10 +90,11 @@ const OPENAI_LABELS: Record<ReasoningEffort, string> = {
 // label honest about what the model is actually doing, without
 // changing the stored value.
 const ANTHROPIC_LABELS: Record<ReasoningEffort, string> = {
-  minimal: "Quick",
+  none: "Off",
   low: "Standard",
   medium: "Extended",
   high: "Deep",
+  xhigh: "Max",
 };
 
 function labelsForProvider(provider: LlmProvider | undefined): Record<ReasoningEffort, string> {

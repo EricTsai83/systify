@@ -40,9 +40,8 @@ export interface LlmPricing {
   outputPerMillion: number;
   /**
    * USD per 1 M cache-read input tokens. Anthropic prices cache reads
-   * at a steep discount (~10% of input rate); OpenAI's prompt cache
-   * is automatic at 50% of input rate and exposed via
-   * `cachedPromptTokens` — both flow through this field.
+   * at a steep discount; OpenAI's prompt cache is model-specific
+   * and exposed via `cachedPromptTokens` — both flow through this field.
    *
    * Omit when the provider does not charge a separate cache-read
    * tier (the math treats `cachedInputTokens` as fully-billed input
@@ -75,18 +74,17 @@ const PRICING: Record<string, LlmPricing> = {
   "openai:gpt-5.5": {
     inputPerMillion: 5,
     outputPerMillion: 30,
-    // OpenAI's prompt cache is automatic at 50% of input.
-    cacheReadPerMillion: 2.5,
+    cacheReadPerMillion: 0.5,
   },
   "openai:gpt-5.4-mini": {
-    inputPerMillion: 0.25,
-    outputPerMillion: 2,
-    cacheReadPerMillion: 0.125,
+    inputPerMillion: 0.75,
+    outputPerMillion: 4.5,
+    cacheReadPerMillion: 0.075,
   },
   "openai:gpt-5.4-nano": {
-    inputPerMillion: 0.05,
-    outputPerMillion: 0.4,
-    cacheReadPerMillion: 0.025,
+    inputPerMillion: 0.2,
+    outputPerMillion: 1.25,
+    cacheReadPerMillion: 0.02,
   },
   // Legacy fallbacks for existing persisted messages.
   "openai:gpt-5": {
@@ -122,9 +120,15 @@ const PRICING: Record<string, LlmPricing> = {
     inputPerMillion: 0.4,
     outputPerMillion: 1.6,
   },
-  // === Anthropic === Sized to Anthropic Claude Opus 4.7+ family list
+  // === Anthropic === Sized to Anthropic Claude Opus 4.8+ family list
   // pricing. Anthropic explicitly bills cache reads cheaper (10%) and
   // cache writes more expensive (125%) than the base input rate.
+  "anthropic:claude-opus-4-8": {
+    inputPerMillion: 5,
+    outputPerMillion: 25,
+    cacheReadPerMillion: 0.5,
+    cacheWritePerMillion: 6.25,
+  },
   "anthropic:claude-opus-4-7": {
     inputPerMillion: 5,
     outputPerMillion: 25,
@@ -132,18 +136,12 @@ const PRICING: Record<string, LlmPricing> = {
     cacheWritePerMillion: 6.25,
   },
   "anthropic:claude-haiku-4-5": {
-    inputPerMillion: 0.8,
-    outputPerMillion: 4,
-    cacheReadPerMillion: 0.08,
-    cacheWritePerMillion: 1,
+    inputPerMillion: 1,
+    outputPerMillion: 5,
+    cacheReadPerMillion: 0.1,
+    cacheWritePerMillion: 1.25,
   },
   // Legacy fallbacks for existing persisted messages.
-  "anthropic:claude-opus-4-8": {
-    inputPerMillion: 15,
-    outputPerMillion: 75,
-    cacheReadPerMillion: 1.5,
-    cacheWritePerMillion: 18.75,
-  },
   "anthropic:claude-sonnet-4-6": {
     inputPerMillion: 3,
     outputPerMillion: 15,

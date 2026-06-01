@@ -69,8 +69,8 @@ type ChatPanelProps = {
    * switches) and passes it through.
    *
    * `threadLockedProvider` mirrors `threads.lockedProvider` from the
-   * thread-context query. When set, the picker hides the other
-   * provider's group and renders the lock pill.
+   * thread-context query. When set, the picker hides the other provider's
+   * group and renders the lock pill.
    *
    * All four are optional so unit-test renders / headless callers can
    * mount `ChatPanel` without threading picker state through. The
@@ -105,6 +105,12 @@ type ChatPanelProps = {
       }
     | null
     | undefined;
+  /**
+   * Whether to show Discuss grounding controls. Repoless `/chat` routes are
+   * Discuss-only but have no repository context, so Library/Sandbox controls
+   * would be permanently unusable there.
+   */
+  showGroundingToggles?: boolean;
   /** Fires when the user clicks the Library "Generate System Design" CTA. */
   onOpenGenerateSystemDesign?: () => void;
   isSending: boolean;
@@ -262,6 +268,7 @@ export function ChatPanel({
   setSelectedReasoningEffort,
   threadLockedProvider = null,
   grounding,
+  showGroundingToggles = chatMode === "discuss",
   onOpenGenerateSystemDesign,
   isSending,
   onSendMessage,
@@ -565,14 +572,6 @@ export function ChatPanel({
                     }
                     onChange={setSelectedModel}
                     threadLockedProvider={threadLockedProvider}
-                    // Capability filter mirrors the chat composer's
-                    // surface. The picker still lets users pick
-                    // sandbox-tier models inside the discuss surface
-                    // because the catalog's `discuss` group includes
-                    // tool-capable entries — sandbox grounding kicks
-                    // them up to the sandbox capability inside the
-                    // resolver, not via the picker filter.
-                    capability="discuss"
                   />
                 ) : null}
                 {!isReadOnly && setSelectedReasoningEffort ? (
@@ -583,7 +582,7 @@ export function ChatPanel({
                     modelName={selectedModelName ?? undefined}
                   />
                 ) : null}
-                {chatMode === "discuss" ? (
+                {showGroundingToggles && chatMode === "discuss" ? (
                   <GroundingToggleBar
                     groundLibrary={groundLibrary}
                     groundSandbox={groundSandbox}

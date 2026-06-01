@@ -209,6 +209,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
             setSelectedReasoningEffort={setSelectedReasoningEffort}
             threadLockedProvider={capabilities.lockedProvider}
             grounding={undefined}
+            showGroundingToggles={false}
             isSending={isSending}
             onSendMessage={handleSendMessage}
             sandboxModeStatus={null}
