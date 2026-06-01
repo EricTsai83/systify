@@ -586,7 +586,7 @@ function FolderTreeBranch({
               }
             }}
           >
-            <span aria-hidden className="text-muted-foreground">
+            <span aria-hidden className="mr-1 text-muted-foreground">
               {isOpen ? <CaretDownIcon size={11} weight="bold" /> : <CaretRightIcon size={11} weight="bold" />}
             </span>
             {isInlineEditing ? (
@@ -601,7 +601,7 @@ function FolderTreeBranch({
                   event.stopPropagation();
                   handleInlineInputKeyDown(event);
                 }}
-                className="h-6 flex-1 text-[12px]"
+                className="h-5 min-w-0 flex-1 px-1 py-0 text-[12px]"
                 disabled={isInlineCommitting}
                 maxLength={FOLDER_NAME_MAX_LENGTH}
               />
@@ -837,7 +837,7 @@ const ArtifactRow = memo(function ArtifactRow({
                 event.stopPropagation();
                 handleInlineInputKeyDown(event);
               }}
-              className="h-6 flex-1 text-[12px]"
+              className="h-5 min-w-0 flex-1 px-1 py-0 text-[12px]"
               disabled={isInlineCommitting}
               maxLength={MAX_ARTIFACT_TITLE_LENGTH}
             />
