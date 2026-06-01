@@ -5,8 +5,8 @@ import {
   LockIcon,
   PencilSimpleIcon,
   PlusIcon,
-  PushPinIcon,
-  PushPinSlashIcon,
+  PushPinSimpleIcon,
+  PushPinSimpleSlashIcon,
   TrashIcon,
 } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
@@ -509,7 +509,11 @@ function ThreadItem({
               aria-pressed={isPinned}
               title={isPinned ? "Unpin thread" : "Pin thread"}
             >
-              {isPinned ? <PushPinSlashIcon size={13} weight="bold" /> : <PushPinIcon size={13} weight="regular" />}
+              {isPinned ? (
+                <PushPinSimpleSlashIcon size={13} weight="bold" />
+              ) : (
+                <PushPinSimpleIcon size={13} weight="bold" />
+              )}
             </Button>
             <Button
               variant="ghost"
@@ -529,11 +533,11 @@ function ThreadItem({
           <ContextMenuItem onClick={() => onTogglePin(thread._id, !isPinned)}>
             {isPinned ? (
               <>
-                <PushPinSlashIcon weight="bold" /> Unpin
+                <PushPinSimpleSlashIcon weight="bold" /> Unpin
               </>
             ) : (
               <>
-                <PushPinIcon weight="bold" /> Pin to top
+                <PushPinSimpleIcon weight="bold" /> Pin to top
               </>
             )}
           </ContextMenuItem>
@@ -772,7 +776,11 @@ function RepolessThreadItem({
               aria-pressed={isPinned}
               title={isPinned ? "Unpin thread" : "Pin thread"}
             >
-              {isPinned ? <PushPinSlashIcon size={13} weight="bold" /> : <PushPinIcon size={13} weight="regular" />}
+              {isPinned ? (
+                <PushPinSimpleSlashIcon size={13} weight="bold" />
+              ) : (
+                <PushPinSimpleIcon size={13} weight="bold" />
+              )}
             </Button>
             <Button
               variant="ghost"
@@ -792,11 +800,11 @@ function RepolessThreadItem({
           <ContextMenuItem onClick={() => onTogglePin(thread._id, !isPinned)}>
             {isPinned ? (
               <>
-                <PushPinSlashIcon weight="bold" /> Unpin
+                <PushPinSimpleSlashIcon weight="bold" /> Unpin
               </>
             ) : (
               <>
-                <PushPinIcon weight="bold" /> Pin to top
+                <PushPinSimpleIcon weight="bold" /> Pin to top
               </>
             )}
           </ContextMenuItem>
