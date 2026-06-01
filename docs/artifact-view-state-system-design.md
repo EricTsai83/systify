@@ -334,7 +334,7 @@ just one. Two surfaces own activation:
 | Artifact panel (chat right rail) | Row click → `onOpenInReader` | Inside the click handler |
 
 The Library shell uses `useEffect` because activation can happen
-without a click (URL navigation, keyboard `Cmd+1..9`). The artifact
+without a click (URL navigation, keyboard shortcuts). The artifact
 panel uses the click handler because that is the only entry. Both
 ultimately call the same hook's `markViewed` and end up writing the
 same `artifactViews` row.

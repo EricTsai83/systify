@@ -42,7 +42,7 @@ the gateway still accepts them.
 
 ### Thread provider lock — enforced in the backend
 
-The `threads.lockedProvider` column (`convex/schema.ts:760`) is unset on a
+The `threads.lockedProvider` column (`convex/schema.ts:750`) is unset on a
 brand-new thread and patched to the resolved provider the first time
 `insertChatTurn` writes a turn (`convex/chat/send.ts:144-146`). Once set, it
 is immutable for the lifetime of the thread.
@@ -70,7 +70,7 @@ capability-default layer prefers the locked provider's tier entry instead of
 the global OpenAI default — otherwise a stale `defaultModelName` on a
 lock-Anthropic thread would land on the OpenAI fallback and bounce off the
 lock check the user never picked
-(`convex/chat/modelSelection.ts:184-197`).
+(`convex/chat/modelSelection.ts:189-207`).
 
 Within the locked provider the user freely switches model tier (gpt-5 ↔
 gpt-5-mini); only the provider literal is immutable. `defaultModelName` is
@@ -89,12 +89,45 @@ would reject is just a code bug; correctness still comes from `sendMessage`.
 ### System Design jobs
 
 System Design picks `(provider, modelName)` at job creation time and bakes
-both onto the `jobs` row (`convex/schema.ts:378-379`). Different jobs may
+both onto the `jobs` row (`convex/schema.ts:368-369`). Different jobs may
 use different providers; within a single job every kind uses the same pair —
 the artifact cache key `(repositoryId, kind, alignedImportCommitSha,
 generatedByProvider, generatedByModel, promptVersion)`
-(`convex/schema.ts:535-537`) relies on that immutability so a resume after
+(`convex/schema.ts:525-527`) relies on that immutability so a resume after
 action timeout picks up exactly where the original attempt left off.
+
+### Embedding capability tier
+
+Embeddings flow through the same LLM gateway as generation, but on a
+dedicated dispatch path. `embedViaGateway` (`convex/lib/llmGateway.ts`)
+takes the same `(provider, modelName)` pair the catalog validates and
+hands it to `getSdkEmbeddingModel`, a sibling switch to `getSdkModel`
+that returns the provider-specific embedding handle (today only
+`openai.embedding(modelName)`).
+
+The path enforces two extra invariants that the generation path does
+not:
+
+1. **Capability gate.** `assertEmbeddingCapability` rejects any call
+   whose `LlmCallContext.capability` is not `"embedding"`. A generate-
+   tier model cannot accidentally route here, and an embedding-tier
+   entry refuses a stray generation request via the symmetric guard in
+   the catalog. The gateway surfaces the bug at the boundary instead of
+   letting the SDK return an opaque error.
+2. **Provider availability.** Anthropic does not publish an embedding
+   API today. The `getSdkEmbeddingModel` switch carries an explicit
+   `throw` for the `anthropic` case and the catalog refuses to register
+   an embedding entry under `anthropic`, so the branch is unreachable
+   via valid picks. The explicit throw documents the boundary so a
+   future "Anthropic adds embeddings" change surfaces here, not as a
+   cryptic SDK error.
+
+Adding embedding support for a third provider means adding the embedding
+case to `getSdkEmbeddingModel` alongside the generation case in
+`getSdkModel`, plus the catalog row with `capability: "embedding"`.
+Pricing rows carry `outputPerMillion: 0` for embedding entries —
+`embedViaGateway` reuses `estimateCostUsd` with `outputTokens: 0` so cost
+attribution flows through the same accounting path as generation.
 
 ### Pre-existing threads
 
@@ -129,7 +162,7 @@ zero-cost models — the test is the gate.
 **Stale `defaultModelName` (catalog narrowed mid-thread).** The resolver's
 per-message-override layer re-validates against the catalog and degrades to
 the capability default rather than handing the gateway an unknown pair
-(`convex/chat/modelSelection.ts:151-163`). When `lockedProvider` is set, the
+(`convex/chat/modelSelection.ts:160-173`). When `lockedProvider` is set, the
 fallback uses the locked provider's tier entry so the resolved pick survives
 the lock check.
 
@@ -148,15 +181,19 @@ this to a fixed list of files:
 2. Add catalog rows in `convex/lib/llmCatalog.ts`.
 3. Add pricing rows in `convex/lib/llmPricing.ts` (CI gate).
 4. Add a new `case` to the `getSdkModel` switch in
-   `convex/lib/llmGateway.ts:449-455`.
+   `convex/lib/llmGateway.ts:578-585`. If the new provider publishes an
+   embedding API, add the corresponding case to `getSdkEmbeddingModel`
+   in the same file (see "Embedding capability tier" above) — otherwise
+   leave the explicit `throw` so the catalog refuses embedding entries
+   under that provider.
 5. Handle provider-specific options mapping inside the gateway's
-   `buildProviderOptions` (`convex/lib/llmGateway.ts:464+`) — Anthropic
+   `buildProviderOptions` (`convex/lib/llmGateway.ts:613-630`) — Anthropic
    already needs its own thinking-budget knob; Gemini would need the same.
 
 Zero call site changes anywhere else. The picker, the resolver, the lock
 enforcement, and every persistence path read the union and the catalog.
 
-**Forked thread.** `threads.forkedFromThreadId` (`convex/schema.ts:776`) is
+**Forked thread.** `threads.forkedFromThreadId` (`convex/schema.ts:766`) is
 unwired today. It reserves space for a "Fork to new model" workflow that
 clones a locked thread into a new thread that can pick a different provider
 while keeping a back-pointer to the original. Lands without a second
@@ -165,7 +202,7 @@ migration.
 **Per-user model preference.** Today the picker's last pick rides on
 `threads.defaultModelName`. When the product needs a default model per user
 (rather than per thread), the `userPreferences` table
-(`convex/schema.ts:223-227`) is the natural home for a `defaultModelName`
+(`convex/schema.ts:213-217`) is the natural home for a `defaultModelName`
 column. Until then thread-level state is enough.
 
 ## Non-decisions

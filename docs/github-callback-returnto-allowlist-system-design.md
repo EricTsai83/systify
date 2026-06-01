@@ -75,8 +75,8 @@ flowchart TD
   C --> D[GitHub calls callback endpoint]
   D --> E[Validate state and consume once]
   E --> F[Normalize and allowlist-check returnTo origin]
-  F -->|pass| G[Redirect to trusted origin]
-  F -->|fail| H[Return safe fallback success/error page]
+  F -->|pass| G[Render callback page with client-side navigation to trusted origin]
+  F -->|fail| H[Render safe fallback success/error page with no auto-navigation]
 ```
 
 ## Allowlist Source Of Truth
@@ -88,7 +88,7 @@ Use one server-side environment variable as the source of truth, for example:
 Operational guidance:
 
 - store as comma-separated origins (`https://app.example.com,https://preview.example.com`)
-- parse once at startup and normalize
+- parse lazily on first use and cache the normalized result (not at startup)
 - keep production list minimal
 - keep local dev entries explicit (`http://localhost:5173`)
 
@@ -114,7 +114,7 @@ Parse with `URL`, use canonical `origin`, and reject malformed input.
 If validation fails:
 
 - do not redirect to provided `returnTo`
-- return safe fallback response (status page or fixed known frontend URL)
+- render the safe fallback page with no auto-navigation (the user sees a readable status page and stays put rather than being silently routed anywhere)
 - log structured security event for investigation
 
 ## What This Defends Against

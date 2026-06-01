@@ -95,15 +95,17 @@ For threads outside the MRU window, the sidebar uses `ConvexReactClient.prewarmQ
 - Has a short retention window so mass-hovering across a long sidebar does not fan out long-lived subscriptions.
 - Shares the subscription with the active `useQuery` once the user does click (same `(query, args)` de-duplication).
 
-This is encapsulated in `usePrewarmThread`, which returns a stable callback. The sidebar wires it to `onMouseEnter` and `onFocus` on each thread row.
+This is encapsulated in `usePrewarmThread`, which returns a stable callback. It is defined in `src/hooks/use-prewarm-thread.ts` and wired to `onMouseEnter` / `onFocus` in `repository-threads-rail.tsx` (the sidebar rail) and `library-ask-thread-tabs.tsx` (the Library Ask thread tabs).
 
 ### Layer 3 — Entrance-animation gating
 
 The 300 ms fade-in is genuinely valuable on the **first** time a thread is shown — it tells the user that new content has materialized. It is noise on every subsequent visit.
 
-`ChatPanel` keeps a session-scoped `seenThreads: Set<ThreadId>` in component state. On the first time a thread's messages div is shown, the entrance animation classes are present; `onAnimationEnd` (filtered to the parent target so streaming-bubble animations do not trigger it) adds the thread id to the set. On subsequent renders, `skipEntrance` evaluates to `true` and the animation classes are omitted.
+`ChatPanel` keeps a session-scoped `seenThreads: Set<ThreadId>` in component state. On the first time a thread's messages div is shown, the entrance animation classes are present; `onAnimationEnd` (filtered to the parent target so streaming-bubble animations do not trigger it) adds the thread id to the set. On subsequent renders, `skipEntrance` evaluates to `true` and the animation classes are omitted. `skipEntrance` is true when **either** (a) the thread is already in `seenThreads`, **or** (b) `conversationScroll.didPrepend` is true — once an older page has been prepended into the current thread, animating the wrapper would render a slide-in over messages that are mid-restore.
 
 The set is keyed by `ThreadId`, not by message identity, so a thread that gains new messages while the user is away still skips the entrance animation on revisit — only the new bubbles animate (via their own per-bubble animation, when applicable).
+
+The set is capped at 64 entries (`SEEN_THREADS_CAP`); when full, the oldest entry (by insertion order) is evicted so a long-running tab that visits hundreds of threads does not accumulate the id list indefinitely.
 
 ## Component Reference
 
@@ -115,7 +117,8 @@ The set is keyed by `ThreadId`, not by message identity, so a thread that gains 
 | `src/hooks/use-warm-thread-subscriptions.ts` | Holds live `useQueries` subscriptions for `listMessagesPaginated` + `getActiveMessageStream` across the MRU set. No data is consumed; the side-effect is the retention itself. |
 | `src/hooks/use-prewarm-thread.ts`          | Stable callback that calls `prewarmQuery` for both queries with an 8 s extension. Used on hover/focus from the sidebar. |
 | `src/components/repository-shell.tsx`      | Mounts `useRecentThreads(effectiveSelectedThreadId)` and feeds the result into `useWarmThreadSubscriptions`. |
-| `src/components/app-sidebar.tsx`           | Calls `usePrewarmThread()` and wires the callback to `onMouseEnter` / `onFocus` on each thread row. |
+| `src/components/repository-threads-rail.tsx` | Calls `usePrewarmThread()` and wires the callback to `onMouseEnter` / `onFocus` on each thread row in the sidebar rail. |
+| `src/components/library-ask-thread-tabs.tsx` | Also calls `usePrewarmThread()` and wires the callback to `onMouseEnter` / `onFocus` on each Library Ask thread tab. |
 | `src/components/chat-panel.tsx`            | Houses `seenThreads`/`skipEntrance` for entrance-animation gating. Renders messages behind `{messages && …}` (not `{!isChatLoading && …}`) so capability-query loading does not unmount the content. |
 
 ### Library tabs

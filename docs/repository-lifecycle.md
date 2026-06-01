@@ -45,13 +45,15 @@ A Daytona sandbox is only provisioned on demand by features that genuinely need 
 
 ## Entry Points
 
-The repository lifecycle currently has three main entry points:
+The repository lifecycle has five first-class entry points:
 
 - `createRepositoryImport`
 - `syncRepository`
+- `archiveRepository`
+- `restoreRepository`
 - `deleteRepository`
 
-Both import and sync ultimately route into the same `importsNode.runImportPipeline`, while deletion goes through sandbox cleanup and cascade delete.
+Import and sync route into the same `importsNode.runImportPipeline`. Archive stamps `repositories.archivedAt` and stops any live sandbox, but leaves threads, messages, and artifacts intact so Restore can pick up where the user left off. Restore clears `archivedAt`. Deletion is gated on archive (see Deletion Flow below) and goes through sandbox cleanup followed by cascade delete.
 
 ## Import / Sync Flow
 
@@ -149,13 +151,13 @@ The same cleanup path is also reused for cancelled or failed imports that had al
 - the repository itself
 - recent jobs
 - recent threads
-- import artifacts and recent deep-analysis artifacts
+- artifacts attached to `repository.latestImportJobId` (from the single `artifacts.by_jobId` index, not a separate deep-analysis fetch)
 - file count
 - a sandbox summary
-- `deepModeAvailable`
+- `sandboxModeStatus`
 - `hasRemoteUpdates`
 
-This lets the frontend get most of what the main screen needs in a single query.
+This lets the frontend get most of what the main screen needs in a single query. The actual return shape is defined in `convex/repositories.ts:289-309`.
 
 ## How Sync Differs From the First Import
 
@@ -169,14 +171,11 @@ In other words, sync is not a patch to the repository. It is a controlled re-run
 
 ## Deletion Flow
 
-### 1. Tombstone the repository
+### 1. Archive is a hard precondition
 
-`deleteRepository` does not delete everything immediately. It first writes `deletionRequestedAt` onto the repository.
+`deleteRepository` throws `"Archive the repository before deleting it permanently."` unless `isRepositoryArchived(repository)` is true (see `convex/repositories.ts:554-556`). Archive is therefore not an optional first step — it is the gate that any caller must pass through before destructive deletion is allowed. The same handler is also idempotent: if `isRepositoryDeleting(repository)` is already true the mutation returns immediately without re-scheduling work.
 
-This tombstone serves two purposes:
-
-- it prevents new import or processing work from continuing
-- it lets background workflows detect the deletion and cancel or finish gracefully
+Once the archive precondition is satisfied, `deleteRepository` stamps `deletionRequestedAt` so background workflows can observe the tombstone and stop cleanly, then proceeds with sandbox cleanup and cascade delete.
 
 ### 2. Schedule sandbox cleanup first
 
@@ -189,16 +188,17 @@ These sandboxes originate from sandbox-grounded Discuss / System Design / `ensur
 
 ### 3. Cascade delete
 
-After that, `cascadeDeleteRepository` removes data in batches:
+After that, `cascadeDeleteRepository` removes data in batches, in this order:
 
-- `messages`
-- `threads`
-- `artifacts`
+- per-thread: `messageStreamChunks`, `messageStreams`, `messages` (with their tool-call events), thread-scoped `artifacts`, then the `threads` row itself
+- `artifactViews` (owner-scoped, per-viewer)
+- `repositoryViewerBootstraps` (owner-scoped, per-viewer)
+- remaining `artifacts` by `repositoryId`
 - `repoChunks`
 - `repoFiles`
 - `imports`
-- `sandboxes`
-- `jobs`
+- `sandboxes` (only rows already in status `archived` are deleted here; anything else keeps the cascade in `waitingOnSandboxCleanup`)
+- `jobs` (only drained once sandbox cleanup has reported empty)
 - and finally `repositories`
 
 If sandbox cleanup is still in progress, cascade delete reschedules itself until it can finish safely.

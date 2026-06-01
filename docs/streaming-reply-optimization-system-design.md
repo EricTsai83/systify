@@ -57,7 +57,7 @@ The key rule is:
 
 - chronological chat history
 - final assistant content
-- coarse status transitions such as `pending`, `streaming`, `completed`, and `failed`
+- coarse status transitions such as `pending`, `streaming`, `completed`, `failed`, and `cancelled`
 
 ### Hot layer
 
@@ -67,6 +67,8 @@ The key rule is:
 - `compactedContent`
 - `compactedThroughSequence`
 - `nextSequence`
+- `liveReasoning` (live reasoning tail appended into the stream row rather than a separate chunks table — reasoning volume is bounded so it doesn't benefit from sequence-based compaction)
+- `reasoningStartedAt` / `reasoningEndedAt` (reasoning timing, folded onto the durable message at finalize)
 - timing metadata
 
 `messageStreamChunks` stores the append-only tail:
@@ -168,6 +170,8 @@ The cleanup rule is simple:
 - if a reply fails or stalls, the durable row is marked failed (with any partial tool-call trace folded onto `messages.toolCalls`) and hot state is deleted
 
 That prevents orphan `messageStreams`, `messageStreamChunks`, or `messageToolCallEvents` from accumulating after failures. A tool whose `start` event committed but whose `end` event never arrived folds into a `messages.toolCalls` entry with `endedAt === startedAt`, which the trace UI renders as "interrupted" so the user can tell the model didn't finish that call.
+
+All four terminal signals — `completed` (success), `failed` (upstream error / mid-stream failure), `cancelled` (user-initiated stop via `chat.cancel.cancelInFlightReply`), and `stale` (lease expired, recovered by `recoverStaleChatJob`) — flow through a single `applyTerminalSettlement` seam in `convex/chat/streaming.ts`. The seam owns the ~80% of ceremony every path shares: fold + drain tool-call events, patch the message into its terminal status, transition the job row, settle sandbox cost against the per-user / per-repository daily cap, record sandbox session activity, and clean the ephemeral stream tables in `finally`. The per-kind differences (which `lib/jobs` transition to call, whether thread timestamps move, whether cost settlement runs) live in a switch on `outcome.kind`, so a future "what does termination need to do?" change has one place to land instead of four. Settling cost on every path — not just `completed` — matters because partial replies still incur real provider spend; skipping settlement on cancellation or stale recovery would let a user repeatedly hit Stop just before finalize and bypass the daily cap.
 
 The lease-refresh heuristic in `appendAssistantStreamChunk` and `appendAssistantToolCallEvent` (refresh once half the lease window has elapsed) keeps long-running tool steps — e.g. a 15s file fetch from a cold sandbox — from being incorrectly marked stale. Without it, a slow tool with no intervening text deltas could drift past `leaseExpiresAt` while the reply is genuinely healthy.
 

@@ -29,7 +29,7 @@ flowchart TD
 
 ### 1. WorkOS AuthKit creates the user session
 
-The frontend wraps the application with `AuthKitProvider` in `src/main.tsx` and uses:
+The frontend wraps the application with `AuthKitProvider` in `src/App.tsx` (mounted from `src/main.tsx`, which only sets up the React root) and uses:
 
 - `VITE_WORKOS_CLIENT_ID`
 - the current browser origin to build `/callback`
@@ -49,7 +49,7 @@ The frontend auth boundary can therefore be summarized as:
 
 - WorkOS: produces sign-in state and an access token
 - `ConvexProviderWithAuthKit`: attaches that token to all Convex requests
-- `ProtectedLayout`: protects `/chat` via `useConvexAuth()`
+- `ProtectedLayout`: protects every authenticated route via `useConvexAuth()`. From `src/router.tsx`, that includes `/chat`, `/chat/:threadId`, `/r/:repositoryId`, `/r/:repositoryId/discuss`, `/r/:repositoryId/discuss/:threadId`, `/r/:repositoryId/library`, `/r/:repositoryId/library/a/:artifactId`, `/archive`, and `/resources` — not just `/chat`.
 - `LandingRoute`: redirects authenticated users from `/` to `/chat`
 
 ## Backend Authentication
@@ -136,6 +136,8 @@ GitHub webhooks synchronize installation state back into Convex, including:
 - `suspend`
 - `unsuspend`
 
+Other actions on the `installation` event (notably `update`, where a user changes the GitHub App's repository selection without uninstalling) are intentionally ignored by the webhook receiver — the handler still returns `200 OK` so GitHub does not retry, but no mutation runs. Repository selection is re-read on demand from the GitHub API the next time the frontend or backend needs it.
+
 As a result, `githubInstallations` is not just a callback record. It is the local projection of currently usable GitHub permissions.
 
 ## Repository Access Control
@@ -153,15 +155,15 @@ Even if the user has already connected GitHub, the import flow still calls the G
 
 This check fails fast (one API round trip) when the repository is not actually accessible, so an unreachable repo never gets as far as the tree / blob fetches. The same probe is reused by the on-demand sandbox path (`ensureSandboxReady`) before any sandbox-grounded reply or System Design generation provisions a Daytona sandbox, so a user who lost access to a repository between import and sandbox activation gets the same actionable error without burning sandbox cost.
 
-## Deep Mode And Permissions
+## Sandbox grounding (per-message in Discuss)
 
-Deep mode availability is driven more by sandbox state than by auth, but using deep mode still requires:
+Sandbox grounding is the per-message Discuss toggle that lets a single reply read files out of a Daytona sandbox. Availability is driven more by sandbox state than by auth, but turning the toggle on for a message still requires all of the following preconditions to hold:
 
-- being signed in
-- passing the repository ownership check
-- having a currently usable sandbox for that repository
+- being signed in (`requireViewerIdentity` on the send path)
+- passing the repository ownership check (`ownerTokenIdentifier` matches `identity.tokenIdentifier`)
+- `ensureSandboxReady` succeeding for that repository — the on-demand sandbox path reconfirms GitHub installation access, then provisions or resumes a Daytona sandbox before the reply runs
 
-So deep mode is constrained by both auth and runtime resource boundaries.
+So sandbox grounding is constrained by both auth and runtime resource boundaries, and the toggle is the only thing in Discuss mode that pulls in a sandbox — Library mode never provisions one.
 
 ## Environment Variable Split
 
@@ -182,7 +184,7 @@ These values must exist only in the Convex runtime. This list intentionally matc
 - `GITHUB_APP_PRIVATE_KEY`
 - `GITHUB_APP_WEBHOOK_SECRET`
 - `OPENAI_API_KEY`
-- `OPENAI_MODEL`
+- `ANTHROPIC_API_KEY`
 - `DAYTONA_API_KEY`
 - `DAYTONA_API_URL`
 - `DAYTONA_TARGET`

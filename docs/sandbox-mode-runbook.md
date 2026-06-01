@@ -2,7 +2,7 @@
 
 ## Audience
 
-You're on call for Systify chat. Sandbox-grounded Discuss replies (`messages.groundSandbox === true`, persisted with `mode: "discuss"`) are the only chat path that drives Daytona compute, executes live tools (`read_file`, `list_dir`, `run_shell`) inside per-repository sandboxes, and bills against the chat cost category. This document gives you the queries, thresholds, and remediation playbook you need to handle the four most common incidents:
+You're on call for Systify chat. Sandbox-grounded Discuss replies (`messages.groundSandbox === true`, persisted with `mode: "discuss"`) are the only chat path that drives Daytona compute, executes live tools (`read_file`, `list_dir`, `run_shell`) inside per-repository sandboxes, and bills against the `system_design` cost category (`convex/chat/send.ts:69`). This document gives you the queries, thresholds, and remediation playbook you need to handle the four most common incidents:
 
 1. **Daytona is unavailable** — sandbox provisioning or tool execution fails for every viewer.
 2. **Cost spike** — a viewer or repository burns through their daily cap unusually fast.
@@ -22,11 +22,14 @@ These two metric streams plus the existing `[chat] …` debug logs are the only 
 
 ### How this interacts with System Design generation
 
-System Design generation now uses live sandbox grounding for LLM-backed kinds (architecture diagram, data model overview, etc.). Each kind that needs source-code introspection calls `ensureSandboxReady` (`convex/systemDesign.ts`) which provisions a Daytona sandbox if one isn't running. Sandbox lifecycle / cost / tool-error / latency symptoms surface in the SAME metric streams (`sandbox_session_finished`, `sandbox_tool_invoked`) — distinguishable by feature tag.
+System Design generation runs all 8 System Design kinds through the LLM gateway with live sandbox grounding — every kind is LLM-backed and provisions Daytona. Each kind calls `ensureSandboxReady` (`convex/lib/sandboxLiveness.ts`) which provisions a Daytona sandbox if one isn't running. Sandbox lifecycle / cost / tool-error / latency symptoms for the two surfaces emit on TWO separate metric families:
 
-An incident affecting Daytona (Incident 1 in this runbook) blocks System Design generation entirely: the kind fails with `failureReason: "live_source_unavailable"` or `"infra"`; the job's auto-resume re-tries on the next stale-recovery sweep. The same `SANDBOX_DAILY_CAP_PER_USER_USD=0` mitigation that gates new sandbox-grounded chat also gates new System Design generation requests via the same cost-cap check.
+- **Chat (sandbox-grounded Discuss)**: `sandbox_session_finished` and `sandbox_tool_invoked`. Tags on `sandbox_session_finished` are `{mode, status, model, had_tools}` only — there is no `feature` tag, and only chat replies emit on this stream.
+- **System Design**: `systemdesign_kind_*` metrics (`systemdesign_kind_started`, `systemdesign_kind_duration_ms`, `systemdesign_kind_steps_used`, `systemdesign_kind_cost_usd`, `systemdesign_kind_tokens`, `systemdesign_kind_failed`, `systemdesign_kind_cache_hit`) emitted from `convex/systemDesignNode.ts:192-400`.
 
-Cost-spike symptoms (Incident 2) may now include System Design generation runs. Filter `sandbox_session_finished` events on feature tag to separate chat from `system_design`. Per-kind cost shows up additionally in `systemDesignKindRuns.totalCostUsd` — `bun run report:user-costs` surfaces per-user totals; `bun run report:system-design` surfaces per-kind aggregates.
+An incident affecting Daytona (Incident 1 in this runbook) blocks System Design generation entirely: the kind fails with `failureReason: "live_source_unavailable"` or `"infra"`; the job's auto-resume re-tries on the next stale-recovery sweep. The same `SANDBOX_DAILY_CAP_PER_USER_USD=0` mitigation that gates new sandbox-grounded chat also gates new System Design generation requests — System Design has its own hard pre-check via `assertSandboxDailyCostBudget` (`convex/systemDesign.ts:756`) on the same daily cost cap.
+
+Cost-spike symptoms (Incident 2) may now include System Design generation runs. Because the two surfaces emit on separate metric families, query `systemdesign_kind_cost_usd` for System Design spend and `sandbox_session_finished` (`details.cost_usd`) for chat spend — there is no shared filter across them. Per-kind cost is also persisted on `systemDesignKindRuns.totalCostUsd`; `bun run report:user-costs` surfaces per-user totals and `bun run report:system-design` surfaces per-kind aggregates.
 
 Cross-reference `docs/architecture/system-design-generation.md` for the full kind lifecycle and failure taxonomy.
 
@@ -100,7 +103,7 @@ If a single viewer accounts for >50% of spend in 24h, treat as a cost-cap evasio
 peekSandboxDailyCostForUser / peekSandboxDailyCostForRepository
 ```
 
-These rate-limit peeks are exposed via `convex/threadContext.ts` and reflect the live consumed cents. If they show 0 for a high-spend viewer, the settlement path has a bug — file ASAP and consider rolling back.
+These rate-limit peeks are exposed via `convex/lib/rateLimit.ts` and reflect the live consumed cents. If they show 0 for a high-spend viewer, the settlement path has a bug — file ASAP and consider rolling back.
 
 ### Mitigate
 
@@ -142,7 +145,7 @@ The `error_code` distribution is the diagnostic signal:
 
 ### Mitigate
 
-- **Path / deny-list regressions**: roll the previous Convex deploy (`npx convex deploy --rollback`) — these issues are fully fixed by reverting the offending commit.
+- **Path / deny-list regressions**: `git revert` the offending commit and re-run `bunx convex deploy` — these issues are fully fixed by reverting the offending change.
 - **Runaway pipelines**: tighten the system prompt's "read-only inspection only" reminders. Don't lower `SANDBOX_RUN_SHELL_DEFAULT_TIMEOUT_SECONDS` unless you can also confirm legitimate usage isn't being clipped — use the `value` field on `sandbox_tool_invoked` to check timeout-adjacent latency distributions.
 
 ### Resolve

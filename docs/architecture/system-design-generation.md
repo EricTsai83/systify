@@ -59,20 +59,20 @@ main for-loop (`convex/systemDesignNode.ts:183-423`):
    action while it is still making progress.
 2. **Cache probe.** When `forceRegenerate` is `false` and the repository has a
    `lastSyncedCommitSha`, the action calls `findCachedArtifact`
-   (`convex/systemDesign.ts:686`) with the full tuple `(repositoryId, kind,
+   (`convex/systemDesign.ts:680`) with the full tuple `(repositoryId, kind,
    alignedImportCommitSha, generatedByProvider, generatedByModel,
    promptVersion)`. A match short-circuits the LLM call entirely: the run
    status becomes `cached_hit` and the cached artifact's id flows straight into
    step 7. There is no separate cache table — the artifact itself is the
    cache.
 3. **Cost pre-check.** `assertKindCostBudget`
-   (`convex/systemDesign.ts:756`) throws `SANDBOX_DAILY_CAP_EXCEEDED` or
+   (`convex/systemDesign.ts:750`) throws `SANDBOX_DAILY_CAP_EXCEEDED` or
    `SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED` when the per-user or
    per-repository daily cap has no headroom. The catch below classifies the
    throw as `transport_rate_limit`.
 4. **Gateway call.** `generateViaGateway` is invoked with the locked
    `(provider, modelName)` from `getJobModelChoice`
-   (`convex/systemDesign.ts:722`), the kind's prompt suffixed with the step
+   (`convex/systemDesign.ts:716`), the kind's prompt suffixed with the step
    budget reminder (`budgetSuffix` in `convex/lib/systemDesignPrompts.ts:330`),
    and `stopWhen: stepCountIs(config.stepBudget)`. Tools are the same
    `read_file`/`list_dir`/`run_shell` factory the chat path uses, bound to the
@@ -85,20 +85,20 @@ main for-loop (`convex/systemDesignNode.ts:183-423`):
    to confirm at least one fenced ` ```mermaid ` block. Failure sets
    `runStatus = "quality_rejected"` and records the missing sections.
 6. **Persist artifact.** `persistGeneratedArtifact`
-   (`convex/systemDesign.ts:580`) resolves the destination folder by
+   (`convex/systemDesign.ts:574`) resolves the destination folder by
    `systemKey`, cascades-deletes any prior artifact of the same kind in the
    folder, then writes a new row through `createArtifactInMutation` with the
    `(generatedByProvider, generatedByModel, promptVersion,
    alignedImportCommitSha)` fingerprint filled in. These fields become the
    next run's cache key.
 7. **Telemetry + settlement.** `recordKindRun`
-   (`convex/systemDesign.ts:780`) inserts a `systemDesignKindRuns` row with
+   (`convex/systemDesign.ts:774`) inserts a `systemDesignKindRuns` row with
    the normalized usage, cost, duration, status, failure reason, and missing
    sections, then (in the same mutation) charges the day's sandbox cost cap
    via `consumeSandboxDailyCost` using the gateway-reported `totalCostUsd`
    — settlement uses actual spend, not the pre-check estimate. `cached_hit`
    rows skip settlement because the artifact was already paid for. After the
-   insert, `linkKindRun` (`convex/systemDesign.ts:855`) patches the artifact's
+   insert, `linkKindRun` (`convex/systemDesign.ts:849`) patches the artifact's
    `kindRunId` back-reference and vice versa.
 8. **Per-kind metrics.** `emitMetric` calls surface
    `systemdesign_kind_duration_ms`, `systemdesign_kind_steps_used`,
@@ -145,11 +145,11 @@ one job all kinds use the same.
 
 ### Action timeout and auto-resume
 
-A seven-kind run at roughly 90 seconds per kind sums to about 10.5 minutes,
+An eight-kind run at roughly 90 seconds per kind sums to about 12 minutes,
 which exceeds the Convex action ceiling. When the action dies mid-run, the
-job row's lease expires and the daily stale-recovery sweep
-(`opsNode.recoverStaleInteractiveJobs`) hands the row to
-`recoverStaleSystemDesignJob` (`convex/systemDesign.ts:465`).
+job row's lease expires and the every-5-minute stale-recovery sweep
+(`opsNode.reconcileStaleInteractiveJobs`) hands the row to
+`recoverStaleSystemDesignJob` (`convex/systemDesign.ts:459`).
 
 That mutation collects every `systemDesignKindRuns` row for the job and
 splits selections by terminal status using `KIND_RUN_TERMINAL_STATUSES`
@@ -176,7 +176,7 @@ on attempt N still has a shot on attempt N+1.
 ### Per-kind failure taxonomy
 
 `classifyLlmError` (`convex/systemDesignNode.ts:463`) translates exceptions
-into the `kindFailureReason` literal union defined in `convex/schema.ts:61`:
+into the `kindFailureReason` literal union defined in `convex/schema.ts:53`:
 
 - `live_source_unavailable` — `SandboxPreparationError` reached the per-kind
   catch (the sandbox or repository data was missing or unreachable). Should
@@ -205,11 +205,11 @@ whole job.
 ### Banner mapping
 
 `SystemDesignStatusBanner`
-(`src/components/system-design-status-banner.tsx:54`) subscribes to
+(`src/components/system-design-status-banner.tsx:50`) subscribes to
 `getLatestSystemDesignJob` and renders one of three branches. For failures it
 calls `describeFailures` which deduplicates the `kindFailures[].reason` set
 and renders the matching copy from `REASON_TEXT_BY_KIND`
-(`src/components/system-design-status-banner.tsx:143`):
+(`src/components/system-design-status-banner.tsx:135`):
 
 - `transport_rate_limit` → "The provider rate-limited the run. Wait a couple
   of minutes…"

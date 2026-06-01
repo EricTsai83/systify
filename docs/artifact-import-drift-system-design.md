@@ -39,7 +39,8 @@ as separate indicators.
 
 ```mermaid
 flowchart TD
-  Import[Import pipeline: persistImportHeader]
+  Import[Import pipeline: persistImportHeader stamps imports.commitSha]
+  Generator[System Design generator: persistGeneratedArtifact -> createArtifactInMutation]
   Aligned[artifacts.alignedImportCommitSha = import commitSha]
   LatestPtr[repositories.latestImportId]
   LatestSha[imports.commitSha of latest import]
@@ -48,7 +49,7 @@ flowchart TD
   Flag[importDriftFromLatestSync?: true]
   UI[FolderNavigator amber drift icon]
 
-  Import --> Aligned
+  Import --> Generator --> Aligned
   LatestPtr --> LatestSha --> Resolve
   Aligned --> Compare
   Resolve --> Compare --> Flag --> UI
@@ -58,10 +59,20 @@ flowchart TD
 
 `artifacts.alignedImportCommitSha` is the only persisted state this feature
 adds. It is the commit SHA of the import snapshot the artifact's prose was
-anchored to. The import pipeline (`persistImportHeader` in `convex/imports.ts`)
-stamps it on every artifact it writes — both the insert path and the
-re-import patch path — using the same `commitSha` it writes to the `imports`
-row.
+anchored to. The System Design generator stamps it on every artifact row it
+writes: `persistGeneratedArtifact` (`convex/systemDesign.ts`) forwards the
+`alignedImportCommitSha` argument straight through to `createArtifactInMutation`
+(`convex/artifactStore.ts`), which sets it on the inserted `artifacts` row.
+The import pipeline itself (`persistImportHeader`) writes zero artifact rows —
+it only stamps `commitSha` on the `imports` row, and the generator reads that
+value when it produces the artifact.
+
+Re-runs of the same kind do not patch the existing row in place. The generator
+finds the prior artifact for that `(repositoryId, folderId, kind)`, deletes it
+through `deleteArtifactInternal` (so `artifactChunks` cascade with it), and
+inserts a fresh row carrying the new `alignedImportCommitSha`. There is no
+artifact patch path — only delete-then-insert — so the SHA is always the SHA
+of the import the prose was actually generated against.
 
 It is intentionally optional. Legacy artifacts written before this field
 existed simply have no value, and produce no drift signal — silence, not a
@@ -100,9 +111,9 @@ a hot path — so the per-row read had to go.
 ### UI surface
 
 `FolderNavigator` (`src/components/folder-navigator.tsx`) renders an amber
-`ArrowsClockwise` icon next to the artifact title when `importDriftFromLatestSync`
-is set, with a tooltip explaining the artifact's aligned revision differs from
-the latest sync. It is a low-weight cue, not a blocking state — the artifact
+`ArrowsClockwiseIcon` (Phosphor v2 naming) next to the artifact title when
+`importDriftFromLatestSync` is set, with a tooltip explaining the artifact's
+aligned revision differs from the latest sync. It is a low-weight cue, not a blocking state — the artifact
 still opens and reads normally.
 
 ## Why the Signal Is Coarse
@@ -175,7 +186,9 @@ scaffolding.
 
 ## Result
 
-Import drift is one optional SHA on the artifact row, written by the import
-pipeline and compared at read time against a latest-import SHA that is resolved
-once per query. Every UI state is derived from those SHAs; there is no stored
-flag, no reconciliation, and no per-artifact read on the hot subscription path.
+Import drift is one optional SHA on the artifact row, stamped by the System
+Design generator (`persistGeneratedArtifact` -> `createArtifactInMutation`)
+from the import's `commitSha`, and compared at read time against a
+latest-import SHA that is resolved once per query. Every UI state is derived
+from those SHAs; there is no stored flag, no reconciliation, and no
+per-artifact read on the hot subscription path.

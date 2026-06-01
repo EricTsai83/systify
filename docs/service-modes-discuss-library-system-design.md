@@ -9,7 +9,7 @@ Systify exposes two top-level chat modes plus a background generator:
   - **Sandbox grounding** reads the live source tree through Daytona-hosted tools and produces `[path:line-line]` citations.
   - Both off → the reply is unbound LLM training-only chat.
 - **`library`** — read-mostly artifact reader with an always-visible **Ask** panel running chunked-RAG over the repository's artifacts.
-- **System Design generation** — background sandbox-backed job that writes the starter set of System Design artifacts (`readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`) into the Library for later citation.
+- **System Design generation** — background sandbox-backed job that writes the starter set of 8 System Design artifacts (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`) into the Library for later citation. Every kind is LLM-backed — the generator opens a Daytona sandbox for every kind, including `architecture_diagram`, which carries an additional `validateMermaidBlock` quality gate so the published markdown is guaranteed to contain a parseable Mermaid block.
 
 `discuss` is the canonical default mode; `library` requires an attached repository.
 
@@ -31,22 +31,18 @@ flowchart TD
 
 ## Library Shell Composition
 
-The Library page does not reuse the global chat shell. It mounts `AppSidebar` in its `libraryAsk` variant — the sidebar's content slot renders the full **Library Ask** panel in place of the repository thread rail. The page itself reconstructs only the remaining chrome (header, repository switcher) plus the Library shell.
+The Library page does not reuse the global chat shell. It mounts two separate sidebar components side-by-side around the document column:
 
-In the `libraryAsk` variant the sidebar carries a complete chat surface: an IDE-style thread tab strip on top (`LibraryAskThreadTabs`) — one tab per *open* thread, not the full list — over the conversation and the input. The `+` button starts a thread; the clock button opens `LibraryAskHistoryPopover` as a popup beneath itself. Because the panel lives in the resizable sidebar, it gets its own stored width and a roomier default than the slim Discuss thread rail.
+- **`AppSidebarLeft`** (`src/components/app-sidebar.tsx:55`) — the shared repository sidebar. It branches internally on `effectiveChatMode`: in **Library** mode it renders `LibraryTree` (the artifact folder navigator); in **Discuss** mode it renders `RepositoryThreadsRail` (the vertical thread list). One component, two mode-specific content slots, scoped by `listThreads({ mode })` so a Library Ask thread can never leak into the Discuss rail.
+- **`AppSidebarRight`** (`src/components/app-sidebar.tsx:181`) — the Library-mode-only right sidebar that carries `LibraryAskPanel`. The panel is a complete chat surface: an IDE-style thread tab strip on top (`LibraryAskThreadTabs`) — one tab per *open* thread, not the full list — over the conversation and the input. The `+` button starts a thread; the clock button opens `LibraryAskHistoryPopover` as a popup beneath itself. Because the panel lives in the resizable sidebar, it gets its own stored width and a roomier default than the slim Discuss thread rail.
 
-The Library shell is then a two-column desktop layout:
+The Library page (`src/pages/library.tsx:193, 227`) mounts both sidebars side-by-side around the document column, so the folder tree, the editor, and the Ask panel are three peer surfaces of the same page.
 
-- **Left — Document**: the artifact tab strip (`LibraryTabs`) and the editor.
-- **Right — Folder tree**: the artifact folder navigator, collapsible via Cmd+B.
+The Library shell itself (`src/components/library-shell.tsx:13`) is a **single-column desktop layout**: it owns only the artifact tab strip (`LibraryTabs`) and the editor. The folder tree no longer lives inside the shell — it has moved to `AppSidebarLeft`'s Library-mode content slot. **Cmd+B** (around `src/components/library-shell.tsx:51, 60-64`) toggles the left sidebar, matching the Discuss muscle-memory; the previous separate "collapse icon rail" affordance is intentionally dropped in exchange for a single keybinding across all modes.
 
-On narrow viewports the document column is the base layer and the folder tree moves into a Sheet; Library Ask rides inside the sidebar's own Sheet, opened by the header's sidebar trigger. The Library tab-strip state (`useLibraryTabs`) is owned by the page and handed to both the document column and the sidebar's Ask panel, so the artifact context stays in sync across the two. `Sidebar` mounts its children in exactly one place (docked `<aside>` *or* mobile Sheet, never both), so the Ask panel's cross-render local state (`useLibraryAskTabs`) is never split across two mounts.
+On narrow viewports the document column is the base layer and the left sidebar (carrying the folder tree in Library mode) moves into a Sheet; Library Ask rides inside the right sidebar's own Sheet, opened by the header's sidebar trigger. The Library tab-strip state (`useLibraryTabs`) is owned by the page and handed to both the document column and the right sidebar's Ask panel, so the artifact context stays in sync across the two. `Sidebar` mounts its children in exactly one place (docked `<aside>` *or* mobile Sheet, never both), so the Ask panel's cross-render local state (`useLibraryAskTabs`) is never split across two mounts.
 
 The Ask thread strip is an *open set*, mirroring how the document column works: tabs are threads the user has explicitly opened (persisted per-repository in localStorage by `useLibraryAskTabs`, caching `{ id, title }` since `listThreads` is capped), the X closes a tab without deleting the thread, and the full searchable history — recall a past thread, pin it, or delete it — lives in `LibraryAskHistoryPopover` (anchored beneath the clock button rather than as a full-screen dialog). The *active* thread is the page-owned `?ask=` URL param. Thread deletion is intentionally confined to the history popover so it is never a stray click beside a close button; `LibraryAskPanel` owns the confirm-dialog flow so the deleted thread is dropped from the open set in one place.
-
-`RepositoryThreadsRail` is the single *vertical* thread-list implementation, used by the sidebar's default `threads` variant for Discuss. Both thread surfaces scope their query to one mode (`listThreads({ mode })`): a Library Ask thread surfacing in the Discuss sidebar would be a mode leak.
-
-`AppSidebar`'s props are a discriminated union on `variant` (`threads` vs `libraryAsk`), so each variant only accepts the callbacks it actually uses — the type system enforces the composition boundary rather than callers passing no-op handlers.
 
 ## Library Access and the Empty State
 
@@ -66,7 +62,11 @@ Capability-based model selection routes the reply based on the (mode, groundSand
 - `mode: "library"` → `library` tier (default `gpt-5-mini`).
 - otherwise → `discuss` tier (default `gpt-5-mini`).
 
-Each tier can be pinned via `OPENAI_MODEL_SANDBOX` / `OPENAI_MODEL_LIBRARY` / `OPENAI_MODEL_DISCUSS`. A global `OPENAI_MODEL` is the fallback when no per-capability override is set.
+Within each tier the per-reply `(provider, modelName)` pair is collapsed by the 3-tier resolver in `convex/chat/modelSelection.ts:9-15`, which explicitly disclaims env-var overrides:
+
+1. **Per-message override.** `overrideProvider + overrideModelName` from the queued user message (`messages.provider` / `messages.modelName`) — what the composer's model picker sent for *this* send. Revalidated against `MODEL_CATALOG` so a narrowed catalog degrades cleanly to the next tier instead of failing at the gateway.
+2. **Thread default.** `threads.defaultModelName`, refreshed on every send, with the provider inferred via catalog lookup. Lets a re-opened thread restore the user's last pick without forcing them to re-select.
+3. **Capability default.** Falls back to a hard-coded `DEFAULT_PICK_BY_CAPABILITY` entry sized so a fresh install with `OPENAI_API_KEY` set just works. Operator overrides land in `MODEL_CATALOG` (add an entry) — *not* via per-capability env vars.
 
 ## Per-Thread LLM Provider Lock
 
@@ -111,7 +111,7 @@ flowchart TD
 
 `repositoryModeEligibility.evaluate` is the canonical "can the user use this mode / grounding axis right now?" surface. It exposes:
 
-- `availableModes` — the modes the top-level switcher should enable.
+- `modes` — per-mode `{ discuss, library }` verdicts the top-level switcher consumes. The accompanying `defaultMode` is `library` whenever a repository is attached (only `discuss` for repoless threads), so opening a repository lands the user on the artifact reader rather than an empty Discuss thread.
 - `grounding.library` / `grounding.sandbox` — the per-axis verdict the Discuss composer's toggle bar consumes. Each axis carries a structured `reason.code` (e.g. `library_no_artifact`, `sandbox_provisioning`, `sandbox_user_cap_exceeded`) so the UI can branch on it without regex-matching tooltip strings.
 - `grounding.sandbox.isActivatable` — true when the sandbox is recoverable by a click (`missing` / `expired` / `failed`) and the cost-cap gate is open.
 

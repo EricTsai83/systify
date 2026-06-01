@@ -21,7 +21,7 @@ After GitHub authorization, the system imports repositories directly through the
 
 - **Discuss**: free-form chat with per-message Library / Sandbox grounding toggles; defaults to **no repo** until the user attaches one to the thread.
 - **Library**: read and edit artifact markdown plus **Ask** (hybrid retrieval over artifact chunks), with layout favoring documents on one side and thread + Ask on the other.
-- **System Design generation**: a sandbox-backed job kicked off from the **Generate System Design** button on an empty Library page (or from the Discuss composer's grounding toggle bar when Library grounding is closed for lack of artifacts). It inspects the repository and emits a starter set of System Design artifacts (`readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`) for Library Ask and sandbox-grounded Discuss citations.
+- **System Design generation**: a sandbox-backed job kicked off from the **Generate System Design** button on an empty Library page (or from the Discuss composer's grounding toggle bar when Library grounding is closed for lack of artifacts). It inspects the repository and emits a starter set of 8 System Design artifacts (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`) for Library Ask and sandbox-grounded Discuss citations.
 
 ## Main Runtime Boundaries
 
@@ -33,14 +33,18 @@ flowchart TD
   WorkOS[WorkOSAuthKit]
   GitHub[GitHubApp]
   Daytona[DaytonaSandbox]
+  LLMGateway[LLMGateway]
   OpenAI[OpenAI]
+  Anthropic[Anthropic]
 
   User --> Frontend
   Frontend --> WorkOS
   Frontend --> Convex
   Convex --> GitHub
   Convex --> Daytona
-  Convex --> OpenAI
+  Convex --> LLMGateway
+  LLMGateway --> OpenAI
+  LLMGateway --> Anthropic
 ```
 
 
@@ -61,19 +65,20 @@ The route table lives in `src/router.tsx`, where `appRoutes` is turned into the 
 
 - `/` through `AppLayout`
 - the landing experience through `LandingRoute`
-- the authenticated `/chat` surface through `ProtectedLayout`
-- lazy loading for the chat page via `loadChatRoute`
+- all authenticated surfaces through `ProtectedLayout` — `/chat`, `/chat/:threadId`, `/r/:repositoryId` (with `discuss` and `library` variants), `/archive`, and `/resources` (see `src/router.tsx`)
+- lazy loading for the chat page via `loadRepolessChatRoute` (`src/router.tsx:19, 59-60`)
 
 Layout composition and route-guard behavior now live in `src/router-layouts.tsx`, which centralizes `AppLayout`, `LandingRoute`, and `ProtectedLayout`.
 
 ### Application Shell
 
-The main application shell is still centered on `src/components/repository-shell.tsx`, but it no longer owns all product-level orchestration directly. The component now coordinates several extracted hooks:
+The main application shell is still centered on `src/components/repository-shell.tsx`, but it no longer owns all product-level orchestration directly. The component now coordinates several extracted hooks (see `src/components/repository-shell.tsx:18-27`):
 
-- `useRepositoryActions`: sync, repository deletion, thread deletion, System Design generation, and message sending
-- `useRepositorySelection`: effective repository selection and repository-loading state
+- `useChatShellLifecycle`: composer + send + streaming lifecycle for the active thread
+- `useThreadDeletionRecovery`: handles fallback navigation when the active thread is deleted
+- `useRepositoryPersistence`: persists the effective repository selection across reloads
 - `useCheckForUpdates`: lightweight remote-commit checks on focus and repository switch
-- `useGitHubConnection`, `useAsyncCallback`, `useRelativeTime`, and `useIsMobile`: focused frontend utilities used elsewhere in the shell and surrounding UI
+- `useRecentThreads`, `useRepositoryLifecycle`, `useChatMode`, `useThreadCapabilities`, `useWarmThreadSubscriptions`, `useLocalStorageBoolean`: focused frontend utilities used elsewhere in the shell and surrounding UI
 
 `RepositoryShell` still coordinates the sidebar, top bar, tabs, and dialog state, but the orchestration logic is less concentrated than before.
 
@@ -83,7 +88,7 @@ The backend is built entirely on Convex, with no separate Express or Nest API la
 
 - `query`: reads frontend-facing data such as repositories, threads, messages, and artifacts
 - `mutation`: creates imports, sends messages, requests System Design generation, and deletes data
-- `action` / `internalAction`: runs Node-runtime work such as GitHub App, Daytona, and OpenAI logic
+- `action` / `internalAction`: runs Node-runtime work such as GitHub App, Daytona, and LLM gateway streaming (OpenAI + Anthropic via `convex/lib/llmGateway.ts`)
 - `httpAction`: handles GitHub callbacks plus GitHub and Daytona webhooks
 - `cron`: periodically cleans up sandboxes and repairs webhook backlog
 
@@ -114,11 +119,12 @@ That means Convex simultaneously serves as the application database, application
 ### 3. Chat and analysis
 
 - The chat flow creates a `chat` job, a user message, and an assistant placeholder message.
-- `internal.chat.generation.generateAssistantReply` loads context and produces a reply either through OpenAI streaming or a heuristic fallback.
+- `internal.chat.generation.generateAssistantReply` loads context and produces a reply through LLM gateway streaming.
+- `threads.lockedProvider` (see `convex/schema.ts`) is a thread-level provider lock — once a provider streams a message on the thread, the thread is locked to that provider for all subsequent replies (the user can still switch model tier within the locked provider).
 - Durable chat history lives in `messages`, while active in-flight stream state lives in `messageStreams` and `messageStreamChunks`.
 - When provider usage is available, chat finalization also writes token counts to `messages` and `jobs`, plus an estimated job cost.
 - Library Ask retrieves artifact chunks from `artifactChunks`; sandbox-grounded Discuss replies use the repository sandbox through guarded tools (`read_file`, `list_dir`, `run_shell`).
-- System Design generation creates a `system_design` job and runs focused inspection against the sandbox to produce a starter set of System Design artifacts (`readme_summary`, `architecture_overview`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`).
+- System Design generation creates a `system_design` job and runs focused inspection against the sandbox to produce a starter set of 8 System Design artifacts (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`).
 
 ### 4. GitHub integration
 
@@ -133,7 +139,7 @@ That means Convex simultaneously serves as the application database, application
 - Sandboxes are provisioned **lazily**. Repository import never touches Daytona; users who only use ungrounded Discuss or Library never incur sandbox cost.
 - A sandbox is provisioned on the first activation of the Discuss composer's Sandbox grounding toggle on a repository (`requestSandboxActivation` → `sandboxActivationNode.runSandboxActivation`), or when System Design generation includes at least one LLM-backed kind (`systemDesignNode.runSystemDesignGeneration`, gated by `ensureSandboxReady`).
 - `ensureSandboxReady` (in `convex/lib/sandboxLiveness.ts`) is the single orchestrator for "make a sandbox usable for this repository right now". It probes Daytona, wakes a stopped sandbox, or provisions a fresh one and patches `repositories.latestSandboxId` to the result.
-- Cost-control affordances live on the on-demand path: the repository-level sandbox-session row in `sandboxSessions` carries `spentCents` for per-session running cost, the chat-bubble cost ticker renders the per-message estimate, and the per-user / per-repository daily caps in `rateLimit.ts` close the Sandbox grounding toggle when exhausted. System Design's heuristic-only generations skip Daytona entirely.
+- Cost-control affordances live on the on-demand path: the repository-level sandbox-session row in `sandboxSessions` carries `spentCents` for per-session running cost, the chat-bubble cost ticker renders the per-message estimate, and the per-user / per-repository daily caps in `rateLimit.ts` close the Sandbox grounding toggle when exhausted. Every System Design kind is LLM-backed and opens a sandbox — no kind skips Daytona (`convex/systemDesignNode.ts:140-156`).
 - Daytona webhook ingestion writes a durable event inbox plus a remote-observation projection so Convex can converge faster when Daytona state changes.
 - Cron-based reconciliation still handles expired sandboxes, Daytona-side orphan resources, and stuck webhook backlog, making sandbox cleanup a core reliability concern rather than a best-effort background task.
 
@@ -165,7 +171,7 @@ flowchart TD
 2. Convex owns identity enforcement, data consistency, workflow scheduling, and persistence.
 3. GitHub determines repository access and installation state.
 4. Daytona provides the live execution environment for repository analysis.
-5. OpenAI participates only in response and analysis generation; it is not the source of truth.
+5. The LLM gateway (`convex/lib/llmGateway.ts`) is the single chokepoint for every LLM call; OpenAI and Anthropic are co-equal providers behind it and participate only in response and analysis generation, never as the source of truth.
 
 ## Current Architecture Characteristics
 

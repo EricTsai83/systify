@@ -15,8 +15,9 @@ The stack is split into four layers, each with one job:
 | File | Responsibility |
 |------|----------------|
 | `src/lib/storage.ts` | Leaf helpers — read / write / remove / enumerate for `localStorage` and `sessionStorage`, plus a cross-tab change listener. No React, no policy. |
-| `src/hooks/use-persisted-state.ts` | `useLocalStorageBoolean` — typed boolean preference hook with conservative-write semantics and cross-tab sync. |
-| `src/hooks/use-storage-gc.ts` | `useStorageGC` — reactive orphan sweeper for id-scoped keys. Mounted once in `RepositoryShell`. |
+| `src/hooks/use-persisted-state.ts` | `useLocalStorageBoolean` and `useLocalStorageEnum` — typed preference hooks with conservative-write semantics, mid-mount key-swap guard, and cross-tab sync. |
+| `src/hooks/use-storage-gc.ts` | `useStorageGC` — reactive orphan sweeper for id-scoped keys. Mounted via `useChatShellLifecycle` (`src/components/chat-shell-shared/use-chat-shell-lifecycle.ts:62`), consumed by both `RepositoryShell` and `RepolessChatShell`. |
+| `src/hooks/use-auth-bound-cleanup.ts` | `useAuthBoundCleanup` — detects logout / account switch and clears per-viewer composer-draft `localStorage` so drafts don't leak across users on the same machine. |
 | `vitest.setup.ts` + `src/test-utils/storage.ts` | JSDOM polyfill installed once per test process, plus richer mocks tests can opt into. |
 
 Each layer depends on at most one above it; `src/lib/storage.ts` has no
@@ -113,7 +114,9 @@ Tests that need to assert error paths spy on the underlying DOM methods
 ## `useLocalStorageBoolean` contract
 
 The hook is intentionally narrow — only `boolean` preferences — so the
-surface stays small and the invariants are easy to test.
+surface stays small and the invariants are easy to test. A string-enum
+sibling (`useLocalStorageEnum`) lives in the same file; see
+[its section below](#uselocalstorageenum-contract).
 
 ### Synchronous first paint
 
@@ -147,6 +150,25 @@ The invariant is enforced by a `hasUserSetRef` flag:
 The write effect short-circuits when the flag is `false`, so a fresh
 mount with empty storage produces zero writes.
 
+### Mid-mount key-swap guard
+
+A second ref, `prevUserSetKeyRef`, tracks the key the most recent
+user-committed action (setter or non-null cross-tab event) applied to.
+It exists because a parent swapping the storage key between renders
+creates a window where the key-change effect has queued a `setValue`
+for the new key's stored value, but the write effect in the same commit
+still sees the previous render's `value`. Without the guard the write
+effect would re-persist the old key's value under the new key,
+clobbering whatever was already stored there.
+
+The write effect short-circuits unless `prevUserSetKeyRef.current ===
+key`, so the first post-swap render skips writing; the key-change
+effect's queued `setValue` lands, and only a subsequent real user
+commit (which sets `prevUserSetKeyRef.current = key`) re-enables writes.
+The key-change effect itself deliberately does **not** advance the ref,
+since it is an auto-sync of the new key's stored value rather than a
+user-committed action.
+
 ### "Follows changing default" semantic
 
 A direct consequence of the conservative write: while no value has been
@@ -174,19 +196,83 @@ in-memory state: the user's session behaves correctly, but the value
 does not persist across reload. The `falls back to in-memory state when
 localStorage throws` test exercises this path.
 
+## `useLocalStorageEnum` contract
+
+The string-valued sibling of `useLocalStorageBoolean`. Shares the same
+synchronous lazy read, conservative-write policy, mid-mount key-swap
+guard, and cross-tab sync — only the value domain differs.
+
+```ts
+useLocalStorageEnum(key, allowed, defaultValue);
+```
+
+The `allowed` tuple defines the value domain. A stored string outside
+`allowed` (schema drift from an older build that wrote a value this one
+no longer knows, or a hand-edited entry) is treated as a cache miss and
+falls back to `defaultValue`, exactly as an absent key would. Validation
+is centralised in a memoised `parse` closure that the lazy initializer,
+the re-read effect, the write-skip check, and the cross-tab listener
+all share.
+
+`allowed` must be a stable reference — pass a module-scope constant,
+not an inline array literal. The hook lists it as a dependency of
+`parse` (and therefore of every sync effect), so an unstable identity
+would loop the re-read effect on every render.
+
+## `useAuthBoundCleanup` contract
+
+Mounted once near the top of `App` so it runs for every authenticated
+view. Detects logout / account-switch and clears per-viewer
+`localStorage` that would otherwise leak across users on the same
+machine.
+
+### Tracking the previous user
+
+The last-seen WorkOS user id is mirrored to
+`systify.composer.lastAuthUser` so the detection survives a hard reload
+or a second user opening the same browser after the first closed it
+without signing out. An in-memory ref alone would forget the previous
+id on every tab close, which is exactly the cross-session case this
+guards against. A `previousUserIdRef` sentinel (`undefined` until the
+first effect run) lazily seeds the ref from storage so the very first
+render after sign-in has the prior id available.
+
+### Sweep target
+
+Today the only sweep target is the `systify.composer.draft.*` prefix,
+which covers both the repository- and thread-scoped draft keys. Other
+per-viewer-tied keys (library tabs, folder open state) are id-scoped by
+repository and get reaped naturally by `useStorageGC` once the new
+viewer's repository ids land.
+
+### `isLoading` window
+
+AuthKit briefly sets `isLoading: true` during silent refresh and may
+transiently report `user = null` in the same render. The effect
+short-circuits while `isLoading` is true so that window does not flush
+the user's drafts.
+
 ## `useStorageGC` contract
 
-Mounted once at the top of `RepositoryShell`. Sweeps orphan
-`localStorage` keys whenever the live id sets change.
+Mounted via `useChatShellLifecycle`
+(`src/components/chat-shell-shared/use-chat-shell-lifecycle.ts:62`) so
+both `RepositoryShell` and `RepolessChatShell` get the same sweep — not
+mounted directly in `RepositoryShell`. Sweeps orphan `localStorage` keys
+whenever the live id sets change.
 
 ### Inputs
 
 ```ts
 useStorageGC({
   liveRepositoryIds: ReadonlySet<string> | null,
-  liveThreadIds: ReadonlySet<string> | null,
+  liveThreadIds?: ReadonlySet<string> | null,
 });
 ```
+
+`liveThreadIds` is optional so callers that don't yet know about thread
+ids (or are intentionally skipping the thread sweep) can omit it; when
+omitted or `null`, the thread-scoped composer-draft sweep is a no-op
+while the repository sweep still runs.
 
 - `null` means **the upstream query is still loading**. The hook is a
   no-op in this state — sweeping against an empty live set on first
@@ -218,7 +304,15 @@ const REPOSITORY_SCOPED_PREFIXES = [
   "systify.composer.draft.repository.",
   "systify.folderNav.open.",
 ] as const;
+
+const COMPOSER_DRAFT_THREAD_PREFIX = "systify.composer.draft.thread.";
 ```
+
+The four repository-scoped prefixes are swept against `liveRepositoryIds`
+(see `src/hooks/use-storage-gc.ts:11`); the thread-scoped composer-draft
+prefix is swept separately against `liveThreadIds` in its own effect
+(`src/hooks/use-storage-gc.ts:44-50`) so a deleted thread's draft is
+reaped even when the owning repository is still alive.
 
 Adding a new id-scoped key means adding its prefix here and **not**
 writing a manual `removeKeysByPrefix` in the delete callback. A

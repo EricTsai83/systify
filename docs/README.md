@@ -2,6 +2,8 @@
 
 This folder contains the system design documentation for the current Systify codebase. The documents focus on the current state and are meant to help engineers quickly understand the system boundaries, core data model, key workflows, and external integrations.
 
+For cross-cutting infrastructure concerns (LLM gateway, multi-provider strategy, rate limiting and fairness, System Design generation, cost tracking, and the eval harness), see [`architecture/`](./architecture/README.md) as the source of truth. The docs in this folder focus on product flows and reference the architecture docs where needed.
+
 ## Recommended Reading Order
 
 1. `system-overview.md`
@@ -51,17 +53,44 @@ This folder contains the system design documentation for the current Systify cod
 - `service-modes-discuss-library-system-design.md`
   - How do Discuss and Library map to routes, data dependencies, and the sandbox-grounding toggle?
   - Why does Library use metadata-only subscriptions and artifact-specific body reads?
+- `sandbox-mode-system-design.md`
+  - How does sandbox grounding integrate with the Discuss composer and per-message toggle?
+  - What is the lifecycle of a lazily provisioned Daytona sandbox?
+- `sandbox-mode-security-system-design.md`
+  - What trust boundary separates sandbox tool calls from the rest of the system?
+  - How are sandbox secrets and execution scopes constrained?
+- `sandbox-mode-runbook.md`
+  - What operational signals indicate sandbox provisioning or execution failures?
+  - How are stuck or orphan sandboxes recovered?
+- `artifact-import-drift-system-design.md`
+  - How is drift between imported artifacts and the current repository snapshot detected?
+  - How does the Library surface drift to readers without blocking access?
+- `artifact-view-state-system-design.md`
+  - How is per-user, per-artifact view state stored and reconciled across devices?
+  - Why is view state separated from artifact body reads?
+- `client-storage-architecture.md`
+  - Which client-side stores hold which kinds of state, and where is the source of truth?
+  - How do client storage layers degrade safely on quota or eviction?
+- `client-storage-strategy.md`
+  - What policy decides what is cached client-side versus refetched from Convex?
+  - How does the strategy interact with auth and cross-device continuity?
+- `instant-view-switching-system-design.md`
+  - How does instant view switching avoid first-paint flashes when navigating between modes or artifacts?
+  - Which subscriptions stay hot versus get torn down on transition?
+- `landing-auth-hint-system-design.md`
+  - How does the landing page hint at auth state without leaking identity before sign-in?
+  - Why is the auth-hint path separate from the authenticated session boot?
 
-## Implementation Coverage
+## Topic Index
 
-The current codebase keeps system-design documentation for all implemented high-impact flows:
+Use this as a guided reading order for finding the doc that answers a specific topic. For cross-cutting infrastructure (LLM gateway, multi-provider strategy, rate limiting and fairness, System Design generation, cost tracking, eval harness), see the sibling [`architecture/`](./architecture/README.md) index — those docs are the source of truth for those areas, and the entries below cross-link rather than duplicate them.
 
-- Rate limiting and lease recovery: `integrations-and-operations.md`
+- Rate limiting and lease recovery: `integrations-and-operations.md` (see also `architecture/rate-limiting-and-fairness.md` for the gateway-side fairness model)
 - Daytona orphan protection and reconciliation layers: `orphan-resource-handling.md`
 - Daytona webhook reconciliation path: `daytona-webhook-reconciliation-system-design.md`
 - Import persistence idempotency and finalize boundary: `import-persistence-system-design.md`
 - Chat context retrieval strategy: `chat-context-retrieval-system-design.md`
-- Discuss / Library service modes: `service-modes-discuss-library-system-design.md`
+- Service Modes: Discuss, Library, and System Design: `service-modes-discuss-library-system-design.md`
 - Repository file-count denormalization: `repository-filecount-rollout-system-design.md`
 - Chat streaming architecture: `streaming-reply-optimization-system-design.md`
 - Vercel + Convex deployment model: `vercel-convex-deployment-system-design.md`
