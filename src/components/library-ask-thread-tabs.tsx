@@ -86,7 +86,7 @@ export const LibraryAskThreadTabs = memo(function LibraryAskThreadTabs({
                     }
                   }}
                   className={cn(
-                    "group flex max-w-[220px] cursor-pointer items-center gap-1.5 rounded-t-md border-b-2 px-2.5 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                    "group flex max-w-[220px] cursor-pointer items-center gap-1.5 rounded-t-md border-t-2 px-2.5 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                     isActive
                       ? "border-primary bg-muted/60 text-foreground"
                       : "border-transparent bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground",
