@@ -447,7 +447,7 @@ export function ChatPanel({
         // column owns its own max-w-3xl gutter.
         <Conversation scroll={conversationScroll} className="flex-1 min-h-0">
           <ConversationContent
-            className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 py-6"
+            className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pb-6 pt-10"
             showLoadOlderSentinel={canLoadOlderMessages}
           >
             {sandboxPill}
