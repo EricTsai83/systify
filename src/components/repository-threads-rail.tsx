@@ -1,7 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery } from "convex/react";
 import {
-  DotsThreeVerticalIcon,
   GlobeIcon,
   LockIcon,
   PencilSimpleIcon,
@@ -22,13 +21,6 @@ import {
   ContextMenuSeparator,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useInlineRename } from "@/hooks/use-inline-rename";
@@ -325,9 +317,8 @@ function ThreadsSection({
         <>
           {pinnedThreads.length > 0 && (
             <div className="flex flex-col gap-1 pb-3">
-              <div className="flex items-center gap-1 px-1 pb-1 text-muted-foreground">
-                <PushPinIcon size={10} weight="fill" className="shrink-0" />
-                <p className="text-[11px] font-semibold uppercase tracking-wider">Pinned</p>
+              <div className="flex items-center gap-1 px-1 pb-1">
+                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Pinned</p>
               </div>
               <ThreadsList
                 threads={pinnedThreads}
@@ -512,53 +503,24 @@ function ThreadItem({
             <Button
               variant="ghost"
               size="icon"
-              className={cn(
-                "pointer-events-auto h-6 w-6 transition-opacity focus-visible:opacity-100 group-hover:opacity-100",
-                isPinned
-                  ? "text-foreground opacity-100 hover:text-muted-foreground"
-                  : "text-muted-foreground opacity-0 hover:text-foreground",
-              )}
+              className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
               onClick={() => onTogglePin(thread._id, !isPinned)}
               aria-label={isPinned ? "Unpin thread" : "Pin thread"}
               aria-pressed={isPinned}
               title={isPinned ? "Unpin thread" : "Pin thread"}
             >
-              <PushPinIcon size={13} weight={isPinned ? "fill" : "regular"} />
+              {isPinned ? <PushPinSlashIcon size={13} weight="bold" /> : <PushPinIcon size={13} weight="regular" />}
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
-                  aria-label="Thread actions"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <DotsThreeVerticalIcon size={13} weight="bold" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => onTogglePin(thread._id, !isPinned)}>
-                  {isPinned ? (
-                    <>
-                      <PushPinSlashIcon size={12} weight="bold" /> Unpin
-                    </>
-                  ) : (
-                    <>
-                      <PushPinIcon size={12} weight="bold" /> Pin to top
-                    </>
-                  )}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleStartEdit}>
-                  <PencilSimpleIcon size={12} weight="bold" /> Rename
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => onDeleteThread(thread._id)} className="text-destructive">
-                  <TrashIcon size={12} weight="bold" /> Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+              onClick={() => onDeleteThread(thread._id)}
+              aria-label="Delete thread"
+              title="Delete thread"
+            >
+              <TrashIcon size={13} weight="bold" />
+            </Button>
           </div>
         </div>
       </ContextMenuTrigger>
@@ -667,9 +629,8 @@ export function RepolessChatsRail({
           <div className="flex flex-col">
             {pinnedThreads.length > 0 && (
               <div className="flex flex-col gap-1 pb-3">
-                <div className="flex items-center gap-1 px-1 pb-1 text-muted-foreground">
-                  <PushPinIcon size={10} weight="fill" className="shrink-0" />
-                  <p className="text-[11px] font-semibold uppercase tracking-wider">Pinned</p>
+                <div className="flex items-center gap-1 px-1 pb-1">
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Pinned</p>
                 </div>
                 <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-300 ease-out">
                   {pinnedThreads.map((thread) => (
@@ -805,53 +766,24 @@ function RepolessThreadItem({
             <Button
               variant="ghost"
               size="icon"
-              className={cn(
-                "pointer-events-auto h-6 w-6 transition-opacity focus-visible:opacity-100 group-hover:opacity-100",
-                isPinned
-                  ? "text-foreground opacity-100 hover:text-muted-foreground"
-                  : "text-muted-foreground opacity-0 hover:text-foreground",
-              )}
+              className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
               onClick={() => onTogglePin(thread._id, !isPinned)}
               aria-label={isPinned ? "Unpin thread" : "Pin thread"}
               aria-pressed={isPinned}
               title={isPinned ? "Unpin thread" : "Pin thread"}
             >
-              <PushPinIcon size={13} weight={isPinned ? "fill" : "regular"} />
+              {isPinned ? <PushPinSlashIcon size={13} weight="bold" /> : <PushPinIcon size={13} weight="regular" />}
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100"
-                  aria-label="Thread actions"
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <DotsThreeVerticalIcon size={13} weight="bold" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => onTogglePin(thread._id, !isPinned)}>
-                  {isPinned ? (
-                    <>
-                      <PushPinSlashIcon size={12} weight="bold" /> Unpin
-                    </>
-                  ) : (
-                    <>
-                      <PushPinIcon size={12} weight="bold" /> Pin to top
-                    </>
-                  )}
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={handleStartEdit}>
-                  <PencilSimpleIcon size={12} weight="bold" /> Rename
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onClick={() => onDeleteThread(thread._id)} className="text-destructive">
-                  <TrashIcon size={12} weight="bold" /> Delete
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
+              onClick={() => onDeleteThread(thread._id)}
+              aria-label="Delete thread"
+              title="Delete thread"
+            >
+              <TrashIcon size={13} weight="bold" />
+            </Button>
           </div>
         </div>
       </ContextMenuTrigger>
