@@ -213,13 +213,14 @@ function ProviderLockTooltip({ provider }: { provider: LlmProvider }) {
     <TooltipProvider delayDuration={150}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span
+          <button
+            type="button"
             aria-label={`Locked to ${PROVIDER_DISPLAY_NAME[provider]}`}
-            className="inline-flex items-center text-muted-foreground/80"
+            className="inline-flex items-center border-0 bg-transparent p-0 text-muted-foreground/80"
             data-testid="prompt-input-model-picker-lock-icon"
           >
             <LockSimpleIcon aria-hidden="true" weight="bold" size={12} />
-          </span>
+          </button>
         </TooltipTrigger>
         <TooltipContent className="w-64">
           <p className="font-semibold">Locked to {PROVIDER_DISPLAY_NAME[provider]}</p>
