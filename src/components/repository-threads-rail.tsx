@@ -413,47 +413,51 @@ const ThreadsList = memo(function ThreadsList({
   );
 });
 
-function ThreadItem({
-  thread,
-  isSelected,
-  isPinned,
-  repository,
-  onSelectThread,
-  onPrewarmThread,
-  onDeleteThread,
-  onTogglePin,
-  compact,
-  onError,
-}: {
+interface ThreadItemBaseProps {
   thread: Doc<"threads">;
-  isSelected: boolean;
+  isEditing: boolean;
+  isCommitting: boolean;
+  draft: string;
   isPinned: boolean;
-  repository: Doc<"repositories"> | undefined;
+  isSelected: boolean;
+  titleTextClass: string;
+  compact?: boolean;
+  repositoryBadge?: React.ReactNode;
+  rowRef: React.RefObject<HTMLDivElement | null>;
+  inputRef: React.RefObject<HTMLInputElement | null>;
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onPrewarmThread: (id: ThreadId) => void;
   onDeleteThread: (id: ThreadId) => void;
   onTogglePin: (id: ThreadId, pinned: boolean) => void;
-  compact?: boolean;
-  onError: (message: string | null) => void;
-}) {
-  const rowRef = useRef<HTMLDivElement>(null);
-  const {
-    isEditing,
-    isCommitting,
-    draft,
-    setDraft,
-    inputRef,
-    handleStartEdit,
-    handleCommit,
-    handleKeyDown,
-    handleItemKeyDown,
-  } = useThreadRename({
-    thread,
-    onError,
-    rowRef,
-  });
+  setDraft: (value: string) => void;
+  handleStartEdit: () => void;
+  handleCommit: () => void | Promise<void>;
+  handleKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  handleItemKeyDown: (e: React.KeyboardEvent<HTMLElement>) => void;
+}
 
-  const titleTextClass = threadTitleTextClass(compact);
+function ThreadItemBase({
+  thread,
+  isEditing,
+  isCommitting,
+  draft,
+  isPinned,
+  isSelected,
+  titleTextClass,
+  compact,
+  repositoryBadge,
+  rowRef,
+  inputRef,
+  onSelectThread,
+  onPrewarmThread,
+  onDeleteThread,
+  onTogglePin,
+  setDraft,
+  handleStartEdit,
+  handleCommit,
+  handleKeyDown,
+  handleItemKeyDown,
+}: ThreadItemBaseProps) {
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild disabled={isEditing}>
@@ -475,7 +479,7 @@ function ThreadItem({
                     titleTextClass,
                   )}
                 />
-                <ThreadRepoBadge repository={repository} />
+                {repositoryBadge}
               </div>
             </EditableRowFrame>
           ) : (
@@ -495,7 +499,7 @@ function ThreadItem({
                 >
                   {thread.title}
                 </p>
-                <ThreadRepoBadge repository={repository} />
+                {repositoryBadge}
               </div>
             </SidebarMenuButton>
           )}
@@ -553,6 +557,73 @@ function ThreadItem({
         </ContextMenuGroup>
       </ContextMenuContent>
     </ContextMenu>
+  );
+}
+
+function ThreadItem({
+  thread,
+  isSelected,
+  isPinned,
+  repository,
+  onSelectThread,
+  onPrewarmThread,
+  onDeleteThread,
+  onTogglePin,
+  compact,
+  onError,
+}: {
+  thread: Doc<"threads">;
+  isSelected: boolean;
+  isPinned: boolean;
+  repository: Doc<"repositories"> | undefined;
+  onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
+  onPrewarmThread: (id: ThreadId) => void;
+  onDeleteThread: (id: ThreadId) => void;
+  onTogglePin: (id: ThreadId, pinned: boolean) => void;
+  compact?: boolean;
+  onError: (message: string | null) => void;
+}) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const {
+    isEditing,
+    isCommitting,
+    draft,
+    setDraft,
+    inputRef,
+    handleStartEdit,
+    handleCommit,
+    handleKeyDown,
+    handleItemKeyDown,
+  } = useThreadRename({
+    thread,
+    onError,
+    rowRef,
+  });
+
+  const titleTextClass = threadTitleTextClass(compact);
+  return (
+    <ThreadItemBase
+      thread={thread}
+      isEditing={isEditing}
+      isCommitting={isCommitting}
+      draft={draft}
+      isPinned={isPinned}
+      isSelected={isSelected}
+      titleTextClass={titleTextClass}
+      compact={compact}
+      repositoryBadge={<ThreadRepoBadge repository={repository} />}
+      rowRef={rowRef}
+      inputRef={inputRef}
+      onSelectThread={onSelectThread}
+      onPrewarmThread={onPrewarmThread}
+      onDeleteThread={onDeleteThread}
+      onTogglePin={onTogglePin}
+      setDraft={setDraft}
+      handleStartEdit={handleStartEdit}
+      handleCommit={handleCommit}
+      handleKeyDown={handleKeyDown}
+      handleItemKeyDown={handleItemKeyDown}
+    />
   );
 }
 
@@ -724,101 +795,25 @@ function RepolessThreadItem({
 
   const titleTextClass = threadTitleTextClass(false);
   return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild disabled={isEditing}>
-        <div ref={rowRef} className="group relative">
-          {isEditing ? (
-            <EditableRowFrame className="py-1.5 pr-16">
-              <div className="min-w-0 flex-1">
-                <input
-                  ref={inputRef}
-                  value={draft}
-                  maxLength={MAX_RENAME_TITLE_LENGTH}
-                  aria-label="Rename thread"
-                  disabled={isCommitting}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  onBlur={() => void handleCommit()}
-                  className={cn(
-                    "m-0 block w-full truncate border-0 bg-transparent p-0 font-medium text-foreground outline-none ring-0",
-                    titleTextClass,
-                  )}
-                />
-              </div>
-            </EditableRowFrame>
-          ) : (
-            <SidebarMenuButton
-              selected={isSelected}
-              onClick={() => onSelectThread(thread._id, thread.mode)}
-              onMouseEnter={() => onPrewarmThread(thread._id)}
-              onFocus={() => onPrewarmThread(thread._id)}
-              onKeyDown={handleItemKeyDown}
-              aria-keyshortcuts="F2"
-              className="py-1.5 pr-16"
-            >
-              <div className="min-w-0 flex-1">
-                <p
-                  onDoubleClick={handleStartEdit}
-                  className={cn("cursor-pointer truncate font-medium text-foreground", titleTextClass)}
-                >
-                  {thread.title}
-                </p>
-              </div>
-            </SidebarMenuButton>
-          )}
-          <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
-              onClick={() => onTogglePin(thread._id, !isPinned)}
-              aria-label={isPinned ? "Unpin thread" : "Pin thread"}
-              aria-pressed={isPinned}
-              title={isPinned ? "Unpin thread" : "Pin thread"}
-            >
-              {isPinned ? (
-                <PushPinSimpleSlashIcon size={13} weight="bold" />
-              ) : (
-                <PushPinSimpleIcon size={13} weight="bold" />
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-              onClick={() => onDeleteThread(thread._id)}
-              aria-label="Delete thread"
-              title="Delete thread"
-            >
-              <TrashIcon size={13} weight="bold" />
-            </Button>
-          </div>
-        </div>
-      </ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuGroup>
-          <ContextMenuItem onClick={() => onTogglePin(thread._id, !isPinned)}>
-            {isPinned ? (
-              <>
-                <PushPinSimpleSlashIcon weight="bold" /> Unpin
-              </>
-            ) : (
-              <>
-                <PushPinSimpleIcon weight="bold" /> Pin to top
-              </>
-            )}
-          </ContextMenuItem>
-          <ContextMenuItem onClick={handleStartEdit}>
-            <PencilSimpleIcon weight="bold" /> Rename
-          </ContextMenuItem>
-        </ContextMenuGroup>
-        <ContextMenuSeparator />
-        <ContextMenuGroup>
-          <ContextMenuItem variant="destructive" onClick={() => onDeleteThread(thread._id)}>
-            <TrashIcon weight="bold" /> Delete
-          </ContextMenuItem>
-        </ContextMenuGroup>
-      </ContextMenuContent>
-    </ContextMenu>
+    <ThreadItemBase
+      thread={thread}
+      isEditing={isEditing}
+      isCommitting={isCommitting}
+      draft={draft}
+      isPinned={isPinned}
+      isSelected={isSelected}
+      titleTextClass={titleTextClass}
+      rowRef={rowRef}
+      inputRef={inputRef}
+      onSelectThread={onSelectThread}
+      onPrewarmThread={onPrewarmThread}
+      onDeleteThread={onDeleteThread}
+      onTogglePin={onTogglePin}
+      setDraft={setDraft}
+      handleStartEdit={handleStartEdit}
+      handleCommit={handleCommit}
+      handleKeyDown={handleKeyDown}
+      handleItemKeyDown={handleItemKeyDown}
+    />
   );
 }
