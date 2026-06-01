@@ -75,7 +75,8 @@ type SandboxLookupResult = {
 } | null;
 type SandboxCleanupStart = { started: true; remoteId: string } | { started: false };
 
-const STALE_CHAT_JOB_ERROR_MESSAGE = "The assistant reply stalled and was automatically marked as failed.";
+const STALE_CHAT_JOB_ERROR_MESSAGE =
+  "This reply stopped before it could finish. Try sending your message again. If it keeps happening, choose another model or check the provider configuration.";
 const DAYTONA_ORPHAN_RECONCILIATION_MIN_AGE_MS = 10 * 60_000;
 
 export const sweepExpiredSandboxes = internalAction({

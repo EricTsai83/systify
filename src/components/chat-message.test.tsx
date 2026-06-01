@@ -31,8 +31,9 @@ function makeAssistantMessage(overrides: Partial<Doc<"messages">> = {}): Doc<"me
 }
 
 describe("MessageBubble", () => {
-  test("does not render a duplicate error line when failed content already contains the same error", () => {
-    const errorMessage = "The assistant reply stalled and was automatically marked as failed.";
+  test("renders an error-only failed reply as a system alert without duplicating the message", () => {
+    const errorMessage =
+      "This reply stopped before it could finish. Try sending your message again. If it keeps happening, choose another model or check the provider configuration.";
     render(
       <MessageBubble
         message={makeAssistantMessage({
@@ -45,10 +46,12 @@ describe("MessageBubble", () => {
     );
 
     expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("Reply could not finish")).toBeInTheDocument();
     expect(screen.getAllByText(errorMessage)).toHaveLength(1);
   });
 
-  test("keeps the error line when failed content contains useful partial output", () => {
+  test("keeps a system alert when failed content contains useful partial output", () => {
     render(
       <MessageBubble
         message={makeAssistantMessage({
@@ -61,6 +64,8 @@ describe("MessageBubble", () => {
     );
 
     expect(screen.getByText("Partial answer before the provider failed.")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByText("Reply could not finish")).toBeInTheDocument();
     expect(screen.getByText("Provider request failed.")).toBeInTheDocument();
   });
 });

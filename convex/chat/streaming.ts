@@ -37,7 +37,8 @@ import {
   type ToolCallTraceEntry,
 } from "./toolCallEventStore";
 
-const STALE_CHAT_JOB_ERROR_MESSAGE = "The assistant reply stalled and was automatically marked as failed.";
+const STALE_CHAT_JOB_ERROR_MESSAGE =
+  "This reply stopped before it could finish. Try sending your message again. If it keeps happening, choose another model or check the provider configuration.";
 
 /**
  * Soft truncation marker appended to over-long tool-call summaries before

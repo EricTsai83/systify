@@ -5,12 +5,13 @@ import { Message, MessageContent, MessageActions, MessageAction } from "@/compon
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { ToolCallTrace } from "@/components/tool-call-trace";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Markdown } from "@/components/markdown";
 import { useClipboard } from "@/hooks/use-clipboard";
 import { CITATION_TOKEN_REGEX, prepareAssistantMarkdown } from "@/lib/assistant-markdown";
 import type { ActiveMessageStream, ArtifactId } from "@/lib/types";
-import { CopyIcon, CheckIcon } from "@phosphor-icons/react";
+import { CopyIcon, CheckIcon, WarningCircleIcon } from "@phosphor-icons/react";
 
 /**
  * Derive the grounding chip label from a persisted assistant message.
@@ -95,8 +96,12 @@ export const MessageBubble = memo(function MessageBubble({
     isAssistant && activeMessageStream?.assistantMessageId === message._id
       ? activeMessageStream.content || message.content
       : message.content;
-  const renderedErrorMessage =
-    message.errorMessage && message.errorMessage.trim() !== displayContent.trim() ? message.errorMessage : null;
+  const isTerminalSystemError =
+    isAssistant &&
+    (message.status === "failed" || message.status === "cancelled") &&
+    message.errorMessage !== undefined &&
+    message.errorMessage.trim().length > 0;
+  const isSystemErrorOnly = isTerminalSystemError && message.errorMessage?.trim() === displayContent.trim();
   // Assistant messages show a small grounding chip so the user can tell
   // which grounding axes produced the answer (and trace surprising
   // replies back to a wrong toggle). User messages still carry the
@@ -226,7 +231,9 @@ export const MessageBubble = memo(function MessageBubble({
         </div>
       ) : null}
       <MessageContent>
-        {isAssistant ? (
+        {isSystemErrorOnly ? (
+          <SystemErrorNotice status={message.status} message={message.errorMessage ?? ""} />
+        ) : isAssistant ? (
           displayContent ? (
             <Markdown
               className="text-sm leading-6"
@@ -244,7 +251,9 @@ export const MessageBubble = memo(function MessageBubble({
         ) : (
           <p className="whitespace-pre-wrap text-sm leading-6">{displayContent || "…"}</p>
         )}
-        {renderedErrorMessage ? <p className="mt-2 text-xs text-destructive">{renderedErrorMessage}</p> : null}
+        {isTerminalSystemError && !isSystemErrorOnly ? (
+          <SystemErrorNotice status={message.status} message={message.errorMessage ?? ""} />
+        ) : null}
         {isAssistant ? (
           <ToolCallTrace
             messageId={message._id}
@@ -285,6 +294,17 @@ export const MessageBubble = memo(function MessageBubble({
     </Message>
   );
 });
+
+function SystemErrorNotice({ status, message }: { status: Doc<"messages">["status"]; message: string }) {
+  const title = status === "cancelled" ? "Reply cancelled" : "Reply could not finish";
+  return (
+    <Alert variant="destructive" className="max-w-xl bg-destructive/5">
+      <WarningCircleIcon size={16} weight="fill" />
+      <AlertTitle>{title}</AlertTitle>
+      <AlertDescription>{message}</AlertDescription>
+    </Alert>
+  );
+}
 
 /**
  * Resolve the "Thought for N seconds" duration the `<Reasoning>` trigger
