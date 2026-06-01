@@ -622,6 +622,7 @@ function getSdkEmbeddingModel(provider: LlmProvider, modelName: string): Embeddi
  */
 const ANTHROPIC_THINKING_BUDGET_TOKENS: Record<Exclude<ReasoningEffort, "none">, number> = {
   // Anthropic's API minimum thinking budget is 1024 tokens.
+  minimal: 1_024,
   low: 5_000,
   medium: 16_000,
   high: 32_000,

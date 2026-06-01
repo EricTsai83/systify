@@ -156,7 +156,7 @@ describe("TEST_INTERNALS.buildProviderOptions", () => {
   test("Anthropic reasoning model: reasoningEffort maps to a thinking-budget token count", () => {
     // Claude Opus 4.8 (`supportsReasoning: true`) — effort maps
     // to the budget table in `buildProviderOptions`:
-    // low=5000, medium=16000, high=32000, xhigh=64000.
+    // minimal=1024, low=5000, medium=16000, high=32000, xhigh=64000.
     const opts = TEST_INTERNALS.buildProviderOptions("anthropic", "claude-opus-4-8", {
       system: "s",
       prompt: "p",
@@ -175,6 +175,17 @@ describe("TEST_INTERNALS.buildProviderOptions", () => {
     });
     expect(opts).toEqual({
       anthropic: { thinking: { type: "disabled" } },
+    });
+  });
+
+  test("Anthropic reasoning model: minimal effort maps to the provider minimum budget", () => {
+    const opts = TEST_INTERNALS.buildProviderOptions("anthropic", "claude-opus-4-8", {
+      system: "s",
+      prompt: "p",
+      reasoningEffort: "minimal",
+    });
+    expect(opts).toEqual({
+      anthropic: { thinking: { type: "enabled", budgetTokens: 1_024 } },
     });
   });
 

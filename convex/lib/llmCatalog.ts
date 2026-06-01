@@ -69,7 +69,7 @@ export type UserPickableCapability = Exclude<ModelCapability, "embedding">;
  * flows through `messages.reasoningEffort` and
  * `LlmGenerateArgs.reasoningEffort`.
  */
-export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
+export type ReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 /**
  * Convex validator for {@link ReasoningEffort}. Exported so the
@@ -79,6 +79,7 @@ export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh";
  */
 export const reasoningEffortValidator = v.union(
   v.literal("none"),
+  v.literal("minimal"),
   v.literal("low"),
   v.literal("medium"),
   v.literal("high"),
