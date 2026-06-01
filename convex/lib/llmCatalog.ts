@@ -182,7 +182,6 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     modelName: "gpt-5.4-nano",
     displayName: "GPT-5.4 Nano",
     capability: "discuss",
-    reasoningEffort: "minimal",
     // The nano tier intentionally drops tool support; we keep it
     // for ultra-cheap eval-judge and lightweight discuss flows.
     supportsReasoning: false,

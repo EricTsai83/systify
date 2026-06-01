@@ -1,22 +1,25 @@
 /**
  * LLM-as-judge for System Design eval.
  *
- * Pins the model: `(provider: "openai", modelName: "gpt-5-nano")`.
- * The judge model is part of the eval contract — bumping it
- * invalidates every prior score, so we keep it in code (not env)
- * and require a deliberate edit.
+ * The judge model is catalog-driven via `ROLE_MODELS.internalJudge`
+ * in `lib/llmCatalog.ts` — bumping that entry invalidates every
+ * prior score, since the eval contract pins the model. Treat any
+ * edit to `ROLE_MODELS.internalJudge` as a deliberate score-history
+ * reset.
  *
  * Module is a plain async helper (not an `internalAction`) so the
  * Node runner (`runner.ts`) can call it inline. The gateway carries
  * the call through the same retry / rate-limit / cost pipeline as
  * production chat — eval traffic shows up in dashboards tagged
- * `feature: "eval_judge"` and `model: "gpt-5-nano"`.
+ * `feature: "eval_judge"` with the model name resolved from
+ * `ROLE_MODELS.internalJudge`.
  *
  * The judge does NOT enforce a JSON schema at the SDK layer (the AI
  * SDK's `output: object({...})` would round-trip to a tool call,
- * which `gpt-5-nano` cannot do). Instead we ask for raw JSON in the
- * prompt and tolerate parse failures by returning a `parseError` —
- * the caller still records the failed trial rather than throwing.
+ * which the nano-tier judge model cannot do). Instead we ask for raw
+ * JSON in the prompt and tolerate parse failures by returning a
+ * `parseError` — the caller still records the failed trial rather
+ * than throwing.
  */
 
 import type { ActionCtx } from "../../_generated/server";

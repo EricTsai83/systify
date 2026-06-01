@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { ClockCounterClockwiseIcon, PushPinIcon, TrashIcon } from "@phosphor-icons/react";
+import { ClockCounterClockwiseIcon, PushPinSimpleIcon, PushPinSimpleSlashIcon, TrashIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -178,7 +178,7 @@ export function LibraryAskHistoryPopover({
                             }}
                           >
                             {isPinned ? (
-                              <PushPinIcon
+                              <PushPinSimpleIcon
                                 size={11}
                                 weight="fill"
                                 className="shrink-0 text-muted-foreground"
@@ -205,7 +205,11 @@ export function LibraryAskHistoryPopover({
                               title={isPinned ? "Unpin thread" : "Pin thread"}
                               onClick={() => onTogglePin(threadId, !isPinned)}
                             >
-                              <PushPinIcon size={13} weight={isPinned ? "fill" : "regular"} />
+                              {isPinned ? (
+                                <PushPinSimpleSlashIcon size={13} weight="bold" />
+                              ) : (
+                                <PushPinSimpleIcon size={13} weight="bold" />
+                              )}
                             </Button>
                             <Button
                               type="button"

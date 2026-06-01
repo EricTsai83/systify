@@ -9,8 +9,8 @@ import {
   FolderPlusIcon,
   FoldersIcon,
   PencilSimpleIcon,
-  PushPinIcon,
-  PushPinSlashIcon,
+  PushPinSimpleIcon,
+  PushPinSimpleSlashIcon,
   TrashIcon,
   XIcon,
 } from "@phosphor-icons/react";
@@ -302,7 +302,7 @@ export function FolderNavigator({
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-3">
           {pinnedRoots.length > 0 ? (
-            <NavigatorSection title="Pinned" icon={<PushPinIcon size={12} weight="fill" />}>
+            <NavigatorSection title="Pinned" icon={<PushPinSimpleIcon size={12} weight="fill" />}>
               {pinnedRoots
                 .filter((node) => folderMatchesSearch(node))
                 .map((node) => (
@@ -629,11 +629,11 @@ function FolderTreeBranch({
                   <DropdownMenuItem onClick={() => void runTogglePin()} disabled={isPinPending}>
                     {isPinned ? (
                       <>
-                        <PushPinSlashIcon size={12} weight="bold" /> Unpin
+                        <PushPinSimpleSlashIcon size={12} weight="bold" /> Unpin
                       </>
                     ) : (
                       <>
-                        <PushPinIcon size={12} weight="bold" /> Pin to top
+                        <PushPinSimpleIcon size={12} weight="bold" /> Pin to top
                       </>
                     )}
                   </DropdownMenuItem>
@@ -660,11 +660,11 @@ function FolderTreeBranch({
               <ContextMenuItem onClick={() => void runTogglePin()} disabled={isPinPending}>
                 {isPinned ? (
                   <>
-                    <PushPinSlashIcon weight="bold" /> Unpin
+                    <PushPinSimpleSlashIcon weight="bold" /> Unpin
                   </>
                 ) : (
                   <>
-                    <PushPinIcon weight="bold" /> Pin to top
+                    <PushPinSimpleIcon weight="bold" /> Pin to top
                   </>
                 )}
               </ContextMenuItem>

@@ -31,7 +31,13 @@ import {
   getSandboxReplyEstimateCents,
   SYSTEM_DESIGN_JOB_LEASE_MS,
 } from "./lib/rateLimit";
-import { isValidPick, listPickableModels, reasoningEffortValidator, ROLE_MODELS } from "./lib/llmCatalog";
+import {
+  isValidPick,
+  listPickableModels,
+  reasoningEffortValidator,
+  ROLE_MODELS,
+  type ReasoningEffort,
+} from "./lib/llmCatalog";
 import { llmProviderValidator, type LlmProvider } from "./lib/llmProvider";
 import { costUsdToCents } from "./lib/llmPricing";
 import { logInfo, logWarn } from "./lib/observability";
@@ -735,7 +741,7 @@ export const getJobModelChoice = internalQuery({
   ): Promise<{
     provider: LlmProvider;
     modelName: string;
-    reasoningEffort: "minimal" | "low" | "medium" | "high" | undefined;
+    reasoningEffort: ReasoningEffort | undefined;
   }> => {
     const job = await ctx.db.get(args.jobId);
     if (!job) {
