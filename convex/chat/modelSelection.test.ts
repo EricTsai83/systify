@@ -170,7 +170,7 @@ describe("resolveModelForReply", () => {
     expect(choice.reasoningEffort).toBe("high");
   });
 
-  test("per-message reasoning override applies on capability-default fallbacks too", () => {
+  test("unsupported per-message reasoning override falls back to the model default", () => {
     const choice = resolveModelForReply({
       mode: "discuss",
       groundSandbox: false,
@@ -178,6 +178,6 @@ describe("resolveModelForReply", () => {
     });
     expect(choice.provider).toBe("openai");
     expect(choice.modelName).toBe("gpt-5.4-mini");
-    expect(choice.reasoningEffort).toBe("none");
+    expect(choice.reasoningEffort).toBe("low");
   });
 });

@@ -116,6 +116,21 @@ export function PromptInputReasoningPicker({
 
   useEffect(() => closeTooltip, [closeTooltip]);
 
+  const supportedEfforts = useMemo(
+    () => selectedEntry?.supportedReasoningEfforts ?? [],
+    [selectedEntry?.supportedReasoningEfforts],
+  );
+  const fallbackEffort = selectedEntry?.reasoningEffort ?? supportedEfforts[0] ?? "none";
+
+  useEffect(() => {
+    if (!selectedEntry?.supportsReasoning || value === null) {
+      return;
+    }
+    if (!supportedEfforts.includes(value)) {
+      onChange(fallbackEffort);
+    }
+  }, [fallbackEffort, onChange, selectedEntry?.supportsReasoning, supportedEfforts, value]);
+
   // Hide entirely on non-reasoning models. The picker re-renders into
   // the row whenever the user picks a reasoning-capable model, so the
   // hide / show flip is transparent to the surrounding layout.
@@ -125,7 +140,8 @@ export function PromptInputReasoningPicker({
     return null;
   }
 
-  const effectiveValue = value ?? selectedEntry.reasoningEffort ?? "none";
+  const selectableEfforts = supportedEfforts.length > 0 ? supportedEfforts : EFFORTS;
+  const effectiveValue = value !== null && supportedEfforts.includes(value) ? value : fallbackEffort;
   const currentMeta = EFFORT_META[effectiveValue];
 
   const handleValueChange = (next: string) => {
@@ -171,7 +187,7 @@ export function PromptInputReasoningPicker({
           </Tooltip>
         </TooltipProvider>
         <PromptInputSelectContent className="min-w-36 border-border bg-popover p-1 text-popover-foreground shadow-lg">
-          {EFFORTS.map((effort) => {
+          {selectableEfforts.map((effort) => {
             const meta = EFFORT_META[effort];
             return (
               <PromptInputSelectItem

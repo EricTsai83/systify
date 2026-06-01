@@ -155,6 +155,16 @@ describe("TEST_INTERNALS.buildProviderOptions", () => {
     expect(opts).toEqual({ openai: { reasoningEffort: "high" } });
   });
 
+  test("OpenAI reasoning model: unsupported effort throws before provider dispatch", () => {
+    expect(() =>
+      TEST_INTERNALS.buildProviderOptions("openai", "gpt-5.5", {
+        system: "s",
+        prompt: "p",
+        reasoningEffort: "none",
+      }),
+    ).toThrow(/unsupported reasoning effort/);
+  });
+
   test("Anthropic reasoning model: reasoningEffort maps to a thinking-budget token count", () => {
     // Claude Opus 4.8 (`supportsReasoning: true`) — effort maps
     // to the budget table in `buildProviderOptions`:

@@ -1,6 +1,13 @@
 import { describe, expect, test } from "vitest";
 
-import { getCatalogEntry, isValidPick, listPickableModels, MODEL_CATALOG, ROLE_MODELS } from "./llmCatalog";
+import {
+  getCatalogEntry,
+  isSupportedReasoningEffort,
+  isValidPick,
+  listPickableModels,
+  MODEL_CATALOG,
+  ROLE_MODELS,
+} from "./llmCatalog";
 import { TEST_INTERNALS as PRICING_INTERNALS } from "./llmPricing";
 
 describe("MODEL_CATALOG", () => {
@@ -61,6 +68,22 @@ describe("MODEL_CATALOG", () => {
     }
   });
 
+  test("every reasoning-capable model declares non-empty supported reasoning efforts", () => {
+    for (const entry of MODEL_CATALOG) {
+      if (entry.supportsReasoning) {
+        expect(
+          entry.supportedReasoningEfforts?.length,
+          `${entry.provider}:${entry.modelName} should declare supportedReasoningEfforts`,
+        ).toBeGreaterThan(0);
+        if (entry.reasoningEffort !== undefined) {
+          expect(entry.supportedReasoningEfforts).toContain(entry.reasoningEffort);
+        }
+      } else {
+        expect(entry.supportedReasoningEfforts ?? []).toHaveLength(0);
+      }
+    }
+  });
+
   test("embedding-capability entries never claim tool support and are not user-pickable", () => {
     // Embedding models cannot run tools (they only return vectors)
     // and are routed via the backend `embedViaGateway` — surfacing
@@ -104,6 +127,18 @@ describe("isValidPick", () => {
   test("false for fabricated pairs", () => {
     expect(isValidPick("openai", "gpt-99")).toBe(false);
     expect(isValidPick("anthropic", "gpt-5.5")).toBe(false);
+  });
+});
+
+describe("isSupportedReasoningEffort", () => {
+  test("accepts undefined effort for any catalogued model", () => {
+    expect(isSupportedReasoningEffort("openai", "gpt-5.5", undefined)).toBe(true);
+  });
+
+  test("enforces provider/model-specific supported efforts", () => {
+    expect(isSupportedReasoningEffort("openai", "gpt-5.5", "medium")).toBe(true);
+    expect(isSupportedReasoningEffort("openai", "gpt-5.5", "none")).toBe(false);
+    expect(isSupportedReasoningEffort("anthropic", "claude-opus-4-8", "minimal")).toBe(true);
   });
 });
 

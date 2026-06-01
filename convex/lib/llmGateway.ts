@@ -71,7 +71,7 @@ import type { ActionCtx } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 
 import type { ModelCapability, ReasoningEffort } from "./llmCatalog";
-import { getCatalogEntry, isValidPick } from "./llmCatalog";
+import { getCatalogEntry, isSupportedReasoningEffort, isValidPick } from "./llmCatalog";
 import type { LlmProvider, NormalizedUsage } from "./llmProvider";
 import { estimateCostUsd } from "./llmPricing";
 import { emitMetric, logWarn } from "./observability";
@@ -632,7 +632,9 @@ function getSdkEmbeddingModel(provider: LlmProvider, modelName: string): Embeddi
  *
  * A reasoning effort smuggled onto a non-reasoning model is dropped
  * here rather than passed through to the SDK — the catalog entry's
- * `supportsReasoning: false` is the source of truth. This means:
+ * `supportsReasoning: false` is the source of truth. A reasoning
+ * effort that exists globally but is unsupported by this exact model
+ * is rejected here before provider dispatch.
  *
  *   - A catalog entry with `supportsReasoning: false` silently
  *     ignores any `reasoningEffort` the caller passes; no provider
@@ -658,28 +660,34 @@ function buildProviderOptions(
   if (args.reasoningEffort !== undefined) {
     const entry = getCatalogEntry(provider, modelName);
     const supportsReasoning = entry?.supportsReasoning ?? false;
-    if (supportsReasoning) {
-      switch (provider) {
-        case "openai": {
-          const existing = (merged.openai as Record<string, unknown>) ?? {};
-          merged.openai = { ...existing, reasoningEffort: args.reasoningEffort };
+    if (!supportsReasoning) {
+      return Object.keys(merged).length === 0 ? undefined : merged;
+    }
+    if (!isSupportedReasoningEffort(provider, modelName, args.reasoningEffort)) {
+      throw new Error(
+        `LlmGateway: unsupported reasoning effort "${args.reasoningEffort}" for ${provider}:${modelName}`,
+      );
+    }
+    switch (provider) {
+      case "openai": {
+        const existing = (merged.openai as Record<string, unknown>) ?? {};
+        merged.openai = { ...existing, reasoningEffort: args.reasoningEffort };
+        break;
+      }
+      case "anthropic": {
+        const existing = (merged.anthropic as Record<string, unknown>) ?? {};
+        if (args.reasoningEffort === "none") {
+          merged.anthropic = { ...existing, thinking: { type: "disabled" } };
           break;
         }
-        case "anthropic": {
-          const existing = (merged.anthropic as Record<string, unknown>) ?? {};
-          if (args.reasoningEffort === "none") {
-            merged.anthropic = { ...existing, thinking: { type: "disabled" } };
-            break;
-          }
-          merged.anthropic = {
-            ...existing,
-            thinking: {
-              type: "enabled",
-              budgetTokens: ANTHROPIC_THINKING_BUDGET_TOKENS[args.reasoningEffort],
-            },
-          };
-          break;
-        }
+        merged.anthropic = {
+          ...existing,
+          thinking: {
+            type: "enabled",
+            budgetTokens: ANTHROPIC_THINKING_BUDGET_TOKENS[args.reasoningEffort],
+          },
+        };
+        break;
       }
     }
   }

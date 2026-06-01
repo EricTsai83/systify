@@ -7,7 +7,12 @@ import { assertRepositoryModeEligible } from "../repositoryModeEligibility";
 import { requireViewerIdentity } from "../lib/auth";
 import { chatModeValidator, resolveDiscussGrounding, type ChatMode } from "../lib/chatMode";
 import { enqueueJob, findActiveJob } from "../lib/jobs";
-import { isValidPick, reasoningEffortValidator, type ReasoningEffort } from "../lib/llmCatalog";
+import {
+  isSupportedReasoningEffort,
+  isValidPick,
+  reasoningEffortValidator,
+  type ReasoningEffort,
+} from "../lib/llmCatalog";
 import { llmProviderValidator, type LlmProvider } from "../lib/llmProvider";
 import { requireActiveRepositoryForViewer } from "../lib/repositoryAccess";
 import { requireOwnedDoc } from "../lib/ownedDocs";
@@ -269,6 +274,7 @@ export const sendMessageStartingNewThread = mutation({
       overrideModelName: args.modelName,
       overrideReasoningEffort: args.reasoningEffort,
     });
+    assertSupportedReasoningEffort(resolved.provider, resolved.modelName, args.reasoningEffort);
 
     const now = Date.now();
 
@@ -421,6 +427,7 @@ export const sendMessage = mutation({
       threadDefaultModelName: thread.defaultModelName,
       lockedProvider: thread.lockedProvider,
     });
+    assertSupportedReasoningEffort(resolved.provider, resolved.modelName, args.reasoningEffort);
 
     if (thread.lockedProvider !== undefined && thread.lockedProvider !== resolved.provider) {
       throw new ConvexError({
@@ -488,6 +495,19 @@ function assertCompletePickerPair(args: { provider?: LlmProvider; modelName?: st
     throw new ConvexError({
       code: "incomplete_model_pick",
       message: "Both provider and modelName must be supplied together, or both omitted.",
+    });
+  }
+}
+
+function assertSupportedReasoningEffort(
+  provider: LlmProvider,
+  modelName: string,
+  reasoningEffort: ReasoningEffort | undefined,
+): void {
+  if (!isSupportedReasoningEffort(provider, modelName, reasoningEffort)) {
+    throw new ConvexError({
+      code: "unsupported_reasoning_effort",
+      message: `Unsupported reasoning effort "${reasoningEffort}" for ${provider}:${modelName}.`,
     });
   }
 }

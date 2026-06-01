@@ -114,6 +114,13 @@ export interface ModelCatalogEntry {
    */
   reasoningEffort?: ReasoningEffort;
   /**
+   * Reasoning efforts this exact `(provider, modelName)` accepts.
+   * Empty / omitted for non-reasoning models. The picker, write
+   * mutations, and gateway all read this list so provider/model
+   * support drift is fixed in one place.
+   */
+  supportedReasoningEfforts?: readonly ReasoningEffort[];
+  /**
    * Whether this model accepts a reasoning / extended-thinking knob
    * at all. Drives:
    *   - The reasoning-effort picker visibility in the composer
@@ -163,6 +170,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     displayName: "GPT-5.5",
     capability: "sandbox",
     reasoningEffort: "medium",
+    supportedReasoningEfforts: ["low", "medium", "high"],
     supportsReasoning: true,
     supportsTools: true,
     contextWindow: 1_050_000,
@@ -174,6 +182,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     displayName: "GPT-5.4 Mini",
     capability: "discuss",
     reasoningEffort: "low",
+    supportedReasoningEfforts: ["low", "medium", "high"],
     supportsReasoning: true,
     supportsTools: true,
     contextWindow: 400_000,
@@ -186,6 +195,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     capability: "discuss",
     // The nano tier is kept internal-only for ultra-cheap eval-judge
     // and lightweight title-generation flows.
+    supportedReasoningEfforts: ["low", "medium", "high"],
     supportsReasoning: true,
     supportsTools: true,
     contextWindow: 400_000,
@@ -202,6 +212,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     modelName: "claude-opus-4-8",
     displayName: "Claude Opus 4.8",
     capability: "sandbox",
+    supportedReasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh"],
     supportsReasoning: true,
     supportsTools: true,
     contextWindow: 1_000_000,
@@ -212,6 +223,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     modelName: "claude-opus-4-7",
     displayName: "Claude Opus 4.7",
     capability: "sandbox",
+    supportedReasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh"],
     supportsReasoning: true,
     supportsTools: true,
     contextWindow: 200_000,
@@ -222,6 +234,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     modelName: "claude-haiku-4-5",
     displayName: "Claude Haiku 4.5",
     capability: "discuss",
+    supportedReasoningEfforts: ["none", "minimal", "low", "medium", "high", "xhigh"],
     supportsReasoning: true,
     supportsTools: true,
     contextWindow: 200_000,
@@ -307,6 +320,26 @@ export function listPickableModels(opts?: {
  */
 export function isValidPick(provider: LlmProvider, modelName: string): boolean {
   return getCatalogEntry(provider, modelName) !== undefined;
+}
+
+/**
+ * True iff the catalogued model accepts the requested reasoning
+ * effort. Undefined effort is always valid because it means "use the
+ * model's catalog default / provider default".
+ */
+export function isSupportedReasoningEffort(
+  provider: LlmProvider,
+  modelName: string,
+  reasoningEffort: ReasoningEffort | undefined,
+): boolean {
+  if (reasoningEffort === undefined) {
+    return true;
+  }
+  const entry = getCatalogEntry(provider, modelName);
+  if (!entry?.supportsReasoning) {
+    return false;
+  }
+  return (entry.supportedReasoningEfforts ?? []).includes(reasoningEffort);
 }
 
 /**

@@ -33,6 +33,7 @@ import {
 } from "./lib/rateLimit";
 import {
   isValidPick,
+  isSupportedReasoningEffort,
   listPickableModels,
   reasoningEffortValidator,
   ROLE_MODELS,
@@ -158,6 +159,12 @@ export const requestSystemDesignGeneration = mutation({
       throw new ConvexError({
         code: "invalid_model_pick",
         message: `Unsupported model selection: ${provider}:${modelName}`,
+      });
+    }
+    if (!isSupportedReasoningEffort(provider, modelName, args.reasoningEffort)) {
+      throw new ConvexError({
+        code: "unsupported_reasoning_effort",
+        message: `Unsupported reasoning effort "${args.reasoningEffort}" for ${provider}:${modelName}.`,
       });
     }
 

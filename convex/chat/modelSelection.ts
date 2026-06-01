@@ -41,6 +41,7 @@
 import type { ChatMode } from "../lib/chatMode";
 import {
   getCatalogEntry,
+  isSupportedReasoningEffort,
   MODEL_CATALOG,
   ROLE_MODELS,
   type ModelCapability,
@@ -168,8 +169,17 @@ export function resolveModelForReply(args: {
   // (provider, model) ends up resolved. Dropped silently on a
   // non-reasoning model — the gateway would otherwise reject the
   // option as unknown.
-  const applyReasoningOverride = (catalogDefault: ReasoningEffort | undefined, supportsReasoning: boolean) =>
-    supportsReasoning && args.overrideReasoningEffort !== undefined ? args.overrideReasoningEffort : catalogDefault;
+  const applyReasoningOverride = (entry: {
+    provider: LlmProvider;
+    modelName: string;
+    reasoningEffort?: ReasoningEffort;
+    supportsReasoning: boolean;
+  }) =>
+    entry.supportsReasoning &&
+    args.overrideReasoningEffort !== undefined &&
+    isSupportedReasoningEffort(entry.provider, entry.modelName, args.overrideReasoningEffort)
+      ? args.overrideReasoningEffort
+      : entry.reasoningEffort;
 
   // 1. Explicit per-message override. Already validated by the send
   // mutation; re-validate here so an out-of-band catalog change degrades
@@ -180,7 +190,7 @@ export function resolveModelForReply(args: {
       return {
         provider: entry.provider,
         modelName: entry.modelName,
-        reasoningEffort: applyReasoningOverride(entry.reasoningEffort, entry.supportsReasoning),
+        reasoningEffort: applyReasoningOverride(entry),
         capability,
       };
     }
@@ -194,7 +204,7 @@ export function resolveModelForReply(args: {
       return {
         provider: entry.provider,
         modelName: entry.modelName,
-        reasoningEffort: applyReasoningOverride(entry.reasoningEffort, entry.supportsReasoning),
+        reasoningEffort: applyReasoningOverride(entry),
         capability,
       };
     }
@@ -213,7 +223,7 @@ export function resolveModelForReply(args: {
       return {
         provider: lockedFallback.provider,
         modelName: lockedFallback.modelName,
-        reasoningEffort: applyReasoningOverride(lockedFallback.reasoningEffort, lockedFallback.supportsReasoning),
+        reasoningEffort: applyReasoningOverride(lockedFallback),
         capability,
       };
     }
@@ -222,7 +232,7 @@ export function resolveModelForReply(args: {
   return {
     provider: fallback.provider,
     modelName: fallback.modelName,
-    reasoningEffort: applyReasoningOverride(fallbackEntry?.reasoningEffort, fallbackEntry?.supportsReasoning ?? false),
+    reasoningEffort: fallbackEntry !== undefined ? applyReasoningOverride(fallbackEntry) : undefined,
     capability,
   };
 }

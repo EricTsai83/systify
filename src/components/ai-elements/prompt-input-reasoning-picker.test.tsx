@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { PromptInputReasoningPicker } from "./prompt-input-reasoning-picker";
 import type { ModelCatalogEntry } from "@/lib/types";
@@ -19,6 +19,7 @@ const reasoningModel: ModelCatalogEntry = {
   displayName: "GPT-5.5",
   capability: "sandbox",
   reasoningEffort: "medium",
+  supportedReasoningEfforts: ["low", "medium", "high"],
   supportsReasoning: true,
   supportsTools: true,
   contextWindow: 1_050_000,
@@ -41,9 +42,18 @@ describe("PromptInputReasoningPicker", () => {
     expect(screen.getByTestId("prompt-input-reasoning-picker-trigger")).toHaveTextContent("Medium");
   });
 
-  test("keeps the control visible when the selected override is none", () => {
-    render(<PromptInputReasoningPicker value="none" onChange={vi.fn()} provider="openai" modelName="gpt-5.5" />);
+  test("keeps the control visible when the selected override is supported", () => {
+    render(<PromptInputReasoningPicker value="low" onChange={vi.fn()} provider="openai" modelName="gpt-5.5" />);
 
-    expect(screen.getByTestId("prompt-input-reasoning-picker-trigger")).toHaveTextContent("Instant");
+    expect(screen.getByTestId("prompt-input-reasoning-picker-trigger")).toHaveTextContent("Low");
+  });
+
+  test("falls back and notifies when a stale override is not supported by the selected model", async () => {
+    const onChange = vi.fn();
+    render(<PromptInputReasoningPicker value="none" onChange={onChange} provider="openai" modelName="gpt-5.5" />);
+
+    expect(screen.getByTestId("prompt-input-reasoning-picker-trigger")).toHaveTextContent("Medium");
+    expect(screen.queryByText("Instant")).not.toBeInTheDocument();
+    await waitFor(() => expect(onChange).toHaveBeenCalledWith("medium"));
   });
 });
