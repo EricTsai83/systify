@@ -566,7 +566,7 @@ function FolderTreeBranch({
             aria-label={node.name}
             className={cn(
               "group flex cursor-pointer items-center gap-1 px-1.5 py-1 text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-              isSelected ? "bg-primary/10 ring-1 ring-primary/40 hover:bg-primary/15" : "hover:bg-muted/60",
+              isSelected ? "bg-primary/10 ring-1 ring-primary/40" : "hover:bg-muted/60",
             )}
             style={{ paddingLeft: `${indent * 12 + 6}px` }}
             onClick={handleRowActivate}
@@ -805,8 +805,8 @@ const ArtifactRow = memo(function ArtifactRow({
           aria-current={isSelected ? "true" : undefined}
           aria-label={artifact.title}
           className={cn(
-            "group flex cursor-pointer items-center gap-1 px-1.5 py-1 text-left text-[12px] hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-            isSelected ? "bg-primary/10 ring-1 ring-primary/30" : "",
+            "group flex cursor-pointer items-center gap-1 px-1.5 py-1 text-left text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+            isSelected ? "bg-primary/10 ring-1 ring-primary/30" : "hover:bg-muted/60",
           )}
           style={{ paddingLeft: `${indent * 12 + 22}px`, contentVisibility: "auto", containIntrinsicSize: "28px" }}
           onClick={handleSelect}
