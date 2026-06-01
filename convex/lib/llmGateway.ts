@@ -473,12 +473,32 @@ export async function streamViaGateway(
   // releases.
   const settlementPromise = settle();
 
+  const finalText = settlementPromise.then((s) => s.text);
+  const finalUsage = settlementPromise.then((s) => s.usage);
+  const finalCostUsd = settlementPromise.then((s) => s.costUsd);
+  const finalSteps = settlementPromise.then((s) => s.steps);
+
+  // Callers do not always need every projection. For example, chat
+  // finalization reads usage/cost but not text/steps because it already
+  // persisted deltas from `fullStream`. If settlement rejects, the
+  // unobserved projections would otherwise surface as process-level
+  // unhandled rejections even though the caller handled the failure path
+  // it cares about. Attach observers to both the shared settlement
+  // promise and its public projections: some runtimes report the root
+  // rejected promise before projection handlers settle, and Convex treats
+  // that as an action-level unhandled rejection.
+  void settlementPromise.catch(() => undefined);
+  void finalText.catch(() => undefined);
+  void finalUsage.catch(() => undefined);
+  void finalCostUsd.catch(() => undefined);
+  void finalSteps.catch(() => undefined);
+
   return {
     fullStream: sdkResult.fullStream,
-    finalText: settlementPromise.then((s) => s.text),
-    finalUsage: settlementPromise.then((s) => s.usage),
-    finalCostUsd: settlementPromise.then((s) => s.costUsd),
-    finalSteps: settlementPromise.then((s) => s.steps),
+    finalText,
+    finalUsage,
+    finalCostUsd,
+    finalSteps,
     abort: () => abortController.abort(),
   };
 }

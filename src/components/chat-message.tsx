@@ -95,6 +95,8 @@ export const MessageBubble = memo(function MessageBubble({
     isAssistant && activeMessageStream?.assistantMessageId === message._id
       ? activeMessageStream.content || message.content
       : message.content;
+  const renderedErrorMessage =
+    message.errorMessage && message.errorMessage.trim() !== displayContent.trim() ? message.errorMessage : null;
   // Assistant messages show a small grounding chip so the user can tell
   // which grounding axes produced the answer (and trace surprising
   // replies back to a wrong toggle). User messages still carry the
@@ -242,7 +244,7 @@ export const MessageBubble = memo(function MessageBubble({
         ) : (
           <p className="whitespace-pre-wrap text-sm leading-6">{displayContent || "…"}</p>
         )}
-        {message.errorMessage ? <p className="mt-2 text-xs text-destructive">{message.errorMessage}</p> : null}
+        {renderedErrorMessage ? <p className="mt-2 text-xs text-destructive">{renderedErrorMessage}</p> : null}
         {isAssistant ? (
           <ToolCallTrace
             messageId={message._id}

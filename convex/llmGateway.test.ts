@@ -11,6 +11,7 @@ import {
   TEST_INTERNALS,
   embedViaGateway,
   generateViaGateway,
+  streamViaGateway,
   type LlmCallContext,
 } from "./lib/llmGateway";
 
@@ -58,13 +59,14 @@ vi.mock("ai", async (importOriginal) => {
   };
 });
 
-import { embedMany, generateText } from "ai";
+import { embedMany, generateText, streamText } from "ai";
 
 beforeEach(() => {
   openaiFactory.mockClear();
   openaiEmbeddingFactory.mockClear();
   anthropicFactory.mockClear();
   vi.mocked(generateText).mockReset();
+  vi.mocked(streamText).mockReset();
   vi.mocked(embedMany).mockReset();
 });
 
@@ -236,6 +238,16 @@ function buildOkGenerateResult(text = "ok") {
   } as unknown as Awaited<ReturnType<typeof generateText>>;
 }
 
+function buildRejectingStreamResult(error: Error) {
+  return {
+    fullStream: (async function* () {})(),
+    text: Promise.reject(error),
+    totalUsage: Promise.reject(error),
+    providerMetadata: Promise.reject(error),
+    steps: Promise.reject(error),
+  } as unknown as ReturnType<typeof streamText>;
+}
+
 function buildCallCtx(overrides?: Partial<LlmCallContext>): LlmCallContext {
   return {
     provider: "openai",
@@ -333,6 +345,35 @@ describe("generateViaGateway — slot release on error (#5)", () => {
     vi.mocked(generateText).mockResolvedValueOnce(buildOkGenerateResult());
     await t.action(async (ctx) => {
       await generateViaGateway(ctx, buildCallCtx(), { system: "s", prompt: "p" });
+    });
+  });
+});
+
+describe("streamViaGateway — settlement rejection handling", () => {
+  beforeEach(() => {
+    process.env.LLM_CONCURRENT_CALLS_PER_USER = "1";
+    process.env.LLM_REQUESTS_PER_USER_PER_MINUTE = "100";
+  });
+  afterEach(() => {
+    delete process.env.LLM_CONCURRENT_CALLS_PER_USER;
+    delete process.env.LLM_REQUESTS_PER_USER_PER_MINUTE;
+  });
+
+  test("unused final projections do not escape as unhandled rejections when settlement fails", async () => {
+    const sdkError = new Error("No output generated. Check the stream for errors.");
+    vi.mocked(streamText).mockReturnValueOnce(buildRejectingStreamResult(sdkError));
+
+    const t = createTestHarness();
+
+    await t.action(async (ctx) => {
+      const stream = await streamViaGateway(ctx, buildCallCtx({ feature: "chat" }), { system: "s", prompt: "p" });
+
+      for await (const _part of stream.fullStream) {
+        // Empty mocked stream.
+      }
+
+      await expect(stream.finalUsage).rejects.toBe(sdkError);
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
   });
 });
