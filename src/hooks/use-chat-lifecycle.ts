@@ -3,7 +3,7 @@ import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { ChatMode, LlmProvider, RepositoryId, ThreadId } from "@/lib/types";
+import type { ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } from "@/lib/types";
 
 /**
  * Owns the in-flight reply lifecycle (send, cancel) plus thread teardown.
@@ -28,6 +28,7 @@ export function useChatLifecycle({
   groundSandbox,
   selectedProvider,
   selectedModelName,
+  selectedReasoningEffort,
   clearChatInput,
   setActionError,
   setThreadToDelete,
@@ -57,6 +58,14 @@ export function useChatLifecycle({
    */
   selectedProvider?: LlmProvider | null;
   selectedModelName?: string | null;
+  /**
+   * Composer-picked reasoning-effort override for this send. `null`
+   * means "no explicit pick" — the backend resolver falls back to
+   * the catalog entry's default effort. Forwarded to the send
+   * mutation only when set; the picker hides itself on non-reasoning
+   * models so a stale value from a prior pick cannot leak through.
+   */
+  selectedReasoningEffort?: ReasoningEffort | null;
   clearChatInput: () => void;
   setActionError: (value: string | null) => void;
   setThreadToDelete: (value: ThreadId | null) => void;
@@ -94,6 +103,10 @@ export function useChatLifecycle({
                 modelName: selectedModelName,
               }
             : {};
+        const reasoningArgs =
+          selectedReasoningEffort !== null && selectedReasoningEffort !== undefined
+            ? { reasoningEffort: selectedReasoningEffort }
+            : {};
         try {
           if (selectedThreadId) {
             await sendMessageMutation({
@@ -102,6 +115,7 @@ export function useChatLifecycle({
               mode: chatMode,
               ...groundingArgs,
               ...modelArgs,
+              ...reasoningArgs,
             });
             clearChatInput();
             return;
@@ -116,6 +130,7 @@ export function useChatLifecycle({
             mode: chatMode,
             ...groundingArgs,
             ...modelArgs,
+            ...reasoningArgs,
           });
           clearChatInput();
           onAfterCreateThread(result.threadId, result.mode);
@@ -130,6 +145,7 @@ export function useChatLifecycle({
         groundSandbox,
         selectedProvider,
         selectedModelName,
+        selectedReasoningEffort,
         clearChatInput,
         onAfterCreateThread,
         selectedThreadId,

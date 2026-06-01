@@ -4,6 +4,7 @@ import type { QueryCtx } from "../_generated/server";
 import { internalQuery } from "../_generated/server";
 import { resolveDiscussGrounding } from "../lib/chatMode";
 import { MAX_CONTEXT_MESSAGES } from "../lib/constants";
+import type { ReasoningEffort } from "../lib/llmCatalog";
 import type { LlmProvider } from "../lib/llmProvider";
 import type { ExtendedChatMode } from "./prompting";
 
@@ -45,6 +46,16 @@ export type ReplyContext = {
    */
   provider?: LlmProvider;
   modelName?: string;
+  /**
+   * Per-message reasoning-effort override (`messages.reasoningEffort`),
+   * pinned at send time. Forwarded into `resolveModelForReply` so the
+   * resolved `modelChoice.reasoningEffort` reflects what the user picked
+   * for *this* send rather than the catalog entry's default. Optional —
+   * absent on legacy messages, on Anthropic Haiku replies where the
+   * picker hides itself, and on every send where the user accepted the
+   * model's default effort.
+   */
+  reasoningEffort?: ReasoningEffort;
   repositoryId?: Id<"repositories">;
   repositorySummary?: string;
   readmeSummary?: string;
@@ -281,6 +292,7 @@ export const getReplyContext = internalQuery({
         groundSandbox,
         provider: userMessage.provider,
         modelName: userMessage.modelName,
+        reasoningEffort: userMessage.reasoningEffort,
         repositoryId: undefined,
         repositorySummary: undefined,
         readmeSummary: undefined,
@@ -355,6 +367,7 @@ export const getReplyContext = internalQuery({
       groundSandbox,
       provider: userMessage.provider,
       modelName: userMessage.modelName,
+      reasoningEffort: userMessage.reasoningEffort,
       repositoryId: repository._id,
       repositorySummary: repository.summary,
       readmeSummary: repository.readmeSummary,

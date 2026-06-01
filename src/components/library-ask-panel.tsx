@@ -16,14 +16,16 @@ import {
   PromptInputModelPicker,
   type PromptInputModelPickerValue,
 } from "@/components/ai-elements/prompt-input-model-picker";
+import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-input-reasoning-picker";
 import { EmptyStateHero, PromptSuggestionList } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { LibraryAskThreadTabs } from "@/components/library-ask-thread-tabs";
 import { Button } from "@/components/ui/button";
 import { useLibraryAskTabs } from "@/hooks/use-library-ask-tabs";
+import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { ArtifactId, LlmProvider, RepositoryId, ThreadId } from "@/lib/types";
+import type { ArtifactId, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } from "@/lib/types";
 import { toast } from "sonner";
 
 const LOCKED_PLACEHOLDER = "Generate a System Design to unlock Library Ask.";
@@ -123,22 +125,27 @@ export function LibraryAskPanel({
   const [error, setError] = useState<string | null>(null);
   const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<ThreadId | null>(null);
   const [isDeletingThread, setIsDeletingThread] = useState(false);
-  // Per-thread composer model pick. Mirrors `repository-shell.tsx`:
-  // tracks the `threadId` we last seeded against, and the effect below
-  // re-seeds from `thread.lockedProvider` + `thread.defaultModelName`
-  // when the URL thread changes so reopening a thread restores its
-  // last pick instead of a stale one from another thread.
+  // Per-thread composer model pick. Mirrors `repository-shell.tsx`
+  // — but the default cascade (thread default → capability default)
+  // resolves through `useDefaultModelPick`, so the picker shows the
+  // actual Library default on first paint instead of a placeholder.
   const [modelByThread, setModelByThread] = useState<{
     threadId: ThreadId | null;
     provider: LlmProvider | null;
     modelName: string | null;
   }>({ threadId: null, provider: null, modelName: null });
-  const selectedProvider = modelByThread.provider;
-  const selectedModelName = modelByThread.modelName;
+  const [reasoningByThread, setReasoningByThread] = useState<{
+    threadId: ThreadId | null;
+    effort: ReasoningEffort | null;
+  }>({ threadId: null, effort: null });
   const setSelectedModel = useCallback(
     (next: PromptInputModelPickerValue) =>
-      setModelByThread((prev) => ({ ...prev, provider: next.provider, modelName: next.modelName })),
-    [],
+      setModelByThread({ threadId, provider: next.provider, modelName: next.modelName }),
+    [threadId],
+  );
+  const setSelectedReasoningEffort = useCallback(
+    (next: ReasoningEffort) => setReasoningByThread({ threadId, effort: next }),
+    [threadId],
   );
   const submissionLockRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -192,25 +199,23 @@ export function LibraryAskPanel({
     setError(null);
   }, [threadId]);
 
-  // Re-seed the model pick when the active thread changes. Existing
-  // threads pre-fill from `lockedProvider` (provider pinned on first
-  // reply) + `defaultModelName` (last pick); the draft state
-  // (`threadId === null`) clears the picker so a new thread starts
-  // unset, falling through to the backend capability default until
-  // the user picks. Re-seeds only when the thread id actually flips
-  // so an in-progress pick during a probe refetch is preserved.
+  // Compose the picker default through `useDefaultModelPick` so the
+  // trigger label shows the actual Library default on first paint —
+  // either the user's previous pick on this thread
+  // (`activeThreadProbe.defaultModelName`) or the capability default
+  // sourced from `ROLE_MODELS`. The thread-scoped `modelByThread`
+  // local state captures the user's explicit pick on top of that.
   const lockedProvider = activeThreadProbe?.lockedProvider ?? null;
   const defaultModelName = activeThreadProbe?.defaultModelName ?? null;
-  useEffect(() => {
-    setModelByThread((prev) => {
-      if (prev.threadId === threadId) return prev;
-      return {
-        threadId,
-        provider: lockedProvider,
-        modelName: defaultModelName,
-      };
-    });
-  }, [threadId, lockedProvider, defaultModelName]);
+  const defaultModelPick = useDefaultModelPick({
+    capability: "library",
+    threadLockedProvider: lockedProvider,
+    threadDefaultModelName: defaultModelName,
+  });
+  const userPickedModel = modelByThread.threadId === threadId ? modelByThread : null;
+  const selectedProvider = userPickedModel?.provider ?? defaultModelPick?.provider ?? lockedProvider ?? null;
+  const selectedModelName = userPickedModel?.modelName ?? defaultModelPick?.modelName ?? defaultModelName ?? null;
+  const selectedReasoningEffort = reasoningByThread.threadId === threadId ? reasoningByThread.effort : null;
 
   // "+" no longer eagerly creates a thread — it transitions the panel to a
   // draft state (clears `?ask=`, focuses the composer). The thread is created
@@ -315,11 +320,13 @@ export function LibraryAskPanel({
       // through to the library capability default.
       const modelArgs =
         selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : {};
+      const reasoningArgs = selectedReasoningEffort !== null ? { reasoningEffort: selectedReasoningEffort } : {};
       await sendMessage({
         threadId: targetThreadId,
         content,
         mode: "library",
         ...modelArgs,
+        ...reasoningArgs,
       });
       setInput("");
       if (createdNew) {
@@ -466,6 +473,14 @@ export function LibraryAskPanel({
                   onChange={setSelectedModel}
                   threadLockedProvider={lockedProvider}
                   capability="library"
+                />
+              ) : null}
+              {!isLocked ? (
+                <PromptInputReasoningPicker
+                  value={selectedReasoningEffort}
+                  onChange={setSelectedReasoningEffort}
+                  provider={selectedProvider ?? undefined}
+                  modelName={selectedModelName ?? undefined}
                 />
               ) : null}
             </PromptInputTools>

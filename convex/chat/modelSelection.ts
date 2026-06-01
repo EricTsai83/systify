@@ -45,6 +45,7 @@ import type { ChatMode } from "../lib/chatMode";
 import {
   getCatalogEntry,
   MODEL_CATALOG,
+  ROLE_MODELS,
   type ModelCapability,
   type ReasoningEffort,
   type UserPickableCapability,
@@ -75,19 +76,20 @@ export type ModelChoice = {
 };
 
 /**
- * Capability → `(provider, model)` default. The pricing-coverage test in
- * `modelSelection.test.ts` pins this pairing — every default here must
- * have a catalog entry AND a pricing row, otherwise the daily cost cap
- * settlement silently degrades to "no cost recorded" (`estimateCostUsd`
- * returns `undefined` for unknown pairs).
+ * Capability → `(provider, model)` default. Derived from {@link ROLE_MODELS}
+ * to ensure the pricing-coverage test in `modelSelection.test.ts` stays
+ * in sync with the catalog. Every default here must have a catalog entry
+ * AND a pricing row, otherwise the daily cost cap settlement silently
+ * degrades to "no cost recorded" (`estimateCostUsd` returns `undefined`
+ * for unknown pairs).
  *
  * Defaults are OpenAI because `OPENAI_API_KEY` is the only env var the
  * bootstrap docs require; Anthropic is opt-in via the composer picker.
  */
 const DEFAULT_PICK_BY_CAPABILITY: Record<UserPickableCapability, { provider: LlmProvider; modelName: string }> = {
-  sandbox: { provider: "openai", modelName: "gpt-5" },
-  library: { provider: "openai", modelName: "gpt-5-mini" },
-  discuss: { provider: "openai", modelName: "gpt-5-mini" },
+  sandbox: ROLE_MODELS.defaultSandbox,
+  library: ROLE_MODELS.defaultLibrary,
+  discuss: ROLE_MODELS.defaultDiscuss,
 };
 
 /**
@@ -138,6 +140,16 @@ export function resolveModelForReply(args: {
   overrideProvider?: LlmProvider;
   overrideModelName?: string;
   /**
+   * Per-message reasoning-effort override from the queued user message
+   * (`messages.reasoningEffort`). When set on a `supportsReasoning`
+   * model it wins over the catalog entry's default — the user picked
+   * an intensity for *this* send. A reasoning override on a non-
+   * reasoning model is dropped (the catalog entry's `undefined`
+   * default stays in effect) so the gateway doesn't smuggle a knob
+   * the provider would reject.
+   */
+  overrideReasoningEffort?: ReasoningEffort;
+  /**
    * Thread's last-picked model name (`threads.defaultModelName`). Only
    * consulted when no per-message override exists; provider is inferred
    * via catalog lookup so we never have to persist provider redundantly
@@ -157,6 +169,14 @@ export function resolveModelForReply(args: {
 }): ModelChoice {
   const capability = pickCapability(args);
 
+  // Per-message override of reasoning effort. Applied at every layer
+  // exit so the user's per-send intent survives whichever
+  // (provider, model) ends up resolved. Dropped silently on a
+  // non-reasoning model — the gateway would otherwise reject the
+  // option as unknown.
+  const applyReasoningOverride = (catalogDefault: ReasoningEffort | undefined, supportsReasoning: boolean) =>
+    supportsReasoning && args.overrideReasoningEffort !== undefined ? args.overrideReasoningEffort : catalogDefault;
+
   // 1. Explicit per-message override. Already validated by the send
   // mutation; re-validate here so an out-of-band catalog change degrades
   // to the default rather than reaching the gateway with an unknown pair.
@@ -166,7 +186,7 @@ export function resolveModelForReply(args: {
       return {
         provider: entry.provider,
         modelName: entry.modelName,
-        reasoningEffort: entry.reasoningEffort,
+        reasoningEffort: applyReasoningOverride(entry.reasoningEffort, entry.supportsReasoning),
         capability,
       };
     }
@@ -180,7 +200,7 @@ export function resolveModelForReply(args: {
       return {
         provider: entry.provider,
         modelName: entry.modelName,
-        reasoningEffort: entry.reasoningEffort,
+        reasoningEffort: applyReasoningOverride(entry.reasoningEffort, entry.supportsReasoning),
         capability,
       };
     }
@@ -200,7 +220,7 @@ export function resolveModelForReply(args: {
       return {
         provider: lockedFallback.provider,
         modelName: lockedFallback.modelName,
-        reasoningEffort: lockedFallback.reasoningEffort,
+        reasoningEffort: applyReasoningOverride(lockedFallback.reasoningEffort, lockedFallback.supportsReasoning),
         capability,
       };
     }
@@ -209,7 +229,7 @@ export function resolveModelForReply(args: {
   return {
     provider: fallback.provider,
     modelName: fallback.modelName,
-    reasoningEffort: fallbackEntry?.reasoningEffort,
+    reasoningEffort: applyReasoningOverride(fallbackEntry?.reasoningEffort, fallbackEntry?.supportsReasoning ?? false),
     capability,
   };
 }

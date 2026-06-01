@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -11,8 +11,9 @@ import { useChatShellLifecycle } from "@/components/chat-shell-shared/use-chat-s
 import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-thread-deletion-recovery";
 import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
+import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
-import type { ChatMode, LlmProvider, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
+import type { ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { DEFAULT_AUTHENTICATED_PATH, modeAwareThreadPath, repolessThreadPath, repositoryPath } from "@/route-paths";
 
 /**
@@ -60,29 +61,42 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
 
   // Per-thread composer model pick. Mirrors the RepositoryShell's
   // pattern so reopening a repoless thread restores the user's last
-  // pick from `threads.defaultModelName`.
+  // pick from `threads.defaultModelName`. The hook composes
+  //   user pick → thread default → capability default
+  // so the picker shows the actual default model on first mount
+  // rather than a placeholder.
   const [modelByThread, setModelByThread] = useState<{
     threadId: ThreadId | null;
     provider: LlmProvider | null;
     modelName: string | null;
   }>({ threadId: null, provider: null, modelName: null });
-  const selectedProvider = modelByThread.provider;
-  const selectedModelName = modelByThread.modelName;
+  const defaultModelPick = useDefaultModelPick({
+    capability: "discuss",
+    threadLockedProvider: capabilities.lockedProvider,
+    threadDefaultModelName: capabilities.defaultModelName,
+  });
+  const userPickedModel = modelByThread.threadId === urlThreadId ? modelByThread : null;
+  const selectedProvider =
+    userPickedModel?.provider ?? defaultModelPick?.provider ?? capabilities.lockedProvider ?? null;
+  const selectedModelName =
+    userPickedModel?.modelName ?? defaultModelPick?.modelName ?? capabilities.defaultModelName ?? null;
   const setSelectedModel = useCallback(
     (next: { provider: LlmProvider; modelName: string }) =>
-      setModelByThread((prev) => ({ ...prev, provider: next.provider, modelName: next.modelName })),
-    [],
+      setModelByThread({ threadId: urlThreadId, provider: next.provider, modelName: next.modelName }),
+    [urlThreadId],
   );
-
-  useEffect(() => {
-    if (modelByThread.threadId === urlThreadId) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setModelByThread({
-      threadId: urlThreadId,
-      provider: urlThreadId === null ? null : capabilities.lockedProvider,
-      modelName: urlThreadId === null ? null : capabilities.defaultModelName,
-    });
-  }, [urlThreadId, capabilities.defaultModelName, capabilities.lockedProvider, modelByThread.threadId]);
+  // Per-message reasoning-effort override (see RepositoryShell for
+  // rationale — Discuss is the only mode this shell supports, so the
+  // picker mirrors that surface's affordance).
+  const [reasoningByThread, setReasoningByThread] = useState<{
+    threadId: ThreadId | null;
+    effort: ReasoningEffort | null;
+  }>({ threadId: null, effort: null });
+  const selectedReasoningEffort = reasoningByThread.threadId === urlThreadId ? reasoningByThread.effort : null;
+  const setSelectedReasoningEffort = useCallback(
+    (next: ReasoningEffort) => setReasoningByThread({ threadId: urlThreadId, effort: next }),
+    [urlThreadId],
+  );
 
   const recentThreadIds = useRecentThreads(urlThreadId);
   useWarmThreadSubscriptions(recentThreadIds);
@@ -105,6 +119,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       chatMode,
       selectedProvider,
       selectedModelName,
+      selectedReasoningEffort,
       liveRepositoryIds,
       liveThreadIds,
       threadToDelete,
@@ -190,6 +205,8 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
             selectedProvider={selectedProvider}
             selectedModelName={selectedModelName}
             setSelectedModel={setSelectedModel}
+            selectedReasoningEffort={selectedReasoningEffort}
+            setSelectedReasoningEffort={setSelectedReasoningEffort}
             threadLockedProvider={capabilities.lockedProvider}
             grounding={undefined}
             isSending={isSending}

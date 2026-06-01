@@ -31,7 +31,7 @@ import {
   getSandboxReplyEstimateCents,
   SYSTEM_DESIGN_JOB_LEASE_MS,
 } from "./lib/rateLimit";
-import { isValidPick, listPickableModels } from "./lib/llmCatalog";
+import { isValidPick, listPickableModels, reasoningEffortValidator, ROLE_MODELS } from "./lib/llmCatalog";
 import { llmProviderValidator, type LlmProvider } from "./lib/llmProvider";
 import { costUsdToCents } from "./lib/llmPricing";
 import { logInfo, logWarn } from "./lib/observability";
@@ -39,17 +39,19 @@ import { SYSTEM_DESIGN_PROMPT_VERSIONS } from "./lib/systemDesignPrompts";
 
 /**
  * Default LLM pick for System Design jobs when the caller does not
- * specify one. Pinned to the sandbox-capable tier of the catalog
- * because every System Design kind drives sandbox tools — switching
- * a non-tool model in here would silently break the generator.
+ * specify one. Sourced from `ROLE_MODELS.defaultSystemDesign` — the
+ * sandbox-capable tier of the catalog because every System Design
+ * kind drives sandbox tools (switching a non-tool model in here would
+ * silently break the generator).
  *
- * Multi-provider model selection through the dialog lands in PR-A3.
- * Until then, every job uses these defaults; the values still flow
- * through the gateway (rate limits, retry, telemetry) exactly like
- * a user-picked pair would.
+ * `getJobModelChoice` falls back to these values on stale-recovery
+ * paths whose persisted job rows pre-date the picker. After this
+ * file's swap to `ROLE_MODELS`, a future bump of the default model
+ * propagates to both the dialog and the recovery path with a single
+ * edit in `llmCatalog.ts`.
  */
-const DEFAULT_SYSTEM_DESIGN_PROVIDER: LlmProvider = "openai";
-const DEFAULT_SYSTEM_DESIGN_MODEL = "gpt-5";
+const DEFAULT_SYSTEM_DESIGN_PROVIDER: LlmProvider = ROLE_MODELS.defaultSystemDesign.provider;
+const DEFAULT_SYSTEM_DESIGN_MODEL = ROLE_MODELS.defaultSystemDesign.modelName;
 
 /**
  * Loop guard for the stale-recovery auto-resume path. A System Design
@@ -102,6 +104,14 @@ export const requestSystemDesignGeneration = mutation({
      */
     provider: v.optional(llmProviderValidator),
     modelName: v.optional(v.string()),
+    /**
+     * Reasoning-effort override applied to every kind in this job.
+     * `undefined` falls back to the catalog entry's default at gateway
+     * time. The dialog's reasoning picker hides for non-reasoning
+     * models, so a stale value cannot land on a model that wouldn't
+     * accept it.
+     */
+    reasoningEffort: v.optional(reasoningEffortValidator),
     /**
      * When `true`, the per-kind cache lookup is skipped and the
      * generator re-runs every selected kind. Set by the Generate
@@ -197,6 +207,7 @@ export const requestSystemDesignGeneration = mutation({
     await ctx.db.patch(jobId, {
       provider,
       modelName,
+      ...(args.reasoningEffort !== undefined ? { reasoningEffort: args.reasoningEffort } : {}),
     });
 
     await ctx.scheduler.runAfter(0, internal.systemDesignNode.runSystemDesignGeneration, {
@@ -712,16 +723,26 @@ export const findCachedArtifact = internalQuery({
  * stale-recovery resume picks up the same pair. Falls back to the
  * System Design defaults when the row is somehow missing them
  * (pre-PR-A2 rows, manual mutation) — non-fatal but logged.
+ *
+ * `reasoningEffort` rides alongside so the Node action can forward
+ * the override into the gateway without re-reading the row.
  */
 export const getJobModelChoice = internalQuery({
   args: { jobId: v.id("jobs") },
-  handler: async (ctx, args): Promise<{ provider: LlmProvider; modelName: string }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    provider: LlmProvider;
+    modelName: string;
+    reasoningEffort: "minimal" | "low" | "medium" | "high" | undefined;
+  }> => {
     const job = await ctx.db.get(args.jobId);
     if (!job) {
       throw new Error(`Job ${args.jobId} not found while resolving model choice.`);
     }
     if (job.provider && job.modelName) {
-      return { provider: job.provider, modelName: job.modelName };
+      return { provider: job.provider, modelName: job.modelName, reasoningEffort: job.reasoningEffort };
     }
     logWarn("systemDesign", "job_missing_model_choice", {
       jobId: args.jobId,
@@ -729,7 +750,11 @@ export const getJobModelChoice = internalQuery({
       modelName: job.modelName ?? null,
       hint: "Falling back to System Design defaults — expected for pre-PR-A2 jobs only.",
     });
-    return { provider: DEFAULT_SYSTEM_DESIGN_PROVIDER, modelName: DEFAULT_SYSTEM_DESIGN_MODEL };
+    return {
+      provider: DEFAULT_SYSTEM_DESIGN_PROVIDER,
+      modelName: DEFAULT_SYSTEM_DESIGN_MODEL,
+      reasoningEffort: undefined,
+    };
   },
 });
 

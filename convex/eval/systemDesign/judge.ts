@@ -21,6 +21,7 @@
 
 import type { ActionCtx } from "../../_generated/server";
 import { generateViaGateway } from "../../lib/llmGateway";
+import { ROLE_MODELS } from "../../lib/llmCatalog";
 import type { SystemDesignKind } from "../../lib/systemDesign";
 import type { JudgeAxisScores } from "./aggregate";
 
@@ -35,8 +36,8 @@ export interface JudgeResult {
   rawOutput?: string;
 }
 
-const JUDGE_PROVIDER = "openai" as const;
-const JUDGE_MODEL = "gpt-5-nano";
+const JUDGE_PROVIDER = ROLE_MODELS.internalJudge.provider;
+const JUDGE_MODEL = ROLE_MODELS.internalJudge.modelName;
 const EVAL_HARNESS_OWNER = "eval:harness";
 
 const ZERO_AXES: JudgeAxisScores = {

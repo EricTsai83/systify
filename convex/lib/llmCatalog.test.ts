@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { getCatalogEntry, isValidPick, listPickableModels, MODEL_CATALOG } from "./llmCatalog";
+import { getCatalogEntry, isValidPick, listPickableModels, MODEL_CATALOG, ROLE_MODELS } from "./llmCatalog";
 import { TEST_INTERNALS as PRICING_INTERNALS } from "./llmPricing";
 
 describe("MODEL_CATALOG", () => {
@@ -33,6 +33,34 @@ describe("MODEL_CATALOG", () => {
     }
   });
 
+  test("every ROLE_MODELS entry resolves to a valid catalog row (swap-safety guard)", () => {
+    // The role → catalog binding is the contract that makes
+    // "swap a model = one-line edit" work. A role whose modelName
+    // drifts out of the catalog would crash the gateway on first
+    // invocation; pinning the invariant here catches the drift at
+    // build time.
+    for (const [role, pick] of Object.entries(ROLE_MODELS)) {
+      expect(isValidPick(pick.provider, pick.modelName), `ROLE_MODELS.${role} missing catalog entry`).toBe(true);
+    }
+  });
+
+  test("every user-pickable reasoning model carries a reasoningEffort default", () => {
+    // Picker UX assumption: a reasoning-capable model resolved
+    // through the catalog default should land on a non-undefined
+    // effort so the gateway can apply provider options without
+    // re-deriving from a per-model lookup. Anthropic entries are
+    // explicitly OK without a default (catalog stays OpenAI-shaped
+    // — the gateway maps `undefined` → catalog default upstream).
+    for (const entry of MODEL_CATALOG) {
+      if (entry.userPickable && entry.supportsReasoning && entry.provider === "openai") {
+        expect(
+          entry.reasoningEffort,
+          `${entry.provider}:${entry.modelName} should declare a default reasoningEffort`,
+        ).toBeDefined();
+      }
+    }
+  });
+
   test("embedding-capability entries never claim tool support and are not user-pickable", () => {
     // Embedding models cannot run tools (they only return vectors)
     // and are routed via the backend `embedViaGateway` — surfacing
@@ -55,26 +83,26 @@ describe("MODEL_CATALOG", () => {
 
 describe("getCatalogEntry", () => {
   test("returns the entry for a known pair", () => {
-    const entry = getCatalogEntry("openai", "gpt-5");
-    expect(entry?.displayName).toBe("GPT-5");
+    const entry = getCatalogEntry("openai", "gpt-5.5");
+    expect(entry?.displayName).toBe("GPT-5.5");
     expect(entry?.capability).toBe("sandbox");
   });
 
   test("returns undefined for a (provider, model) pair not in the catalog", () => {
     expect(getCatalogEntry("openai", "no-such-model")).toBeUndefined();
-    expect(getCatalogEntry("anthropic", "gpt-5")).toBeUndefined();
+    expect(getCatalogEntry("anthropic", "gpt-5.5")).toBeUndefined();
   });
 });
 
 describe("isValidPick", () => {
   test("true for catalogued pairs", () => {
-    expect(isValidPick("openai", "gpt-5")).toBe(true);
-    expect(isValidPick("anthropic", "claude-opus-4-8")).toBe(true);
+    expect(isValidPick("openai", "gpt-5.5")).toBe(true);
+    expect(isValidPick("anthropic", "claude-opus-4-7")).toBe(true);
   });
 
   test("false for fabricated pairs", () => {
     expect(isValidPick("openai", "gpt-99")).toBe(false);
-    expect(isValidPick("anthropic", "gpt-5")).toBe(false);
+    expect(isValidPick("anthropic", "gpt-5.5")).toBe(false);
   });
 });
 

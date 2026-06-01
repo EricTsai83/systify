@@ -26,8 +26,15 @@
  * `userPickable: false` is reserved for internal-only models (eval
  * judge, future utility models). The picker filters them out; the
  * gateway still accepts them.
+ *
+ * `ROLE_MODELS` at the bottom of this file names every named-role
+ * model in the system (internal title gen, internal eval judge,
+ * per-capability default). Swapping a role's model is a one-line
+ * edit here — call sites import the role rather than the literal
+ * model name.
  */
 
+import { v } from "convex/values";
 import type { LlmProvider } from "./llmProvider";
 
 /**
@@ -55,17 +62,31 @@ export type ModelCapability = "sandbox" | "library" | "discuss" | "embedding";
 export type UserPickableCapability = Exclude<ModelCapability, "embedding">;
 
 /**
- * OpenAI reasoning effort knob. Mirrors the provider's accepted
- * values for `providerOptions.openai.reasoningEffort`. Anthropic
- * exposes a different "thinking" budget — we model that separately
- * (PR-A3) and keep this type OpenAI-shaped for clarity.
+ * Reasoning effort knob. OpenAI consumes this directly as
+ * `providerOptions.openai.reasoningEffort`. Anthropic maps it to a
+ * thinking-budget token count in `buildProviderOptions`. The
+ * per-message override flows through `messages.reasoningEffort` and
+ * `LlmGenerateArgs.reasoningEffort`.
  */
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high";
+
+/**
+ * Convex validator for {@link ReasoningEffort}. Exported so the
+ * schema, send mutation, and any future per-call validator stay in
+ * sync with the type union — change either side here, the other
+ * still compiles against the same literal set.
+ */
+export const reasoningEffortValidator = v.union(
+  v.literal("minimal"),
+  v.literal("low"),
+  v.literal("medium"),
+  v.literal("high"),
+);
 
 export interface ModelCatalogEntry {
   provider: LlmProvider;
   /**
-   * Provider-native model identifier (`gpt-5`, `claude-opus-4-8`, …).
+   * Provider-native model identifier (`gpt-5.5`, `claude-opus-4-7`, …).
    * Persisted to `messages.modelName`, `threads.defaultModelName`,
    * `jobs.modelName`. Never rename a value — only add new ones.
    */
@@ -82,11 +103,30 @@ export interface ModelCatalogEntry {
   /**
    * Default reasoning effort baked into the gateway dispatch when
    * the call goes through this model. `undefined` for non-reasoning
-   * models. The gateway forwards this as `providerOptions.openai.
-   * reasoningEffort` (OpenAI). Anthropic ignores it today; PR-A3
-   * adds a separate thinking-budget knob.
+   * models. The gateway forwards this as either
+   * `providerOptions.openai.reasoningEffort` (OpenAI) or as an
+   * Anthropic thinking-budget mapping; see `buildProviderOptions`.
+   * Per-message override (`messages.reasoningEffort`) takes priority
+   * over this value via `resolveModelForReply`.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Whether this model accepts a reasoning / extended-thinking knob
+   * at all. Drives:
+   *   - The reasoning-effort picker visibility in the composer
+   *     (hidden when `false`).
+   *   - The gateway's `buildProviderOptions` — a `false` model never
+   *     gets `reasoningEffort` smuggled into `providerOptions`, so a
+   *     stray override on a non-reasoning model is dropped silently
+   *     rather than landing as an SDK rejection.
+   *
+   * Distinct from `reasoningEffort` itself (which is the *default*
+   * effort): an Anthropic reasoning model carries
+   * `supportsReasoning: true` with `reasoningEffort: undefined` so
+   * the catalog stays OpenAI-shaped while the gateway still
+   * recognises the model as reasoning-capable.
+   */
+  supportsReasoning: boolean;
   /**
    * Whether the model supports tool use. Drives the
    * `stopWhen: stepCountIs(...)` decision at the call site —
@@ -109,53 +149,59 @@ export interface ModelCatalogEntry {
 
 export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
   // === OpenAI === GPT-5 family.
+  //
+  // GPT-5.5 is the latest sandbox-tier model; the family does not (yet)
+  // publish a 5.5 mini — GPT-5.4 Mini remains the cheapest reasoning-
+  // capable tier the picker surfaces. GPT-5.4 Nano stays internal-only
+  // (`userPickable: false`) because the picker should not surface a
+  // model that drops tool support.
   {
     provider: "openai",
-    modelName: "gpt-5",
-    displayName: "GPT-5",
+    modelName: "gpt-5.5",
+    displayName: "GPT-5.5",
     capability: "sandbox",
     reasoningEffort: "medium",
+    supportsReasoning: true,
     supportsTools: true,
     contextWindow: 200_000,
     userPickable: true,
   },
   {
     provider: "openai",
-    modelName: "gpt-5-mini",
-    displayName: "GPT-5 Mini",
+    modelName: "gpt-5.4-mini",
+    displayName: "GPT-5.4 Mini",
     capability: "discuss",
     reasoningEffort: "low",
+    supportsReasoning: true,
     supportsTools: true,
     contextWindow: 200_000,
     userPickable: true,
   },
   {
     provider: "openai",
-    modelName: "gpt-5-nano",
-    displayName: "GPT-5 Nano",
+    modelName: "gpt-5.4-nano",
+    displayName: "GPT-5.4 Nano",
     capability: "discuss",
     reasoningEffort: "minimal",
     // The nano tier intentionally drops tool support; we keep it
     // for ultra-cheap eval-judge and lightweight discuss flows.
+    supportsReasoning: false,
     supportsTools: false,
     contextWindow: 128_000,
-    userPickable: true,
+    userPickable: false,
   },
   // === Anthropic === Claude 4 family.
+  //
+  // Opus 4.7 supports extended thinking; Haiku 4.5 does not. The
+  // `supportsReasoning` flag drives both the picker's reasoning-
+  // effort visibility and the gateway's Anthropic thinking-budget
+  // wiring.
   {
     provider: "anthropic",
-    modelName: "claude-opus-4-8",
-    displayName: "Claude Opus 4.8",
+    modelName: "claude-opus-4-7",
+    displayName: "Claude Opus 4.7",
     capability: "sandbox",
-    supportsTools: true,
-    contextWindow: 200_000,
-    userPickable: true,
-  },
-  {
-    provider: "anthropic",
-    modelName: "claude-sonnet-4-6",
-    displayName: "Claude Sonnet 4.6",
-    capability: "discuss",
+    supportsReasoning: true,
     supportsTools: true,
     contextWindow: 200_000,
     userPickable: true,
@@ -165,6 +211,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     modelName: "claude-haiku-4-5",
     displayName: "Claude Haiku 4.5",
     capability: "discuss",
+    supportsReasoning: false,
     supportsTools: true,
     contextWindow: 200_000,
     userPickable: true,
@@ -183,6 +230,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     modelName: "text-embedding-3-small",
     displayName: "OpenAI Embedding 3 (small)",
     capability: "embedding",
+    supportsReasoning: false,
     supportsTools: false,
     contextWindow: 8_192,
     userPickable: false,
@@ -192,6 +240,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     modelName: "text-embedding-3-large",
     displayName: "OpenAI Embedding 3 (large)",
     capability: "embedding",
+    supportsReasoning: false,
     supportsTools: false,
     contextWindow: 8_192,
     userPickable: false,
@@ -248,3 +297,27 @@ export function listPickableModels(opts?: {
 export function isValidPick(provider: LlmProvider, modelName: string): boolean {
   return getCatalogEntry(provider, modelName) !== undefined;
 }
+
+/**
+ * Named role → catalog pair. Every internal call site that used to
+ * carry a hardcoded `("openai", "gpt-5-...")` literal now imports
+ * the role it represents, so swapping the model for that role is a
+ * one-line edit here. The catalog-validity test asserts every entry
+ * resolves to a real catalog row — a swap that forgets to land the
+ * matching catalog entry fails the suite, not production.
+ *
+ * `defaultSandbox` / `defaultLibrary` / `defaultDiscuss` are the
+ * per-capability fallbacks consumed by `resolveModelForReply`'s
+ * third layer. `defaultSystemDesign` is the System Design generator
+ * default. `internalTitle` / `internalJudge` are the
+ * `userPickable: false` workhorses behind thread-title gen and the
+ * eval judge.
+ */
+export const ROLE_MODELS = {
+  internalTitle: { provider: "openai", modelName: "gpt-5.4-nano" },
+  internalJudge: { provider: "openai", modelName: "gpt-5.4-nano" },
+  defaultSandbox: { provider: "openai", modelName: "gpt-5.5" },
+  defaultDiscuss: { provider: "openai", modelName: "gpt-5.4-mini" },
+  defaultLibrary: { provider: "openai", modelName: "gpt-5.4-mini" },
+  defaultSystemDesign: { provider: "openai", modelName: "gpt-5.5" },
+} as const satisfies Record<string, { provider: LlmProvider; modelName: string }>;

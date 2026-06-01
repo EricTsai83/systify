@@ -7,7 +7,7 @@ import { assertRepositoryModeEligible } from "../repositoryModeEligibility";
 import { requireViewerIdentity } from "../lib/auth";
 import { chatModeValidator, resolveDiscussGrounding, type ChatMode } from "../lib/chatMode";
 import { enqueueJob, findActiveJob } from "../lib/jobs";
-import { isValidPick } from "../lib/llmCatalog";
+import { isValidPick, reasoningEffortValidator, type ReasoningEffort } from "../lib/llmCatalog";
 import { llmProviderValidator, type LlmProvider } from "../lib/llmProvider";
 import { requireActiveRepositoryForViewer } from "../lib/repositoryAccess";
 import { requireOwnedDoc } from "../lib/ownedDocs";
@@ -51,6 +51,14 @@ async function insertChatTurn(
      */
     provider: LlmProvider;
     modelName: string;
+    /**
+     * Per-message reasoning effort override resolved upstream. When
+     * present, persisted on both message rows so the generation action
+     * reads it off the assistant placeholder (mirroring the
+     * provider / modelName / grounding pattern). `undefined` falls
+     * through to the catalog entry's default at gateway time.
+     */
+    reasoningEffort?: ReasoningEffort;
     trimmedContent: string;
     ownerTokenIdentifier: string;
     now: number;
@@ -87,6 +95,7 @@ async function insertChatTurn(
     ...(args.groundSandbox === true ? { groundSandbox: true } : {}),
     provider: args.provider,
     modelName: args.modelName,
+    ...(args.reasoningEffort !== undefined ? { reasoningEffort: args.reasoningEffort } : {}),
   });
 
   const assistantMessageId = await ctx.db.insert("messages", {
@@ -102,6 +111,7 @@ async function insertChatTurn(
     ...(args.groundSandbox === true ? { groundSandbox: true } : {}),
     provider: args.provider,
     modelName: args.modelName,
+    ...(args.reasoningEffort !== undefined ? { reasoningEffort: args.reasoningEffort } : {}),
   });
 
   await ctx.db.insert("messageStreams", {
@@ -205,6 +215,11 @@ export const sendMessageStartingNewThread = mutation({
      */
     provider: v.optional(llmProviderValidator),
     modelName: v.optional(v.string()),
+    /**
+     * Per-message reasoning effort override. When set, overrides the
+     * catalog entry's default for this message only.
+     */
+    reasoningEffort: v.optional(reasoningEffortValidator),
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
@@ -253,6 +268,7 @@ export const sendMessageStartingNewThread = mutation({
       groundSandbox,
       overrideProvider: args.provider,
       overrideModelName: args.modelName,
+      overrideReasoningEffort: args.reasoningEffort,
     });
 
     const now = Date.now();
@@ -293,6 +309,7 @@ export const sendMessageStartingNewThread = mutation({
       groundSandbox,
       provider: resolved.provider,
       modelName: resolved.modelName,
+      reasoningEffort: resolved.reasoningEffort,
       trimmedContent,
       ownerTokenIdentifier: identity.tokenIdentifier,
       now,
@@ -336,6 +353,11 @@ export const sendMessage = mutation({
      */
     provider: v.optional(llmProviderValidator),
     modelName: v.optional(v.string()),
+    /**
+     * Per-message reasoning effort override. When set, overrides the
+     * catalog entry's default for this message only.
+     */
+    reasoningEffort: v.optional(reasoningEffortValidator),
   },
   handler: async (
     ctx,
@@ -397,6 +419,7 @@ export const sendMessage = mutation({
       groundSandbox,
       overrideProvider: args.provider,
       overrideModelName: args.modelName,
+      overrideReasoningEffort: args.reasoningEffort,
       threadDefaultModelName: thread.defaultModelName,
       lockedProvider: thread.lockedProvider,
     });
@@ -444,6 +467,7 @@ export const sendMessage = mutation({
       groundSandbox,
       provider: resolved.provider,
       modelName: resolved.modelName,
+      reasoningEffort: resolved.reasoningEffort,
       trimmedContent,
       ownerTokenIdentifier: identity.tokenIdentifier,
       now,

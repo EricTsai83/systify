@@ -144,8 +144,8 @@ describe("TEST_INTERNALS.normalizeUsage", () => {
 // =====================================================================
 
 describe("TEST_INTERNALS.buildProviderOptions", () => {
-  test("OpenAI: reasoningEffort lands under providerOptions.openai", () => {
-    const opts = TEST_INTERNALS.buildProviderOptions("openai", {
+  test("OpenAI reasoning model: reasoningEffort lands under providerOptions.openai", () => {
+    const opts = TEST_INTERNALS.buildProviderOptions("openai", "gpt-5.5", {
       system: "s",
       prompt: "p",
       reasoningEffort: "high",
@@ -153,17 +153,46 @@ describe("TEST_INTERNALS.buildProviderOptions", () => {
     expect(opts).toEqual({ openai: { reasoningEffort: "high" } });
   });
 
-  test("Anthropic: reasoningEffort is dropped (no provider-side knob yet)", () => {
-    const opts = TEST_INTERNALS.buildProviderOptions("anthropic", {
+  test("Anthropic reasoning model: reasoningEffort maps to a thinking-budget token count", () => {
+    // Claude Opus 4.7 (`supportsReasoning: true`) — effort maps
+    // to the budget table in `buildProviderOptions`:
+    // minimal=1024, low=5000, medium=16000, high=32000.
+    const opts = TEST_INTERNALS.buildProviderOptions("anthropic", "claude-opus-4-7", {
       system: "s",
       prompt: "p",
-      reasoningEffort: "medium",
+      reasoningEffort: "high",
+    });
+    expect(opts).toEqual({
+      anthropic: { thinking: { type: "enabled", budgetTokens: 32_000 } },
+    });
+  });
+
+  test("Anthropic non-reasoning model (Haiku 4.5): reasoningEffort is dropped", () => {
+    // Haiku 4.5 (`supportsReasoning: false`) — never gets a
+    // thinking budget regardless of what the caller passes. Catches
+    // a class of bugs where a stale effort from a prior message
+    // leaks into a model that would reject the option.
+    const opts = TEST_INTERNALS.buildProviderOptions("anthropic", "claude-haiku-4-5", {
+      system: "s",
+      prompt: "p",
+      reasoningEffort: "high",
     });
     expect(opts).toBeUndefined();
   });
 
+  test("Anthropic reasoning model: minimal effort hits the API floor (1024)", () => {
+    const opts = TEST_INTERNALS.buildProviderOptions("anthropic", "claude-opus-4-7", {
+      system: "s",
+      prompt: "p",
+      reasoningEffort: "minimal",
+    });
+    expect(opts).toEqual({
+      anthropic: { thinking: { type: "enabled", budgetTokens: 1_024 } },
+    });
+  });
+
   test("explicit providerOptions are merged through", () => {
-    const opts = TEST_INTERNALS.buildProviderOptions("openai", {
+    const opts = TEST_INTERNALS.buildProviderOptions("openai", "gpt-5.5", {
       system: "s",
       prompt: "p",
       reasoningEffort: "medium",
@@ -175,7 +204,7 @@ describe("TEST_INTERNALS.buildProviderOptions", () => {
   });
 
   test("no reasoningEffort + no providerOptions yields undefined", () => {
-    expect(TEST_INTERNALS.buildProviderOptions("openai", { system: "s", prompt: "p" })).toBeUndefined();
+    expect(TEST_INTERNALS.buildProviderOptions("openai", "gpt-5.5", { system: "s", prompt: "p" })).toBeUndefined();
   });
 });
 
@@ -201,7 +230,7 @@ function buildOkGenerateResult(text = "ok") {
 function buildCallCtx(overrides?: Partial<LlmCallContext>): LlmCallContext {
   return {
     provider: "openai",
-    modelName: "gpt-5",
+    modelName: "gpt-5.5",
     ownerTokenIdentifier: "user|test",
     capability: "sandbox",
     feature: "system_design",
@@ -214,12 +243,12 @@ describe("generateViaGateway — provider dispatch (#1)", () => {
     vi.mocked(generateText).mockResolvedValueOnce(buildOkGenerateResult());
     const t = createTestHarness();
     await t.action(async (ctx) => {
-      await generateViaGateway(ctx, buildCallCtx({ provider: "openai", modelName: "gpt-5" }), {
+      await generateViaGateway(ctx, buildCallCtx({ provider: "openai", modelName: "gpt-5.5" }), {
         system: "s",
         prompt: "p",
       });
     });
-    expect(openaiFactory).toHaveBeenCalledWith("gpt-5");
+    expect(openaiFactory).toHaveBeenCalledWith("gpt-5.5");
     expect(anthropicFactory).not.toHaveBeenCalled();
   });
 
@@ -227,12 +256,12 @@ describe("generateViaGateway — provider dispatch (#1)", () => {
     vi.mocked(generateText).mockResolvedValueOnce(buildOkGenerateResult());
     const t = createTestHarness();
     await t.action(async (ctx) => {
-      await generateViaGateway(ctx, buildCallCtx({ provider: "anthropic", modelName: "claude-opus-4-8" }), {
+      await generateViaGateway(ctx, buildCallCtx({ provider: "anthropic", modelName: "claude-opus-4-7" }), {
         system: "s",
         prompt: "p",
       });
     });
-    expect(anthropicFactory).toHaveBeenCalledWith("claude-opus-4-8");
+    expect(anthropicFactory).toHaveBeenCalledWith("claude-opus-4-7");
     expect(openaiFactory).not.toHaveBeenCalled();
   });
 

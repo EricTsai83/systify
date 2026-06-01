@@ -24,6 +24,7 @@ import {
   PromptInputModelPicker,
   type PromptInputModelPickerValue,
 } from "@/components/ai-elements/prompt-input-model-picker";
+import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-input-reasoning-picker";
 import { SandboxActivityPill } from "@/components/sandbox-activity-pill";
 import { Button } from "@/components/ui/button";
 import type {
@@ -31,6 +32,7 @@ import type {
   ArtifactId,
   ChatMode,
   LlmProvider,
+  ReasoningEffort,
   RepositoryId,
   SandboxModeStatus,
   ThreadId,
@@ -78,6 +80,17 @@ type ChatPanelProps = {
   selectedProvider?: LlmProvider | null;
   selectedModelName?: string | null;
   setSelectedModel?: (next: PromptInputModelPickerValue) => void;
+  /**
+   * Per-message reasoning-effort override. The picker shows only when
+   * the selected model's catalog entry supports reasoning. `null`
+   * means "fall back to catalog default" — the gateway threads that
+   * cascade for us.
+   *
+   * As with the model picker, the shell owns the state; the picker
+   * resets between sends unless the shell chooses to remember it.
+   */
+  selectedReasoningEffort?: ReasoningEffort | null;
+  setSelectedReasoningEffort?: (next: ReasoningEffort) => void;
   threadLockedProvider?: LlmProvider | null;
   /**
    * Per-axis availability verdict from `repositoryModeEligibility.evaluate`.
@@ -245,6 +258,8 @@ export function ChatPanel({
   selectedProvider = null,
   selectedModelName = null,
   setSelectedModel,
+  selectedReasoningEffort = null,
+  setSelectedReasoningEffort,
   threadLockedProvider = null,
   grounding,
   onOpenGenerateSystemDesign,
@@ -558,6 +573,14 @@ export function ChatPanel({
                     // them up to the sandbox capability inside the
                     // resolver, not via the picker filter.
                     capability="discuss"
+                  />
+                ) : null}
+                {!isReadOnly && setSelectedReasoningEffort ? (
+                  <PromptInputReasoningPicker
+                    value={selectedReasoningEffort}
+                    onChange={setSelectedReasoningEffort}
+                    provider={selectedProvider ?? undefined}
+                    modelName={selectedModelName ?? undefined}
                   />
                 ) : null}
                 {chatMode === "discuss" ? (

@@ -68,14 +68,30 @@ export interface LlmPricing {
 }
 
 const PRICING: Record<string, LlmPricing> = {
-  // === OpenAI === Sized to OpenAI GPT-5 family list pricing. The
+  // === OpenAI === Sized to OpenAI GPT-5.5+ family list pricing. The
   // sandbox tier uses the full model because it drives tool use;
   // discuss / docs use mini / nano because they only need text
   // completions.
+  "openai:gpt-5.5": {
+    inputPerMillion: 5,
+    outputPerMillion: 30,
+    // OpenAI's prompt cache is automatic at 50% of input.
+    cacheReadPerMillion: 2.5,
+  },
+  "openai:gpt-5.4-mini": {
+    inputPerMillion: 0.25,
+    outputPerMillion: 2,
+    cacheReadPerMillion: 0.125,
+  },
+  "openai:gpt-5.4-nano": {
+    inputPerMillion: 0.05,
+    outputPerMillion: 0.4,
+    cacheReadPerMillion: 0.025,
+  },
+  // Legacy fallbacks for existing persisted messages.
   "openai:gpt-5": {
     inputPerMillion: 1.25,
     outputPerMillion: 10,
-    // OpenAI's prompt cache is automatic at 50% of input.
     cacheReadPerMillion: 0.625,
   },
   "openai:gpt-5-mini": {
@@ -106,9 +122,22 @@ const PRICING: Record<string, LlmPricing> = {
     inputPerMillion: 0.4,
     outputPerMillion: 1.6,
   },
-  // === Anthropic === Sized to Anthropic Claude 4 family list pricing.
-  // Anthropic explicitly bills cache reads cheaper (10%) and cache
-  // writes more expensive (125%) than the base input rate.
+  // === Anthropic === Sized to Anthropic Claude Opus 4.7+ family list
+  // pricing. Anthropic explicitly bills cache reads cheaper (10%) and
+  // cache writes more expensive (125%) than the base input rate.
+  "anthropic:claude-opus-4-7": {
+    inputPerMillion: 5,
+    outputPerMillion: 25,
+    cacheReadPerMillion: 0.5,
+    cacheWritePerMillion: 6.25,
+  },
+  "anthropic:claude-haiku-4-5": {
+    inputPerMillion: 0.8,
+    outputPerMillion: 4,
+    cacheReadPerMillion: 0.08,
+    cacheWritePerMillion: 1,
+  },
+  // Legacy fallbacks for existing persisted messages.
   "anthropic:claude-opus-4-8": {
     inputPerMillion: 15,
     outputPerMillion: 75,
@@ -120,12 +149,6 @@ const PRICING: Record<string, LlmPricing> = {
     outputPerMillion: 15,
     cacheReadPerMillion: 0.3,
     cacheWritePerMillion: 3.75,
-  },
-  "anthropic:claude-haiku-4-5": {
-    inputPerMillion: 0.8,
-    outputPerMillion: 4,
-    cacheReadPerMillion: 0.08,
-    cacheWritePerMillion: 1,
   },
   // === OpenAI embeddings === Input-only pricing — embedding APIs
   // return a vector, not generated tokens, so `outputPerMillion`

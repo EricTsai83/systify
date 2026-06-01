@@ -28,6 +28,7 @@ import { generateViaGateway } from "../lib/llmGateway";
 import { isDefaultTitle } from "../lib/threadDefaults";
 import { sanitizeTitle } from "../lib/titleSanitization";
 import { logErrorWithId } from "../lib/observability";
+import { ROLE_MODELS } from "../lib/llmCatalog";
 import type { TitleGenContext } from "./titles";
 
 /**
@@ -38,8 +39,8 @@ import type { TitleGenContext } from "./titles";
  * is by design here. Single knob colocated with the prompt so a future swap
  * to a smaller model is a one-line change.
  */
-const TITLE_PROVIDER = "openai" as const;
-const TITLE_MODEL = "gpt-5-nano";
+const TITLE_PROVIDER = ROLE_MODELS.internalTitle.provider;
+const TITLE_MODEL = ROLE_MODELS.internalTitle.modelName;
 
 /**
  * Minimum trimmed length of the user's first message before we bother

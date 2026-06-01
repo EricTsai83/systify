@@ -252,7 +252,10 @@ export const runSystemDesignGeneration = internalAction({
               prompt: buildUserPrompt(context.repository),
               tools: createSandboxTools(await getSandboxFsClient(prepared.remoteId), prepared.repoPath),
               stopWhen: stepCountIs(config.stepBudget),
-              reasoningEffort: catalogEntry?.reasoningEffort,
+              // Per-job override takes priority over the catalog
+              // default. Wired through `getJobModelChoice` so a
+              // stale-recovery resume picks up the same effort.
+              reasoningEffort: modelChoice.reasoningEffort ?? catalogEntry?.reasoningEffort,
             },
           );
 

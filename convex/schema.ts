@@ -2,6 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { chatModeValidator } from "./lib/chatMode";
 import { llmProviderValidator } from "./lib/llmProvider";
+import { reasoningEffortValidator } from "./lib/llmCatalog";
 import { systemDesignKindValidator } from "./lib/systemDesign";
 
 const repositoryStatus = v.union(
@@ -367,6 +368,13 @@ export default defineSchema({
      */
     provider: v.optional(llmProviderValidator),
     modelName: v.optional(v.string()),
+    /**
+     * Optional reasoning-effort override picked at request time. Pinned
+     * onto the job alongside provider/modelName so a stale-recovery
+     * resume preserves the user's intent. Absent on chat jobs (those
+     * carry per-message overrides on `messages.reasoningEffort`).
+     */
+    reasoningEffort: v.optional(reasoningEffortValidator),
     /**
      * Auto-resume counter for System Design jobs. Incremented each time
      * `recoverStaleSystemDesignJob` re-enqueues a stale-but-recoverable
@@ -837,6 +845,13 @@ export default defineSchema({
      */
     estimatedCachedInputTokens: v.optional(v.number()),
     estimatedReasoningTokens: v.optional(v.number()),
+    /**
+     * Per-message reasoning effort override. When set, this takes
+     * precedence over the catalog entry's default `reasoningEffort`.
+     * Used to let users adjust reasoning intensity for individual
+     * messages without changing the model or thread default.
+     */
+    reasoningEffort: v.optional(reasoningEffortValidator),
     /**
      * Per-message cost estimate in USD, computed from the model's reported
      * usage and a snapshot pricing table at finalize time

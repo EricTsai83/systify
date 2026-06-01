@@ -71,7 +71,7 @@ import type { ActionCtx } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 
 import type { ModelCapability, ReasoningEffort } from "./llmCatalog";
-import { isValidPick } from "./llmCatalog";
+import { getCatalogEntry, isValidPick } from "./llmCatalog";
 import type { LlmProvider, NormalizedUsage } from "./llmProvider";
 import { estimateCostUsd } from "./llmPricing";
 import { emitMetric, logWarn } from "./observability";
@@ -324,7 +324,7 @@ export async function generateViaGateway(
           prompt: args.prompt,
           ...(args.tools ? { tools: args.tools } : {}),
           ...(args.stopWhen ? { stopWhen: args.stopWhen } : {}),
-          providerOptions: buildProviderOptions(callCtx.provider, args),
+          providerOptions: buildProviderOptions(callCtx.provider, callCtx.modelName, args),
           // Wrapper owns retries — see `withLlmRetry` contract.
           maxRetries: 0,
         }),
@@ -406,7 +406,7 @@ export async function streamViaGateway(
       ...(args.tools ? { tools: args.tools } : {}),
       ...(args.stopWhen ? { stopWhen: args.stopWhen } : {}),
       ...(args.prepareStep ? { prepareStep: args.prepareStep } : {}),
-      providerOptions: buildProviderOptions(callCtx.provider, args),
+      providerOptions: buildProviderOptions(callCtx.provider, callCtx.modelName, args),
       abortSignal: abortController.signal,
       maxRetries: 0,
     });
@@ -606,24 +606,55 @@ function getSdkEmbeddingModel(provider: LlmProvider, modelName: string): Embeddi
 
 /**
  * Translate gateway-level args into provider-specific
- * `providerOptions`. Today only `reasoningEffort` differs across
- * providers (OpenAI uses the field; Anthropic ignores it — PR-A3
- * adds the thinking-budget knob for Anthropic).
+ * `providerOptions`. OpenAI consumes `reasoningEffort` directly;
+ * Anthropic translates the same logical knob to an extended-thinking
+ * token budget.
+ *
+ * A reasoning effort smuggled onto a non-reasoning model is dropped
+ * here rather than passed through to the SDK — the catalog entry's
+ * `supportsReasoning: false` is the source of truth. This means:
+ *
+ *   - Haiku 4.5 (`supportsReasoning: false`) silently ignores any
+ *     `reasoningEffort` the caller passes; no provider rejection.
+ *   - A future catalog edit that flips a model to reasoning-capable
+ *     starts honouring the existing override automatically.
  */
-function buildProviderOptions(provider: LlmProvider, args: LlmGenerateArgs): ProviderOptions | undefined {
+const ANTHROPIC_THINKING_BUDGET_TOKENS: Record<ReasoningEffort, number> = {
+  // Anthropic's API minimum thinking budget is 1024 tokens.
+  minimal: 1024,
+  low: 5_000,
+  medium: 16_000,
+  high: 32_000,
+};
+
+function buildProviderOptions(
+  provider: LlmProvider,
+  modelName: string,
+  args: LlmGenerateArgs,
+): ProviderOptions | undefined {
   const merged: ProviderOptions = { ...(args.providerOptions ?? {}) };
   if (args.reasoningEffort !== undefined) {
-    switch (provider) {
-      case "openai": {
-        const existing = (merged.openai as Record<string, unknown>) ?? {};
-        merged.openai = { ...existing, reasoningEffort: args.reasoningEffort };
-        break;
+    const entry = getCatalogEntry(provider, modelName);
+    const supportsReasoning = entry?.supportsReasoning ?? false;
+    if (supportsReasoning) {
+      switch (provider) {
+        case "openai": {
+          const existing = (merged.openai as Record<string, unknown>) ?? {};
+          merged.openai = { ...existing, reasoningEffort: args.reasoningEffort };
+          break;
+        }
+        case "anthropic": {
+          const existing = (merged.anthropic as Record<string, unknown>) ?? {};
+          merged.anthropic = {
+            ...existing,
+            thinking: {
+              type: "enabled",
+              budgetTokens: ANTHROPIC_THINKING_BUDGET_TOKENS[args.reasoningEffort],
+            },
+          };
+          break;
+        }
       }
-      case "anthropic":
-        // Anthropic exposes thinking budget separately; PR-A3
-        // wires it. For PR-A1 we accept the arg silently so
-        // OpenAI-shaped callers don't have to branch.
-        break;
     }
   }
   return Object.keys(merged).length === 0 ? undefined : merged;

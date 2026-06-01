@@ -88,7 +88,7 @@ describe("withLlmRetry", () => {
 
   test("returns on first success without sleeping", async () => {
     const op = vi.fn().mockResolvedValue("ok");
-    const result = await withLlmRetry(op, { operation: "test.ok", provider: "openai", modelName: "gpt-5" });
+    const result = await withLlmRetry(op, { operation: "test.ok", provider: "openai", modelName: "gpt-5.5" });
     expect(result).toBe("ok");
     expect(op).toHaveBeenCalledTimes(1);
   });
@@ -100,7 +100,7 @@ describe("withLlmRetry", () => {
       .mockRejectedValueOnce(makeApiCallError({ statusCode: 429 }))
       .mockRejectedValueOnce(makeApiCallError({ statusCode: 429 }))
       .mockResolvedValue("ok");
-    const promise = withLlmRetry(op, { operation: "test.retry", provider: "openai", modelName: "gpt-5" });
+    const promise = withLlmRetry(op, { operation: "test.retry", provider: "openai", modelName: "gpt-5.5" });
     await vi.runAllTimersAsync();
     await expect(promise).resolves.toBe("ok");
     expect(op).toHaveBeenCalledTimes(3);
@@ -112,7 +112,7 @@ describe("withLlmRetry", () => {
       .fn()
       .mockRejectedValueOnce(makeApiCallError({ statusCode: 429, responseHeaders: { "retry-after": "7" } }))
       .mockResolvedValue("ok");
-    const promise = withLlmRetry(op, { operation: "test.header", provider: "anthropic", modelName: "claude-opus-4-8" });
+    const promise = withLlmRetry(op, { operation: "test.header", provider: "anthropic", modelName: "claude-opus-4-7" });
 
     await vi.advanceTimersByTimeAsync(6_999);
     expect(op).toHaveBeenCalledTimes(1);
@@ -127,7 +127,7 @@ describe("withLlmRetry", () => {
       .fn()
       .mockRejectedValueOnce(makeApiCallError({ statusCode: 429, responseHeaders: { "retry-after": "300" } }))
       .mockResolvedValue("ok");
-    const promise = withLlmRetry(op, { operation: "test.cap", provider: "openai", modelName: "gpt-5" });
+    const promise = withLlmRetry(op, { operation: "test.cap", provider: "openai", modelName: "gpt-5.5" });
 
     await vi.advanceTimersByTimeAsync(TEST_INTERNALS.MAX_DELAY_MS - 1);
     expect(op).toHaveBeenCalledTimes(1);
@@ -138,7 +138,7 @@ describe("withLlmRetry", () => {
   test("fast-fails on non-retriable 4xx without sleeping", async () => {
     const badRequest = makeApiCallError({ statusCode: 400 });
     const op = vi.fn().mockRejectedValue(badRequest);
-    await expect(withLlmRetry(op, { operation: "test.4xx", provider: "openai", modelName: "gpt-5" })).rejects.toBe(
+    await expect(withLlmRetry(op, { operation: "test.4xx", provider: "openai", modelName: "gpt-5.5" })).rejects.toBe(
       badRequest,
     );
     expect(op).toHaveBeenCalledTimes(1);
@@ -151,7 +151,7 @@ describe("withLlmRetry", () => {
     const promise = withLlmRetry(op, {
       operation: "test.exhaust",
       provider: "anthropic",
-      modelName: "claude-opus-4-8",
+      modelName: "claude-opus-4-7",
     });
     const rejection = expect(promise).rejects.toBe(finalError);
     await vi.runAllTimersAsync();
@@ -165,7 +165,7 @@ describe("withLlmRetry", () => {
       .fn()
       .mockRejectedValueOnce(makeApiCallError({ statusCode: 503 }))
       .mockResolvedValue("ok");
-    const promise = withLlmRetry(op, { operation: "test.5xx", provider: "openai", modelName: "gpt-5" });
+    const promise = withLlmRetry(op, { operation: "test.5xx", provider: "openai", modelName: "gpt-5.5" });
     await vi.runAllTimersAsync();
     await expect(promise).resolves.toBe("ok");
     expect(op).toHaveBeenCalledTimes(2);
@@ -177,7 +177,7 @@ describe("withLlmRetry", () => {
     const promise = withLlmRetry(op, {
       operation: "test.network",
       provider: "anthropic",
-      modelName: "claude-opus-4-8",
+      modelName: "claude-opus-4-7",
     });
     await vi.runAllTimersAsync();
     await expect(promise).resolves.toBe("ok");

@@ -1,7 +1,7 @@
 import { useChatLifecycle } from "@/hooks/use-chat-lifecycle";
 import { useComposerDraft } from "@/hooks/use-composer-draft";
 import { useStorageGC } from "@/hooks/use-storage-gc";
-import type { ChatMode, LlmProvider, RepositoryId, ThreadId } from "@/lib/types";
+import type { ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } from "@/lib/types";
 
 /**
  * Bundles the chat-shell primitives both shells need so the RepositoryShell
@@ -21,6 +21,7 @@ export function useChatShellLifecycle({
   groundSandbox,
   selectedProvider,
   selectedModelName,
+  selectedReasoningEffort,
   liveRepositoryIds,
   liveThreadIds,
   threadToDelete,
@@ -41,6 +42,12 @@ export function useChatShellLifecycle({
    */
   selectedProvider?: LlmProvider | null;
   selectedModelName?: string | null;
+  /**
+   * Composer-picked reasoning-effort override for this send. `null`
+   * means "no explicit pick" — the resolver falls back to the catalog
+   * entry's default.
+   */
+  selectedReasoningEffort?: ReasoningEffort | null;
   liveRepositoryIds: ReadonlySet<string> | null;
   liveThreadIds: ReadonlySet<string> | null;
   threadToDelete: ThreadId | null;
@@ -75,6 +82,7 @@ export function useChatShellLifecycle({
     groundSandbox,
     selectedProvider,
     selectedModelName,
+    selectedReasoningEffort,
     clearChatInput,
     setActionError,
     setThreadToDelete,

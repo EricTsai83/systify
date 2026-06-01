@@ -24,11 +24,13 @@ import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useRepositoryLifecycle } from "@/hooks/use-repository-lifecycle";
 import { resolveEffectiveChatMode, useChatMode } from "@/hooks/use-service-mode";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
+import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
 import type {
   ArtifactId,
   ChatMode,
   LlmProvider,
+  ReasoningEffort,
   RepositoryId,
   SandboxModeStatus,
   ThreadId,
@@ -118,22 +120,47 @@ export function RepositoryShell({
     (next: boolean) => setGroundingByThread((prev) => ({ ...prev, sandbox: next })),
     [],
   );
-  // Per-thread composer model pick. Mirrors the grounding state above:
-  // the shell tracks the `threadId` we last reset against, and the
-  // `useEffect` below re-seeds the pick when the URL thread changes
-  // (analogous to `groundingByThread` seeding from
-  // `capabilities.defaultGroundLibrary/Sandbox`).
+  // Per-thread composer model pick. Mirrors the grounding state above
+  // but resolves its default through `useDefaultModelPick` rather than
+  // an explicit `useEffect` re-seed. The hook composes the cascade:
+  //   1. user's explicit pick (`modelByThread.provider/modelName`),
+  //   2. thread default (`capabilities.defaultModelName`),
+  //   3. capability default (server query — sourced from `ROLE_MODELS`).
+  // Returning `undefined` while loading lets the picker render its
+  // placeholder for one paint instead of flashing a stale default.
   const [modelByThread, setModelByThread] = useState<{
     threadId: ThreadId | null;
     provider: LlmProvider | null;
     modelName: string | null;
   }>({ threadId: null, provider: null, modelName: null });
-  const selectedProvider = modelByThread.provider;
-  const selectedModelName = modelByThread.modelName;
+  const defaultModelPick = useDefaultModelPick({
+    capability: "discuss",
+    threadLockedProvider: capabilities.lockedProvider,
+    threadDefaultModelName: capabilities.defaultModelName,
+  });
+  const userPickedModel = modelByThread.threadId === urlThreadId ? modelByThread : null;
+  const selectedProvider =
+    userPickedModel?.provider ?? defaultModelPick?.provider ?? capabilities.lockedProvider ?? null;
+  const selectedModelName =
+    userPickedModel?.modelName ?? defaultModelPick?.modelName ?? capabilities.defaultModelName ?? null;
   const setSelectedModel = useCallback(
     (next: { provider: LlmProvider; modelName: string }) =>
-      setModelByThread((prev) => ({ ...prev, provider: next.provider, modelName: next.modelName })),
-    [],
+      setModelByThread({ threadId: urlThreadId, provider: next.provider, modelName: next.modelName }),
+    [urlThreadId],
+  );
+  // Per-message reasoning-effort override. Lives at the shell level so
+  // a thread switch resets the picker (the explicit pick stops being
+  // "this thread's override" once the thread changes). Stored as
+  // `null` when the user has not overridden anything — the gateway
+  // falls back to the catalog entry's default.
+  const [reasoningByThread, setReasoningByThread] = useState<{
+    threadId: ThreadId | null;
+    effort: ReasoningEffort | null;
+  }>({ threadId: null, effort: null });
+  const selectedReasoningEffort = reasoningByThread.threadId === urlThreadId ? reasoningByThread.effort : null;
+  const setSelectedReasoningEffort = useCallback(
+    (next: ReasoningEffort) => setReasoningByThread({ threadId: urlThreadId, effort: next }),
+    [urlThreadId],
   );
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<{ title: string; message: string } | null>(null);
@@ -425,6 +452,7 @@ export function RepositoryShell({
     groundSandbox,
     selectedProvider,
     selectedModelName,
+    selectedReasoningEffort,
     liveRepositoryIds,
     liveThreadIds,
     threadToDelete,
@@ -443,21 +471,6 @@ export function RepositoryShell({
       sandbox: urlThreadId === null ? false : capabilities.defaultGroundSandbox,
     });
   }, [urlThreadId, capabilities.defaultGroundLibrary, capabilities.defaultGroundSandbox, groundingByThread.threadId]);
-
-  useEffect(() => {
-    if (modelByThread.threadId === urlThreadId) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setModelByThread({
-      threadId: urlThreadId,
-      // Pre-fill from `threads.defaultModelName` so the picker shows
-      // the user's last pick when they reopen the thread. Inferring
-      // the provider from the locked side keeps the picker label
-      // stable even when the thread default model name doesn't match
-      // the locked provider (e.g. legacy threads with no lock yet).
-      provider: urlThreadId === null ? null : capabilities.lockedProvider,
-      modelName: urlThreadId === null ? null : capabilities.defaultModelName,
-    });
-  }, [urlThreadId, capabilities.defaultModelName, capabilities.lockedProvider, modelByThread.threadId]);
 
   const groundingState = availability?.grounding;
   useEffect(() => {
@@ -513,6 +526,8 @@ export function RepositoryShell({
       selectedProvider={selectedProvider}
       selectedModelName={selectedModelName}
       setSelectedModel={setSelectedModel}
+      selectedReasoningEffort={selectedReasoningEffort}
+      setSelectedReasoningEffort={setSelectedReasoningEffort}
       threadLockedProvider={capabilities.lockedProvider}
       grounding={availability?.grounding}
       onOpenGenerateSystemDesign={() => setIsGenerateDialogOpen(true)}
