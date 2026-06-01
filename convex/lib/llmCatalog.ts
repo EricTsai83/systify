@@ -274,7 +274,9 @@ export function getCatalogEntry(provider: LlmProvider, modelName: string): Model
  * Filter the catalog to entries the picker should surface. Both
  * filters compose:
  *
- *   - `provider` — reserved for future per-provider policy surfaces.
+ *   - `provider` — used by the composer when the thread is locked to a
+ *     provider (`threads.lockedProvider`). Filters out the other provider's
+ *     group entirely.
  *   - `capability` — used by surfaces that only support a tier
  *     (e.g. the standalone System Design dialog shows `sandbox`-
  *     tier models because the generator drives tool use).

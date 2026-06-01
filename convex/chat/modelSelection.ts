@@ -2,10 +2,10 @@
  * Resolve `(provider, modelName)` for a single chat reply.
  *
  * The resolver is a thin pass-through. It runs after `chat.send.sendMessage`
- * has already validated the user's pick against {@link MODEL_CATALOG} and
- * this module's job is only to collapse the (per-message override, thread
- * default, capability default) triple into a single `ModelChoice`. The picker
- * UI and the env-driven operator escape hatch live elsewhere:
+ * has already validated the user's pick against {@link MODEL_CATALOG}; this
+ * module's job is only to collapse the (per-message override, thread default,
+ * capability default) triple into a single `ModelChoice`. The picker UI and
+ * the env-driven operator escape hatch live elsewhere:
  *
  *   - The picker UI lives in `src/components/ai-elements/prompt-input-model-picker.tsx`.
  *   - Operator overrides land in {@link MODEL_CATALOG} (add an entry) or via
@@ -153,6 +153,13 @@ export function resolveModelForReply(args: {
    * alongside the default model name.
    */
   threadDefaultModelName?: string;
+  /**
+   * `threads.lockedProvider` for the thread being replied into. When set,
+   * the capability-default fallback picks from this provider's catalog
+   * entries instead of {@link DEFAULT_PICK_BY_CAPABILITY} so provider-level
+   * cached thread context stays coherent.
+   */
+  lockedProvider?: LlmProvider;
 }): ModelChoice {
   const capability = pickCapability(args);
 
@@ -194,8 +201,23 @@ export function resolveModelForReply(args: {
   }
 
   // 3. Capability default. The hard-coded fallback pairing is pinned
-  // against the pricing table by the unit test below.
+  // against the pricing table by the unit test below. When the thread is
+  // locked to a different provider, prefer that provider's capability-tier
+  // entry so the resolved pick survives the lock check in `sendMessage`.
   const fallback = DEFAULT_PICK_BY_CAPABILITY[capability];
+  if (args.lockedProvider !== undefined && args.lockedProvider !== fallback.provider) {
+    const lockedFallback = MODEL_CATALOG.find(
+      (entry) => entry.provider === args.lockedProvider && entry.capability === capability,
+    );
+    if (lockedFallback) {
+      return {
+        provider: lockedFallback.provider,
+        modelName: lockedFallback.modelName,
+        reasoningEffort: applyReasoningOverride(lockedFallback.reasoningEffort, lockedFallback.supportsReasoning),
+        capability,
+      };
+    }
+  }
   const fallbackEntry = getCatalogEntry(fallback.provider, fallback.modelName);
   return {
     provider: fallback.provider,

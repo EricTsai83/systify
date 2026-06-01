@@ -33,12 +33,32 @@ export interface DefaultModelPick {
 export function useDefaultModelPick(args: {
   capability: UserPickableCapability;
   /**
+   * `threads.lockedProvider`. When the thread is locked, the capability
+   * default's provider may not match — in that case the hook prefers the
+   * locked-provider capability default by reading
+   * `listPickableModels({ provider, capability })` and returning the first
+   * matching entry.
+   */
+  threadLockedProvider?: LlmProvider | null;
+  /**
    * `threads.defaultModelName`. Restores the user's last pick when
    * they reopen a thread.
    */
   threadDefaultModelName?: string | null;
 }): DefaultModelPick | undefined {
   const capabilityDefault = useQuery(api.llmCatalog.getDefaultModelPick, { capability: args.capability });
+  // Provider filter applied only when the thread is locked to a provider
+  // whose capability default differs from the global pick. Saves a query
+  // roundtrip for the common unlocked / matching case.
+  const lockedProviderNeedsLookup =
+    args.threadLockedProvider !== null &&
+    args.threadLockedProvider !== undefined &&
+    capabilityDefault !== undefined &&
+    capabilityDefault.provider !== args.threadLockedProvider;
+  const lockedProviderEntries = useQuery(
+    api.llmCatalog.listPickableModels,
+    lockedProviderNeedsLookup ? { provider: args.threadLockedProvider!, capability: args.capability } : "skip",
+  );
   // Looked up purely so the hook can verify a persisted thread
   // default model still exists in the catalog before returning it.
   // When the persisted name is absent or stale we fall through to
@@ -66,6 +86,22 @@ export function useDefaultModelPick(args: {
       return undefined;
     }
 
+    if (lockedProviderNeedsLookup) {
+      if (lockedProviderEntries === undefined) {
+        return undefined;
+      }
+      const first = lockedProviderEntries[0];
+      if (first) {
+        return { provider: first.provider, modelName: first.modelName };
+      }
+    }
+
     return capabilityDefault;
-  }, [args.threadDefaultModelName, catalogForThreadDefault, capabilityDefault]);
+  }, [
+    args.threadDefaultModelName,
+    catalogForThreadDefault,
+    capabilityDefault,
+    lockedProviderEntries,
+    lockedProviderNeedsLookup,
+  ]);
 }

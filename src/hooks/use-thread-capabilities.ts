@@ -80,8 +80,9 @@ export interface ThreadCapabilities {
   defaultGroundLibrary: boolean;
   defaultGroundSandbox: boolean;
   /**
-   * Legacy provider marker on older threads. New sends no longer enforce
-   * provider locking; the composer can switch providers on any turn.
+   * Provider this thread is locked to, or `null` for fresh threads. The
+   * composer narrows the model picker to this provider so provider-level
+   * cached thread context stays coherent.
    */
   lockedProvider: LlmProvider | null;
   /**

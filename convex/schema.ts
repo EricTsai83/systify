@@ -741,11 +741,10 @@ export default defineSchema({
      */
     userEditedTitle: v.optional(v.boolean()),
     /**
-     * Legacy provider marker from the earlier provider-locking model.
-     * New sends no longer write or enforce it; messages carry their own
-     * provider/model attribution, and the composer can switch providers on
-     * any turn. Optional because old threads may still have the field while
-     * new threads generally do not.
+     * Provider lock written on the first assistant reply in a thread and
+     * immutable thereafter. Once a thread has held a turn with OpenAI we
+     * refuse to mix Anthropic into the same conversation history (and vice
+     * versa) so provider-level cached thread context stays coherent.
      */
     lockedProvider: v.optional(llmProviderValidator),
     /**

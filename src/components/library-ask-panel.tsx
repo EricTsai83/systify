@@ -205,13 +205,15 @@ export function LibraryAskPanel({
   // (`activeThreadProbe.defaultModelName`) or the capability default
   // sourced from `ROLE_MODELS`. The thread-scoped `modelByThread`
   // local state captures the user's explicit pick on top of that.
+  const lockedProvider = activeThreadProbe?.lockedProvider ?? null;
   const defaultModelName = activeThreadProbe?.defaultModelName ?? null;
   const defaultModelPick = useDefaultModelPick({
     capability: "library",
+    threadLockedProvider: lockedProvider,
     threadDefaultModelName: defaultModelName,
   });
   const userPickedModel = modelByThread.threadId === threadId ? modelByThread : null;
-  const selectedProvider = userPickedModel?.provider ?? defaultModelPick?.provider ?? null;
+  const selectedProvider = userPickedModel?.provider ?? defaultModelPick?.provider ?? lockedProvider ?? null;
   const selectedModelName = userPickedModel?.modelName ?? defaultModelPick?.modelName ?? defaultModelName ?? null;
   const selectedReasoningEffort = reasoningByThread.threadId === threadId ? reasoningByThread.effort : null;
 
@@ -455,8 +457,9 @@ export function LibraryAskPanel({
                * is locked (no artifacts) — the user can't send
                * anyway, and the picker dropdown would just clutter
                * the locked-state hint. Library Ask intentionally shows
-               * every user-pickable chat model; the backend validates
-               * the picked pair before queueing the reply.
+               * every user-pickable chat model before the first send; once
+               * the thread is locked to a provider, the picker narrows to
+               * that provider so cached thread context stays coherent.
                */}
               {!isLocked ? (
                 <PromptInputModelPicker
@@ -466,6 +469,7 @@ export function LibraryAskPanel({
                       : null
                   }
                   onChange={setSelectedModel}
+                  threadLockedProvider={lockedProvider}
                 />
               ) : null}
               {!isLocked ? (
