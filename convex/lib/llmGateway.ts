@@ -71,7 +71,7 @@ import type { ActionCtx } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 
 import type { ModelCapability, ReasoningEffort } from "./llmCatalog";
-import { getCatalogEntry, isValidPick } from "./llmCatalog";
+import { getCatalogEntry, isSupportedReasoningEffort, isValidPick } from "./llmCatalog";
 import type { LlmProvider, NormalizedUsage } from "./llmProvider";
 import { estimateCostUsd } from "./llmPricing";
 import { emitMetric, logWarn } from "./observability";
@@ -473,12 +473,32 @@ export async function streamViaGateway(
   // releases.
   const settlementPromise = settle();
 
+  const finalText = settlementPromise.then((s) => s.text);
+  const finalUsage = settlementPromise.then((s) => s.usage);
+  const finalCostUsd = settlementPromise.then((s) => s.costUsd);
+  const finalSteps = settlementPromise.then((s) => s.steps);
+
+  // Callers do not always need every projection. For example, chat
+  // finalization reads usage/cost but not text/steps because it already
+  // persisted deltas from `fullStream`. If settlement rejects, the
+  // unobserved projections would otherwise surface as process-level
+  // unhandled rejections even though the caller handled the failure path
+  // it cares about. Attach observers to both the shared settlement
+  // promise and its public projections: some runtimes report the root
+  // rejected promise before projection handlers settle, and Convex treats
+  // that as an action-level unhandled rejection.
+  void settlementPromise.catch(() => undefined);
+  void finalText.catch(() => undefined);
+  void finalUsage.catch(() => undefined);
+  void finalCostUsd.catch(() => undefined);
+  void finalSteps.catch(() => undefined);
+
   return {
     fullStream: sdkResult.fullStream,
-    finalText: settlementPromise.then((s) => s.text),
-    finalUsage: settlementPromise.then((s) => s.usage),
-    finalCostUsd: settlementPromise.then((s) => s.costUsd),
-    finalSteps: settlementPromise.then((s) => s.steps),
+    finalText,
+    finalUsage,
+    finalCostUsd,
+    finalSteps,
     abort: () => abortController.abort(),
   };
 }
@@ -612,7 +632,9 @@ function getSdkEmbeddingModel(provider: LlmProvider, modelName: string): Embeddi
  *
  * A reasoning effort smuggled onto a non-reasoning model is dropped
  * here rather than passed through to the SDK — the catalog entry's
- * `supportsReasoning: false` is the source of truth. This means:
+ * `supportsReasoning: false` is the source of truth. A reasoning
+ * effort that exists globally but is unsupported by this exact model
+ * is rejected here before provider dispatch.
  *
  *   - A catalog entry with `supportsReasoning: false` silently
  *     ignores any `reasoningEffort` the caller passes; no provider
@@ -622,6 +644,7 @@ function getSdkEmbeddingModel(provider: LlmProvider, modelName: string): Embeddi
  */
 const ANTHROPIC_THINKING_BUDGET_TOKENS: Record<Exclude<ReasoningEffort, "none">, number> = {
   // Anthropic's API minimum thinking budget is 1024 tokens.
+  minimal: 1_024,
   low: 5_000,
   medium: 16_000,
   high: 32_000,
@@ -637,28 +660,34 @@ function buildProviderOptions(
   if (args.reasoningEffort !== undefined) {
     const entry = getCatalogEntry(provider, modelName);
     const supportsReasoning = entry?.supportsReasoning ?? false;
-    if (supportsReasoning) {
-      switch (provider) {
-        case "openai": {
-          const existing = (merged.openai as Record<string, unknown>) ?? {};
-          merged.openai = { ...existing, reasoningEffort: args.reasoningEffort };
+    if (!supportsReasoning) {
+      return Object.keys(merged).length === 0 ? undefined : merged;
+    }
+    if (!isSupportedReasoningEffort(provider, modelName, args.reasoningEffort)) {
+      throw new Error(
+        `LlmGateway: unsupported reasoning effort "${args.reasoningEffort}" for ${provider}:${modelName}`,
+      );
+    }
+    switch (provider) {
+      case "openai": {
+        const existing = (merged.openai as Record<string, unknown>) ?? {};
+        merged.openai = { ...existing, reasoningEffort: args.reasoningEffort };
+        break;
+      }
+      case "anthropic": {
+        const existing = (merged.anthropic as Record<string, unknown>) ?? {};
+        if (args.reasoningEffort === "none") {
+          merged.anthropic = { ...existing, thinking: { type: "disabled" } };
           break;
         }
-        case "anthropic": {
-          const existing = (merged.anthropic as Record<string, unknown>) ?? {};
-          if (args.reasoningEffort === "none") {
-            merged.anthropic = { ...existing, thinking: { type: "disabled" } };
-            break;
-          }
-          merged.anthropic = {
-            ...existing,
-            thinking: {
-              type: "enabled",
-              budgetTokens: ANTHROPIC_THINKING_BUDGET_TOKENS[args.reasoningEffort],
-            },
-          };
-          break;
-        }
+        merged.anthropic = {
+          ...existing,
+          thinking: {
+            type: "enabled",
+            budgetTokens: ANTHROPIC_THINKING_BUDGET_TOKENS[args.reasoningEffort],
+          },
+        };
+        break;
       }
     }
   }

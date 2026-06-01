@@ -7,34 +7,30 @@
  *
  * The picker is a per-message override:
  *
- *   - Persisted on `messages.reasoningEffort` for the queued send,
- *     not on the thread row. A trivial follow-up question and a
- *     deep reasoning task can land different efforts inside the same
- *     conversation; the picker resets to the catalog default (or the
- *     last picked override) between sends.
+ *   - Persisted on `messages.reasoningEffort` for the queued send
+ *     only after the user changes it, not on the thread row. A trivial
+ *     follow-up question and a deep reasoning task can land different
+ *     efforts inside the same conversation; until then the picker
+ *     displays the catalog default while letting the gateway apply it.
  *   - Hidden entirely when the picked model's catalog entry carries
  *     `supportsReasoning: false` — embedding and future non-reasoning
  *     entries are the expected examples. Hiding the control rather
  *     than disabling it avoids a dangling knob the gateway would
  *     silently drop.
  *
- * Label vocabulary is provider-native:
+ * Label vocabulary follows the provider/AI SDK effort vocabulary:
  *
- *   - OpenAI models: `None / Low / Medium / High / XHigh` — these match
- *     the provider's API enum so a user familiar with the OpenAI
- *     console finds the familiar names.
- *   - Anthropic models: `Off / Standard / Extended / Deep / Max` — the
- *     control still stores the normalized `"none" | ...` value;
- *     the label just reflects how that maps to an Anthropic thinking
- *     budget (disabled / 5K / 16K / 32K / 64K tokens; the actual budget is wired
- *     in `buildProviderOptions`).
+ *   - `none` is the only exception: the UI shows `Instant` because
+ *     there is no reasoning effort to apply.
+ *   - Other values render as title-cased official effort names.
  *
  * The component is dumb: every catalog read goes through
  * `useQuery(api.llmCatalog.listPickableModels)` so a future per-user
  * policy that surfaces / hides reasoning lands without a UI change.
  */
 
-import { useMemo } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AtomIcon, BrainIcon, BracketsCurlyIcon, GaugeIcon, LightningIcon, type Icon } from "@phosphor-icons/react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { LlmProvider, ReasoningEffort } from "@/lib/types";
@@ -45,22 +41,19 @@ import {
   PromptInputSelectTrigger,
   PromptInputSelectValue,
 } from "@/components/ai-elements/prompt-input";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 export interface PromptInputReasoningPickerProps {
   /**
    * Currently-picked effort, or `null` when the user has not picked
-   * an override for this send (the gateway falls back to the catalog
-   * entry's default in that case). The trigger label reflects the
-   * effort verbatim; the picker never invents one from the catalog.
+   * an override for this send. In the null state, the trigger displays
+   * the catalog default so the row still shows the active reasoning
+   * level; the gateway remains responsible for applying that default.
    */
   value: ReasoningEffort | null;
   onChange: (next: ReasoningEffort) => void;
-  /**
-   * Provider currently selected in the sibling model picker. Drives
-   * the label vocabulary (OpenAI vs. Anthropic), nothing else. The
-   * normalized `ReasoningEffort` is identical for both providers.
-   */
+  /** Provider currently selected in the sibling model picker. */
   provider: LlmProvider | undefined;
   /**
    * Model name currently selected in the sibling model picker. Used
@@ -75,32 +68,16 @@ export interface PromptInputReasoningPickerProps {
   className?: string;
 }
 
-const EFFORTS: readonly ReasoningEffort[] = ["none", "low", "medium", "high", "xhigh"];
+const EFFORTS: readonly ReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh"];
 
-const OPENAI_LABELS: Record<ReasoningEffort, string> = {
-  none: "None",
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-  xhigh: "XHigh",
+const EFFORT_META: Record<ReasoningEffort, { label: string; Icon: Icon }> = {
+  none: { label: "Instant", Icon: LightningIcon },
+  minimal: { label: "Minimal", Icon: GaugeIcon },
+  low: { label: "Low", Icon: BracketsCurlyIcon },
+  medium: { label: "Medium", Icon: BracketsCurlyIcon },
+  high: { label: "High", Icon: BrainIcon },
+  xhigh: { label: "XHigh", Icon: AtomIcon },
 };
-
-// Anthropic publishes thinking as a token budget rather than an
-// effort enum. Surfacing the budget-shaped vocabulary keeps the
-// label honest about what the model is actually doing, without
-// changing the stored value.
-const ANTHROPIC_LABELS: Record<ReasoningEffort, string> = {
-  none: "Off",
-  low: "Standard",
-  medium: "Extended",
-  high: "Deep",
-  xhigh: "Max",
-};
-
-function labelsForProvider(provider: LlmProvider | undefined): Record<ReasoningEffort, string> {
-  if (provider === "anthropic") return ANTHROPIC_LABELS;
-  return OPENAI_LABELS;
-}
 
 export function PromptInputReasoningPicker({
   value,
@@ -122,6 +99,38 @@ export function PromptInputReasoningPicker({
     return safeCatalog.find((entry) => entry.provider === provider && entry.modelName === modelName);
   }, [safeCatalog, provider, modelName]);
 
+  const tooltipTimerRef = useRef<number | null>(null);
+  const [isTooltipOpen, setIsTooltipOpen] = useState(false);
+
+  const clearTooltipTimer = useCallback(() => {
+    if (tooltipTimerRef.current) {
+      window.clearTimeout(tooltipTimerRef.current);
+      tooltipTimerRef.current = null;
+    }
+  }, []);
+
+  const closeTooltip = useCallback(() => {
+    clearTooltipTimer();
+    setIsTooltipOpen(false);
+  }, [clearTooltipTimer]);
+
+  useEffect(() => closeTooltip, [closeTooltip]);
+
+  const supportedEfforts = useMemo(
+    () => selectedEntry?.supportedReasoningEfforts ?? [],
+    [selectedEntry?.supportedReasoningEfforts],
+  );
+  const fallbackEffort = selectedEntry?.reasoningEffort ?? supportedEfforts[0] ?? "none";
+
+  useEffect(() => {
+    if (!selectedEntry?.supportsReasoning || value === null) {
+      return;
+    }
+    if (!supportedEfforts.includes(value)) {
+      onChange(fallbackEffort);
+    }
+  }, [fallbackEffort, onChange, selectedEntry?.supportsReasoning, supportedEfforts, value]);
+
   // Hide entirely on non-reasoning models. The picker re-renders into
   // the row whenever the user picks a reasoning-capable model, so the
   // hide / show flip is transparent to the surrounding layout.
@@ -131,8 +140,9 @@ export function PromptInputReasoningPicker({
     return null;
   }
 
-  const labels = labelsForProvider(provider);
-  const currentLabel = value ? labels[value] : undefined;
+  const selectableEfforts = supportedEfforts.length > 0 ? supportedEfforts : EFFORTS;
+  const effectiveValue = value !== null && supportedEfforts.includes(value) ? value : fallbackEffort;
+  const currentMeta = EFFORT_META[effectiveValue];
 
   const handleValueChange = (next: string) => {
     if ((EFFORTS as ReadonlyArray<string>).includes(next)) {
@@ -140,22 +150,64 @@ export function PromptInputReasoningPicker({
     }
   };
 
+  const handleTriggerPointerEnter = () => {
+    clearTooltipTimer();
+    tooltipTimerRef.current = window.setTimeout(() => setIsTooltipOpen(true), 650);
+  };
+
   return (
     <div className={cn("flex items-center gap-1", className)}>
-      <PromptInputSelect value={value ?? undefined} onValueChange={handleValueChange} disabled={disabled}>
-        <PromptInputSelectTrigger
-          aria-label="Reasoning effort"
-          data-testid="prompt-input-reasoning-picker-trigger"
-          className="h-8 gap-1.5 px-2 text-xs"
-        >
-          <PromptInputSelectValue placeholder="Reasoning">{currentLabel}</PromptInputSelectValue>
-        </PromptInputSelectTrigger>
-        <PromptInputSelectContent>
-          {EFFORTS.map((effort) => (
-            <PromptInputSelectItem key={effort} value={effort}>
-              {labels[effort]}
-            </PromptInputSelectItem>
-          ))}
+      <PromptInputSelect value={effectiveValue} onValueChange={handleValueChange} disabled={disabled}>
+        <TooltipProvider>
+          <Tooltip open={isTooltipOpen}>
+            <TooltipTrigger asChild>
+              <PromptInputSelectTrigger
+                aria-label="Reasoning effort"
+                data-testid="prompt-input-reasoning-picker-trigger"
+                onPointerEnter={handleTriggerPointerEnter}
+                onPointerLeave={closeTooltip}
+                onPointerDown={closeTooltip}
+                className={cn(
+                  "h-8 min-w-24 justify-start gap-1.5 rounded-none border border-muted-foreground/65 bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
+                  "hover:border-muted-foreground hover:bg-transparent hover:text-foreground",
+                  "focus-visible:border-ring focus-visible:bg-transparent focus-visible:text-foreground",
+                  "aria-expanded:border-muted-foreground aria-expanded:bg-transparent aria-expanded:text-foreground",
+                  "[&>svg:last-child]:hidden",
+                )}
+              >
+                <div className="flex size-4 shrink-0 items-center justify-center self-center text-current">
+                  <currentMeta.Icon size={14} weight="bold" />
+                </div>
+                <PromptInputSelectValue className="flex items-center leading-none" placeholder="Reasoning">
+                  {currentMeta.label}
+                </PromptInputSelectValue>
+              </PromptInputSelectTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="top">Reasoning effort</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        <PromptInputSelectContent className="min-w-36 border-border bg-popover p-1 text-popover-foreground shadow-lg">
+          {selectableEfforts.map((effort) => {
+            const meta = EFFORT_META[effort];
+            return (
+              <PromptInputSelectItem
+                key={effort}
+                value={effort}
+                className={cn(
+                  "h-8 px-2 py-0 text-sm text-popover-foreground",
+                  "focus:bg-accent focus:text-accent-foreground data-highlighted:bg-accent",
+                  "[&>span:first-child]:hidden",
+                )}
+              >
+                <div className="flex h-full w-full items-center gap-2 leading-none">
+                  <span className="flex size-5 shrink-0 items-center justify-center self-center text-muted-foreground">
+                    <meta.Icon size={15} weight="bold" />
+                  </span>
+                  <span className="leading-none">{meta.label}</span>
+                </div>
+              </PromptInputSelectItem>
+            );
+          })}
         </PromptInputSelectContent>
       </PromptInputSelect>
     </div>

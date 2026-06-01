@@ -25,9 +25,6 @@ import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { LlmProvider, ModelCatalogEntry, UserPickableCapability } from "@/lib/types";
 import {
-  PromptInputHoverCard,
-  PromptInputHoverCardContent,
-  PromptInputHoverCardTrigger,
   PromptInputSelect,
   PromptInputSelectContent,
   PromptInputSelectItem,
@@ -35,6 +32,7 @@ import {
   PromptInputSelectValue,
 } from "@/components/ai-elements/prompt-input";
 import { SelectGroup, SelectLabel } from "@/components/ui/select";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 export type PromptInputModelPickerValue = {
@@ -58,7 +56,8 @@ export interface PromptInputModelPickerProps {
   onChange: (next: PromptInputModelPickerValue) => void;
   /**
    * Provider this thread is locked to, if any. Hides the other provider's
-   * group from the dropdown and renders the lock pill alongside the trigger.
+   * group from the dropdown and marks the remaining provider label with a
+   * lock tooltip.
    */
   threadLockedProvider?: LlmProvider | null;
   /**
@@ -162,8 +161,9 @@ export function PromptInputModelPicker({
           ) : (
             groupedByProvider.map((group) => (
               <SelectGroup key={group.provider}>
-                <SelectLabel className="text-xs text-muted-foreground">
+                <SelectLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
                   {PROVIDER_DISPLAY_NAME[group.provider]}
+                  {threadLockedProvider === group.provider ? <ProviderLockTooltip provider={group.provider} /> : null}
                 </SelectLabel>
                 {group.entries.map((entry) => (
                   <PromptInputSelectItem
@@ -178,7 +178,6 @@ export function PromptInputModelPicker({
           )}
         </PromptInputSelectContent>
       </PromptInputSelect>
-      {threadLockedProvider ? <ProviderLockPill provider={threadLockedProvider} /> : null}
     </div>
   );
 }
@@ -209,25 +208,28 @@ function groupByProvider(entries: ReadonlyArray<ModelCatalogEntry>): ProviderGro
   }));
 }
 
-function ProviderLockPill({ provider }: { provider: LlmProvider }) {
+function ProviderLockTooltip({ provider }: { provider: LlmProvider }) {
   return (
-    <PromptInputHoverCard>
-      <PromptInputHoverCardTrigger asChild>
-        <span
-          className="inline-flex items-center gap-1 rounded-md border border-border bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
-          data-testid="prompt-input-model-picker-lock-pill"
-        >
-          <LockSimpleIcon weight="bold" size={10} />
-          {PROVIDER_DISPLAY_NAME[provider]}
-        </span>
-      </PromptInputHoverCardTrigger>
-      <PromptInputHoverCardContent className="w-64 text-xs leading-5">
-        <p className="font-semibold">Locked to {PROVIDER_DISPLAY_NAME[provider]}</p>
-        <p className="mt-1 text-muted-foreground">
-          Provider responses differ in reasoning, caching, and tool formats. Start a new chat to use a different
-          provider.
-        </p>
-      </PromptInputHoverCardContent>
-    </PromptInputHoverCard>
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            aria-label={`Locked to ${PROVIDER_DISPLAY_NAME[provider]}`}
+            className="inline-flex items-center border-0 bg-transparent p-0 text-muted-foreground/80"
+            data-testid="prompt-input-model-picker-lock-icon"
+          >
+            <LockSimpleIcon aria-hidden="true" weight="bold" size={12} />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent className="w-64">
+          <p className="font-semibold">Locked to {PROVIDER_DISPLAY_NAME[provider]}</p>
+          <p className="mt-1 text-muted-foreground">
+            Provider responses differ in reasoning, caching, and tool formats. Start a new chat to use a different
+            provider.
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

@@ -7,7 +7,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
 import { createSandboxTools } from "./chat/sandboxTools";
 import { getSandboxFsClient } from "./daytona";
-import { getCatalogEntry } from "./lib/llmCatalog";
+import { getCatalogEntry, isSupportedReasoningEffort } from "./lib/llmCatalog";
 import { generateViaGateway, LlmRateLimitError } from "./lib/llmGateway";
 import type { LlmProvider, NormalizedUsage } from "./lib/llmProvider";
 import {
@@ -121,6 +121,13 @@ export const runSystemDesignGeneration = internalAction({
       jobId: args.jobId,
     });
     const catalogEntry = getCatalogEntry(modelChoice.provider, modelChoice.modelName);
+    const reasoningEffort = isSupportedReasoningEffort(
+      modelChoice.provider,
+      modelChoice.modelName,
+      modelChoice.reasoningEffort,
+    )
+      ? (modelChoice.reasoningEffort ?? catalogEntry?.reasoningEffort)
+      : catalogEntry?.reasoningEffort;
 
     // Every kind reads live source through the sandbox, so the run always
     // needs a ready sandbox. `ensureSandboxReady` probes / wakes / provisions
@@ -255,7 +262,7 @@ export const runSystemDesignGeneration = internalAction({
               // Per-job override takes priority over the catalog
               // default. Wired through `getJobModelChoice` so a
               // stale-recovery resume picks up the same effort.
-              reasoningEffort: modelChoice.reasoningEffort ?? catalogEntry?.reasoningEffort,
+              reasoningEffort,
             },
           );
 
