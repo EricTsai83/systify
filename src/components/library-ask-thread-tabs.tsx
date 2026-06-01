@@ -59,7 +59,11 @@ export const LibraryAskThreadTabs = memo(function LibraryAskThreadTabs({
   return (
     <div className={cn("relative flex items-center border-b border-border bg-background", className)}>
       <ScrollArea className="min-w-0 flex-1">
-        <ul role="tablist" aria-label="Open Library Ask threads" className="flex items-center gap-px px-1 py-1">
+        <ul
+          role="tablist"
+          aria-label="Open Library Ask threads"
+          className="flex items-center divide-x divide-border px-1 py-1"
+        >
           {tabs.map((tab) => {
             const isActive = activeThreadId === tab.id;
             return (
@@ -86,7 +90,7 @@ export const LibraryAskThreadTabs = memo(function LibraryAskThreadTabs({
                     }
                   }}
                   className={cn(
-                    "group flex max-w-[220px] cursor-pointer items-center gap-1.5 rounded-t-md border-t-2 px-2.5 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+                    "group flex max-w-[220px] cursor-pointer items-center gap-1.5 border-t-2 px-2.5 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                     isActive
                       ? "border-primary bg-muted/60 text-foreground"
                       : "border-transparent bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground",

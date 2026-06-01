@@ -124,7 +124,7 @@ export const LibraryTabs = memo(function LibraryTabs({
   return (
     <div className={cn("relative flex items-center border-b border-border bg-background", className)}>
       <ScrollArea className="min-w-0 flex-1">
-        <ul role="tablist" aria-label="Open artifacts" className="flex items-center gap-px px-1 py-1">
+        <ul role="tablist" aria-label="Open artifacts" className="flex items-center divide-x divide-border px-1 py-1">
           {openArtifactIds.map((artifactId) => {
             const artifact = artifactsById.get(artifactId);
             const isActive = activeArtifactId === artifactId;
@@ -148,7 +148,7 @@ export const LibraryTabs = memo(function LibraryTabs({
                     }
                   }}
                   className={cn(
-                    "group flex max-w-[220px] cursor-pointer items-center gap-1.5 rounded-t-md border-t-2 px-2.5 py-1.5 text-xs transition-colors",
+                    "group flex max-w-[220px] cursor-pointer items-center gap-1.5 border-t-2 px-2.5 py-1.5 text-xs transition-colors",
                     isActive
                       ? "border-primary bg-muted/60 text-foreground"
                       : "border-transparent bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground",
