@@ -7,6 +7,7 @@ import {
   CaretRightIcon,
   DotsThreeVerticalIcon,
   FolderPlusIcon,
+  FoldersIcon,
   PencilSimpleIcon,
   PushPinIcon,
   PushPinSlashIcon,
@@ -14,6 +15,7 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
+import { MAX_ARTIFACT_TITLE_LENGTH } from "../../convex/lib/artifactDefaults";
 import { FOLDER_NAME_MAX_LENGTH } from "../../convex/lib/artifactFolderDefaults";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -300,7 +302,7 @@ export function FolderNavigator({
       <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-3 p-3">
           {pinnedRoots.length > 0 ? (
-            <NavigatorSection title="Pinned">
+            <NavigatorSection title="Pinned" icon={<PushPinIcon size={12} weight="fill" />}>
               {pinnedRoots
                 .filter((node) => folderMatchesSearch(node))
                 .map((node) => (
@@ -327,7 +329,11 @@ export function FolderNavigator({
           ) : null}
 
           {tree.length === 0 || unpinnedRoots.length > 0 ? (
-            <NavigatorSection title="Folders" description="Group artifacts by feature, decision, or subsystem.">
+            <NavigatorSection
+              title="Folders"
+              description="Group artifacts by feature, decision, or subsystem."
+              icon={<FoldersIcon size={12} weight="fill" />}
+            >
               {tree.length === 0 ? (
                 <p className="px-1 text-[11px] text-muted-foreground/80">
                   No folders yet. Click the folder-plus icon above to create one.
@@ -388,16 +394,21 @@ export function FolderNavigator({
 function NavigatorSection({
   title,
   description,
+  icon,
   children,
 }: {
   title: string;
   description?: string;
+  icon?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="flex flex-col gap-1.5">
       <div className="px-1">
-        <h3 className="text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">{title}</h3>
+        <h3 className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+          {icon}
+          {title}
+        </h3>
         {description ? <p className="text-[10px] text-muted-foreground/70">{description}</p> : null}
       </div>
       <div className="flex flex-col gap-1">{children}</div>
@@ -555,7 +566,7 @@ function FolderTreeBranch({
             aria-label={node.name}
             className={cn(
               "group flex cursor-pointer items-center gap-1 px-1.5 py-1 text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-              isSelected ? "bg-primary/10 ring-1 ring-primary/40 hover:bg-primary/15" : "hover:bg-muted/60",
+              isSelected ? "bg-primary/10 ring-1 ring-primary/40" : "hover:bg-muted/60",
             )}
             style={{ paddingLeft: `${indent * 12 + 6}px` }}
             onClick={handleRowActivate}
@@ -595,11 +606,8 @@ function FolderTreeBranch({
                 maxLength={FOLDER_NAME_MAX_LENGTH}
               />
             ) : (
-              <span className="flex flex-1 items-center justify-between gap-2 truncate text-left">
+              <span className="flex flex-1 items-center gap-2 truncate text-left">
                 <span className="truncate font-medium">{node.name}</span>
-                {isPinned ? (
-                  <PushPinIcon size={14} weight="fill" aria-label="Pinned" className="shrink-0 text-muted-foreground" />
-                ) : null}
               </span>
             )}
             <DropdownMenu>
@@ -747,41 +755,123 @@ const ArtifactRow = memo(function ArtifactRow({
   indent: number;
   isUnseen: boolean;
 }) {
+  const rowRef = useRef<HTMLDivElement>(null);
+  const renameArtifact = useMutation(api.artifacts.rename);
+  const removeArtifact = useMutation(api.artifacts.remove);
+
+  const {
+    isEditing: isInlineEditing,
+    isCommitting: isInlineCommitting,
+    draft: inlineDraft,
+    setDraft: setInlineDraft,
+    inputRef: inlineInputRef,
+    startEdit: startInlineEdit,
+    commit: commitInline,
+    handleInputKeyDown: handleInlineInputKeyDown,
+  } = useInlineRename({
+    currentValue: artifact.title,
+    onCommit: useCallback(
+      async (next: string) => {
+        await renameArtifact({ artifactId: artifact._id as ArtifactId, title: next });
+      },
+      [renameArtifact, artifact._id],
+    ),
+    errorFallback: "Failed to rename artifact.",
+    rowRef,
+  });
+
+  const [isRemovePending, runRemove] = useAsyncCallback(async () => {
+    try {
+      await removeArtifact({ artifactId: artifact._id as ArtifactId });
+    } catch {
+      // The mutation surfaces a server error; we leave the row visible so
+      // the user can retry instead of silently failing.
+    }
+  });
+
   const handleSelect = () => onSelect(artifact._id as ArtifactId);
+
   return (
-    // The entire row is the click target so the hoverable area matches
-    // the clickable one. role="button" + tabIndex keeps it keyboard-reachable.
-    <div
-      role="button"
-      tabIndex={0}
-      aria-current={isSelected ? "true" : undefined}
-      className={cn(
-        "group flex cursor-pointer items-center gap-1 px-1.5 py-1 text-left text-[12px] hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-        isSelected ? "bg-primary/10 ring-1 ring-primary/30" : "",
-      )}
-      style={{ paddingLeft: `${indent * 12 + 22}px`, contentVisibility: "auto", containIntrinsicSize: "28px" }}
-      onClick={handleSelect}
-      onKeyDown={(event) => {
-        if ((event.key === "Enter" || event.key === " ") && event.currentTarget === event.target) {
-          event.preventDefault();
-          handleSelect();
-        }
-      }}
-    >
-      <div className="flex flex-1 items-center gap-1.5 truncate">
-        <span className="truncate font-medium text-foreground">{artifact.title}</span>
-        {artifact.importDriftFromLatestSync ? (
-          <span
-            role="img"
-            title="This artifact's aligned import revision differs from the latest repository sync."
-            className="inline-flex shrink-0 text-amber-600 dark:text-amber-400"
-            aria-label="Import snapshot drift versus latest sync"
-          >
-            <ArrowsClockwiseIcon size={12} weight="bold" />
-          </span>
-        ) : null}
-        {isUnseen ? <span aria-hidden className="ml-1 inline-flex h-1.5 w-1.5 rounded-full bg-primary" /> : null}
-      </div>
-    </div>
+    <ContextMenu>
+      <ContextMenuTrigger asChild disabled={isInlineEditing}>
+        {/*
+          The entire row is the click target so the hoverable area matches
+          the clickable one. role="button" + tabIndex keeps it keyboard-reachable.
+        */}
+        <div
+          ref={rowRef}
+          role="button"
+          tabIndex={isInlineEditing ? -1 : 0}
+          aria-current={isSelected ? "true" : undefined}
+          aria-label={artifact.title}
+          className={cn(
+            "group flex cursor-pointer items-center gap-1 px-1.5 py-1 text-left text-[12px] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+            isSelected ? "bg-primary/10 ring-1 ring-primary/30" : "hover:bg-muted/60",
+          )}
+          style={{ paddingLeft: `${indent * 12 + 22}px`, contentVisibility: "auto", containIntrinsicSize: "28px" }}
+          onClick={handleSelect}
+          onKeyDown={(event) => {
+            // F2 takes precedence over Enter/Space so the row's activation
+            // shortcut doesn't swallow the rename trigger when the user has
+            // an artifact row focused.
+            if (event.key === "F2") {
+              event.preventDefault();
+              startInlineEdit();
+              return;
+            }
+            if ((event.key === "Enter" || event.key === " ") && event.currentTarget === event.target) {
+              event.preventDefault();
+              handleSelect();
+            }
+          }}
+        >
+          {isInlineEditing ? (
+            <Input
+              ref={inlineInputRef}
+              autoFocus
+              value={inlineDraft}
+              onChange={(event) => setInlineDraft(event.target.value)}
+              onBlur={() => void commitInline()}
+              onClick={(event) => event.stopPropagation()}
+              onKeyDown={(event) => {
+                event.stopPropagation();
+                handleInlineInputKeyDown(event);
+              }}
+              className="h-6 flex-1 text-[12px]"
+              disabled={isInlineCommitting}
+              maxLength={MAX_ARTIFACT_TITLE_LENGTH}
+            />
+          ) : (
+            <div className="flex flex-1 items-center gap-1.5 truncate">
+              <span className="truncate font-medium text-foreground">{artifact.title}</span>
+              {artifact.importDriftFromLatestSync ? (
+                <span
+                  role="img"
+                  title="This artifact's aligned import revision differs from the latest repository sync."
+                  className="inline-flex shrink-0 text-amber-600 dark:text-amber-400"
+                  aria-label="Import snapshot drift versus latest sync"
+                >
+                  <ArrowsClockwiseIcon size={12} weight="bold" />
+                </span>
+              ) : null}
+              {isUnseen ? <span aria-hidden className="ml-1 inline-flex h-1.5 w-1.5 rounded-full bg-primary" /> : null}
+            </div>
+          )}
+        </div>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuGroup>
+          <ContextMenuItem onClick={startInlineEdit}>
+            <PencilSimpleIcon weight="bold" /> Rename
+          </ContextMenuItem>
+        </ContextMenuGroup>
+        <ContextMenuSeparator />
+        <ContextMenuGroup>
+          <ContextMenuItem variant="destructive" onClick={() => void runRemove()} disabled={isRemovePending}>
+            <TrashIcon weight="bold" /> Delete
+          </ContextMenuItem>
+        </ContextMenuGroup>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 });

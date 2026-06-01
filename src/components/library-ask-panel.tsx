@@ -6,7 +6,16 @@ import { api } from "../../convex/_generated/api";
 import { CHAT_MESSAGES_PAGE_SIZE } from "../../convex/lib/constants";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { useChatScroll } from "@/components/ai-elements/use-chat-scroll";
-import { PromptInput, PromptInputFooter, PromptInputTextarea } from "@/components/ai-elements/prompt-input";
+import {
+  PromptInput,
+  PromptInputFooter,
+  PromptInputTextarea,
+  PromptInputTools,
+} from "@/components/ai-elements/prompt-input";
+import {
+  PromptInputModelPicker,
+  type PromptInputModelPickerValue,
+} from "@/components/ai-elements/prompt-input-model-picker";
 import { EmptyStateHero, PromptSuggestionList } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -14,7 +23,7 @@ import { LibraryAskThreadTabs } from "@/components/library-ask-thread-tabs";
 import { Button } from "@/components/ui/button";
 import { useLibraryAskTabs } from "@/hooks/use-library-ask-tabs";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { ArtifactId, RepositoryId, ThreadId } from "@/lib/types";
+import type { ArtifactId, LlmProvider, RepositoryId, ThreadId } from "@/lib/types";
 import { toast } from "sonner";
 
 const LOCKED_PLACEHOLDER = "Generate a System Design to unlock Library Ask.";
@@ -114,6 +123,23 @@ export function LibraryAskPanel({
   const [error, setError] = useState<string | null>(null);
   const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<ThreadId | null>(null);
   const [isDeletingThread, setIsDeletingThread] = useState(false);
+  // Per-thread composer model pick. Mirrors `repository-shell.tsx`:
+  // tracks the `threadId` we last seeded against, and the effect below
+  // re-seeds from `thread.lockedProvider` + `thread.defaultModelName`
+  // when the URL thread changes so reopening a thread restores its
+  // last pick instead of a stale one from another thread.
+  const [modelByThread, setModelByThread] = useState<{
+    threadId: ThreadId | null;
+    provider: LlmProvider | null;
+    modelName: string | null;
+  }>({ threadId: null, provider: null, modelName: null });
+  const selectedProvider = modelByThread.provider;
+  const selectedModelName = modelByThread.modelName;
+  const setSelectedModel = useCallback(
+    (next: PromptInputModelPickerValue) =>
+      setModelByThread((prev) => ({ ...prev, provider: next.provider, modelName: next.modelName })),
+    [],
+  );
   const submissionLockRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -165,6 +191,26 @@ export function LibraryAskPanel({
     setInput("");
     setError(null);
   }, [threadId]);
+
+  // Re-seed the model pick when the active thread changes. Existing
+  // threads pre-fill from `lockedProvider` (provider pinned on first
+  // reply) + `defaultModelName` (last pick); the draft state
+  // (`threadId === null`) clears the picker so a new thread starts
+  // unset, falling through to the backend capability default until
+  // the user picks. Re-seeds only when the thread id actually flips
+  // so an in-progress pick during a probe refetch is preserved.
+  const lockedProvider = activeThreadProbe?.lockedProvider ?? null;
+  const defaultModelName = activeThreadProbe?.defaultModelName ?? null;
+  useEffect(() => {
+    setModelByThread((prev) => {
+      if (prev.threadId === threadId) return prev;
+      return {
+        threadId,
+        provider: lockedProvider,
+        modelName: defaultModelName,
+      };
+    });
+  }, [threadId, lockedProvider, defaultModelName]);
 
   // "+" no longer eagerly creates a thread — it transitions the panel to a
   // draft state (clears `?ask=`, focuses the composer). The thread is created
@@ -262,10 +308,18 @@ export function LibraryAskPanel({
         targetThreadId = created._id;
         createdNew = true;
       }
+      // Forward the picked pair only when BOTH halves are present.
+      // The mutation rejects half-pairs with `incomplete_model_pick`;
+      // dropping them here keeps an unmounted / loading picker from
+      // firing a doomed send. With both unset the backend falls
+      // through to the library capability default.
+      const modelArgs =
+        selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : {};
       await sendMessage({
         threadId: targetThreadId,
         content,
         mode: "library",
+        ...modelArgs,
       });
       setInput("");
       if (createdNew) {
@@ -389,7 +443,32 @@ export function LibraryAskPanel({
             disabled={isSending || latestAssistantInFlight || isLocked}
             aria-describedby={isLocked && threadId ? "library-ask-locked-hint" : undefined}
           />
-          <PromptInputFooter className="justify-end">
+          <PromptInputFooter>
+            <PromptInputTools>
+              {/*
+               * Library Ask model picker. Hidden while the composer
+               * is locked (no artifacts) — the user can't send
+               * anyway, and the picker dropdown would just clutter
+               * the locked-state hint. `capability="library"` scopes
+               * the catalog to RAG-tier models; `threadLockedProvider`
+               * mirrors the thread's `lockedProvider` so reopening a
+               * thread that already replied hides the other provider's
+               * group (the mutation would reject those picks with
+               * `thread_provider_locked`).
+               */}
+              {!isLocked ? (
+                <PromptInputModelPicker
+                  value={
+                    selectedProvider && selectedModelName
+                      ? { provider: selectedProvider, modelName: selectedModelName }
+                      : null
+                  }
+                  onChange={setSelectedModel}
+                  threadLockedProvider={lockedProvider}
+                  capability="library"
+                />
+              ) : null}
+            </PromptInputTools>
             <Button
               type="submit"
               size="sm"

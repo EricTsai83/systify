@@ -1,7 +1,9 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
+import { deleteArtifactInternal } from "./artifactStore";
 import { loadOwnedDoc, requireOwnedDoc } from "./lib/ownedDocs";
+import { MAX_ARTIFACT_TITLE_LENGTH } from "./lib/artifactDefaults";
 import { replaceArtifactFolder } from "./lib/artifactWrites";
 import { resolveLatestImportSha, toArtifactMetadataView, toArtifactView } from "./lib/artifactView";
 
@@ -227,6 +229,75 @@ export const moveToFolder = mutation({
     }
 
     await replaceArtifactFolder(ctx, artifact, nextFolderId);
+    return null;
+  },
+});
+
+/**
+ * Manual artifact rename, driven by the FolderNavigator's right-click
+ * context menu in Library Mode (inline edit, Enter / blur to commit, Esc to
+ * cancel). Mirrors the thread-rename surface — the user-edit signal lives
+ * on the title field itself, so renaming bumps `version` + `updatedAt` so
+ * downstream readers (the Reader's freshness pill, RAG callers that pull
+ * `artifact.title` at read time) see the new value immediately.
+ *
+ * Chunks store the title by reference (`buildChunkRecord` reads it live
+ * from the artifact), so no chunk rewrite is necessary on rename — the
+ * next search hit picks up the new title automatically.
+ *
+ * Errors use the structured `ConvexError({ code, message })` shape so
+ * `toUserErrorMessage` on the client extracts a clean toast from
+ * `error.data.message` rather than the transport-wrapped `error.message`.
+ */
+export const rename = mutation({
+  args: {
+    artifactId: v.id("artifacts"),
+    title: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const { doc: artifact } = await requireOwnedDoc(ctx, args.artifactId, {
+      notFoundMessage: "Artifact not found.",
+    });
+    const trimmed = args.title.trim();
+    if (trimmed.length === 0) {
+      throw new ConvexError({
+        code: "INVALID_TITLE",
+        message: "Title cannot be empty.",
+      });
+    }
+    if (trimmed.length > MAX_ARTIFACT_TITLE_LENGTH) {
+      throw new ConvexError({
+        code: "INVALID_TITLE",
+        message: `Title must be at most ${MAX_ARTIFACT_TITLE_LENGTH} characters.`,
+      });
+    }
+    if (artifact.title === trimmed) {
+      return null;
+    }
+    await ctx.db.patch(artifact._id, {
+      title: trimmed,
+      version: artifact.version + 1,
+      updatedAt: Date.now(),
+    });
+    return null;
+  },
+});
+
+/**
+ * Permanent artifact delete. Drives the FolderNavigator's right-click
+ * "Delete" affordance. Cascades through `deleteArtifactInternal` so the
+ * artifact's chunks (`artifactChunks`) and per-viewer view rows
+ * (`artifactViews`) are removed in the same transaction — leaving them
+ * behind would surface as ghost hits in RAG search and stale unread dots
+ * in the navigator.
+ */
+export const remove = mutation({
+  args: { artifactId: v.id("artifacts") },
+  handler: async (ctx, args) => {
+    await requireOwnedDoc(ctx, args.artifactId, {
+      notFoundMessage: "Artifact not found.",
+    });
+    await deleteArtifactInternal(ctx, args.artifactId);
     return null;
   },
 });
