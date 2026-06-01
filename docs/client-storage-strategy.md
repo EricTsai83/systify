@@ -19,6 +19,10 @@ Client storage in Systify is split between **localStorage** (device-local state)
 | `systify.library.askTabs.{repoId}` | Repository state | localStorage | Same rationale |
 | `systify.folderNav.open.{repoId}.{nodeId}` | Navigation state | localStorage | Write-frequent, minimal cross-device value |
 | `systify.artifactPanel.open` | Space/mode condition | localStorage | Layout preference for this session |
+| `systify.composer.draft.thread.{threadId}` | In-progress text | localStorage | Per-thread draft survives navigation / hard reload; not worth a DB round-trip per keystroke |
+| `systify.composer.draft.repository.{repoId}.discuss` | In-progress text | localStorage | Pre-thread draft for the repository's discuss composer (before lazy first send materialises a thread) |
+| `systify.composer.draft.chat` | In-progress text | localStorage | Pre-thread draft for the repoless `/chat` landing |
+| `systify.composer.lastAuthUser` | Auth boundary marker | localStorage | Last-seen WorkOS user id; used to detect cross-session account switch and clear stale drafts |
 | `systify.activeRepositoryId` | User identity | localStorage (first-paint cache) + DB | "My current main project" — DB is source of truth (`userPreferences.lastActiveRepositoryId`) |
 | `systify.auth.returnTo` | One-time flow | sessionStorage | OAuth callback route; expires at tab close |
 
@@ -48,18 +52,20 @@ When adding a new preference:
    writeJSON("my.storage.key", value);
    ```
 
-4. **Wire up cleanup**: For id-scoped keys (`prefix.{repoId}.…`), add the prefix to `REPOSITORY_SCOPED_PREFIXES` in `use-storage-gc.ts` — the hook will sweep orphans automatically whenever the live id set shrinks. For one-off, non-id-scoped cleanup (e.g., a schema change to a global key), call `removeKeysByPrefix()` directly from a migration entry point:
+4. **Wire up cleanup**: For repository-id-scoped keys (`prefix.{repoId}.…`), add the prefix to `REPOSITORY_SCOPED_PREFIXES` in `use-storage-gc.ts` — the hook will sweep orphans automatically whenever the live id set shrinks. For thread-id-scoped keys, extend the thread effect in the same file (`COMPOSER_DRAFT_THREAD_PREFIX` is the existing example). For per-viewer keys that must not leak across users on the same machine (e.g. composer drafts), make sure their prefix is reachable by the auth-boundary sweep in `use-auth-bound-cleanup.ts`. For one-off, non-id-scoped cleanup (e.g., a schema change to a global key), call `removeKeysByPrefix()` directly from a migration entry point:
    ```ts
    removeKeysByPrefix("systify.deprecatedPrefix.");
    ```
 
 ## Orphan Key Cleanup
 
-Related keys are automatically cleaned up when their owner is deleted via the `useStorageGC` hook (mounted in `RepositoryShell`):
+Related keys are automatically cleaned up along three axes — two id-scoped sweeps in `useStorageGC` and a separate auth-boundary sweep in `useAuthBoundCleanup`:
 
-- When a **repository** is deleted: `systify.library.tabs.{repoId}`, `systify.library.askTabs.{repoId}`, and `systify.folderNav.open.{repoId}.…` keys are removed
+- **Repository-scoped sweep** (`useStorageGC`, `liveRepositoryIds`): when a repository is deleted, every key under `REPOSITORY_SCOPED_PREFIXES` whose first suffix segment is a dead repository id is removed. Today that covers `systify.library.tabs.{repoId}`, `systify.library.askTabs.{repoId}`, `systify.composer.draft.repository.{repoId}.…`, and `systify.folderNav.open.{repoId}.…`.
+- **Thread-scoped sweep** (`useStorageGC`, `liveThreadIds`): when a thread is deleted (or never persisted), every `systify.composer.draft.thread.{threadId}` key whose id is no longer live is removed. The thread axis is a separate effect with its own `COMPOSER_DRAFT_THREAD_PREFIX` so the repository-id pass never has to reason about thread ids.
+- **Auth-boundary sweep** (`useAuthBoundCleanup`): a logout or cross-user account switch on the same machine removes every key under `systify.composer.draft.*` — both the thread-scoped and repository-scoped draft shapes — so the next viewer never sees the prior user's in-progress text. The last-seen WorkOS user id is mirrored to `systify.composer.lastAuthUser` so a second user opening the browser after the first closed it without signing out still triggers the sweep on first load. AuthKit's transient `isLoading: true` windows are skipped to avoid wiping drafts during silent refresh.
 
-Cleanup runs whenever the live id sets shrink (initial load, local deletion, or cross-tab deletion via Convex subscription). Adding a new id-scoped key? Add its prefix to `REPOSITORY_SCOPED_PREFIXES` in `use-storage-gc.ts` and the same machinery will sweep it.
+Both id-scoped sweeps run whenever the live id sets change (initial load, local deletion, or cross-tab deletion via Convex subscription). Pass `null` while the upstream Convex query is still loading so the hook does not mistake "not yet known" for "all dead". Adding a new id-scoped key? Add its prefix to `REPOSITORY_SCOPED_PREFIXES` (for repository ids) or extend the thread effect (for thread ids) in `use-storage-gc.ts` and the same machinery will sweep it.
 
 For one-off, non-id-scoped cleanup (e.g. an old key whose schema changed), call `removeKeysByPrefix()` directly from a migration entry point.
 

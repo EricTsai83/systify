@@ -36,22 +36,30 @@ distinct error.
 1. **Per-user daily cost cap.** Buckets `sandboxCostUsdPerUserDaily` and
    `sandboxCostUsdPerRepositoryDaily` in `convex/lib/rateLimit.ts`. Fixed-window
    bucket aligned to UTC midnight (`start: 0`). Default `$5/day/user` and
-   `$50/day/repository`. Pre-check on `sendMessage` uses
-   `assertSandboxDailyCostBudget` against a `SANDBOX_REPLY_ESTIMATE_USD` (default
-   `$0.10`); settlement on `finalizeAssistantReply` records the actual cost via
-   `consumeSandboxDailyCost`. `maxReserved` absorbs settlement overruns when an
-   in-flight reply lands the bucket below zero.
+   `$50/day/repository`. The chat path's pre-check on `sendMessage` is
+   peek-only: `assertRepositoryModeEligible` (`convex/repositoryModeEligibility.ts`)
+   calls `computeSandboxCostCapEvaluation` (`convex/lib/chatEligibility.ts`),
+   which `peek`s both buckets against a `SANDBOX_REPLY_ESTIMATE_USD` (default
+   `$0.10`) and closes the Sandbox grounding axis when either bucket has
+   insufficient headroom — the gate surfaces as a structured `ConvexError`
+   via the eligibility resolver, never via a direct rate-limiter throw on the
+   chat path. The hard assert (`assertSandboxDailyCostBudget`, which calls
+   `rateLimiter.check` and throws on denial) is the System Design pre-check
+   at `convex/systemDesign.ts:756` (`assertKindCostBudget`). Settlement on
+   `finalizeAssistantReply` records the actual cost via `consumeSandboxDailyCost`.
+   `maxReserved` absorbs settlement overruns when an in-flight reply lands the
+   bucket below zero.
 2. **Per-user requests per minute.** Bucket `llmRequestsPerUserPerMinute`,
    default `60/min` (env `LLM_REQUESTS_PER_USER_PER_MINUTE`). Token bucket so
    short bursts are accepted up to `capacity` then drained at `rate/period`.
-   Acquired in `acquireLlmRequestRateSlot` (`convex/lib/rateLimit.ts:682`),
+   Acquired in `acquireLlmRequestRateSlot` (`convex/lib/rateLimit.ts:708`),
    exposed to the gateway via the `acquireLlmRequestSlot` internal mutation
-   (`convex/lib/rateLimit.ts:743`).
+   (`convex/lib/rateLimit.ts:769`).
 3. **Per-user concurrent calls in flight.** Bucket `llmConcurrentCallsPerUser`,
    default `5` (env `LLM_CONCURRENT_CALLS_PER_USER`). Fixed window with
    `period: HOUR`, acquired with `count: 1` and released with `count: -1`.
-   Acquired in `acquireLlmConcurrencySlot` (`convex/lib/rateLimit.ts:703`),
-   released in `releaseLlmConcurrencySlot` (`convex/lib/rateLimit.ts:730`).
+   Acquired in `acquireLlmConcurrencySlot` (`convex/lib/rateLimit.ts:729`),
+   released in `releaseLlmConcurrencySlot` (`convex/lib/rateLimit.ts:756`).
    Exposed to the gateway via `acquireLlmConcurrency` and `releaseLlmConcurrency`
    internal mutations.
 
@@ -64,24 +72,32 @@ code change needed.
 
 ### Gateway acquire / release sequence
 
-`convex/lib/llmGateway.ts` is the single chokepoint. Every LLM call follows
-the same acquire-then-release shape:
+`convex/lib/llmGateway.ts` is the single chokepoint. Every LLM call —
+`generateViaGateway`, `streamViaGateway`, and `embedViaGateway` —
+follows the same acquire-then-release shape:
 
 1. `assertCatalogPick` — fail-fast on unsupported `(provider, model)` pair.
-2. `acquireRpmOrThrow` (`llmGateway.ts:380`) — runs the RPM mutation; on
+2. `acquireRpmOrThrow` (`llmGateway.ts:509`) — runs the RPM mutation; on
    denial throws `LlmRateLimitError("requests_per_minute_exceeded", retryAfterMs)`.
    No slot consumed yet on the concurrency bucket.
-3. `acquireConcurrencyOrThrow` (`llmGateway.ts:398`) — runs the concurrency
+3. `acquireConcurrencyOrThrow` (`llmGateway.ts:527`) — runs the concurrency
    mutation; on denial throws `LlmRateLimitError("concurrency_exceeded", …)`.
 4. Provider SDK call wrapped in `withLlmRetry` (or, for streaming, called
    without retry because replay isn't supported).
-5. `releaseConcurrencyBestEffort` (`llmGateway.ts:422`) runs in `finally`
+5. `releaseConcurrencyBestEffort` (`llmGateway.ts:551`) runs in `finally`
    — on natural completion, on retry exhaustion, on caller abort.
    Acquire order is RPM-then-concurrency; release order is concurrency only
    (RPM is a window cap, not a held resource).
 
+Embedding calls (`embedViaGateway`) are not exempt: every batched
+`embedMany` invocation acquires the same per-user RPM token and the same
+per-user concurrency slot before the SDK call and releases the slot in
+`finally`. A burst of artifact-indexing embedding batches therefore counts
+against the same fairness buckets as chat / System Design generations,
+preventing a runaway indexing job from starving interactive replies.
+
 For streaming, `streamViaGateway` returns four `final*` promises and an
-`abort()`. The release is wired into a single `settle()` (`llmGateway.ts:310`)
+`abort()`. The release is wired into a single `settle()` (`llmGateway.ts:424`)
 that runs exactly once and is awaited by every `final*` projection, so any
 caller that awaits any of the four implicitly waits for the slot release.
 
@@ -127,10 +143,28 @@ the System Design failure recorder maps both codes to
 `failureReason: "transport_rate_limit"` and re-enqueues via auto-resume
 (see `system-design-generation.md`).
 
-The cost-cap failure mode is fourth and separate: `assertSandboxDailyCostBudget`
-throws a `ConvexError` with `code: "SANDBOX_DAILY_CAP_EXCEEDED"` (or
-`SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED`) before any LLM call, surfaced to
-the UI with a midnight-UTC countdown.
+The cost-cap failure mode is fourth and separate, and surfaces through two
+distinct entry points before any LLM call lands:
+
+- **Chat path** uses peek-only `computeSandboxCostCapEvaluation`
+  (`convex/lib/chatEligibility.ts`) via `assertRepositoryModeEligible`.
+  When either bucket lacks headroom, the eligibility resolver closes the
+  Sandbox grounding axis and `assertRepositoryModeEligible` throws a
+  structured `ConvexError` whose `code` matches the disabled-reason code
+  (`sandbox_user_cap_exceeded` / `sandbox_repository_cap_exceeded`),
+  surfaced to the UI with a midnight-UTC countdown via the same gate the
+  composer renders.
+- **System Design pre-check** uses the hard assert
+  `assertSandboxDailyCostBudget` directly (`convex/systemDesign.ts:756`,
+  wrapped as `assertKindCostBudget`). On denial it throws a `ConvexError`
+  with `code: "SANDBOX_DAILY_CAP_EXCEEDED"` (or
+  `SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED`); the per-kind action catches it
+  and records the kind as failed with `failureReason: "transport_rate_limit"`.
+
+Both entry points read the same `peekSandboxDailyCost*` snapshots, so
+"is the bucket empty?" gives the same answer either way; what differs is
+the surface (eligibility verdict vs. direct throw) and the caller that
+handles it.
 
 ### Concurrency slot leak on action crash
 
@@ -148,7 +182,7 @@ pair is the canary. Revisit if dashboards show released-count not returning
 to baseline after expected releases (indicating leaked slots accumulating).
 
 The release path itself is best-effort and swallows mutation errors
-(`releaseConcurrencyBestEffort`, `llmGateway.ts:422`) with a `logWarn` so
+(`releaseConcurrencyBestEffort`, `llmGateway.ts:551`) with a `logWarn` so
 a transient release failure cannot mask the original error to the caller.
 The same window-rollover safety net catches missed releases from this path.
 

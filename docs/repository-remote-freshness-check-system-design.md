@@ -153,7 +153,6 @@ Clearing `latestRemoteSha` at sync queue time drops `hasRemoteUpdates` to false 
 The action returns early without contacting GitHub when any of the following hold:
 
 - the repository row no longer exists
-- the caller is not the repository owner
 - the repository has never been synced (`lastSyncedCommitSha` is undefined)
 - the repository has no `defaultBranch`
 - the repository is being deleted (`deletionRequestedAt` set)
@@ -162,6 +161,8 @@ The action returns early without contacting GitHub when any of the following hol
 - the throttle window has not yet elapsed
 
 Each of these is a state where either the comparison would be meaningless or the user cannot act on the result.
+
+If the caller is not the repository owner, the action throws rather than returning early. Ownership is an authorization failure, not a state that can be silently skipped — the client should not be issuing the check at all.
 
 ## Trade-Offs
 

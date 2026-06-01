@@ -125,18 +125,24 @@ This is a bounded retrieval layer whose main goals are:
 
 - reducing prompt size
 - improving answer focus
-- keeping read cost bounded without introducing embeddings yet
+- keeping read cost bounded
+
+The candidate pool uses vector retrieval via `artifactChunks.by_embedding` and the embed-gateway for relevance filtering when embeddings are available.
 
 ### 5. Generate the answer
 
-If `OPENAI_API_KEY` exists, the system:
+The reply is dispatched through the multi-provider LLM gateway via `streamViaGateway`. Model selection uses a 3-tier resolver (see `convex/chat/modelSelection.ts:87-91`):
 
-- uses `streamText`
-- selects `OPENAI_MODEL` or falls back to `gpt-5.4-mini`
+1. composer override (per-request model the user picked in the composer)
+2. `threads.defaultModelName` (the thread's saved default)
+3. `DEFAULT_PICK_BY_CAPABILITY` (a capability-based fallback chosen from the providers configured at runtime)
+
+A `threads.lockedProvider` lock keeps subsequent picks within the same provider once a thread is bound to one. The dispatch also:
+
 - builds a per-mode system prompt via `buildSystemPrompt(replyContext.mode)` so the model receives a different contract per mode
 - builds a user prompt from artifacts, chunks, and the user question
 
-If `OPENAI_API_KEY` is absent, the system falls back to a heuristic answer so it can still produce a response based on indexed data.
+If no provider credential is configured, the system falls back to a heuristic answer so it can still produce a response based on indexed data.
 
 ### 6. Stream, compact, and complete
 
@@ -236,24 +242,25 @@ System Design generation is **user-initiated, not import-driven**. Imports no lo
 
 ### Kinds and dispatch
 
-Library System Design produces up to eight LLM-backed artifact kinds: `readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`. Each spins a `generateText` call against the sandbox-backed model with the same `read_file` / `list_dir` / `run_shell` tool factory the sandbox-grounded chat path uses.
+Library System Design produces up to eight LLM-backed artifact kinds: `readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`. Every kind is LLM-backed — no kind skips Daytona. Each spins a `generateViaGateway` call against the sandbox-backed model with the same `read_file` / `list_dir` / `run_shell` tool factory the sandbox-grounded chat path uses.
 
 ### 1. Request validation
 
 `requestSystemDesignGeneration` (in `convex/systemDesign.ts`) performs the following checks in order:
 
-1. **Identity + repository ownership** — `requireViewerIdentity` + `requireActiveRepositoryForOwner` reject archived, deleted, or non-owned repos with the standard error messages.
+1. **Identity + repository ownership** — `requireViewerIdentity` + `requireActiveRepositoryForViewer` reject archived, deleted, or non-owned repos with the standard error messages.
 2. **Non-empty selection** — at least one kind must be checked.
-3. **Sandbox preflight** — reads `repository.latestSandboxId` and passes it through `getSandboxAvailability`; rejects the whole request with the helper's user-facing message if the sandbox is missing, provisioning, archived, stopped, expired, or failed.
-4. **Idempotency dedup** — scans `jobs` by the `by_repositoryId_and_kind_and_status_and_leaseExpiresAt` index for an active (`queued` or `running`, lease still alive) `system_design` job. If one is found, the mutation returns that existing `jobId` instead of creating a duplicate.
-5. **Rate limiting** — consumes the per-owner `systemDesignRequests` bucket (10/hour by default) and the global `daytonaRequestsGlobal` bucket.
-6. **Folder seeding** — `ensureSystemDesignFolders` is idempotent and creates the default System Design folder tree if it does not already exist.
+3. **Idempotency dedup** — scans `jobs` by the `by_repositoryId_and_kind_and_status_and_leaseExpiresAt` index for an active (`queued` or `running`, lease still alive) `system_design` job. If one is found, the mutation returns that existing `jobId` instead of creating a duplicate.
+4. **Rate limiting** — consumes the per-owner `systemDesignRequests` bucket (10/hour by default) and the global `daytonaRequestsGlobal` bucket.
+5. **Folder seeding** — `ensureSystemDesignFolders` is idempotent and creates the default System Design folder tree if it does not already exist.
+
+Sandbox readiness is **not** checked up front in the mutation. The repository's sandbox status helpers `getRepositorySandboxStatus` / `requireRepositorySandbox` describe the latest sandbox row but do not trigger provisioning; the actual provisioning happens lazily inside the Node action: `runSystemDesignGeneration` calls `ensureSandboxReady` (see `convex/systemDesignNode.ts`), and if that throws a `SandboxPreparationError`, the job is marked failed with the helper's user-facing message instead of being rejected pre-insert.
 
 ### 2. Create the job
 
 The mutation inserts one `jobs` row with `kind: "system_design"`, `costCategory: "system_design"`, the selected `sandboxId`, an `outputSummary` summarising the selection, and a non-null `leaseExpiresAt = now + SYSTEM_DESIGN_JOB_LEASE_MS` (default 60 minutes).
 
-The lease is set **at insert time** rather than only at the `queued → running` transition. This matters because the stale-job sweep (`opsNode.listStaleInteractiveJobs`) queries the `by_status_and_kind_and_leaseExpiresAt` index with `lt("leaseExpiresAt", now)`, which never matches rows where `leaseExpiresAt` is undefined. A pre-running job without a lease would be invisible to recovery if the Node action never started.
+The lease is set **at insert time** rather than only at the `queued → running` transition. This matters because the stale-job sweep (`ops.listStaleInteractiveJobs`) queries the `by_status_and_kind_and_leaseExpiresAt` index with `lt("leaseExpiresAt", now)`, which never matches rows where `leaseExpiresAt` is undefined. A pre-running job without a lease would be invisible to recovery if the Node action never started.
 
 ### 3. Run the generators
 
@@ -271,7 +278,7 @@ Every System Design kind is sandbox-grounded, so `createArtifactInMutation` stam
 
 After all kinds complete (success or failure), `completeGeneration` marks the job `completed` with a final `outputSummary` (`Generated X of Y documents.` / `; N failed.`). Progress and final status flow back to the UI through the standard job subscription.
 
-If the action dies (process restart, panic) before `completeGeneration`, the daily cron `reconcileStaleInteractiveJobs` will eventually call `recoverStaleSystemDesignJob`, which fails the job with the standard stale-lease message — the lease semantics above guarantee the row is discoverable by the sweep.
+If the action dies (process restart, panic) before `completeGeneration`, the 5-minute cron `reconcileStaleInteractiveJobs` will eventually call `recoverStaleSystemDesignJob`, which fails the job with the standard stale-lease message — the lease semantics above guarantee the row is discoverable by the sweep.
 
 ## Sandbox Availability
 
@@ -282,7 +289,7 @@ Two distinct surfaces depend on a live Daytona sandbox: sandbox-grounded Discuss
 - has failed
 - is missing required remote path information
 
-then Sandbox grounding is unavailable and `requestSystemDesignGeneration` rejects the request with the helper's user-facing message.
+then Sandbox grounding is unavailable for chat. `getRepositorySandboxStatus` / `requireRepositorySandbox` report the latest sandbox row but do **not** provision — they only describe state. System Design generation does not pre-check sandbox readiness in `requestSystemDesignGeneration`; provisioning happens lazily inside the Node action via `ensureSandboxReady`, and a `SandboxPreparationError` there fails the queued job with the helper's user-facing message rather than rejecting at insert.
 
 The frontend uses this state to tell the user to:
 

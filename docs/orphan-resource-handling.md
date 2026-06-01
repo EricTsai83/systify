@@ -252,5 +252,3 @@ Those belong in implementation plans or operations-specific documents rather tha
 
 - `repository-lifecycle.md`
 - `integrations-and-operations.md`
-- `plans/03-daytona-orphan-protection.md`
-- `plans/09-daytona-webhook-reconciliation.md`

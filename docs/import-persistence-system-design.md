@@ -6,11 +6,10 @@ This document explains why the import persistence flow uses staged writes plus a
 
 ## The Problem
 
-An import produces three durable outputs:
+An import produces two durable outputs:
 
 - `repoFiles`
 - `repoChunks`
-- `artifacts`
 
 It also needs to update the repository's published snapshot metadata, including:
 
@@ -42,7 +41,7 @@ The import persistence flow is split into four steps:
 
 ```mermaid
 flowchart TD
-  H[Persist Header And Artifacts]
+  H[Persist Header And Seed Folders]
   F[Persist RepoFiles In Batches]
   C[Persist RepoChunks In Batches]
   P[Finalize And Publish Snapshot]
@@ -58,6 +57,7 @@ The first step writes only small, import-scoped metadata:
 
 - import commit metadata
 - job stage progress
+- System Design folder seeding via `ensureSystemDesignFolders` (idempotent — creates the per-repository Library folders that later System Design runs write artifacts into)
 
 This step is intentionally small so it is cheap to retry.
 
@@ -121,7 +121,6 @@ Sandbox cleanup is no longer part of this contract. Imports do not provision san
 
 The system relies on document identity rather than "best effort" retries:
 
-- artifacts upsert by `jobId + kind`
 - files dedupe by `importId + path`
 - chunks dedupe by `importId + path + chunkIndex`
 

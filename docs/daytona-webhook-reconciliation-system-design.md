@@ -213,10 +213,10 @@ There are two separate problems:
 
 These are handled by the inbox dedupe key.
 
-Preferred order:
+The implementation already uses the Svix `svix-id` header as the provider delivery ID for the dedupe key. The order is:
 
-1. official provider delivery ID, if Daytona later documents one clearly
-2. a derived key from `eventType + remoteId + eventTimestamp + normalizedState`
+1. `svix-id` (the Svix provider delivery ID) — used by default
+2. fallback derived key from `eventType + remoteId + eventTimestamp + normalizedState`, only when `svix-id` is missing
 
 ### Out-of-order delivery
 

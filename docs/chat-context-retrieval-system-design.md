@@ -2,153 +2,100 @@
 
 ## Purpose
 
-This document explains why chat context retrieval now uses filtered Convex search indexes plus a bounded baseline candidate pool instead of a fixed `take(80)` chunk read.
+This document explains the two distinct retrieval architectures Systify uses to ground chat replies. Both are bounded to the latest published import snapshot, but they differ entirely in mechanism: sandbox-grounded Discuss replies are tool-driven (no pre-loaded chunks), while Library Ask uses hybrid lexical + vector retrieval over `artifactChunks`.
 
-## The Problem
+## The Two Flows
 
-Chat (specifically sandbox-grounded Discuss replies — the only chat path that loads code chunks; ungrounded `discuss` skips repo lookups entirely and `library` retrieves from `artifactChunks`) previously loaded the first 80 `repoChunks` from:
+Chat has only two modes — `discuss` and `library` — and each one resolves grounding differently:
 
-- `repoChunks.by_importId_and_path_and_chunkIndex`
+- `discuss` with the per-message **sandbox grounding** toggle on: the model fetches what it needs through sandbox tools at generation time. No code chunks are loaded into the prompt up front.
+- `discuss` with the per-message **Library grounding** toggle on, and `library` mode: artifacts are loaded and (for Library Ask) `artifactChunks` are retrieved via hybrid RAG.
+- `discuss` with both toggles off: training-only chat — no repo lookup at all, even when the thread has a repository attached.
 
-and then reranked them only with substring matches on:
-
-- `path`
-- `summary`
-
-That created two problems:
-
-1. retrieval quality was mostly determined by path ordering, not the user's question
-2. chunks outside the first slice of the latest import snapshot could never be considered
-
-For larger repositories, this meant the same question kept seeing roughly the same files.
-
-## Design Goals
-
-The retrieval design optimizes for four properties:
-
-1. stay strictly inside the latest published import snapshot
-2. let the candidate pool change with the user's question
-3. keep reads bounded and Convex-friendly
-4. improve relevance without introducing embeddings yet
+`convex/chat/context.ts:325-330` hardcodes `chunks: []` with an explicit comment for the repository-backed branch, and `convex/chat/context.ts:369` hardcodes `artifactChunks: []`. The actual `artifactChunks` retrieval happens later in the action via `convex/lib/artifactRag.ts:retrieveArtifactChunks`, not inside the context query.
 
 ## Chosen Design
 
-The new retrieval flow has two stages:
-
 ```mermaid
 flowchart TD
-  Q[Latest User Question]
-  B[Baseline Head/Tail Chunks]
-  SS[search_summary filtered by importId]
-  SC[search_content filtered by importId]
-  M[Merge And Deduplicate Candidate Pool]
-  R[Weighted Local Rerank]
-  P[Prompt Chunks]
+  Q[Queued User Message]
+  M{Mode and Grounding}
+  S[Sandbox-grounded Discuss]
+  L[Library Ask]
+  T[sandboxTooling: read_file, list_dir, run_shell]
+  A[retrieveArtifactChunks: hybrid RAG]
+  Audit[sandboxToolCallLog]
+  P[Prompt]
 
-  Q --> SS
-  Q --> SC
-  B --> M
-  SS --> M
-  SC --> M
-  M --> R --> P
+  Q --> M
+  M -->|discuss + groundSandbox| S
+  M -->|library or discuss + groundLibrary| L
+  S --> T --> Audit
+  T --> P
+  L --> A --> P
 ```
 
+### 1. Sandbox-grounded Discuss (tool-driven)
 
+When the queued user message carries `groundSandbox: true` and the repository's latest sandbox is in `ready` state, `getReplyContext` surfaces a `sandboxTooling` handle (`sandboxId`, `remoteId`, `repoPath`) alongside an empty `chunks: []`.
 
-### 1. Snapshot-scoped search
+The action wires that handle into `sandboxTooling` (`read_file`, `list_dir`, `run_shell`) so the LLM gateway can let the model pull whatever it needs from the live sandbox during generation. Nothing is pre-fetched.
 
-`repoChunks` now defines two search indexes:
+Every tool execution writes an entry into `sandboxToolCallLog`, keyed by the same `sandboxId` the context query returned. That gives the audit log a single transactional anchor: the `(thread, sandbox, repository)` triple read at queue time is exactly the triple every tool call belongs to.
 
-- `search_summary`
-- `search_content`
+If the sandbox is unavailable (`provisioning`, `stopped`, `archived`, `failed`, or missing), `sandboxTooling` is left `undefined` and the action falls back to a no-tool reply — answering without tools is strictly better than streaming a mid-reply tool-call failure.
 
-Both indexes use `importId` as a filter field. At query time, retrieval always calls:
+### 2. Library Ask (hybrid RAG)
 
-- `q.search(...).eq('importId', repository.latestImportId)`
+Library mode (and Discuss with `groundLibrary: true`) loads a bounded artifact set in `getReplyContext`: scoped to `thread.artifactContext` when set, otherwise the latest docs artifacts across the documented kinds.
 
-This is the key correctness rule of the design. Query-aware retrieval is allowed to change which chunks are considered, but it is not allowed to cross the latest snapshot boundary.
+`artifactChunks` retrieval is then performed by `convex/lib/artifactRag.ts:retrieveArtifactChunks`, called from the reply action — not from the context query. The retriever:
 
-### 2. Baseline fallback
+- runs lexical search (`artifactChunkStore.searchContent` + `searchSummary`, scoped by `repositoryId`) and semantic search (vector search over `artifactChunks.by_embedding`) in parallel via `Promise.allSettled`
+- requests a query embedding through `embedViaGateway` from the multi-provider LLM gateway, settling embedding spend into the per-user / per-repository daily-cap buckets
+- fuses the two channels with Reciprocal Rank Fusion (`RRF_K = 60`) and returns the top-N candidates
 
-Search results alone are not enough because some questions have weak terms, unusual vocabulary, or no useful lexical overlap with chunk text.
+The embedding call is wrapped in `Promise.allSettled`, so if the embedding provider fails or returns nothing, retrieval degrades gracefully to lexical-only — the `retrieval_mode` log field records `"hybrid"` vs `"lexical_only"` for each query. Chunks without embeddings simply never appear in the semantic channel and rely on the lexical channel.
 
-To keep fallback behavior stable, retrieval also loads a small baseline set from:
+### Note on `repoChunks` search indexes
 
-- the head of `by_importId_and_path_and_chunkIndex`
-- the tail of the same index in descending order
+`repoChunks.search_summary` and `repoChunks.search_content` are still defined on the schema, but **no code path currently queries them**. The sandbox-grounded Discuss path is tool-driven (no pre-loaded code chunks), and Library Ask retrieves from `artifactChunks`, not `repoChunks`. Future retrieval work over repository code would re-activate these indexes; today they are unread.
 
-This is better than a single head-only slice because it avoids a persistent bias toward only the lexicographically earliest files.
+## Why Not Pre-load Code Chunks for Sandbox-grounded Discuss
 
-### 3. Merge before ranking
+A naive design would pre-fetch the top-K most relevant `repoChunks` into the prompt before the model runs. That was rejected because:
 
-The candidate pool merges:
+1. the sandbox already exposes the full repo through `read_file` / `list_dir` / `run_shell`, so the model can ask for exactly the files it needs based on the partial reasoning so far
+2. pre-loading guesses at relevance before the model has even started reasoning, while tool calls let the model expand its view based on what it has just learned
+3. two parallel knowledge sources (pre-loaded chunks + live tool calls) would have to be kept non-overlapping to avoid contradictions and wasted prompt tokens
 
-- summary search hits
-- content search hits
-- baseline chunks
+The current contract is intentional: tool-driven for sandbox-grounded Discuss, artifact-grounded for Library, never both.
 
-Chunks are deduplicated by `_id` and capped at a fixed upper bound.
+## Why Hybrid Over Lexical-Only for Library Ask
 
-This keeps the hot path predictable:
+Pure lexical search misses paraphrased questions where the user's vocabulary doesn't overlap with the artifact text. Pure semantic search loses precision on exact symbol names and short technical phrases.
 
-- search is bounded with `.take(...)`
-- fallback is bounded with `.take(...)`
-- prompt assembly never depends on an unbounded scan
-
-### 4. Weighted local rerank
-
-After the candidate pool is built, `selectRelevantChunks` reranks locally with simple lexical weights:
-
-- path hit: `+3`
-- summary hit: `+2`
-- content hit: `+1`
-
-This keeps the implementation lightweight while still preferring more precise structural matches over looser content matches.
-
-## Why Not Query By `repositoryId`
-
-A tempting shortcut is to do question-driven lookups directly on repository-wide indexes such as:
-
-- `by_repositoryId_and_path`
-- `by_repositoryId_and_symbolName`
-
-That was rejected for the short-term design for two reasons:
-
-1. repository-scoped reads can reintroduce stale chunks from older imports if retrieval is not explicitly re-scoped back to the latest snapshot
-2. `symbolName` is not yet a strong short-term signal in the current chunk generation path
-
-In other words, repository-wide probing improves recall only if it does not weaken snapshot correctness. The chosen design keeps correctness first.
-
-## Why Not Embeddings Yet
-
-Embeddings would improve semantic recall, but they would also introduce:
-
-- a new indexing pipeline
-- a larger storage and sync surface
-- more rollout complexity than this iteration needs
-
-The current design deliberately stops at "better lexical retrieval with strong snapshot guarantees." It improves answer quality now without locking the system into a heavier retrieval architecture prematurely.
+RRF over the two channels gets both: lexical wins on exact matches, semantic wins on paraphrases, and the rank-based fusion is robust to the very different score scales each side produces. The `RRF_K = 60` constant matches the published RRF defaults and gives sane behavior without per-channel tuning.
 
 ## Trade-Offs
 
-This design adds:
+This design accepts:
 
-- two search indexes
-- more retrieval logic in `getReplyContext`
-- a small amount of duplicated evidence between baseline and search hits
+- two completely different retrieval paths to maintain (sandbox tools vs hybrid RAG)
+- embedding-time cost for every Library Ask query (settled into the daily-cap buckets)
+- unused `repoChunks.search_summary` / `search_content` indexes carried by the schema
 
 That is a deliberate trade for:
 
-- much better recall on question-specific chunks
-- bounded query cost
-- no stale snapshot mixing
+- sandbox-grounded Discuss answers grounded in whatever the model decides it needs to read, not a pre-computed guess
+- Library Ask recall that survives both exact-match and paraphrased questions
+- a clean knowledge-source contract — artifacts vs live tool calls, never overlapping
 
 ## Result
 
-The new retrieval path gives sandbox-grounded chat a better fit for the current Systify architecture:
+The two retrieval architectures together give chat replies a mode-appropriate grounding source:
 
-- candidate pools change with the user's question
-- all retrieval stays inside `latestImportId`
-- misses still fall back to a bounded baseline
-- the system remains simple enough to evolve toward embeddings later
+- sandbox-grounded Discuss reads the live repo through tools, with every call audited in `sandboxToolCallLog`
+- Library Ask retrieves the most relevant `artifactChunks` via hybrid lexical + vector fusion, with graceful fallback to lexical-only when embeddings are unavailable
+- both flows stay strictly inside the latest published snapshot of the repository
 

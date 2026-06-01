@@ -108,9 +108,15 @@ mid-transition reader could observe a repository that ranks first by
 client-side reconciliation rule has to assume both writes are coherent.
 
 The shared upsert helper is in `convex/lib/userPreferences.ts`
-(`upsertLastActiveRepository`). It is idempotent: calling `touchRepository`
-repeatedly on the same repository skips the patch entirely so subscriptions
-on `getViewerPreferences` stay stable.
+(`upsertLastActiveRepository`). The *userPreferences* write is
+idempotent: calling `touchRepository` repeatedly on the same repository
+short-circuits `upsertLastActiveRepository` so subscriptions on
+`getViewerPreferences` stay stable. The *repository* patch, however,
+always runs — `lastAccessedAt` is bumped to `Date.now()` on every call
+(and `lastMode` is patched when `mode` is supplied and differs from the
+stored value), because the sidebar's recency ordering and the
+most-recent-repository fallback both depend on that timestamp moving
+forward on every explicit user activation.
 
 `mode` is intentionally optional. Callers that only know the repository
 changed (URL → state sync on first paint) omit it so the stored mode is not
@@ -135,25 +141,33 @@ never sees a dangling id; it only ever sees one of:
 
 ### Frontend reconciliation
 
-`src/components/chat-shell-shared/use-repository-persistence.ts` owns four
+`src/components/chat-shell-shared/use-repository-persistence.ts` owns five
 ordered effects:
 
 1. **First-paint cache.** `useState` initializer reads
    `localStorage["systify.activeRepositoryId"]` synchronously so the first
    render already has a repository id.
-2. **DB-wins reconciliation** (live, not one-shot). Whenever both
-   `listRepositoriesForSwitcher` and `getViewerPreferences` are resolved,
-   if the DB carries a different selection than the local state *and* that
-   repository still exists, the local state is updated to match the DB. No
-   write is issued — the DB is already authoritative. Because the effect
-   re-runs on every change to `viewerPreferences`, a switch from another
-   tab propagates here the moment Convex pushes the row update.
-3. **Fallback + seeding.** If the active id is missing or no longer valid,
-   pick the most recently accessed repository and call `touchRepository`
-   on it. This both promotes the fallback into the DB (so a brand-new
-   browser converges immediately on next load) and bumps `lastAccessedAt`
-   so the sidebar order matches the actual selection.
-4. **URL → state sync.** When the URL carries a `:repositoryId`, treat it
+2. **localStorage mirror.** A `useEffect` watches `activeRepositoryId`
+   and writes it back to `localStorage["systify.activeRepositoryId"]`
+   whenever it changes (or removes the key when the id becomes `null`).
+   This is what keeps the first-paint cache aligned with the
+   reconciled state across every subsequent mount, including after
+   DB-wins reconciliation, fallback seeding, and URL → state sync.
+3. **DB-wins reconciliation** (live, not one-shot). Whenever both the
+   owned-repository id set (from `listAllOwnerRepositoryIds`) and
+   `getViewerPreferences` are resolved, if the DB carries a different
+   selection than the local state *and* that repository still exists,
+   the local state is updated to match the DB. No write is issued — the
+   DB is already authoritative. Because the effect re-runs on every
+   change to `viewerPreferences`, a switch from another tab propagates
+   here the moment Convex pushes the row update.
+4. **Fallback + seeding.** If the active id is missing or no longer valid,
+   pick the most recently accessed repository (from the switcher's 20-row
+   recency window) and call `touchRepository` on it. This both promotes
+   the fallback into the DB (so a brand-new browser converges immediately
+   on next load) and bumps `lastAccessedAt` so the sidebar order matches
+   the actual selection.
+5. **URL → state sync.** When the URL carries a `:repositoryId`, treat it
    as canonical: adopt it into local state and call `touchRepository` so
    the DB selection matches the user's just-followed link. A URL pointing
    at a missing repository bounces to `DEFAULT_AUTHENTICATED_PATH`.
@@ -188,15 +202,22 @@ defense-in-depth for any code path that bypasses the public
 The active-repository pointer is only one of several localStorage entries
 scoped to a repository — the Library tab strip
 (`systify.library.tabs.{repoId}`), the Ask tab strip
-(`systify.library.askTabs.{repoId}`), and the folder navigator's per-node
-open state (`systify.folderNav.open.{repoId}.{nodeId}`) are also keyed by
-id. When the owning repository is deleted, those keys would otherwise
-accumulate in the user's browser indefinitely.
+(`systify.library.askTabs.{repoId}`), the composer draft for a repository
+(`systify.composer.draft.repository.{repoId}.discuss`), and the folder navigator's
+per-node open state (`systify.folderNav.open.{repoId}.{nodeId}`) are also
+keyed by id. When the owning repository is deleted, those keys would
+otherwise accumulate in the user's browser indefinitely.
 
-`useStorageGC` (in `src/hooks/use-storage-gc.ts`) is mounted by
-`RepositoryShell` and sweeps the prefixes against the live id set coming
-from the same `listRepositoriesForSwitcher` query the shell already
-subscribes to. The hook handles three trigger paths uniformly:
+`useStorageGC` (in `src/hooks/use-storage-gc.ts`) is mounted on the shared
+repository lifecycle mount and sweeps the prefixes against the live id set coming
+from `listAllOwnerRepositoryIds` (the *complete* owned set, capped at
+1000) — not the `listRepositoriesForSwitcher` query that powers the
+sidebar dropdown. The shell wires this up explicitly with an inline
+comment at `src/components/repository-shell.tsx:71-78`: GC needs the full
+owned set so that repositories sitting outside the switcher's 20-row
+recency window aren't mistakenly treated as deleted and have their
+scoped keys garbage-collected. The hook handles three trigger paths
+uniformly:
 
 - **Initial load.** The first non-null snapshot of the live id set
   garbage-collects any keys left over from a previous session (e.g. the

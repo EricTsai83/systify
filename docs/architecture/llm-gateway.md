@@ -11,8 +11,9 @@ edits had to agree, which they predictably did not.
 The gateway is the single chokepoint that owns provider dispatch, fairness, retry, usage
 normalization, and cost. The caller decides `(provider, modelName)` per request and the
 gateway runs it. Provider SDK imports (`@ai-sdk/openai`, `@ai-sdk/anthropic`) are confined to
-`convex/lib/llmGateway.ts`; a provider-isolation test in `convex/lib/llmGateway.test.ts`
-fails CI if either import leaks into another file in `convex/`.
+`convex/lib/llmGateway.ts`; a provider-isolation test in
+`convex/lib/llmGateway.architecture.test.ts` fails CI if either import leaks into another
+file in `convex/`.
 
 The gateway is a dispatcher, not a failover orchestrator. There is no "try OpenAI, fall back
 to Claude" — that would break the per-message model semantics the picker promises ("the
@@ -22,22 +23,28 @@ record as a job failure.
 
 ## How it works
 
-Two entry points live in `convex/lib/llmGateway.ts`:
+Three entry points live in `convex/lib/llmGateway.ts`:
 
-- `generateViaGateway` at `convex/lib/llmGateway.ts:196` — non-streaming. Awaits the full
+- `generateViaGateway` at `convex/lib/llmGateway.ts:310` — non-streaming. Awaits the full
   result and returns an `LlmGenerateResult` (`text`, `steps`, `usage`, `costUsd`,
   `rawResponseId`). Used by `convex/systemDesignNode.ts:240` for the System Design generator
   and by the eval judge.
-- `streamViaGateway` at `convex/lib/llmGateway.ts:270` — streaming. Returns synchronously
+- `streamViaGateway` at `convex/lib/llmGateway.ts:384` — streaming. Returns synchronously
   with an `LlmStreamResult` containing `fullStream` plus four `final*` promises (`finalText`,
   `finalUsage`, `finalCostUsd`, `finalSteps`) and `abort()`. Used by
   `convex/chat/generation.ts:652` for chat replies.
+- `embedViaGateway` at `convex/lib/llmGateway.ts:241` — batch embedding. Always goes
+  through the AI SDK's `embedMany` (even for a single value) so per-batch usage settles
+  once per gateway invocation. Returns an `LlmEmbedResult` (`embeddings` preserving input
+  order, `usage` with `inputTokens` only, `costUsd`). The `callCtx.capability` MUST be
+  `"embedding"` so an embedding-tier catalog row cannot be reached by a generate call site
+  and vice versa.
 
-Both helpers are plain TS async functions that accept the caller's `ActionCtx`. They are
-not registered Convex actions — keeping dispatch inline avoids a `runMutation` hop per call
-while still letting the helpers issue mutations against rate-limit tables.
+All three helpers are plain TS async functions that accept the caller's `ActionCtx`. They
+are not registered Convex actions — keeping dispatch inline avoids a `runMutation` hop per
+call while still letting the helpers issue mutations against rate-limit tables.
 
-### Per-call flow (9 steps, both entry points)
+### Per-call flow (9 steps, all three entry points)
 
 1. **Catalog validation.** `assertCatalogPick` calls `isValidPick(provider, modelName)`
    from `convex/lib/llmCatalog.ts`. A model not in `MODEL_CATALOG` throws before any
@@ -65,19 +72,21 @@ while still letting the helpers issue mutations against rate-limit tables.
    `convex/lib/llmPricing.ts` returns USD or `undefined` (pricing miss → "cost unknown",
    not zero).
 7. **Concurrency slot release in `finally`.** `releaseConcurrencyBestEffort` runs on every
-   exit path of both helpers. Release errors are warn-logged, never re-thrown — the slot
-   refreshes at the next bucket window even if the release patch fails. See the `finally`
-   block at `convex/lib/llmGateway.ts:249` (non-streaming) and `convex/lib/llmGateway.ts:349`
-   (inside the stream `settle`).
-8. **`llm_tokens_used` metric emission.** Tagged with provider, model, and feature
+   exit path of all three helpers. Release errors are warn-logged, never re-thrown — the
+   slot refreshes at the next bucket window even if the release patch fails. See the
+   `finally` block at `convex/lib/llmGateway.ts:363` (non-streaming),
+   `convex/lib/llmGateway.ts:466` (inside the stream `settle`), and
+   `convex/lib/llmGateway.ts:295` (embedding).
+8. **Metric emission.** Generate / stream emit `llm_tokens_used`; embed emits
+   `llm_embedding_tokens_used`. Both are tagged with provider, model, and feature
    (`chat` | `system_design` | `eval_judge`); details carry the per-token-tier counts and
    the owner identifier.
-9. **Uniform return.** Callers see the same `LlmGenerateResult` / `LlmStreamResult` shape
-   regardless of provider.
+9. **Uniform return.** Callers see the same `LlmGenerateResult` / `LlmStreamResult` /
+   `LlmEmbedResult` shape regardless of provider.
 
 ### Provider dispatch
 
-`getSdkModel` at `convex/lib/llmGateway.ts:449` is a switch on the `LlmProvider` literal:
+`getSdkModel` at `convex/lib/llmGateway.ts:578` is a switch on the `LlmProvider` literal:
 
 ```ts
 function getSdkModel(provider: LlmProvider, modelName: string) {
@@ -101,7 +110,7 @@ a `try/catch` that releases the concurrency slot before re-throwing on synchrono
 failure.
 
 Once the stream is live, settlement runs exactly once through the `settle` closure at
-`convex/lib/llmGateway.ts:310`. The closure awaits `sdkResult.text`, `sdkResult.totalUsage`,
+`convex/lib/llmGateway.ts:424`. The closure awaits `sdkResult.text`, `sdkResult.totalUsage`,
 `sdkResult.providerMetadata`, and `sdkResult.steps` in parallel, normalizes, emits the
 metric, and releases the slot in its `finally`. The same `settlementPromise` projects into
 all four `final*` promises, so any of them resolving means the slot has already released.
@@ -153,9 +162,10 @@ through a poll loop that watches the job's `cancelled` flag —
 which works whether the abort lands before or after the stream handle is assigned.
 
 **Concurrency slot leak.** The most common semaphore bug — a missed release path on an
-error branch. Both `generateViaGateway` and `streamViaGateway` wire release into a
-`finally`. The streaming path has a unit test in `convex/lib/llmGateway.test.ts` that
-forces the SDK to throw mid-stream and asserts the slot count returns to baseline.
+error branch. `generateViaGateway`, `streamViaGateway`, and `embedViaGateway` each wire
+release into a `finally`. The non-streaming path has a unit test at
+`convex/llmGateway.test.ts:264` that forces the SDK to throw and asserts the slot count
+returns to baseline so a follow-up call is not blocked by a leaked semaphore slot.
 
 **Release failure.** `releaseConcurrencyBestEffort` swallows release errors with a warn
 log because re-throwing would mask the original LLM error and confuse the caller. The slot
@@ -170,9 +180,9 @@ changes:
 2. Add catalog rows to `MODEL_CATALOG` in `convex/lib/llmCatalog.ts`.
 3. Add pricing rows to `PRICING` in `convex/lib/llmPricing.ts`.
 4. Add a `case "gemini": return gemini(modelName)` arm to `getSdkModel` in
-   `convex/lib/llmGateway.ts:449`.
+   `convex/lib/llmGateway.ts:578`.
 5. Add a `case "gemini":` arm to `buildProviderOptions` in
-   `convex/lib/llmGateway.ts:464` if Gemini needs a non-default `providerOptions` mapping
+   `convex/lib/llmGateway.ts:613` if Gemini needs a non-default `providerOptions` mapping
    (e.g. its own reasoning / safety knob).
 
 The provider-isolation test catches a forgotten import-confinement change at CI time.

@@ -32,6 +32,14 @@ etc.). Each entry carries:
 - `reasoningPerMillion` (optional) — separate tier for reasoning tokens.
   Currently absent on all rows so the math falls back to the output rate
   (OpenAI's published behavior).
+- Embedding rows (`openai:text-embedding-3-small`, `openai:text-embedding-3-large`)
+  carry only `inputPerMillion` with `outputPerMillion: 0`. Embedding APIs return
+  vectors, not generated tokens, so `estimateCostUsd` zeroes the output line
+  cleanly; cache / reasoning fields are absent and short-circuit on their
+  optional checks. The Library Ask hybrid RAG path
+  (`convex/lib/artifactRag.ts:retrieveArtifactChunks`) and the artifact-indexing
+  batches (`convex/artifactIndexing.ts`) both bill against the same daily cap
+  via these rows.
 
 `estimateCostUsd(provider, modelName, usage)` walks the `NormalizedUsage` and
 returns USD or `undefined`. It returns `undefined` when the pair is missing from
@@ -39,25 +47,31 @@ the table OR when both `inputTokens` and `outputTokens` are missing (degenerate
 stream that errored before any usage settled). Returning `undefined` — rather
 than `0` — is the load-bearing signal that lets the daily-cap settlement
 distinguish "no recordable spend" from "genuinely $0.00" (see
-`convex/lib/llmPricing.ts:157-193`).
+`convex/lib/llmPricing.ts:172-208`).
 
 `costUsdToCents(costUsd)` ceilings to integer cents because the daily-cap
 rate-limiter component speaks in cents and ceiling is the one rounding rule that
 keeps the recorded sum always greater than or equal to real spend
-(`convex/lib/llmPricing.ts:208-216`).
+(`convex/lib/llmPricing.ts:223-231`).
 
 A coverage invariant — "every `MODEL_CATALOG` entry has a `PRICING` row" — is
 asserted by `llmCatalog.test.ts` using the test-only export `TEST_INTERNALS`
-(`convex/lib/llmPricing.ts:224-226`). Adding a catalog model without pricing
+(`convex/lib/llmPricing.ts:239-241`). Adding a catalog model without pricing
 fails CI; there are no silent zero-cost models.
 
 ### Usage normalization in the gateway
 
 The gateway collapses provider-specific shapes into a uniform `NormalizedUsage`
-before any cost math runs. `providerMetadata.openai.cachedPromptTokens` and
-`providerMetadata.anthropic.cacheReadInputTokens` both feed
-`NormalizedUsage.cachedInputTokens`. Anthropic cache writes are captured as a
-separate field (`cacheWriteTokens`) — there is no OpenAI analog today.
+before any cost math runs. The cache-read measurement comes from the AI SDK v6
+structural surface `sdkUsage.inputTokenDetails.cacheReadTokens` (mapped to
+`NormalizedUsage.cachedInputTokens`) — both OpenAI's prompt cache and
+Anthropic's explicit cache reads flow through this single field. Anthropic
+cache writes are captured separately via
+`sdkUsage.inputTokenDetails.cacheWriteTokens` (mapped to
+`NormalizedUsage.cacheWriteTokens`); there is no OpenAI analog today.
+`providerMetadata` is currently passed through unused — kept on the
+`normalizeUsage` signature so a future provider-specific counter can land
+without a call-site change.
 
 ### Per-message persistence (chat)
 
@@ -102,7 +116,7 @@ The kind-run row is written by `recordKindRun` in `convex/systemDesign.ts`,
 called from the System Design action at `convex/systemDesignNode.ts:327-350`
 which passes `totalCostUsd: costUsd` directly.
 
-`jobs.estimatedCostUsd` (`convex/schema.ts:347`) summarizes the full run. The
+`jobs.estimatedCostUsd` (`convex/schema.ts:337`) summarizes the full run. The
 per-job number is fed by the same `completeRunningJob` helper that powers chat
 job completion.
 
@@ -111,10 +125,10 @@ job completion.
 `convex/lib/userCost.ts` exposes an `internalQuery` that walks three sources:
 
 1. `systemDesignKindRuns` via `by_owner_and_startedAt`
-   (`convex/schema.ts:1242`) — source of truth for the System Design path
+   (`convex/schema.ts:1232`) — source of truth for the System Design path
    because the row already carries provider, model, normalized usage, and cost
    in one place.
-2. `messages` via `by_ownerTokenIdentifier` (`convex/schema.ts:999`) — chat
+2. `messages` via `by_ownerTokenIdentifier` (`convex/schema.ts:989`) — chat
    spend. The loop filters by `_creationTime` within the requested window
    (`sinceMs` inclusive, `untilMs` exclusive, default `Date.now()`).
 3. `jobs.estimatedCostUsd` is intentionally NOT read. The same money is already
@@ -136,11 +150,11 @@ and per-model dimensions — the loop branches on
 
 ### Daily cap settlement
 
-Two settlement call sites, both routing through
+Three settlement call sites, all routing through
 `consumeSandboxDailyCost(ctx, {ownerTokenIdentifier, repositoryId, cents})`
 (`convex/lib/rateLimit.ts:597-612`):
 
-- Chat: `settleChatSandboxDailyCost` inside `convex/chat/streaming.ts:130-163`,
+- Chat: `settleSandboxReplyCost` inside `convex/chat/streaming.ts:115-163`,
   invoked from the chat finalize / fail / cancel mutations. Converts
   `args.costUsd` via `costUsdToCents`, looks up the thread's `repositoryId`, and
   settles against both the per-user and per-repository buckets. A heuristic
@@ -148,10 +162,17 @@ Two settlement call sites, both routing through
   `cents === undefined`; the helper returns early without settlement (the
   conservative direction — better to under-settle than to fabricate a number
   that starves a user's quota).
-- System Design: `convex/systemDesign.ts:835-842` settles after writing the
-  kindRun row. `cached_hit` runs skip settlement (the artifact was already paid
-  for on the run that produced it). The `consumeSandboxDailyCost` short-circuit
-  on `cents <= 0` handles pricing misses uniformly.
+- System Design: `convex/systemDesign.ts:825-836` settles after writing the
+  kindRun row inside `recordKindRun`. `cached_hit` runs skip settlement (the
+  artifact was already paid for on the run that produced it). The
+  `consumeSandboxDailyCost` short-circuit on `cents <= 0` handles pricing
+  misses uniformly.
+- Embeddings: the artifact-indexing background action settles per batch via
+  `internal.lib.rateLimit.settleSandboxDailyCost` (the action-callable wrapper
+  around `consumeSandboxDailyCost`) inside `convex/artifactIndexing.ts`, and
+  the Library Ask hybrid RAG settles the per-query embed in
+  `convex/lib/artifactRag.ts:retrieveArtifactChunks`. Both paths gate on
+  `costUsdToCents(costUsd)` so pricing misses settle to a no-op.
 
 Cap config defaults live in `convex/lib/rateLimit.ts` under
 `sandboxCostUsdPerUserDaily` and `sandboxCostUsdPerRepositoryDaily`. Live

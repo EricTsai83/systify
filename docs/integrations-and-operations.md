@@ -13,13 +13,13 @@ flowchart TD
   WorkOS[WorkOS]
   GitHub[GitHubAppAndAPI]
   Daytona[Daytona]
-  OpenAI[OpenAI]
+  LLM[LLMProvidersOpenAIAnthropic]
 
   Frontend --> WorkOS
   Frontend --> Convex
   Convex --> GitHub
   Convex --> Daytona
-  Convex --> OpenAI
+  Convex --> LLM
 ```
 
 
@@ -134,7 +134,7 @@ The Convex `sandboxes` table stores the local projection of the Daytona runtime 
 - display sandbox summaries
 - execute later cleanup flows
 
-When a user clicks **Generate System Design**, the request path now also extends the sandbox TTL before the background action is queued. This keeps the sandbox alive long enough for the System Design Node action to start and reduces request-versus-sweep races.
+When a user clicks **Generate System Design**, the request mutation (`convex/systemDesign.ts:115-211`) enqueues the background job and returns; it does **not** extend the sandbox TTL inline. Sandbox liveness (probe, wake, or fresh provision) happens later inside `ensureSandboxReady` in the Node action — that's where the Daytona-side lifecycle is refreshed.
 
 ### On-demand sandbox provisioning
 
@@ -279,17 +279,53 @@ Webhook delivery is not assumed to be perfect. Systify therefore also runs two m
 
 These jobs make the webhook path durable instead of best-effort.
 
-## OpenAI
+### Sandbox sessions and idle auto-pause
+
+The `sandboxSessions` table tracks per-repository, per-owner sandbox usage windows so the system can surface "you have an active session" UI, accumulate `spentCents`, and pause idle sandboxes proactively. Each row carries `status` (`starting` / `active` / `paused`), `lastActivityAt`, `idleAutoPauseMinutes`, and the running `spentCents` tally.
+
+The `auto pause idle sandbox sessions` cron (`crons.ts`) runs every minute and pauses sessions whose `lastActivityAt` exceeds `idleAutoPauseMinutes` (default `10`, overridable via `SANDBOX_SESSION_IDLE_AUTO_PAUSE_MINUTES`). This keeps cost-bearing sandboxes from accruing spend after the user has wandered off.
+
+### Sandbox activation flow
+
+When a user enables Sandbox grounding on a Discuss thread (or reactivates after archive), `repositories.requestSandboxActivation` enqueues a `sandbox_activation` job and schedules `sandboxActivationNode.runSandboxActivation`. The Node action runs `ensureSandboxReady` (in `convex/lib/sandboxLiveness.ts`) — the single orchestrator for "make a sandbox usable for this repository right now" — which probes Daytona, wakes a stopped sandbox where possible, or provisions a fresh one. The same `sandbox_activation` job kind is what the in-flight guard above uses to dedupe duplicate activation triggers.
+
+### Audit log retention sweep
+
+The `cleanup expired sandbox tool call logs` cron (`crons.ts`) runs every 24 hours and walks `sandboxToolCallLog` rows oldest-first, deleting rows past the 90-day retention window. The handler self-reschedules when a batch is full so a backlog drains across multiple ticks rather than breaching the per-mutation write budget.
+
+### GitHub OAuth state cleanup
+
+The `cleanup expired github oauth states` cron (`crons.ts`) runs every 12 hours and purges `githubOAuthStates` rows whose 10-minute TTL has expired. Without this sweep the table would grow unbounded over time.
+
+## Sandbox cost caps
+
+In addition to request-rate buckets, Systify enforces **per-user** and **per-repository** daily spend caps on sandbox-grounded work (Discuss-mode Sandbox grounding replies and every System Design kind, which is always LLM-backed).
+
+- `SANDBOX_DAILY_CAP_PER_USER_USD` — default `5` USD / day per user
+- `SANDBOX_DAILY_CAP_PER_REPOSITORY_USD` — default `50` USD / day per repository
+
+Buckets are fixed windows aligned to UTC midnight and are denominated internally in cents so the rate-limiter token arithmetic stays integer. They are read fresh every call (no module-scope cache) so deploy-time env changes take effect without a restart.
+
+There are two flavors of cap interaction:
+
+- **Pre-check (peek-only)** — `computeSandboxCostCapEvaluation` in `convex/lib/chatEligibility.ts` peeks the bucket without consuming it. Used by the chat composer / mode switcher to render disabled CTAs with structured reason codes (`sandbox_user_cap_exceeded`, `sandbox_repository_cap_exceeded`).
+- **Hard pre-check (assert)** — `convex/systemDesign.ts:756` (`assertSandboxDailyCostBudget`) blocks `requestSystemDesignGeneration` outright when the projected estimate would push the bucket over the cap.
+
+Actual spend is settled post-hoc by `consumeSandboxDailyCost` once the gateway returns the real `totalCostUsd`, so the cap reflects observed cost rather than the upfront estimate.
+
+## LLM providers (OpenAI, Anthropic)
 
 ### Role
 
-OpenAI is currently used mainly for chat response generation across the two chat modes (`discuss` / `library`). If `OPENAI_API_KEY` is absent, the system falls back to a heuristic answer.
+LLM providers (OpenAI and Anthropic) power chat response generation across the two chat modes (`discuss` / `library`) and every LLM-backed System Design kind. All provider calls flow through the **LLM gateway** in `convex/lib/llmGateway.ts` (`streamViaGateway` / `generateViaGateway` / `embedViaGateway`) — provider SDKs (`@ai-sdk/openai`, `@ai-sdk/anthropic`) MUST NOT be imported anywhere else in `convex/`. The gateway owns catalog validation, per-user rate / concurrency acquisition, provider dispatch, retry, usage normalization, and cost computation, so no call site can bypass the chokepoint. Provider selection comes from a 3-tier resolver (`convex/chat/modelSelection.ts:9-91`): composer per-message override → `threads.defaultModelName` → `DEFAULT_PICK_BY_CAPABILITY`. The thread-level `threads.lockedProvider` field pins a provider for the lifetime of a thread once any reply has settled.
+
+If neither `OPENAI_API_KEY` nor `ANTHROPIC_API_KEY` is set, the system falls back to a heuristic answer.
 
 ### Design implications
 
-- OpenAI improves answer quality, but it is not the only requirement for product usability
+- LLM providers improve answer quality, but they are not the only requirement for product usability
 - the real repository knowledge source still lives in Convex artifacts and chunks
-- this fallback design preserves baseline usability even when the external model is unavailable
+- this fallback design preserves baseline usability even when external models are unavailable
 - when finalized usage is available, chat writes token counts to `messages` and `jobs`, plus `estimatedCostUsd` on the job
 - cost estimation uses a small local pricing snapshot, so unknown models leave cost fields empty instead of breaking the reply path
 
@@ -340,21 +376,27 @@ This sequence is intentional: the system rejects the cheapest failure paths firs
   - error: `RATE_LIMIT_EXCEEDED`
 - `daytonaRequestsGlobal`
   - default: `30 / hour`, sharded
-  - mutations: `requestSandboxActivation`, and `requestSystemDesignGeneration` *only when the request includes at least one LLM-backed kind*. Heuristic-only Library System Design requests skip this bucket because they do not touch Daytona. `createRepositoryImport` / `syncRepository` no longer consume this bucket — import runs against the GitHub API only.
+  - mutations: `requestSandboxActivation` and `requestSystemDesignGeneration` — both **always** consume this bucket because every System Design kind is LLM-backed and opens a Daytona sandbox (see `convex/systemDesign.ts:171` and `convex/lib/systemDesign.ts:74-89`). `createRepositoryImport` / `syncRepository` do **not** consume this bucket — import runs against the GitHub API only.
   - override: `RATE_LIMIT_DAYTONA_GLOBAL_PER_HOUR`
   - error: `RATE_LIMIT_EXCEEDED`
 
 ### In-flight guards
 
+The shared helper is `findActiveJob` in `convex/lib/jobs.ts`. It indexes by `(scope, kind, status, leaseExpiresAt)` and uses `gte("leaseExpiresAt", now)` (not strict `>`), so a row whose lease lands exactly on `now` still counts as active.
+
 - repository import / sync
   - guard source: `repositories.importStatus`
   - error: `OPERATION_ALREADY_IN_PROGRESS`
+- Sandbox grounding activation
+  - guard source: active `jobs` rows where `kind === 'sandbox_activation'`, `status in ('queued', 'running')`, and `leaseExpiresAt >= now`
+  - lease override: `SANDBOX_ACTIVATION_JOB_LEASE_MS`
+  - behavior: **idempotent** — `requestSandboxActivation` returns the existing `jobId` when one is in flight.
 - Library System Design generation
-  - guard source: active `jobs` rows where `kind === 'system_design'`, `status in ('queued', 'running')`, and `leaseExpiresAt > now`.
+  - guard source: active `jobs` rows where `kind === 'system_design'`, `status in ('queued', 'running')`, and `leaseExpiresAt >= now`.
   - lease override: `SYSTEM_DESIGN_JOB_LEASE_MS`
   - behavior: **idempotent** — returns the existing `jobId` instead of throwing, so the dialog can converge on the same job from a duplicate submit without an error toast.
 - chat replies
-  - guard source: active `jobs` rows where `kind === 'chat'`, `status in ('queued', 'running')`, and `leaseExpiresAt > now`
+  - guard source: active `jobs` rows where `kind === 'chat'`, `status in ('queued', 'running')`, and `leaseExpiresAt >= now`
   - lease override: `CHAT_JOB_LEASE_MS`
   - error: `OPERATION_ALREADY_IN_PROGRESS`
 
@@ -386,7 +428,10 @@ These values must exist in the Convex environment, not frontend `.env.local`:
 - `GITHUB_APP_PRIVATE_KEY`
 - `GITHUB_APP_WEBHOOK_SECRET`
 - `OPENAI_API_KEY`
-- `OPENAI_MODEL`
+- `ANTHROPIC_API_KEY`
+- `OPENAI_MODEL` *(listed but unused — legacy; model defaults live in `convex/chat/modelSelection.ts`)*
+- `SANDBOX_DAILY_CAP_PER_USER_USD`
+- `SANDBOX_DAILY_CAP_PER_REPOSITORY_USD`
 - `DAYTONA_API_KEY`
 - `DAYTONA_API_URL`
 - `DAYTONA_TARGET`
@@ -413,7 +458,7 @@ These values must exist in the Convex environment, not frontend `.env.local`:
 
 - the frontend receives only public configuration
 - sensitive credentials remain only in the Convex runtime
-- GitHub, Daytona, and OpenAI secrets never leak into the frontend bundle
+- GitHub, Daytona, and LLM provider (OpenAI / Anthropic) secrets never leak into the frontend bundle
 
 ## Minimal Deployment Model
 
@@ -421,7 +466,7 @@ The minimum deployment structure implied by the current codebase is:
 
 - frontend: a static site built from Vite
 - backend: Convex cloud
-- external dependencies: WorkOS, GitHub, Daytona, and OpenAI
+- external dependencies: WorkOS, GitHub, Daytona, and LLM providers (OpenAI, Anthropic)
 - hosting/CD: Vercel Git integration calling `bun run build:vercel`
 - SPA routing fallback: `vercel.json` rewrites client routes to `index.html` while leaving `/api/*` and file-extension asset requests alone
 
@@ -431,7 +476,7 @@ In other words, Systify does not require another always-on API server. Convex al
 
 ### Strengths
 
-- External dependency boundaries are clear, and GitHub, Daytona, and OpenAI each have an explicit Node-side integration layer.
+- External dependency boundaries are clear, and GitHub, Daytona, and the LLM providers (OpenAI, Anthropic) each have an explicit Node-side integration layer — LLM calls are funneled through the single `convex/lib/llmGateway.ts` chokepoint.
 - Cleanup uses both jobs and cron, which balances proactive deletion with passive reconciliation.
 - Environment-variable layering is clear, so sensitive credentials are not directly exposed to the frontend.
 
@@ -440,5 +485,5 @@ In other words, Systify does not require another always-on API server. Convex al
 - Both webhook and callback handling depend on Convex HTTP routes, so if integrations grow later, the system may need a clearer integration-module split.
 - Daytona webhook verification now uses Svix signing on the raw body by validating `svix-id`, `svix-timestamp`, and `svix-signature` with `DAYTONA_WEBHOOK_SIGNING_SECRET`, then optionally enforcing the configured organization allowlist.
 - Daytona cleanup is one of the most important cost-control paths, and failed sweeps or failed orphan reconciliation runs can still leave resources around temporarily.
-- OpenAI is currently used mostly for chat, while the analysis pipeline is still centered on sandbox inspection, so the two paths have not yet converged into a single agent framework.
+- LLM providers are currently used mostly for chat, while the analysis pipeline is still centered on sandbox inspection, so the two paths have not yet converged into a single agent framework.
 

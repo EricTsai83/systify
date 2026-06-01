@@ -60,7 +60,7 @@ In both cases, the leak point is downstream of the sandbox. Deleting the sandbox
 
 ## Confirmed Leak Path: `.git/config`
 
-The current clone implementation in `convex/daytona.ts:204-227` calls:
+The current clone implementation in `convex/daytona.ts:369-376` calls:
 
 ```ts
 await sandbox.git.clone(
@@ -146,8 +146,8 @@ The `redact(text)` function in `convex/chat/redaction.ts` scans tool output for 
 
 Redaction is applied at two points:
 
-1. Before the tool result is returned to the LLM. This prevents the LLM from reasoning over or quoting the secret. Implemented inside `executeReadFile` (file content) and `executeListDir` (entry names, aggregated to the result level so the entry shape stays stable for the tool-call ticker).
-2. Before any tool input or output is written to `messages.toolCalls`, `messageToolCallEvents`, or `sandboxToolCallLog`. The persistence path (`messages.toolCalls` + `messageToolCallEvents`, and `sandboxToolCallLog`) lifts the existing `redactedTypes` field directly rather than re-running redaction.
+1. Before the tool result is returned to the LLM. This prevents the LLM from reasoning over or quoting the secret. Implemented inside `executeReadFile` (file content), `executeListDir` (entry names, aggregated to the result level so the entry shape stays stable for the tool-call ticker), and `executeRunShell` (merged stdout/stderr after the 32 KiB truncation).
+2. Before any tool input or output is written to `messages.toolCalls`, `messageToolCallEvents`, or `sandboxToolCallLog`. The persistence path in `convex/chat/generation.ts` re-runs `redact()` over the serialized tool input and output JSON (`inputSummary` / `outputSummary`) — it does not assume the upstream envelope already scrubbed every field. `sandboxToolCallLog.redactedFields` then lifts the success envelope's `redactedTypes` so audit consumers see the matched-type slugs alongside the re-redacted summary.
 
 `redact()` returns both the scrubbed text and a sorted, de-duplicated list of matched pattern types. The matched-types list is informational — it lets the LLM and audit consumers know that something was filtered without exposing what. The returned slugs are typed as a closed `RedactionType` union so adding a pattern requires widening the union *and* the registry, which the compiler enforces.
 

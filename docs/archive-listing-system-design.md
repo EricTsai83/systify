@@ -112,8 +112,8 @@ Five terminal states, deterministically derived from `(isSearching, isLoadingFir
 
 | Condition                                                     | View                                                               |
 | ------------------------------------------------------------- | ------------------------------------------------------------------ |
-| Not searching, first page loading, no rows yet                | Full skeleton (description placeholder + 4 row placeholders)       |
-| Not searching, exhausted, zero rows                           | Empty-archive hero (large icon, title, copy, "Back to chat" CTA)   |
+| Not searching, first page loading, no rows yet                | Description + search input render immediately; 4 row card skeletons below |
+| Not searching, exhausted, zero rows                           | Empty-archive state (title, copy, "Back to chat" CTA with back-arrow icon) |
 | Searching, first page loading                                 | Search-pending card with spinner                                   |
 | Searching, settled, zero rows                                 | No-matches card (echoes the query, "Clear search" button)          |
 | Otherwise                                                     | Description + search input + list + sentinel + footer state        |

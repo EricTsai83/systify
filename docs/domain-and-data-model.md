@@ -62,8 +62,10 @@ flowchart TD
   Job --> Artifact
   Job --> Message
   Installation --> Repository
-  OAuthState --> Installation
+  OAuthState -.-> Installation
 ```
+
+The `OAuthState -.-> Installation` edge is a dashed arrow because `githubOAuthStates` carries no foreign key to `githubInstallations`. The state row only encodes a one-shot CSRF token that the GitHub App callback validates before upserting an installation — the relation is causal (state precedes install), not stored.
 
 
 
@@ -95,8 +97,9 @@ Its responsibilities include:
 
 - recording the source URL and branch
 - pointing to the associated `job`
-- linking to the sandbox created for that attempt when applicable
 - storing the commit SHA and completion time for that import
+
+Import never provisions a Daytona sandbox — repository metadata and knowledge are pulled through the GitHub API directly into Convex. Sandboxes are provisioned lazily by the Discuss-mode sandbox grounding toggle and by LLM-backed System Design kinds.
 
 In other words, `repositories` is the long-lived entity, while `imports` is a one-off process snapshot.
 
@@ -114,13 +117,14 @@ Its existence lets the system distinguish between a live sandbox that can suppor
 
 ### `jobs`
 
-`jobs` is the shared tracking layer for all asynchronous workflows. Different `kind` values share the same table:
+`jobs` is the shared tracking layer for all asynchronous workflows. Different `kind` values share the same table (see `convex/schema.ts:29`):
 
 - `import`
 - `index`
 - `system_design`
 - `chat`
 - `cleanup`
+- `sandbox_activation`
 
 Each job carries:
 
@@ -129,6 +133,7 @@ Each job carries:
 - `progress`
 - `costCategory`
 - `triggerSource`
+- `provider` / `modelName` — LLM provider and model baked into the job at creation, so a System Design job's per-kind cache key (`artifacts.generatedByProvider/Model/promptVersion`) remains stable across resumes after action timeout
 
 Because of this, the UI does not need to know the internal implementation of every background flow. It can render progress and result summaries directly from the job list.
 
@@ -158,6 +163,8 @@ This table plays two roles:
 
 Artifacts may optionally carry **`alignedImportCommitSha`**: best-effort record of which import revision the prose was authored against—used alongside sandbox verification timestamps to distinguish "checked against sandbox" freshness from **import snapshot drift**.
 
+LLM-generated artifacts additionally carry a provenance + idempotency triple — `generatedByProvider`, `generatedByModel`, and `promptVersion` — used as the System Design generator's cache lookup key. A cache hit against `(repositoryId, kind, alignedImportCommitSha, generatedByProvider, generatedByModel, promptVersion)` means we already produced this exact artifact for the same commit, with the same model, against the same prompt revision, so reusing it is safe. Bumping any of provider / model / promptVersion invalidates the cache.
+
 Library navigators consume metadata-only subscriptions; the markdown body loads when an editor tab is active.
 
 ### `userPreferences`
@@ -186,15 +193,21 @@ Chat data follows a standard thread/message model:
 - `threads` stores the title, mode, and last interaction timestamps. Current product modes are `discuss` and `library` — the same vocabulary appears in the persisted DB literal, the URL segment, and the UI label. Sandbox grounding is per-message inside Discuss (`messages.groundSandbox`), not a separate mode.
 - `messages` stores role, status, content, mode, and error information
 
+Threads also pin LLM provider state once the first assistant reply lands:
+
+- `lockedProvider`: thread-level provider lock written on the first assistant reply and immutable thereafter. Once a thread has held a turn with OpenAI we refuse to mix Anthropic into the same conversation history (and vice versa) — provider responses differ in reasoning-block shape, prompt-caching semantics, and tool-call envelope, so switching mid-thread would corrupt the running context. The composer's model picker hides the locked-out provider's models, and `chat.send.sendMessage` rejects mismatched picks with `thread_provider_locked` as backend defense-in-depth.
+- `defaultModelName`: last picked model name for this thread, used by the composer's 3-tier resolver (composer override → `threads.defaultModelName` → `DEFAULT_PICK_BY_CAPABILITY`) to pre-fill the picker.
+
 Beyond the basics, `messages` carries a few optional fields that are only populated when the corresponding feature applies:
 
+- `provider` / `modelName`: pinned at message insertion time so a later model picker change in the composer does not retroactively re-attribute an already-finished reply. User messages carry the pair too so the per-user cost rollup can attribute spend by the model the user chose even when the corresponding assistant reply never finalized.
 - `citationMap`: numbered `[A#] -> artifactId` entries, written for artifact-grounded replies
 - `toolCalls`: frozen tool-call trace for sandbox-grounded replies (folded from `messageToolCallEvents` at terminalization: finalize or any terminal failure/recovery path; see `chat-and-analysis-pipeline.md` for the lifecycle)
 - `estimatedInputTokens` / `estimatedOutputTokens`: usage data from the model provider, when available
 
 All three stay unset on messages that do not need them, so older rows continue to validate without backfill.
 
-An assistant message is not written all at once. It transitions through `pending` -> `streaming` -> `completed` or `failed`.
+An assistant message is not written all at once. It transitions through `pending` -> `streaming` -> `completed`, `failed`, or `cancelled`.
 
 ### `messageStreams`, `messageStreamChunks`, and `messageToolCallEvents`
 
@@ -296,6 +309,9 @@ This state affects both deep mode availability and cleanup behavior.
 - `streaming`
 - `completed`
 - `failed`
+- `cancelled`
+
+`cancelled` joins the terminal-state set alongside `completed` and `failed`, used when the owner stops their own in-flight reply via `chat.cancel.cancelInFlightReply`. Distinct from `failed` because the message body is not an error (partial content is still useful), the status label reads "Cancelled" (not "Failed") in the UI, and audit / metrics should distinguish user intent from upstream failures.
 
 ## Why This Model Works
 

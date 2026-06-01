@@ -157,12 +157,14 @@ The Daytona-managed container is the ultimate enforcement boundary. Systify conf
 | ------------------------------------------ | -------------------------------------- | ---------------------------------- |
 | CPU limit (vCPUs)                          | 2                                      | `DAYTONA_CPU_LIMIT`                |
 | Memory limit (GiB)                         | 4                                      | `DAYTONA_MEMORY_GIB`               |
-| Disk limit (GiB)                           | 10 (`.env.example` documents 20)        | `DAYTONA_DISK_GIB`                 |
+| Disk limit (GiB)                           | 10                                     | `DAYTONA_DISK_GIB`                 |
 | Auto-stop interval (minutes)               | 10                                     | `DAYTONA_AUTO_STOP_MINUTES`        |
 | Auto-archive interval (minutes)            | 1,440 (24 h)                           | `DAYTONA_AUTO_ARCHIVE_MINUTES`     |
 | Auto-delete interval (minutes)             | 1,440 (24 h)                           | `DAYTONA_AUTO_DELETE_MINUTES`      |
 | `networkBlockAll` at provisioning          | `false` (Daytona's default network policy applies during clone) | n/a (constant in `provisionSandbox`) |
 | `networkBlockAll` post-clone               | `true` (iptables blocks all egress) when truthy; skipped when falsy | `DAYTONA_POST_CLONE_BLOCK_NETWORK` |
+
+> **SDK limitation on CPU / memory / disk env vars**: the Daytona SDK only accepts a `resources` block on the *image-based* `create()` overload (`CreateSandboxFromImageParams`, `node_modules/@daytona/sdk/src/Daytona.d.ts:140-143`). `provisionSandbox` uses the *snapshot-based* overload (`convex/daytona.ts:120-133`), which does not carry `resources`. As a result, `DAYTONA_CPU_LIMIT` / `DAYTONA_MEMORY_GIB` / `DAYTONA_DISK_GIB` are read at `convex/daytona.ts:109-111` and recorded on the sandbox response for observability, but the container caps are actually inherited from the Daytona snapshot / tier and are not enforced by these env vars today. TODO: when Systify migrates to image-based provisioning (or Daytona exposes `resources` on the snapshot overload), thread the env-derived `Resources` through `daytona.create(...)` and reaffirm Layer 4 enforcement on these dimensions.
 
 The properties this gives us:
 
@@ -233,12 +235,12 @@ This is acceptable because no consumer of `messageToolCallEvents` reads the slug
 - **Empirical Daytona limits.** The defaults table above documents what Systify configures, but the underlying container (kernel, cgroups, seccomp, capability set) is not directly measured from within Systify. A focused validation pass against a live sandbox — running `cat /proc/self/status`, `cat /proc/self/limits`, and a controlled fork-bomb / `rm -rf` against a non-existent path — would let us replace the "we rely on Daytona's documented isolation" qualifier with concrete observed limits.
 - **Per-tool deny lists.** The current deny list is one set of patterns applied uniformly to `run_shell`. If a future tool (e.g. a degraded `library`-mode fallback path or a hypothetical `git_diff`) is added, this design accommodates a per-tool list without restructuring — each tool's `executeXxx` calls its own deny check.
 - **Streaming tool output.** Daytona's `executeCommand` returns the entire result at once. For very long-running inspection tools (e.g. a multi-GB `git log -p`) the LLM cannot react until the call returns. A future enhancement could expose Daytona's PTY surface for streaming, but that materially complicates the truncation and redaction story (we cannot redact a stream we have not finished receiving) and is deferred until there is a concrete need.
-- **Cancellation × in-flight `run_shell`.** `cancelInFlightReply` aborts the surrounding `streamText` via `AbortController`, but `SandboxFsClient.executeCommand` does not currently accept an `AbortSignal` — the Daytona SDK's `Process.executeCommand(command, cwd, env, timeout)` has no abort plumbing. Concretely: if a user cancels mid-`run_shell`, the in-flight shell continues running on the Daytona side until its `timeoutSeconds` elapses (worst case 60 s). The downstream effects:
-  - The cancelled assistant message is finalised correctly (cancellation path runs to completion); the eventual tool-result is dropped by the `if (wasCancelled) break` guard in `convex/chat/generation.ts`.
+- **Cancellation × in-flight `run_shell`.** `cancelInFlightReply` aborts the surrounding stream via the **LLM gateway's abort handle** (returned by `streamViaGateway`, not a raw `AbortController` constructed in `generation.ts`), but `SandboxFsClient.executeCommand` does not currently accept an `AbortSignal` — the Daytona SDK's `Process.executeCommand(command, cwd, env, timeout)` has no abort plumbing. Concretely: if a user cancels mid-`run_shell`, the in-flight shell continues running on the Daytona side until its `timeoutSeconds` elapses (worst case 60 s). The downstream effects:
+  - The cancelled assistant message is finalised correctly (cancellation path runs to completion); the eventual tool-result is dropped by the `if (wasCancelled) break` guard in `convex/chat/generation.ts`. The same `wasCancelled` guard also covers the `generationAborted` path (server-side abort, e.g. on session restart), so both user-cancel and runtime-abort drop the late tool-result identically.
   - The Daytona compute / token cost for the in-flight call is paid in full.
   - The live ticker may briefly show a "running" entry that then disappears without an "end" event, depending on which side wins the race.
 
-  The forward fix is twofold: (1) extend `SandboxShellExecuteOptions` with an optional `signal?: AbortSignal` and thread it through the adapter; (2) when Daytona's SDK exposes an abort hook, wire it to `cancellationController.signal` from `generation.ts` so cancel actually interrupts the underlying shell. Until then, the 60 s cap on `SANDBOX_RUN_SHELL_MAX_TIMEOUT_SECONDS` is the bound on the wasted compute window.
+  The forward fix is twofold: (1) extend `SandboxShellExecuteOptions` with an optional `signal?: AbortSignal` and thread it through the adapter; (2) when Daytona's SDK exposes an abort hook, wire it to the gateway's abort handle from `generation.ts` so cancel actually interrupts the underlying shell. Until then, the 60 s cap on `SANDBOX_RUN_SHELL_MAX_TIMEOUT_SECONDS` is the bound on the wasted compute window.
 
 ## Implementation Pointers
 
@@ -249,5 +251,5 @@ This is acceptable because no consumer of `messageToolCallEvents` reads the slug
   - Tool factory wiring: `createSandboxTools`.
 - Adapter: `convex/daytona.ts`
   - `getSandboxFsClient` → `executeCommand` translates `DaytonaTimeoutError` to `{ kind: "timeout" }`.
-- Prompt: `convex/chat/prompting.ts` — `SYSTEM_PROMPT_SANDBOX`.
+- Prompt: `convex/chat/prompting.ts` — `DISCUSS_SANDBOX_RULES`.
 - Tests: `convex/chat/sandboxTools.test.ts` (deny list, workdir, timeout, truncation, redaction, exit code), `convex/chat-prompting.test.ts` (prompt invariants), `convex/daytona.test.ts` (clone-time scrub).

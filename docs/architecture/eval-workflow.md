@@ -134,8 +134,9 @@ the markdown verbatim into the judge prompt
 (`convex/eval/systemDesign/judge.ts:67-75`). The action itself does NOT
 read the filesystem — keeps the Convex bundle self-contained.
 
-The four axes the judge scores are pinned in
-`convex/eval/systemDesign/aggregate.ts:29` and
+The four axes the judge scores are pinned by the `JudgeAxisScores`
+interface in `convex/eval/systemDesign/aggregate.ts:29` and enforced at
+runtime by the required-axes validation loop in
 `convex/eval/systemDesign/judge.ts:130-135`:
 
 ```typescript
