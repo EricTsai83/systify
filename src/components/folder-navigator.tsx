@@ -329,11 +329,7 @@ export function FolderNavigator({
           ) : null}
 
           {tree.length === 0 || unpinnedRoots.length > 0 ? (
-            <NavigatorSection
-              title="Folders"
-              description="Group artifacts by feature, decision, or subsystem."
-              icon={<FoldersIcon size={12} weight="fill" />}
-            >
+            <NavigatorSection title="Folders" icon={<FoldersIcon size={12} weight="fill" />}>
               {tree.length === 0 ? (
                 <p className="px-1 text-[11px] text-muted-foreground/80">
                   No folders yet. Click the folder-plus icon above to create one.
