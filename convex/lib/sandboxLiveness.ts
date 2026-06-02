@@ -11,7 +11,7 @@ import {
   startSandbox,
   type LiveSandboxProbe,
 } from "../daytona";
-import { getInstallationAccessToken } from "../githubAppNode";
+import { getInstallationAccessToken } from "./githubAppAuthNode";
 import { logErrorWithId, logInfo, logWarn } from "./observability";
 
 /**

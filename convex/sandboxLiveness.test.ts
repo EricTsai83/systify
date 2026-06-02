@@ -51,7 +51,7 @@ vi.mock("./daytona", () => ({
   SYSTIFY_DAYTONA_MANAGED_LABELS: { app: "systify" },
 }));
 
-vi.mock("./githubAppNode", () => ({
+vi.mock("./lib/githubAppAuthNode", () => ({
   getInstallationAccessToken: getInstallationAccessTokenMock,
 }));
 
