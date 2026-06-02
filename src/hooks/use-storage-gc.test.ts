@@ -121,7 +121,7 @@ describe("useStorageGC", () => {
     expect(window.localStorage.getItem("systify.library.tabs.repo_b")).toBeNull();
   });
 
-  test("leaves unrelated keys untouched", () => {
+  test("clears stale active repository cache and leaves unrelated keys untouched", () => {
     window.localStorage.setItem("systify.activeRepositoryId", "repo_active");
     window.localStorage.setItem("systify.artifactPanel.open", "true");
     window.localStorage.setItem("vite-ui-theme", "dark");
@@ -133,7 +133,7 @@ describe("useStorageGC", () => {
       }),
     );
 
-    expect(window.localStorage.getItem("systify.activeRepositoryId")).toBe("repo_active");
+    expect(window.localStorage.getItem("systify.activeRepositoryId")).toBeNull();
     expect(window.localStorage.getItem("systify.artifactPanel.open")).toBe("true");
     expect(window.localStorage.getItem("vite-ui-theme")).toBe("dark");
     expect(window.localStorage.getItem("systify.library.tabs.repo_gone")).toBeNull();

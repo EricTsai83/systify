@@ -6,12 +6,8 @@
  * panel and cost ticker).
  *
  * The pure resolvers stay independent of `process.env` and Convex `ctx`,
- * so they remain trivially testable. The runtime helpers below
- * (`toChatModeSandboxStatus`, `computeSandboxCostCapEvaluation`) own the
- * cross-query invariants shared by `threadContext.ts` and
- * `repositoryModeEligibility.ts` so the two read paths cannot drift in
- * how they translate sandbox lifecycle state or apply the cost-cap
- * precedence rule.
+ * so they remain trivially testable. Runtime database composition lives in
+ * `lib/modeAvailability.ts`.
  *
  * Mode semantics:
  *   - `discuss`  — free-form chat with two independent grounding axes
@@ -20,16 +16,7 @@
  *                  repository; the home of the always-visible Ask panel.
  */
 
-import type { Id } from "../_generated/dataModel";
-import type { QueryCtx } from "../_generated/server";
 import { type ChatMode, getDefaultThreadMode } from "./chatMode";
-import { type SandboxModeStatus } from "./repositorySandbox";
-import {
-  getSandboxReplyEstimateCents,
-  peekSandboxDailyCostForRepository,
-  peekSandboxDailyCostForUser,
-  type SandboxDailyCostBudget,
-} from "./rateLimit";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -322,103 +309,4 @@ export function resolveRepositoryModes(
     },
     askReadiness,
   };
-}
-
-// ─── Shared runtime helpers ───────────────────────────────────────────────
-
-/**
- * Map the centralized `SandboxModeStatus` (from `lib/repositorySandbox.ts`)
- * onto the pure resolver's `ChatModeSandboxStatus` input. Single source of
- * truth for the translation — `threadContext.getThreadContext` and
- * `repositoryModeEligibility.evaluate` both import this so the two read
- * paths cannot drift in how they classify the same sandbox doc.
- *
- * TTL, missing remoteId / repoPath, and provider-status semantics stay in
- * `lib/repositorySandbox.ts`; this helper only relabels the codes for the
- * resolver domain.
- */
-export function toChatModeSandboxStatus(status: SandboxModeStatus | null): ChatModeSandboxStatus {
-  switch (status?.reasonCode ?? "missing_sandbox") {
-    case "available":
-      return "ready";
-    case "sandbox_provisioning":
-      return "provisioning";
-    case "sandbox_expired":
-      return "expired";
-    case "sandbox_unavailable":
-      return "failed";
-    case "missing_sandbox":
-      return "none";
-  }
-}
-
-export interface SandboxCostCapEvaluation {
-  /** Gate consumed by the eligibility resolver. */
-  gate: SandboxCostCapGate;
-  /** Per-user daily budget snapshot (always populated for the cost ticker). */
-  userBudget: SandboxDailyCostBudget;
-  /** Per-repository daily budget snapshot, or `null` when no repository is in play. */
-  repositoryBudget: SandboxDailyCostBudget | null;
-}
-
-/**
- * Compute the sandbox daily-cost-cap gate AND the per-user / per-repository
- * budget snapshots in one pass. Single source of truth for the precedence
- * rule (user cap blocks first); shared by
- * `threadContext.computeSandboxCostBudgets` and
- * `repositoryModeEligibility.computeSandboxCostCapGate` so the rule cannot
- * drift between the two call sites.
- *
- * Both peeks happen inside the surrounding query's transaction so the gate
- * decision and the displayed budgets agree even under concurrent
- * settlement: a rate-limit settle that lands between the user peek and the
- * repository peek would update both buckets atomically from the viewer's
- * POV.
- *
- * Why we peek even when the gate ends up open: the chat-panel cost ticker
- * ("$X.XX of $Y.YY remaining today") is shown regardless of whether the
- * cap blocked the send. Returning both peeks unconditionally keeps the
- * read path a single source of truth.
- *
- * Precedence (user cap first) matches `assertSandboxDailyCostBudget`'s
- * write-path ordering in `convex/lib/rateLimit.ts`. When both would block,
- * the gate surfaces the user-cap tooltip — the more user-actionable signal
- * because the viewer can switch to ungrounded chat immediately, whereas
- * the repository-cap reset blocks every sandbox-grounded send against the
- * same repository regardless of which thread initiated the spend.
- */
-export async function computeSandboxCostCapEvaluation(
-  ctx: QueryCtx,
-  ownerTokenIdentifier: string,
-  repositoryId: Id<"repositories"> | null,
-): Promise<SandboxCostCapEvaluation> {
-  const estimateCents = getSandboxReplyEstimateCents();
-  const userBudget = await peekSandboxDailyCostForUser(ctx, ownerTokenIdentifier);
-  const repositoryBudget = repositoryId ? await peekSandboxDailyCostForRepository(ctx, repositoryId) : null;
-
-  if (userBudget.remainingCents < estimateCents) {
-    return {
-      gate: {
-        enabled: false,
-        reason: "user_daily_cap_exceeded",
-        tooltip: DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
-        resetAtMs: userBudget.resetAtMs,
-      },
-      userBudget,
-      repositoryBudget,
-    };
-  }
-  if (repositoryBudget && repositoryBudget.remainingCents < estimateCents) {
-    return {
-      gate: {
-        enabled: false,
-        reason: "repository_daily_cap_exceeded",
-        tooltip: DISABLED_REASON_SANDBOX_REPOSITORY_CAP_EXCEEDED,
-        resetAtMs: repositoryBudget.resetAtMs,
-      },
-      userBudget,
-      repositoryBudget,
-    };
-  }
-  return { gate: { enabled: true }, userBudget, repositoryBudget };
 }

@@ -11,7 +11,7 @@ import {
   startSandbox,
   type LiveSandboxProbe,
 } from "../daytona";
-import { getInstallationAccessToken } from "../githubAppNode";
+import { getInstallationAccessToken } from "./githubAppAuthNode";
 import { logErrorWithId, logInfo, logWarn } from "./observability";
 
 /**
@@ -293,11 +293,11 @@ async function provisionAndClone(
       userFacingMessage: LIVE_SOURCE_UNAVAILABLE_MESSAGE,
     });
   }
-  const accessCheck = (await ctx.runAction(internal.githubAppNode.checkRepoAccess, {
+  const accessCheck = await ctx.runAction(internal.githubAppNode.checkRepoAccess, {
     installationId,
     owner: repoOwner,
     repo: repoName,
-  })) as { accessible: boolean; isPrivate?: boolean; message?: string };
+  });
   if (!accessCheck.accessible) {
     throw new SandboxPreparationError({
       reason: "repository_inaccessible",

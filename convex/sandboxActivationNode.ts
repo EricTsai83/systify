@@ -28,9 +28,9 @@ export const runSandboxActivation = internalAction({
     ownerTokenIdentifier: v.string(),
   },
   handler: async (ctx, args) => {
-    const start = (await ctx.runMutation(internal.repositories.markSandboxActivationStarted, {
+    const start = await ctx.runMutation(internal.repositories.markSandboxActivationStarted, {
       jobId: args.jobId,
-    })) as { started: boolean };
+    });
     if (!start.started) {
       return;
     }

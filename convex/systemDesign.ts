@@ -41,6 +41,11 @@ import {
 } from "./lib/llmCatalog";
 import { llmProviderValidator, type LlmProvider } from "./lib/llmProvider";
 import { costUsdToCents } from "./lib/llmPricing";
+import {
+  persistedArtifactResultValidator,
+  recordedKindRunResultValidator,
+  startedResultValidator,
+} from "./lib/functionResultSchemas";
 import { logInfo, logWarn } from "./lib/observability";
 import { SYSTEM_DESIGN_PROMPT_VERSIONS } from "./lib/systemDesignPrompts";
 
@@ -315,6 +320,7 @@ export const getLatestSystemDesignJob = query({
 
 export const markGenerationStarted = internalMutation({
   args: { jobId: v.id("jobs"), selections: v.array(systemDesignKindValidator) },
+  returns: startedResultValidator,
   handler: async (ctx, args): Promise<{ started: boolean }> => {
     const now = Date.now();
     const result = await markQueuedJobRunning(ctx, {
@@ -614,6 +620,7 @@ export const persistGeneratedArtifact = internalMutation({
     generatedByModel: v.optional(v.string()),
     promptVersion: v.optional(v.number()),
   },
+  returns: persistedArtifactResultValidator,
   handler: async (ctx, args): Promise<{ artifactId: Id<"artifacts"> }> => {
     const folderKey = SYSTEM_DESIGN_KIND_TO_FOLDER[args.kind as SystemDesignKind];
     // Tolerant lookup: `by_repositoryId_and_systemKey` is non-unique, so
@@ -834,6 +841,7 @@ export const recordKindRun = internalMutation({
     missingSections: v.optional(v.array(v.string())),
     startedAt: v.number(),
   },
+  returns: recordedKindRunResultValidator,
   handler: async (ctx, args): Promise<{ kindRunId: Id<"systemDesignKindRuns"> }> => {
     const kindRunId = await ctx.db.insert("systemDesignKindRuns", {
       ownerTokenIdentifier: args.ownerTokenIdentifier,

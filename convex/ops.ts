@@ -5,6 +5,13 @@ import { internalMutation, internalQuery, mutation, type MutationCtx, type Query
 import { requireOwnedDoc } from "./lib/ownedDocs";
 import { CASCADE_BATCH_SIZE } from "./lib/constants";
 import { completeRunningJob, enqueueJob, failRunningJob, markQueuedJobRunning } from "./lib/jobs";
+import {
+  expiredSandboxesValidator,
+  sandboxCleanupScheduleResultValidator,
+  sandboxCleanupStartValidator,
+  sandboxLookupResultValidator,
+  staleInteractiveJobsValidator,
+} from "./lib/functionResultSchemas";
 
 const STALE_INTERACTIVE_JOBS_PER_KIND_LIMIT = 25;
 const STALE_INTERACTIVE_JOBS_TOTAL_LIMIT = 50;
@@ -103,6 +110,7 @@ export const scheduleRepositorySandboxCleanup = internalMutation({
   args: {
     repositoryId: v.id("repositories"),
   },
+  returns: sandboxCleanupScheduleResultValidator,
   handler: async (ctx, args) => {
     const sandboxes = await ctx.db
       .query("sandboxes")
@@ -145,6 +153,7 @@ export const markSandboxCleanupRunning = internalMutation({
     sandboxId: v.id("sandboxes"),
     jobId: v.id("jobs"),
   },
+  returns: sandboxCleanupStartValidator,
   handler: async (ctx, args) => {
     const sandbox = await ctx.db.get(args.sandboxId);
     if (!sandbox) {
@@ -175,6 +184,7 @@ export const completeSandboxCleanup = internalMutation({
     jobId: v.id("jobs"),
   },
   handler: async (ctx, args) => {
+    const sandbox = await ctx.db.get(args.sandboxId);
     const completedJob = await completeRunningJob(ctx, {
       jobId: args.jobId,
       expectedKind: "cleanup",
@@ -185,10 +195,24 @@ export const completeSandboxCleanup = internalMutation({
       return { completed: false as const };
     }
 
-    await ctx.db.patch(args.sandboxId, {
-      status: "archived",
-      lastUsedAt: Date.now(),
-    });
+    if (sandbox) {
+      await ctx.db.patch(args.sandboxId, {
+        status: "archived",
+        lastUsedAt: Date.now(),
+      });
+    }
+
+    const repositoryId = completedJob.repositoryId;
+    if (!repositoryId) {
+      throw new Error("Cleanup job is missing repositoryId.");
+    }
+
+    const repository = await ctx.db.get(repositoryId);
+    if (repository?.deletionRequestedAt) {
+      await ctx.scheduler.runAfter(0, internal.repositories.cascadeDeleteRepository, {
+        repositoryId,
+      });
+    }
     return { completed: true as const };
   },
 });
@@ -262,6 +286,7 @@ export const failSandboxCleanup = internalMutation({
     errorMessage: v.string(),
   },
   handler: async (ctx, args) => {
+    const sandbox = await ctx.db.get(args.sandboxId);
     const failedJob = await failRunningJob(ctx, {
       jobId: args.jobId,
       expectedKind: "cleanup",
@@ -276,6 +301,17 @@ export const failSandboxCleanup = internalMutation({
       status: "failed",
       lastErrorMessage: args.errorMessage,
     });
+    if (sandbox) {
+      const repository = await ctx.db.get(sandbox.repositoryId);
+      if (repository?.deletionRequestedAt) {
+        await ctx.db.patch(sandbox.repositoryId, {
+          repositoryDeleteSandboxCleanupAttempts: (repository.repositoryDeleteSandboxCleanupAttempts ?? 0) + 1,
+        });
+        await ctx.scheduler.runAfter(0, internal.repositories.cascadeDeleteRepository, {
+          repositoryId: sandbox.repositoryId,
+        });
+      }
+    }
     return { failed: true as const };
   },
 });
@@ -286,6 +322,7 @@ export const failSandboxCleanup = internalMutation({
 
 export const getExpiredSandboxes = internalQuery({
   args: {},
+  returns: expiredSandboxesValidator,
   handler: async (ctx) => {
     const now = Date.now();
     // Sweep both expired ready sandboxes and expired stopped sandboxes.
@@ -330,6 +367,7 @@ export const getSandboxByRemoteId = internalQuery({
   args: {
     remoteId: v.string(),
   },
+  returns: sandboxLookupResultValidator,
   handler: async (ctx, args) => {
     const sandbox = await ctx.db
       .query("sandboxes")
@@ -365,6 +403,7 @@ async function listStaleJobsByStatusAndKind(
 
 export const listStaleInteractiveJobs = internalQuery({
   args: {},
+  returns: staleInteractiveJobsValidator,
   handler: async (ctx) => {
     const now = Date.now();
     const jobs = (
@@ -387,10 +426,15 @@ export const listStaleInteractiveJobs = internalQuery({
       })
       .slice(0, STALE_INTERACTIVE_JOBS_TOTAL_LIMIT);
 
-    return jobs.map((job) => ({
-      jobId: job._id,
-      kind: job.kind,
-    }));
+    return jobs.map((job) => {
+      if (job.kind !== "chat" && job.kind !== "system_design" && job.kind !== "sandbox_activation") {
+        throw new Error(`Unexpected stale interactive job kind: ${job.kind}`);
+      }
+      return {
+        jobId: job._id,
+        kind: job.kind,
+      };
+    });
   },
 });
 

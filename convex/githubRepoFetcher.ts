@@ -1,6 +1,6 @@
 "use node";
 
-import { getInstallationAccessToken } from "./githubAppNode";
+import { getInstallationAccessToken } from "./lib/githubAppAuthNode";
 import { createRepoFileRecords, shouldReadFile, type RepositorySnapshot } from "./lib/repoAnalysis";
 import { MAX_LISTED_FILES } from "./lib/constants";
 import { logWarn } from "./lib/observability";

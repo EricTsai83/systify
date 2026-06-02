@@ -245,6 +245,9 @@ export default defineSchema({
     latestRemoteSha: v.optional(v.string()),
     lastCheckedForUpdatesAt: v.optional(v.number()),
     deletionRequestedAt: v.optional(v.number()),
+    repositoryDeleteSandboxCleanupAttempts: v.optional(v.number()),
+    repositoryDeleteFailedAt: v.optional(v.number()),
+    repositoryDeleteFailureMessage: v.optional(v.string()),
     archivedAt: v.optional(v.number()),
     /**
      * Per-repository UI state. `color` is round-robin allocated on import
