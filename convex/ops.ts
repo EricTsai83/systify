@@ -195,17 +195,23 @@ export const completeSandboxCleanup = internalMutation({
       return { completed: false as const };
     }
 
-    await ctx.db.patch(args.sandboxId, {
-      status: "archived",
-      lastUsedAt: Date.now(),
-    });
     if (sandbox) {
-      const repository = await ctx.db.get(sandbox.repositoryId);
-      if (repository?.deletionRequestedAt) {
-        await ctx.scheduler.runAfter(0, internal.repositories.cascadeDeleteRepository, {
-          repositoryId: sandbox.repositoryId,
-        });
-      }
+      await ctx.db.patch(args.sandboxId, {
+        status: "archived",
+        lastUsedAt: Date.now(),
+      });
+    }
+
+    const repositoryId = completedJob.repositoryId;
+    if (!repositoryId) {
+      throw new Error("Cleanup job is missing repositoryId.");
+    }
+
+    const repository = await ctx.db.get(repositoryId);
+    if (repository?.deletionRequestedAt) {
+      await ctx.scheduler.runAfter(0, internal.repositories.cascadeDeleteRepository, {
+        repositoryId,
+      });
     }
     return { completed: true as const };
   },

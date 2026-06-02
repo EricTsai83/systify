@@ -3,6 +3,10 @@ type GitHubAppCredentials = {
   privateKeyPem: string;
 };
 
+const INSTALLATION_TOKEN_MAX_ATTEMPTS = 3;
+const INSTALLATION_TOKEN_BASE_BACKOFF_MS = 500;
+const INSTALLATION_TOKEN_RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
+
 let cachedGitHubAppCredentials: GitHubAppCredentials | null = null;
 
 /**
@@ -167,22 +171,63 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
  * has been granted access to.
  */
 export async function getInstallationAccessToken(installationId: number): Promise<string> {
-  const appJwt = await createAppJwt();
+  let lastError: Error | null = null;
 
-  const response = await fetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
-    method: "POST",
-    headers: {
-      "Accept": "application/vnd.github.v3+json",
-      "Authorization": `Bearer ${appJwt}`,
-      "User-Agent": "systify",
-    },
-  });
+  for (let attempt = 1; attempt <= INSTALLATION_TOKEN_MAX_ATTEMPTS; attempt += 1) {
+    const appJwt = await createAppJwt();
 
-  if (!response.ok) {
+    const response = await fetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
+      method: "POST",
+      headers: {
+        "Accept": "application/vnd.github.v3+json",
+        "Authorization": `Bearer ${appJwt}`,
+        "User-Agent": "systify",
+      },
+    });
+
+    if (response.ok) {
+      const data = (await response.json()) as { token: string };
+      return data.token;
+    }
+
     const body = await response.text();
-    throw new Error(`Failed to get installation access token (${response.status}): ${body}`);
+    const error = new Error(`Failed to get installation access token (${response.status}): ${body}`);
+    lastError = error;
+
+    if (attempt >= INSTALLATION_TOKEN_MAX_ATTEMPTS || !INSTALLATION_TOKEN_RETRYABLE_STATUS_CODES.has(response.status)) {
+      throw error;
+    }
+
+    await delay(getInstallationTokenRetryDelayMs(response.headers.get("retry-after"), attempt));
   }
 
-  const data = (await response.json()) as { token: string };
-  return data.token;
+  throw lastError ?? new Error("Failed to get installation access token: exhausted retries.");
+}
+
+function getInstallationTokenRetryDelayMs(retryAfterHeader: string | null, attempt: number): number {
+  const retryAfterMs = parseRetryAfterMs(retryAfterHeader);
+  const backoffMs = INSTALLATION_TOKEN_BASE_BACKOFF_MS * 2 ** (attempt - 1);
+  return Math.max(retryAfterMs, backoffMs);
+}
+
+function parseRetryAfterMs(retryAfterHeader: string | null): number {
+  if (!retryAfterHeader) {
+    return 0;
+  }
+
+  const retryAfterSeconds = Number.parseInt(retryAfterHeader, 10);
+  if (Number.isFinite(retryAfterSeconds)) {
+    return retryAfterSeconds * 1000;
+  }
+
+  const retryAfterTimestamp = Date.parse(retryAfterHeader);
+  if (Number.isFinite(retryAfterTimestamp)) {
+    return Math.max(0, retryAfterTimestamp - Date.now());
+  }
+
+  return 0;
+}
+
+async function delay(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
