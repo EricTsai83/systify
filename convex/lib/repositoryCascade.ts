@@ -59,6 +59,27 @@ async function drainArtifactsByRepositoryId(ctx: MutationCtx, repositoryId: Id<"
   return docs.length === CASCADE_BATCH_SIZE;
 }
 
+async function drainArtifactChunksByRepositoryId(ctx: MutationCtx, repositoryId: Id<"repositories">): Promise<boolean> {
+  const docs = await ctx.db
+    .query("artifactChunks")
+    .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
+    .take(CASCADE_BATCH_SIZE);
+  for (const doc of docs) await ctx.db.delete(doc._id);
+  return docs.length === CASCADE_BATCH_SIZE;
+}
+
+async function drainArtifactFoldersByRepositoryId(
+  ctx: MutationCtx,
+  repositoryId: Id<"repositories">,
+): Promise<boolean> {
+  const docs = await ctx.db
+    .query("artifactFolders")
+    .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
+    .take(CASCADE_BATCH_SIZE);
+  for (const doc of docs) await ctx.db.delete(doc._id);
+  return docs.length === CASCADE_BATCH_SIZE;
+}
+
 async function drainRepoChunksByRepositoryId(ctx: MutationCtx, repositoryId: Id<"repositories">): Promise<boolean> {
   const docs = await ctx.db
     .query("repoChunks")
@@ -84,6 +105,52 @@ async function drainImportsByRepositoryId(ctx: MutationCtx, repositoryId: Id<"re
     .take(CASCADE_BATCH_SIZE);
   for (const doc of docs) await ctx.db.delete(doc._id);
   return docs.length === CASCADE_BATCH_SIZE;
+}
+
+async function drainSystemDesignKindRunsByRepositoryId(
+  ctx: MutationCtx,
+  repositoryId: Id<"repositories">,
+): Promise<boolean> {
+  const docs = await ctx.db
+    .query("systemDesignKindRuns")
+    .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", repositoryId))
+    .take(CASCADE_BATCH_SIZE);
+  for (const doc of docs) await ctx.db.delete(doc._id);
+  return docs.length === CASCADE_BATCH_SIZE;
+}
+
+async function drainSandboxSessionsByRepositoryId(
+  ctx: MutationCtx,
+  repositoryId: Id<"repositories">,
+): Promise<boolean> {
+  const docs = await ctx.db
+    .query("sandboxSessions")
+    .withIndex("by_repositoryId_and_startedAt", (q) => q.eq("repositoryId", repositoryId))
+    .take(CASCADE_BATCH_SIZE);
+  for (const doc of docs) await ctx.db.delete(doc._id);
+  return docs.length === CASCADE_BATCH_SIZE;
+}
+
+async function detachSandboxRemoteObservation(ctx: MutationCtx, remoteId: string): Promise<void> {
+  if (remoteId === "") {
+    return;
+  }
+
+  const observation = await ctx.db
+    .query("sandboxRemoteObservations")
+    .withIndex("by_remoteId", (q) => q.eq("remoteId", remoteId))
+    .unique();
+  if (!observation) {
+    return;
+  }
+
+  await ctx.db.patch(observation._id, {
+    sandboxId: undefined,
+    repositoryId: undefined,
+    discoveryStatus: "ignored",
+    confirmAfterAt: undefined,
+    lastWebhookAt: Date.now(),
+  });
 }
 
 async function drainJobsByRepositoryId(ctx: MutationCtx, repositoryId: Id<"repositories">): Promise<boolean> {
@@ -281,10 +348,14 @@ export async function runRepositoryCascadeDelete(
       })) || more;
   }
 
+  more = (await drainArtifactChunksByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainArtifactsByRepositoryId(ctx, args.repositoryId)) || more;
+  more = (await drainArtifactFoldersByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainRepoChunksByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainRepoFilesByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainImportsByRepositoryId(ctx, args.repositoryId)) || more;
+  more = (await drainSystemDesignKindRunsByRepositoryId(ctx, args.repositoryId)) || more;
+  more = (await drainSandboxSessionsByRepositoryId(ctx, args.repositoryId)) || more;
 
   const sandboxes = await ctx.db
     .query("sandboxes")
@@ -294,6 +365,7 @@ export async function runRepositoryCascadeDelete(
   let nonArchivedSandboxCount = 0;
   for (const sandbox of sandboxes) {
     if (sandbox.status === "archived") {
+      await detachSandboxRemoteObservation(ctx, sandbox.remoteId);
       await ctx.db.delete(sandbox._id);
     } else if (sandboxCleanupRetryExhausted) {
       nonArchivedSandboxCount += 1;

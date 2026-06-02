@@ -7,6 +7,7 @@ import { CASCADE_BATCH_SIZE } from "./lib/constants";
 import { completeRunningJob, enqueueJob, failRunningJob, markQueuedJobRunning } from "./lib/jobs";
 import {
   expiredSandboxesValidator,
+  sandboxCleanupScheduleResultValidator,
   sandboxCleanupStartValidator,
   sandboxLookupResultValidator,
   staleInteractiveJobsValidator,
@@ -109,6 +110,7 @@ export const scheduleRepositorySandboxCleanup = internalMutation({
   args: {
     repositoryId: v.id("repositories"),
   },
+  returns: sandboxCleanupScheduleResultValidator,
   handler: async (ctx, args) => {
     const sandboxes = await ctx.db
       .query("sandboxes")

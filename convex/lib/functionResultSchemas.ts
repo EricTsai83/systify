@@ -70,6 +70,11 @@ export const sandboxCleanupStartValidator = v.union(
 );
 export type SandboxCleanupStart = Infer<typeof sandboxCleanupStartValidator>;
 
+export const sandboxCleanupScheduleResultValidator = v.object({
+  pendingCleanupCount: v.number(),
+});
+export type SandboxCleanupScheduleResult = Infer<typeof sandboxCleanupScheduleResultValidator>;
+
 export const expiredSandboxValidator = v.object({
   sandboxId: v.id("sandboxes"),
   remoteId: v.string(),

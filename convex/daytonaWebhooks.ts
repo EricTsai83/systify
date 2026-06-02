@@ -339,6 +339,8 @@ export const markObservationDeleted = internalMutation({
     }
 
     await ctx.db.patch(observation._id, {
+      sandboxId: undefined,
+      repositoryId: undefined,
       discoveryStatus: "deleted",
       confirmAfterAt: undefined,
       deletedAt: Date.now(),

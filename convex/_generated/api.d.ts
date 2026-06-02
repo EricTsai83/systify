@@ -23,7 +23,6 @@ import type * as chat_prompting from "../chat/prompting.js";
 import type * as chat_redaction from "../chat/redaction.js";
 import type * as chat_relevance from "../chat/relevance.js";
 import type * as chat_replySession from "../chat/replySession.js";
-import type * as chat_replyStreamRunner from "../chat/replyStreamRunner.js";
 import type * as chat_sandboxToolCallLog from "../chat/sandboxToolCallLog.js";
 import type * as chat_sandboxTools from "../chat/sandboxTools.js";
 import type * as chat_send from "../chat/send.js";
@@ -129,7 +128,6 @@ declare const fullApi: ApiFromModules<{
   "chat/redaction": typeof chat_redaction;
   "chat/relevance": typeof chat_relevance;
   "chat/replySession": typeof chat_replySession;
-  "chat/replyStreamRunner": typeof chat_replyStreamRunner;
   "chat/sandboxToolCallLog": typeof chat_sandboxToolCallLog;
   "chat/sandboxTools": typeof chat_sandboxTools;
   "chat/send": typeof chat_send;

@@ -513,8 +513,10 @@ export const cascadeDeleteRepository = internalMutation({
   args: {
     repositoryId: v.id("repositories"),
   },
-  handler: async (ctx, args) => {
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
     await runRepositoryCascadeDelete(ctx, args);
+    return null;
   },
 });
 

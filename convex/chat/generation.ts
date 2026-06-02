@@ -8,9 +8,9 @@ import { runAssistantReplySession } from "./replySession";
 /**
  * Convex action adapter for chat reply generation.
  *
- * The session and stream orchestration live in `replySession.ts` /
- * `replyStreamRunner.ts`; this registration remains the public internal
- * interface and the single place that marks the assistant reply running.
+ * The session and stream orchestration live in `replySession.ts`; this
+ * registration remains the public internal interface and the single place
+ * that marks the assistant reply running.
  */
 export const generateAssistantReply = internalAction({
   args: {
