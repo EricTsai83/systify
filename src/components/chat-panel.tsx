@@ -606,7 +606,7 @@ export function ChatPanel({
                  * double-cancels: the mutation is idempotent on the server,
                  * but stacking clicks would still fire redundant requests.
                  *
-                 * Shares the `min-w-[7.5rem]` floor with the Send button so
+                 * Shares the `min-w-30` floor with the Send button so
                  * the composer's right edge doesn't snap horizontally when
                  * the streaming → cancelled transition swaps which button is
                  * mounted.
@@ -618,7 +618,7 @@ export function ChatPanel({
                   disabled={isCancellingReply}
                   aria-label="Stop generating reply"
                   data-testid="chat-panel-stop-button"
-                  className="min-w-[7.5rem]"
+                  className="min-w-30"
                   onClick={() => {
                     void onCancelInFlightReply?.();
                   }}
@@ -638,7 +638,7 @@ export function ChatPanel({
                   size="sm"
                   disabled={isSendBlocked}
                   data-testid="chat-panel-send-button"
-                  className="min-w-[7.5rem]"
+                  className="min-w-30"
                 >
                   <PaperPlaneTiltIcon weight="bold" />
                   {/*
@@ -648,8 +648,8 @@ export function ChatPanel({
                    * The invisible sizer reserves the max width; the visible
                    * span is overlaid in the same grid cell.
                    *
-                   * `min-w-[7.5rem]` on the button itself matches the Stop
-                   * button so the streaming → idle swap is width-stable too.
+                   * The button's minimum width matches the Stop button so the
+                   * streaming → idle swap is width-stable too.
                    */}
                   <span className="grid">
                     <span aria-hidden="true" className="invisible col-start-1 row-start-1">

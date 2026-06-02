@@ -60,3 +60,84 @@ describe("recordSandboxSessionActivity", () => {
     expect(stored?.spentCents).toBe(25);
   });
 });
+
+describe("idle sandbox session auto-pause", () => {
+  test("lists only active sessions beyond their idle timeout", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await seedRepository(t);
+    const now = Date.now();
+    const staleSessionId = await t.run(async (ctx) =>
+      ctx.db.insert("sandboxSessions", {
+        ownerTokenIdentifier: OWNER,
+        repositoryId,
+        status: "active",
+        startedAt: now - 30 * 60_000,
+        lastActivityAt: now - 11 * 60_000,
+        lastResumedAt: now - 30 * 60_000,
+        idleAutoPauseMinutes: 10,
+        spentCents: 0,
+      }),
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.insert("sandboxSessions", {
+        ownerTokenIdentifier: OWNER,
+        repositoryId,
+        status: "active",
+        startedAt: now - 30 * 60_000,
+        lastActivityAt: now - 5 * 60_000,
+        lastResumedAt: now - 30 * 60_000,
+        idleAutoPauseMinutes: 10,
+        spentCents: 0,
+      });
+      await ctx.db.insert("sandboxSessions", {
+        ownerTokenIdentifier: OWNER,
+        repositoryId,
+        status: "paused",
+        startedAt: now - 30 * 60_000,
+        lastActivityAt: now - 20 * 60_000,
+        lastResumedAt: now - 30 * 60_000,
+        idleAutoPauseMinutes: 10,
+        spentCents: 0,
+      });
+    });
+
+    const candidates = await t.query(internal.sandboxSessions.listAutoPauseCandidates, {
+      now,
+      limit: 10,
+    });
+
+    expect(candidates.map((session) => session._id)).toEqual([staleSessionId]);
+  });
+
+  test("rechecks idleness before marking a session paused", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await seedRepository(t);
+    const now = Date.now();
+    const sessionId = await t.run(async (ctx) =>
+      ctx.db.insert("sandboxSessions", {
+        ownerTokenIdentifier: OWNER,
+        repositoryId,
+        status: "active",
+        startedAt: now - 30 * 60_000,
+        lastActivityAt: now - 11 * 60_000,
+        lastResumedAt: now - 30 * 60_000,
+        idleAutoPauseMinutes: 10,
+        spentCents: 0,
+      }),
+    );
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(sessionId, { lastActivityAt: now });
+    });
+
+    const result = await t.mutation(internal.sandboxSessions.markSessionPausedByIdle, {
+      sessionId,
+      now,
+    });
+    const stored = await t.run(async (ctx) => ctx.db.get(sessionId));
+
+    expect(result.paused).toBe(false);
+    expect(stored?.status).toBe("active");
+    expect(stored?.pausedAt).toBeUndefined();
+  });
+});
