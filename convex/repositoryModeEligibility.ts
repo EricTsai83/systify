@@ -21,22 +21,15 @@
  */
 
 import { ConvexError, v } from "convex/values";
-import type { Doc, Id } from "./_generated/dataModel";
+import type { Id } from "./_generated/dataModel";
 import { query } from "./_generated/server";
-import type { MutationCtx, QueryCtx } from "./_generated/server";
-import {
-  computeSandboxCostCapEvaluation,
-  resolveRepositoryModes,
-  toChatModeSandboxStatus,
-  type AxisVerdict,
-  type SandboxCostCapGate,
-  type SandboxGroundingVerdict,
-} from "./lib/chatEligibility";
+import type { MutationCtx } from "./_generated/server";
+import { type AxisVerdict, type SandboxGroundingVerdict } from "./lib/chatEligibility";
 import type { ChatMode } from "./lib/chatMode";
 import { requireViewerIdentity } from "./lib/auth";
 import { isOwnedBy } from "./lib/ownedDocs";
-import { getRepositorySandboxStatus, type SandboxModeStatus } from "./lib/repositorySandbox";
 import { loadAccessibleRepositoryForViewer } from "./lib/repositoryAccess";
+import { evaluateRepositoryModeAvailability } from "./lib/modeAvailability";
 
 // ─── Types ────────────────────────────────────────────────────────────────
 
@@ -61,50 +54,6 @@ export interface RepositoryModeEligibility {
 
 // ─── Internal helpers ─────────────────────────────────────────────────────
 
-/**
- * Shared core: given an already-loaded repository (or `null`), compose the
- * verdict. Both the read-path query and the write-path assert call this.
- */
-async function evaluateFromRepository(
-  ctx: QueryCtx,
-  args: {
-    repository: Doc<"repositories"> | null;
-    tokenIdentifier: string;
-  },
-): Promise<RepositoryModeEligibility> {
-  let sandboxModeStatus: SandboxModeStatus | null = null;
-  let hasAtLeastOneArtifact = false;
-
-  if (args.repository) {
-    const probe = await ctx.db
-      .query("artifacts")
-      .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repository!._id))
-      .take(1);
-    hasAtLeastOneArtifact = probe.length > 0;
-    sandboxModeStatus = (await getRepositorySandboxStatus(ctx, args.repository)).sandboxModeStatus;
-  }
-
-  let costGate: SandboxCostCapGate = { enabled: true };
-  if (args.repository !== null) {
-    const evaluation = await computeSandboxCostCapEvaluation(ctx, args.tokenIdentifier, args.repository._id);
-    costGate = evaluation.gate;
-  }
-
-  const sandboxStatus = toChatModeSandboxStatus(sandboxModeStatus);
-  const hasAttachedRepo = args.repository !== null;
-
-  const resolution = resolveRepositoryModes(hasAttachedRepo, hasAtLeastOneArtifact, sandboxStatus, costGate);
-
-  return {
-    modes: resolution.modes,
-    defaultMode: resolution.defaultMode,
-    grounding: resolution.grounding,
-    askReadiness: resolution.askReadiness,
-    hasAttachedRepo,
-    hasAtLeastOneArtifact,
-  };
-}
-
 // ─── Public surface ────────────────────────────────────────────────────────
 
 /**
@@ -123,7 +72,7 @@ export const evaluate = query({
   handler: async (ctx, args): Promise<RepositoryModeEligibility | null> => {
     if (!args.repositoryId) {
       const identity = await requireViewerIdentity(ctx);
-      return await evaluateFromRepository(ctx, {
+      return await evaluateRepositoryModeAvailability(ctx, {
         repository: null,
         tokenIdentifier: identity.tokenIdentifier,
       });
@@ -134,7 +83,7 @@ export const evaluate = query({
     if (!repository) {
       return null;
     }
-    return await evaluateFromRepository(ctx, {
+    return await evaluateRepositoryModeAvailability(ctx, {
       repository,
       tokenIdentifier: identity.tokenIdentifier,
     });
@@ -209,7 +158,7 @@ export async function assertRepositoryModeEligible(
   // discuss turn does not need further mode/grounding validation.
   if (isUngroundedDiscuss) return;
 
-  const verdict = await evaluateFromRepository(ctx, {
+  const verdict = await evaluateRepositoryModeAvailability(ctx, {
     repository,
     tokenIdentifier: identity.tokenIdentifier,
   });

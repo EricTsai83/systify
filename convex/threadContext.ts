@@ -4,14 +4,8 @@ import { internalQuery, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import { loadOwnedDoc } from "./lib/ownedDocs";
 import { getRepositorySandboxStatus, type SandboxModeStatus } from "./lib/repositorySandbox";
-import {
-  computeSandboxCostCapEvaluation,
-  resolveChatModes,
-  resolveSandboxGroundingAxis,
-  toChatModeSandboxStatus,
-  type ChatModeResolution,
-  type SandboxCostCapGate,
-} from "./lib/chatEligibility";
+import { type ChatModeResolution } from "./lib/chatEligibility";
+import { evaluateThreadModeAvailability } from "./lib/modeAvailability";
 import { type SandboxDailyCostBudget } from "./lib/rateLimit";
 
 export type SandboxTableStatus = Doc<"sandboxes">["status"];
@@ -80,57 +74,26 @@ async function enrichThreadContext(
 ): Promise<ThreadContext> {
   const { thread, attachedRepository, viewerTokenIdentifier } = args;
   let sandboxStatus: SandboxTableStatus | null = null;
-  let sandboxModeStatus: SandboxModeStatus | null = null;
 
   if (attachedRepository) {
     const result = await getRepositorySandboxStatus(ctx, attachedRepository);
     sandboxStatus = result.sandbox?.status ?? null;
-    sandboxModeStatus = result.sandboxModeStatus;
   }
 
-  // Only consult the cost-cap gate when sandbox mode is at all relevant
-  // (a repository is attached). Without a repo, sandbox mode is already
-  // gated by the no-repo branch of the resolver, and an extra rate-limiter
-  // peek would be wasted query work that also pollutes the reactive query's
-  // read set with rate-limiter docs that change as ANY user settles cost.
-  // Skipping the peek for no-repo threads keeps those subscriptions stable
-  // and bounds re-renders to threads where sandbox mode is at least
-  // theoretically usable.
-  let costGate: SandboxCostCapGate = { enabled: true };
-  let sandboxCostBudgets: ThreadContextSandboxCostBudgets | null = null;
-  if (attachedRepository !== null) {
-    const evaluation = await computeSandboxCostCapEvaluation(ctx, viewerTokenIdentifier, attachedRepository._id);
-    costGate = evaluation.gate;
-    sandboxCostBudgets = { userBudget: evaluation.userBudget, repositoryBudget: evaluation.repositoryBudget };
-  }
-
-  const chatModeSandboxStatus = toChatModeSandboxStatus(sandboxModeStatus);
-  // `resolveChatModes` only takes `hasAttachedRepo`; sandbox status and
-  // cost cap feed the grounding axes on `resolveRepositoryModes` instead.
-  // The per-thread chat-mode resolver stays a thin function so `chatModes`
-  // consumers see a stable shape.
-  const chatModes = resolveChatModes(attachedRepository !== null);
-
-  // Derive `sandboxIsActivatable` from the same grounding-axis resolver the
-  // repository read path uses so the activation rule lives in exactly one
-  // place. The verdict is "activatable" iff disabled with `isActivatable:
-  // true` — covers (no sandbox / expired / failed) while a healthy ready
-  // sandbox or a cost-capped one stays not-activatable.
-  const sandboxGroundingVerdict = resolveSandboxGroundingAxis(
-    attachedRepository !== null,
-    chatModeSandboxStatus,
-    costGate,
-  );
-  const sandboxIsActivatable = !sandboxGroundingVerdict.enabled && sandboxGroundingVerdict.isActivatable;
+  const availability = await evaluateThreadModeAvailability(ctx, {
+    thread,
+    attachedRepository,
+    viewerTokenIdentifier,
+  });
 
   return {
     thread,
     attachedRepository,
     sandboxStatus,
-    sandboxModeStatus,
-    chatModes,
-    sandboxCostBudgets,
-    sandboxIsActivatable,
+    sandboxModeStatus: availability.sandboxModeStatus,
+    chatModes: availability.chatModes,
+    sandboxCostBudgets: availability.sandboxCostBudgets,
+    sandboxIsActivatable: availability.sandboxIsActivatable,
   };
 }
 

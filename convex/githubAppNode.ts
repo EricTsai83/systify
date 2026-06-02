@@ -6,6 +6,7 @@ import { createPrivateKey, type KeyObject } from "node:crypto";
 import { action, internalAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { requireViewerIdentity } from "./lib/auth";
+import { repoAccessCheckResultValidator, type RepoAccessCheckResult } from "./lib/functionResultSchemas";
 import { parseGitHubUrl } from "./lib/github";
 import { normalizeReturnToUrl } from "./lib/returnTo";
 
@@ -231,10 +232,7 @@ async function fetchRepoAccessFromGitHub(args: {
   installationId: number;
   owner: string;
   repo: string;
-}): Promise<
-  | { accessible: true; isPrivate: boolean; fullName: string; defaultBranch: string }
-  | { accessible: false; message: string }
-> {
+}): Promise<RepoAccessCheckResult> {
   const token = await getInstallationAccessToken(args.installationId);
 
   const response = await fetch(`https://api.github.com/repos/${args.owner}/${args.repo}`, {
@@ -320,6 +318,7 @@ export const checkRepoAccess = internalAction({
     owner: v.string(),
     repo: v.string(),
   },
+  returns: repoAccessCheckResultValidator,
   handler: async (_ctx, args) => fetchRepoAccessFromGitHub(args),
 });
 

@@ -9,6 +9,7 @@ const REPOSITORY_SCOPED_PREFIXES = [
 ] as const;
 
 const COMPOSER_DRAFT_THREAD_PREFIX = "systify.composer.draft.thread.";
+const ACTIVE_REPOSITORY_STORAGE_KEY = "systify.activeRepositoryId";
 
 /**
  * Garbage-collect localStorage keys whose owning repository or thread no
@@ -18,10 +19,8 @@ const COMPOSER_DRAFT_THREAD_PREFIX = "systify.composer.draft.thread.";
  * Pass `null` while the upstream Convex query is still loading so we don't
  * mistakenly wipe everything as "orphan".
  *
- * `systify.activeRepositoryId` is intentionally NOT handled here. The
- * fallback effect in the shell already resets the active id to a
- * surviving repository when its target disappears; this hook only sweeps
- * the *scoped* keys.
+ * `systify.activeRepositoryId` is a first-paint cache only, so a stale
+ * value is cleared as soon as the live repository id set is known.
  */
 export function useStorageGC({
   liveRepositoryIds,
@@ -38,6 +37,10 @@ export function useStorageGC({
         const repositoryId = suffix.split(".")[0];
         if (!repositoryId || !liveRepositoryIds.has(repositoryId)) removeKey(key);
       }
+    }
+    const activeRepositoryId = window.localStorage.getItem(ACTIVE_REPOSITORY_STORAGE_KEY);
+    if (activeRepositoryId && !liveRepositoryIds.has(activeRepositoryId)) {
+      removeKey(ACTIVE_REPOSITORY_STORAGE_KEY);
     }
   }, [liveRepositoryIds]);
 

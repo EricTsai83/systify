@@ -2,7 +2,6 @@
 
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
 import {
   deleteSandbox,
@@ -19,10 +18,10 @@ export const runSandboxCleanup = internalAction({
     jobId: v.id("jobs"),
   },
   handler: async (ctx, args) => {
-    const sandbox = (await ctx.runMutation(internal.ops.markSandboxCleanupRunning, {
+    const sandbox = await ctx.runMutation(internal.ops.markSandboxCleanupRunning, {
       sandboxId: args.sandboxId,
       jobId: args.jobId,
-    })) as SandboxCleanupStart;
+    });
     if (!sandbox.started) {
       return;
     }
@@ -57,24 +56,6 @@ export const runSandboxCleanup = internalAction({
 // Scheduled sweep: reconcile Convex DB status with Daytona reality
 // ---------------------------------------------------------------------------
 
-type ExpiredSandbox = {
-  sandboxId: string;
-  remoteId: string;
-  repositoryId: string;
-  ttlExpiresAt: number;
-};
-
-type StaleInteractiveJob = {
-  jobId: Id<"jobs">;
-  kind: "chat" | "system_design" | "sandbox_activation";
-};
-
-type SandboxLookupResult = {
-  sandboxId: Id<"sandboxes">;
-  status: "provisioning" | "ready" | "stopped" | "archived" | "failed";
-} | null;
-type SandboxCleanupStart = { started: true; remoteId: string } | { started: false };
-
 const STALE_CHAT_JOB_ERROR_MESSAGE =
   "This reply stopped before it could finish. Try sending your message again. If it keeps happening, choose another model or check the provider configuration.";
 const DAYTONA_ORPHAN_RECONCILIATION_MIN_AGE_MS = 10 * 60_000;
@@ -82,9 +63,7 @@ const DAYTONA_ORPHAN_RECONCILIATION_MIN_AGE_MS = 10 * 60_000;
 export const sweepExpiredSandboxes = internalAction({
   args: {},
   handler: async (ctx) => {
-    // Cast required: Convex action ctx.runQuery cannot infer return types
-    // for functions defined in a different file (framework limitation).
-    const expired = (await ctx.runQuery(internal.ops.getExpiredSandboxes, {})) as ExpiredSandbox[];
+    const expired = await ctx.runQuery(internal.ops.getExpiredSandboxes, {});
 
     if (expired.length === 0) {
       return;
@@ -101,7 +80,7 @@ export const sweepExpiredSandboxes = internalAction({
         if (daytonaState === "archived" || daytonaState === "destroyed") {
           // Daytona already reclaimed it — mark as archived in Convex DB
           await ctx.runMutation(internal.ops.markSandboxSwept, {
-            sandboxId: entry.sandboxId as never,
+            sandboxId: entry.sandboxId,
             newStatus: "archived",
           });
           logInfo("sweep", "sandbox_marked_archived", {
@@ -119,14 +98,14 @@ export const sweepExpiredSandboxes = internalAction({
             remoteId: entry.remoteId,
           });
           await ctx.runMutation(internal.ops.markSandboxSwept, {
-            sandboxId: entry.sandboxId as never,
+            sandboxId: entry.sandboxId,
             newStatus: "archived",
           });
         } else if (daytonaState === "started") {
           // Sandbox is somehow still running past TTL — stop it first, delete next sweep
           await stopSandbox(entry.remoteId);
           await ctx.runMutation(internal.ops.markSandboxSwept, {
-            sandboxId: entry.sandboxId as never,
+            sandboxId: entry.sandboxId,
             newStatus: "stopped",
           });
           logInfo("sweep", "running_sandbox_stopped_for_ttl", {
@@ -147,7 +126,7 @@ export const sweepExpiredSandboxes = internalAction({
 export const reconcileStaleInteractiveJobs = internalAction({
   args: {},
   handler: async (ctx) => {
-    const staleJobs = (await ctx.runQuery(internal.ops.listStaleInteractiveJobs, {})) as StaleInteractiveJob[];
+    const staleJobs = await ctx.runQuery(internal.ops.listStaleInteractiveJobs, {});
 
     if (staleJobs.length === 0) {
       return;
@@ -197,9 +176,9 @@ export const reconcileDaytonaOrphans = internalAction({
         continue;
       }
 
-      const matchedSandbox = (await ctx.runQuery(internal.ops.getSandboxByRemoteId, {
+      const matchedSandbox = await ctx.runQuery(internal.ops.getSandboxByRemoteId, {
         remoteId: sandbox.remoteId,
-      })) as SandboxLookupResult;
+      });
       if (matchedSandbox) {
         continue;
       }

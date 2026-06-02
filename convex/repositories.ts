@@ -3,19 +3,18 @@ import { paginationOptsValidator } from "convex/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { mutation, query, internalQuery, internalMutation, type MutationCtx } from "./_generated/server";
-import { drainMessageToolCallEvents } from "./chat/toolCallEventStore";
 import { getDefaultThreadMode } from "./lib/chatMode";
 import { requireViewerIdentity } from "./lib/auth";
-import { isOwnedBy, loadOwnedDoc, requireOwnedDoc } from "./lib/ownedDocs";
+import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
 import { getRepositorySandboxStatus } from "./lib/repositorySandbox";
 import { makeRepositoryTitle, parseGitHubUrl } from "./lib/github";
-import { CASCADE_BATCH_SIZE } from "./lib/constants";
 import { pickNextRepositoryColor, touchRepositoryLastAccessed } from "./lib/repositoryPalette";
-import { clearLastActiveRepositoryIfMatches } from "./lib/userPreferences";
+import { startedResultValidator } from "./lib/functionResultSchemas";
+import { runRepositoryCascadeDelete } from "./lib/repositoryCascade";
+import { archiveOwnedRepository, requestRepositoryDeletion, restoreOwnedRepository } from "./lib/repositoryRetirement";
 import {
   hasRemoteUpdates,
   isRepositoryArchived,
-  isRepositoryDeleting,
   loadAccessibleRepositoryForViewer,
   requireActiveRepositoryForViewer,
 } from "./lib/repositoryAccess";
@@ -36,8 +35,6 @@ import {
 
 const FILE_COUNT_DISPLAY_LIMIT = 400;
 const REPOSITORY_DETAIL_IMPORT_ARTIFACT_LIMIT = 10;
-const REPOSITORY_DELETE_RETRY_MS = 5_000;
-const STREAM_CHUNK_DRAIN_PASS_LIMIT = 8;
 const REPOSITORY_LIST_TAKE = 200;
 
 async function queueImportWorkflow(
@@ -490,28 +487,7 @@ export const archiveRepository = mutation({
     repositoryId: v.id("repositories"),
   },
   handler: async (ctx, args) => {
-    const { doc: repository } = await requireOwnedDoc(ctx, args.repositoryId, {
-      notFoundMessage: "Repository not found.",
-    });
-
-    if (isRepositoryDeleting(repository)) {
-      throw new Error("Repository is being deleted and cannot be archived.");
-    }
-
-    if (isRepositoryArchived(repository)) {
-      return;
-    }
-
-    await ctx.db.patch(args.repositoryId, {
-      archivedAt: Date.now(),
-    });
-
-    // Stop any live sandbox to release Daytona resources. Threads, messages,
-    // and artifacts stay intact so Restore lets the user pick up where they
-    // left off.
-    await ctx.runMutation(internal.ops.scheduleRepositorySandboxCleanup, {
-      repositoryId: args.repositoryId,
-    });
+    await archiveOwnedRepository(ctx, args);
   },
 });
 
@@ -520,21 +496,7 @@ export const restoreRepository = mutation({
     repositoryId: v.id("repositories"),
   },
   handler: async (ctx, args) => {
-    const { doc: repository } = await requireOwnedDoc(ctx, args.repositoryId, {
-      notFoundMessage: "Repository not found.",
-    });
-
-    if (isRepositoryDeleting(repository)) {
-      throw new Error("Repository is being deleted and cannot be restored.");
-    }
-
-    if (!isRepositoryArchived(repository)) {
-      return;
-    }
-
-    await ctx.db.patch(args.repositoryId, {
-      archivedAt: undefined,
-    });
+    await restoreOwnedRepository(ctx, args);
   },
 });
 
@@ -543,292 +505,16 @@ export const deleteRepository = mutation({
     repositoryId: v.id("repositories"),
   },
   handler: async (ctx, args) => {
-    const { doc: repository } = await requireOwnedDoc(ctx, args.repositoryId, {
-      notFoundMessage: "Repository not found.",
-    });
-
-    if (isRepositoryDeleting(repository)) {
-      return;
-    }
-
-    if (!isRepositoryArchived(repository)) {
-      throw new Error("Archive the repository before deleting it permanently.");
-    }
-
-    await ctx.db.patch(args.repositoryId, {
-      deletionRequestedAt: Date.now(),
-    });
-
-    await ctx.runMutation(internal.ops.scheduleRepositorySandboxCleanup, {
-      repositoryId: args.repositoryId,
-    });
-
-    // Schedule cascading deletion of all related data once background jobs have
-    // had a chance to observe the tombstone and stop cleanly.
-    await ctx.scheduler.runAfter(0, internal.repositories.cascadeDeleteRepository, {
-      repositoryId: args.repositoryId,
-    });
+    await requestRepositoryDeletion(ctx, args);
   },
 });
-
-async function drainArtifactsByRepositoryId(ctx: MutationCtx, repositoryId: Id<"repositories">): Promise<boolean> {
-  const docs = await ctx.db
-    .query("artifacts")
-    .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
-    .take(CASCADE_BATCH_SIZE);
-  for (const doc of docs) {
-    await ctx.db.delete(doc._id);
-  }
-  return docs.length === CASCADE_BATCH_SIZE;
-}
-
-async function drainRepoChunksByRepositoryId(ctx: MutationCtx, repositoryId: Id<"repositories">): Promise<boolean> {
-  const docs = await ctx.db
-    .query("repoChunks")
-    .withIndex("by_repositoryId_and_path", (q) => q.eq("repositoryId", repositoryId))
-    .take(CASCADE_BATCH_SIZE);
-  for (const doc of docs) {
-    await ctx.db.delete(doc._id);
-  }
-  return docs.length === CASCADE_BATCH_SIZE;
-}
-
-async function drainRepoFilesByRepositoryId(ctx: MutationCtx, repositoryId: Id<"repositories">): Promise<boolean> {
-  const docs = await ctx.db
-    .query("repoFiles")
-    .withIndex("by_repositoryId_and_path", (q) => q.eq("repositoryId", repositoryId))
-    .take(CASCADE_BATCH_SIZE);
-  for (const doc of docs) {
-    await ctx.db.delete(doc._id);
-  }
-  return docs.length === CASCADE_BATCH_SIZE;
-}
-
-async function drainImportsByRepositoryId(ctx: MutationCtx, repositoryId: Id<"repositories">): Promise<boolean> {
-  const docs = await ctx.db
-    .query("imports")
-    .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
-    .take(CASCADE_BATCH_SIZE);
-  for (const doc of docs) {
-    await ctx.db.delete(doc._id);
-  }
-  return docs.length === CASCADE_BATCH_SIZE;
-}
-
-async function drainJobsByRepositoryId(ctx: MutationCtx, repositoryId: Id<"repositories">): Promise<boolean> {
-  const docs = await ctx.db
-    .query("jobs")
-    .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
-    .take(CASCADE_BATCH_SIZE);
-  for (const doc of docs) {
-    await ctx.db.delete(doc._id);
-  }
-  return docs.length === CASCADE_BATCH_SIZE;
-}
-
-async function drainArtifactViewsByRepository(
-  ctx: MutationCtx,
-  args: { ownerTokenIdentifier: string; repositoryId: Id<"repositories"> },
-): Promise<boolean> {
-  const docs = await ctx.db
-    .query("artifactViews")
-    .withIndex("by_ownerTokenIdentifier_and_repositoryId", (q) =>
-      q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier).eq("repositoryId", args.repositoryId),
-    )
-    .take(CASCADE_BATCH_SIZE);
-  for (const doc of docs) {
-    await ctx.db.delete(doc._id);
-  }
-  return docs.length === CASCADE_BATCH_SIZE;
-}
-
-async function drainRepositoryViewerBootstrapsByRepository(
-  ctx: MutationCtx,
-  args: { ownerTokenIdentifier: string; repositoryId: Id<"repositories"> },
-): Promise<boolean> {
-  // At most one row per (owner, repo), so this never paginates in
-  // practice. The take/loop form is kept for parity with the other
-  // drains so the cascade pattern stays uniform.
-  const docs = await ctx.db
-    .query("repositoryViewerBootstraps")
-    .withIndex("by_ownerTokenIdentifier_and_repositoryId", (q) =>
-      q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier).eq("repositoryId", args.repositoryId),
-    )
-    .take(CASCADE_BATCH_SIZE);
-  for (const doc of docs) {
-    await ctx.db.delete(doc._id);
-  }
-  return docs.length === CASCADE_BATCH_SIZE;
-}
 
 export const cascadeDeleteRepository = internalMutation({
   args: {
     repositoryId: v.id("repositories"),
   },
   handler: async (ctx, args) => {
-    const cleanupState: { pendingCleanupCount: number } = await ctx.runMutation(
-      internal.ops.scheduleRepositorySandboxCleanup,
-      {
-        repositoryId: args.repositoryId,
-      },
-    );
-    let more = false;
-    let waitingOnSandboxCleanup = cleanupState.pendingCleanupCount > 0;
-
-    // Delete threads and their messages (threads need special handling)
-    const threads = await ctx.db
-      .query("threads")
-      .withIndex("by_repositoryId_and_lastMessageAt", (q) => q.eq("repositoryId", args.repositoryId))
-      .take(CASCADE_BATCH_SIZE);
-    for (const thread of threads) {
-      const msgs = await ctx.db
-        .query("messages")
-        .withIndex("by_threadId", (q) => q.eq("threadId", thread._id))
-        .take(CASCADE_BATCH_SIZE);
-      for (const msg of msgs) {
-        // Drain orphan tool-call events before deleting the message.
-        // Events are bounded per message (≤ step budget × 2) and
-        // are normally cleaned up at finalize / fail; this is the
-        // belt-and-braces path that catches any row that survived a
-        // mid-stream crash. Order matters: delete child events first so a
-        // partially-failed cascade leaves no row pointing at a missing
-        // `messageId`.
-        await drainMessageToolCallEvents(ctx, msg._id);
-        await ctx.db.delete(msg._id);
-      }
-
-      const streams = await ctx.db
-        .query("messageStreams")
-        .withIndex("by_threadId", (q) => q.eq("threadId", thread._id))
-        .take(CASCADE_BATCH_SIZE);
-      let streamChunksDrained = true;
-      for (const stream of streams) {
-        let streamChunksFullyDrained = false;
-        for (let pass = 0; pass < STREAM_CHUNK_DRAIN_PASS_LIMIT; pass += 1) {
-          const streamChunks = await ctx.db
-            .query("messageStreamChunks")
-            .withIndex("by_streamId_and_sequence", (q) => q.eq("streamId", stream._id))
-            .take(CASCADE_BATCH_SIZE);
-          for (const chunk of streamChunks) {
-            await ctx.db.delete(chunk._id);
-          }
-          if (streamChunks.length < CASCADE_BATCH_SIZE) {
-            streamChunksFullyDrained = true;
-            break;
-          }
-        }
-        if (streamChunksFullyDrained) {
-          await ctx.db.delete(stream._id);
-        } else {
-          streamChunksDrained = false;
-          more = true;
-        }
-      }
-
-      if (streams.length === CASCADE_BATCH_SIZE) {
-        more = true;
-      }
-
-      let artifactsDrained = true;
-      let artifactMore = false;
-      for (let pass = 0; pass < STREAM_CHUNK_DRAIN_PASS_LIMIT; pass += 1) {
-        const artifacts = await ctx.db
-          .query("artifacts")
-          .withIndex("by_threadId", (q) => q.eq("threadId", thread._id))
-          .take(CASCADE_BATCH_SIZE);
-        for (const artifact of artifacts) {
-          await ctx.db.delete(artifact._id);
-        }
-        if (artifacts.length === CASCADE_BATCH_SIZE) {
-          artifactMore = true;
-        } else {
-          artifactsDrained = true;
-          break;
-        }
-      }
-      if (artifactMore) {
-        artifactsDrained = false;
-        more = true;
-      }
-
-      if (
-        msgs.length < CASCADE_BATCH_SIZE &&
-        streams.length < CASCADE_BATCH_SIZE &&
-        streamChunksDrained &&
-        artifactsDrained
-      ) {
-        await ctx.db.delete(thread._id);
-      } else {
-        more = true;
-      }
-    }
-    if (threads.length === CASCADE_BATCH_SIZE) more = true;
-
-    // Drain remaining tables, but keep cleanup jobs until sandbox deletion has finished.
-    // Per-viewer rows (artifactViews, repositoryViewerBootstraps) need
-    // the owner token because their indexes are owner-scoped. The repo
-    // row is always present at this point — the cascade only deletes
-    // it after every drain has reported empty, at the bottom of this
-    // handler — so a single read here is safe for the lifetime of all
-    // drain passes that can find rows to delete.
-    const cascadeRepository = await ctx.db.get(args.repositoryId);
-    if (cascadeRepository) {
-      more =
-        (await drainArtifactViewsByRepository(ctx, {
-          ownerTokenIdentifier: cascadeRepository.ownerTokenIdentifier,
-          repositoryId: args.repositoryId,
-        })) || more;
-      more =
-        (await drainRepositoryViewerBootstrapsByRepository(ctx, {
-          ownerTokenIdentifier: cascadeRepository.ownerTokenIdentifier,
-          repositoryId: args.repositoryId,
-        })) || more;
-    }
-    more = (await drainArtifactsByRepositoryId(ctx, args.repositoryId)) || more;
-    more = (await drainRepoChunksByRepositoryId(ctx, args.repositoryId)) || more;
-    more = (await drainRepoFilesByRepositoryId(ctx, args.repositoryId)) || more;
-    more = (await drainImportsByRepositoryId(ctx, args.repositoryId)) || more;
-
-    const sandboxes = await ctx.db
-      .query("sandboxes")
-      .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
-      .order("desc")
-      .take(CASCADE_BATCH_SIZE);
-    for (const sandbox of sandboxes) {
-      if (sandbox.status === "archived") {
-        await ctx.db.delete(sandbox._id);
-      } else {
-        waitingOnSandboxCleanup = true;
-      }
-    }
-    if (sandboxes.length === CASCADE_BATCH_SIZE) {
-      more = true;
-    }
-
-    if (!waitingOnSandboxCleanup) {
-      more = (await drainJobsByRepositoryId(ctx, args.repositoryId)) || more;
-    }
-
-    // Self-schedule if any table still has remaining records
-    if (more || waitingOnSandboxCleanup) {
-      await ctx.scheduler.runAfter(
-        waitingOnSandboxCleanup ? REPOSITORY_DELETE_RETRY_MS : 0,
-        internal.repositories.cascadeDeleteRepository,
-        {
-          repositoryId: args.repositoryId,
-        },
-      );
-      return;
-    }
-
-    const repository = await ctx.db.get(args.repositoryId);
-    if (repository) {
-      await clearLastActiveRepositoryIfMatches(ctx, {
-        ownerTokenIdentifier: repository.ownerTokenIdentifier,
-        repositoryId: args.repositoryId,
-      });
-      await ctx.db.delete(args.repositoryId);
-    }
+    await runRepositoryCascadeDelete(ctx, args);
   },
 });
 
@@ -961,6 +647,7 @@ export const requestSandboxActivation = mutation({
 
 export const markSandboxActivationStarted = internalMutation({
   args: { jobId: v.id("jobs") },
+  returns: startedResultValidator,
   handler: async (ctx, args): Promise<{ started: boolean }> => {
     const now = Date.now();
     const result = await markQueuedJobRunning(ctx, {

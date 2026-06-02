@@ -4,6 +4,7 @@ import type { NavigateFunction } from "react-router-dom";
 import { api } from "../../../convex/_generated/api";
 import type { Doc } from "../../../convex/_generated/dataModel";
 import { applyTouchRepositoryOptimistic } from "@/lib/repository-mutations";
+import { resolveRepositorySelection } from "@/lib/repository-selection";
 import { readString, removeKey, writeString } from "@/lib/storage";
 import type { RepositoryId } from "@/lib/types";
 import { DEFAULT_AUTHENTICATED_PATH, repositoryPath } from "@/route-paths";
@@ -84,57 +85,38 @@ export function useRepositoryPersistence({
     }
   }, [activeRepositoryId]);
 
-  // DB-wins reconciliation. Cross-tab pushes flow through here too.
-  useEffect(() => {
-    if (viewerPreferences === undefined) return;
-    if (ownerRepositoryIdSet === null) return;
-    const dbRepositoryId = viewerPreferences?.lastActiveRepositoryId ?? null;
-    if (!dbRepositoryId) return;
-    if (ownerRepositoryIdSet.has(dbRepositoryId)) {
-      if (dbRepositoryId !== activeRepositoryId) {
-        // eslint-disable-next-line react-hooks/set-state-in-effect
-        setActiveRepositoryId(dbRepositoryId);
-      }
-      return;
+  const resolvedSelection = useMemo(() => {
+    if (repositories === undefined || viewerPreferences === undefined || ownerRepositoryIdSet === null) {
+      return null;
     }
-    if (dbRepositoryId !== activeRepositoryId) {
-      setActiveRepositoryId(null);
-    }
-  }, [ownerRepositoryIdSet, viewerPreferences, activeRepositoryId]);
-
-  // Auto-select the most recent repository if none is active or the active
-  // one no longer exists. Seed the DB preference too.
-  useEffect(() => {
-    if (!repositories || repositories.length === 0) return;
-    if (viewerPreferences === undefined) return;
-    if (ownerRepositoryIdSet === null) return;
-    if (activeRepositoryId && ownerRepositoryIdSet.has(activeRepositoryId)) return;
-    const fallback = repositories[0]._id;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setActiveRepositoryId(fallback);
-    if (viewerPreferences?.lastActiveRepositoryId !== fallback) {
-      void touchRepository({ repositoryId: fallback }).catch((err) => {
-        console.error(`touchRepository failed for fallback repositoryId=${fallback}`, err);
-      });
-    }
-  }, [repositories, viewerPreferences, ownerRepositoryIdSet, activeRepositoryId, touchRepository]);
-
-  // URL → state sync.
-  useEffect(() => {
-    if (urlRepositoryId === null) return;
-    if (repositories === undefined) return;
-    const urlRepositoryExists = repositories.some((repo) => repo._id === urlRepositoryId);
-    if (!urlRepositoryExists) {
-      void navigate(DEFAULT_AUTHENTICATED_PATH, { replace: true });
-      return;
-    }
-    if (urlRepositoryId === activeRepositoryId) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setActiveRepositoryId(urlRepositoryId);
-    void touchRepository({ repositoryId: urlRepositoryId }).catch((err) => {
-      console.error(`touchRepository failed for urlRepositoryId=${urlRepositoryId}`, err);
+    return resolveRepositorySelection({
+      urlRepositoryId,
+      activeRepositoryId,
+      dbRepositoryId: viewerPreferences?.lastActiveRepositoryId ?? null,
+      switcherRepositoryIds: repositories.map((repo) => repo._id),
+      ownerRepositoryIds: ownerRepositoryIdSet,
     });
-  }, [urlRepositoryId, activeRepositoryId, touchRepository, repositories, navigate]);
+  }, [activeRepositoryId, ownerRepositoryIdSet, repositories, urlRepositoryId, viewerPreferences]);
+
+  useEffect(() => {
+    if (!resolvedSelection) return;
+    for (const command of resolvedSelection.commands) {
+      switch (command.kind) {
+        case "setActiveRepository":
+          // eslint-disable-next-line react-hooks/set-state-in-effect
+          setActiveRepositoryId(command.repositoryId);
+          break;
+        case "touchRepository":
+          void touchRepository({ repositoryId: command.repositoryId }).catch((err) => {
+            console.error(`touchRepository failed for repositoryId=${command.repositoryId}`, err);
+          });
+          break;
+        case "navigateDefault":
+          void navigate(DEFAULT_AUTHENTICATED_PATH, { replace: command.replace });
+          break;
+      }
+    }
+  }, [navigate, resolvedSelection, touchRepository]);
 
   const handleSwitchRepository = useCallback(
     (repositoryId: RepositoryId) => {
@@ -143,7 +125,8 @@ export function useRepositoryPersistence({
     [navigate],
   );
 
-  const currentRepositoryId: RepositoryId | null = urlRepositoryId ?? activeRepositoryId;
+  const currentRepositoryId: RepositoryId | null =
+    resolvedSelection?.currentRepositoryId ?? urlRepositoryId ?? activeRepositoryId;
   const currentRepository = useMemo(
     () => (currentRepositoryId ? (repositories?.find((repo) => repo._id === currentRepositoryId) ?? null) : null),
     [repositories, currentRepositoryId],

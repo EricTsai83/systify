@@ -3,6 +3,7 @@ import type { Doc, Id } from "../_generated/dataModel";
 import { type MutationCtx, internalMutation, internalQuery, query } from "../_generated/server";
 import { loadOwnedDoc, requireOwnedDoc } from "../lib/ownedDocs";
 import { CHAT_JOB_LEASE_MS, consumeSandboxDailyCost } from "../lib/rateLimit";
+import { jobCancellationStatusValidator, startedResultValidator } from "../lib/functionResultSchemas";
 import { costUsdToCents } from "../lib/llmPricing";
 import { logInfo, logWarn } from "../lib/observability";
 import {
@@ -805,6 +806,7 @@ export const markAssistantReplyRunning = internalMutation({
     assistantMessageId: v.id("messages"),
     jobId: v.id("jobs"),
   },
+  returns: startedResultValidator,
   handler: async (ctx, args) => {
     const now = Date.now();
     const runningJob = await markQueuedJobRunning(ctx, {
@@ -1235,6 +1237,7 @@ export const getJobCancellationStatus = internalQuery({
   args: {
     jobId: v.id("jobs"),
   },
+  returns: jobCancellationStatusValidator,
   handler: async (ctx, args): Promise<{ cancelled: boolean; jobMissing: boolean }> => {
     const job = await ctx.db.get(args.jobId);
     if (!job) {

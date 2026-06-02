@@ -82,10 +82,10 @@ export const runSystemDesignGeneration = internalAction({
     forceRegenerate: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const start = (await ctx.runMutation(internal.systemDesign.markGenerationStarted, {
+    const start = await ctx.runMutation(internal.systemDesign.markGenerationStarted, {
       jobId: args.jobId,
       selections: args.selections,
-    })) as { started: boolean };
+    });
     if (!start.started) {
       return;
     }
@@ -286,7 +286,7 @@ export const runSystemDesignGeneration = internalAction({
                 missingSections.push("mermaid_block");
               }
             } else {
-              const persisted = (await ctx.runMutation(internal.systemDesign.persistGeneratedArtifact, {
+              const persisted = await ctx.runMutation(internal.systemDesign.persistGeneratedArtifact, {
                 repositoryId: args.repositoryId,
                 ownerTokenIdentifier: args.ownerTokenIdentifier,
                 jobId: args.jobId,
@@ -298,7 +298,7 @@ export const runSystemDesignGeneration = internalAction({
                 generatedByProvider: modelChoice.provider,
                 generatedByModel: modelChoice.modelName,
                 promptVersion: config.promptVersion,
-              })) as { artifactId: Id<"artifacts"> };
+              });
               artifactId = persisted.artifactId;
               runStatus = "succeeded";
             }
@@ -334,7 +334,7 @@ export const runSystemDesignGeneration = internalAction({
       const durationMs = Date.now() - startedAt;
 
       // ── 3. Telemetry: kindRun row + cost settlement ───────────────────
-      const recorded = (await ctx.runMutation(internal.systemDesign.recordKindRun, {
+      const recorded = await ctx.runMutation(internal.systemDesign.recordKindRun, {
         ownerTokenIdentifier: args.ownerTokenIdentifier,
         repositoryId: args.repositoryId,
         jobId: args.jobId,
@@ -357,7 +357,7 @@ export const runSystemDesignGeneration = internalAction({
         outputCharLength: outputCharLength > 0 ? outputCharLength : undefined,
         missingSections,
         startedAt,
-      })) as { kindRunId: Id<"systemDesignKindRuns"> };
+      });
 
       if (artifactId && runStatus !== "cached_hit") {
         await ctx.runMutation(internal.systemDesign.linkKindRun, {
