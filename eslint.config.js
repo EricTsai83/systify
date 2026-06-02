@@ -17,6 +17,7 @@ export default defineConfig([
       "postcss.config.js",
       "tailwind.config.js",
       "vite.config.ts",
+      ".deepsec/**",
     ],
   },
   {

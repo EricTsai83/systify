@@ -44,21 +44,37 @@ export const stopRemoteSandboxForSession = internalAction({
 
 export const autoPauseIdleSandboxSessions = internalAction({
   args: {},
-  handler: async (ctx): Promise<{ paused: number }> => {
+  handler: async (ctx): Promise<{ paused: number; skipped?: boolean }> => {
     const now = Date.now();
-    const sessions: Doc<"sandboxSessions">[] = await ctx.runQuery(internal.sandboxSessions.listAutoPauseCandidates, {
-      now,
-      limit: AUTO_PAUSE_BATCH_SIZE,
-    });
+    let sessions: Doc<"sandboxSessions">[];
+    try {
+      sessions = await ctx.runQuery(internal.sandboxSessions.listAutoPauseCandidates, {
+        now,
+        limit: AUTO_PAUSE_BATCH_SIZE,
+      });
+    } catch (error) {
+      logWarn("sandboxSessions", "auto_pause_candidate_query_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { paused: 0, skipped: true };
+    }
+
     let pausedCount = 0;
     for (const session of sessions) {
-      const pauseResult = await ctx.runMutation(internal.sandboxSessions.markSessionPausedByIdle, {
-        sessionId: session._id,
-        now,
-      });
-      if (pauseResult.paused) {
-        pausedCount++;
-        await ctx.runAction(internal.sandboxSessionsNode.stopRemoteSandboxForSession, { sessionId: session._id });
+      try {
+        const pauseResult = await ctx.runMutation(internal.sandboxSessions.markSessionPausedByIdle, {
+          sessionId: session._id,
+          now,
+        });
+        if (pauseResult.paused) {
+          pausedCount++;
+          await ctx.runAction(internal.sandboxSessionsNode.stopRemoteSandboxForSession, { sessionId: session._id });
+        }
+      } catch (error) {
+        logWarn("sandboxSessions", "auto_pause_session_failed", {
+          sessionId: session._id,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
     return { paused: pausedCount };
