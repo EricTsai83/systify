@@ -366,7 +366,7 @@ export const fetchInstallationDetails = internalAction({
     installationId: v.number(),
   },
   handler: async (_ctx, args) => {
-    const appJwt = createAppJwt();
+    const appJwt = await createAppJwt();
 
     const response = await fetch(`https://api.github.com/app/installations/${args.installationId}`, {
       headers: {

@@ -126,7 +126,9 @@ export function useRepositoryPersistence({
   );
 
   const currentRepositoryId: RepositoryId | null =
-    resolvedSelection?.currentRepositoryId ?? urlRepositoryId ?? activeRepositoryId;
+    resolvedSelection && Object.prototype.hasOwnProperty.call(resolvedSelection, "currentRepositoryId")
+      ? resolvedSelection.currentRepositoryId
+      : (urlRepositoryId ?? activeRepositoryId);
   const currentRepository = useMemo(
     () => (currentRepositoryId ? (repositories?.find((repo) => repo._id === currentRepositoryId) ?? null) : null),
     [repositories, currentRepositoryId],

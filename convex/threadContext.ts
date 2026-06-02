@@ -73,23 +73,23 @@ async function enrichThreadContext(
   },
 ): Promise<ThreadContext> {
   const { thread, attachedRepository, viewerTokenIdentifier } = args;
-  let sandboxStatus: SandboxTableStatus | null = null;
+  let sandboxSnapshot: { sandboxModeStatus: SandboxModeStatus; sandbox: Doc<"sandboxes"> | null } | null = null;
 
   if (attachedRepository) {
-    const result = await getRepositorySandboxStatus(ctx, attachedRepository);
-    sandboxStatus = result.sandbox?.status ?? null;
+    sandboxSnapshot = await getRepositorySandboxStatus(ctx, attachedRepository);
   }
 
   const availability = await evaluateThreadModeAvailability(ctx, {
     thread,
     attachedRepository,
     viewerTokenIdentifier,
+    preloadedSandboxStatus: sandboxSnapshot,
   });
 
   return {
     thread,
     attachedRepository,
-    sandboxStatus,
+    sandboxStatus: availability.sandbox?.status ?? null,
     sandboxModeStatus: availability.sandboxModeStatus,
     chatModes: availability.chatModes,
     sandboxCostBudgets: availability.sandboxCostBudgets,

@@ -1,10 +1,6 @@
-"use node";
-
-import { createPrivateKey, sign, type KeyObject } from "node:crypto";
-
 type GitHubAppCredentials = {
   appId: string;
-  privateKey: KeyObject;
+  privateKeyPem: string;
 };
 
 let cachedGitHubAppCredentials: GitHubAppCredentials | null = null;
@@ -17,8 +13,8 @@ let cachedGitHubAppCredentials: GitHubAppCredentials | null = null;
  *
  * Requires env vars: GITHUB_APP_ID, GITHUB_APP_PRIVATE_KEY (raw PEM).
  */
-export function createAppJwt(): string {
-  const { appId, privateKey } = getGitHubAppCredentials();
+export async function createAppJwt(): Promise<string> {
+  const { appId, privateKeyPem } = getGitHubAppCredentials();
   const now = Math.floor(Date.now() / 1000);
 
   const encodedHeader = base64UrlEncodeJson({ alg: "RS256", typ: "JWT" });
@@ -28,9 +24,10 @@ export function createAppJwt(): string {
     iss: appId,
   });
   const signingInput = `${encodedHeader}.${encodedPayload}`;
-  const signature = sign("RSA-SHA256", Buffer.from(signingInput), privateKey).toString("base64url");
+  const privateKey = await importPrivateKey(privateKeyPem);
+  const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", privateKey, new TextEncoder().encode(signingInput));
 
-  return `${signingInput}.${signature}`;
+  return `${signingInput}.${base64UrlEncodeBytes(new Uint8Array(signature))}`;
 }
 
 function getGitHubAppCredentials(): GitHubAppCredentials {
@@ -57,23 +54,9 @@ function getGitHubAppCredentials(): GitHubAppCredentials {
     );
   }
 
-  let privateKey: KeyObject;
-  try {
-    privateKey = createPrivateKey({
-      key: privateKeyPem,
-      format: "pem",
-    });
-  } catch (error) {
-    throw new Error(
-      `GITHUB_APP_PRIVATE_KEY is not a valid PEM private key: ${
-        error instanceof Error ? error.message : "Unknown error."
-      }`,
-    );
-  }
-
   cachedGitHubAppCredentials = {
     appId,
-    privateKey,
+    privateKeyPem,
   };
 
   return cachedGitHubAppCredentials;
@@ -84,11 +67,98 @@ function normalizePem(value: string): string {
 }
 
 function looksLikePemPrivateKey(value: string): boolean {
-  return /^-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/.test(value);
+  return /^-----BEGIN (RSA )?PRIVATE KEY-----/.test(value);
 }
 
 function base64UrlEncodeJson(value: Record<string, string | number>): string {
-  return Buffer.from(JSON.stringify(value)).toString("base64url");
+  return base64UrlEncodeBytes(new TextEncoder().encode(JSON.stringify(value)));
+}
+
+function base64UrlEncodeBytes(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/u, "");
+}
+
+function pemToPrivateKeyDer(pem: string): ArrayBuffer {
+  const label = pem.startsWith("-----BEGIN RSA PRIVATE KEY-----") ? "RSA PRIVATE KEY" : "PRIVATE KEY";
+  const base64 = pem.replace(`-----BEGIN ${label}-----`, "").replace(`-----END ${label}-----`, "").replace(/\s/g, "");
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  if (label === "PRIVATE KEY") {
+    return toArrayBuffer(bytes);
+  }
+  return wrapPkcs1RsaPrivateKeyAsPkcs8(bytes);
+}
+
+async function importPrivateKey(privateKeyPem: string): Promise<CryptoKey> {
+  try {
+    return await crypto.subtle.importKey(
+      "pkcs8",
+      pemToPrivateKeyDer(privateKeyPem),
+      {
+        name: "RSASSA-PKCS1-v1_5",
+        hash: "SHA-256",
+      },
+      false,
+      ["sign"],
+    );
+  } catch (error) {
+    throw new Error(
+      `GITHUB_APP_PRIVATE_KEY is not a valid PEM private key: ${
+        error instanceof Error ? error.message : "Unknown error."
+      }`,
+    );
+  }
+}
+
+function wrapPkcs1RsaPrivateKeyAsPkcs8(pkcs1Der: Uint8Array): ArrayBuffer {
+  const version = Uint8Array.from([0x02, 0x01, 0x00]);
+  const rsaEncryptionAlgorithmIdentifier = Uint8Array.from([
+    0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01, 0x05, 0x00,
+  ]);
+  const privateKey = derWrap(0x04, pkcs1Der);
+  return toArrayBuffer(derWrap(0x30, concatBytes([version, rsaEncryptionAlgorithmIdentifier, privateKey])));
+}
+
+function derWrap(tag: number, value: Uint8Array): Uint8Array {
+  return concatBytes([Uint8Array.from([tag, ...encodeDerLength(value.length)]), value]);
+}
+
+function encodeDerLength(length: number): number[] {
+  if (length < 0x80) {
+    return [length];
+  }
+
+  const bytes: number[] = [];
+  let remaining = length;
+  while (remaining > 0) {
+    bytes.unshift(remaining & 0xff);
+    remaining >>= 8;
+  }
+  return [0x80 | bytes.length, ...bytes];
+}
+
+function concatBytes(chunks: Uint8Array[]): Uint8Array {
+  const totalLength = chunks.reduce((total, chunk) => total + chunk.length, 0);
+  const bytes = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return bytes;
+}
+
+function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
 }
 
 /**
@@ -97,7 +167,7 @@ function base64UrlEncodeJson(value: Record<string, string | number>): string {
  * has been granted access to.
  */
 export async function getInstallationAccessToken(installationId: number): Promise<string> {
-  const appJwt = createAppJwt();
+  const appJwt = await createAppJwt();
 
   const response = await fetch(`https://api.github.com/app/installations/${installationId}/access_tokens`, {
     method: "POST",

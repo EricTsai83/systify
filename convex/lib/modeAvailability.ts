@@ -23,6 +23,7 @@ import {
 export interface ModeAvailabilitySnapshot {
   chatModes: ChatModeResolution;
   repositoryModes?: RepositoryModeEligibility;
+  sandbox: Doc<"sandboxes"> | null;
   sandboxModeStatus: SandboxModeStatus | null;
   sandboxCostBudgets: ThreadContextSandboxCostBudgets | null;
   sandboxIsActivatable: boolean;
@@ -128,13 +129,20 @@ export async function evaluateThreadModeAvailability(
     thread: Doc<"threads">;
     attachedRepository: Doc<"repositories"> | null;
     viewerTokenIdentifier: string;
+    preloadedSandboxStatus?: {
+      sandboxModeStatus: SandboxModeStatus;
+      sandbox: Doc<"sandboxes"> | null;
+    } | null;
   },
 ): Promise<ModeAvailabilitySnapshot> {
   const { attachedRepository, viewerTokenIdentifier } = args;
   let sandboxModeStatus: SandboxModeStatus | null = null;
+  let sandbox: Doc<"sandboxes"> | null = null;
 
   if (attachedRepository) {
-    sandboxModeStatus = (await getRepositorySandboxStatus(ctx, attachedRepository)).sandboxModeStatus;
+    const sandboxSnapshot = args.preloadedSandboxStatus ?? (await getRepositorySandboxStatus(ctx, attachedRepository));
+    sandboxModeStatus = sandboxSnapshot.sandboxModeStatus;
+    sandbox = sandboxSnapshot.sandbox;
   }
 
   let costGate: SandboxCostCapGate = { enabled: true };
@@ -155,6 +163,7 @@ export async function evaluateThreadModeAvailability(
 
   return {
     chatModes,
+    sandbox,
     sandboxModeStatus,
     sandboxCostBudgets,
     sandboxIsActivatable: !sandboxGroundingVerdict.enabled && sandboxGroundingVerdict.isActivatable,

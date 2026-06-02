@@ -584,7 +584,6 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
     const sandboxTools: ToolSet | undefined = resolvedSandboxTooling
       ? await buildSandboxTools(resolvedSandboxTooling)
       : undefined;
-    telemetry.hadTools = sandboxTools !== undefined;
 
     const flushIfNeeded = async () => {
       if (pendingDelta.length >= STREAM_FLUSH_THRESHOLD) {
@@ -641,6 +640,7 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
       return;
     }
 
+    telemetry.hadTools = sandboxTools !== undefined;
     stream = await streamViaGateway(
       ctx,
       {

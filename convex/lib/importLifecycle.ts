@@ -15,7 +15,7 @@ export type PersistGuardResult =
       repository: Doc<"repositories">;
     }
   | { kind: "completed" }
-  | { kind: "cancelled" };
+  | { kind: "cancelled"; reason?: string };
 
 function reasonForRepositoryTombstone(repository: Doc<"repositories"> | null | undefined): string {
   if (!repository) {
@@ -45,11 +45,19 @@ export async function loadImportContext(
     };
   }
 
-  if (importRecord.status === "cancelled" || importRecord.status === "failed") {
+  if (importRecord.status === "cancelled") {
     return {
       kind: "cancelled" as const,
       jobId: importRecord.jobId,
       reason: importRecord.errorMessage ?? "Import is already in a terminal state.",
+    };
+  }
+
+  if (importRecord.status === "failed") {
+    return {
+      kind: "cancelled" as const,
+      jobId: importRecord.jobId,
+      reason: importRecord.errorMessage ?? "Import failed previously.",
     };
   }
 
@@ -91,10 +99,17 @@ export async function markImportRunningForMutation(
     };
   }
 
-  if (importRecord?.status === "cancelled" || importRecord?.status === "failed") {
+  if (importRecord?.status === "cancelled") {
     return {
       kind: "cancelled" as const,
       reason: importRecord.errorMessage ?? "Import is already in a terminal state.",
+    };
+  }
+
+  if (importRecord?.status === "failed") {
+    return {
+      kind: "cancelled" as const,
+      reason: importRecord.errorMessage ?? "Import failed previously.",
     };
   }
 
@@ -135,6 +150,13 @@ export async function finalizeImportCancellation(
 
   if (importRecord?.status === "cancelled") {
     return { kind: "cancelled" as const };
+  }
+
+  if (importRecord?.status === "failed") {
+    return {
+      kind: "cancelled" as const,
+      reason: importRecord.errorMessage,
+    };
   }
 
   const now = Date.now();
@@ -183,8 +205,12 @@ export async function guardPersistStage(
     return { kind: "completed" };
   }
 
-  if (importRecord.status === "cancelled" || importRecord.status === "failed") {
-    return { kind: "cancelled" };
+  if (importRecord.status === "cancelled") {
+    return { kind: "cancelled", reason: importRecord.errorMessage };
+  }
+
+  if (importRecord.status === "failed") {
+    return { kind: "cancelled", reason: importRecord.errorMessage };
   }
 
   const repository = await ctx.db.get(importRecord.repositoryId);
@@ -271,7 +297,12 @@ export async function markImportFailedForMutation(
   },
 ): Promise<void> {
   const importRecord = await ctx.db.get(args.importId);
-  if (!importRecord || importRecord.status === "completed" || importRecord.status === "cancelled") {
+  if (
+    !importRecord ||
+    importRecord.status === "completed" ||
+    importRecord.status === "cancelled" ||
+    importRecord.status === "failed"
+  ) {
     return;
   }
 

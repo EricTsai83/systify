@@ -34,7 +34,9 @@ export async function runRepositoryImportPipeline(ctx: ActionCtx, args: { import
   let importContext: ImportContext | null = null;
 
   try {
-    const started = await startImportRun(ctx, args.importId);
+    const started = await startImportRun(ctx, args.importId, (readyContext) => {
+      importContext = readyContext;
+    });
     if (started.kind === "stopped") {
       return;
     }
@@ -47,7 +49,11 @@ export async function runRepositoryImportPipeline(ctx: ActionCtx, args: { import
   }
 }
 
-async function startImportRun(ctx: ActionCtx, importId: Id<"imports">): Promise<StartedImportRun> {
+async function startImportRun(
+  ctx: ActionCtx,
+  importId: Id<"imports">,
+  onReadyContext: (importContext: ReadyImportContext) => void,
+): Promise<StartedImportRun> {
   const importContext = await ctx.runQuery(internal.imports.getImportContext, {
     importId,
   });
@@ -65,6 +71,7 @@ async function startImportRun(ctx: ActionCtx, importId: Id<"imports">): Promise<
     return { kind: "stopped" };
   }
 
+  onReadyContext(importContext);
   const runningState = await ctx.runMutation(internal.imports.markImportRunning, {
     importId,
     jobId: importContext.jobId,

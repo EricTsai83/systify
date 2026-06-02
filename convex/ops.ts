@@ -182,6 +182,7 @@ export const completeSandboxCleanup = internalMutation({
     jobId: v.id("jobs"),
   },
   handler: async (ctx, args) => {
+    const sandbox = await ctx.db.get(args.sandboxId);
     const completedJob = await completeRunningJob(ctx, {
       jobId: args.jobId,
       expectedKind: "cleanup",
@@ -196,6 +197,14 @@ export const completeSandboxCleanup = internalMutation({
       status: "archived",
       lastUsedAt: Date.now(),
     });
+    if (sandbox) {
+      const repository = await ctx.db.get(sandbox.repositoryId);
+      if (repository?.deletionRequestedAt) {
+        await ctx.scheduler.runAfter(0, internal.repositories.cascadeDeleteRepository, {
+          repositoryId: sandbox.repositoryId,
+        });
+      }
+    }
     return { completed: true as const };
   },
 });
@@ -269,6 +278,7 @@ export const failSandboxCleanup = internalMutation({
     errorMessage: v.string(),
   },
   handler: async (ctx, args) => {
+    const sandbox = await ctx.db.get(args.sandboxId);
     const failedJob = await failRunningJob(ctx, {
       jobId: args.jobId,
       expectedKind: "cleanup",
@@ -283,6 +293,17 @@ export const failSandboxCleanup = internalMutation({
       status: "failed",
       lastErrorMessage: args.errorMessage,
     });
+    if (sandbox) {
+      const repository = await ctx.db.get(sandbox.repositoryId);
+      if (repository?.deletionRequestedAt) {
+        await ctx.db.patch(sandbox.repositoryId, {
+          repositoryDeleteSandboxCleanupAttempts: (repository.repositoryDeleteSandboxCleanupAttempts ?? 0) + 1,
+        });
+        await ctx.scheduler.runAfter(0, internal.repositories.cascadeDeleteRepository, {
+          repositoryId: sandbox.repositoryId,
+        });
+      }
+    }
     return { failed: true as const };
   },
 });
