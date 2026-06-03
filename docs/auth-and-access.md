@@ -126,7 +126,7 @@ The security invariant is:
 - Systify state proves which signed-in Systify owner initiated the flow.
 - GitHub user OAuth proves which GitHub user is currently authorizing the callback.
 - GitHub's accessible-installations API proves whether that GitHub user can access the installation id.
-- `saveInstallation` still enforces the local invariant that one active installation id cannot be bound to a different active owner.
+- `saveInstallation` still enforces the local invariant that one current installation id cannot be bound to a different current owner. Current means `active` or `suspended`.
 
 This prevents cross-tenant installation binding: a user who knows another installation id cannot attach it to their Systify account unless GitHub also says their authenticated GitHub user can access that installation.
 
@@ -156,7 +156,9 @@ GitHub webhooks synchronize installation state back into Convex, including:
 
 Other actions on the `installation` event (notably `update`, where a user changes the GitHub App's repository selection without uninstalling) are intentionally ignored by the webhook receiver — the handler still returns `200 OK` so GitHub does not retry, but no mutation runs. Repository selection is re-read on demand from the GitHub API the next time the frontend or backend needs it.
 
-As a result, `githubInstallations` is not just a callback record. It is the local projection of currently usable GitHub permissions.
+As a result, `githubInstallations` is not just a callback record. It is the local projection of GitHub installation lifecycle state. `active` is current and usable, `suspended` is current but unusable, and `deleted` is historical.
+
+Webhook transitions never create a new authorization proof. A suspended row can become active through an unambiguous signed `unsuspend` webhook because it is still the same current owner binding. A deleted row cannot be revived by webhook; the only path back to a usable binding is the fresh OAuth-verified installation flow that proves the Systify owner and GitHub user can access the installation before `saveInstallation` writes `active`.
 
 ## Repository Access Control
 

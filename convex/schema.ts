@@ -546,6 +546,10 @@ export default defineSchema({
   })
     .index("by_repositoryId", ["repositoryId"])
     .index("by_repositoryId_and_kind", ["repositoryId", "kind"])
+    .index(
+      "by_repositoryId_and_kind_and_alignedImportCommitSha_and_generatedByProvider_and_generatedByModel_and_promptVersion",
+      ["repositoryId", "kind", "alignedImportCommitSha", "generatedByProvider", "generatedByModel", "promptVersion"],
+    )
     .index("by_repositoryId_and_folderId", ["repositoryId", "folderId"])
     .index("by_repositoryId_and_lastVerifiedAt", ["repositoryId", "lastVerifiedAt"])
     .index("by_folderId", ["folderId"])
@@ -1275,6 +1279,8 @@ export default defineSchema({
   })
     .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"])
     .index("by_ownerTokenIdentifier_and_status", ["ownerTokenIdentifier", "status"])
+    .index("by_ownerTokenIdentifier_and_installationId", ["ownerTokenIdentifier", "installationId"])
+    .index("by_installationId_and_status", ["installationId", "status"])
     .index("by_installationId", ["installationId"]),
 
   githubOAuthStates: defineTable({

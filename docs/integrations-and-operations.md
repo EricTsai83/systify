@@ -87,8 +87,8 @@ The actual flow is:
 6. The OAuth callback exchanges the `code` for a GitHub user access token and verifies the pending installation with GitHub's accessible-installations API.
 7. Only after that verification passes does the callback fetch installation details from GitHub.
 8. `saveInstallation` either:
-  - connects or refreshes the same installation
-  - or returns a conflict when the owner already has a different active installation
+  - connects or refreshes the same owner-scoped installation
+  - or returns a conflict when the owner already has a different active or suspended installation
 9. conflict redirects use `?github_error=already_connected` instead of silently replacing the existing connection.
 10. callback redirects use the stored frontend origin when available.
 11. if GitHub calls back without a usable state, the HTTP route returns an explicit error response instead of guessing a frontend URL.
@@ -103,7 +103,7 @@ Defenses:
 - `githubOAuthStates.state` binds the callback to the Systify owner that started the flow.
 - PKCE-backed GitHub user OAuth binds the callback to the GitHub user currently authorizing the flow.
 - GitHub's accessible-installations API verifies that the GitHub user can access the pending installation id before it is saved.
-- `saveInstallation` checks `by_installationId` in the same mutation and rejects a foreign active owner, so even a verified installation cannot be silently rebound away from another active Systify owner.
+- `saveInstallation` rejects foreign active or suspended rows in the same mutation, so even a verified installation cannot be silently rebound away from another current Systify owner.
 - callback errors use explicit failure pages / redirect parameters rather than falling back to guessed frontend targets.
 
 ### Webhook flow
@@ -114,7 +114,9 @@ Defenses:
 - `suspend`
 - `unsuspend`
 
-The webhook first verifies the payload with HMAC-SHA256 using `GITHUB_APP_WEBHOOK_SECRET`, then updates local installation state.
+The webhook first verifies the payload with HMAC-SHA256 using `GITHUB_APP_WEBHOOK_SECRET`, then updates local installation state. This only synchronizes provider lifecycle; it does not establish authorization proof for a Systify owner. Deleted rows are terminal for webhook handling and can become usable again only through the fresh OAuth-verified callback flow.
+
+Webhook projection fails closed when local state is ambiguous. In particular, if an `unsuspend` event finds multiple current owners for the same installation id, Systify logs a warning and leaves all rows unchanged rather than guessing which owner should receive active access.
 
 ### Design points
 
@@ -122,7 +124,7 @@ The webhook first verifies the payload with HMAC-SHA256 using `GITHUB_APP_WEBHOO
 - both callback and webhook handling are centralized in Convex `http.ts`
 - local `githubInstallations` records are a projection of GitHub permission state, not the sole source of truth
 - URL parameters, webhook payloads, and GitHub installation ids are external inputs; they must be verified against Systify state, GitHub signatures, or GitHub APIs before they affect owner-scoped data
-- the current product invariant is **one active GitHub installation per owner**
+- the current product invariant is **one current GitHub installation per owner**, where current means active or suspended
 - a second different installation is treated as a product conflict, not as an implicit overwrite
 
 ## Daytona

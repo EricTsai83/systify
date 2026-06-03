@@ -10,5 +10,7 @@ export function useGitHubConnection() {
     installationId: status?.installationId ?? null,
     accountLogin: status?.accountLogin ?? null,
     repositorySelection: status?.repositorySelection ?? null,
+    installationStatus: status?.installationStatus ?? null,
+    isSuspended: status?.installationStatus === "suspended",
   };
 }

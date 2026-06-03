@@ -692,22 +692,39 @@ const recordKindRunStatus = v.union(
   v.literal("quality_rejected"),
 );
 
+type SystemDesignCacheKey = {
+  repositoryId: Id<"repositories">;
+  kind: SystemDesignKind;
+  alignedImportCommitSha: string;
+  generatedByProvider: LlmProvider;
+  generatedByModel: string;
+  promptVersion: number;
+};
+
 /**
- * Idempotency cache probe. Returns the most-recent artifact matching
- * the full `(repositoryId, kind, commitSha, provider, model,
- * promptVersion)` tuple, or `null` when no match exists.
- *
- * Read scope is bounded by `by_repositoryId_and_kind`: typical
- * (repo, kind) slices hold ≤ 1 artifact at any time because
- * `persistGeneratedArtifact` deletes the previous artifact when the
- * regeneration overwrites it. The collect-and-filter pattern stays
- * cheap and avoids a six-field index that would be a maintenance
- * burden for every future cache-key change.
- *
- * Returns the *most recent* match (descending `_creationTime`) so a
- * race between concurrent regenerations resolves consistently — the
- * later writer wins.
+ * Exact idempotency cache probe. Returns the most-recent artifact matching
+ * the full `(repositoryId, kind, commitSha, provider, model, promptVersion)`
+ * tuple, or `null` when no match exists. Legacy artifacts missing any cache
+ * metadata field do not match this index lookup.
  */
+async function findCachedArtifactByKey(ctx: QueryCtx, key: SystemDesignCacheKey): Promise<Doc<"artifacts"> | null> {
+  return await ctx.db
+    .query("artifacts")
+    .withIndex(
+      "by_repositoryId_and_kind_and_alignedImportCommitSha_and_generatedByProvider_and_generatedByModel_and_promptVersion",
+      (q) =>
+        q
+          .eq("repositoryId", key.repositoryId)
+          .eq("kind", key.kind)
+          .eq("alignedImportCommitSha", key.alignedImportCommitSha)
+          .eq("generatedByProvider", key.generatedByProvider)
+          .eq("generatedByModel", key.generatedByModel)
+          .eq("promptVersion", key.promptVersion),
+    )
+    .order("desc")
+    .first();
+}
+
 export const findCachedArtifact = internalQuery({
   args: {
     repositoryId: v.id("repositories"),
@@ -718,22 +735,7 @@ export const findCachedArtifact = internalQuery({
     promptVersion: v.number(),
   },
   handler: async (ctx, args): Promise<Doc<"artifacts"> | null> => {
-    const candidates = await ctx.db
-      .query("artifacts")
-      .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", args.repositoryId).eq("kind", args.kind))
-      .order("desc")
-      .collect();
-    for (const candidate of candidates) {
-      if (
-        candidate.alignedImportCommitSha === args.alignedImportCommitSha &&
-        candidate.generatedByProvider === args.generatedByProvider &&
-        candidate.generatedByModel === args.generatedByModel &&
-        candidate.promptVersion === args.promptVersion
-      ) {
-        return candidate;
-      }
-    }
-    return null;
+    return await findCachedArtifactByKey(ctx, args);
   },
 });
 
@@ -990,18 +992,14 @@ export const getCachedSelectionStatus = query({
     const pendingKinds: SystemDesignKind[] = [];
     for (const kind of selections) {
       const promptVersion = SYSTEM_DESIGN_PROMPT_VERSIONS[kind];
-      const candidates = await ctx.db
-        .query("artifacts")
-        .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", args.repositoryId).eq("kind", kind))
-        .order("desc")
-        .collect();
-      const cached = candidates.find(
-        (candidate) =>
-          candidate.alignedImportCommitSha === commitSha &&
-          candidate.generatedByProvider === provider &&
-          candidate.generatedByModel === modelName &&
-          candidate.promptVersion === promptVersion,
-      );
+      const cached = await findCachedArtifactByKey(ctx, {
+        repositoryId: args.repositoryId,
+        kind,
+        alignedImportCommitSha: commitSha,
+        generatedByProvider: provider,
+        generatedByModel: modelName,
+        promptVersion,
+      });
       if (cached) {
         cachedKinds.push(kind);
       } else {

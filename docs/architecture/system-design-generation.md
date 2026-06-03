@@ -59,12 +59,14 @@ main for-loop (`convex/systemDesignNode.ts:183-423`):
    action while it is still making progress.
 2. **Cache probe.** When `forceRegenerate` is `false` and the repository has a
    `lastSyncedCommitSha`, the action calls `findCachedArtifact`
-   (`convex/systemDesign.ts:680`) with the full tuple `(repositoryId, kind,
+   (`convex/systemDesign.ts`) with the full tuple `(repositoryId, kind,
    alignedImportCommitSha, generatedByProvider, generatedByModel,
-   promptVersion)`. A match short-circuits the LLM call entirely: the run
-   status becomes `cached_hit` and the cached artifact's id flows straight into
-   step 7. There is no separate cache table — the artifact itself is the
-   cache.
+   promptVersion)`. The lookup uses the exact compound
+   `artifacts.by_repositoryId_and_kind_and_alignedImportCommitSha_and_generatedByProvider_and_generatedByModel_and_promptVersion`
+   index and returns the newest matching artifact. A match short-circuits the
+   LLM call entirely: the run status becomes `cached_hit` and the cached
+   artifact's id flows straight into step 7. There is no separate cache table
+   — the artifact itself is the cache.
 3. **Cost pre-check.** `assertKindCostBudget`
    (`convex/systemDesign.ts:750`) throws `SANDBOX_DAILY_CAP_EXCEEDED` or
    `SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED` when the per-user or
@@ -114,11 +116,26 @@ After each kind finishes (success, cache hit, or fail), the action calls
 
 The artifact's `(repositoryId, kind, alignedImportCommitSha,
 generatedByProvider, generatedByModel, promptVersion)` tuple is the cache
-key. Same commit and same provider, model, and prompt version means
-`findCachedArtifact` finds the row and the next run is free. Bumping any
-component invalidates the cache: a new commit re-runs against the fresh tree,
-a different provider re-runs because the fingerprint moves, a `promptVersion`
-bump in `SYSTEM_DESIGN_PROMPT_VERSIONS`
+key. Both the Generate dialog cache preview and the Node action share the
+same indexed lookup helper, so preview and execution agree on what counts as
+a hit:
+
+```mermaid
+flowchart LR
+  Dialog[Generate dialog cache preview] --> Lookup[Indexed cache lookup]
+  Node[System Design Node action] --> Lookup
+  Lookup --> Index[(artifacts cache-key index)]
+  Index --> Hit[Cached artifact]
+  Index --> Miss[Generate via LLM gateway]
+```
+
+Same commit and same provider, model, and prompt version means
+`findCachedArtifact` finds the newest matching row and the next run is free.
+Rows missing any cache metadata field do not count as hits, which keeps
+pre-cache historical artifacts conservative. Bumping any component invalidates
+the cache: a new commit re-runs against the fresh tree, a different provider
+re-runs because the fingerprint moves, a `promptVersion` bump in
+`SYSTEM_DESIGN_PROMPT_VERSIONS`
 (`convex/lib/systemDesignPrompts.ts:212`) re-runs every kind whose prompt was
 edited. The snapshot test `promptShape.test.ts` fails the suite when a
 prompt edit lands without a matching version bump, so prompt churn cannot

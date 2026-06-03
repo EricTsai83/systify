@@ -61,6 +61,19 @@ function activeInstallation(ownerTokenIdentifier: string, installationId: number
   };
 }
 
+function suspendedInstallation(ownerTokenIdentifier: string, installationId: number) {
+  return {
+    ownerTokenIdentifier,
+    installationId,
+    accountLogin: `suspended-${installationId}`,
+    accountType: "User" as const,
+    status: "suspended" as const,
+    repositorySelection: "selected" as const,
+    connectedAt: Date.now() - 10_000,
+    suspendedAt: Date.now() - 5_000,
+  };
+}
+
 function deletedInstallation(ownerTokenIdentifier: string, installationId: number) {
   return {
     ownerTokenIdentifier,
@@ -228,6 +241,81 @@ describe("GitHub installation selection", () => {
     expect(rows[0]?.ownerTokenIdentifier).toBe(ownerTokenIdentifier);
   });
 
+  test("saveInstallation rejects an installation id already suspended for another owner", async () => {
+    const ownerTokenIdentifier = "user|installation-owner-suspended";
+    const intruderTokenIdentifier = "user|installation-intruder-suspended";
+    const t = createTestConvex();
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("githubInstallations", suspendedInstallation(ownerTokenIdentifier, 703));
+    });
+
+    const result = await t.mutation(internal.github.saveInstallation, {
+      ownerTokenIdentifier: intruderTokenIdentifier,
+      installationId: 703,
+      accountLogin: "intruder-account",
+      accountType: "User",
+      repositorySelection: "all",
+    });
+
+    expect(result).toEqual({
+      kind: "conflict",
+      existingInstallationId: 703,
+      existingAccountLogin: "suspended-703",
+    });
+
+    const rows = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("githubInstallations")
+          .withIndex("by_installationId", (q) => q.eq("installationId", 703))
+          .take(10),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.ownerTokenIdentifier).toBe(ownerTokenIdentifier);
+    expect(rows[0]?.status).toBe("suspended");
+  });
+
+  test("saveInstallation reconnects the same owner's suspended installation", async () => {
+    const ownerTokenIdentifier = "user|installation-suspended-reconnect";
+    const t = createTestConvex();
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("githubInstallations", suspendedInstallation(ownerTokenIdentifier, 704));
+    });
+
+    const result = await t.mutation(internal.github.saveInstallation, {
+      ownerTokenIdentifier,
+      installationId: 704,
+      accountLogin: "reconnected-account",
+      accountType: "Organization",
+      repositorySelection: "all",
+    });
+
+    expect(result).toEqual({
+      kind: "connected",
+      installationId: 704,
+    });
+
+    const rows = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("githubInstallations")
+          .withIndex("by_ownerTokenIdentifier_and_installationId", (q) =>
+            q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("installationId", 704),
+          )
+          .take(10),
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      accountLogin: "reconnected-account",
+      accountType: "Organization",
+      repositorySelection: "all",
+      status: "active",
+    });
+    expect(rows[0]?.suspendedAt).toBeUndefined();
+  });
+
   test("saveInstallation allows reusing an installation id after the foreign active row is deleted", async () => {
     const oldOwnerTokenIdentifier = "user|installation-old-owner";
     const newOwnerTokenIdentifier = "user|installation-new-owner";
@@ -251,6 +339,182 @@ describe("GitHub installation selection", () => {
     });
   });
 
+  test("saveInstallation does not patch a foreign deleted installation row", async () => {
+    const oldOwnerTokenIdentifier = "user|installation-foreign-deleted-old-owner";
+    const newOwnerTokenIdentifier = "user|installation-foreign-deleted-new-owner";
+    const t = createTestConvex();
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("githubInstallations", deletedInstallation(oldOwnerTokenIdentifier, 705));
+    });
+
+    const result = await t.mutation(internal.github.saveInstallation, {
+      ownerTokenIdentifier: newOwnerTokenIdentifier,
+      installationId: 705,
+      accountLogin: "new-account",
+      accountType: "Organization",
+      repositorySelection: "selected",
+    });
+
+    expect(result).toEqual({
+      kind: "connected",
+      installationId: 705,
+    });
+
+    const rows = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("githubInstallations")
+          .withIndex("by_installationId", (q) => q.eq("installationId", 705))
+          .order("asc")
+          .take(10),
+    );
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.ownerTokenIdentifier === oldOwnerTokenIdentifier)).toMatchObject({
+      accountLogin: "deleted-705",
+      status: "deleted",
+    });
+    expect(rows.find((row) => row.ownerTokenIdentifier === newOwnerTokenIdentifier)).toMatchObject({
+      accountLogin: "new-account",
+      status: "active",
+    });
+  });
+
+  test("deleted installations can only reconnect through saveInstallation", async () => {
+    const ownerTokenIdentifier = "user|installation-deleted-reconnect";
+    const t = createTestConvex();
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("githubInstallations", deletedInstallation(ownerTokenIdentifier, 706));
+    });
+
+    await t.mutation(internal.github.markInstallationActive, { installationId: 706 });
+
+    const afterWebhook = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("githubInstallations")
+          .withIndex("by_ownerTokenIdentifier_and_installationId", (q) =>
+            q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("installationId", 706),
+          )
+          .unique(),
+    );
+    expect(afterWebhook?.status).toBe("deleted");
+
+    await t.mutation(internal.github.saveInstallation, {
+      ownerTokenIdentifier,
+      installationId: 706,
+      accountLogin: "fresh-oauth-account",
+      accountType: "User",
+      repositorySelection: "all",
+    });
+
+    const afterSave = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("githubInstallations")
+          .withIndex("by_ownerTokenIdentifier_and_installationId", (q) =>
+            q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("installationId", 706),
+          )
+          .unique(),
+    );
+    expect(afterSave).toMatchObject({
+      accountLogin: "fresh-oauth-account",
+      status: "active",
+    });
+  });
+
+  test("markInstallationSuspended ignores deleted installations", async () => {
+    const ownerTokenIdentifier = "user|installation-suspend-deleted";
+    const t = createTestConvex();
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("githubInstallations", deletedInstallation(ownerTokenIdentifier, 707));
+    });
+
+    await t.mutation(internal.github.markInstallationSuspended, { installationId: 707 });
+
+    const row = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("githubInstallations")
+          .withIndex("by_ownerTokenIdentifier_and_installationId", (q) =>
+            q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("installationId", 707),
+          )
+          .unique(),
+    );
+    expect(row?.status).toBe("deleted");
+  });
+
+  test("markInstallationActive does not resurrect deleted installations", async () => {
+    const ownerTokenIdentifier = "user|installation-unsuspend-deleted";
+    const t = createTestConvex();
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("githubInstallations", deletedInstallation(ownerTokenIdentifier, 708));
+    });
+
+    await t.mutation(internal.github.markInstallationActive, { installationId: 708 });
+
+    const row = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("githubInstallations")
+          .withIndex("by_ownerTokenIdentifier_and_installationId", (q) =>
+            q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("installationId", 708),
+          )
+          .unique(),
+    );
+    expect(row?.status).toBe("deleted");
+  });
+
+  test("markInstallationActive fails closed when multiple current owners exist", async () => {
+    const activeOwnerTokenIdentifier = "user|installation-unsuspend-active-owner";
+    const suspendedOwnerTokenIdentifier = "user|installation-unsuspend-suspended-owner";
+    const t = createTestConvex();
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("githubInstallations", activeInstallation(activeOwnerTokenIdentifier, 709));
+      await ctx.db.insert("githubInstallations", suspendedInstallation(suspendedOwnerTokenIdentifier, 709));
+    });
+
+    await t.mutation(internal.github.markInstallationActive, { installationId: 709 });
+
+    const rows = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("githubInstallations")
+          .withIndex("by_installationId", (q) => q.eq("installationId", 709))
+          .take(10),
+    );
+    expect(rows.find((row) => row.ownerTokenIdentifier === activeOwnerTokenIdentifier)?.status).toBe("active");
+    expect(rows.find((row) => row.ownerTokenIdentifier === suspendedOwnerTokenIdentifier)?.status).toBe("suspended");
+  });
+
+  test("disconnectGitHub deletes suspended installations", async () => {
+    const ownerTokenIdentifier = "user|installation-disconnect-suspended";
+    const t = createTestConvex();
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("githubInstallations", suspendedInstallation(ownerTokenIdentifier, 710));
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    await viewer.mutation(api.github.disconnectGitHub, {});
+
+    const row = await t.run(
+      async (ctx) =>
+        await ctx.db
+          .query("githubInstallations")
+          .withIndex("by_ownerTokenIdentifier_and_installationId", (q) =>
+            q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("installationId", 710),
+          )
+          .unique(),
+    );
+    expect(row?.status).toBe("deleted");
+    expect(row?.deletedAt).toEqual(expect.any(Number));
+  });
+
   test("connection status ignores deleted installations that were created first", async () => {
     const ownerTokenIdentifier = "user|github-status";
     const t = createTestConvex();
@@ -268,6 +532,27 @@ describe("GitHub installation selection", () => {
       installationId: 202,
       accountLogin: "active-202",
       repositorySelection: "selected",
+      installationStatus: "active",
+    });
+  });
+
+  test("connection status returns suspended metadata with isConnected false", async () => {
+    const ownerTokenIdentifier = "user|github-status-suspended";
+    const t = createTestConvex();
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("githubInstallations", suspendedInstallation(ownerTokenIdentifier, 203));
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const status = await viewer.query(api.github.getGitHubConnectionStatus, {});
+
+    expect(status).toMatchObject({
+      isConnected: false,
+      installationId: 203,
+      accountLogin: "suspended-203",
+      repositorySelection: "selected",
+      installationStatus: "suspended",
     });
   });
 

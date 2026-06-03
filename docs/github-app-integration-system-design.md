@@ -310,30 +310,44 @@ The update branch is intentionally read-only. GitHub can redirect back after the
 ```mermaid
 flowchart TD
   Save[saveInstallation]
-  SameInstallationRows[Load rows by installationId]
-  ForeignActive{Active row belongs to another owner?}
-  OwnerActiveRows[Load active rows by ownerTokenIdentifier]
-  OtherOwnerInstallation{Owner already has another active installation?}
-  SameActive{Owner already has same active installation?}
+  SameInstallationRows[Load current rows by installationId]
+  ForeignCurrent{Active or suspended row belongs to another owner?}
+  OwnerCurrentRows[Load owner active and suspended rows]
+  OtherOwnerInstallation{Owner already has another current installation?}
+  SameOwnedRow{Owner has same active, suspended, or deleted installation?}
   Patch[Patch existing row active and fresh details]
   Insert[Insert new active installation row]
   Conflict[Return conflict]
   Connected[Return connected]
 
   Save --> SameInstallationRows
-  SameInstallationRows --> ForeignActive
-  ForeignActive -->|Yes| Conflict
-  ForeignActive -->|No| OwnerActiveRows
-  OwnerActiveRows --> OtherOwnerInstallation
+  SameInstallationRows --> ForeignCurrent
+  ForeignCurrent -->|Yes| Conflict
+  ForeignCurrent -->|No| OwnerCurrentRows
+  OwnerCurrentRows --> OtherOwnerInstallation
   OtherOwnerInstallation -->|Yes| Conflict
-  OtherOwnerInstallation -->|No| SameActive
-  SameActive -->|Yes| Patch
-  SameActive -->|No| Insert
+  OtherOwnerInstallation -->|No| SameOwnedRow
+  SameOwnedRow -->|Yes| Patch
+  SameOwnedRow -->|No| Insert
   Patch --> Connected
   Insert --> Connected
 ```
 
-The product invariant is one active GitHub installation per Systify owner. A second different installation is a conflict, not an implicit replacement.
+The product invariant is one current GitHub installation per Systify owner, where current means `active` or `suspended`. A second different current installation is a conflict, not an implicit replacement. A foreign `active` or `suspended` row also conflicts. A foreign `deleted` row is historical and is never patched or revived by another owner's OAuth flow.
+
+## Installation Lifecycle
+
+```mermaid
+stateDiagram-v2
+  [*] --> Active: fresh OAuth verified
+  Active --> Suspended: signed webhook suspend
+  Suspended --> Active: signed webhook unsuspend
+  Active --> Deleted: disconnect or deleted webhook
+  Suspended --> Deleted: disconnect or deleted webhook
+  Deleted --> Active: fresh OAuth verified only
+```
+
+`deleted` is terminal for webhook processing. Signed webhooks may project provider lifecycle changes for current rows, but they do not establish a new owner authorization proof. A deleted row can become usable again only when the same owner completes the fresh OAuth-verified installation flow and `saveInstallation` updates that owner-scoped row.
 
 ## Repository Discovery Flow
 
@@ -527,7 +541,16 @@ sequenceDiagram
   end
 ```
 
-The webhook receiver currently treats installation lifecycle events as a projection update. It does not try to mirror every repository-selection update into Convex. Repository selection is re-read on demand from GitHub when the UI lists repositories or when access is checked.
+The webhook receiver treats installation lifecycle events as provider-state projection only. It does not try to mirror every repository-selection update into Convex. Repository selection is re-read on demand from GitHub when the UI lists repositories or when access is checked.
+
+Lifecycle transitions are intentionally narrow:
+
+- `suspend` only changes `active` rows to `suspended`.
+- `unsuspend` only changes unambiguous `suspended` rows to `active`.
+- `deleted` only changes `active` or `suspended` rows to `deleted`.
+- `deleted` rows are terminal for webhooks and never become `active` from `unsuspend`.
+
+If an `unsuspend` webhook maps to more than one current owner for the same installation id, Systify logs the ambiguity and leaves all rows unchanged. The system fails closed because a webhook proves provider lifecycle, not which Systify owner should receive a usable binding.
 
 ## Trust Boundaries
 
@@ -626,10 +649,11 @@ flowchart LR
 
 ## Operational Invariants
 
-- A Systify owner can have at most one active GitHub App installation.
-- An active installation id cannot be silently rebound to a different active owner.
+- A Systify owner can have at most one current GitHub App installation, where current means `active` or `suspended`.
+- A current installation id cannot be silently rebound to a different current owner.
 - Callback `installation_id` is untrusted until verified by GitHub user OAuth and accessible-installations.
-- Installation lifecycle webhooks update local status but do not replace on-demand GitHub access checks.
+- Installation lifecycle webhooks update local status but do not create authorization proof or replace on-demand GitHub access checks.
+- Deleted installation rows are webhook-terminal and can become usable only through a fresh OAuth-verified save for that owner.
 - Import and sync read GitHub directly and never provision Daytona sandboxes.
 - Sandbox-backed flows still re-check GitHub access before provisioning or using a sandbox.
 - GitHub network-heavy paths consume server-side rate-limit buckets before calling GitHub.
