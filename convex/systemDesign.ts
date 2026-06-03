@@ -710,16 +710,14 @@ type SystemDesignCacheKey = {
 async function findCachedArtifactByKey(ctx: QueryCtx, key: SystemDesignCacheKey): Promise<Doc<"artifacts"> | null> {
   return await ctx.db
     .query("artifacts")
-    .withIndex(
-      "by_repositoryId_and_kind_and_alignedImportCommitSha_and_generatedByProvider_and_generatedByModel_and_promptVersion",
-      (q) =>
-        q
-          .eq("repositoryId", key.repositoryId)
-          .eq("kind", key.kind)
-          .eq("alignedImportCommitSha", key.alignedImportCommitSha)
-          .eq("generatedByProvider", key.generatedByProvider)
-          .eq("generatedByModel", key.generatedByModel)
-          .eq("promptVersion", key.promptVersion),
+    .withIndex("by_repo_kind_commit_provider_model_promptVersion", (q) =>
+      q
+        .eq("repositoryId", key.repositoryId)
+        .eq("kind", key.kind)
+        .eq("alignedImportCommitSha", key.alignedImportCommitSha)
+        .eq("generatedByProvider", key.generatedByProvider)
+        .eq("generatedByModel", key.generatedByModel)
+        .eq("promptVersion", key.promptVersion),
     )
     .order("desc")
     .first();

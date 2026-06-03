@@ -62,7 +62,7 @@ main for-loop (`convex/systemDesignNode.ts:183-423`):
    (`convex/systemDesign.ts`) with the full tuple `(repositoryId, kind,
    alignedImportCommitSha, generatedByProvider, generatedByModel,
    promptVersion)`. The lookup uses the exact compound
-   `artifacts.by_repositoryId_and_kind_and_alignedImportCommitSha_and_generatedByProvider_and_generatedByModel_and_promptVersion`
+   `artifacts.by_repo_kind_commit_provider_model_promptVersion`
    index and returns the newest matching artifact. A match short-circuits the
    LLM call entirely: the run status becomes `cached_hit` and the cached
    artifact's id flows straight into step 7. There is no separate cache table

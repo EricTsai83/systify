@@ -546,10 +546,14 @@ export default defineSchema({
   })
     .index("by_repositoryId", ["repositoryId"])
     .index("by_repositoryId_and_kind", ["repositoryId", "kind"])
-    .index(
-      "by_repositoryId_and_kind_and_alignedImportCommitSha_and_generatedByProvider_and_generatedByModel_and_promptVersion",
-      ["repositoryId", "kind", "alignedImportCommitSha", "generatedByProvider", "generatedByModel", "promptVersion"],
-    )
+    .index("by_repo_kind_commit_provider_model_promptVersion", [
+      "repositoryId",
+      "kind",
+      "alignedImportCommitSha",
+      "generatedByProvider",
+      "generatedByModel",
+      "promptVersion",
+    ])
     .index("by_repositoryId_and_folderId", ["repositoryId", "folderId"])
     .index("by_repositoryId_and_lastVerifiedAt", ["repositoryId", "lastVerifiedAt"])
     .index("by_folderId", ["folderId"])
