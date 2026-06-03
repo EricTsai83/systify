@@ -175,6 +175,17 @@ export interface SandboxListedFile {
   readonly size: number;
 }
 
+export interface SandboxFileInfo {
+  readonly isDir: boolean;
+  readonly size: number;
+}
+
+export interface SandboxLimitedListResult {
+  readonly entries: readonly SandboxListedFile[];
+  readonly totalEntries: number;
+  readonly truncated: boolean;
+}
+
 /**
  * Options bag for `executeCommand`. The shape is option-bag (rather than
  * positional like `downloadFile(path, timeoutSeconds)`) because Daytona's
@@ -188,6 +199,7 @@ export interface SandboxShellExecuteOptions {
   readonly cwd?: string;
   readonly env?: Record<string, string>;
   readonly timeoutSeconds: number;
+  readonly maxOutputBytes?: number;
 }
 
 /**
@@ -222,9 +234,17 @@ export type SandboxShellOutcome =
  * generation call sites) with no semantic gain.
  */
 export interface SandboxFsClient {
+  /** Optional metadata probe used to reject oversized reads before download. */
+  readonly getFileInfo?: (path: string) => Promise<SandboxFileInfo>;
   /** Returns the entire file as raw bytes. Caller is responsible for size guards. */
   readonly downloadFile: (path: string, timeoutSeconds?: number) => Promise<Uint8Array>;
   readonly listFiles: (path: string) => Promise<readonly SandboxListedFile[]>;
+  /**
+   * Optional bounded directory listing. Production uses this to avoid
+   * asking Daytona to serialize huge directory listings; tests and fallback
+   * adapters can omit it and retain the legacy `listFiles` behavior.
+   */
+  readonly listFilesLimited?: (path: string, maxEntries: number) => Promise<SandboxLimitedListResult>;
   /**
    * Execute a shell command inside the sandbox.
    *
@@ -746,6 +766,31 @@ export async function executeReadFile(
     };
   }
 
+  if (client.getFileInfo) {
+    try {
+      const info = await client.getFileInfo(resolution.absolutePath);
+      if (info.isDir) {
+        return {
+          ok: false,
+          errorCode: "invalid_path",
+          message: "read_file requires a file path, but the resolved path is a directory.",
+        };
+      }
+      if (info.size > SANDBOX_READ_FILE_MAX_BYTES) {
+        return {
+          ok: false,
+          errorCode: "file_too_large_to_decode",
+          message:
+            `File is ${info.size} bytes; read_file only supports files up to ` +
+            `${SANDBOX_READ_FILE_MAX_BYTES} bytes. Use run_shell with a targeted ` +
+            "`sed`, `head`, `tail`, or `grep` command to inspect a smaller slice.",
+        };
+      }
+    } catch (error) {
+      return { ok: false, errorCode: "io_error", message: explainIoError(error) };
+    }
+  }
+
   let bytes: Uint8Array;
   try {
     bytes = await client.downloadFile(resolution.absolutePath, SANDBOX_READ_FILE_TIMEOUT_SECONDS);
@@ -792,8 +837,18 @@ export async function executeListDir(
   }
 
   let entries: readonly SandboxListedFile[];
+  let totalEntries: number;
+  let wasTruncatedByAdapter = false;
   try {
-    entries = await client.listFiles(resolution.absolutePath);
+    if (client.listFilesLimited) {
+      const limited = await client.listFilesLimited(resolution.absolutePath, SANDBOX_LIST_DIR_MAX_ENTRIES);
+      entries = limited.entries;
+      totalEntries = limited.totalEntries;
+      wasTruncatedByAdapter = limited.truncated;
+    } else {
+      entries = await client.listFiles(resolution.absolutePath);
+      totalEntries = entries.length;
+    }
   } catch (error) {
     return { ok: false, errorCode: "io_error", message: explainIoError(error) };
   }
@@ -818,7 +873,7 @@ export async function executeListDir(
     return a.name < b.name ? -1 : 1;
   });
 
-  const truncated = sortedEntries.length > SANDBOX_LIST_DIR_MAX_ENTRIES;
+  const truncated = wasTruncatedByAdapter || sortedEntries.length > SANDBOX_LIST_DIR_MAX_ENTRIES;
   const sliced = truncated ? sortedEntries.slice(0, SANDBOX_LIST_DIR_MAX_ENTRIES) : sortedEntries;
 
   // Redaction signals are aggregated to the result level (not annotated
@@ -841,7 +896,7 @@ export async function executeListDir(
     ok: true,
     path: resolution.normalizedRelative,
     entries: redactedEntries,
-    totalEntries: sortedEntries.length,
+    totalEntries,
     truncated,
     redactedTypes: [...aggregatedRedactionTypes].sort(),
   };
@@ -941,6 +996,7 @@ export async function executeRunShell(
   try {
     outcome = await client.executeCommand(command, {
       cwd: resolution.absolutePath,
+      maxOutputBytes: SANDBOX_RUN_SHELL_MAX_OUTPUT_BYTES,
       timeoutSeconds,
     });
   } catch (error) {

@@ -65,8 +65,8 @@ export function LibraryAskPanel({
    */
   onGenerate?: () => void;
 }) {
-  const createLibraryAskThread = useMutation(api.chat.threads.createLibraryAskThread);
   const sendMessage = useMutation(api.chat.send.sendMessage);
+  const sendMessageStartingNewThread = useMutation(api.chat.send.sendMessageStartingNewThread);
   const deleteThread = useMutation(api.chat.threads.deleteThread);
   const setThreadPinned = useMutation(api.chat.threads.setThreadPinned);
 
@@ -294,6 +294,14 @@ export function LibraryAskPanel({
     setIsStarting(!threadId);
     setIsSending(true);
     try {
+      // Forward the picked pair only when BOTH halves are present.
+      // The mutation rejects half-pairs with `incomplete_model_pick`;
+      // dropping them here keeps an unmounted / loading picker from
+      // firing a doomed send. With both unset the backend falls
+      // through to the library capability default.
+      const modelArgs =
+        selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : {};
+      const reasoningArgs = selectedReasoningEffort !== null ? { reasoningEffort: selectedReasoningEffort } : {};
       // Create the thread (if needed) and persist the user message BEFORE
       // telling the parent to flip `?ask=`. Switching the active thread no
       // longer remounts this panel (the thread is a query param on the same
@@ -305,29 +313,26 @@ export function LibraryAskPanel({
       let targetThreadId = threadId;
       let createdNew = false;
       if (!targetThreadId) {
-        const created = await createLibraryAskThread({
+        const created = await sendMessageStartingNewThread({
           repositoryId,
+          content,
+          mode: "library",
           artifactContext: activeArtifactId ? [activeArtifactId] : undefined,
           title: "Library Ask",
+          ...modelArgs,
+          ...reasoningArgs,
         });
-        targetThreadId = created._id;
+        targetThreadId = created.threadId;
         createdNew = true;
+      } else {
+        await sendMessage({
+          threadId: targetThreadId,
+          content,
+          mode: "library",
+          ...modelArgs,
+          ...reasoningArgs,
+        });
       }
-      // Forward the picked pair only when BOTH halves are present.
-      // The mutation rejects half-pairs with `incomplete_model_pick`;
-      // dropping them here keeps an unmounted / loading picker from
-      // firing a doomed send. With both unset the backend falls
-      // through to the library capability default.
-      const modelArgs =
-        selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : {};
-      const reasoningArgs = selectedReasoningEffort !== null ? { reasoningEffort: selectedReasoningEffort } : {};
-      await sendMessage({
-        threadId: targetThreadId,
-        content,
-        mode: "library",
-        ...modelArgs,
-        ...reasoningArgs,
-      });
       setInput("");
       if (createdNew) {
         ensureOpen({ id: targetThreadId, title: "Library Ask" });

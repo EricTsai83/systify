@@ -14,6 +14,7 @@ import {
   streamViaGateway,
   type LlmCallContext,
 } from "./lib/llmGateway";
+import { ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS } from "./lib/llmCatalog";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -229,6 +230,23 @@ describe("TEST_INTERNALS.buildProviderOptions", () => {
   });
 });
 
+describe("TEST_INTERNALS.buildEmbeddingProviderOptions", () => {
+  test("OpenAI embedding models request the artifact vector-index dimension", () => {
+    expect(TEST_INTERNALS.buildEmbeddingProviderOptions("openai", "text-embedding-3-small")).toEqual({
+      openai: { dimensions: ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS },
+    });
+    expect(TEST_INTERNALS.buildEmbeddingProviderOptions("openai", "text-embedding-3-large")).toEqual({
+      openai: { dimensions: ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS },
+    });
+  });
+
+  test("generation catalog entries cannot be routed through embedding options", () => {
+    expect(() => TEST_INTERNALS.buildEmbeddingProviderOptions("openai", "gpt-5.5")).toThrow(
+      /catalog entry must have capability "embedding"/,
+    );
+  });
+});
+
 // =====================================================================
 // Gateway integration tests (slot release, RPM denial, dispatch)
 // =====================================================================
@@ -307,6 +325,28 @@ describe("generateViaGateway — provider dispatch (#1)", () => {
       }),
     ).rejects.toThrow(/unsupported model pick/);
     // Factory never invoked because catalog check fails first.
+    expect(openaiFactory).not.toHaveBeenCalled();
+    expect(vi.mocked(generateText)).not.toHaveBeenCalled();
+  });
+
+  test("embedding catalog entries cannot be routed through generation", async () => {
+    const t = createTestHarness();
+    await expect(
+      t.action(async (ctx) => {
+        await generateViaGateway(
+          ctx,
+          buildCallCtx({
+            provider: "openai",
+            modelName: "text-embedding-3-small",
+            capability: "embedding",
+          }),
+          {
+            system: "s",
+            prompt: "p",
+          },
+        );
+      }),
+    ).rejects.toThrow(/generation calls require a generation catalog entry/);
     expect(openaiFactory).not.toHaveBeenCalled();
     expect(vi.mocked(generateText)).not.toHaveBeenCalled();
   });
@@ -431,7 +471,14 @@ describe("generateViaGateway — RPM denial (#6)", () => {
 // embedViaGateway — provider dispatch + cost calculation
 // =====================================================================
 
-function buildOkEmbedResult(values: string[], embedding: number[] = [0.1, 0.2, 0.3], tokens = 42) {
+function buildEmbeddingVector(first = 0.1, second = 0.2): number[] {
+  const embedding = Array.from({ length: ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS }, () => 0);
+  embedding[0] = first;
+  embedding[1] = second;
+  return embedding;
+}
+
+function buildOkEmbedResult(values: string[], embedding: number[] = buildEmbeddingVector(), tokens = 42) {
   return {
     embeddings: values.map(() => embedding),
     values,
@@ -453,20 +500,48 @@ function buildEmbedCallCtx(overrides?: Partial<LlmCallContext>): LlmCallContext 
 }
 
 describe("embedViaGateway — happy path", () => {
-  test("routes to openai.embedding(modelName) and returns vectors + cost", async () => {
+  test("routes to openai.embedding(modelName), passes dimensions, and returns vectors + cost", async () => {
     const values = ["chunk-a", "chunk-b"];
-    vi.mocked(embedMany).mockResolvedValueOnce(buildOkEmbedResult(values, [0.5, -0.5], 1_000_000));
+    vi.mocked(embedMany).mockResolvedValueOnce(buildOkEmbedResult(values, buildEmbeddingVector(0.5, -0.5), 1_000_000));
 
     const t = createTestHarness();
     const result = await t.action(async (ctx) => embedViaGateway(ctx, buildEmbedCallCtx(), { values }));
 
     expect(openaiEmbeddingFactory).toHaveBeenCalledWith("text-embedding-3-small");
+    expect(vi.mocked(embedMany)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerOptions: { openai: { dimensions: ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS } },
+      }),
+    );
     expect(anthropicFactory).not.toHaveBeenCalled();
     expect(result.embeddings).toHaveLength(2);
-    expect(result.embeddings[0]).toEqual([0.5, -0.5]);
+    expect(result.embeddings[0]).toHaveLength(ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS);
+    expect(result.embeddings[0]?.slice(0, 2)).toEqual([0.5, -0.5]);
     expect(result.usage.inputTokens).toBe(1_000_000);
     // 1M input @ $0.02 = $0.02
     expect(result.costUsd).toBeCloseTo(0.02);
+  });
+
+  test("text-embedding-3-large is down-projected to the artifact vector-index dimension", async () => {
+    const values = ["query"];
+    vi.mocked(embedMany).mockResolvedValueOnce(
+      buildOkEmbedResult(values, buildEmbeddingVector(0.25, -0.25), 1_000_000),
+    );
+
+    const t = createTestHarness();
+    const result = await t.action(async (ctx) =>
+      embedViaGateway(ctx, buildEmbedCallCtx({ modelName: "text-embedding-3-large" }), { values }),
+    );
+
+    expect(openaiEmbeddingFactory).toHaveBeenCalledWith("text-embedding-3-large");
+    expect(vi.mocked(embedMany)).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerOptions: { openai: { dimensions: ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS } },
+      }),
+    );
+    expect(result.embeddings[0]).toHaveLength(ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS);
+    // 1M input @ $0.13 = $0.13
+    expect(result.costUsd).toBeCloseTo(0.13);
   });
 
   test("rejects when capability is not 'embedding' (guards generate-only models)", async () => {
@@ -487,6 +562,36 @@ describe("embedViaGateway — happy path", () => {
     // SDK never reached because capability assertion fails first.
     expect(vi.mocked(embedMany)).not.toHaveBeenCalled();
     expect(openaiEmbeddingFactory).not.toHaveBeenCalled();
+  });
+
+  test("rejects when the catalog entry is not an embedding model", async () => {
+    const t = createTestHarness();
+    await expect(
+      t.action(async (ctx) =>
+        embedViaGateway(
+          ctx,
+          buildEmbedCallCtx({
+            provider: "openai",
+            modelName: "gpt-5.5",
+            capability: "embedding",
+          }),
+          { values: ["x"] },
+        ),
+      ),
+    ).rejects.toThrow(/catalog entry must have capability "embedding"/);
+    expect(vi.mocked(embedMany)).not.toHaveBeenCalled();
+    expect(openaiEmbeddingFactory).not.toHaveBeenCalled();
+  });
+
+  test("rejects provider embeddings whose width does not match the catalog", async () => {
+    const values = ["chunk-a"];
+    vi.mocked(embedMany).mockResolvedValueOnce(buildOkEmbedResult(values, [0.1, 0.2], 42));
+
+    const t = createTestHarness();
+    await expect(t.action(async (ctx) => embedViaGateway(ctx, buildEmbedCallCtx(), { values }))).rejects.toThrow(
+      /expected 1536/,
+    );
+    expect(openaiEmbeddingFactory).toHaveBeenCalledWith("text-embedding-3-small");
   });
 
   test("rejects an anthropic embedding pick with a clear error", async () => {

@@ -70,8 +70,8 @@ import { internal } from "../_generated/api";
 import type { ActionCtx } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 
-import type { ModelCapability, ReasoningEffort } from "./llmCatalog";
-import { getCatalogEntry, isSupportedReasoningEffort, isValidPick } from "./llmCatalog";
+import type { ModelCapability, ModelCatalogEntry, ReasoningEffort } from "./llmCatalog";
+import { getCatalogEntry, isSupportedReasoningEffort } from "./llmCatalog";
 import type { LlmProvider, NormalizedUsage } from "./llmProvider";
 import { estimateCostUsd } from "./llmPricing";
 import { emitMetric, logWarn } from "./observability";
@@ -243,8 +243,8 @@ export async function embedViaGateway(
   callCtx: LlmCallContext,
   args: LlmEmbedArgs,
 ): Promise<LlmEmbedResult> {
-  assertCatalogPick(callCtx);
-  assertEmbeddingCapability(callCtx);
+  const entry = assertCatalogPick(callCtx);
+  assertEmbeddingCapability(callCtx, entry);
   await acquireRpmOrThrow(ctx, callCtx);
   await acquireConcurrencyOrThrow(ctx, callCtx);
   try {
@@ -253,6 +253,7 @@ export async function embedViaGateway(
         embedMany({
           model: getSdkEmbeddingModel(callCtx.provider, callCtx.modelName),
           values: args.values,
+          providerOptions: buildEmbeddingProviderOptions(callCtx.provider, callCtx.modelName),
           // Wrapper owns retries — see `withLlmRetry` contract.
           maxRetries: 0,
         }),
@@ -263,6 +264,7 @@ export async function embedViaGateway(
         resourceId: callCtx.jobId ?? callCtx.messageId ?? callCtx.threadId,
       },
     );
+    assertEmbeddingVectorDimensions(callCtx, result.embeddings);
     const usage: NormalizedEmbeddingUsage = { inputTokens: result.usage.tokens };
     // Reuse the generation cost calculator: embedding rows have
     // `outputPerMillion: 0` so passing `{ inputTokens, outputTokens: 0 }`
@@ -312,7 +314,8 @@ export async function generateViaGateway(
   callCtx: LlmCallContext,
   args: LlmGenerateArgs,
 ): Promise<LlmGenerateResult> {
-  assertCatalogPick(callCtx);
+  const entry = assertCatalogPick(callCtx);
+  assertGenerationCapability(callCtx, entry, "generateViaGateway");
   await acquireRpmOrThrow(ctx, callCtx);
   await acquireConcurrencyOrThrow(ctx, callCtx);
   try {
@@ -386,7 +389,8 @@ export async function streamViaGateway(
   callCtx: LlmCallContext,
   args: LlmGenerateArgs,
 ): Promise<LlmStreamResult> {
-  assertCatalogPick(callCtx);
+  const entry = assertCatalogPick(callCtx);
+  assertGenerationCapability(callCtx, entry, "streamViaGateway");
   await acquireRpmOrThrow(ctx, callCtx);
   await acquireConcurrencyOrThrow(ctx, callCtx);
 
@@ -503,10 +507,24 @@ export async function streamViaGateway(
   };
 }
 
-function assertCatalogPick(callCtx: LlmCallContext): void {
-  if (!isValidPick(callCtx.provider, callCtx.modelName)) {
+function assertCatalogPick(callCtx: LlmCallContext): ModelCatalogEntry {
+  const entry = getCatalogEntry(callCtx.provider, callCtx.modelName);
+  if (!entry) {
     throw new Error(
       `LlmGateway: unsupported model pick ${callCtx.provider}:${callCtx.modelName} (not in MODEL_CATALOG)`,
+    );
+  }
+  return entry;
+}
+
+function assertGenerationCapability(
+  callCtx: LlmCallContext,
+  entry: ModelCatalogEntry,
+  gatewayFunction: "generateViaGateway" | "streamViaGateway",
+): void {
+  if (entry.capability === "embedding" || callCtx.capability === "embedding") {
+    throw new Error(
+      `LlmGateway.${gatewayFunction}: generation calls require a generation catalog entry for ${callCtx.provider}:${callCtx.modelName}`,
     );
   }
 }
@@ -518,11 +536,43 @@ function assertCatalogPick(callCtx: LlmCallContext): void {
  * `generateViaGateway` — that would fail at the SDK boundary, but
  * this guard surfaces the bug at the gateway with a clear error).
  */
-function assertEmbeddingCapability(callCtx: LlmCallContext): void {
+function assertEmbeddingCapability(callCtx: LlmCallContext, entry: ModelCatalogEntry): void {
   if (callCtx.capability !== "embedding") {
     throw new Error(
       `LlmGateway.embedViaGateway: capability must be "embedding" (got "${callCtx.capability}") for ${callCtx.provider}:${callCtx.modelName}`,
     );
+  }
+  if (!isEmbeddingCatalogEntry(entry)) {
+    throw new Error(
+      `LlmGateway.embedViaGateway: catalog entry must have capability "embedding" and embeddingDimensions for ${callCtx.provider}:${callCtx.modelName}`,
+    );
+  }
+}
+
+type EmbeddingCatalogEntry = ModelCatalogEntry & { capability: "embedding"; embeddingDimensions: number };
+
+function isEmbeddingCatalogEntry(entry: ModelCatalogEntry | undefined): entry is EmbeddingCatalogEntry {
+  return entry?.capability === "embedding" && entry.embeddingDimensions !== undefined;
+}
+
+function getEmbeddingCatalogEntry(provider: LlmProvider, modelName: string): EmbeddingCatalogEntry {
+  const entry = getCatalogEntry(provider, modelName);
+  if (!isEmbeddingCatalogEntry(entry)) {
+    throw new Error(
+      `LlmGateway.embedViaGateway: catalog entry must have capability "embedding" and embeddingDimensions for ${provider}:${modelName}`,
+    );
+  }
+  return entry;
+}
+
+function assertEmbeddingVectorDimensions(callCtx: LlmCallContext, embeddings: readonly (readonly number[])[]): void {
+  const { embeddingDimensions } = getEmbeddingCatalogEntry(callCtx.provider, callCtx.modelName);
+  for (const [index, embedding] of embeddings.entries()) {
+    if (embedding.length !== embeddingDimensions) {
+      throw new Error(
+        `LlmGateway.embedViaGateway: embedding ${index} for ${callCtx.provider}:${callCtx.modelName} had ${embedding.length} dimensions; expected ${embeddingDimensions}`,
+      );
+    }
   }
 }
 
@@ -616,6 +666,19 @@ function getSdkEmbeddingModel(provider: LlmProvider, modelName: string): Embeddi
   switch (provider) {
     case "openai":
       return openai.embedding(modelName);
+    case "anthropic":
+      throw new Error(
+        `LlmGateway: provider "anthropic" does not support embeddings (model ${modelName}); ` +
+          "no Anthropic embedding API is currently published.",
+      );
+  }
+}
+
+function buildEmbeddingProviderOptions(provider: LlmProvider, modelName: string): ProviderOptions {
+  const { embeddingDimensions } = getEmbeddingCatalogEntry(provider, modelName);
+  switch (provider) {
+    case "openai":
+      return { openai: { dimensions: embeddingDimensions } };
     case "anthropic":
       throw new Error(
         `LlmGateway: provider "anthropic" does not support embeddings (model ${modelName}); ` +
@@ -769,4 +832,5 @@ function normalizeUsage(
 export const TEST_INTERNALS = {
   normalizeUsage,
   buildProviderOptions,
+  buildEmbeddingProviderOptions,
 } as const;

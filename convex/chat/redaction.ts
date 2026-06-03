@@ -31,7 +31,21 @@
  * Adding a pattern means widening this union *and* adding a registry
  * entry — the compiler enforces the pairing.
  */
-export type RedactionType = "github_token" | "jwt" | "aws_access_key" | "slack_token" | "bearer_token";
+export type RedactionType =
+  | "github_token"
+  | "openai_api_key"
+  | "anthropic_api_key"
+  | "google_api_key"
+  | "jwt"
+  | "private_key"
+  | "database_url"
+  | "credential_url"
+  | "aws_access_key"
+  | "aws_secret_key"
+  | "slack_token"
+  | "assignment_secret"
+  | "basic_auth"
+  | "bearer_token";
 
 type RedactionPattern = {
   readonly type: RedactionType;
@@ -57,16 +71,60 @@ const PATTERN_REGISTRY: readonly RedactionPattern[] = [
   // GitHub format expansion without code changes.
   { type: "github_token", pattern: /gh[pousr]_[A-Za-z0-9]{36,}/g },
 
+  // Anthropic API keys.
+  { type: "anthropic_api_key", pattern: /sk-ant-[A-Za-z0-9_-]{20,}/g },
+
+  // OpenAI secret keys (`sk-...`) and project keys (`sk-proj-...`).
+  { type: "openai_api_key", pattern: /sk-(?!ant-)(?:proj-)?[A-Za-z0-9_-]{20,}/g },
+
+  // Google API / AI Studio keys.
+  { type: "google_api_key", pattern: /AIza[0-9A-Za-z_-]{35}/g },
+
   // JWT compact serialization. Both header and payload begin with `eyJ`
   // (base64url of `{"…`); requiring it on both segments is the strictest
   // anchor.
   { type: "jwt", pattern: /eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g },
 
+  // PEM private-key blocks. DotAll would be shorter, but `[\s\S]` keeps
+  // this robust across runtimes and tsconfig targets.
+  {
+    type: "private_key",
+    pattern: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g,
+  },
+
+  // Database connection URLs with a password component.
+  {
+    type: "database_url",
+    pattern: /\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis):\/\/[^\s:@/]+:[^\s@/]+@[^\s]+/gi,
+  },
+
+  // Generic credential-bearing URLs, including git clone URLs with
+  // `https://x-access-token:<token>@github.com/...` userinfo.
+  { type: "credential_url", pattern: /\bhttps?:\/\/[^\s:@/]+:[^\s@/]+@[^\s]+/gi },
+
   // AWS access key IDs: `AKIA` + 16 uppercase alphanumerics.
   { type: "aws_access_key", pattern: /AKIA[0-9A-Z]{16}/g },
 
+  // AWS secret access keys when labelled in env/config files.
+  {
+    type: "aws_secret_key",
+    pattern: /\b(?:aws[_-]?)?secret[_-]?access[_-]?key\s*[:=]\s*["']?[A-Za-z0-9/+=]{40}["']?/gi,
+  },
+
   // Slack `xoxb-…` / `xoxp-…` / etc.
   { type: "slack_token", pattern: /xox[baprs]-[A-Za-z0-9-]+/g },
+
+  // Assignment-style catch-all for common secret names that do not have a
+  // stable provider prefix. Kept late so provider-specific sentinels win.
+  {
+    type: "assignment_secret",
+    pattern:
+      /\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{24,}["']?/gi,
+  },
+
+  // HTTP Basic credentials. Specific enough to preserve short prose like
+  // "use Basic auth" while scrubbing actual headers.
+  { type: "basic_auth", pattern: /Basic\s+[A-Za-z0-9+/=]{20,}/gi },
 
   // Generic `Bearer <token>` catch-all. The body class is the RFC 6750
   // token68 subset that excludes `+/=` — including them would let the
@@ -118,7 +176,10 @@ export function redact(text: string): RedactionResult {
 
   for (const { type, pattern } of PATTERN_REGISTRY) {
     let didMatch = false;
-    working = working.replace(pattern, () => {
+    working = working.replace(pattern, (match) => {
+      if (match.includes("[REDACTED:") && type !== "credential_url" && type !== "database_url") {
+        return match;
+      }
       didMatch = true;
       return buildSentinel(type);
     });

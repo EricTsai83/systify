@@ -25,6 +25,13 @@
 - Customer billing addresses considered PII — `customers.billing_address` is column-encrypted via pgcrypto, key in SSM. Decryption happens only in `packages/db/src/customers.ts`.
 - Stripe ids (`cus_…`, `sub_…`, `in_…`) are NOT considered PII and are logged freely.
 
+## Trust Boundaries & Abuse Controls
+
+- WorkOS callback state is validated before a session cookie is issued in `apps/api/src/middleware/auth.ts`; the callback fails closed if the state does not match.
+- Stripe webhook payloads cross an unauthenticated HTTP boundary and are verified with `Stripe.webhooks.constructEvent` before dispatch in `apps/api/src/stripe/webhook.ts`.
+- GraphQL mutations call `assertRole(ctx, "operator")` before writes, so client-supplied ids are not sufficient to perform privileged changes (`apps/api/src/graphql/_authz.ts`).
+- No per-IP or per-key rate limit was observed for the billing bot REST path in `apps/api/src/rest/_bot.ts`.
+
 ## Observed Gaps & Risks
 
 - REST endpoints lack rate limiting — the billing bot key is a single shared secret with no per-IP cap. Surfaced in `apps/api/src/rest/_bot.ts` as a TODO comment.

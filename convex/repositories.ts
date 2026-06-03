@@ -21,6 +21,7 @@ import {
 import {
   consumeDaytonaGlobalRateLimit,
   consumeImportRateLimit,
+  IMPORT_JOB_LEASE_MS,
   SANDBOX_ACTIVATION_JOB_LEASE_MS,
   throwOperationAlreadyInProgress,
 } from "./lib/rateLimit";
@@ -53,6 +54,7 @@ async function queueImportWorkflow(
     ownerTokenIdentifier: args.ownerTokenIdentifier,
     costCategory: "indexing",
     triggerSource: "user",
+    leaseMs: IMPORT_JOB_LEASE_MS,
   });
 
   const importId = await ctx.db.insert("imports", {
@@ -241,7 +243,7 @@ export const getRepositoryDetail = query({
     repositoryId: v.id("repositories"),
   },
   handler: async (ctx, args) => {
-    const { repository } = await loadAccessibleRepositoryForViewer(ctx, {
+    const { identity, repository } = await loadAccessibleRepositoryForViewer(ctx, {
       repositoryId: args.repositoryId,
     });
     if (!repository) {
@@ -274,7 +276,9 @@ export const getRepositoryDetail = query({
 
     const threads = await ctx.db
       .query("threads")
-      .withIndex("by_repositoryId_and_lastMessageAt", (q) => q.eq("repositoryId", args.repositoryId))
+      .withIndex("by_ownerTokenIdentifier_repositoryId_and_lastMessageAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("repositoryId", args.repositoryId),
+      )
       .order("desc")
       .take(10);
 

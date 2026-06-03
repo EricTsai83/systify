@@ -1,8 +1,10 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, type MutationCtx } from "./_generated/server";
 import { DEFAULT_AUTO_ARCHIVE_MINUTES, DEFAULT_AUTO_DELETE_MINUTES, DEFAULT_AUTO_STOP_MINUTES } from "./lib/constants";
 import { isOwnedBy } from "./lib/ownedDocs";
+import { isActiveRepository } from "./lib/repositoryAccess";
 import { importRunningStateValidator, nullableImportContextValidator } from "./lib/functionResultSchemas";
 import {
   finalizeImportCancellation,
@@ -10,6 +12,7 @@ import {
   markImportFailedForMutation,
   markImportRunningForMutation,
 } from "./lib/importLifecycle";
+import { failStaleActiveJob } from "./lib/jobs";
 import {
   cleanupSupersededImportSnapshotInMutation,
   finalizeImportCompletionInMutation,
@@ -141,7 +144,38 @@ export const attachOnDemandSandboxRemoteInfo = internalMutation({
     autoDeleteIntervalMinutes: v.number(),
     networkBlockAll: v.boolean(),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ attached: boolean }> => {
+    const sandbox = await ctx.db.get(args.sandboxId);
+    if (!sandbox) {
+      throw new Error("Sandbox provisioning row no longer exists.");
+    }
+    const repository = await ctx.db.get(sandbox.repositoryId);
+    const canProgress =
+      sandbox.status === "provisioning" &&
+      !!repository &&
+      isActiveRepository(repository) &&
+      isOwnedBy(repository, sandbox.ownerTokenIdentifier) &&
+      repository.latestSandboxId === sandbox._id;
+
+    if (!canProgress) {
+      await ctx.db.patch(args.sandboxId, {
+        remoteId: args.remoteId,
+        workDir: args.workDir,
+        repoPath: args.repoPath,
+        cpuLimit: args.cpuLimit,
+        memoryLimitGiB: args.memoryLimitGiB,
+        diskLimitGiB: args.diskLimitGiB,
+        ttlExpiresAt: Date.now(),
+        autoStopIntervalMinutes: args.autoStopIntervalMinutes,
+        autoArchiveIntervalMinutes: args.autoArchiveIntervalMinutes,
+        autoDeleteIntervalMinutes: args.autoDeleteIntervalMinutes,
+        networkBlockAll: args.networkBlockAll,
+        status: "failed",
+        lastErrorMessage: "Sandbox provisioning was cancelled before remote attach completed.",
+      });
+      return { attached: false };
+    }
+
     await ctx.db.patch(args.sandboxId, {
       remoteId: args.remoteId,
       workDir: args.workDir,
@@ -155,6 +189,7 @@ export const attachOnDemandSandboxRemoteInfo = internalMutation({
       autoDeleteIntervalMinutes: args.autoDeleteIntervalMinutes,
       networkBlockAll: args.networkBlockAll,
     });
+    return { attached: true };
   },
 });
 
@@ -172,14 +207,26 @@ export const markOnDemandSandboxReady = internalMutation({
     commitSha: v.optional(v.string()),
     branch: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
+  handler: async (ctx, args): Promise<{ ready: boolean }> => {
     const sandbox = await ctx.db.get(args.sandboxId);
+    if (!sandbox) {
+      throw new Error("Sandbox provisioning row no longer exists.");
+    }
+    const repository = await ctx.db.get(args.repositoryId);
+    const canProgress =
+      sandbox.status === "provisioning" &&
+      sandbox.repositoryId === args.repositoryId &&
+      !!repository &&
+      isActiveRepository(repository) &&
+      isOwnedBy(repository, sandbox.ownerTokenIdentifier) &&
+      repository.latestSandboxId === sandbox._id;
 
-    if (args.commitSha && sandbox && sandbox.repositoryId !== args.repositoryId) {
-      console.warn(
-        `Sandbox ${args.sandboxId} repositoryId mismatch: expected ${args.repositoryId}, got ${sandbox.repositoryId}`,
-      );
-      return;
+    if (!canProgress) {
+      await ctx.db.patch(args.sandboxId, {
+        status: "failed",
+        lastErrorMessage: "Sandbox provisioning was cancelled before ready state completed.",
+      });
+      return { ready: false };
     }
 
     const now = Date.now();
@@ -198,6 +245,7 @@ export const markOnDemandSandboxReady = internalMutation({
         });
       }
     }
+    return { ready: true };
   },
 });
 
@@ -301,6 +349,54 @@ export const markImportFailed = internalMutation({
   },
   handler: async (ctx, args) => {
     await markImportFailedForMutation(ctx, args);
+  },
+});
+
+export const recoverStaleImportJob = internalMutation({
+  args: {
+    jobId: v.id("jobs"),
+    errorMessage: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const importRecord = await ctx.db
+      .query("imports")
+      .withIndex("by_jobId", (q) => q.eq("jobId", args.jobId))
+      .first();
+    const failedJob = await failStaleActiveJob(ctx, {
+      jobId: args.jobId,
+      expectedKind: "import",
+      now,
+      errorMessage: args.errorMessage,
+    });
+    if (!failedJob || !importRecord) {
+      return { recovered: false as const };
+    }
+
+    if (
+      importRecord.status !== "completed" &&
+      importRecord.status !== "cancelled" &&
+      importRecord.status !== "failed"
+    ) {
+      await ctx.db.patch(importRecord._id, {
+        status: "failed",
+        completedAt: now,
+        errorMessage: args.errorMessage,
+      });
+    }
+
+    const repository = await ctx.db.get(importRecord.repositoryId);
+    if (repository && repository.importStatus !== "completed") {
+      await ctx.db.patch(importRecord.repositoryId, {
+        importStatus: "failed",
+      });
+    }
+
+    await ctx.scheduler.runAfter(0, internal.imports.cleanupSupersededImportSnapshot, {
+      importId: importRecord._id,
+      importJobId: args.jobId,
+    });
+    return { recovered: true as const };
   },
 });
 

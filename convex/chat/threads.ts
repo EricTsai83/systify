@@ -6,6 +6,7 @@ import { internalMutation, mutation, query, type MutationCtx } from "../_generat
 import { requireViewerIdentity } from "../lib/auth";
 import { chatModeValidator, getDefaultThreadMode } from "../lib/chatMode";
 import { loadOwnedDoc, requireOwnedDoc } from "../lib/ownedDocs";
+import { requireActiveRepositoryForViewer } from "../lib/repositoryAccess";
 import { MAX_RENAME_TITLE_LENGTH, NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
 import { MAX_STREAM_CHUNKS_PER_PASS } from "../lib/constants";
 import { touchRepositoryLastAccessed } from "../lib/repositoryPalette";
@@ -36,36 +37,45 @@ export const listThreads = query({
     mode: v.optional(chatModeValidator),
   },
   handler: async (ctx, args) => {
-    const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    const { identity, doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
     if (!repository) {
       return [];
     }
     const repositoryId = args.repositoryId;
+    const ownerTokenIdentifier = identity.tokenIdentifier;
     const mode = args.mode;
     const pinned = mode
       ? await ctx.db
           .query("threads")
-          .withIndex("by_repositoryId_mode_and_pinnedAt", (q) =>
-            q.eq("repositoryId", repositoryId).eq("mode", mode).gt("pinnedAt", 0),
+          .withIndex("by_ownerTokenIdentifier_repositoryId_mode_and_pinnedAt", (q) =>
+            q
+              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
+              .eq("repositoryId", repositoryId)
+              .eq("mode", mode)
+              .gt("pinnedAt", 0),
           )
           .order("desc")
           .take(20)
       : await ctx.db
           .query("threads")
-          .withIndex("by_repositoryId_and_pinnedAt", (q) => q.eq("repositoryId", repositoryId).gt("pinnedAt", 0))
+          .withIndex("by_ownerTokenIdentifier_repositoryId_and_pinnedAt", (q) =>
+            q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("repositoryId", repositoryId).gt("pinnedAt", 0),
+          )
           .order("desc")
           .take(20);
     const recent = mode
       ? await ctx.db
           .query("threads")
-          .withIndex("by_repositoryId_mode_and_lastMessageAt", (q) =>
-            q.eq("repositoryId", repositoryId).eq("mode", mode),
+          .withIndex("by_ownerTokenIdentifier_repositoryId_mode_and_lastMessageAt", (q) =>
+            q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("repositoryId", repositoryId).eq("mode", mode),
           )
           .order("desc")
           .take(20)
       : await ctx.db
           .query("threads")
-          .withIndex("by_repositoryId_and_lastMessageAt", (q) => q.eq("repositoryId", repositoryId))
+          .withIndex("by_ownerTokenIdentifier_repositoryId_and_lastMessageAt", (q) =>
+            q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("repositoryId", repositoryId),
+          )
           .order("desc")
           .take(20);
     const pinnedIds = new Set(pinned.map((thread) => thread._id));
@@ -210,6 +220,13 @@ export const createThread = mutation({
     if (mode === "library" && !repositoryId) {
       throw new Error(`'${mode}' mode requires an attached repository.`);
     }
+    if (repositoryId) {
+      await requireActiveRepositoryForViewer(ctx, {
+        repositoryId,
+        notFoundMessage: "Repository not found.",
+        archivedMessage: "This repository is archived. Restore it to continue chatting.",
+      });
+    }
 
     const title = args.title ?? NEW_THREAD_DEFAULT_TITLE;
 
@@ -320,6 +337,7 @@ export const setThreadRepository = mutation({
       await ctx.db.patch(args.threadId, {
         repositoryId: args.repositoryId,
         mode: nextMode,
+        ...(swappedFromRepositoryId ? { artifactContext: undefined } : {}),
       });
       return {
         repositoryId: args.repositoryId,
@@ -339,6 +357,7 @@ export const setThreadRepository = mutation({
       mode: detachedMode,
       defaultGroundLibrary: false,
       defaultGroundSandbox: false,
+      artifactContext: undefined,
     });
     return { repositoryId: null as null, mode: detachedMode };
   },

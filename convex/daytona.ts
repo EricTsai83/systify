@@ -1,7 +1,8 @@
 "use node";
 
 import { CodeLanguage, Daytona, DaytonaError, DaytonaNotFoundError, DaytonaTimeoutError } from "@daytona/sdk";
-import type { SandboxFsClient, SandboxShellOutcome } from "./chat/sandboxTools";
+import type { SandboxFsClient, SandboxLimitedListResult, SandboxShellOutcome } from "./chat/sandboxTools";
+import { redact } from "./chat/redaction";
 import { withDaytonaRetry } from "./lib/daytonaRetry";
 import { buildSandboxName } from "./lib/sandboxNames";
 import { logInfo, logWarn } from "./lib/observability";
@@ -488,6 +489,52 @@ function posixSingleQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 
+const DAYTONA_BOUNDED_LIST_COMMAND = `bash -lc ${posixSingleQuote(
+  [
+    'limit="${SYSTIFY_LIST_LIMIT:-200}"',
+    'find "$SYSTIFY_LIST_PATH" -mindepth 1 -maxdepth 1 -printf \'%y\\t%s\\t%f\\0\' | head -z -n "$((limit + 1))"',
+  ].join("\n"),
+)}`;
+
+const DAYTONA_OUTPUT_LIMIT_COMMAND = `bash -lc ${posixSingleQuote(
+  [
+    "set +e",
+    'limit="${SYSTIFY_OUTPUT_LIMIT_BYTES:-32769}"',
+    'tmp="$(mktemp)"',
+    'bash -lc "$SYSTIFY_USER_COMMAND" 2>&1 | head -c "$limit" > "$tmp"',
+    "status=${PIPESTATUS[0]}",
+    'cat "$tmp"',
+    'rm -f "$tmp"',
+    'exit "$status"',
+  ].join("\n"),
+)}`;
+
+function parseBoundedListOutput(output: string, maxEntries: number): SandboxLimitedListResult {
+  const records = output.split("\0").filter((record) => record.length > 0);
+  const truncated = records.length > maxEntries;
+  const selectedRecords = truncated ? records.slice(0, maxEntries) : records;
+  return {
+    entries: selectedRecords.map((record) => {
+      const firstTab = record.indexOf("\t");
+      const secondTab = firstTab === -1 ? -1 : record.indexOf("\t", firstTab + 1);
+      if (firstTab === -1 || secondTab === -1) {
+        throw new Error("Unexpected Daytona directory listing format.");
+      }
+
+      const typeChar = record.slice(0, firstTab);
+      const rawSize = record.slice(firstTab + 1, secondTab);
+      const size = Number(rawSize);
+      return {
+        name: record.slice(secondTab + 1),
+        isDir: typeChar === "d",
+        size: Number.isFinite(size) ? size : 0,
+      };
+    }),
+    totalEntries: truncated ? maxEntries + 1 : selectedRecords.length,
+    truncated,
+  };
+}
+
 /**
  * Enrich a `sandbox.git.clone` failure with the diagnostic context the
  * Daytona SDK strips out by default.
@@ -534,11 +581,11 @@ function wrapDaytonaCloneError(error: unknown, context: { url: string; branch?: 
     if (error.errorCode) {
       fragments.push(`code=${error.errorCode}`);
     }
-    fragments.push(error.message);
+    fragments.push(sanitizeCloneDiagnostic(error.message));
   } else if (error instanceof Error) {
-    fragments.push(error.message);
+    fragments.push(sanitizeCloneDiagnostic(error.message));
   } else {
-    fragments.push(String(error));
+    fragments.push(sanitizeCloneDiagnostic(String(error)));
   }
 
   // `new Error(msg, { cause })` is ES2022; the frontend tsconfig still ships
@@ -547,7 +594,7 @@ function wrapDaytonaCloneError(error: unknown, context: { url: string; branch?: 
   // is sugar for the same property assignment — and `serializeError` reads
   // `cause` through the same localised cast.
   const wrapped = new Error(fragments.join(" — ")) as Error & { cause?: unknown };
-  wrapped.cause = error;
+  wrapped.cause = buildSanitizedCloneCause(error);
   if (error instanceof Error) {
     // Forward the original name so log filters / dashboards that key on
     // `DaytonaValidationError` keep matching after wrapping. We only do
@@ -556,6 +603,31 @@ function wrapDaytonaCloneError(error: unknown, context: { url: string; branch?: 
     wrapped.name = error.name;
   }
   return wrapped;
+}
+
+function buildSanitizedCloneCause(error: unknown): unknown {
+  if (!(error instanceof Error)) {
+    return sanitizeCloneDiagnostic(String(error));
+  }
+
+  const sanitized = new Error(sanitizeCloneDiagnostic(error.message)) as Error & {
+    statusCode?: number;
+    errorCode?: string;
+  };
+  sanitized.name = error.name;
+  if (error instanceof DaytonaError) {
+    if (error.statusCode !== undefined) {
+      sanitized.statusCode = error.statusCode;
+    }
+    if (error.errorCode !== undefined) {
+      sanitized.errorCode = error.errorCode;
+    }
+  }
+  return sanitized;
+}
+
+function sanitizeCloneDiagnostic(value: string): string {
+  return redact(value).redacted;
 }
 
 /**
@@ -680,6 +752,13 @@ function resolvePostCloneBlockNetwork(): boolean {
 export async function getSandboxFsClient(remoteId: string): Promise<SandboxFsClient> {
   const sandbox = await getSandbox(remoteId);
   return {
+    getFileInfo: async (path) => {
+      const info = await sandbox.fs.getFileDetails(path);
+      return {
+        isDir: info.isDir,
+        size: info.size,
+      };
+    },
     // The two-arg `downloadFile(path, timeout)` overload returns a Buffer
     // (which extends Uint8Array, satisfying the SandboxFsClient contract).
     // We intentionally pin to that overload; the three-arg form would
@@ -697,6 +776,16 @@ export async function getSandboxFsClient(remoteId: string): Promise<SandboxFsCli
         size: entry.size,
       }));
     },
+    listFilesLimited: async (path, maxEntries) => {
+      const response = await sandbox.process.executeCommand(DAYTONA_BOUNDED_LIST_COMMAND, undefined, {
+        SYSTIFY_LIST_LIMIT: String(maxEntries),
+        SYSTIFY_LIST_PATH: path,
+      });
+      if (response.exitCode !== 0) {
+        throw new Error(response.result || `Directory listing failed with exit code ${response.exitCode}.`);
+      }
+      return parseBoundedListOutput(response.result, maxEntries);
+    },
     // `run_shell` adapter. Daytona's `executeCommand` returns
     // `{ exitCode, result }` for normal completion (including non-zero
     // exits — `grep` finding nothing exits 1 without throwing). Timeouts
@@ -710,12 +799,18 @@ export async function getSandboxFsClient(remoteId: string): Promise<SandboxFsCli
     // genuinely-infrastructural failures behind a "timeout" badge.
     executeCommand: async (command, options): Promise<SandboxShellOutcome> => {
       try {
-        const response = await sandbox.process.executeCommand(
-          command,
-          options.cwd,
-          options.env,
-          options.timeoutSeconds,
-        );
+        const maxOutputBytes = options.maxOutputBytes;
+        const bounded = typeof maxOutputBytes === "number" && Number.isFinite(maxOutputBytes) && maxOutputBytes > 0;
+        const responseLimitBytes = bounded ? Math.floor(maxOutputBytes) + 1 : undefined;
+        const commandToRun = bounded ? DAYTONA_OUTPUT_LIMIT_COMMAND : command;
+        const env = bounded
+          ? {
+              ...options.env,
+              SYSTIFY_OUTPUT_LIMIT_BYTES: String(responseLimitBytes),
+              SYSTIFY_USER_COMMAND: command,
+            }
+          : options.env;
+        const response = await sandbox.process.executeCommand(commandToRun, options.cwd, env, options.timeoutSeconds);
         return {
           kind: "ok",
           exitCode: response.exitCode,

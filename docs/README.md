@@ -9,11 +9,12 @@ For cross-cutting infrastructure concerns (LLM gateway, multi-provider strategy,
 1. `system-overview.md`
 2. `domain-and-data-model.md`
 3. `auth-and-access.md`
-4. `repository-lifecycle.md`
-5. `chat-and-analysis-pipeline.md`
-6. `integrations-and-operations.md`
-7. `orphan-resource-handling.md`
-8. `service-modes-discuss-library-system-design.md`
+4. `github-app-integration-system-design.md`
+5. `repository-lifecycle.md`
+6. `chat-and-analysis-pipeline.md`
+7. `integrations-and-operations.md`
+8. `orphan-resource-handling.md`
+9. `service-modes-discuss-library-system-design.md`
 
 ## Additional Focused Design Docs
 
@@ -38,6 +39,9 @@ For cross-cutting infrastructure concerns (LLM gateway, multi-provider strategy,
 - `github-callback-returnto-allowlist-system-design.md`
   - Why is URL-format validation alone insufficient for callback redirect trust?
   - How does origin allowlisting reduce open-redirect phishing-chain risk?
+- `github-app-integration-system-design.md`
+  - How does the GitHub App installation, callback, OAuth verification, and webhook flow work end to end?
+  - How do installation tokens, repo discovery, access checks, and import snapshot fetching communicate with GitHub?
 - `repository-persistence-system-design.md`
   - Why is the viewer's "current repository" stored in both Convex and localStorage?
   - How does DB-wins reconciliation give cross-device continuity without a first-paint flash?
@@ -56,6 +60,9 @@ For cross-cutting infrastructure concerns (LLM gateway, multi-provider strategy,
 - `sandbox-mode-system-design.md`
   - How does sandbox grounding integrate with the Discuss composer and per-message toggle?
   - What is the lifecycle of a lazily provisioned Daytona sandbox?
+- `sandbox-provisioning-cleanup-system-design.md`
+  - How is a fresh Daytona remote cleaned up when provisioning fails before `remoteId` is persisted?
+  - Why does the action directly delete the known remote id even when a cleanup job is queued?
 - `sandbox-mode-security-system-design.md`
   - What trust boundary separates sandbox tool calls from the rest of the system?
   - How are sandbox secrets and execution scopes constrained?
@@ -87,6 +94,7 @@ Use this as a guided reading order for finding the doc that answers a specific t
 
 - Rate limiting and lease recovery: `integrations-and-operations.md` (see also `architecture/rate-limiting-and-fairness.md` for the gateway-side fairness model)
 - Daytona orphan protection and reconciliation layers: `orphan-resource-handling.md`
+- Daytona provisioning failure cleanup: `sandbox-provisioning-cleanup-system-design.md`
 - Daytona webhook reconciliation path: `daytona-webhook-reconciliation-system-design.md`
 - Import persistence idempotency and finalize boundary: `import-persistence-system-design.md`
 - Chat context retrieval strategy: `chat-context-retrieval-system-design.md`
@@ -94,6 +102,7 @@ Use this as a guided reading order for finding the doc that answers a specific t
 - Repository file-count denormalization: `repository-filecount-rollout-system-design.md`
 - Chat streaming architecture: `streaming-reply-optimization-system-design.md`
 - Vercel + Convex deployment model: `vercel-convex-deployment-system-design.md`
+- GitHub App installation, callback verification, webhooks, installation tokens, and repository API access: `github-app-integration-system-design.md`
 - GitHub callback returnTo allowlist boundary: `github-callback-returnto-allowlist-system-design.md`
 - Repository persistence and cross-device continuity: `repository-persistence-system-design.md`
 - Sandbox tool-call audit log retention and recording boundary: `sandbox-tool-call-audit-log-system-design.md`

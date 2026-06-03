@@ -59,6 +59,7 @@ flowchart TD
   User[User]
   Frontend[Frontend]
   GitHub[GitHub]
+  GitHubOAuth[GitHubUserOAuth]
   Callback[ConvexHttpCallback]
   State[githubOAuthStates]
   Installation[githubInstallations]
@@ -68,6 +69,8 @@ flowchart TD
   Frontend --> GitHub
   GitHub --> Callback
   Callback --> State
+  Callback --> GitHubOAuth
+  GitHubOAuth --> Callback
   Callback --> Installation
   Callback --> Conflict
 ```
@@ -77,17 +80,31 @@ flowchart TD
 The actual flow is:
 
 1. The user starts GitHub App installation from the frontend.
-2. The backend creates a random state and stores it in `githubOAuthStates` together with the frontend origin that started the flow.
+2. The backend creates a random state plus a GitHub OAuth PKCE verifier / challenge and stores them in `githubOAuthStates` together with the frontend origin that started the flow.
 3. GitHub redirects to `/api/github/callback` after installation.
-4. The callback consumes the state and resolves the owner.
-5. The callback fetches installation details from GitHub.
-6. `saveInstallation` either:
+4. The callback validates the Systify state and records the callback `installation_id` as pending. It does not save the installation yet, because callback ids are not proof that the Systify owner controls the GitHub installation.
+5. The callback redirects through GitHub user OAuth using the stored PKCE challenge.
+6. The OAuth callback exchanges the `code` for a GitHub user access token and verifies the pending installation with GitHub's accessible-installations API.
+7. Only after that verification passes does the callback fetch installation details from GitHub.
+8. `saveInstallation` either:
   - connects or refreshes the same installation
   - or returns a conflict when the owner already has a different active installation
-7. conflict redirects use `?github_error=already_connected` instead of silently replacing the existing connection.
-8. callback redirects use the stored frontend origin when available.
-9. if GitHub calls back without a usable state, the HTTP route returns an explicit error response instead of guessing a frontend URL.
-10. if installation succeeds but no return target is available, the callback returns a small success page instead of a misleading 500 error.
+9. conflict redirects use `?github_error=already_connected` instead of silently replacing the existing connection.
+10. callback redirects use the stored frontend origin when available.
+11. if GitHub calls back without a usable state, the HTTP route returns an explicit error response instead of guessing a frontend URL.
+12. if installation succeeds but no return target is available, the callback returns a small success page instead of a misleading 500 error.
+
+### GitHub installation trust boundary
+
+The callback path is intentionally defensive because `installation_id` is an external identifier crossing from GitHub through the user's browser into Convex. The system does not treat that id as authorization evidence.
+
+Defenses:
+
+- `githubOAuthStates.state` binds the callback to the Systify owner that started the flow.
+- PKCE-backed GitHub user OAuth binds the callback to the GitHub user currently authorizing the flow.
+- GitHub's accessible-installations API verifies that the GitHub user can access the pending installation id before it is saved.
+- `saveInstallation` checks `by_installationId` in the same mutation and rejects a foreign active owner, so even a verified installation cannot be silently rebound away from another active Systify owner.
+- callback errors use explicit failure pages / redirect parameters rather than falling back to guessed frontend targets.
 
 ### Webhook flow
 
@@ -104,6 +121,7 @@ The webhook first verifies the payload with HMAC-SHA256 using `GITHUB_APP_WEBHOO
 - installation tokens are used instead of user personal access tokens
 - both callback and webhook handling are centralized in Convex `http.ts`
 - local `githubInstallations` records are a projection of GitHub permission state, not the sole source of truth
+- URL parameters, webhook payloads, and GitHub installation ids are external inputs; they must be verified against Systify state, GitHub signatures, or GitHub APIs before they affect owner-scoped data
 - the current product invariant is **one active GitHub installation per owner**
 - a second different installation is treated as a product conflict, not as an implicit overwrite
 
@@ -486,4 +504,3 @@ In other words, Systify does not require another always-on API server. Convex al
 - Daytona webhook verification now uses Svix signing on the raw body by validating `svix-id`, `svix-timestamp`, and `svix-signature` with `DAYTONA_WEBHOOK_SIGNING_SECRET`, then optionally enforcing the configured organization allowlist.
 - Daytona cleanup is one of the most important cost-control paths, and failed sweeps or failed orphan reconciliation runs can still leave resources around temporarily.
 - LLM providers are currently used mostly for chat, while the analysis pipeline is still centered on sandbox inspection, so the two paths have not yet converged into a single agent framework.
-

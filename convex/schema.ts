@@ -2,7 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { chatModeValidator } from "./lib/chatMode";
 import { llmProviderValidator } from "./lib/llmProvider";
-import { reasoningEffortValidator } from "./lib/llmCatalog";
+import { ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS, reasoningEffortValidator } from "./lib/llmCatalog";
 import { systemDesignKindValidator } from "./lib/systemDesign";
 
 const repositoryStatus = v.union(
@@ -788,6 +788,24 @@ export default defineSchema({
      * to read only the pinned-repoless rows in descending pin recency.
      */
     .index("by_ownerTokenIdentifier_repoless_and_pinnedAt", ["ownerTokenIdentifier", "repositoryId", "pinnedAt"])
+    .index("by_ownerTokenIdentifier_repositoryId_and_lastMessageAt", [
+      "ownerTokenIdentifier",
+      "repositoryId",
+      "lastMessageAt",
+    ])
+    .index("by_ownerTokenIdentifier_repositoryId_and_pinnedAt", ["ownerTokenIdentifier", "repositoryId", "pinnedAt"])
+    .index("by_ownerTokenIdentifier_repositoryId_mode_and_lastMessageAt", [
+      "ownerTokenIdentifier",
+      "repositoryId",
+      "mode",
+      "lastMessageAt",
+    ])
+    .index("by_ownerTokenIdentifier_repositoryId_mode_and_pinnedAt", [
+      "ownerTokenIdentifier",
+      "repositoryId",
+      "mode",
+      "pinnedAt",
+    ])
     .index("by_repositoryId_and_pinnedAt", ["repositoryId", "pinnedAt"])
     .index("by_repositoryId_and_mode", ["repositoryId", "mode"])
     .index("by_repositoryId_mode_and_lastMessageAt", ["repositoryId", "mode", "lastMessageAt"])
@@ -996,13 +1014,10 @@ export default defineSchema({
     .index("by_threadId_and_status", ["threadId", "status"])
     .index("by_jobId", ["jobId"])
     /**
-     * Per-owner scan for the per-user cost rollup. Convex implicitly
-     * orders by `_creationTime` as the trailing key, so the rollup
-     * query can window by time by filtering the index-scoped result —
-     * an active user with thousands of messages still scans only their
-     * own slice, not the global table.
+     * Per-owner scans and time-windowed per-user cost rollups.
      */
-    .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
+    .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"])
+    .index("by_ownerTokenIdentifier_and_creationTime", ["ownerTokenIdentifier", "_creationTime"]),
 
   /**
    * Application invariant: each assistant reply owns at most one `messageStreams`
@@ -1266,6 +1281,10 @@ export default defineSchema({
     state: v.string(),
     ownerTokenIdentifier: v.string(),
     returnTo: v.optional(v.string()),
+    githubCodeVerifier: v.optional(v.string()),
+    githubCodeChallenge: v.optional(v.string()),
+    pendingInstallationId: v.optional(v.number()),
+    githubUserAuthorizationStartedAt: v.optional(v.number()),
     createdAt: v.number(),
     expiresAt: v.number(),
     consumed: v.boolean(),
@@ -1317,7 +1336,7 @@ export default defineSchema({
     .index("by_repositoryId", ["repositoryId"])
     .vectorIndex("by_embedding", {
       vectorField: "embedding",
-      dimensions: 1536,
+      dimensions: ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS,
       filterFields: ["repositoryId", "artifactId"],
     })
     .searchIndex("search_content", {

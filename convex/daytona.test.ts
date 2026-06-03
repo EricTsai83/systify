@@ -756,10 +756,10 @@ describe("assertSandboxProvisioningConfigured", () => {
  * These tests pin the wrapper's contract: it must (1) embed the
  * structured fields in a single human-readable `message`, (2) preserve
  * the original error's `name` so log filters keyed on
- * `DaytonaValidationError` keep matching, (3) forward the original
- * error as `cause` so observability can recurse and surface
- * `statusCode`/`errorCode` as structured fields, and (4) never include
- * the installation token in the wrapped message.
+ * `DaytonaValidationError` keep matching, (3) attach only a sanitized
+ * cause so observability can recurse and surface `statusCode`/`errorCode`
+ * without serializing credential-bearing SDK payloads, and (4) never
+ * include the installation token in the wrapped message.
  */
 describe("cloneRepositoryInSandbox — error enrichment", () => {
   const SANDBOX_REMOTE_ID = "sandbox-clone-err-1";
@@ -815,15 +815,56 @@ describe("cloneRepositoryInSandbox — error enrichment", () => {
       expect(err.message).toContain("code=GIT_CLONE_FAILED");
       expect(err.message).toContain("Request failed with status code 400");
 
-      // Original error chained as cause so observability can walk the
-      // chain and surface structured fields automatically.
-      expect(err.cause).toBe(underlying);
+      // Sanitized error chained as cause so observability can walk the
+      // chain and surface structured fields without serializing the raw
+      // SDK error object.
+      expect(err.cause).not.toBe(underlying);
+      const cause = err.cause as Error & { statusCode?: number; errorCode?: string };
+      expect(cause.name).toBe("DaytonaValidationError");
+      expect(cause.message).toBe("Request failed with status code 400");
+      expect(cause.statusCode).toBe(400);
+      expect(cause.errorCode).toBe("GIT_CLONE_FAILED");
 
       // SECURITY INVARIANT: the installation token is never part of the
       // wrapped message. The wrapper carries a boolean ("with installation
       // token") rather than the credential itself.
       expect(err.message).not.toContain(fakeInstallationToken);
       expect(err.message).not.toContain("ghs_");
+    }
+  });
+
+  test("redacts credentialized upstream clone messages and sanitized causes", async () => {
+    const fakeInstallationToken = `ghs_${"x".repeat(40)}`;
+    const underlying = new MockDaytonaValidationError(
+      `fatal: could not read from https://x-access-token:${fakeInstallationToken}@github.com/acme/private-widget.git`,
+      400,
+      {},
+      "GIT_CLONE_FAILED",
+    );
+    const { sandbox } = makeSandboxMock();
+    sandbox.git.clone = vi.fn(async () => {
+      throw underlying;
+    });
+    getMock.mockResolvedValue(sandbox);
+
+    try {
+      await cloneRepositoryInSandbox({
+        remoteId: SANDBOX_REMOTE_ID,
+        url: "https://github.com/acme/private-widget.git",
+        branch: "main",
+        token: fakeInstallationToken,
+      });
+      throw new Error("expected cloneRepositoryInSandbox to throw");
+    } catch (caught) {
+      const err = caught as Error;
+      const cause = err.cause as Error;
+
+      expect(err.message).not.toContain(fakeInstallationToken);
+      expect(err.message).not.toContain("x-access-token");
+      expect(err.message).toContain("[REDACTED:credential_url]");
+      expect(cause.message).not.toContain(fakeInstallationToken);
+      expect(cause.message).not.toContain("x-access-token");
+      expect(cause.message).toContain("[REDACTED:credential_url]");
     }
   });
 
@@ -912,7 +953,8 @@ describe("cloneRepositoryInSandbox — error enrichment", () => {
       // error is not a `DaytonaError`.
       expect(err.message).not.toMatch(/Daytona HTTP/);
       expect(err.message).not.toMatch(/\bcode=/);
-      expect(err.cause).toBe(underlying);
+      expect(err.cause).not.toBe(underlying);
+      expect((err.cause as Error).message).toBe("Connection reset by peer");
     }
   });
 });

@@ -32,8 +32,8 @@ import {
   SYSTEM_DESIGN_JOB_LEASE_MS,
 } from "./lib/rateLimit";
 import {
-  isValidPick,
   isSupportedReasoningEffort,
+  isUserPickableModel,
   listPickableModels,
   reasoningEffortValidator,
   ROLE_MODELS,
@@ -160,7 +160,7 @@ export const requestSystemDesignGeneration = mutation({
         message: "provider and modelName must be supplied together.",
       });
     }
-    if (!isValidPick(provider, modelName)) {
+    if (!isUserPickableModel(provider, modelName, "sandbox")) {
       throw new ConvexError({
         code: "invalid_model_pick",
         message: `Unsupported model selection: ${provider}:${modelName}`,
@@ -822,6 +822,7 @@ export const recordKindRun = internalMutation({
     repositoryId: v.id("repositories"),
     jobId: v.id("jobs"),
     kind: systemDesignKindValidator,
+    artifactId: v.optional(v.id("artifacts")),
     provider: llmProviderValidator,
     modelName: v.string(),
     promptVersion: v.number(),
@@ -848,6 +849,7 @@ export const recordKindRun = internalMutation({
       repositoryId: args.repositoryId,
       jobId: args.jobId,
       kind: args.kind,
+      artifactId: args.artifactId,
       provider: args.provider,
       modelName: args.modelName,
       promptVersion: args.promptVersion,
@@ -973,19 +975,20 @@ export const getCachedSelectionStatus = query({
     pendingKinds: SystemDesignKind[];
   }> => {
     const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
+    const selections = Array.from(new Set(args.selections)).filter(isSystemDesignKind);
     const provider = args.provider ?? DEFAULT_SYSTEM_DESIGN_PROVIDER;
     const modelName = args.modelName ?? DEFAULT_SYSTEM_DESIGN_MODEL;
     const commitSha = repository?.lastSyncedCommitSha;
     if (!repository || !commitSha) {
       return {
-        total: args.selections.length,
+        total: selections.length,
         cachedKinds: [],
-        pendingKinds: [...args.selections] as SystemDesignKind[],
+        pendingKinds: selections,
       };
     }
     const cachedKinds: SystemDesignKind[] = [];
     const pendingKinds: SystemDesignKind[] = [];
-    for (const kind of args.selections as SystemDesignKind[]) {
+    for (const kind of selections) {
       const promptVersion = SYSTEM_DESIGN_PROMPT_VERSIONS[kind];
       const candidates = await ctx.db
         .query("artifacts")
@@ -1005,7 +1008,7 @@ export const getCachedSelectionStatus = query({
         pendingKinds.push(kind);
       }
     }
-    return { total: args.selections.length, cachedKinds, pendingKinds };
+    return { total: selections.length, cachedKinds, pendingKinds };
   },
 });
 

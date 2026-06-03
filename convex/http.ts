@@ -13,6 +13,17 @@ import { createOpaqueErrorId, logErrorWithId, logInfo, logWarn } from "./lib/obs
 import { normalizeReturnToUrl } from "./lib/returnTo";
 
 const http = httpRouter();
+const GITHUB_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
+
+class GitHubWebhookBodyReadError extends Error {
+  constructor(
+    message: "GitHub webhook payload too large." | "Invalid GitHub webhook content length.",
+    readonly status: 400 | 413,
+  ) {
+    super(message);
+    this.name = "GitHubWebhookBodyReadError";
+  }
+}
 
 function constantTimeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
@@ -31,6 +42,49 @@ function buildRedirectUrl(baseUrl: string, params: Record<string, string>): stri
   return redirectUrl.toString();
 }
 
+function parseGitHubInstallationId(value: string | null): number | null {
+  if (!value || !/^\d+$/u.test(value)) {
+    return null;
+  }
+
+  const installationId = Number(value);
+  if (!Number.isSafeInteger(installationId) || installationId <= 0) {
+    return null;
+  }
+
+  return installationId;
+}
+
+function getGitHubAppClientId(): string {
+  const clientId = process.env.GITHUB_APP_CLIENT_ID?.trim();
+  if (!clientId) {
+    throw new Error("GITHUB_APP_CLIENT_ID is required. Set it in your Convex dashboard environment variables.");
+  }
+  return clientId;
+}
+
+function getCurrentCallbackUri(url: URL): string {
+  const callbackUri = new URL(url.toString());
+  callbackUri.search = "";
+  callbackUri.hash = "";
+  return callbackUri.toString();
+}
+
+function buildGitHubUserAuthorizationUrl(args: {
+  clientId: string;
+  state: string;
+  redirectUri: string;
+  codeChallenge: string;
+}): string {
+  const authorizationUrl = new URL("https://github.com/login/oauth/authorize");
+  authorizationUrl.searchParams.set("client_id", args.clientId);
+  authorizationUrl.searchParams.set("state", args.state);
+  authorizationUrl.searchParams.set("redirect_uri", args.redirectUri);
+  authorizationUrl.searchParams.set("code_challenge", args.codeChallenge);
+  authorizationUrl.searchParams.set("code_challenge_method", "S256");
+  return authorizationUrl.toString();
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -38,6 +92,53 @@ function escapeHtml(value: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+async function readGitHubWebhookRawBody(request: Request, maxBytes = GITHUB_WEBHOOK_MAX_BODY_BYTES): Promise<string> {
+  const contentLength = request.headers.get("content-length");
+  if (contentLength !== null) {
+    const parsedContentLength = Number(contentLength);
+    if (!Number.isInteger(parsedContentLength) || parsedContentLength < 0) {
+      throw new GitHubWebhookBodyReadError("Invalid GitHub webhook content length.", 400);
+    }
+    if (parsedContentLength > maxBytes) {
+      throw new GitHubWebhookBodyReadError("GitHub webhook payload too large.", 413);
+    }
+  }
+
+  if (!request.body) {
+    return "";
+  }
+
+  const reader = request.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let rawBody = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+      if (!value) {
+        continue;
+      }
+
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        await reader.cancel("GitHub webhook payload too large.");
+        throw new GitHubWebhookBodyReadError("GitHub webhook payload too large.", 413);
+      }
+
+      rawBody += decoder.decode(value, { stream: true });
+    }
+
+    rawBody += decoder.decode();
+    return rawBody;
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 /**
@@ -221,8 +322,9 @@ function callbackPermissionsUpdated(): Response {
  *   - setup_action: "install" | "update" | "request"
  *   - state: the CSRF token we generated in initiateGitHubInstall
  *
- * We validate the state, fetch installation details from GitHub, store the
- * installation record in Convex, then redirect the user to the frontend.
+ * The setup URL's installation_id is untrusted. We first validate the Systify
+ * state, then require GitHub user authorization and verify that the resulting
+ * user token can access the installation before saving it for this owner.
  */
 http.route({
   path: "/api/github/callback",
@@ -230,10 +332,129 @@ http.route({
   handler: httpAction(async (ctx, request) => {
     const url = new URL(request.url);
     const installationIdParam = url.searchParams.get("installation_id");
+    const installationId = parseGitHubInstallationId(installationIdParam);
     const state = url.searchParams.get("state");
+    const code = url.searchParams.get("code");
+    const githubAuthorizationError = url.searchParams.get("error");
     let redirectTarget: string | null = state
       ? await ctx.runQuery(internal.github.getOAuthReturnToByState, { state })
       : null;
+
+    if (githubAuthorizationError && state) {
+      logWarn("http", "github_user_authorization_denied", {
+        error: githubAuthorizationError,
+        errorDescription: url.searchParams.get("error_description"),
+      });
+      return callbackError(
+        redirectTarget,
+        { github_error: "authorization_denied" },
+        403,
+        "GitHub connection could not be completed.",
+        "GitHub user authorization was not completed, so Systify could not verify this installation.",
+      );
+    }
+
+    if (code && state) {
+      try {
+        const oauthState: {
+          ownerTokenIdentifier: string;
+          returnTo: string | null;
+          installationId: number;
+          githubCodeVerifier: string | null;
+        } = await ctx.runMutation(internal.github.consumeOAuthStateForInstallationVerification, {
+          state,
+          ...(installationId !== null ? { callbackInstallationId: installationId } : {}),
+        });
+        redirectTarget = oauthState.returnTo;
+
+        const verification:
+          | { kind: "verified" }
+          | {
+              kind: "unauthorized";
+              message: string;
+            } = await ctx.runAction(internal.githubAppNode.verifyInstallationAccessWithGitHubUser, {
+          code,
+          ...(oauthState.githubCodeVerifier ? { codeVerifier: oauthState.githubCodeVerifier } : {}),
+          redirectUri: getCurrentCallbackUri(url),
+          installationId: oauthState.installationId,
+        });
+
+        if (verification.kind === "unauthorized") {
+          logWarn("http", "github_callback_user_installation_verification_failed", {
+            installationId: oauthState.installationId,
+            reason: verification.message,
+          });
+          return callbackError(
+            redirectTarget,
+            { github_error: "installation_not_authorized" },
+            403,
+            "GitHub connection could not be completed.",
+            "The authenticated GitHub user could not verify access to this GitHub App installation.",
+          );
+        }
+
+        const details: {
+          accountLogin: string;
+          accountType: "User" | "Organization";
+          repositorySelection: "all" | "selected";
+        } = await ctx.runAction(internal.githubAppNode.fetchInstallationDetails, {
+          installationId: oauthState.installationId,
+        });
+
+        const saveResult:
+          | { kind: "connected"; installationId: number }
+          | {
+              kind: "conflict";
+              existingInstallationId: number;
+              existingAccountLogin: string;
+            } = await ctx.runMutation(internal.github.saveInstallation, {
+          ownerTokenIdentifier: oauthState.ownerTokenIdentifier,
+          installationId: oauthState.installationId,
+          accountLogin: details.accountLogin,
+          accountType: details.accountType,
+          repositorySelection: details.repositorySelection,
+        });
+
+        if (saveResult.kind === "conflict") {
+          logInfo("http", "github_callback_conflict", {
+            installationId: oauthState.installationId,
+            existingInstallationId: saveResult.existingInstallationId,
+            existingAccountLogin: saveResult.existingAccountLogin,
+          });
+          return callbackError(
+            redirectTarget,
+            { github_error: "already_connected" },
+            409,
+            "GitHub connection could not be completed.",
+            "This GitHub account is already connected to a different installation in Systify.",
+          );
+        }
+
+        logInfo("http", "github_callback_completed", {
+          installationId: oauthState.installationId,
+        });
+        return callbackSuccess(
+          redirectTarget,
+          { github_connected: "true" },
+          "GitHub connection completed.",
+          "GitHub finished the installation flow. You can close this tab and return to Systify.",
+        );
+      } catch (error) {
+        const errorId = logErrorWithId("http", "github_callback_user_authorization_failed", error, {
+          installationId: installationIdParam,
+        });
+        return callbackError(
+          redirectTarget,
+          {
+            github_error: "callback_failed",
+            error_id: errorId,
+          },
+          500,
+          "GitHub connection could not be completed.",
+          `GitHub callback processing failed. Reference: ${errorId}`,
+        );
+      }
+    }
 
     if (!installationIdParam) {
       return callbackError(
@@ -245,8 +466,7 @@ http.route({
       );
     }
 
-    const installationId = parseInt(installationIdParam, 10);
-    if (isNaN(installationId)) {
+    if (installationId === null) {
       return callbackError(
         redirectTarget,
         { github_error: "invalid_installation" },
@@ -293,60 +513,31 @@ http.route({
     // New installation flow (with CSRF state)
     // -----------------------------------------------------------------------
     try {
-      // Validate and consume the CSRF state
+      // Validate the CSRF state and record the untrusted installation_id while
+      // we verify it with a GitHub user access token.
       const oauthState: {
-        ownerTokenIdentifier: string;
         returnTo: string | null;
-      } = await ctx.runMutation(internal.github.consumeOAuthState, { state });
+        githubCodeChallenge: string;
+      } = await ctx.runMutation(internal.github.prepareInstallationUserAuthorization, { state, installationId });
       redirectTarget = oauthState.returnTo;
 
-      // Fetch installation details from GitHub API
-      const details: {
-        accountLogin: string;
-        accountType: "User" | "Organization";
-        repositorySelection: "all" | "selected";
-      } = await ctx.runAction(internal.githubAppNode.fetchInstallationDetails, {
-        installationId,
+      const authorizationUrl = buildGitHubUserAuthorizationUrl({
+        clientId: getGitHubAppClientId(),
+        state,
+        redirectUri: getCurrentCallbackUri(url),
+        codeChallenge: oauthState.githubCodeChallenge,
       });
 
-      const saveResult:
-        | { kind: "connected"; installationId: number }
-        | {
-            kind: "conflict";
-            existingInstallationId: number;
-            existingAccountLogin: string;
-          } = await ctx.runMutation(internal.github.saveInstallation, {
-        ownerTokenIdentifier: oauthState.ownerTokenIdentifier,
-        installationId,
-        accountLogin: details.accountLogin,
-        accountType: details.accountType,
-        repositorySelection: details.repositorySelection,
-      });
-
-      if (saveResult.kind === "conflict") {
-        logInfo("http", "github_callback_conflict", {
-          installationId,
-          existingInstallationId: saveResult.existingInstallationId,
-          existingAccountLogin: saveResult.existingAccountLogin,
-        });
-        return callbackError(
-          redirectTarget,
-          { github_error: "already_connected" },
-          409,
-          "GitHub connection could not be completed.",
-          "This GitHub account is already connected to a different installation in Systify.",
-        );
-      }
-
-      logInfo("http", "github_callback_completed", {
+      logInfo("http", "github_callback_user_authorization_started", {
         installationId,
       });
-      return callbackSuccess(
-        redirectTarget,
-        { github_connected: "true" },
-        "GitHub connection completed.",
-        "GitHub finished the installation flow. You can close this tab and return to Systify.",
-      );
+      return new Response(null, {
+        status: 302,
+        headers: {
+          "cache-control": "no-store",
+          "location": authorizationUrl,
+        },
+      });
     } catch (error) {
       const errorId = logErrorWithId("http", "github_callback_failed", error, {
         installationId: installationIdParam,
@@ -393,7 +584,21 @@ http.route({
       return new Response("Missing signature", { status: 401 });
     }
 
-    const body = await request.text();
+    let body: string;
+    try {
+      body = await readGitHubWebhookRawBody(request);
+    } catch (error) {
+      if (error instanceof GitHubWebhookBodyReadError) {
+        logWarn("webhook", "github_webhook_invalid_body", {
+          error: error.message,
+          status: error.status,
+        });
+        return new Response(error.status === 413 ? "Payload too large" : "Bad Request", {
+          status: error.status,
+        });
+      }
+      throw error;
+    }
 
     // Verify HMAC-SHA256 signature using Web Crypto API
     const encoder = new TextEncoder();

@@ -328,7 +328,12 @@ export const getReplyContext = internalQuery({
     if (shouldLoadArtifacts) {
       if (thread.artifactContext && thread.artifactContext.length > 0) {
         const scoped = await Promise.all(thread.artifactContext.map((artifactId) => ctx.db.get(artifactId)));
-        artifacts = scoped.filter((artifact): artifact is Doc<"artifacts"> => artifact !== null);
+        artifacts = scoped.filter(
+          (artifact): artifact is Doc<"artifacts"> =>
+            artifact !== null &&
+            artifact.repositoryId === repository._id &&
+            artifact.ownerTokenIdentifier === repository.ownerTokenIdentifier,
+        );
       } else {
         artifacts = await loadLatestDocsArtifacts(ctx, repository._id);
       }

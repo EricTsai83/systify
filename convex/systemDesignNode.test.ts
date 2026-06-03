@@ -50,7 +50,7 @@ const PROMPT_SNAPSHOTS: Record<SystemDesignKind, { hash: string; version: number
   data_model_overview: { hash: "5a940a04", version: 1 },
   api_surface_overview: { hash: "f14deb4c", version: 1 },
   deployment_overview: { hash: "1ada6806", version: 1 },
-  security_overview: { hash: "4f62c0c4", version: 1 },
+  security_overview: { hash: "a47572e1", version: 2 },
   operations_overview: { hash: "de4dd1b4", version: 1 },
 };
 

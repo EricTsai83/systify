@@ -1,3 +1,4 @@
+import { useAuth } from "@workos-inc/authkit-react";
 import { useChatLifecycle } from "@/hooks/use-chat-lifecycle";
 import { useComposerDraft } from "@/hooks/use-composer-draft";
 import { useStorageGC } from "@/hooks/use-storage-gc";
@@ -67,7 +68,9 @@ export function useChatShellLifecycle({
   handleDeleteThread: () => Promise<void>;
 } {
   useStorageGC({ liveRepositoryIds, liveThreadIds });
+  const { user, isLoading: isAuthLoading } = useAuth();
   const [chatInput, setChatInput, clearChatInput] = useComposerDraft({
+    authUserId: isAuthLoading ? null : (user?.id ?? null),
     repositoryId,
     threadId: urlThreadId,
     mode: chatMode,

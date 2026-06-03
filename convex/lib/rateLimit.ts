@@ -11,6 +11,11 @@ export type RateLimitBucket =
   | "chatRequestsPerOwner"
   | "chatRequestsGlobal"
   | "daytonaRequestsGlobal"
+  | "githubInstallInitiations"
+  | "githubRepoAccessChecks"
+  | "githubRepoListRequests"
+  | "githubRepoSearchRequests"
+  | "githubRemoteUpdateChecks"
   | "sandboxCostUsdPerUserDaily"
   | "sandboxCostUsdPerRepositoryDaily"
   | "llmRequestsPerUserPerMinute"
@@ -44,6 +49,11 @@ const RATE_LIMIT_MESSAGES: Record<RateLimitBucket, string> = {
   chatRequestsPerOwner: "Too many chat requests. Please retry later.",
   chatRequestsGlobal: "Chat capacity is temporarily full. Please retry later.",
   daytonaRequestsGlobal: "Analysis capacity is temporarily full. Please retry later.",
+  githubInstallInitiations: "Too many GitHub connection attempts. Please retry later.",
+  githubRepoAccessChecks: "Too many GitHub repository access checks. Please retry later.",
+  githubRepoListRequests: "Too many GitHub repository list requests. Please retry later.",
+  githubRepoSearchRequests: "Too many GitHub repository searches. Please retry later.",
+  githubRemoteUpdateChecks: "Too many GitHub update checks. Please retry later.",
   sandboxCostUsdPerUserDaily: "Daily sandbox spend cap reached. Resets at midnight UTC.",
   sandboxCostUsdPerRepositoryDaily: "Repository daily sandbox spend cap reached. Resets at midnight UTC.",
   llmRequestsPerUserPerMinute: "Too many LLM requests per minute. Please wait and retry.",
@@ -57,6 +67,11 @@ const DEFAULT_CHAT_BURST_CAPACITY = 6;
 const DEFAULT_GLOBAL_CHAT_PER_MINUTE = 300;
 const DEFAULT_GLOBAL_CHAT_BURST_CAPACITY = 60;
 const DEFAULT_DAYTONA_GLOBAL_PER_HOUR = 30;
+const DEFAULT_GITHUB_INSTALL_INITIATIONS_PER_HOUR = 10;
+const DEFAULT_GITHUB_REPO_ACCESS_CHECKS_PER_MINUTE = 20;
+const DEFAULT_GITHUB_REPO_LIST_REQUESTS_PER_MINUTE = 6;
+const DEFAULT_GITHUB_REPO_SEARCH_REQUESTS_PER_MINUTE = 20;
+const DEFAULT_GITHUB_REMOTE_UPDATE_CHECKS_PER_MINUTE = 30;
 
 /**
  * Per-user LLM-call fairness defaults.
@@ -171,6 +186,7 @@ export function repositoryCostKey(repositoryId: Id<"repositories">) {
 }
 
 export const CHAT_JOB_LEASE_MS = readPositiveIntEnv("CHAT_JOB_LEASE_MS", 10 * 60_000);
+export const IMPORT_JOB_LEASE_MS = readPositiveIntEnv("IMPORT_JOB_LEASE_MS", 30 * 60_000);
 export const SYSTEM_DESIGN_JOB_LEASE_MS = readPositiveIntEnv("SYSTEM_DESIGN_JOB_LEASE_MS", 60 * 60_000);
 export const SANDBOX_ACTIVATION_JOB_LEASE_MS = readPositiveIntEnv("SANDBOX_ACTIVATION_JOB_LEASE_MS", 5 * 60_000);
 
@@ -215,6 +231,62 @@ export const rateLimiter = new RateLimiter(components.rateLimiter, {
     rate: readPositiveIntEnv("RATE_LIMIT_DAYTONA_GLOBAL_PER_HOUR", DEFAULT_DAYTONA_GLOBAL_PER_HOUR),
     period: HOUR,
     shards: 10,
+  },
+  githubInstallInitiations: {
+    kind: "fixed window",
+    rate: readPositiveIntEnv(
+      "RATE_LIMIT_GITHUB_INSTALL_INITIATIONS_PER_HOUR",
+      DEFAULT_GITHUB_INSTALL_INITIATIONS_PER_HOUR,
+    ),
+    period: HOUR,
+  },
+  githubRepoAccessChecks: {
+    kind: "token bucket",
+    rate: readPositiveIntEnv(
+      "RATE_LIMIT_GITHUB_REPO_ACCESS_CHECKS_PER_MINUTE",
+      DEFAULT_GITHUB_REPO_ACCESS_CHECKS_PER_MINUTE,
+    ),
+    period: MINUTE,
+    capacity: readPositiveIntEnv(
+      "RATE_LIMIT_GITHUB_REPO_ACCESS_CHECKS_BURST",
+      DEFAULT_GITHUB_REPO_ACCESS_CHECKS_PER_MINUTE,
+    ),
+  },
+  githubRepoListRequests: {
+    kind: "token bucket",
+    rate: readPositiveIntEnv(
+      "RATE_LIMIT_GITHUB_REPO_LIST_REQUESTS_PER_MINUTE",
+      DEFAULT_GITHUB_REPO_LIST_REQUESTS_PER_MINUTE,
+    ),
+    period: MINUTE,
+    capacity: readPositiveIntEnv(
+      "RATE_LIMIT_GITHUB_REPO_LIST_REQUESTS_BURST",
+      DEFAULT_GITHUB_REPO_LIST_REQUESTS_PER_MINUTE,
+    ),
+  },
+  githubRepoSearchRequests: {
+    kind: "token bucket",
+    rate: readPositiveIntEnv(
+      "RATE_LIMIT_GITHUB_REPO_SEARCH_REQUESTS_PER_MINUTE",
+      DEFAULT_GITHUB_REPO_SEARCH_REQUESTS_PER_MINUTE,
+    ),
+    period: MINUTE,
+    capacity: readPositiveIntEnv(
+      "RATE_LIMIT_GITHUB_REPO_SEARCH_REQUESTS_BURST",
+      DEFAULT_GITHUB_REPO_SEARCH_REQUESTS_PER_MINUTE,
+    ),
+  },
+  githubRemoteUpdateChecks: {
+    kind: "token bucket",
+    rate: readPositiveIntEnv(
+      "RATE_LIMIT_GITHUB_REMOTE_UPDATE_CHECKS_PER_MINUTE",
+      DEFAULT_GITHUB_REMOTE_UPDATE_CHECKS_PER_MINUTE,
+    ),
+    period: MINUTE,
+    capacity: readPositiveIntEnv(
+      "RATE_LIMIT_GITHUB_REMOTE_UPDATE_CHECKS_BURST",
+      DEFAULT_GITHUB_REMOTE_UPDATE_CHECKS_PER_MINUTE,
+    ),
   },
   // LLM fairness buckets (`llmRequestsPerUserPerMinute`,
   // `llmConcurrentCallsPerUser`) are deliberately NOT registered
@@ -367,6 +439,66 @@ export async function consumeChatGlobalRateLimit(ctx: MutationCtx) {
 export async function consumeDaytonaGlobalRateLimit(ctx: MutationCtx) {
   await consumeRateLimit(ctx, "daytonaRequestsGlobal");
 }
+
+export async function consumeGitHubInstallInitiationRateLimit(ctx: MutationCtx, ownerTokenIdentifier: string) {
+  await consumeRateLimit(ctx, "githubInstallInitiations", { key: ownerTokenIdentifier });
+}
+
+export async function consumeGitHubRepoAccessCheckRateLimit(ctx: MutationCtx, ownerTokenIdentifier: string) {
+  await consumeRateLimit(ctx, "githubRepoAccessChecks", { key: ownerTokenIdentifier });
+}
+
+export async function consumeGitHubRepoListRateLimit(ctx: MutationCtx, ownerTokenIdentifier: string) {
+  await consumeRateLimit(ctx, "githubRepoListRequests", { key: ownerTokenIdentifier });
+}
+
+export async function consumeGitHubRepoSearchRateLimit(ctx: MutationCtx, ownerTokenIdentifier: string) {
+  await consumeRateLimit(ctx, "githubRepoSearchRequests", { key: ownerTokenIdentifier });
+}
+
+export async function consumeGitHubRemoteUpdateRateLimit(ctx: MutationCtx, ownerTokenIdentifier: string) {
+  await consumeRateLimit(ctx, "githubRemoteUpdateChecks", { key: ownerTokenIdentifier });
+}
+
+export const consumeGitHubInstallInitiation = internalMutation({
+  args: { ownerTokenIdentifier: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    await consumeGitHubInstallInitiationRateLimit(ctx, args.ownerTokenIdentifier);
+    return null;
+  },
+});
+
+export const consumeGitHubRepoAccessCheck = internalMutation({
+  args: { ownerTokenIdentifier: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    await consumeGitHubRepoAccessCheckRateLimit(ctx, args.ownerTokenIdentifier);
+    return null;
+  },
+});
+
+export const consumeGitHubRepoList = internalMutation({
+  args: { ownerTokenIdentifier: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    await consumeGitHubRepoListRateLimit(ctx, args.ownerTokenIdentifier);
+    return null;
+  },
+});
+
+export const consumeGitHubRepoSearch = internalMutation({
+  args: { ownerTokenIdentifier: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    await consumeGitHubRepoSearchRateLimit(ctx, args.ownerTokenIdentifier);
+    return null;
+  },
+});
+
+export const consumeGitHubRemoteUpdate = internalMutation({
+  args: { ownerTokenIdentifier: v.string() },
+  handler: async (ctx, args): Promise<null> => {
+    await consumeGitHubRemoteUpdateRateLimit(ctx, args.ownerTokenIdentifier);
+    return null;
+  },
+});
 
 /**
  * Structured error thrown by the sandbox-cap pre-check on

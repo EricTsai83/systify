@@ -1,8 +1,10 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS,
   getCatalogEntry,
   isSupportedReasoningEffort,
+  isUserPickableModel,
   isValidPick,
   listPickableModels,
   MODEL_CATALOG,
@@ -94,6 +96,10 @@ describe("MODEL_CATALOG", () => {
     expect(embeddingEntries.length).toBeGreaterThan(0);
     for (const entry of embeddingEntries) {
       expect(
+        entry.embeddingDimensions,
+        `embedding entry ${entry.provider}:${entry.modelName} must declare vector dimensions`,
+      ).toBe(ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS);
+      expect(
         entry.supportsTools,
         `embedding entry ${entry.provider}:${entry.modelName} must not claim tool support`,
       ).toBe(false);
@@ -127,6 +133,23 @@ describe("isValidPick", () => {
   test("false for fabricated pairs", () => {
     expect(isValidPick("openai", "gpt-99")).toBe(false);
     expect(isValidPick("anthropic", "gpt-5.5")).toBe(false);
+  });
+});
+
+describe("isUserPickableModel", () => {
+  test("accepts visible generation models", () => {
+    expect(isUserPickableModel("openai", "gpt-5.5")).toBe(true);
+    expect(isUserPickableModel("openai", "gpt-5.5", "sandbox")).toBe(true);
+  });
+
+  test("rejects hidden and embedding-only entries", () => {
+    expect(isUserPickableModel("openai", "gpt-5.4-nano")).toBe(false);
+    expect(isUserPickableModel("openai", "text-embedding-3-small")).toBe(false);
+  });
+
+  test("enforces an optional capability filter", () => {
+    expect(isUserPickableModel("openai", "gpt-5.4-mini", "discuss")).toBe(true);
+    expect(isUserPickableModel("openai", "gpt-5.4-mini", "sandbox")).toBe(false);
   });
 });
 

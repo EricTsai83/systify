@@ -332,6 +332,34 @@ describe("ArtifactStore — folder integrity", () => {
       /folder not found/i,
     );
   });
+
+  test("moveToFolder rejects moves into a full folder", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await seedRepository(t);
+    const folderId = await seedArtifactFolder(t, { repositoryId });
+    const artifactId = await seedArtifact(t, { repositoryId });
+
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 200; index += 1) {
+        await ctx.db.insert("artifacts", {
+          repositoryId,
+          ownerTokenIdentifier: OWNER,
+          kind: "architecture_diagram",
+          title: `Seed ${index}`,
+          summary: "s",
+          contentMarkdown: "m",
+          version: 1,
+          updatedAt: Date.now(),
+          folderId,
+        });
+      }
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+    await expect(viewer.mutation(api.artifacts.moveToFolder, { artifactId, folderId })).rejects.toThrow(
+      /at most 200 artifacts/i,
+    );
+  });
 });
 
 describe("ArtifactStore — filters", () => {

@@ -284,6 +284,71 @@ describe("import snapshot cleanup", () => {
   });
 });
 
+describe("stale import recovery", () => {
+  test("fails a stale queued import and unblocks repository sync", async () => {
+    const ownerTokenIdentifier = "user|stale-import";
+    const t = convexTest(schema, modules);
+    const now = Date.now();
+
+    const ids = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/stale-import",
+        sourceRepoFullName: "acme/stale-import",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "stale-import",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "queued",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 0,
+        color: "blue",
+        lastAccessedAt: now,
+      });
+      const jobId = await ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "import",
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+        costCategory: "indexing",
+        triggerSource: "user",
+        leaseExpiresAt: now - 60_000,
+      });
+      const importId = await ctx.db.insert("imports", {
+        repositoryId,
+        ownerTokenIdentifier,
+        sourceUrl: "https://github.com/acme/stale-import",
+        adapterKind: "git_clone",
+        status: "queued",
+        jobId,
+      });
+      return { repositoryId, jobId, importId };
+    });
+
+    const result = await t.mutation(internal.imports.recoverStaleImportJob, {
+      jobId: ids.jobId,
+      errorMessage: "stale import",
+    });
+
+    const state = await t.run(async (ctx) => ({
+      repository: await ctx.db.get(ids.repositoryId),
+      job: await ctx.db.get(ids.jobId),
+      importRecord: await ctx.db.get(ids.importId),
+    }));
+
+    expect(result.recovered).toBe(true);
+    expect(state.job?.status).toBe("failed");
+    expect(state.importRecord?.status).toBe("failed");
+    expect(state.repository?.importStatus).toBe("failed");
+  });
+});
+
 describe("batched import persistence", () => {
   test("retries do not duplicate files, chunks, or artifacts", async () => {
     const ownerTokenIdentifier = "user|persist-idempotent";

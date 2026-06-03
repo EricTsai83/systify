@@ -163,6 +163,23 @@ describe("executeReadFile", () => {
     expect(ok.content.endsWith(SANDBOX_TRUNCATION_MARKER)).toBe(true);
   });
 
+  test("rejects oversized files from metadata before downloading content", async () => {
+    const getFileInfo = vi.fn<NonNullable<SandboxFsClient["getFileInfo"]>>().mockResolvedValue({
+      isDir: false,
+      size: SANDBOX_READ_FILE_MAX_BYTES + 1,
+    });
+    const downloadFile = vi.fn<SandboxFsClient["downloadFile"]>().mockResolvedValue(TEXT_ENCODER.encode("too late"));
+    const client = makeFakeFsClient({ downloadFile, getFileInfo });
+
+    const result = await executeReadFile(client, REPO_PATH, "large.log");
+    const err = expectErr(result);
+
+    expect(err.errorCode).toBe("file_too_large_to_decode");
+    expect(err.message).toContain(String(SANDBOX_READ_FILE_MAX_BYTES));
+    expect(getFileInfo).toHaveBeenCalledWith(`${REPO_PATH}/large.log`);
+    expect(downloadFile).not.toHaveBeenCalled();
+  });
+
   test.each([
     {
       name: "absolute path",
@@ -320,6 +337,25 @@ describe("executeListDir", () => {
     expect(listFiles).toHaveBeenCalledWith(`${REPO_PATH}/convex`);
   });
 
+  test("uses bounded listFilesLimited when the adapter provides it", async () => {
+    const listFiles = vi.fn<SandboxFsClient["listFiles"]>().mockResolvedValue([]);
+    const listFilesLimited = vi.fn<NonNullable<SandboxFsClient["listFilesLimited"]>>().mockResolvedValue({
+      entries: [fakeEntry("zeta.ts", false, 64), fakeEntry("subdir", true, 0)],
+      totalEntries: SANDBOX_LIST_DIR_MAX_ENTRIES + 1,
+      truncated: true,
+    });
+    const client = makeFakeFsClient({ listFiles, listFilesLimited });
+
+    const result = await executeListDir(client, REPO_PATH, "convex");
+    const ok = expectOk(result);
+
+    expect(ok.entries.map((entry) => entry.name)).toEqual(["subdir", "zeta.ts"]);
+    expect(ok.totalEntries).toBe(SANDBOX_LIST_DIR_MAX_ENTRIES + 1);
+    expect(ok.truncated).toBe(true);
+    expect(listFilesLimited).toHaveBeenCalledWith(`${REPO_PATH}/convex`, SANDBOX_LIST_DIR_MAX_ENTRIES);
+    expect(listFiles).not.toHaveBeenCalled();
+  });
+
   test.each(["", ".", "./"])("treats %j as the repository root", async (input) => {
     const listFiles = vi.fn<SandboxFsClient["listFiles"]>().mockResolvedValue([fakeEntry("README.md", false, 12)]);
     const client = makeFakeFsClient({ listFiles });
@@ -413,9 +449,10 @@ describe("output redaction integration", () => {
 
     // The raw token is gone from the observable result …
     expect(ok.content).not.toContain(FAKE_INSTALLATION_TOKEN);
-    expect(ok.content).toContain("[REDACTED:github_token]");
+    expect(ok.content).not.toContain("x-access-token");
+    expect(ok.content).toContain("[REDACTED:credential_url]");
     // … and the matched type is surfaced for the LLM and the audit log.
-    expect(ok.redactedTypes).toEqual(["github_token"]);
+    expect(ok.redactedTypes).toEqual(["credential_url", "github_token"]);
   });
 
   test("read_file: returns an empty redactedTypes array for innocuous content (stable shape)", async () => {
@@ -604,6 +641,7 @@ describe("createSandboxTools (AI SDK wrapper)", () => {
     expect(executeCommand).toHaveBeenCalledOnce();
     expect(executeCommand).toHaveBeenCalledWith("echo hello", {
       cwd: REPO_PATH,
+      maxOutputBytes: SANDBOX_RUN_SHELL_MAX_OUTPUT_BYTES,
       timeoutSeconds: SANDBOX_RUN_SHELL_DEFAULT_TIMEOUT_SECONDS,
     });
   });
@@ -712,6 +750,7 @@ describe("executeRunShell", () => {
     expect(executeCommand).toHaveBeenCalledOnce();
     expect(executeCommand).toHaveBeenCalledWith("find convex/chat -name '*.ts'", {
       cwd: REPO_PATH,
+      maxOutputBytes: SANDBOX_RUN_SHELL_MAX_OUTPUT_BYTES,
       timeoutSeconds: SANDBOX_RUN_SHELL_DEFAULT_TIMEOUT_SECONDS,
     });
   });
@@ -1040,8 +1079,9 @@ describe("executeRunShell", () => {
       const ok = expectOk(result);
 
       expect(ok.output).not.toContain(FAKE_INSTALLATION_TOKEN);
-      expect(ok.output).toContain("[REDACTED:github_token]");
-      expect(ok.redactedTypes).toEqual(["github_token"]);
+      expect(ok.output).not.toContain("x-access-token");
+      expect(ok.output).toContain("[REDACTED:credential_url]");
+      expect(ok.redactedTypes).toEqual(["credential_url", "github_token"]);
     });
 
     test("returns an empty redactedTypes array for innocuous output (stable shape for audit)", async () => {

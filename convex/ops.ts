@@ -10,26 +10,29 @@ import {
   sandboxCleanupScheduleResultValidator,
   sandboxCleanupStartValidator,
   sandboxLookupResultValidator,
+  staleImportJobsValidator,
   staleInteractiveJobsValidator,
 } from "./lib/functionResultSchemas";
 
 const STALE_INTERACTIVE_JOBS_PER_KIND_LIMIT = 25;
 const STALE_INTERACTIVE_JOBS_TOTAL_LIMIT = 50;
+const CLEANUP_JOB_LEASE_MS = 10 * 60_000;
 
 async function listActiveCleanupJobs(
   ctx: MutationCtx,
   repositoryId: Id<"repositories">,
 ): Promise<Map<Id<"sandboxes">, Id<"jobs">>> {
+  const now = Date.now();
   const queuedJobs = await ctx.db
     .query("jobs")
     .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-      q.eq("repositoryId", repositoryId).eq("kind", "cleanup").eq("status", "queued"),
+      q.eq("repositoryId", repositoryId).eq("kind", "cleanup").eq("status", "queued").gte("leaseExpiresAt", now),
     )
     .take(CASCADE_BATCH_SIZE);
   const runningJobs = await ctx.db
     .query("jobs")
     .withIndex("by_repositoryId_and_kind_and_status_and_leaseExpiresAt", (q) =>
-      q.eq("repositoryId", repositoryId).eq("kind", "cleanup").eq("status", "running"),
+      q.eq("repositoryId", repositoryId).eq("kind", "cleanup").eq("status", "running").gte("leaseExpiresAt", now),
     )
     .take(CASCADE_BATCH_SIZE);
 
@@ -67,6 +70,7 @@ async function queueSandboxCleanupJob(
     sandboxId: sandbox._id,
     costCategory: "ops",
     triggerSource,
+    leaseMs: CLEANUP_JOB_LEASE_MS,
   });
 
   await ctx.scheduler.runAfter(0, internal.opsNode.runSandboxCleanup, {
@@ -166,6 +170,7 @@ export const markSandboxCleanupRunning = internalMutation({
       stage: "deleting_remote_sandbox",
       progress: 0.3,
       startedAt: Date.now(),
+      leaseExpiresAt: Date.now() + CLEANUP_JOB_LEASE_MS,
     });
     if (!runningJob) {
       return { started: false as const };
@@ -389,7 +394,7 @@ async function listStaleJobsByStatusAndKind(
   ctx: Pick<QueryCtx, "db">,
   args: {
     status: "queued" | "running";
-    kind: "chat" | "system_design" | "sandbox_activation";
+    kind: "chat" | "system_design" | "sandbox_activation" | "import";
     now: number;
   },
 ) {
@@ -435,6 +440,31 @@ export const listStaleInteractiveJobs = internalQuery({
         kind: job.kind,
       };
     });
+  },
+});
+
+export const listStaleImportJobs = internalQuery({
+  args: {},
+  returns: staleImportJobsValidator,
+  handler: async (ctx) => {
+    const now = Date.now();
+    const jobs = (
+      await Promise.all([
+        listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "import", now }),
+        listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "import", now }),
+      ])
+    )
+      .flat()
+      .sort((left, right) => {
+        const leaseDelta = (left.leaseExpiresAt ?? 0) - (right.leaseExpiresAt ?? 0);
+        if (leaseDelta !== 0) {
+          return leaseDelta;
+        }
+        return left._creationTime - right._creationTime;
+      })
+      .slice(0, STALE_INTERACTIVE_JOBS_TOTAL_LIMIT);
+
+    return jobs.map((job) => ({ jobId: job._id }));
   },
 });
 

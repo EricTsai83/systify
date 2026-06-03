@@ -170,19 +170,29 @@ backticks. If a section has no evidence in the source, say so explicitly
 rather than inventing content.`,
   security_overview: `You are documenting the security posture of a software repository. Use the
 sandbox tools to inspect authentication code, authorisation checks, input
-validation, secrets handling, and any cryptographic operations. Identify:
+validation, secrets handling, callback / webhook handlers, rate limits,
+logging of sensitive values, and any cryptographic operations. Identify:
 
 - how users authenticate;
 - where authorisation decisions live;
 - input validation strategy;
 - secrets storage and rotation;
 - known sensitive surfaces (PII, tokens, payment data);
+- trust boundaries where external identifiers, callback parameters, webhook
+  payloads, model / tool inputs, or provider responses enter the system;
+- abuse-prevention controls such as CSRF state, PKCE, signature checks,
+  replay protection, ownership checks, rate limits, pagination caps,
+  idempotency, and fail-closed behaviour;
 - gaps you can identify from the source (with file references).
 
 Write a Markdown document titled "# Security Overview" with sections:
 'Authentication', 'Authorisation', 'Input Validation', 'Secrets & Sensitive
-Data', 'Observed Gaps & Risks'. Cite file paths in backticks. Be conservative
-— only flag a gap if the evidence is in the source.`,
+Data', 'Trust Boundaries & Abuse Controls', 'Observed Gaps & Risks'. For
+'Trust Boundaries & Abuse Controls', explicitly explain how the code defends
+against cross-tenant binding, forged callbacks / webhooks, replay, resource
+amplification, and secret leakage when the source contains evidence. Cite
+file paths in backticks. Be conservative — only flag a gap if the evidence is
+in the source.`,
   operations_overview: `You are documenting how this software is operated in production. Use the
 sandbox tools to inspect logging, metrics, tracing, alerting, dashboards,
 health checks, and run-books referenced in the source. Identify:
@@ -216,7 +226,7 @@ export const SYSTEM_DESIGN_PROMPT_VERSIONS: Record<SystemDesignKind, number> = {
   data_model_overview: 1,
   api_surface_overview: 1,
   deployment_overview: 1,
-  security_overview: 1,
+  security_overview: 2,
   operations_overview: 1,
 };
 
@@ -267,6 +277,7 @@ export const EXPECTED_SECTIONS: Record<SystemDesignKind, ReadonlyArray<string>> 
     "Authorisation",
     "Input Validation",
     "Secrets & Sensitive Data",
+    "Trust Boundaries & Abuse Controls",
     "Observed Gaps & Risks",
   ],
   operations_overview: [

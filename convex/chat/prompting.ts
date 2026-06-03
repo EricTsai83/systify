@@ -212,6 +212,14 @@ export function buildUserPrompt(
   const chunkSection = relevantChunks
     .map((chunk) => `### ${chunk.path}\n${chunk.summary}\n${chunk.content.slice(0, 1200)}`)
     .join("\n\n");
+  const historyMessages =
+    context.messages.at(-1)?.role === "user" && context.messages.at(-1)?.content.trim() === question.trim()
+      ? context.messages.slice(0, -1)
+      : context.messages;
+  const conversationSection = historyMessages
+    .filter((message) => message.content.trim().length > 0)
+    .map((message) => `${message.role.toUpperCase()}: ${message.content.trim().slice(0, 1200)}`)
+    .join("\n\n");
 
   const hasRepoContext =
     !!context.sourceRepoFullName ||
@@ -235,6 +243,7 @@ export function buildUserPrompt(
           "",
         ]
       : ["No repository is attached to this thread; answer from general architecture knowledge."]),
+    conversationSection ? `Recent conversation:\n${conversationSection}` : undefined,
     `User question: ${question}`,
   ]
     .filter((line): line is string => line !== undefined)

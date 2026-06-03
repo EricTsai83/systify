@@ -9,6 +9,8 @@ import { FOLDER_NAME_MAX_LENGTH } from "./lib/artifactFolderDefaults";
 
 const FOLDERS_PER_REPO_LIMIT = 200;
 const ARTIFACTS_PER_FOLDER_LIMIT = 200;
+const FOLDER_OVERFLOW_READ_LIMIT = FOLDERS_PER_REPO_LIMIT + 1;
+const ARTIFACT_OVERFLOW_READ_LIMIT = ARTIFACTS_PER_FOLDER_LIMIT + 1;
 const FOLDER_DESCRIPTION_MAX_LENGTH = 400;
 
 function normalizeFolderName(raw: string): string {
@@ -68,6 +70,9 @@ async function ensureNoCycle(
     if (!ancestor) return;
     cursor = ancestor.parentFolderId ?? undefined;
     hops += 1;
+  }
+  if (cursor) {
+    throw new Error("Folder hierarchy is too deep to verify safely.");
   }
 }
 
@@ -134,6 +139,14 @@ export const create = mutation({
       if (parent.repositoryId !== args.repositoryId) {
         throw new Error("Parent folder belongs to a different repository.");
       }
+    }
+
+    const existingFolders = await ctx.db
+      .query("artifactFolders")
+      .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
+      .take(FOLDERS_PER_REPO_LIMIT);
+    if (existingFolders.length >= FOLDERS_PER_REPO_LIMIT) {
+      throw new Error(`A repository can contain at most ${FOLDERS_PER_REPO_LIMIT} folders.`);
     }
 
     const folderId = await ctx.db.insert("artifactFolders", {
@@ -265,7 +278,10 @@ export const remove = mutation({
         .withIndex("by_repositoryId_and_parentFolderId", (q) =>
           q.eq("repositoryId", folder.repositoryId).eq("parentFolderId", folder._id),
         )
-        .take(FOLDERS_PER_REPO_LIMIT);
+        .take(FOLDER_OVERFLOW_READ_LIMIT);
+      if (childFolders.length > FOLDERS_PER_REPO_LIMIT) {
+        throw new Error("Folder has too many child folders to delete safely.");
+      }
       for (const child of childFolders) {
         await ctx.db.patch(child._id, {
           parentFolderId: newParentId,
@@ -274,7 +290,10 @@ export const remove = mutation({
       const ownArtifacts = await ctx.db
         .query("artifacts")
         .withIndex("by_folderId", (q) => q.eq("folderId", folder._id))
-        .take(ARTIFACTS_PER_FOLDER_LIMIT);
+        .take(ARTIFACT_OVERFLOW_READ_LIMIT);
+      if (ownArtifacts.length > ARTIFACTS_PER_FOLDER_LIMIT) {
+        throw new Error("Folder has too many artifacts to move safely.");
+      }
       for (const artifact of ownArtifacts) {
         await replaceArtifactFolder(ctx, artifact, newParentId);
       }
@@ -291,7 +310,10 @@ export const remove = mutation({
           .withIndex("by_repositoryId_and_parentFolderId", (q) =>
             q.eq("repositoryId", folder.repositoryId).eq("parentFolderId", current),
           )
-          .take(FOLDERS_PER_REPO_LIMIT);
+          .take(FOLDER_OVERFLOW_READ_LIMIT);
+        if (children.length > FOLDERS_PER_REPO_LIMIT) {
+          throw new Error("Folder subtree exceeds the per-repository limit.");
+        }
         for (const child of children) {
           stack.push(child._id);
         }
@@ -311,7 +333,10 @@ export const remove = mutation({
         const ownArtifacts = await ctx.db
           .query("artifacts")
           .withIndex("by_folderId", (q) => q.eq("folderId", id))
-          .take(ARTIFACTS_PER_FOLDER_LIMIT);
+          .take(ARTIFACT_OVERFLOW_READ_LIMIT);
+        if (ownArtifacts.length > ARTIFACTS_PER_FOLDER_LIMIT) {
+          throw new Error("Folder has too many artifacts to delete safely.");
+        }
         for (const artifact of ownArtifacts) {
           await replaceArtifactFolder(ctx, artifact, undefined);
         }

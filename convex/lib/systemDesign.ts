@@ -40,23 +40,16 @@ export async function ensureSystemDesignFolders(
     ownerTokenIdentifier: string;
   },
 ): Promise<Map<SystemDesignFolderKey, Id<"artifactFolders">>> {
-  const existing = await ctx.db
-    .query("artifactFolders")
-    .withIndex("by_repositoryId_and_systemKey", (q) => q.eq("repositoryId", args.repositoryId))
-    .collect();
-
-  const existingBySystemKey = new Map<string, Id<"artifactFolders">>();
-  for (const folder of existing) {
-    if (folder.systemKey) {
-      existingBySystemKey.set(folder.systemKey, folder._id);
-    }
-  }
-
   const result = new Map<SystemDesignFolderKey, Id<"artifactFolders">>();
   for (const seed of SYSTEM_DESIGN_FOLDERS) {
-    const existingId = existingBySystemKey.get(seed.systemKey);
-    if (existingId) {
-      result.set(seed.systemKey, existingId);
+    const existing = await ctx.db
+      .query("artifactFolders")
+      .withIndex("by_repositoryId_and_systemKey", (q) =>
+        q.eq("repositoryId", args.repositoryId).eq("systemKey", seed.systemKey),
+      )
+      .first();
+    if (existing) {
+      result.set(seed.systemKey, existing._id);
       continue;
     }
     const created = await ctx.db.insert("artifactFolders", {

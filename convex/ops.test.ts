@@ -399,6 +399,71 @@ describe("expired sandbox sweep", () => {
     ).toBe(true);
   });
 
+  test("expired cleanup jobs do not block scheduling a replacement cleanup", async () => {
+    const t = convexTest(schema, modules);
+    const ownerTokenIdentifier = "user|cleanup-expired";
+    const now = Date.now();
+
+    const ids = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/cleanup-expired",
+        sourceRepoFullName: "acme/cleanup-expired",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "cleanup-expired",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 1,
+        color: "blue",
+        lastAccessedAt: now,
+      });
+      const sandboxId = await ctx.db.insert("sandboxes", {
+        repositoryId,
+        ownerTokenIdentifier,
+        provider: "daytona",
+        sourceAdapter: "git_clone",
+        remoteId: "remote-expired-cleanup",
+        status: "failed",
+        workDir: "/workspace",
+        repoPath: "/workspace/repo",
+        cpuLimit: 2,
+        memoryLimitGiB: 4,
+        diskLimitGiB: 10,
+        ttlExpiresAt: now + 60_000,
+        autoStopIntervalMinutes: 30,
+        autoArchiveIntervalMinutes: 60,
+        autoDeleteIntervalMinutes: 120,
+        networkBlockAll: false,
+      });
+      const staleJobId = await ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        sandboxId,
+        kind: "cleanup",
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+        costCategory: "ops",
+        triggerSource: "system",
+        leaseExpiresAt: now - 60_000,
+      });
+      return { sandboxId, staleJobId };
+    });
+
+    const result = await t.mutation(internal.ops.scheduleSandboxCleanup, {
+      sandboxId: ids.sandboxId,
+    });
+
+    expect(result.jobId).toBeTruthy();
+    expect(result.jobId).not.toBe(ids.staleJobId);
+  });
+
   test("reconcileDaytonaOrphans deletes Daytona sandboxes that are missing in Convex and older than the safety window", async () => {
     const t = convexTest(schema, modules);
     const olderThanWindow = new Date(Date.now() - 11 * 60_000).toISOString();

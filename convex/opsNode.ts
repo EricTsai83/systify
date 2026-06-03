@@ -58,6 +58,7 @@ export const runSandboxCleanup = internalAction({
 
 const STALE_CHAT_JOB_ERROR_MESSAGE =
   "This reply stopped before it could finish. Try sending your message again. If it keeps happening, choose another model or check the provider configuration.";
+const STALE_IMPORT_JOB_ERROR_MESSAGE = "Repository import stopped before it could finish. Start a new sync to retry.";
 const DAYTONA_ORPHAN_RECONCILIATION_MIN_AGE_MS = 10 * 60_000;
 
 export const sweepExpiredSandboxes = internalAction({
@@ -154,6 +155,28 @@ export const reconcileStaleInteractiveJobs = internalAction({
 
       await ctx.runMutation(internal.systemDesign.recoverStaleSystemDesignJob, {
         jobId: job.jobId,
+      });
+    }
+  },
+});
+
+export const reconcileStaleImportJobs = internalAction({
+  args: {},
+  handler: async (ctx) => {
+    const staleJobs = await ctx.runQuery(internal.ops.listStaleImportJobs, {});
+
+    if (staleJobs.length === 0) {
+      return;
+    }
+
+    logInfo("ops", "stale_import_jobs_found", {
+      count: staleJobs.length,
+    });
+
+    for (const job of staleJobs) {
+      await ctx.runMutation(internal.imports.recoverStaleImportJob, {
+        jobId: job.jobId,
+        errorMessage: STALE_IMPORT_JOB_ERROR_MESSAGE,
       });
     }
   },

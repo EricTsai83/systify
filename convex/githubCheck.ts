@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { action, internalMutation, internalQuery } from "./_generated/server";
+import { consumeGitHubRemoteUpdateRateLimit } from "./lib/rateLimit";
 
 // ---------------------------------------------------------------------------
 // Public action — called by the frontend on visibility-change / repo-switch
@@ -21,27 +22,11 @@ export const checkForUpdates = action({
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated.");
 
-    // Fetch the repo record to get owner/repo/branch
-    const repo: RepoForCheck | null = await ctx.runQuery(internal.githubCheck.getRepoForCheck, {
+    const repo: RepoForCheck | null = await ctx.runMutation(internal.githubCheck.reserveRemoteUpdateCheck, {
       repositoryId: args.repositoryId,
+      ownerTokenIdentifier: identity.tokenIdentifier,
     });
     if (!repo) return;
-
-    // Verify ownership: caller must own this repo
-    if (identity.tokenIdentifier !== repo.ownerTokenIdentifier) {
-      throw new Error("Not authorized to check this repository.");
-    }
-
-    // Must have been synced at least once, must not be mid-sync, archived, or deleting
-    if (!repo.lastSyncedCommitSha || !repo.defaultBranch) return;
-    if (repo.deletionRequestedAt) return;
-    if (repo.archivedAt) return;
-    if (repo.importStatus === "queued" || repo.importStatus === "running") return;
-
-    // Throttle: skip if we checked within the last 60 seconds
-    if (repo.lastCheckedForUpdatesAt && Date.now() - repo.lastCheckedForUpdatesAt < 60_000) {
-      return;
-    }
 
     // Always use authenticated GitHub API (5,000 req/hr per user) when
     // possible, regardless of whether the repo is public or private.
@@ -56,6 +41,7 @@ export const checkForUpdates = action({
       console.warn("[github-check] Failed to get GitHub token:", error instanceof Error ? error.message : error);
     }
 
+    if (!repo.defaultBranch) return;
     const sha = await fetchLatestRemoteSha(repo.owner, repo.repo, repo.defaultBranch, githubToken);
     if (!sha) return;
 
@@ -94,6 +80,49 @@ export const getRepoForCheck = internalQuery({
       defaultBranch: repo.defaultBranch ?? null,
       lastSyncedCommitSha: repo.lastSyncedCommitSha ?? null,
       lastCheckedForUpdatesAt: repo.lastCheckedForUpdatesAt ?? null,
+      importStatus: repo.importStatus,
+      deletionRequestedAt: repo.deletionRequestedAt ?? null,
+      archivedAt: repo.archivedAt ?? null,
+      ownerTokenIdentifier: repo.ownerTokenIdentifier,
+      accessMode: repo.accessMode,
+    };
+  },
+});
+
+export const reserveRemoteUpdateCheck = internalMutation({
+  args: {
+    repositoryId: v.id("repositories"),
+    ownerTokenIdentifier: v.string(),
+  },
+  handler: async (ctx, args): Promise<RepoForCheck | null> => {
+    const repo = await ctx.db.get(args.repositoryId);
+    if (!repo) return null;
+
+    if (args.ownerTokenIdentifier !== repo.ownerTokenIdentifier) {
+      throw new Error("Not authorized to check this repository.");
+    }
+
+    if (!repo.lastSyncedCommitSha || !repo.defaultBranch) return null;
+    if (repo.deletionRequestedAt) return null;
+    if (repo.archivedAt) return null;
+    if (repo.importStatus === "queued" || repo.importStatus === "running") return null;
+
+    const now = Date.now();
+    if (repo.lastCheckedForUpdatesAt && now - repo.lastCheckedForUpdatesAt < 60_000) {
+      return null;
+    }
+
+    await consumeGitHubRemoteUpdateRateLimit(ctx, repo.ownerTokenIdentifier);
+    await ctx.db.patch(args.repositoryId, {
+      lastCheckedForUpdatesAt: now,
+    });
+
+    return {
+      owner: repo.sourceRepoOwner,
+      repo: repo.sourceRepoName,
+      defaultBranch: repo.defaultBranch ?? null,
+      lastSyncedCommitSha: repo.lastSyncedCommitSha ?? null,
+      lastCheckedForUpdatesAt: now,
       importStatus: repo.importStatus,
       deletionRequestedAt: repo.deletionRequestedAt ?? null,
       archivedAt: repo.archivedAt ?? null,

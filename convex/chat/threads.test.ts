@@ -3,7 +3,7 @@
 import { describe, expect, test } from "vitest";
 import { register as registerRateLimiter } from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import schema from "../schema";
 
 // Resolve sibling Convex modules relative to the convex/ root rather than
@@ -71,6 +71,49 @@ describe("createThread", () => {
     const result = await viewer.mutation(api.chat.threads.createThread, { repositoryId });
     expect(result.mode).toBe("library");
   });
+
+  test("foreign repository ids are rejected before inserting a thread", async () => {
+    const ownerTokenIdentifier = "user|create-thread-foreign-owner";
+    const intruderTokenIdentifier = "user|create-thread-foreign-intruder";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier, "foreign-create");
+    const intruder = t.withIdentity({ tokenIdentifier: intruderTokenIdentifier });
+
+    await expect(intruder.mutation(api.chat.threads.createThread, { repositoryId })).rejects.toThrow(
+      /repository not found/i,
+    );
+
+    const intruderThreads = await intruder.query(api.chat.threads.listRepolessThreads, {});
+    expect(intruderThreads).toEqual([]);
+  });
+});
+
+describe("listThreads", () => {
+  test("repository thread list excludes owner-mismatched legacy rows", async () => {
+    const ownerTokenIdentifier = "user|list-threads-owner";
+    const intruderTokenIdentifier = "user|list-threads-intruder";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier, "thread-pollution");
+    const owner = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const { _id: ownerThreadId } = await owner.mutation(api.chat.threads.createThread, { repositoryId });
+    const foreignThreadId = await t.run(async (ctx) => {
+      return await ctx.db.insert("threads", {
+        repositoryId,
+        ownerTokenIdentifier: intruderTokenIdentifier,
+        title: "Injected thread",
+        mode: "library",
+        lastMessageAt: Date.now() + 1_000,
+        pinnedAt: Date.now() + 1_000,
+      });
+    });
+
+    const threads = await owner.query(api.chat.threads.listThreads, { repositoryId, mode: "library" });
+
+    expect(threads.map((thread) => thread._id)).toContain(ownerThreadId);
+    expect(threads.map((thread) => thread._id)).not.toContain(foreignThreadId);
+    expect(threads.every((thread) => thread.ownerTokenIdentifier === ownerTokenIdentifier)).toBe(true);
+  });
 });
 
 describe("setThreadRepository", () => {
@@ -123,6 +166,35 @@ describe("setThreadRepository", () => {
       throw new Error("swap mutation should return the new repositoryId");
     }
     expect(swapResult.swappedFromRepositoryId).toBe(repoA);
+  });
+
+  test("swap clears scoped Library Ask artifact context", async () => {
+    const ownerTokenIdentifier = "user|set-thread-repo-swap-artifact-context";
+    const t = createTestConvex();
+    const repoA = await insertRepository(t, ownerTokenIdentifier, "swap-context-a");
+    const repoB = await insertRepository(t, ownerTokenIdentifier, "swap-context-b");
+    const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
+      repositoryId: repoA,
+      ownerTokenIdentifier,
+      kind: "architecture_overview",
+      title: "Architecture",
+      summary: "s",
+      contentMarkdown: "m",
+    });
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const { _id: threadId } = await viewer.mutation(api.chat.threads.createLibraryAskThread, {
+      repositoryId: repoA,
+      artifactContext: [artifactId],
+    });
+
+    await viewer.mutation(api.chat.threads.setThreadRepository, {
+      threadId,
+      repositoryId: repoB,
+    });
+
+    const stored = await t.run((ctx) => ctx.db.get(threadId));
+    expect(stored?.artifactContext).toBeUndefined();
   });
 
   test("detach: repo → null resets mode to discuss and clears grounding defaults", async () => {

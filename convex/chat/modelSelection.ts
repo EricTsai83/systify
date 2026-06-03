@@ -42,6 +42,7 @@ import type { ChatMode } from "../lib/chatMode";
 import {
   getCatalogEntry,
   isSupportedReasoningEffort,
+  isUserPickableModel,
   MODEL_CATALOG,
   ROLE_MODELS,
   type ModelCapability,
@@ -115,7 +116,9 @@ export function pickCapability(args: { mode: ChatMode; groundSandbox: boolean })
  * the caller falls through to the capability default in that case.
  */
 function findCatalogEntryByModelName(modelName: string) {
-  return MODEL_CATALOG.find((entry) => entry.modelName === modelName);
+  return MODEL_CATALOG.find(
+    (entry) => entry.modelName === modelName && isUserPickableModel(entry.provider, entry.modelName),
+  );
 }
 
 /**
@@ -186,7 +189,7 @@ export function resolveModelForReply(args: {
   // to the default rather than reaching the gateway with an unknown pair.
   if (args.overrideProvider !== undefined && args.overrideModelName !== undefined) {
     const entry = getCatalogEntry(args.overrideProvider, args.overrideModelName);
-    if (entry) {
+    if (entry && isUserPickableModel(entry.provider, entry.modelName)) {
       return {
         provider: entry.provider,
         modelName: entry.modelName,
@@ -217,7 +220,10 @@ export function resolveModelForReply(args: {
   const fallback = DEFAULT_PICK_BY_CAPABILITY[capability];
   if (args.lockedProvider !== undefined && args.lockedProvider !== fallback.provider) {
     const lockedFallback = MODEL_CATALOG.find(
-      (entry) => entry.provider === args.lockedProvider && entry.capability === capability,
+      (entry) =>
+        entry.provider === args.lockedProvider &&
+        entry.capability === capability &&
+        isUserPickableModel(entry.provider, entry.modelName, capability),
     );
     if (lockedFallback) {
       return {

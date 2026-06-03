@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { query, mutation, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
 import { requireViewerIdentity } from "./lib/auth";
 
 // ---------------------------------------------------------------------------
@@ -54,6 +55,8 @@ export const createOAuthState = internalMutation({
     state: v.string(),
     ownerTokenIdentifier: v.string(),
     returnTo: v.optional(v.string()),
+    githubCodeVerifier: v.optional(v.string()),
+    githubCodeChallenge: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -61,6 +64,8 @@ export const createOAuthState = internalMutation({
       state: args.state,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       ...(args.returnTo ? { returnTo: args.returnTo } : {}),
+      ...(args.githubCodeVerifier ? { githubCodeVerifier: args.githubCodeVerifier } : {}),
+      ...(args.githubCodeChallenge ? { githubCodeChallenge: args.githubCodeChallenge } : {}),
       createdAt: now,
       expiresAt: now + 10 * 60 * 1000, // 10-minute expiry
       consumed: false,
@@ -110,6 +115,89 @@ export const consumeOAuthState = internalMutation({
   },
 });
 
+function requireUsableOAuthState(stateDoc: Doc<"githubOAuthStates"> | null): Doc<"githubOAuthStates"> {
+  if (!stateDoc) {
+    throw new Error("Invalid state parameter.");
+  }
+  if (stateDoc.consumed) {
+    throw new Error("State already consumed.");
+  }
+  if (stateDoc.expiresAt < Date.now()) {
+    throw new Error("State expired.");
+  }
+  return stateDoc;
+}
+
+export const prepareInstallationUserAuthorization = internalMutation({
+  args: {
+    state: v.string(),
+    installationId: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const stateDoc = requireUsableOAuthState(
+      await ctx.db
+        .query("githubOAuthStates")
+        .withIndex("by_state", (q) => q.eq("state", args.state))
+        .first(),
+    );
+
+    if (stateDoc.pendingInstallationId !== undefined && stateDoc.pendingInstallationId !== args.installationId) {
+      throw new Error("Installation callback does not match the pending GitHub authorization state.");
+    }
+    if (!stateDoc.githubCodeVerifier || !stateDoc.githubCodeChallenge) {
+      throw new Error("GitHub authorization state is incomplete. Please restart the GitHub connection flow.");
+    }
+
+    const now = Date.now();
+    await ctx.db.patch(stateDoc._id, {
+      pendingInstallationId: args.installationId,
+      githubUserAuthorizationStartedAt: now,
+    });
+
+    return {
+      returnTo: stateDoc.returnTo ?? null,
+      githubCodeChallenge: stateDoc.githubCodeChallenge,
+    };
+  },
+});
+
+export const consumeOAuthStateForInstallationVerification = internalMutation({
+  args: {
+    state: v.string(),
+    callbackInstallationId: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const stateDoc = requireUsableOAuthState(
+      await ctx.db
+        .query("githubOAuthStates")
+        .withIndex("by_state", (q) => q.eq("state", args.state))
+        .first(),
+    );
+
+    const installationId = stateDoc.pendingInstallationId ?? args.callbackInstallationId;
+    if (installationId === undefined) {
+      throw new Error("GitHub authorization completed without an installation to verify.");
+    }
+    if (stateDoc.pendingInstallationId !== undefined && args.callbackInstallationId !== undefined) {
+      if (stateDoc.pendingInstallationId !== args.callbackInstallationId) {
+        throw new Error("GitHub authorization callback does not match the pending installation.");
+      }
+    }
+    if (!stateDoc.githubCodeVerifier) {
+      throw new Error("GitHub authorization state is incomplete. Please restart the GitHub connection flow.");
+    }
+
+    await ctx.db.patch(stateDoc._id, { consumed: true });
+
+    return {
+      ownerTokenIdentifier: stateDoc.ownerTokenIdentifier,
+      returnTo: stateDoc.returnTo ?? null,
+      installationId,
+      githubCodeVerifier: stateDoc.githubUserAuthorizationStartedAt !== undefined ? stateDoc.githubCodeVerifier : null,
+    };
+  },
+});
+
 // ---------------------------------------------------------------------------
 // Internal mutation: clean up expired OAuth states
 // ---------------------------------------------------------------------------
@@ -151,6 +239,23 @@ export const saveInstallation = internalMutation({
     repositorySelection: v.union(v.literal("all"), v.literal("selected")),
   },
   handler: async (ctx, args) => {
+    const existingInstallationRows = await ctx.db
+      .query("githubInstallations")
+      .withIndex("by_installationId", (q) => q.eq("installationId", args.installationId))
+      .take(100);
+
+    const foreignActive = existingInstallationRows.find(
+      (installation) =>
+        installation.status === "active" && installation.ownerTokenIdentifier !== args.ownerTokenIdentifier,
+    );
+    if (foreignActive) {
+      return {
+        kind: "conflict" as const,
+        existingInstallationId: foreignActive.installationId,
+        existingAccountLogin: foreignActive.accountLogin,
+      };
+    }
+
     const activeInstallations = await ctx.db
       .query("githubInstallations")
       .withIndex("by_ownerTokenIdentifier_and_status", (q) =>
