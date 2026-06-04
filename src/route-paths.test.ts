@@ -5,6 +5,7 @@ import {
   libraryPath,
   modeAwareThreadPath,
   repolessThreadPath,
+  settingsPath,
   withLibraryAskParam,
 } from "@/route-paths";
 import type { RepositoryId, ThreadId } from "@/lib/types";
@@ -28,6 +29,18 @@ describe("repolessThreadPath", () => {
   });
 });
 
+describe("settingsPath", () => {
+  test("builds the default settings section URL", () => {
+    expect(settingsPath()).toBe("/settings/customization");
+  });
+
+  test("preserves the encoded from query", () => {
+    expect(settingsPath("history", "/r/repo_1/discuss/th_1?tab=a")).toBe(
+      "/settings/history?from=%2Fr%2Frepo_1%2Fdiscuss%2Fth_1%3Ftab%3Da",
+    );
+  });
+});
+
 describe("isProtectedReturnTo", () => {
   test("accepts the repoless chat landing", () => {
     expect(isProtectedReturnTo("/chat")).toBe(true);
@@ -43,5 +56,9 @@ describe("isProtectedReturnTo", () => {
 
   test("rejects unknown paths", () => {
     expect(isProtectedReturnTo("/marketing")).toBe(false);
+  });
+
+  test("accepts settings section paths", () => {
+    expect(isProtectedReturnTo("/settings/customization")).toBe(true);
   });
 });

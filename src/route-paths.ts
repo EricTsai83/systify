@@ -37,6 +37,8 @@ export const PROTECTED_ROUTE_SEGMENTS = {
   repository: "r/:repositoryId",
   archive: "archive",
   resources: "resources",
+  settings: "settings",
+  settingsSection: "settings/:section",
   /**
    * Top-level service modes:
    *
@@ -55,6 +57,32 @@ export const PROTECTED_ROUTE_SEGMENTS = {
 export const ARCHIVE_PATH = `/${PROTECTED_ROUTE_SEGMENTS.archive}` as const;
 
 export const RESOURCES_PATH = `/${PROTECTED_ROUTE_SEGMENTS.resources}` as const;
+
+export const SETTINGS_PATH = `/${PROTECTED_ROUTE_SEGMENTS.settings}` as const;
+
+export const SETTINGS_SECTION_IDS = [
+  "account",
+  "customization",
+  "history",
+  "resources",
+  "models",
+  "api-keys",
+  "attachments",
+  "shortcuts",
+] as const;
+
+export type SettingsSectionId = (typeof SETTINGS_SECTION_IDS)[number];
+
+export const DEFAULT_SETTINGS_SECTION: SettingsSectionId = "customization";
+
+export function settingsPath(section: SettingsSectionId = DEFAULT_SETTINGS_SECTION, from?: string | null): string {
+  const path = `${SETTINGS_PATH}/${section}`;
+  if (!from) {
+    return path;
+  }
+  const params = new URLSearchParams({ from });
+  return `${path}?${params.toString()}`;
+}
 
 export const DEFAULT_AUTHENTICATED_PATH = `/${PROTECTED_ROUTE_SEGMENTS.chat}` as const;
 

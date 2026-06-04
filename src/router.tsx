@@ -37,6 +37,11 @@ async function loadResourcesRoute() {
   return { Component: module.ResourcesPage };
 }
 
+async function loadSettingsRoute() {
+  const module = await import("@/pages/settings");
+  return { Component: module.SettingsPage };
+}
+
 /**
  * Lazy loaders for the top-level service modes. Each route mounts its own
  * shell so the mode the user is in maps 1:1 to the URL, and code-splitting
@@ -68,6 +73,8 @@ const protectedRoutes: RouteObject[] = [
   { path: PROTECTED_ROUTE_SEGMENTS.repositoryLibraryArtifact, lazy: loadLibraryRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.archive, lazy: loadArchiveRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.resources, lazy: loadResourcesRoute },
+  { path: PROTECTED_ROUTE_SEGMENTS.settings, lazy: loadSettingsRoute },
+  { path: PROTECTED_ROUTE_SEGMENTS.settingsSection, lazy: loadSettingsRoute },
 ];
 
 export const appRoutes: RouteObject[] = [
