@@ -1001,10 +1001,11 @@ export default defineSchema({
     .index("by_threadId_and_status", ["threadId", "status"])
     .index("by_jobId", ["jobId"])
     /**
-     * Per-owner scans and time-windowed per-user cost rollups.
+     * Per-owner scans and time-windowed per-user cost rollups. Convex appends
+     * `_creationTime` to every index, so callers can range over it without
+     * declaring it here explicitly.
      */
-    .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"])
-    .index("by_ownerTokenIdentifier_and_creationTime", ["ownerTokenIdentifier", "_creationTime"]),
+    .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
 
   /**
    * Application invariant: each assistant reply owns at most one `messageStreams`

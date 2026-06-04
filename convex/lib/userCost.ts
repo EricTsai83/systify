@@ -197,7 +197,7 @@ export const getUserCostBreakdown = internalQuery({
     // dimensions automatically.
     const messages = await ctx.db
       .query("messages")
-      .withIndex("by_ownerTokenIdentifier_and_creationTime", (q) =>
+      .withIndex("by_ownerTokenIdentifier", (q) =>
         q
           .eq("ownerTokenIdentifier", args.ownerTokenIdentifier)
           .gte("_creationTime", args.sinceMs)
