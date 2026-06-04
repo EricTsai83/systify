@@ -775,27 +775,6 @@ export default defineSchema({
   })
     .index("by_repositoryId_and_lastMessageAt", ["repositoryId", "lastMessageAt"])
     .index("by_ownerTokenIdentifier_and_lastMessageAt", ["ownerTokenIdentifier", "lastMessageAt"])
-    /**
-     * Repoless-thread range read. Convex treats `undefined` as a distinct
-     * index key, so an `.eq("repositoryId", undefined)` range over this index
-     * scans only the repoless slice rather than filtering the whole owner
-     * table. Powers `chat.threads.listRepolessThreads` and the
-     * repoless-shell "Chats" sidebar section.
-     */
-    .index("by_ownerTokenIdentifier_repoless_and_lastMessageAt", [
-      "ownerTokenIdentifier",
-      "repositoryId",
-      "lastMessageAt",
-    ])
-    /**
-     * Repoless-thread pinned range read. Mirrors the
-     * `by_ownerTokenIdentifier_repoless_and_lastMessageAt` shape but trades
-     * `lastMessageAt` for `pinnedAt` so the repoless-shell "Chats" rail can
-     * surface a Pinned section without scanning the recent slice and
-     * filtering. Range over `.eq("repositoryId", undefined).gt("pinnedAt", 0)`
-     * to read only the pinned-repoless rows in descending pin recency.
-     */
-    .index("by_ownerTokenIdentifier_repoless_and_pinnedAt", ["ownerTokenIdentifier", "repositoryId", "pinnedAt"])
     .index("by_ownerTokenIdentifier_repositoryId_and_lastMessageAt", [
       "ownerTokenIdentifier",
       "repositoryId",

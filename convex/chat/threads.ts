@@ -89,13 +89,13 @@ export const listThreads = query({
  * construction (Library requires an attached repository).
  *
  * Two range reads merged: pinned-first via
- * `by_ownerTokenIdentifier_repoless_and_pinnedAt` (ordered by pin recency),
- * then the rest via `by_ownerTokenIdentifier_repoless_and_lastMessageAt`.
+ * `by_ownerTokenIdentifier_repositoryId_and_pinnedAt` (ordered by pin recency),
+ * then the rest via `by_ownerTokenIdentifier_repositoryId_and_lastMessageAt`.
  * Pinned rows survive even when 20+ more recent unpinned threads exist —
  * matches `listThreads`' repo-bound merge behavior.
  *
- * Both indexes pin `repositoryId === undefined` so the range scans only
- * the repoless slice instead of filtering the whole owner table.
+ * Both reads pin `repositoryId === undefined` so the range scans only the
+ * repoless slice instead of filtering the whole owner table.
  */
 export const listRepolessThreads = query({
   args: {},
@@ -103,14 +103,14 @@ export const listRepolessThreads = query({
     const identity = await requireViewerIdentity(ctx);
     const pinned = await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_repoless_and_pinnedAt", (q) =>
+      .withIndex("by_ownerTokenIdentifier_repositoryId_and_pinnedAt", (q) =>
         q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("repositoryId", undefined).gt("pinnedAt", 0),
       )
       .order("desc")
       .take(20);
     const recent = await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_repoless_and_lastMessageAt", (q) =>
+      .withIndex("by_ownerTokenIdentifier_repositoryId_and_lastMessageAt", (q) =>
         q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("repositoryId", undefined),
       )
       .order("desc")
