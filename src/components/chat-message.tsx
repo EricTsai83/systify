@@ -11,7 +11,7 @@ import { Markdown } from "@/components/markdown";
 import { useClipboard } from "@/hooks/use-clipboard";
 import { CITATION_TOKEN_REGEX, prepareAssistantMarkdown } from "@/lib/assistant-markdown";
 import type { ActiveMessageStream, ArtifactId } from "@/lib/types";
-import { CopyIcon, CheckIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import { CopyIcon, CheckIcon, WarningCircleIcon, GaugeIcon, ClockIcon, CpuIcon, HashIcon } from "@phosphor-icons/react";
 
 /**
  * Derive the grounding chip label from a persisted assistant message.
@@ -73,10 +73,12 @@ export const MessageBubble = memo(function MessageBubble({
   message,
   activeMessageStream,
   onSelectArtifact,
+  showStatsForNerds = false,
 }: {
   message: Doc<"messages">;
   activeMessageStream: ActiveMessageStream | null;
   onSelectArtifact?: (artifactId: ArtifactId) => void;
+  showStatsForNerds?: boolean;
 }) {
   const isAssistant = message.role === "assistant";
   // `Message`'s `from` accepts `"system" | "user" | "assistant"`, but the
@@ -163,6 +165,8 @@ export const MessageBubble = memo(function MessageBubble({
     isAssistant && message.status !== "streaming" && message.status !== "pending"
       ? buildCostTickerLabel(message)
       : null;
+  const nerdStats =
+    isAssistant && showStatsForNerds ? buildNerdStats(message, displayContent, activeMessageStream) : null;
   const tickerAriaLabel =
     costTicker === null
       ? "Cost information"
@@ -274,7 +278,34 @@ export const MessageBubble = memo(function MessageBubble({
       {isAssistant ? (
         <div className="flex min-h-7 items-center justify-between gap-2 px-1">
           <div className="min-w-0 flex-1">
-            {costTicker ? (
+            {nerdStats ? (
+              <div
+                className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground/80 tabular-nums"
+                data-testid="message-nerd-stats"
+              >
+                {costTicker ? (
+                  <span className="truncate" data-testid="message-cost-ticker" aria-label={tickerAriaLabel}>
+                    {costTicker}
+                  </span>
+                ) : null}
+                <span className="inline-flex items-center gap-1">
+                  <CpuIcon size={12} />
+                  {nerdStats.model}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <GaugeIcon size={12} />
+                  {nerdStats.tokensPerSecond}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <HashIcon size={12} />
+                  {nerdStats.messageTokens}
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <ClockIcon size={12} />
+                  {nerdStats.timeToFirstToken}
+                </span>
+              </div>
+            ) : costTicker ? (
               <p
                 className="truncate text-[11px] text-muted-foreground/80 tabular-nums"
                 data-testid="message-cost-ticker"
@@ -412,6 +443,58 @@ function buildCostTickerLabel(message: Doc<"messages">): string | null {
     parts.push(`${toolCallCount} ${toolCallCount === 1 ? "tool" : "tools"}`);
   }
   return parts.join(" · ");
+}
+
+function buildNerdStats(
+  message: Doc<"messages">,
+  displayContent: string,
+  activeMessageStream: ActiveMessageStream | null,
+): {
+  model: string;
+  tokensPerSecond: string;
+  messageTokens: string;
+  timeToFirstToken: string;
+} {
+  const outputTokens = message.estimatedOutputTokens ?? estimateMessageTokens(displayContent);
+  const streamTiming =
+    activeMessageStream && activeMessageStream.content.trim()
+      ? {
+          elapsedMs: Math.max(0, activeMessageStream.lastAppendedAt - activeMessageStream.startedAt),
+          tokenCount: estimateMessageTokens(activeMessageStream.content),
+        }
+      : null;
+
+  return {
+    model: message.modelName ?? "model unavailable",
+    tokensPerSecond:
+      streamTiming && streamTiming.elapsedMs > 0
+        ? `${formatTokensPerSecond(streamTiming.tokenCount / (streamTiming.elapsedMs / 1000))} tok/sec`
+        : "tok/sec unavailable",
+    messageTokens: `${formatTokenCount(outputTokens)} est. tokens`,
+    timeToFirstToken: streamTiming ? `TTFT <= ${formatDurationSeconds(streamTiming.elapsedMs)}` : "TTFT unavailable",
+  };
+}
+
+function estimateMessageTokens(content: string): number {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return 0;
+  }
+  return Math.max(1, Math.ceil(Array.from(trimmed).length / 4));
+}
+
+function formatTokensPerSecond(value: number): string {
+  if (value >= 100) {
+    return value.toFixed(0);
+  }
+  if (value >= 10) {
+    return value.toFixed(1);
+  }
+  return value.toFixed(2);
+}
+
+function formatDurationSeconds(ms: number): string {
+  return `${(ms / 1000).toFixed(2)} sec`;
 }
 
 function formatCostUsd(usd: number): string {

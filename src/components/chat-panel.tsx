@@ -5,6 +5,7 @@ import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { CHAT_MESSAGES_PAGE_SIZE } from "../../convex/lib/constants";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { useStatsForNerdsPreference } from "@/hooks/use-user-preferences";
 import { toUserErrorMessage } from "@/lib/errors";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { useChatScroll } from "@/components/ai-elements/use-chat-scroll";
@@ -290,6 +291,7 @@ export function ChatPanel({
   onLoadOlderMessages = NOOP_LOAD_OLDER,
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
+  const [showStatsForNerds] = useStatsForNerdsPreference();
 
   // Owns stick-to-bottom on append, anchor preservation on prepend,
   // sentinel observer for load-older, threadId-keyed reset, and
@@ -492,6 +494,7 @@ export function ChatPanel({
                       message={message}
                       activeMessageStream={messageStream}
                       onSelectArtifact={onSelectArtifact}
+                      showStatsForNerds={showStatsForNerds}
                     />
                   );
                 })}
