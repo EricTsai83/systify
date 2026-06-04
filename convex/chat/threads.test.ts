@@ -1,44 +1,20 @@
 /// <reference types="vite/client" />
 
 import { describe, expect, test } from "vitest";
-import { register as registerRateLimiter } from "@convex-dev/rate-limiter/test";
-import { convexTest } from "convex-test";
-import { api, internal } from "../_generated/api";
-import schema from "../schema";
+import { api } from "../_generated/api";
+import { insertTestArtifact, insertTestRepository } from "../../test/convex/fixtures";
+import { createRateLimitedTestConvex as createTestConvex, type SystifyTestConvex } from "../../test/convex/harness";
 
-// Resolve sibling Convex modules relative to the convex/ root rather than
-// relative to this test file's directory. Without this, convex-test's
-// resolver — which looks up modules by their `convex/`-relative path
-// (e.g. `chat/threads`) — fails to match the `../` prefix that an
-// `import.meta.glob("../**/*.ts")` would produce from a nested test file.
-const modules = import.meta.glob("/convex/**/*.ts");
-
-function createTestConvex() {
-  const t = convexTest(schema, modules);
-  registerRateLimiter(t);
-  return t;
-}
-
-async function insertRepository(t: ReturnType<typeof createTestConvex>, ownerTokenIdentifier: string, slug: string) {
-  return await t.run(async (ctx) => {
-    return await ctx.db.insert("repositories", {
-      ownerTokenIdentifier,
-      sourceHost: "github",
-      sourceUrl: `https://github.com/acme/${slug}`,
-      sourceRepoFullName: `acme/${slug}`,
-      sourceRepoOwner: "acme",
-      sourceRepoName: slug,
-      defaultBranch: "main",
-      visibility: "private",
-      accessMode: "private",
-      importStatus: "completed",
-      detectedLanguages: [],
-      packageManagers: [],
-      entrypoints: [],
-      fileCount: 1,
-      color: "blue",
-      lastAccessedAt: Date.now(),
-    });
+async function insertRepository(t: SystifyTestConvex, ownerTokenIdentifier: string, slug: string) {
+  return await insertTestRepository(t, {
+    ownerTokenIdentifier,
+    sourceUrl: `https://github.com/acme/${slug}`,
+    sourceRepoFullName: `acme/${slug}`,
+    sourceRepoName: slug,
+    defaultBranch: "main",
+    visibility: "private",
+    importStatus: "completed",
+    fileCount: 1,
   });
 }
 
@@ -173,7 +149,7 @@ describe("setThreadRepository", () => {
     const t = createTestConvex();
     const repoA = await insertRepository(t, ownerTokenIdentifier, "swap-context-a");
     const repoB = await insertRepository(t, ownerTokenIdentifier, "swap-context-b");
-    const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
+    const artifactId = await insertTestArtifact(t, {
       repositoryId: repoA,
       ownerTokenIdentifier,
       kind: "architecture_overview",

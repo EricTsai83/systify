@@ -1,97 +1,73 @@
 /// <reference types="vite/client" />
 
 import { describe, expect, test } from "vitest";
-import { convexTest } from "convex-test";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import schema from "./schema";
-
-const modules = import.meta.glob("./**/*.ts");
+import {
+  insertTestArtifact,
+  insertTestArtifactFolder,
+  insertTestRepository,
+  insertTestThread,
+} from "../test/convex/fixtures";
+import { createTestConvex, type SystifyTestConvex } from "../test/convex/harness";
+import { withPausedConvexScheduler } from "../test/convex/scheduler";
 
 const OWNER = "user|artifact-store-test";
 const OTHER_OWNER = "user|artifact-store-other";
 
-async function seedThread(t: ReturnType<typeof convexTest>): Promise<Id<"threads">> {
-  return await t.run(async (ctx) =>
-    ctx.db.insert("threads", {
-      ownerTokenIdentifier: OWNER,
-      title: "design conversation",
-      mode: "discuss",
-      lastMessageAt: Date.now(),
-    }),
-  );
+async function seedThread(t: SystifyTestConvex): Promise<Id<"threads">> {
+  return await insertTestThread(t, {
+    ownerTokenIdentifier: OWNER,
+    title: "design conversation",
+    mode: "discuss",
+  });
 }
 
-async function seedRepository(t: ReturnType<typeof convexTest>): Promise<Id<"repositories">> {
-  return await t.run(async (ctx) =>
-    ctx.db.insert("repositories", {
-      ownerTokenIdentifier: OWNER,
-      sourceHost: "github",
-      sourceUrl: "https://github.com/acme/widget",
-      sourceRepoFullName: "acme/widget",
-      sourceRepoOwner: "acme",
-      sourceRepoName: "widget",
-      visibility: "unknown",
-      accessMode: "private",
-      importStatus: "idle",
-      detectedLanguages: [],
-      packageManagers: [],
-      entrypoints: [],
-      fileCount: 0,
-      color: "blue",
-      lastAccessedAt: Date.now(),
-    }),
-  );
+async function seedRepository(t: SystifyTestConvex): Promise<Id<"repositories">> {
+  return await insertTestRepository(t, {
+    ownerTokenIdentifier: OWNER,
+  });
 }
 
 async function seedArtifactFolder(
-  t: ReturnType<typeof convexTest>,
+  t: SystifyTestConvex,
   args: {
     repositoryId: Id<"repositories">;
     ownerTokenIdentifier?: string;
   },
 ): Promise<Id<"artifactFolders">> {
-  return await t.run(async (ctx) =>
-    ctx.db.insert("artifactFolders", {
-      ownerTokenIdentifier: args.ownerTokenIdentifier ?? OWNER,
-      repositoryId: args.repositoryId,
-      name: "Feature folder",
-    }),
-  );
+  return await insertTestArtifactFolder(t, {
+    repositoryId: args.repositoryId,
+    ownerTokenIdentifier: args.ownerTokenIdentifier ?? OWNER,
+  });
 }
 
 async function seedArtifact(
-  t: ReturnType<typeof convexTest>,
+  t: SystifyTestConvex,
   args: {
     threadId?: Id<"threads">;
     repositoryId?: Id<"repositories">;
     ownerTokenIdentifier?: string;
+    kind?: "architecture_diagram" | "design_review";
+    title?: string;
+    summary?: string;
+    contentMarkdown?: string;
   },
 ): Promise<Id<"artifacts">> {
-  const createArgs: {
-    threadId?: Id<"threads">;
-    repositoryId?: Id<"repositories">;
-    ownerTokenIdentifier: string;
-    kind: "architecture_diagram";
-    title: string;
-    summary: string;
-    contentMarkdown: string;
-  } = {
+  return await insertTestArtifact(t, {
+    threadId: args.threadId,
+    repositoryId: args.repositoryId,
     ownerTokenIdentifier: args.ownerTokenIdentifier ?? OWNER,
-    kind: "architecture_diagram",
-    title: "Diagram 001",
-    summary: "s",
-    contentMarkdown: "m",
-  };
-  if (args.threadId !== undefined) createArgs.threadId = args.threadId;
-  if (args.repositoryId !== undefined) createArgs.repositoryId = args.repositoryId;
-
-  return await t.mutation(internal.artifactStore.createArtifact, createArgs);
+    kind: args.kind,
+    title: args.title,
+    summary: args.summary,
+    contentMarkdown: args.contentMarkdown,
+  });
 }
 
 describe("ArtifactStore — parent invariant", () => {
   test("rejects creation when neither threadId nor repositoryId is provided", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
 
     await expect(
       t.mutation(internal.artifactStore.createArtifact, {
@@ -105,7 +81,7 @@ describe("ArtifactStore — parent invariant", () => {
   });
 
   test("accepts a thread-only parent and persists with no repositoryId", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const threadId = await seedThread(t);
 
     const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
@@ -126,68 +102,74 @@ describe("ArtifactStore — parent invariant", () => {
   });
 
   test("accepts a repository-only parent and persists with no threadId", async () => {
-    const t = convexTest(schema, modules);
-    const repositoryId = await seedRepository(t);
+    await withPausedConvexScheduler(async () => {
+      const t = createTestConvex();
+      const repositoryId = await seedRepository(t);
 
-    const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
-      repositoryId,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
-      title: "Modules",
-      summary: "top-level modules",
-      contentMarkdown: "graph TD; A --> B",
+      const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
+        repositoryId,
+        ownerTokenIdentifier: OWNER,
+        kind: "architecture_diagram",
+        title: "Modules",
+        summary: "top-level modules",
+        contentMarkdown: "graph TD; A --> B",
+      });
+
+      const stored = await t.query(internal.artifactStore.getArtifact, { artifactId });
+      expect(stored).not.toBeNull();
+      expect(stored!.repositoryId).toBe(repositoryId);
+      expect(stored!.threadId).toBeUndefined();
+      expect(stored!.kind).toBe("architecture_diagram");
     });
-
-    const stored = await t.query(internal.artifactStore.getArtifact, { artifactId });
-    expect(stored).not.toBeNull();
-    expect(stored!.repositoryId).toBe(repositoryId);
-    expect(stored!.threadId).toBeUndefined();
-    expect(stored!.kind).toBe("architecture_diagram");
   });
 
   test("accepts both thread and repository parents simultaneously", async () => {
-    const t = convexTest(schema, modules);
-    const threadId = await seedThread(t);
-    const repositoryId = await seedRepository(t);
+    await withPausedConvexScheduler(async () => {
+      const t = createTestConvex();
+      const threadId = await seedThread(t);
+      const repositoryId = await seedRepository(t);
 
-    const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
-      threadId,
-      repositoryId,
-      ownerTokenIdentifier: OWNER,
-      kind: "design_review",
-      title: "risk",
-      summary: "design review",
-      contentMarkdown: "## Risk",
+      const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
+        threadId,
+        repositoryId,
+        ownerTokenIdentifier: OWNER,
+        kind: "design_review",
+        title: "risk",
+        summary: "design review",
+        contentMarkdown: "## Risk",
+      });
+
+      const stored = await t.query(internal.artifactStore.getArtifact, { artifactId });
+      expect(stored!.threadId).toBe(threadId);
+      expect(stored!.repositoryId).toBe(repositoryId);
     });
-
-    const stored = await t.query(internal.artifactStore.getArtifact, { artifactId });
-    expect(stored!.threadId).toBe(threadId);
-    expect(stored!.repositoryId).toBe(repositoryId);
   });
 });
 
 describe("ArtifactStore — folder integrity", () => {
   test("accepts a folder in the artifact repository scope", async () => {
-    const t = convexTest(schema, modules);
-    const repositoryId = await seedRepository(t);
-    const folderId = await seedArtifactFolder(t, { repositoryId });
+    await withPausedConvexScheduler(async () => {
+      const t = createTestConvex();
+      const repositoryId = await seedRepository(t);
+      const folderId = await seedArtifactFolder(t, { repositoryId });
 
-    const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
-      repositoryId,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
-      title: "Diagram 001",
-      summary: "s",
-      contentMarkdown: "m",
-      folderId,
+      const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
+        repositoryId,
+        ownerTokenIdentifier: OWNER,
+        kind: "architecture_diagram",
+        title: "Diagram 001",
+        summary: "s",
+        contentMarkdown: "m",
+        folderId,
+      });
+
+      const stored = await t.query(internal.artifactStore.getArtifact, { artifactId });
+      expect(stored!.folderId).toBe(folderId);
     });
-
-    const stored = await t.query(internal.artifactStore.getArtifact, { artifactId });
-    expect(stored!.folderId).toBe(folderId);
   });
 
   test("rejects a missing or deleted folder", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const repositoryId = await seedRepository(t);
     const folderId = await seedArtifactFolder(t, { repositoryId });
     await t.run(async (ctx) => {
@@ -208,7 +190,7 @@ describe("ArtifactStore — folder integrity", () => {
   });
 
   test("rejects a folder from another repository", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const repositoryId = await seedRepository(t);
     const otherRepositoryId = await seedRepository(t);
     const folderId = await seedArtifactFolder(t, { repositoryId: otherRepositoryId });
@@ -227,7 +209,7 @@ describe("ArtifactStore — folder integrity", () => {
   });
 
   test("rejects a repository folder for a repo-less artifact", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const threadId = await seedThread(t);
     const repositoryId = await seedRepository(t);
     const folderId = await seedArtifactFolder(t, { repositoryId });
@@ -246,7 +228,7 @@ describe("ArtifactStore — folder integrity", () => {
   });
 
   test("rejects a folder owned by another user", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const repositoryId = await seedRepository(t);
     const folderId = await seedArtifactFolder(t, {
       repositoryId,
@@ -267,7 +249,7 @@ describe("ArtifactStore — folder integrity", () => {
   });
 
   test("moveToFolder accepts a folder in the artifact repository scope", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const repositoryId = await seedRepository(t);
     const folderId = await seedArtifactFolder(t, { repositoryId });
     const artifactId = await seedArtifact(t, { repositoryId });
@@ -280,7 +262,7 @@ describe("ArtifactStore — folder integrity", () => {
   });
 
   test("moveToFolder rejects a missing or deleted folder", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const repositoryId = await seedRepository(t);
     const folderId = await seedArtifactFolder(t, { repositoryId });
     const artifactId = await seedArtifact(t, { repositoryId });
@@ -295,7 +277,7 @@ describe("ArtifactStore — folder integrity", () => {
   });
 
   test("moveToFolder rejects a folder from another repository", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const repositoryId = await seedRepository(t);
     const otherRepositoryId = await seedRepository(t);
     const folderId = await seedArtifactFolder(t, { repositoryId: otherRepositoryId });
@@ -308,7 +290,7 @@ describe("ArtifactStore — folder integrity", () => {
   });
 
   test("moveToFolder rejects a repository folder for a repo-less artifact", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const threadId = await seedThread(t);
     const repositoryId = await seedRepository(t);
     const folderId = await seedArtifactFolder(t, { repositoryId });
@@ -319,7 +301,7 @@ describe("ArtifactStore — folder integrity", () => {
   });
 
   test("moveToFolder rejects a folder owned by another user", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const repositoryId = await seedRepository(t);
     const folderId = await seedArtifactFolder(t, {
       repositoryId,
@@ -334,7 +316,7 @@ describe("ArtifactStore — folder integrity", () => {
   });
 
   test("moveToFolder rejects moves into a full folder", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const repositoryId = await seedRepository(t);
     const folderId = await seedArtifactFolder(t, { repositoryId });
     const artifactId = await seedArtifact(t, { repositoryId });
@@ -364,25 +346,17 @@ describe("ArtifactStore — folder integrity", () => {
 
 describe("ArtifactStore — filters", () => {
   test("listByThread returns only artifacts attached to the requested thread", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const threadA = await seedThread(t);
     const threadB = await seedThread(t);
 
-    await t.mutation(internal.artifactStore.createArtifact, {
+    await seedArtifact(t, {
       threadId: threadA,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
       title: "A1",
-      summary: "s",
-      contentMarkdown: "m",
     });
-    await t.mutation(internal.artifactStore.createArtifact, {
+    await seedArtifact(t, {
       threadId: threadB,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
       title: "B1",
-      summary: "s",
-      contentMarkdown: "m",
     });
 
     const aArtifacts = await t.query(internal.artifactStore.listByThread, { threadId: threadA });
@@ -393,24 +367,17 @@ describe("ArtifactStore — filters", () => {
   });
 
   test("listByThreadAndKind filters by kind within a thread", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const threadId = await seedThread(t);
 
-    await t.mutation(internal.artifactStore.createArtifact, {
+    await seedArtifact(t, {
       threadId,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
       title: "Diagram 1",
-      summary: "s",
-      contentMarkdown: "m",
     });
-    await t.mutation(internal.artifactStore.createArtifact, {
+    await seedArtifact(t, {
       threadId,
-      ownerTokenIdentifier: OWNER,
       kind: "design_review",
       title: "Review 1",
-      summary: "s",
-      contentMarkdown: "m",
     });
 
     const diagrams = await t.query(internal.artifactStore.listByThreadAndKind, {
@@ -427,24 +394,18 @@ describe("ArtifactStore — filters", () => {
   });
 
   test("listByRepository returns only artifacts attached to the requested repository", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const repoA = await seedRepository(t);
     const repoB = await seedRepository(t);
 
-    await t.mutation(internal.artifactStore.createArtifact, {
+    await seedArtifact(t, {
       repositoryId: repoA,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
       title: "A diagram",
-      summary: "s",
       contentMarkdown: "graph TD; A --> A",
     });
-    await t.mutation(internal.artifactStore.createArtifact, {
+    await seedArtifact(t, {
       repositoryId: repoB,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
       title: "B diagram",
-      summary: "s",
       contentMarkdown: "graph TD; B --> B",
     });
 
@@ -460,24 +421,18 @@ describe("ArtifactStore — filters", () => {
   });
 
   test("listByRepositoryAndKind filters by kind within a repository", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const repositoryId = await seedRepository(t);
 
-    await t.mutation(internal.artifactStore.createArtifact, {
+    await seedArtifact(t, {
       repositoryId,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
       title: "diagram",
-      summary: "s",
       contentMarkdown: "graph TD;",
     });
-    await t.mutation(internal.artifactStore.createArtifact, {
+    await seedArtifact(t, {
       repositoryId,
-      ownerTokenIdentifier: OWNER,
       kind: "design_review",
       title: "risks",
-      summary: "s",
-      contentMarkdown: "m",
     });
 
     const diagrams = await t.query(internal.artifactStore.listByRepositoryAndKind, {
@@ -496,32 +451,20 @@ describe("ArtifactStore — filters", () => {
 
 describe("ArtifactStore — ordering", () => {
   test("listByThread returns artifacts in newest-first order", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const threadId = await seedThread(t);
 
-    await t.mutation(internal.artifactStore.createArtifact, {
+    await seedArtifact(t, {
       threadId,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
       title: "first",
-      summary: "s",
-      contentMarkdown: "m",
     });
-    await t.mutation(internal.artifactStore.createArtifact, {
+    await seedArtifact(t, {
       threadId,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
       title: "second",
-      summary: "s",
-      contentMarkdown: "m",
     });
-    await t.mutation(internal.artifactStore.createArtifact, {
+    await seedArtifact(t, {
       threadId,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
       title: "third",
-      summary: "s",
-      contentMarkdown: "m",
     });
 
     const result = await t.query(internal.artifactStore.listByThread, { threadId });
@@ -529,24 +472,16 @@ describe("ArtifactStore — ordering", () => {
   });
 
   test("listByRepository returns artifacts in newest-first order", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const repositoryId = await seedRepository(t);
 
-    await t.mutation(internal.artifactStore.createArtifact, {
+    await seedArtifact(t, {
       repositoryId,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
       title: "v1",
-      summary: "s",
-      contentMarkdown: "m",
     });
-    await t.mutation(internal.artifactStore.createArtifact, {
+    await seedArtifact(t, {
       repositoryId,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
       title: "v2",
-      summary: "s",
-      contentMarkdown: "m",
     });
 
     const result = await t.query(internal.artifactStore.listByRepository, { repositoryId });
@@ -556,7 +491,7 @@ describe("ArtifactStore — ordering", () => {
 
 describe("ArtifactStore — update/delete", () => {
   test("updateArtifact bumps the version monotonically", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const threadId = await seedThread(t);
 
     const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
@@ -585,7 +520,7 @@ describe("ArtifactStore — update/delete", () => {
   });
 
   test("updateArtifact throws when artifact not found", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const threadId = await seedThread(t);
 
     // Allocate a real artifact id, then delete it so the id is well-formed
@@ -613,16 +548,12 @@ describe("ArtifactStore — update/delete", () => {
   });
 
   test("deleteArtifact removes the artifact", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const threadId = await seedThread(t);
 
-    const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
+    const artifactId = await seedArtifact(t, {
       threadId,
-      ownerTokenIdentifier: OWNER,
-      kind: "architecture_diagram",
       title: "doomed",
-      summary: "s",
-      contentMarkdown: "m",
     });
 
     await t.mutation(internal.artifactStore.deleteArtifact, { artifactId });

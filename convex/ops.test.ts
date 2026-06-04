@@ -1,11 +1,10 @@
 /// <reference types="vite/client" />
 
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { convexTest } from "convex-test";
 import { internal } from "./_generated/api";
-import schema from "./schema";
-
-const modules = import.meta.glob("./**/*.ts");
+import type { Id } from "./_generated/dataModel";
+import { createTestConvex, type SystifyTestConvex } from "../test/convex/harness";
+import { drainConvexScheduler, withPausedConvexScheduler } from "../test/convex/scheduler";
 
 const { deleteSandboxMock, getSandboxStateMock, listSandboxesByLabelMock, stopSandboxMock } = vi.hoisted(() => ({
   deleteSandboxMock: vi.fn(),
@@ -22,6 +21,53 @@ vi.mock("./daytona", () => ({
   stopSandbox: stopSandboxMock,
 }));
 
+async function seedPlaceholderCleanupSandbox(
+  t: SystifyTestConvex,
+): Promise<{ repositoryId: Id<"repositories">; sandboxId: Id<"sandboxes"> }> {
+  return await t.run(async (ctx) => {
+    const ownerTokenIdentifier = "user|cleanup-placeholder";
+    const repositoryId = await ctx.db.insert("repositories", {
+      ownerTokenIdentifier,
+      sourceHost: "github",
+      sourceUrl: "https://github.com/acme/cleanup-placeholder",
+      sourceRepoFullName: "acme/cleanup-placeholder",
+      sourceRepoOwner: "acme",
+      sourceRepoName: "cleanup-placeholder",
+      defaultBranch: "main",
+      visibility: "private",
+      accessMode: "private",
+      importStatus: "failed",
+      detectedLanguages: [],
+      packageManagers: [],
+      entrypoints: [],
+      fileCount: 0,
+      color: "blue",
+      lastAccessedAt: Date.now(),
+    });
+
+    const sandboxId = await ctx.db.insert("sandboxes", {
+      repositoryId,
+      ownerTokenIdentifier,
+      provider: "daytona",
+      sourceAdapter: "git_clone",
+      remoteId: "",
+      status: "failed",
+      workDir: "",
+      repoPath: "",
+      cpuLimit: 0,
+      memoryLimitGiB: 0,
+      diskLimitGiB: 0,
+      ttlExpiresAt: Date.now() + 60_000,
+      autoStopIntervalMinutes: 10,
+      autoArchiveIntervalMinutes: 60,
+      autoDeleteIntervalMinutes: 120,
+      networkBlockAll: false,
+    });
+
+    return { repositoryId, sandboxId };
+  });
+}
+
 describe("expired sandbox sweep", () => {
   beforeEach(() => {
     deleteSandboxMock.mockReset();
@@ -31,7 +77,7 @@ describe("expired sandbox sweep", () => {
   });
 
   test("getExpiredSandboxes returns both ready and stopped sandboxes past TTL", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const now = Date.now();
 
     await t.run(async (ctx) => {
@@ -118,7 +164,7 @@ describe("expired sandbox sweep", () => {
   });
 
   test("started sandboxes are actually stopped before being marked stopped in Convex", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const now = Date.now();
 
     const sandboxId = await t.run(async (ctx) => {
@@ -173,7 +219,7 @@ describe("expired sandbox sweep", () => {
   });
 
   test("failed deletion of a stopped sandbox leaves it retryable", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const now = Date.now();
 
     const sandboxId = await t.run(async (ctx) => {
@@ -226,7 +272,7 @@ describe("expired sandbox sweep", () => {
   });
 
   test("runSandboxCleanup archives placeholder sandboxes without calling Daytona delete", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
 
     const ids = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
@@ -295,180 +341,208 @@ describe("expired sandbox sweep", () => {
     expect(state.job?.status).toBe("completed");
   });
 
+  test("scheduleSandboxCleanup runs the cleanup action when scheduled functions are drained", async () => {
+    await withPausedConvexScheduler(async () => {
+      const t = createTestConvex();
+      const ids = await seedPlaceholderCleanupSandbox(t);
+
+      const result = await t.mutation(internal.ops.scheduleSandboxCleanup, {
+        sandboxId: ids.sandboxId,
+      });
+      const jobId = result.jobId;
+      if (!jobId) {
+        throw new Error("Expected cleanup job to be queued.");
+      }
+
+      await drainConvexScheduler(t);
+
+      expect(deleteSandboxMock).not.toHaveBeenCalled();
+
+      const state = await t.run(async (ctx) => ({
+        sandbox: await ctx.db.get(ids.sandboxId),
+        job: await ctx.db.get(jobId),
+      }));
+
+      expect(state.sandbox?.status).toBe("archived");
+      expect(state.job?.status).toBe("completed");
+    });
+  });
+
   test("failed sandbox cleanup can be queued again without changing the published sandbox pointer", async () => {
-    const t = convexTest(schema, modules);
-    const ownerTokenIdentifier = "user|cleanup-retry";
+    await withPausedConvexScheduler(async () => {
+      const t = createTestConvex();
+      const ownerTokenIdentifier = "user|cleanup-retry";
 
-    const ids = await t.run(async (ctx) => {
-      const repositoryId = await ctx.db.insert("repositories", {
-        ownerTokenIdentifier,
-        sourceHost: "github",
-        sourceUrl: "https://github.com/acme/cleanup-retry",
-        sourceRepoFullName: "acme/cleanup-retry",
-        sourceRepoOwner: "acme",
-        sourceRepoName: "cleanup-retry",
-        defaultBranch: "main",
-        visibility: "private",
-        accessMode: "private",
-        importStatus: "completed",
-        detectedLanguages: [],
-        packageManagers: [],
-        entrypoints: [],
-        fileCount: 1,
-        color: "blue",
-        lastAccessedAt: Date.now(),
+      const ids = await t.run(async (ctx) => {
+        const repositoryId = await ctx.db.insert("repositories", {
+          ownerTokenIdentifier,
+          sourceHost: "github",
+          sourceUrl: "https://github.com/acme/cleanup-retry",
+          sourceRepoFullName: "acme/cleanup-retry",
+          sourceRepoOwner: "acme",
+          sourceRepoName: "cleanup-retry",
+          defaultBranch: "main",
+          visibility: "private",
+          accessMode: "private",
+          importStatus: "completed",
+          detectedLanguages: [],
+          packageManagers: [],
+          entrypoints: [],
+          fileCount: 1,
+          color: "blue",
+          lastAccessedAt: Date.now(),
+        });
+        const publishedSandboxId = await ctx.db.insert("sandboxes", {
+          repositoryId,
+          ownerTokenIdentifier,
+          provider: "daytona",
+          sourceAdapter: "git_clone",
+          remoteId: "remote-published",
+          status: "ready",
+          workDir: "/workspace",
+          repoPath: "/workspace/repo",
+          cpuLimit: 2,
+          memoryLimitGiB: 4,
+          diskLimitGiB: 10,
+          ttlExpiresAt: Date.now() + 60_000,
+          autoStopIntervalMinutes: 30,
+          autoArchiveIntervalMinutes: 60,
+          autoDeleteIntervalMinutes: 120,
+          networkBlockAll: false,
+        });
+        const supersededSandboxId = await ctx.db.insert("sandboxes", {
+          repositoryId,
+          ownerTokenIdentifier,
+          provider: "daytona",
+          sourceAdapter: "git_clone",
+          remoteId: "remote-superseded",
+          status: "ready",
+          workDir: "/workspace",
+          repoPath: "/workspace/repo",
+          cpuLimit: 2,
+          memoryLimitGiB: 4,
+          diskLimitGiB: 10,
+          ttlExpiresAt: Date.now() + 60_000,
+          autoStopIntervalMinutes: 30,
+          autoArchiveIntervalMinutes: 60,
+          autoDeleteIntervalMinutes: 120,
+          networkBlockAll: false,
+        });
+        await ctx.db.patch(repositoryId, { latestSandboxId: publishedSandboxId });
+
+        return { repositoryId, publishedSandboxId, supersededSandboxId };
       });
-      const publishedSandboxId = await ctx.db.insert("sandboxes", {
-        repositoryId,
-        ownerTokenIdentifier,
-        provider: "daytona",
-        sourceAdapter: "git_clone",
-        remoteId: "remote-published",
-        status: "ready",
-        workDir: "/workspace",
-        repoPath: "/workspace/repo",
-        cpuLimit: 2,
-        memoryLimitGiB: 4,
-        diskLimitGiB: 10,
-        ttlExpiresAt: Date.now() + 60_000,
-        autoStopIntervalMinutes: 30,
-        autoArchiveIntervalMinutes: 60,
-        autoDeleteIntervalMinutes: 120,
-        networkBlockAll: false,
+
+      const firstCleanup = await t.mutation(internal.ops.scheduleSandboxCleanup, {
+        sandboxId: ids.supersededSandboxId,
       });
-      const supersededSandboxId = await ctx.db.insert("sandboxes", {
-        repositoryId,
-        ownerTokenIdentifier,
-        provider: "daytona",
-        sourceAdapter: "git_clone",
-        remoteId: "remote-superseded",
-        status: "ready",
-        workDir: "/workspace",
-        repoPath: "/workspace/repo",
-        cpuLimit: 2,
-        memoryLimitGiB: 4,
-        diskLimitGiB: 10,
-        ttlExpiresAt: Date.now() + 60_000,
-        autoStopIntervalMinutes: 30,
-        autoArchiveIntervalMinutes: 60,
-        autoDeleteIntervalMinutes: 120,
-        networkBlockAll: false,
+      if (!firstCleanup.jobId) {
+        throw new Error("Expected cleanup job to be queued.");
+      }
+      await t.mutation(internal.ops.markSandboxCleanupRunning, {
+        sandboxId: ids.supersededSandboxId,
+        jobId: firstCleanup.jobId,
       });
-      await ctx.db.patch(repositoryId, { latestSandboxId: publishedSandboxId });
+      await t.mutation(internal.ops.failSandboxCleanup, {
+        sandboxId: ids.supersededSandboxId,
+        jobId: firstCleanup.jobId,
+        errorMessage: "temporary Daytona failure",
+      });
 
-      return { repositoryId, publishedSandboxId, supersededSandboxId };
-    });
+      const retryCleanup = await t.mutation(internal.ops.scheduleSandboxCleanup, {
+        sandboxId: ids.supersededSandboxId,
+      });
 
-    const firstCleanup = await t.mutation(internal.ops.scheduleSandboxCleanup, {
-      sandboxId: ids.supersededSandboxId,
-      skipRun: true,
-    });
-    if (!firstCleanup.jobId) {
-      throw new Error("Expected cleanup job to be queued.");
-    }
-    await t.mutation(internal.ops.markSandboxCleanupRunning, {
-      sandboxId: ids.supersededSandboxId,
-      jobId: firstCleanup.jobId,
-    });
-    await t.mutation(internal.ops.failSandboxCleanup, {
-      sandboxId: ids.supersededSandboxId,
-      jobId: firstCleanup.jobId,
-      errorMessage: "temporary Daytona failure",
-    });
+      const state = await t.run(async (ctx) => ({
+        repository: await ctx.db.get(ids.repositoryId),
+        supersededSandbox: await ctx.db.get(ids.supersededSandboxId),
+        jobs: await ctx.db
+          .query("jobs")
+          .withIndex("by_repositoryId", (q) => q.eq("repositoryId", ids.repositoryId))
+          .take(10),
+      }));
 
-    const retryCleanup = await t.mutation(internal.ops.scheduleSandboxCleanup, {
-      sandboxId: ids.supersededSandboxId,
-      skipRun: true,
+      expect(retryCleanup.jobId).toBeTruthy();
+      expect(retryCleanup.jobId).not.toBe(firstCleanup.jobId);
+      expect(state.repository?.latestSandboxId).toBe(ids.publishedSandboxId);
+      expect(state.supersededSandbox?.status).toBe("failed");
+      expect(
+        state.jobs.some(
+          (job) => job.kind === "cleanup" && job.sandboxId === ids.supersededSandboxId && job.status === "queued",
+        ),
+      ).toBe(true);
     });
-
-    const state = await t.run(async (ctx) => ({
-      repository: await ctx.db.get(ids.repositoryId),
-      supersededSandbox: await ctx.db.get(ids.supersededSandboxId),
-      jobs: await ctx.db
-        .query("jobs")
-        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", ids.repositoryId))
-        .take(10),
-    }));
-
-    expect(retryCleanup.jobId).toBeTruthy();
-    expect(retryCleanup.jobId).not.toBe(firstCleanup.jobId);
-    expect(state.repository?.latestSandboxId).toBe(ids.publishedSandboxId);
-    expect(state.supersededSandbox?.status).toBe("failed");
-    expect(
-      state.jobs.some(
-        (job) => job.kind === "cleanup" && job.sandboxId === ids.supersededSandboxId && job.status === "queued",
-      ),
-    ).toBe(true);
   });
 
   test("expired cleanup jobs do not block scheduling a replacement cleanup", async () => {
-    const t = convexTest(schema, modules);
-    const ownerTokenIdentifier = "user|cleanup-expired";
-    const now = Date.now();
+    await withPausedConvexScheduler(async () => {
+      const t = createTestConvex();
+      const ownerTokenIdentifier = "user|cleanup-expired";
+      const now = Date.now();
 
-    const ids = await t.run(async (ctx) => {
-      const repositoryId = await ctx.db.insert("repositories", {
-        ownerTokenIdentifier,
-        sourceHost: "github",
-        sourceUrl: "https://github.com/acme/cleanup-expired",
-        sourceRepoFullName: "acme/cleanup-expired",
-        sourceRepoOwner: "acme",
-        sourceRepoName: "cleanup-expired",
-        defaultBranch: "main",
-        visibility: "private",
-        accessMode: "private",
-        importStatus: "completed",
-        detectedLanguages: [],
-        packageManagers: [],
-        entrypoints: [],
-        fileCount: 1,
-        color: "blue",
-        lastAccessedAt: now,
+      const ids = await t.run(async (ctx) => {
+        const repositoryId = await ctx.db.insert("repositories", {
+          ownerTokenIdentifier,
+          sourceHost: "github",
+          sourceUrl: "https://github.com/acme/cleanup-expired",
+          sourceRepoFullName: "acme/cleanup-expired",
+          sourceRepoOwner: "acme",
+          sourceRepoName: "cleanup-expired",
+          defaultBranch: "main",
+          visibility: "private",
+          accessMode: "private",
+          importStatus: "completed",
+          detectedLanguages: [],
+          packageManagers: [],
+          entrypoints: [],
+          fileCount: 1,
+          color: "blue",
+          lastAccessedAt: now,
+        });
+        const sandboxId = await ctx.db.insert("sandboxes", {
+          repositoryId,
+          ownerTokenIdentifier,
+          provider: "daytona",
+          sourceAdapter: "git_clone",
+          remoteId: "remote-expired-cleanup",
+          status: "failed",
+          workDir: "/workspace",
+          repoPath: "/workspace/repo",
+          cpuLimit: 2,
+          memoryLimitGiB: 4,
+          diskLimitGiB: 10,
+          ttlExpiresAt: now + 60_000,
+          autoStopIntervalMinutes: 30,
+          autoArchiveIntervalMinutes: 60,
+          autoDeleteIntervalMinutes: 120,
+          networkBlockAll: false,
+        });
+        const staleJobId = await ctx.db.insert("jobs", {
+          repositoryId,
+          ownerTokenIdentifier,
+          sandboxId,
+          kind: "cleanup",
+          status: "queued",
+          stage: "queued",
+          progress: 0,
+          costCategory: "ops",
+          triggerSource: "system",
+          leaseExpiresAt: now - 60_000,
+        });
+        return { sandboxId, staleJobId };
       });
-      const sandboxId = await ctx.db.insert("sandboxes", {
-        repositoryId,
-        ownerTokenIdentifier,
-        provider: "daytona",
-        sourceAdapter: "git_clone",
-        remoteId: "remote-expired-cleanup",
-        status: "failed",
-        workDir: "/workspace",
-        repoPath: "/workspace/repo",
-        cpuLimit: 2,
-        memoryLimitGiB: 4,
-        diskLimitGiB: 10,
-        ttlExpiresAt: now + 60_000,
-        autoStopIntervalMinutes: 30,
-        autoArchiveIntervalMinutes: 60,
-        autoDeleteIntervalMinutes: 120,
-        networkBlockAll: false,
+
+      const result = await t.mutation(internal.ops.scheduleSandboxCleanup, {
+        sandboxId: ids.sandboxId,
       });
-      const staleJobId = await ctx.db.insert("jobs", {
-        repositoryId,
-        ownerTokenIdentifier,
-        sandboxId,
-        kind: "cleanup",
-        status: "queued",
-        stage: "queued",
-        progress: 0,
-        costCategory: "ops",
-        triggerSource: "system",
-        leaseExpiresAt: now - 60_000,
-      });
-      return { sandboxId, staleJobId };
+
+      expect(result.jobId).toBeTruthy();
+      expect(result.jobId).not.toBe(ids.staleJobId);
     });
-
-    const result = await t.mutation(internal.ops.scheduleSandboxCleanup, {
-      sandboxId: ids.sandboxId,
-      skipRun: true,
-    });
-
-    expect(result.jobId).toBeTruthy();
-    expect(result.jobId).not.toBe(ids.staleJobId);
   });
 
   test("reconcileDaytonaOrphans deletes Daytona sandboxes that are missing in Convex and older than the safety window", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const olderThanWindow = new Date(Date.now() - 11 * 60_000).toISOString();
     const newerThanWindow = new Date(Date.now() - 5 * 60_000).toISOString();
 
@@ -540,7 +614,7 @@ describe("expired sandbox sweep", () => {
 
 describe("interactive job recovery queries", () => {
   test("listStaleInteractiveJobs is not starved by non-interactive stale jobs", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const now = Date.now();
 
     const { staleChatJobId, staleSystemDesignJobId } = await t.run(async (ctx) => {
@@ -602,7 +676,7 @@ describe("interactive job recovery queries", () => {
 
 describe("syncSandboxStatusFromRemote", () => {
   async function seedSandbox(
-    t: ReturnType<typeof convexTest>,
+    t: SystifyTestConvex,
     overrides: { status: "provisioning" | "ready" | "stopped" | "archived" | "failed" },
   ) {
     return await t.run(async (ctx) => {
@@ -652,7 +726,7 @@ describe("syncSandboxStatusFromRemote", () => {
     ["archived", "archived"],
     ["destroyed", "archived"],
   ] as const)("maps remoteState=%s onto local status=%s", async (remoteState, expectedStatus) => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const sandboxId = await seedSandbox(t, { status: "ready" });
 
     const result = await t.mutation(internal.ops.syncSandboxStatusFromRemote, {
@@ -666,7 +740,7 @@ describe("syncSandboxStatusFromRemote", () => {
   });
 
   test("maps remoteState=error onto status=failed with a clear lastErrorMessage", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const sandboxId = await seedSandbox(t, { status: "ready" });
 
     await t.mutation(internal.ops.syncSandboxStatusFromRemote, {
@@ -679,7 +753,7 @@ describe("syncSandboxStatusFromRemote", () => {
   });
 
   test("treats remoteState=unknown as a no-op rather than overwriting known cache state", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const sandboxId = await seedSandbox(t, { status: "ready" });
 
     const result = await t.mutation(internal.ops.syncSandboxStatusFromRemote, {
@@ -692,7 +766,7 @@ describe("syncSandboxStatusFromRemote", () => {
   });
 
   test("refuses to drag a locally-archived sandbox back to ready", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const sandboxId = await seedSandbox(t, { status: "archived" });
 
     const result = await t.mutation(internal.ops.syncSandboxStatusFromRemote, {
@@ -705,7 +779,7 @@ describe("syncSandboxStatusFromRemote", () => {
   });
 
   test("returns patched=false when the sandbox row no longer exists", async () => {
-    const t = convexTest(schema, modules);
+    const t = createTestConvex();
     const sandboxId = await seedSandbox(t, { status: "ready" });
     await t.run(async (ctx) => await ctx.db.delete(sandboxId));
 

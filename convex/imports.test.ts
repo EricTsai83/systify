@@ -1,10 +1,11 @@
 /// <reference types="vite/client" />
 
-import { describe, expect, test, vi } from "vitest";
+import { describe, expect, test } from "vitest";
 import { convexTest } from "convex-test";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
+import { withPausedConvexScheduler } from "../test/convex/scheduler";
 
 const modules = import.meta.glob("./**/*.ts");
 const PERSIST_BATCH_SIZE = 200;
@@ -331,9 +332,11 @@ describe("stale import recovery", () => {
       return { repositoryId, jobId, importId };
     });
 
-    const result = await t.mutation(internal.imports.recoverStaleImportJob, {
-      jobId: ids.jobId,
-      errorMessage: "stale import",
+    const result = await withPausedConvexScheduler(async () => {
+      return await t.mutation(internal.imports.recoverStaleImportJob, {
+        jobId: ids.jobId,
+        errorMessage: "stale import",
+      });
     });
 
     const state = await t.run(async (ctx) => ({
@@ -505,162 +508,165 @@ describe("batched import persistence", () => {
   });
 
   test("cancellation after partial persistence cleans staged rows", async () => {
-    const ownerTokenIdentifier = "user|delete-mid-import";
-    const t = convexTest(schema, modules);
+    await withPausedConvexScheduler(async () => {
+      const ownerTokenIdentifier = "user|delete-mid-import";
+      const t = convexTest(schema, modules);
 
-    const ids = await t.run(async (ctx) => {
-      const repositoryId = await ctx.db.insert("repositories", {
-        ownerTokenIdentifier,
-        sourceHost: "github",
-        sourceUrl: "https://github.com/acme/delete-mid-import",
-        sourceRepoFullName: "acme/delete-mid-import",
-        sourceRepoOwner: "acme",
-        sourceRepoName: "delete-mid-import",
-        defaultBranch: "main",
-        visibility: "private",
-        accessMode: "private",
-        importStatus: "running",
-        detectedLanguages: [],
-        packageManagers: [],
-        entrypoints: [],
-        fileCount: 0,
-        color: "blue",
-        lastAccessedAt: Date.now(),
+      const ids = await t.run(async (ctx) => {
+        const repositoryId = await ctx.db.insert("repositories", {
+          ownerTokenIdentifier,
+          sourceHost: "github",
+          sourceUrl: "https://github.com/acme/delete-mid-import",
+          sourceRepoFullName: "acme/delete-mid-import",
+          sourceRepoOwner: "acme",
+          sourceRepoName: "delete-mid-import",
+          defaultBranch: "main",
+          visibility: "private",
+          accessMode: "private",
+          importStatus: "running",
+          detectedLanguages: [],
+          packageManagers: [],
+          entrypoints: [],
+          fileCount: 0,
+          color: "blue",
+          lastAccessedAt: Date.now(),
+        });
+
+        const jobId = await ctx.db.insert("jobs", {
+          repositoryId,
+          ownerTokenIdentifier,
+          kind: "import",
+          status: "running",
+          stage: "indexing",
+          progress: 0.6,
+          costCategory: "indexing",
+          triggerSource: "user",
+          startedAt: Date.now() - 5_000,
+        });
+
+        const importId = await ctx.db.insert("imports", {
+          repositoryId,
+          ownerTokenIdentifier,
+          sourceUrl: "https://github.com/acme/delete-mid-import",
+          branch: "main",
+          adapterKind: "git_clone",
+          status: "running",
+          jobId,
+          startedAt: Date.now() - 5_000,
+        });
+
+        const sandboxId = await ctx.db.insert("sandboxes", {
+          repositoryId,
+          ownerTokenIdentifier,
+          provider: "daytona",
+          sourceAdapter: "git_clone",
+          remoteId: "remote-delete-mid-import",
+          status: "ready",
+          workDir: "/workspace",
+          repoPath: "/workspace/repo",
+          cpuLimit: 2,
+          memoryLimitGiB: 4,
+          diskLimitGiB: 10,
+          ttlExpiresAt: Date.now() + 60_000,
+          autoStopIntervalMinutes: 30,
+          autoArchiveIntervalMinutes: 60,
+          autoDeleteIntervalMinutes: 120,
+          networkBlockAll: false,
+        });
+
+        await ctx.db.patch(importId, {
+          sandboxId,
+          remoteSandboxId: "remote-delete-mid-import",
+        });
+
+        return { repositoryId, jobId, importId, sandboxId };
       });
 
-      const jobId = await ctx.db.insert("jobs", {
-        repositoryId,
-        ownerTokenIdentifier,
-        kind: "import",
-        status: "running",
-        stage: "indexing",
-        progress: 0.6,
-        costCategory: "indexing",
-        triggerSource: "user",
-        startedAt: Date.now() - 5_000,
+      expect(
+        await t.mutation(internal.imports.persistImportHeader, {
+          importId: ids.importId,
+          jobId: ids.jobId,
+          commitSha: "abc123",
+          branch: "main",
+        }),
+      ).toEqual({ kind: "ready" });
+
+      expect(
+        await t.mutation(internal.imports.persistRepoFilesBatch, {
+          importId: ids.importId,
+          jobId: ids.jobId,
+          files: [
+            {
+              path: "src/main.ts",
+              parentPath: "src",
+              fileType: "file",
+              extension: "ts",
+              language: "typescript",
+              sizeBytes: 128,
+              isEntryPoint: true,
+              isConfig: false,
+              isImportant: true,
+              summary: "Entry point",
+            },
+          ],
+        }),
+      ).toEqual({ kind: "ready" });
+
+      await t.run(async (ctx) => {
+        await ctx.db.patch(ids.repositoryId, {
+          deletionRequestedAt: Date.now(),
+        });
       });
 
-      const importId = await ctx.db.insert("imports", {
-        repositoryId,
-        ownerTokenIdentifier,
-        sourceUrl: "https://github.com/acme/delete-mid-import",
-        branch: "main",
-        adapterKind: "git_clone",
-        status: "running",
-        jobId,
-        startedAt: Date.now() - 5_000,
+      expect(
+        await t.mutation(internal.imports.persistRepoFilesBatch, {
+          importId: ids.importId,
+          jobId: ids.jobId,
+          files: [
+            {
+              path: "src/extra.ts",
+              parentPath: "src",
+              fileType: "file",
+              extension: "ts",
+              language: "typescript",
+              sizeBytes: 64,
+              isEntryPoint: false,
+              isConfig: false,
+              isImportant: false,
+              summary: "Extra file",
+            },
+          ],
+        }),
+      ).toEqual({ kind: "cancelled" });
+
+      await t.mutation(internal.imports.cleanupSupersededImportSnapshot, {
+        importId: ids.importId,
+        importJobId: ids.jobId,
       });
 
-      const sandboxId = await ctx.db.insert("sandboxes", {
-        repositoryId,
-        ownerTokenIdentifier,
-        provider: "daytona",
-        sourceAdapter: "git_clone",
-        remoteId: "remote-delete-mid-import",
-        status: "ready",
-        workDir: "/workspace",
-        repoPath: "/workspace/repo",
-        cpuLimit: 2,
-        memoryLimitGiB: 4,
-        diskLimitGiB: 10,
-        ttlExpiresAt: Date.now() + 60_000,
-        autoStopIntervalMinutes: 30,
-        autoArchiveIntervalMinutes: 60,
-        autoDeleteIntervalMinutes: 120,
-        networkBlockAll: false,
-      });
+      const state = await t.run(async (ctx) => ({
+        importRecord: await ctx.db.get(ids.importId),
+        job: await ctx.db.get(ids.jobId),
+        files: await ctx.db
+          .query("repoFiles")
+          .withIndex("by_importId", (q) => q.eq("importId", ids.importId))
+          .take(10),
+        chunks: await ctx.db
+          .query("repoChunks")
+          .withIndex("by_importId_and_path_and_chunkIndex", (q) => q.eq("importId", ids.importId))
+          .take(10),
+        artifacts: await ctx.db
+          .query("artifacts")
+          .withIndex("by_jobId", (q) => q.eq("jobId", ids.jobId))
+          .take(10),
+      }));
 
-      await ctx.db.patch(importId, {
-        sandboxId,
-        remoteSandboxId: "remote-delete-mid-import",
-      });
-
-      return { repositoryId, jobId, importId, sandboxId };
+      expect(state.importRecord?.status).toBe("cancelled");
+      expect(state.job?.status).toBe("cancelled");
+      expect(state.files).toHaveLength(0);
+      expect(state.chunks).toHaveLength(0);
+      expect(state.artifacts).toHaveLength(0);
     });
-
-    expect(
-      await t.mutation(internal.imports.persistImportHeader, {
-        importId: ids.importId,
-        jobId: ids.jobId,
-        commitSha: "abc123",
-        branch: "main",
-      }),
-    ).toEqual({ kind: "ready" });
-
-    expect(
-      await t.mutation(internal.imports.persistRepoFilesBatch, {
-        importId: ids.importId,
-        jobId: ids.jobId,
-        files: [
-          {
-            path: "src/main.ts",
-            parentPath: "src",
-            fileType: "file",
-            extension: "ts",
-            language: "typescript",
-            sizeBytes: 128,
-            isEntryPoint: true,
-            isConfig: false,
-            isImportant: true,
-            summary: "Entry point",
-          },
-        ],
-      }),
-    ).toEqual({ kind: "ready" });
-
-    await t.run(async (ctx) => {
-      await ctx.db.patch(ids.repositoryId, {
-        deletionRequestedAt: Date.now(),
-      });
-    });
-
-    expect(
-      await t.mutation(internal.imports.persistRepoFilesBatch, {
-        importId: ids.importId,
-        jobId: ids.jobId,
-        files: [
-          {
-            path: "src/extra.ts",
-            parentPath: "src",
-            fileType: "file",
-            extension: "ts",
-            language: "typescript",
-            sizeBytes: 64,
-            isEntryPoint: false,
-            isConfig: false,
-            isImportant: false,
-            summary: "Extra file",
-          },
-        ],
-      }),
-    ).toEqual({ kind: "cancelled" });
-
-    vi.useFakeTimers();
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-    vi.useRealTimers();
-
-    const state = await t.run(async (ctx) => ({
-      importRecord: await ctx.db.get(ids.importId),
-      job: await ctx.db.get(ids.jobId),
-      files: await ctx.db
-        .query("repoFiles")
-        .withIndex("by_importId", (q) => q.eq("importId", ids.importId))
-        .take(10),
-      chunks: await ctx.db
-        .query("repoChunks")
-        .withIndex("by_importId_and_path_and_chunkIndex", (q) => q.eq("importId", ids.importId))
-        .take(10),
-      artifacts: await ctx.db
-        .query("artifacts")
-        .withIndex("by_jobId", (q) => q.eq("jobId", ids.jobId))
-        .take(10),
-    }));
-
-    expect(state.importRecord?.status).toBe("cancelled");
-    expect(state.job?.status).toBe("cancelled");
-    expect(state.files).toHaveLength(0);
-    expect(state.chunks).toHaveLength(0);
-    expect(state.artifacts).toHaveLength(0);
   });
 });
 
@@ -872,14 +878,17 @@ describe("repository deletion during import", () => {
       }),
     ).toEqual({ kind: "ready" });
 
-    vi.useFakeTimers();
-    await t.mutation(internal.imports.markImportFailed, {
-      importId: ids.failedImportId,
-      jobId: ids.failedJobId,
-      errorMessage: "Chunk persistence failed",
+    await withPausedConvexScheduler(async () => {
+      await t.mutation(internal.imports.markImportFailed, {
+        importId: ids.failedImportId,
+        jobId: ids.failedJobId,
+        errorMessage: "Chunk persistence failed",
+      });
+      await t.mutation(internal.imports.cleanupSupersededImportSnapshot, {
+        importId: ids.failedImportId,
+        importJobId: ids.failedJobId,
+      });
     });
-    await t.finishAllScheduledFunctions(vi.runAllTimers);
-    vi.useRealTimers();
 
     const state = await t.run(async (ctx) => ({
       repository: await ctx.db.get(ids.repositoryId),
@@ -972,13 +981,15 @@ describe("repository deletion during import", () => {
       await ctx.db.delete(ids.repositoryId);
     });
 
-    await expect(
-      t.mutation(internal.imports.markImportFailed, {
-        importId: ids.importId,
-        jobId: ids.jobId,
-        errorMessage: "Clone failed",
-      }),
-    ).resolves.toBeNull();
+    await withPausedConvexScheduler(async () => {
+      await expect(
+        t.mutation(internal.imports.markImportFailed, {
+          importId: ids.importId,
+          jobId: ids.jobId,
+          errorMessage: "Clone failed",
+        }),
+      ).resolves.toBeNull();
+    });
 
     const state = await t.run(async (ctx) => ({
       importRecord: await ctx.db.get(ids.importId),

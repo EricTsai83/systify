@@ -5,6 +5,7 @@ import { register as registerRateLimiter } from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
 import { api } from "./_generated/api";
 import schema from "./schema";
+import { withPausedConvexScheduler } from "../test/convex/scheduler";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -176,18 +177,20 @@ describe("deleteRepository preconditions", () => {
   });
 
   test("permanent delete proceeds when repository is already archived", async () => {
-    const ownerTokenIdentifier = "user|permanent-delete-archived";
-    const t = createTestConvex();
-    const repositoryId = await seedRepository(t, {
-      ownerTokenIdentifier,
-      archivedAt: Date.now() - 1000,
+    await withPausedConvexScheduler(async () => {
+      const ownerTokenIdentifier = "user|permanent-delete-archived";
+      const t = createTestConvex();
+      const repositoryId = await seedRepository(t, {
+        ownerTokenIdentifier,
+        archivedAt: Date.now() - 1000,
+      });
+
+      const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+      await expect(viewer.mutation(api.repositories.deleteRepository, { repositoryId })).resolves.toBeNull();
+
+      const repo = await t.run((ctx) => ctx.db.get(repositoryId));
+      expect(typeof repo?.deletionRequestedAt).toBe("number");
     });
-
-    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
-    await expect(viewer.mutation(api.repositories.deleteRepository, { repositoryId })).resolves.toBeNull();
-
-    const repo = await t.run((ctx) => ctx.db.get(repositoryId));
-    expect(typeof repo?.deletionRequestedAt).toBe("number");
   });
 });
 
