@@ -3,7 +3,7 @@
  *
  * Three tools the LLM can call during a sandbox-mode chat reply:
  *
- *   - `read_file`: UTF-8 file contents capped at 64 KiB.
+ *   - `read_file`: UTF-8 file contents for files up to 64 KiB.
  *   - `list_dir`: directory entries capped at 200 names.
  *   - `run_shell`: arbitrary shell command, output capped at 32 KiB,
  *     gated by a deny list of obviously-destructive patterns, bounded
@@ -37,11 +37,10 @@
  *      the same validator so the tool can never `cd` out of the repo subtree.
  *
  *   4. **Truncation is byte-level.** `downloadFile` returns the entire file
- *      as a `Uint8Array`. We slice the byte buffer to the cap *before*
- *      decoding so a multi-MB file doesn't materialise an intermediate
- *      multi-MB UTF-8 string just to be sliced down. The decoder runs with
- *      `fatal: false` so a truncation that lands inside a multi-byte
- *      sequence yields a single replacement character, not an exception.
+ *      as a `Uint8Array`. Production probes file size first and rejects
+ *      files above `SANDBOX_READ_FILE_MAX_BYTES` before download so a
+ *      multi-MB file doesn't materialise in memory. The decoder runs with
+ *      `fatal: false` for bounded fake clients and fallback adapters.
  *      `run_shell` truncates at the character level instead — Daytona returns
  *      the merged stdout/stderr as an already-decoded `string`, so the byte
  *      cost has already been paid; truncating earlier would force a re-encode
@@ -175,6 +174,17 @@ export interface SandboxListedFile {
   readonly size: number;
 }
 
+export interface SandboxFileInfo {
+  readonly isDir: boolean;
+  readonly size: number;
+}
+
+export interface SandboxLimitedListResult {
+  readonly entries: readonly SandboxListedFile[];
+  readonly totalEntries: number;
+  readonly truncated: boolean;
+}
+
 /**
  * Options bag for `executeCommand`. The shape is option-bag (rather than
  * positional like `downloadFile(path, timeoutSeconds)`) because Daytona's
@@ -188,6 +198,7 @@ export interface SandboxShellExecuteOptions {
   readonly cwd?: string;
   readonly env?: Record<string, string>;
   readonly timeoutSeconds: number;
+  readonly maxOutputBytes?: number;
 }
 
 /**
@@ -206,7 +217,14 @@ export interface SandboxShellExecuteOptions {
  * and combined output."
  */
 export type SandboxShellOutcome =
-  | { readonly kind: "ok"; readonly exitCode: number; readonly output: string }
+  | {
+      readonly kind: "ok";
+      readonly exitCode: number;
+      readonly output: string;
+      readonly bytesReturned?: number;
+      readonly totalBytes?: number;
+      readonly truncated?: boolean;
+    }
   | { readonly kind: "timeout"; readonly message: string };
 
 /**
@@ -222,9 +240,17 @@ export type SandboxShellOutcome =
  * generation call sites) with no semantic gain.
  */
 export interface SandboxFsClient {
+  /** Optional metadata probe used to reject oversized reads before download. */
+  readonly getFileInfo?: (path: string) => Promise<SandboxFileInfo>;
   /** Returns the entire file as raw bytes. Caller is responsible for size guards. */
   readonly downloadFile: (path: string, timeoutSeconds?: number) => Promise<Uint8Array>;
   readonly listFiles: (path: string) => Promise<readonly SandboxListedFile[]>;
+  /**
+   * Optional bounded directory listing. Production uses this to avoid
+   * asking Daytona to serialize huge directory listings; tests and fallback
+   * adapters can omit it and retain the legacy `listFiles` behavior.
+   */
+  readonly listFilesLimited?: (path: string, maxEntries: number) => Promise<SandboxLimitedListResult>;
   /**
    * Execute a shell command inside the sandbox.
    *
@@ -746,6 +772,31 @@ export async function executeReadFile(
     };
   }
 
+  if (client.getFileInfo) {
+    try {
+      const info = await client.getFileInfo(resolution.absolutePath);
+      if (info.isDir) {
+        return {
+          ok: false,
+          errorCode: "invalid_path",
+          message: "read_file requires a file path, but the resolved path is a directory.",
+        };
+      }
+      if (info.size > SANDBOX_READ_FILE_MAX_BYTES) {
+        return {
+          ok: false,
+          errorCode: "file_too_large_to_decode",
+          message:
+            `File is ${info.size} bytes; read_file only supports files up to ` +
+            `${SANDBOX_READ_FILE_MAX_BYTES} bytes. Use run_shell with a targeted ` +
+            "`sed`, `head`, `tail`, or `grep` command to inspect a smaller slice.",
+        };
+      }
+    } catch (error) {
+      return { ok: false, errorCode: "io_error", message: explainIoError(error) };
+    }
+  }
+
   let bytes: Uint8Array;
   try {
     bytes = await client.downloadFile(resolution.absolutePath, SANDBOX_READ_FILE_TIMEOUT_SECONDS);
@@ -792,8 +843,18 @@ export async function executeListDir(
   }
 
   let entries: readonly SandboxListedFile[];
+  let totalEntries: number;
+  let wasTruncatedByAdapter = false;
   try {
-    entries = await client.listFiles(resolution.absolutePath);
+    if (client.listFilesLimited) {
+      const limited = await client.listFilesLimited(resolution.absolutePath, SANDBOX_LIST_DIR_MAX_ENTRIES);
+      entries = limited.entries;
+      totalEntries = limited.totalEntries;
+      wasTruncatedByAdapter = limited.truncated;
+    } else {
+      entries = await client.listFiles(resolution.absolutePath);
+      totalEntries = entries.length;
+    }
   } catch (error) {
     return { ok: false, errorCode: "io_error", message: explainIoError(error) };
   }
@@ -818,7 +879,7 @@ export async function executeListDir(
     return a.name < b.name ? -1 : 1;
   });
 
-  const truncated = sortedEntries.length > SANDBOX_LIST_DIR_MAX_ENTRIES;
+  const truncated = wasTruncatedByAdapter || sortedEntries.length > SANDBOX_LIST_DIR_MAX_ENTRIES;
   const sliced = truncated ? sortedEntries.slice(0, SANDBOX_LIST_DIR_MAX_ENTRIES) : sortedEntries;
 
   // Redaction signals are aggregated to the result level (not annotated
@@ -841,7 +902,7 @@ export async function executeListDir(
     ok: true,
     path: resolution.normalizedRelative,
     entries: redactedEntries,
-    totalEntries: sortedEntries.length,
+    totalEntries,
     truncated,
     redactedTypes: [...aggregatedRedactionTypes].sort(),
   };
@@ -941,6 +1002,7 @@ export async function executeRunShell(
   try {
     outcome = await client.executeCommand(command, {
       cwd: resolution.absolutePath,
+      maxOutputBytes: SANDBOX_RUN_SHELL_MAX_OUTPUT_BYTES,
       timeoutSeconds,
     });
   } catch (error) {
@@ -962,7 +1024,11 @@ export async function executeRunShell(
   }
 
   // Step 6 — truncate, redact, return.
-  const { output, bytesReturned, totalBytes, truncated } = truncateShellOutput(outcome.output);
+  const truncatedOutput = truncateShellOutput(outcome.output);
+  const output = truncatedOutput.output;
+  const bytesReturned = outcome.bytesReturned ?? truncatedOutput.bytesReturned;
+  const totalBytes = outcome.totalBytes ?? truncatedOutput.totalBytes;
+  const truncated = outcome.truncated ?? truncatedOutput.truncated;
   const { redacted, matchedTypes } = redact(output);
 
   // Convert the absolute workdir back to its repo-relative form for the
@@ -1068,7 +1134,7 @@ export function createSandboxTools(client: SandboxFsClient, repoPath: string) {
   return {
     read_file: tool({
       description:
-        "Read the UTF-8 contents of a file inside the repository. Output is capped at 64 KiB; the response includes a `truncated` flag and the file's `totalBytes` so you can decide whether to ask for a narrower section.",
+        "Read the UTF-8 contents of a file inside the repository. Files larger than 64 KiB return `errorCode: 'file_too_large_to_decode'`; use run_shell with `sed`, `head`, `tail`, or `grep` for a narrower section.",
       inputSchema: READ_FILE_INPUT_SCHEMA,
       execute: ({ path }) => executeReadFile(client, repoPath, path),
     }),

@@ -83,6 +83,25 @@ function parseReposArg(value: string): Record<string, string> {
   return out;
 }
 
+function parseBudgetsArg(value: string): number[] {
+  const budgets: number[] = [];
+  for (const token of value.split(",")) {
+    const trimmed = token.trim();
+    if (!/^[1-9][0-9]*$/.test(trimmed)) {
+      throw new Error(`Invalid --budgets value "${trimmed || "(empty)"}" — expected positive integers.`);
+    }
+    const budget = Number(trimmed);
+    if (!Number.isSafeInteger(budget)) {
+      throw new Error(`Invalid --budgets value "${trimmed}" — value is too large.`);
+    }
+    budgets.push(budget);
+  }
+  if (budgets.length === 0) {
+    throw new Error("--budgets must include at least one positive integer when supplied.");
+  }
+  return budgets;
+}
+
 function utcTimestamp(): string {
   return new Date().toISOString().replace(/[:.]/g, "-");
 }
@@ -147,10 +166,16 @@ async function main(): Promise<void> {
     ?.split(",")
     .map((s) => s.trim())
     .filter(Boolean) as SystemDesignKind[] | undefined;
-  const budgets = parseArg("budgets")
-    ?.split(",")
-    .map((s) => Number(s.trim()))
-    .filter((n) => Number.isFinite(n) && n > 0);
+  const budgetsRaw = parseArg("budgets");
+  let budgets: number[] | undefined;
+  if (budgetsRaw !== undefined) {
+    try {
+      budgets = parseBudgetsArg(budgetsRaw);
+    } catch (error) {
+      console.error((error as Error).message);
+      process.exit(2);
+    }
+  }
   const provider = parseArg("provider");
   const model = parseArg("model");
   const skipJudge = hasFlag("no-judge");

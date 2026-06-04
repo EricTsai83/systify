@@ -86,7 +86,15 @@ export const reasoningEffortValidator = v.union(
   v.literal("xhigh"),
 );
 
-export interface ModelCatalogEntry {
+/**
+ * Convex vector index width for artifact chunk embeddings. OpenAI's
+ * `text-embedding-3-large` defaults to 3072 dimensions unless the
+ * embedding call passes a `dimensions` override; keeping this constant
+ * beside the embedding catalog rows makes that storage contract explicit.
+ */
+export const ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS = 1_536;
+
+interface BaseModelCatalogEntry {
   provider: LlmProvider;
   /**
    * Provider-native model identifier (`gpt-5.5`, `claude-opus-4-8`, …).
@@ -156,6 +164,28 @@ export interface ModelCatalogEntry {
    */
   userPickable: boolean;
 }
+
+export type ModelCatalogEntry =
+  | (BaseModelCatalogEntry & {
+      capability: "embedding";
+      /**
+       * Output vector width to request from the provider and persist into
+       * `artifactChunks.embedding`. Must match the Convex vector index.
+       */
+      embeddingDimensions: number;
+      supportsReasoning: false;
+      supportsTools: false;
+      userPickable: false;
+    })
+  | (BaseModelCatalogEntry & {
+      capability: UserPickableCapability;
+      embeddingDimensions?: never;
+    });
+
+export type UserPickableModelCatalogEntry = ModelCatalogEntry & {
+  capability: UserPickableCapability;
+  userPickable: true;
+};
 
 export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
   // === OpenAI === GPT-5 family.
@@ -248,12 +278,15 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
   // `contextWindow` reflects OpenAI's per-request input token cap
   // for the embedding endpoint (8192 for `text-embedding-3-*`),
   // not a conversational context — informational here, not
-  // enforced by the gateway.
+  // enforced by the gateway. `embeddingDimensions` is the vector
+  // width requested from OpenAI and must stay aligned with
+  // `artifactChunks.by_embedding`.
   {
     provider: "openai",
     modelName: "text-embedding-3-small",
     displayName: "OpenAI Embedding 3 (small)",
     capability: "embedding",
+    embeddingDimensions: ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS,
     supportsReasoning: false,
     supportsTools: false,
     contextWindow: 8_192,
@@ -264,6 +297,7 @@ export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
     modelName: "text-embedding-3-large",
     displayName: "OpenAI Embedding 3 (large)",
     capability: "embedding",
+    embeddingDimensions: ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS,
     supportsReasoning: false,
     supportsTools: false,
     contextWindow: 8_192,
@@ -320,6 +354,23 @@ export function listPickableModels(opts?: {
  */
 export function isValidPick(provider: LlmProvider, modelName: string): boolean {
   return getCatalogEntry(provider, modelName) !== undefined;
+}
+
+/**
+ * True iff `(provider, modelName)` is selectable from a public UI surface.
+ * Internal flows can still use {@link isValidPick} for hidden role models
+ * such as title generation or eval judging.
+ */
+export function isUserPickableModel(
+  provider: LlmProvider,
+  modelName: string,
+  capability?: UserPickableCapability,
+): boolean {
+  const entry = getCatalogEntry(provider, modelName);
+  if (!entry?.userPickable) {
+    return false;
+  }
+  return capability === undefined || entry.capability === capability;
 }
 
 /**

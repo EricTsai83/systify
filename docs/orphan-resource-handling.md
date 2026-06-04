@@ -133,6 +133,8 @@ This is the classic orphan case:
 
 Without protection, Daytona keeps a live sandbox while Convex cannot discover it by normal DB queries.
 
+The current mitigation is not only eventual reconciliation. Once `provisionSandbox` has returned, the action keeps the fresh Daytona id in memory as `remoteIdForCleanup`. If a later step fails before the id is persisted to the `sandboxes` row, the catch path still schedules local cleanup and directly calls Daytona delete with that in-memory id. See `sandbox-provisioning-cleanup-system-design.md` for the focused design.
+
 ### Cleanup Was Scheduled, But Remote Delete Failed
 
 A repository can enter deletion or on-demand provisioning failure cleanup correctly, but Daytona delete may still fail because of timeout, transient provider issues, or interrupted execution.
@@ -252,3 +254,4 @@ Those belong in implementation plans or operations-specific documents rather tha
 
 - `repository-lifecycle.md`
 - `integrations-and-operations.md`
+- `sandbox-provisioning-cleanup-system-design.md`

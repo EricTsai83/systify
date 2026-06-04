@@ -97,7 +97,7 @@ describe("githubCheck.checkForUpdates", () => {
 
     const repository = await t.run(async (ctx) => await ctx.db.get(repositoryId));
     expect(repository?.latestRemoteSha).toBeUndefined();
-    expect(repository?.lastCheckedForUpdatesAt).toBe(previousCheckAt);
+    expect(repository?.lastCheckedForUpdatesAt ?? 0).toBeGreaterThan(previousCheckAt);
   });
 
   test("falls back to unauthenticated SHA check when installation token fails", async () => {
@@ -149,7 +149,7 @@ describe("githubCheck.checkForUpdates", () => {
 
     const repository = await t.run(async (ctx) => await ctx.db.get(repositoryId));
     expect(repository?.latestRemoteSha).toBe("remote-sha-fallback");
-    expect((repository?.lastCheckedForUpdatesAt ?? 0) > 0).toBe(true);
+    expect(repository?.lastCheckedForUpdatesAt ?? 0).toBeGreaterThan(0);
   });
 
   test("updates remote SHA only when GitHub returns a branch SHA", async () => {
@@ -192,6 +192,6 @@ describe("githubCheck.checkForUpdates", () => {
 
     const afterSecondCheck = await t.run(async (ctx) => await ctx.db.get(repositoryId));
     expect(afterSecondCheck?.latestRemoteSha).toBe("remote-sha-1");
-    expect(afterSecondCheck?.lastCheckedForUpdatesAt).toBe(resetCheckedAt);
+    expect(afterSecondCheck?.lastCheckedForUpdatesAt ?? 0).toBeGreaterThan(resetCheckedAt);
   });
 });

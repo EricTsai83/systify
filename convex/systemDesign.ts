@@ -32,8 +32,8 @@ import {
   SYSTEM_DESIGN_JOB_LEASE_MS,
 } from "./lib/rateLimit";
 import {
-  isValidPick,
   isSupportedReasoningEffort,
+  isUserPickableModel,
   listPickableModels,
   reasoningEffortValidator,
   ROLE_MODELS,
@@ -160,7 +160,7 @@ export const requestSystemDesignGeneration = mutation({
         message: "provider and modelName must be supplied together.",
       });
     }
-    if (!isValidPick(provider, modelName)) {
+    if (!isUserPickableModel(provider, modelName, "sandbox")) {
       throw new ConvexError({
         code: "invalid_model_pick",
         message: `Unsupported model selection: ${provider}:${modelName}`,
@@ -692,22 +692,37 @@ const recordKindRunStatus = v.union(
   v.literal("quality_rejected"),
 );
 
+type SystemDesignCacheKey = {
+  repositoryId: Id<"repositories">;
+  kind: SystemDesignKind;
+  alignedImportCommitSha: string;
+  generatedByProvider: LlmProvider;
+  generatedByModel: string;
+  promptVersion: number;
+};
+
 /**
- * Idempotency cache probe. Returns the most-recent artifact matching
- * the full `(repositoryId, kind, commitSha, provider, model,
- * promptVersion)` tuple, or `null` when no match exists.
- *
- * Read scope is bounded by `by_repositoryId_and_kind`: typical
- * (repo, kind) slices hold ≤ 1 artifact at any time because
- * `persistGeneratedArtifact` deletes the previous artifact when the
- * regeneration overwrites it. The collect-and-filter pattern stays
- * cheap and avoids a six-field index that would be a maintenance
- * burden for every future cache-key change.
- *
- * Returns the *most recent* match (descending `_creationTime`) so a
- * race between concurrent regenerations resolves consistently — the
- * later writer wins.
+ * Exact idempotency cache probe. Returns the most-recent artifact matching
+ * the full `(repositoryId, kind, commitSha, provider, model, promptVersion)`
+ * tuple, or `null` when no match exists. Legacy artifacts missing any cache
+ * metadata field do not match this index lookup.
  */
+async function findCachedArtifactByKey(ctx: QueryCtx, key: SystemDesignCacheKey): Promise<Doc<"artifacts"> | null> {
+  return await ctx.db
+    .query("artifacts")
+    .withIndex("by_repo_kind_commit_provider_model_promptVersion", (q) =>
+      q
+        .eq("repositoryId", key.repositoryId)
+        .eq("kind", key.kind)
+        .eq("alignedImportCommitSha", key.alignedImportCommitSha)
+        .eq("generatedByProvider", key.generatedByProvider)
+        .eq("generatedByModel", key.generatedByModel)
+        .eq("promptVersion", key.promptVersion),
+    )
+    .order("desc")
+    .first();
+}
+
 export const findCachedArtifact = internalQuery({
   args: {
     repositoryId: v.id("repositories"),
@@ -718,22 +733,7 @@ export const findCachedArtifact = internalQuery({
     promptVersion: v.number(),
   },
   handler: async (ctx, args): Promise<Doc<"artifacts"> | null> => {
-    const candidates = await ctx.db
-      .query("artifacts")
-      .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", args.repositoryId).eq("kind", args.kind))
-      .order("desc")
-      .collect();
-    for (const candidate of candidates) {
-      if (
-        candidate.alignedImportCommitSha === args.alignedImportCommitSha &&
-        candidate.generatedByProvider === args.generatedByProvider &&
-        candidate.generatedByModel === args.generatedByModel &&
-        candidate.promptVersion === args.promptVersion
-      ) {
-        return candidate;
-      }
-    }
-    return null;
+    return await findCachedArtifactByKey(ctx, args);
   },
 });
 
@@ -822,6 +822,7 @@ export const recordKindRun = internalMutation({
     repositoryId: v.id("repositories"),
     jobId: v.id("jobs"),
     kind: systemDesignKindValidator,
+    artifactId: v.optional(v.id("artifacts")),
     provider: llmProviderValidator,
     modelName: v.string(),
     promptVersion: v.number(),
@@ -848,6 +849,7 @@ export const recordKindRun = internalMutation({
       repositoryId: args.repositoryId,
       jobId: args.jobId,
       kind: args.kind,
+      artifactId: args.artifactId,
       provider: args.provider,
       modelName: args.modelName,
       promptVersion: args.promptVersion,
@@ -973,39 +975,43 @@ export const getCachedSelectionStatus = query({
     pendingKinds: SystemDesignKind[];
   }> => {
     const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
-    const provider = args.provider ?? DEFAULT_SYSTEM_DESIGN_PROVIDER;
-    const modelName = args.modelName ?? DEFAULT_SYSTEM_DESIGN_MODEL;
+    const selections = Array.from(new Set(args.selections)).filter(isSystemDesignKind);
+    let provider = args.provider ?? DEFAULT_SYSTEM_DESIGN_PROVIDER;
+    let modelName = args.modelName ?? DEFAULT_SYSTEM_DESIGN_MODEL;
+    if (
+      (args.provider !== undefined || args.modelName !== undefined) &&
+      !isUserPickableModel(provider, modelName, "sandbox")
+    ) {
+      provider = DEFAULT_SYSTEM_DESIGN_PROVIDER;
+      modelName = DEFAULT_SYSTEM_DESIGN_MODEL;
+    }
     const commitSha = repository?.lastSyncedCommitSha;
     if (!repository || !commitSha) {
       return {
-        total: args.selections.length,
+        total: selections.length,
         cachedKinds: [],
-        pendingKinds: [...args.selections] as SystemDesignKind[],
+        pendingKinds: selections,
       };
     }
     const cachedKinds: SystemDesignKind[] = [];
     const pendingKinds: SystemDesignKind[] = [];
-    for (const kind of args.selections as SystemDesignKind[]) {
+    for (const kind of selections) {
       const promptVersion = SYSTEM_DESIGN_PROMPT_VERSIONS[kind];
-      const candidates = await ctx.db
-        .query("artifacts")
-        .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", args.repositoryId).eq("kind", kind))
-        .order("desc")
-        .collect();
-      const cached = candidates.find(
-        (candidate) =>
-          candidate.alignedImportCommitSha === commitSha &&
-          candidate.generatedByProvider === provider &&
-          candidate.generatedByModel === modelName &&
-          candidate.promptVersion === promptVersion,
-      );
+      const cached = await findCachedArtifactByKey(ctx, {
+        repositoryId: args.repositoryId,
+        kind,
+        alignedImportCommitSha: commitSha,
+        generatedByProvider: provider,
+        generatedByModel: modelName,
+        promptVersion,
+      });
       if (cached) {
         cachedKinds.push(kind);
       } else {
         pendingKinds.push(kind);
       }
     }
-    return { total: args.selections.length, cachedKinds, pendingKinds };
+    return { total: selections.length, cachedKinds, pendingKinds };
   },
 });
 

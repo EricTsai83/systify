@@ -2,7 +2,14 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { ImportContext, ImportRunningState } from "./functionResultSchemas";
-import { cancelActiveJob, completeRunningJob, failRunningJob, markQueuedJobRunning } from "./jobs";
+import { IMPORT_JOB_LEASE_MS } from "./rateLimit";
+import {
+  cancelActiveJob,
+  completeRunningJob,
+  failRunningJob,
+  markQueuedJobRunning,
+  refreshRunningJobLease,
+} from "./jobs";
 
 const REPOSITORY_DELETION_CANCEL_REASON =
   "Repository deletion is in progress. The import was cancelled before it could finish.";
@@ -223,6 +230,12 @@ export async function guardPersistStage(
     return { kind: "cancelled" };
   }
 
+  await refreshRunningJobLease(ctx, {
+    jobId: args.jobId,
+    expectedKind: "import",
+    leaseExpiresAt: Date.now() + IMPORT_JOB_LEASE_MS,
+  });
+
   return {
     kind: "ready",
     importRecord,
@@ -357,6 +370,7 @@ async function applyImportRunningState(
     stage: "fetching_repository",
     progress: 0.1,
     startedAt: now,
+    leaseExpiresAt: now + IMPORT_JOB_LEASE_MS,
   });
   if (!runningJob) {
     return { started: false as const };

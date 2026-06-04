@@ -105,11 +105,29 @@ export const runEval = internalAction({
         continue;
       }
 
+      let repo: Doc<"repositories">;
+      try {
+        const fetched = await ctx.runQuery(internal.repositories.getRepositoryForProcessing, {
+          repositoryId,
+        });
+        repo = fetched.repository;
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        const sandboxReason = detail === "Repository not found." ? "repository_not_found" : "infrastructure_error";
+        skipped.push({
+          slug,
+          reason: "sandbox_preparation_failed",
+          detail,
+          sandboxReason,
+        });
+        continue;
+      }
+
       let prepared: EnsureSandboxReadyResult;
       try {
         prepared = await ensureSandboxReady(ctx, {
           repositoryId,
-          ownerTokenIdentifier: EVAL_HARNESS_OWNER,
+          ownerTokenIdentifier: repo.ownerTokenIdentifier,
         });
       } catch (error) {
         const reason = error instanceof SandboxPreparationError ? error.reason : "infrastructure_error";
@@ -122,16 +140,6 @@ export const runEval = internalAction({
         logWarn("eval", "sandbox_preparation_failed", { slug, repositoryId, reason });
         continue;
       }
-
-      // Sandbox is up — repository row necessarily exists. Throws if
-      // a race deleted it mid-loop; the outer caller surfaces the
-      // error to the CLI. `getRepositoryForProcessing` returns
-      // `{repository, artifacts, chunks}`; the eval runner only needs
-      // the repository row for `buildUserPrompt`.
-      const fetched = await ctx.runQuery(internal.repositories.getRepositoryForProcessing, {
-        repositoryId,
-      });
-      const repo: Doc<"repositories"> = fetched.repository;
 
       for (const kind of kinds) {
         for (const stepBudget of budgets) {

@@ -228,6 +228,16 @@ export const moveToFolder = mutation({
       return null;
     }
 
+    if (nextFolderId !== undefined) {
+      const existingArtifacts = await ctx.db
+        .query("artifacts")
+        .withIndex("by_folderId", (q) => q.eq("folderId", nextFolderId))
+        .take(ARTIFACTS_PER_FOLDER_LIMIT);
+      if (existingArtifacts.length >= ARTIFACTS_PER_FOLDER_LIMIT) {
+        throw new Error(`A folder can contain at most ${ARTIFACTS_PER_FOLDER_LIMIT} artifacts.`);
+      }
+    }
+
     await replaceArtifactFolder(ctx, artifact, nextFolderId);
     return null;
   },

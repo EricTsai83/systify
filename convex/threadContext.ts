@@ -100,13 +100,6 @@ async function enrichThreadContext(
 export const getThreadContext = query({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
-    // Probe for existence first so a stale thread id returns `null` (lets the
-    // client clear the URL) instead of "Thread not found." — both missing and
-    // unauthorized return null to avoid disclosing existence.
-    const probe = await loadThread(ctx, args.threadId);
-    if (!probe) {
-      return null;
-    }
     const { identity, doc: thread } = await loadOwnedDoc(ctx, args.threadId);
     if (!thread) {
       return null;

@@ -106,15 +106,29 @@ Systify does not ask users to provide a GitHub personal access token. Instead, i
 ### Installation flow
 
 1. A signed-in user calls `initiateGitHubInstall`.
-2. The backend generates a random state and stores it in `githubOAuthStates` together with the frontend origin that started the flow.
+2. The backend generates a random state plus a GitHub OAuth PKCE verifier / challenge, then stores them in `githubOAuthStates` together with the frontend origin that started the flow.
 3. The user is redirected to the GitHub App installation page.
-4. After installation, GitHub redirects back to `/api/github/callback`.
-5. The callback validates and consumes the state.
-6. The backend fetches installation details from the GitHub API.
-7. The installation is written into `githubInstallations`.
-8. If a stored frontend origin exists, the callback redirects back to it.
-9. If GitHub calls back without a usable state, the HTTP endpoint returns an explicit error response instead of guessing a frontend URL.
-10. If installation succeeds but no return target is available, the endpoint returns a small success page instead of a misleading server error.
+4. After installation, GitHub redirects back to `/api/github/callback` with `installation_id`.
+5. The callback treats `installation_id` as untrusted. It validates the Systify state, stores the installation id as pending, and redirects the browser through GitHub user OAuth using the stored PKCE challenge.
+6. GitHub redirects back with an OAuth `code`.
+7. The backend exchanges the code for a GitHub user access token, then calls GitHub's accessible-installations API to verify that the authenticated GitHub user can see the pending installation id.
+8. Only after that user-installation binding check passes does the backend fetch installation details and write the installation into `githubInstallations`.
+9. If a stored frontend origin exists, the callback redirects back to it.
+10. If GitHub calls back without a usable state, the HTTP endpoint returns an explicit error response instead of guessing a frontend URL.
+11. If installation succeeds but no return target is available, the endpoint returns a small success page instead of a misleading server error.
+
+### Threat model: callback ids are not proof of control
+
+The setup callback is a cross-system trust boundary. The browser can arrive with a valid Systify state and a GitHub-provided `installation_id`, but the `installation_id` alone does not prove that the Systify user controls that GitHub installation.
+
+The security invariant is:
+
+- Systify state proves which signed-in Systify owner initiated the flow.
+- GitHub user OAuth proves which GitHub user is currently authorizing the callback.
+- GitHub's accessible-installations API proves whether that GitHub user can access the installation id.
+- `saveInstallation` still enforces the local invariant that one current installation id cannot be bound to a different current owner. Current means `active` or `suspended`.
+
+This prevents cross-tenant installation binding: a user who knows another installation id cannot attach it to their Systify account unless GitHub also says their authenticated GitHub user can access that installation.
 
 ### Why `githubOAuthStates` exists
 
@@ -123,10 +137,14 @@ This table exists for callback CSRF protection rather than long-term business da
 - `state`
 - `ownerTokenIdentifier`
 - `returnTo`
+- `githubCodeVerifier`
+- `githubCodeChallenge`
+- `pendingInstallationId`
+- `githubUserAuthorizationStartedAt`
 - `expiresAt`
 - `consumed`
 
-Only after the state is successfully validated does the system know which signed-in user this installation should be bound to.
+Only after the state is successfully validated does the system know which signed-in Systify user initiated the flow. The installation is still not trusted until the GitHub user-token verification step confirms that the GitHub user can access the pending installation.
 
 ### Installation state synchronization
 
@@ -138,7 +156,9 @@ GitHub webhooks synchronize installation state back into Convex, including:
 
 Other actions on the `installation` event (notably `update`, where a user changes the GitHub App's repository selection without uninstalling) are intentionally ignored by the webhook receiver — the handler still returns `200 OK` so GitHub does not retry, but no mutation runs. Repository selection is re-read on demand from the GitHub API the next time the frontend or backend needs it.
 
-As a result, `githubInstallations` is not just a callback record. It is the local projection of currently usable GitHub permissions.
+As a result, `githubInstallations` is not just a callback record. It is the local projection of GitHub installation lifecycle state. `active` is current and usable, `suspended` is current but unusable, and `deleted` is historical.
+
+Webhook transitions never create a new authorization proof. A suspended row can become active through an unambiguous signed `unsuspend` webhook because it is still the same current owner binding. A deleted row cannot be revived by webhook; the only path back to a usable binding is the fresh OAuth-verified installation flow that proves the Systify owner and GitHub user can access the installation before `saveInstallation` writes `active`.
 
 ## Repository Access Control
 
@@ -180,6 +200,8 @@ These values must exist only in the Convex runtime. This list intentionally matc
 
 - `WORKOS_CLIENT_ID`
 - `GITHUB_APP_ID`
+- `GITHUB_APP_CLIENT_ID`
+- `GITHUB_APP_CLIENT_SECRET`
 - `GITHUB_APP_SLUG`
 - `GITHUB_APP_PRIVATE_KEY`
 - `GITHUB_APP_WEBHOOK_SECRET`
@@ -196,11 +218,10 @@ These values must exist only in the Convex runtime. This list intentionally matc
 - `DAYTONA_DISK_GIB`
 - `DAYTONA_POST_CLONE_BLOCK_NETWORK`
 
-This separation matters because the GitHub App private key, webhook secret, and OpenAI key must never leak into the frontend.
+This separation matters because the GitHub App private key, OAuth client secret, webhook secret, and OpenAI key must never leak into the frontend.
 
 ## Known Limitations
 
 - Auth errors are currently handled mostly through a UI banner plus a refresh prompt, so recovery behavior is still basic.
 - The relationship between users and GitHub installations is currently a single-layer owner-scoped model and has not yet expanded to a team or organization level.
 - GitHub authorization depends heavily on correct installation-state synchronization, so webhook issues can temporarily leave local data behind the real GitHub state.
-

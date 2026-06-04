@@ -10,7 +10,11 @@ import { REDACTION_PATTERN_TYPES, redact } from "./redaction";
  */
 const FAKE_GITHUB_INSTALLATION_TOKEN = `ghs_${"x".repeat(40)}`;
 const FAKE_GITHUB_PERSONAL_TOKEN = `ghp_${"y".repeat(40)}`;
+const FAKE_OPENAI_KEY = `sk-proj-${"A".repeat(48)}`;
+const FAKE_ANTHROPIC_KEY = `sk-ant-${"B".repeat(48)}`;
+const FAKE_GOOGLE_API_KEY = `AIza${"C".repeat(35)}`;
 const FAKE_AWS_ACCESS_KEY = `AKIA${"Z".repeat(16)}`;
+const FAKE_AWS_SECRET_KEY = "a".repeat(40);
 const FAKE_SLACK_TOKEN = `xoxb-${"a".repeat(20)}-${"b".repeat(24)}`;
 
 /**
@@ -40,8 +44,9 @@ describe("redact()", () => {
     const result = redact(before);
 
     expect(result.redacted).not.toContain(FAKE_GITHUB_INSTALLATION_TOKEN);
-    expect(result.redacted).toContain("[REDACTED:github_token]");
-    expect(result.matchedTypes).toEqual(["github_token"]);
+    expect(result.redacted).not.toContain("x-access-token");
+    expect(result.redacted).toContain("[REDACTED:credential_url]");
+    expect(result.matchedTypes).toEqual(["credential_url", "github_token"]);
   });
 
   test.each([
@@ -75,12 +80,34 @@ describe("redact()", () => {
     expect(result.matchedTypes).toEqual(["jwt"]);
   });
 
+  test("redacts OpenAI, Anthropic, and Google API keys", () => {
+    const before = [
+      `OPENAI_API_KEY=${FAKE_OPENAI_KEY}`,
+      `ANTHROPIC_API_KEY=${FAKE_ANTHROPIC_KEY}`,
+      FAKE_GOOGLE_API_KEY,
+    ].join("\n");
+    const result = redact(before);
+
+    expect(result.redacted).not.toContain(FAKE_OPENAI_KEY);
+    expect(result.redacted).not.toContain(FAKE_ANTHROPIC_KEY);
+    expect(result.redacted).not.toContain(FAKE_GOOGLE_API_KEY);
+    expect(result.matchedTypes).toEqual(["anthropic_api_key", "google_api_key", "openai_api_key"]);
+  });
+
   test("redacts an AWS access key and reports aws_access_key", () => {
     const before = `aws.accessKeyId = "${FAKE_AWS_ACCESS_KEY}"`;
     const result = redact(before);
 
     expect(result.redacted).not.toContain(FAKE_AWS_ACCESS_KEY);
     expect(result.matchedTypes).toEqual(["aws_access_key"]);
+  });
+
+  test("redacts a labelled AWS secret access key", () => {
+    const before = `aws_secret_access_key = "${FAKE_AWS_SECRET_KEY}"`;
+    const result = redact(before);
+
+    expect(result.redacted).not.toContain(FAKE_AWS_SECRET_KEY);
+    expect(result.matchedTypes).toEqual(["aws_secret_key"]);
   });
 
   test("does NOT redact a lowercase 'akia' string (case-sensitive guard)", () => {
@@ -99,6 +126,38 @@ describe("redact()", () => {
 
     expect(result.redacted).not.toContain(FAKE_SLACK_TOKEN);
     expect(result.matchedTypes).toEqual(["slack_token"]);
+  });
+
+  test("redacts private key blocks", () => {
+    const privateKey = [
+      "-----BEGIN PRIVATE KEY-----",
+      "MIIEvAIBADANBgkqhkiG9w0BAQEFAASC",
+      "-----END PRIVATE KEY-----",
+    ].join("\n");
+    const result = redact(`key:\n${privateKey}\n`);
+
+    expect(result.redacted).not.toContain("MIIEvAIB");
+    expect(result.matchedTypes).toEqual(["private_key"]);
+  });
+
+  test("redacts database and credential-bearing URLs", () => {
+    const databaseUrl = "postgres://app:supersecretpassword@example.com:5432/app";
+    const cloneUrl = "https://x-access-token:githubtokenvalue@example.com/acme/repo.git";
+    const result = redact([databaseUrl, cloneUrl].join("\n"));
+
+    expect(result.redacted).not.toContain("supersecretpassword");
+    expect(result.redacted).not.toContain("githubtokenvalue");
+    expect(result.matchedTypes).toEqual(["credential_url", "database_url"]);
+  });
+
+  test("redacts assignment-style secrets and Basic auth headers", () => {
+    const assignment = `password = "${"p".repeat(32)}"`;
+    const basic = `Authorization: Basic ${"Q".repeat(28)}`;
+    const result = redact([assignment, basic].join("\n"));
+
+    expect(result.redacted).not.toContain("p".repeat(32));
+    expect(result.redacted).not.toContain("Q".repeat(28));
+    expect(result.matchedTypes).toEqual(["assignment_secret", "basic_auth"]);
   });
 
   test("redacts a Bearer header (case-insensitive) and reports bearer_token", () => {
@@ -225,7 +284,24 @@ describe("redact()", () => {
     // each of these slugs at least once.
     const unique = new Set(REDACTION_PATTERN_TYPES);
     expect(unique.size).toBe(REDACTION_PATTERN_TYPES.length);
-    expect(unique).toEqual(new Set(["github_token", "jwt", "aws_access_key", "slack_token", "bearer_token"]));
+    expect(unique).toEqual(
+      new Set([
+        "github_token",
+        "openai_api_key",
+        "anthropic_api_key",
+        "google_api_key",
+        "jwt",
+        "private_key",
+        "database_url",
+        "credential_url",
+        "aws_access_key",
+        "aws_secret_key",
+        "slack_token",
+        "assignment_secret",
+        "basic_auth",
+        "bearer_token",
+      ]),
+    );
   });
 
   test("never produces a sentinel that itself contains a matchable substring (no infinite-loop / second-pass regression)", () => {

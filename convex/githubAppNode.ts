@@ -9,6 +9,194 @@ import { repoAccessCheckResultValidator, type RepoAccessCheckResult } from "./li
 import { parseGitHubUrl } from "./lib/github";
 import { normalizeReturnToUrl } from "./lib/returnTo";
 
+const GITHUB_INSTALLATION_REPOS_PAGE_LIMIT = 5;
+const GITHUB_USER_INSTALLATIONS_PAGE_LIMIT = 10;
+const GITHUB_REPO_SEARCH_QUERY_MAX_LENGTH = 256;
+const GITHUB_AUTH_FETCH_TIMEOUT_MS = 10_000;
+
+const installationUserVerificationResultValidator = v.union(
+  v.object({ kind: v.literal("verified") }),
+  v.object({ kind: v.literal("unauthorized"), message: v.string() }),
+);
+
+type GitHubAppOAuthCredentials = {
+  clientId: string;
+  clientSecret: string;
+};
+
+type GitHubUserAccessTokenResult =
+  | {
+      kind: "token";
+      token: string;
+    }
+  | {
+      kind: "oauth_error";
+      message: string;
+    };
+
+function getGitHubAppOAuthCredentials(): GitHubAppOAuthCredentials {
+  const clientId = process.env.GITHUB_APP_CLIENT_ID?.trim();
+  const clientSecret = process.env.GITHUB_APP_CLIENT_SECRET?.trim();
+
+  if (!clientId) {
+    throw new Error("GITHUB_APP_CLIENT_ID is required. Set it in your Convex dashboard environment variables.");
+  }
+  if (!clientSecret) {
+    throw new Error("GITHUB_APP_CLIENT_SECRET is required. Set it in your Convex dashboard environment variables.");
+  }
+
+  return { clientId, clientSecret };
+}
+
+function randomHex(byteLength: number): string {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function base64UrlEncodeBytes(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/u, "");
+}
+
+async function createPkceCodeChallenge(codeVerifier: string): Promise<string> {
+  const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(codeVerifier));
+  return base64UrlEncodeBytes(new Uint8Array(hash));
+}
+
+function getNextLinkUrl(linkHeader: string | null): string | null {
+  if (!linkHeader) {
+    return null;
+  }
+
+  const links = linkHeader.split(",");
+  for (const link of links) {
+    const match = link.match(/<([^>]+)>;\s*rel="next"/);
+    if (match) {
+      return match[1] ?? null;
+    }
+  }
+
+  return null;
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMessage: string): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GITHUB_AUTH_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(timeoutMessage);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function exchangeGitHubAppUserCode(args: {
+  code: string;
+  codeVerifier?: string;
+  redirectUri: string;
+}): Promise<GitHubUserAccessTokenResult> {
+  const { clientId, clientSecret } = getGitHubAppOAuthCredentials();
+  const body = new URLSearchParams({
+    client_id: clientId,
+    client_secret: clientSecret,
+    code: args.code,
+    redirect_uri: args.redirectUri,
+  });
+
+  if (args.codeVerifier) {
+    body.set("code_verifier", args.codeVerifier);
+  }
+
+  const response = await fetchWithTimeout(
+    "https://github.com/login/oauth/access_token",
+    {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "systify",
+      },
+      body,
+    },
+    "GitHub user authorization token exchange timed out.",
+  );
+
+  const responseBody = await response.text();
+  if (!response.ok) {
+    throw new Error(`Failed to exchange GitHub user authorization code (${response.status}): ${responseBody}`);
+  }
+
+  const data = JSON.parse(responseBody) as {
+    access_token?: unknown;
+    error?: unknown;
+    error_description?: unknown;
+  };
+
+  if (typeof data.error === "string") {
+    return {
+      kind: "oauth_error",
+      message: typeof data.error_description === "string" ? data.error_description : data.error,
+    };
+  }
+
+  if (typeof data.access_token !== "string" || data.access_token.length === 0) {
+    return {
+      kind: "oauth_error",
+      message: "GitHub did not return a user access token.",
+    };
+  }
+
+  return {
+    kind: "token",
+    token: data.access_token,
+  };
+}
+
+async function gitHubUserCanAccessInstallation(userAccessToken: string, installationId: number): Promise<boolean> {
+  let nextUrl: string | null = "https://api.github.com/user/installations?per_page=100";
+  let pagesRead = 0;
+
+  while (nextUrl && pagesRead < GITHUB_USER_INSTALLATIONS_PAGE_LIMIT) {
+    pagesRead += 1;
+    const response: Response = await fetchWithTimeout(
+      nextUrl,
+      {
+        headers: {
+          "Accept": "application/vnd.github.v3+json",
+          "Authorization": `Bearer ${userAccessToken}`,
+          "User-Agent": "systify",
+        },
+      },
+      "GitHub installation verification timed out.",
+    );
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Failed to list GitHub installations accessible to user (${response.status}): ${body}`);
+    }
+
+    const data = (await response.json()) as {
+      installations: Array<{ id: number }>;
+    };
+
+    if (data.installations.some((installation) => installation.id === installationId)) {
+      return true;
+    }
+
+    nextUrl = getNextLinkUrl(response.headers.get("link"));
+  }
+
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Installation token for owner — single front door for "give me a usable
 // GitHub token for this owner". Absorbs the (lookup installation → fetch
@@ -68,11 +256,17 @@ export const initiateGitHubInstall = action({
     if (!slug) {
       throw new Error("GITHUB_APP_SLUG is required. Set it in your Convex dashboard environment variables.");
     }
+    getGitHubAppOAuthCredentials();
 
-    // Generate a cryptographically random state parameter
-    const stateBytes = new Uint8Array(32);
-    crypto.getRandomValues(stateBytes);
-    const state = Array.from(stateBytes, (b) => b.toString(16).padStart(2, "0")).join("");
+    await ctx.runMutation(internal.lib.rateLimit.consumeGitHubInstallInitiation, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+    });
+
+    // Generate a CSRF state and PKCE verifier for the post-install user
+    // authorization step that proves the GitHub user can see the installation.
+    const state = randomHex(32);
+    const githubCodeVerifier = randomHex(32);
+    const githubCodeChallenge = await createPkceCodeChallenge(githubCodeVerifier);
     const normalizedReturnTo = args.returnTo ? normalizeReturnToUrl(args.returnTo) : undefined;
 
     // Store the state for later validation (10-minute expiry)
@@ -80,6 +274,8 @@ export const initiateGitHubInstall = action({
       state,
       ownerTokenIdentifier: identity.tokenIdentifier,
       returnTo: normalizedReturnTo,
+      githubCodeVerifier,
+      githubCodeChallenge,
     });
 
     const url = `https://github.com/apps/${slug}/installations/new?state=${state}`;
@@ -162,6 +358,10 @@ export const verifyRepoAccess = action({
     const identity = await requireViewerIdentity(ctx);
     const parsed = parseGitHubUrl(args.url);
 
+    await ctx.runMutation(internal.lib.rateLimit.consumeGitHubRepoAccessCheck, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+    });
+
     const installationId: number | null = await ctx.runQuery(internal.github.getInstallationIdForOwner, {
       ownerTokenIdentifier: identity.tokenIdentifier,
     });
@@ -202,6 +402,40 @@ export const checkRepoAccess = internalAction({
   handler: async (_ctx, args) => fetchRepoAccessFromGitHub(args),
 });
 
+export const verifyInstallationAccessWithGitHubUser = internalAction({
+  args: {
+    code: v.string(),
+    codeVerifier: v.optional(v.string()),
+    redirectUri: v.string(),
+    installationId: v.number(),
+  },
+  returns: installationUserVerificationResultValidator,
+  handler: async (_ctx, args) => {
+    const tokenResult = await exchangeGitHubAppUserCode({
+      code: args.code,
+      codeVerifier: args.codeVerifier,
+      redirectUri: args.redirectUri,
+    });
+
+    if (tokenResult.kind === "oauth_error") {
+      return {
+        kind: "unauthorized" as const,
+        message: tokenResult.message,
+      };
+    }
+
+    const canAccessInstallation = await gitHubUserCanAccessInstallation(tokenResult.token, args.installationId);
+    if (!canAccessInstallation) {
+      return {
+        kind: "unauthorized" as const,
+        message: "The authenticated GitHub user cannot access this GitHub App installation.",
+      };
+    }
+
+    return { kind: "verified" as const };
+  },
+});
+
 // ---------------------------------------------------------------------------
 // List accessible repos for the installation (public action)
 // ---------------------------------------------------------------------------
@@ -216,9 +450,13 @@ export const listInstallationRepos = action({
   handler: async (ctx) => {
     const identity = await requireViewerIdentity(ctx);
 
+    await ctx.runMutation(internal.lib.rateLimit.consumeGitHubRepoList, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+    });
+
     const resolved = await resolveInstallationTokenForOwner(ctx, identity.tokenIdentifier);
     if (!resolved) {
-      return { repos: [], totalCount: 0 };
+      return { repos: [], totalCount: 0, hasMore: false };
     }
     const { token } = resolved;
 
@@ -233,8 +471,10 @@ export const listInstallationRepos = action({
     }> = [];
     let totalCount = 0;
     let nextUrl: string | null = "https://api.github.com/installation/repositories?per_page=100";
+    let pagesRead = 0;
 
-    while (nextUrl) {
+    while (nextUrl && pagesRead < GITHUB_INSTALLATION_REPOS_PAGE_LIMIT) {
+      pagesRead += 1;
       const response: Response = await fetch(nextUrl, {
         headers: {
           "Accept": "application/vnd.github.v3+json",
@@ -282,6 +522,7 @@ export const listInstallationRepos = action({
         ownerAvatarUrl: r.owner.avatar_url,
       })),
       totalCount,
+      hasMore: nextUrl !== null,
     };
   },
 });
@@ -303,6 +544,17 @@ export const searchGitHubRepos = action({
   args: { query: v.string() },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
+    const query = args.query.trim();
+    if (query.length < 2) {
+      return { repos: [], totalCount: 0 };
+    }
+    if (query.length > GITHUB_REPO_SEARCH_QUERY_MAX_LENGTH) {
+      throw new Error(`GitHub search query must be ${GITHUB_REPO_SEARCH_QUERY_MAX_LENGTH} characters or fewer.`);
+    }
+
+    await ctx.runMutation(internal.lib.rateLimit.consumeGitHubRepoSearch, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+    });
 
     const resolved = await resolveInstallationTokenForOwner(ctx, identity.tokenIdentifier);
     if (!resolved) {
@@ -310,7 +562,7 @@ export const searchGitHubRepos = action({
     }
     const { token } = resolved;
 
-    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(args.query)}&sort=updated&order=desc&per_page=20`;
+    const url = `https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=updated&order=desc&per_page=20`;
 
     const response = await fetch(url, {
       headers: {

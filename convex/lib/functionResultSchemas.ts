@@ -91,6 +91,12 @@ export const staleInteractiveJobValidator = v.object({
 export const staleInteractiveJobsValidator = v.array(staleInteractiveJobValidator);
 export type StaleInteractiveJob = Infer<typeof staleInteractiveJobValidator>;
 
+export const staleImportJobValidator = v.object({
+  jobId: v.id("jobs"),
+});
+export const staleImportJobsValidator = v.array(staleImportJobValidator);
+export type StaleImportJob = Infer<typeof staleImportJobValidator>;
+
 export const sandboxLookupResultValidator = v.union(
   v.object({
     sandboxId: v.id("sandboxes"),

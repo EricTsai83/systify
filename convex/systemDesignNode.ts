@@ -339,6 +339,7 @@ export const runSystemDesignGeneration = internalAction({
         repositoryId: args.repositoryId,
         jobId: args.jobId,
         kind,
+        ...(runStatus === "cached_hit" && artifactId ? { artifactId } : {}),
         provider: modelChoice.provider,
         modelName: modelChoice.modelName,
         promptVersion: config.promptVersion,

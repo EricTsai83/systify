@@ -6,6 +6,7 @@ import { internal } from "../_generated/api";
 import {
   assertSandboxProvisioningConfigured,
   cloneRepositoryInSandbox,
+  deleteSandbox,
   probeLiveSandbox,
   provisionSandbox,
   startSandbox,
@@ -342,19 +343,25 @@ async function provisionAndClone(
     });
     remoteIdForCleanup = provisioned.remoteId;
 
-    await ctx.runMutation(internal.imports.attachOnDemandSandboxRemoteInfo, {
-      sandboxId,
-      remoteId: provisioned.remoteId,
-      workDir: provisioned.workDir,
-      repoPath: provisioned.repoPath,
-      cpuLimit: provisioned.cpuLimit,
-      memoryLimitGiB: provisioned.memoryLimitGiB,
-      diskLimitGiB: provisioned.diskLimitGiB,
-      autoStopIntervalMinutes: provisioned.autoStopIntervalMinutes,
-      autoArchiveIntervalMinutes: provisioned.autoArchiveIntervalMinutes,
-      autoDeleteIntervalMinutes: provisioned.autoDeleteIntervalMinutes,
-      networkBlockAll: provisioned.networkBlockAll,
-    });
+    const attachResult: { attached: boolean } = await ctx.runMutation(
+      internal.imports.attachOnDemandSandboxRemoteInfo,
+      {
+        sandboxId,
+        remoteId: provisioned.remoteId,
+        workDir: provisioned.workDir,
+        repoPath: provisioned.repoPath,
+        cpuLimit: provisioned.cpuLimit,
+        memoryLimitGiB: provisioned.memoryLimitGiB,
+        diskLimitGiB: provisioned.diskLimitGiB,
+        autoStopIntervalMinutes: provisioned.autoStopIntervalMinutes,
+        autoArchiveIntervalMinutes: provisioned.autoArchiveIntervalMinutes,
+        autoDeleteIntervalMinutes: provisioned.autoDeleteIntervalMinutes,
+        networkBlockAll: provisioned.networkBlockAll,
+      },
+    );
+    if (!attachResult.attached) {
+      throw new Error("Sandbox provisioning was cancelled before remote attach completed.");
+    }
 
     let githubToken: string | undefined;
     try {
@@ -377,12 +384,15 @@ async function provisionAndClone(
       token: githubToken,
     });
 
-    await ctx.runMutation(internal.imports.markOnDemandSandboxReady, {
+    const readyResult: { ready: boolean } = await ctx.runMutation(internal.imports.markOnDemandSandboxReady, {
       sandboxId,
       repositoryId: repository._id,
       commitSha: cloneResult.commitSha,
       branch: cloneResult.branch,
     });
+    if (!readyResult.ready) {
+      throw new Error("Sandbox provisioning was cancelled before ready state completed.");
+    }
 
     if (previousSandbox && previousSandbox._id !== sandboxId) {
       await ctx.runMutation(internal.ops.scheduleSandboxCleanup, {
@@ -414,14 +424,37 @@ async function provisionAndClone(
       errorMessage: error instanceof Error ? error.message : String(error),
     });
     if (remoteIdForCleanup) {
-      await ctx.runMutation(internal.ops.scheduleSandboxCleanup, {
-        sandboxId,
-      });
+      await scheduleSandboxCleanupBestEffort(ctx, sandboxId);
+      await deleteRemoteSandboxBestEffort(remoteIdForCleanup);
     }
     throw new SandboxPreparationError({
       reason: "infrastructure_error",
       userFacingMessage: `${LIVE_SOURCE_UNAVAILABLE_MESSAGE} (ref: ${errorId})`,
       cause: error,
+    });
+  }
+}
+
+async function scheduleSandboxCleanupBestEffort(ctx: ActionCtx, sandboxId: Id<"sandboxes">): Promise<void> {
+  try {
+    await ctx.runMutation(internal.ops.scheduleSandboxCleanup, {
+      sandboxId,
+    });
+  } catch (cleanupError) {
+    logWarn("sandbox_liveness", "schedule_cleanup_after_provision_failure_failed", {
+      sandboxId,
+      error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+    });
+  }
+}
+
+async function deleteRemoteSandboxBestEffort(remoteId: string): Promise<void> {
+  try {
+    await deleteSandbox(remoteId);
+  } catch (cleanupError) {
+    logWarn("sandbox_liveness", "direct_remote_cleanup_failed", {
+      remoteId,
+      error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
     });
   }
 }

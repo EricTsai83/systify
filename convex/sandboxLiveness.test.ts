@@ -119,11 +119,13 @@ describe("ensureSandboxReady (via runSandboxActivation)", () => {
     probeLiveSandboxMock.mockReset();
     provisionSandboxMock.mockReset();
     startSandboxMock.mockReset();
+    deleteSandboxMock.mockReset();
     getInstallationAccessTokenMock.mockReset();
   });
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   test("returns existing sandbox when probe says started", async () => {
@@ -233,6 +235,99 @@ describe("ensureSandboxReady (via runSandboxActivation)", () => {
     const job = await t.run(async (ctx) => await ctx.db.get(jobId));
     expect(job?.status).toBe("failed");
     expect(job?.errorMessage).toMatch(/Connect your GitHub account/);
+  });
+
+  test("deletes a fresh Daytona remote when attach persistence aborts before saving remoteId", async () => {
+    const t = convexTest(schema, modules);
+    const ownerTokenIdentifier = "user|attach-aborts";
+    const { repositoryId } = await seedRepoAndSandbox(t, ownerTokenIdentifier, {
+      sandbox: { status: "archived", remoteId: "rid-archived" },
+    });
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("githubInstallations", {
+        ownerTokenIdentifier,
+        installationId: 12345,
+        accountLogin: "acme",
+        accountType: "Organization",
+        status: "active",
+        repositorySelection: "selected",
+        connectedAt: Date.now(),
+      });
+    });
+
+    getInstallationAccessTokenMock.mockResolvedValue("github-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            private: true,
+            full_name: "acme/test",
+            default_branch: "main",
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      ),
+    );
+    provisionSandboxMock.mockImplementation(async ({ sandboxId }) => {
+      await t.run(async (ctx) => {
+        await ctx.db.patch(sandboxId, { status: "archived" });
+      });
+      return {
+        remoteId: "remote-unattached",
+        workDir: "/workspace",
+        repoPath: "/workspace/repo",
+        cpuLimit: 2,
+        memoryLimitGiB: 4,
+        diskLimitGiB: 10,
+        autoStopIntervalMinutes: 30,
+        autoArchiveIntervalMinutes: 60,
+        autoDeleteIntervalMinutes: 120,
+        networkBlockAll: false,
+      };
+    });
+    deleteSandboxMock.mockResolvedValue(undefined);
+
+    const jobId = await t.run(async (ctx) =>
+      ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "sandbox_activation",
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+        costCategory: "ops",
+        triggerSource: "user",
+        leaseExpiresAt: Date.now() + 5 * 60_000,
+      }),
+    );
+
+    await t.action(internal.sandboxActivationNode.runSandboxActivation, {
+      jobId,
+      repositoryId,
+      ownerTokenIdentifier,
+    });
+
+    expect(deleteSandboxMock).toHaveBeenCalledTimes(1);
+    expect(deleteSandboxMock).toHaveBeenCalledWith("remote-unattached");
+    expect(cloneRepositoryInSandboxMock).not.toHaveBeenCalled();
+
+    const state = await t.run(async (ctx) => {
+      const repository = await ctx.db.get(repositoryId);
+      const sandbox = repository?.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
+      const jobs = await ctx.db
+        .query("jobs")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
+        .take(10);
+      return { sandbox, jobs };
+    });
+    expect(state.sandbox?.status).toBe("archived");
+    expect(state.sandbox?.remoteId).toBe("");
+    expect(state.jobs.some((job) => job.kind === "cleanup" && job.sandboxId === state.sandbox?._id)).toBe(false);
   });
 });
 

@@ -220,12 +220,19 @@ export function ImportRepoDialog({
   onOpenChange?: (open: boolean) => void;
 }) {
   const createRepositoryImport = useMutation(api.repositories.createRepositoryImport);
+  const disconnectGitHub = useMutation(api.github.disconnectGitHub);
   const initiateGitHubInstall = useAction(api.githubAppNode.initiateGitHubInstall);
   const listRepos = useAction(api.githubAppNode.listInstallationRepos);
   const searchReposAction = useAction(api.githubAppNode.searchGitHubRepos);
   const verifyAccess = useAction(api.githubAppNode.verifyRepoAccess);
   const importedSummaries = useQuery(api.repositories.getImportedRepoSummaries);
-  const { isConnected, installationId, isLoading: isConnectionLoading } = useGitHubConnection();
+  const {
+    isConnected,
+    installationId,
+    accountLogin,
+    isLoading: isConnectionLoading,
+    isSuspended,
+  } = useGitHubConnection();
   const [open = false, setOpen] = useControllableState({
     prop: openProp,
     defaultProp: false,
@@ -262,6 +269,10 @@ export function ImportRepoDialog({
 
   // --- Authorized repos (fetched once on dialog open) ---
   const [authorizedRepos, setAuthorizedRepos] = useState<RepoInfo[] | null>(null);
+  const [authorizedRepoListMeta, setAuthorizedRepoListMeta] = useState<{
+    totalCount: number;
+    hasMore: boolean;
+  } | null>(null);
   const [isLoadingAuthorized, setIsLoadingAuthorized] = useState(false);
   const [authorizedError, setAuthorizedError] = useState<string | null>(null);
 
@@ -378,6 +389,22 @@ export function ImportRepoDialog({
     }
   });
 
+  const [isDisconnectingGitHub, handleDisconnectGitHub] = useAsyncCallback(async () => {
+    setConnectError(null);
+    try {
+      await disconnectGitHub({});
+    } catch (error) {
+      setConnectError(error instanceof Error ? error.message : "Failed to disconnect GitHub.");
+    }
+  });
+
+  useEffect(() => {
+    if (!isConnected) {
+      setAuthorizedRepos(null);
+      setAuthorizedRepoListMeta(null);
+    }
+  }, [isConnected]);
+
   // Fetch authorized repos
   const fetchAuthorizedRepos = useCallback(async () => {
     setIsLoadingAuthorized(true);
@@ -385,6 +412,10 @@ export function ImportRepoDialog({
     try {
       const result = await listRepos({});
       setAuthorizedRepos(result.repos);
+      setAuthorizedRepoListMeta({
+        totalCount: result.totalCount,
+        hasMore: result.hasMore,
+      });
     } catch (err) {
       setAuthorizedError(err instanceof Error ? err.message : "Failed to load repos");
     } finally {
@@ -397,10 +428,11 @@ export function ImportRepoDialog({
   // the GitHub connection status query has resolved — without this effect
   // fetchAuthorizedRepos would never be called and the Private tab stays empty.
   useEffect(() => {
+    if (isDisconnectingGitHub) return;
     if (open && isConnected && !authorizedRepos && !isLoadingAuthorized) {
       void fetchAuthorizedRepos();
     }
-  }, [open, isConnected, authorizedRepos, isLoadingAuthorized, fetchAuthorizedRepos]);
+  }, [open, isConnected, authorizedRepos, isLoadingAuthorized, isDisconnectingGitHub, fetchAuthorizedRepos]);
 
   // Auto-refresh authorized repos when the user returns to the window (e.g.
   // after configuring repos on GitHub in another tab).
@@ -564,10 +596,49 @@ export function ImportRepoDialog({
       <DialogContent className="flex h-[560px] flex-col overflow-y-hidden data-[state=open]:animate-none">
         <DialogHeader className="shrink-0">
           <DialogTitle>Import Repository</DialogTitle>
-          {!isConnected && <DialogDescription>Install the Systify GitHub App to get started.</DialogDescription>}
+          {isSuspended ? (
+            <DialogDescription>Restore or disconnect the suspended GitHub App installation.</DialogDescription>
+          ) : !isConnected ? (
+            <DialogDescription>Install the Systify GitHub App to get started.</DialogDescription>
+          ) : null}
         </DialogHeader>
 
-        {!isConnected ? (
+        {isSuspended ? (
+          <div className="relative flex flex-1 flex-col items-center justify-center gap-5 text-center">
+            <span className="flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-background">
+              <GithubLogoIcon size={28} weight="fill" />
+            </span>
+            <div className="flex max-w-sm flex-col gap-2">
+              <p className="text-sm font-medium text-foreground">GitHub App installation suspended</p>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                {accountLogin
+                  ? `${accountLogin} is connected but unavailable because GitHub suspended the installation.`
+                  : "This GitHub App installation is connected but unavailable because GitHub suspended it."}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <Button type="button" variant="default" disabled={!installationId} onClick={handleAdjustPermissions}>
+                Open GitHub settings
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={isDisconnectingGitHub}
+                onClick={() => void handleDisconnectGitHub()}
+              >
+                {isDisconnectingGitHub ? (
+                  <>
+                    <Spinner size={15} />
+                    Disconnecting…
+                  </>
+                ) : (
+                  "Disconnect"
+                )}
+              </Button>
+            </div>
+            {connectError ? <p className="text-xs text-destructive">{connectError}</p> : null}
+          </div>
+        ) : !isConnected ? (
           <div className="relative flex flex-1 flex-col items-center justify-center gap-6">
             {/* Ambient top-center glow — gives the dialog depth so it doesn't read as flat */}
             <div
@@ -778,6 +849,13 @@ export function ImportRepoDialog({
                 ) : (
                   <ScrollArea className="min-h-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:block!">
                     <div className="flex flex-col pr-3">
+                      {authorizedRepoListMeta?.hasMore && authorizedRepos ? (
+                        <p className="border-b border-border/50 px-1 py-2 text-xs text-muted-foreground">
+                          Showing {authorizedRepos.length} of {authorizedRepoListMeta.totalCount} repositories. Use
+                          search to find the rest.
+                        </p>
+                      ) : null}
+
                       {/* Authorized repos (filtered client-side by search input) */}
                       {filteredAuthorizedRepos &&
                         filteredAuthorizedRepos.length > 0 &&

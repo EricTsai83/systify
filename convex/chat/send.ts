@@ -9,7 +9,7 @@ import { chatModeValidator, resolveDiscussGrounding, type ChatMode } from "../li
 import { enqueueJob, findActiveJob } from "../lib/jobs";
 import {
   isSupportedReasoningEffort,
-  isValidPick,
+  isUserPickableModel,
   reasoningEffortValidator,
   type ReasoningEffort,
 } from "../lib/llmCatalog";
@@ -25,6 +25,8 @@ import {
   throwOperationAlreadyInProgress,
 } from "../lib/rateLimit";
 import { resolveModelForReply } from "./modelSelection";
+
+const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
 
 async function getActiveChatJobForThread(ctx: MutationCtx, threadId: Id<"threads">, now: number) {
   return await findActiveJob(ctx, {
@@ -202,6 +204,11 @@ export const sendMessageStartingNewThread = mutation({
     mode: chatModeValidator,
     title: v.optional(v.string()),
     /**
+     * Library Ask artifact scope used only for first-send creation. Existing
+     * thread sends read the scope from the thread row.
+     */
+    artifactContext: v.optional(v.array(v.id("artifacts"))),
+    /**
      * Discuss-only grounding flags. Ignored for `library` mode. Either
      * may be omitted; both default to `false`.
      */
@@ -244,6 +251,27 @@ export const sendMessageStartingNewThread = mutation({
       repository = result.repository;
     }
 
+    const artifactContext = args.artifactContext ?? [];
+    if (artifactContext.length > 0 && args.mode !== "library") {
+      throw new Error("Artifact scope is only supported for Library Ask threads.");
+    }
+    if (artifactContext.length > 0 && !repositoryId) {
+      throw new Error("Artifact scope requires an attached repository.");
+    }
+    if (artifactContext.length > ASK_THREAD_MAX_ARTIFACT_CONTEXT) {
+      throw new Error(
+        `Library Ask scope filter accepts at most ${ASK_THREAD_MAX_ARTIFACT_CONTEXT} artifacts (got ${artifactContext.length}).`,
+      );
+    }
+    for (const artifactId of artifactContext) {
+      const { doc: artifact } = await requireOwnedDoc(ctx, artifactId, {
+        notFoundMessage: "Artifact not found.",
+      });
+      if (artifact.repositoryId !== repositoryId) {
+        throw new Error("Artifact is not in this repository.");
+      }
+    }
+
     await assertRepositoryModeEligible(ctx, {
       repositoryId,
       mode: args.mode,
@@ -261,7 +289,11 @@ export const sendMessageStartingNewThread = mutation({
     // pair is rejected up front so the resolver never has to distinguish
     // "intentional half-pick" from "missing arg".
     assertCompletePickerPair(args);
-    if (args.provider !== undefined && args.modelName !== undefined && !isValidPick(args.provider, args.modelName)) {
+    if (
+      args.provider !== undefined &&
+      args.modelName !== undefined &&
+      !isUserPickableModel(args.provider, args.modelName)
+    ) {
       throw new ConvexError({
         code: "unsupported_model",
         message: `Unsupported model selection: ${args.provider}:${args.modelName}.`,
@@ -289,6 +321,7 @@ export const sendMessageStartingNewThread = mutation({
       title,
       mode: args.mode,
       lastMessageAt: now,
+      ...(args.mode === "library" && artifactContext.length > 0 ? { artifactContext } : {}),
       ...(args.mode === "discuss"
         ? {
             defaultGroundLibrary: groundLibrary,
@@ -403,7 +436,11 @@ export const sendMessage = mutation({
     // Validate the picker pair (catalog membership + half-pair shape)
     // BEFORE resolving so the resolver only ever sees a clean override.
     assertCompletePickerPair(args);
-    if (args.provider !== undefined && args.modelName !== undefined && !isValidPick(args.provider, args.modelName)) {
+    if (
+      args.provider !== undefined &&
+      args.modelName !== undefined &&
+      !isUserPickableModel(args.provider, args.modelName)
+    ) {
       throw new ConvexError({
         code: "unsupported_model",
         message: `Unsupported model selection: ${args.provider}:${args.modelName}.`,

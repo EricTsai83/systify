@@ -2,7 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import { chatModeValidator } from "./lib/chatMode";
 import { llmProviderValidator } from "./lib/llmProvider";
-import { reasoningEffortValidator } from "./lib/llmCatalog";
+import { ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS, reasoningEffortValidator } from "./lib/llmCatalog";
 import { systemDesignKindValidator } from "./lib/systemDesign";
 
 const repositoryStatus = v.union(
@@ -546,6 +546,14 @@ export default defineSchema({
   })
     .index("by_repositoryId", ["repositoryId"])
     .index("by_repositoryId_and_kind", ["repositoryId", "kind"])
+    .index("by_repo_kind_commit_provider_model_promptVersion", [
+      "repositoryId",
+      "kind",
+      "alignedImportCommitSha",
+      "generatedByProvider",
+      "generatedByModel",
+      "promptVersion",
+    ])
     .index("by_repositoryId_and_folderId", ["repositoryId", "folderId"])
     .index("by_repositoryId_and_lastVerifiedAt", ["repositoryId", "lastVerifiedAt"])
     .index("by_folderId", ["folderId"])
@@ -767,27 +775,24 @@ export default defineSchema({
   })
     .index("by_repositoryId_and_lastMessageAt", ["repositoryId", "lastMessageAt"])
     .index("by_ownerTokenIdentifier_and_lastMessageAt", ["ownerTokenIdentifier", "lastMessageAt"])
-    /**
-     * Repoless-thread range read. Convex treats `undefined` as a distinct
-     * index key, so an `.eq("repositoryId", undefined)` range over this index
-     * scans only the repoless slice rather than filtering the whole owner
-     * table. Powers `chat.threads.listRepolessThreads` and the
-     * repoless-shell "Chats" sidebar section.
-     */
-    .index("by_ownerTokenIdentifier_repoless_and_lastMessageAt", [
+    .index("by_ownerTokenIdentifier_repositoryId_and_lastMessageAt", [
       "ownerTokenIdentifier",
       "repositoryId",
       "lastMessageAt",
     ])
-    /**
-     * Repoless-thread pinned range read. Mirrors the
-     * `by_ownerTokenIdentifier_repoless_and_lastMessageAt` shape but trades
-     * `lastMessageAt` for `pinnedAt` so the repoless-shell "Chats" rail can
-     * surface a Pinned section without scanning the recent slice and
-     * filtering. Range over `.eq("repositoryId", undefined).gt("pinnedAt", 0)`
-     * to read only the pinned-repoless rows in descending pin recency.
-     */
-    .index("by_ownerTokenIdentifier_repoless_and_pinnedAt", ["ownerTokenIdentifier", "repositoryId", "pinnedAt"])
+    .index("by_ownerTokenIdentifier_repositoryId_and_pinnedAt", ["ownerTokenIdentifier", "repositoryId", "pinnedAt"])
+    .index("by_ownerTokenIdentifier_repositoryId_mode_and_lastMessageAt", [
+      "ownerTokenIdentifier",
+      "repositoryId",
+      "mode",
+      "lastMessageAt",
+    ])
+    .index("by_ownerTokenIdentifier_repositoryId_mode_and_pinnedAt", [
+      "ownerTokenIdentifier",
+      "repositoryId",
+      "mode",
+      "pinnedAt",
+    ])
     .index("by_repositoryId_and_pinnedAt", ["repositoryId", "pinnedAt"])
     .index("by_repositoryId_and_mode", ["repositoryId", "mode"])
     .index("by_repositoryId_mode_and_lastMessageAt", ["repositoryId", "mode", "lastMessageAt"])
@@ -996,11 +1001,9 @@ export default defineSchema({
     .index("by_threadId_and_status", ["threadId", "status"])
     .index("by_jobId", ["jobId"])
     /**
-     * Per-owner scan for the per-user cost rollup. Convex implicitly
-     * orders by `_creationTime` as the trailing key, so the rollup
-     * query can window by time by filtering the index-scoped result —
-     * an active user with thousands of messages still scans only their
-     * own slice, not the global table.
+     * Per-owner scans and time-windowed per-user cost rollups. Convex appends
+     * `_creationTime` to every index, so callers can range over it without
+     * declaring it here explicitly.
      */
     .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
 
@@ -1260,12 +1263,18 @@ export default defineSchema({
   })
     .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"])
     .index("by_ownerTokenIdentifier_and_status", ["ownerTokenIdentifier", "status"])
+    .index("by_ownerTokenIdentifier_and_installationId", ["ownerTokenIdentifier", "installationId"])
+    .index("by_installationId_and_status", ["installationId", "status"])
     .index("by_installationId", ["installationId"]),
 
   githubOAuthStates: defineTable({
     state: v.string(),
     ownerTokenIdentifier: v.string(),
     returnTo: v.optional(v.string()),
+    githubCodeVerifier: v.optional(v.string()),
+    githubCodeChallenge: v.optional(v.string()),
+    pendingInstallationId: v.optional(v.number()),
+    githubUserAuthorizationStartedAt: v.optional(v.number()),
     createdAt: v.number(),
     expiresAt: v.number(),
     consumed: v.boolean(),
@@ -1317,7 +1326,7 @@ export default defineSchema({
     .index("by_repositoryId", ["repositoryId"])
     .vectorIndex("by_embedding", {
       vectorField: "embedding",
-      dimensions: 1536,
+      dimensions: ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS,
       filterFields: ["repositoryId", "artifactId"],
     })
     .searchIndex("search_content", {

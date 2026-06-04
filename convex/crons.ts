@@ -10,6 +10,8 @@ crons.interval("sweep expired sandboxes", { hours: 1 }, internal.opsNode.sweepEx
 
 crons.interval("reconcile stale interactive jobs", { minutes: 5 }, internal.opsNode.reconcileStaleInteractiveJobs, {});
 
+crons.interval("reconcile stale import jobs", { minutes: 5 }, internal.opsNode.reconcileStaleImportJobs, {});
+
 crons.interval(
   "auto pause idle sandbox sessions",
   { minutes: 1 },
