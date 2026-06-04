@@ -11,6 +11,67 @@ export default defineConfig(({ mode }) => {
   validateBuildEnv();
 
   return {
+    build: {
+      chunkSizeWarningLimit: 1000,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes("node_modules")) {
+              return;
+            }
+
+            const normalizedId = id.split(path.sep).join("/");
+
+            if (
+              normalizedId.includes("/node_modules/react/") ||
+              normalizedId.includes("/node_modules/react-dom/") ||
+              normalizedId.includes("/node_modules/scheduler/")
+            ) {
+              return "vendor-react";
+            }
+
+            if (
+              normalizedId.includes("/node_modules/react-router") ||
+              normalizedId.includes("/node_modules/@remix-run/")
+            ) {
+              return "vendor-router";
+            }
+
+            if (normalizedId.includes("/node_modules/convex/")) {
+              return "vendor-convex";
+            }
+
+            if (normalizedId.includes("/node_modules/@workos-inc/")) {
+              return "vendor-auth";
+            }
+
+            if (
+              normalizedId.includes("/node_modules/streamdown/") ||
+              normalizedId.includes("/node_modules/@streamdown/") ||
+              normalizedId.includes("/node_modules/mermaid/") ||
+              normalizedId.includes("/node_modules/shiki/") ||
+              normalizedId.includes("/node_modules/katex/")
+            ) {
+              return "vendor-markdown";
+            }
+
+            if (
+              normalizedId.includes("/node_modules/@base-ui/") ||
+              normalizedId.includes("/node_modules/@radix-ui/") ||
+              normalizedId.includes("/node_modules/radix-ui/") ||
+              normalizedId.includes("/node_modules/cmdk/") ||
+              normalizedId.includes("/node_modules/embla-carousel") ||
+              normalizedId.includes("/node_modules/lucide-react/") ||
+              normalizedId.includes("/node_modules/motion/") ||
+              normalizedId.includes("/node_modules/sonner/") ||
+              normalizedId.includes("/node_modules/vaul/")
+            ) {
+              return "vendor-ui";
+            }
+          },
+        },
+      },
+    },
     plugins: [react(), tailwindcss()],
     resolve: {
       alias: {

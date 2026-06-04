@@ -1,32 +1,44 @@
 import { useCallback, useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
+import { useMutation, useQuery } from "convex/react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import {
   CaretLeftIcon,
   CaretRightIcon,
+  ChatCircleText,
   ChartLineUp,
   CheckCircle,
   Gear,
+  GithubLogo,
   Info,
   Plus,
   SlidersHorizontal,
   Sparkle,
+  Wallet,
   X,
 } from "@phosphor-icons/react";
+import { api } from "../../convex/_generated/api";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { ArchiveSettingsSection } from "@/pages/archive";
 import { ResourcesSettingsSection } from "@/pages/resources";
+import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { Logo } from "@/components/logo";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   CUSTOM_INSTRUCTIONS_MAX_LENGTH,
   type UserPreferences,
   useStatsForNerdsPreference,
   useUserPreferences,
 } from "@/hooks/use-user-preferences";
+import { useAsyncCallback } from "@/hooks/use-async-callback";
 import {
   DEFAULT_AUTHENTICATED_PATH,
   DEFAULT_SETTINGS_SECTION,
@@ -59,6 +71,33 @@ const SETTINGS_SECTIONS: Array<{ id: SettingsSectionId; label: string }> = [
   { id: "attachments", label: "Attachments" },
   { id: "shortcuts", label: "Shortcuts" },
 ];
+
+const COMPACT_NUMBER_FORMATTER = new Intl.NumberFormat("en-US", {
+  notation: "compact",
+  maximumFractionDigits: 1,
+});
+
+const INTEGER_FORMATTER = new Intl.NumberFormat("en-US");
+
+const USD_FORMATTER = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 4,
+});
+
+const USAGE_DESCRIPTIONS = {
+  tokens:
+    "Total LLM tokens recorded in the last 30 days, including input, output, cached input, cache writes, and reasoning tokens.",
+  events:
+    "Metered LLM usage records in the last 30 days. A chat reply or a System Design generation can add one record when usage or cost is recorded.",
+  cost: "Estimated LLM provider spend for your usage in the last 30 days. This is cost telemetry, not an invoice.",
+  chat: "LLM usage from chat replies in Discuss or Library Ask during the last 30 days.",
+  systemDesign:
+    "LLM usage from Generate System Design jobs. Each artifact kind run can add a metered record while creating or refreshing Library artifacts.",
+  sandboxBudget:
+    "Daily spend cap for sandbox-grounded work. It resets at midnight UTC and is separate from regular LLM usage totals.",
+} as const;
 
 export function SettingsPage() {
   const [preferences, setPreferences] = useUserPreferences();
@@ -150,23 +189,216 @@ function SettingsSectionNav({ activeSection, from }: { activeSection: SettingsSe
 }
 
 function AccountSettingsSection() {
+  const { user } = useAuth();
+  const githubConnection = useGitHubConnection();
+  const usageSummary = useQuery(api.lib.userCost.getViewerUsageSummary);
+  const disconnectGitHub = useMutation(api.github.disconnectGitHub);
+  const [isDisconnectDialogOpen, setIsDisconnectDialogOpen] = useState(false);
+  const [disconnectError, setDisconnectError] = useState<string | null>(null);
+
+  const displayName = user?.firstName
+    ? `${user.firstName}${user.lastName ? ` ${user.lastName}` : ""}`
+    : (user?.email ?? "Signed-in user");
+  const fallbackInitial = displayName.trim().charAt(0).toLocaleUpperCase() || "U";
+  const usageWindowLabel = usageSummary ? `Last ${usageSummary.window.days} days` : "Last 30 days";
+  const sandboxBudgetPercent =
+    usageSummary && usageSummary.sandboxDailyBudget.capacityUsd > 0
+      ? Math.min(
+          100,
+          Math.max(0, (usageSummary.sandboxDailyBudget.usedUsd / usageSummary.sandboxDailyBudget.capacityUsd) * 100),
+        )
+      : 0;
+
+  const manageGitHubUrl = githubConnection.installationId
+    ? `https://github.com/settings/installations/${githubConnection.installationId}`
+    : null;
+
+  const handleManageGitHub = useCallback(() => {
+    if (!manageGitHubUrl) return;
+    window.open(manageGitHubUrl, "systify-github-permissions", "width=1020,height=720,popup=yes");
+  }, [manageGitHubUrl]);
+
+  const [isDisconnectingGitHub, handleDisconnectGitHub] = useAsyncCallback(async () => {
+    setDisconnectError(null);
+    try {
+      await disconnectGitHub({});
+      setIsDisconnectDialogOpen(false);
+    } catch (error) {
+      setDisconnectError(error instanceof Error ? error.message : "Failed to disconnect GitHub.");
+    }
+  });
+
   return (
-    <Card className="flex min-h-44 flex-col justify-between p-5">
-      <div className="flex flex-col gap-2">
-        <div className="flex items-center gap-2 text-sm font-semibold">
-          <ChartLineUp weight="bold" />
-          Usage
-        </div>
-        <p className="max-w-xl text-sm leading-6 text-muted-foreground">
-          Usage details will live here once backend accounting is wired into the user settings surface.
-        </p>
-      </div>
-      <div className="mt-5 grid gap-2 sm:grid-cols-3">
-        <UsageMetric label="Tokens" value="Pending" />
-        <UsageMetric label="Requests" value="Pending" />
-        <UsageMetric label="Cost" value="Pending" />
-      </div>
-    </Card>
+    <TooltipProvider delayDuration={150}>
+      <section className="flex flex-col gap-4">
+        <Card className="overflow-hidden p-0">
+          <div className="flex flex-col gap-4 border-b border-border bg-muted/20 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-center gap-3">
+              <Avatar size="lg" className="rounded-md">
+                <AvatarImage src={user?.profilePictureUrl ?? undefined} alt={displayName} className="rounded-md" />
+                <AvatarFallback className="rounded-md text-sm font-semibold uppercase">
+                  {fallbackInitial}
+                </AvatarFallback>
+              </Avatar>
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <h2 className="truncate text-base font-semibold tracking-tight">{displayName}</h2>
+                  <Badge variant="muted">WorkOS</Badge>
+                </div>
+                <p className="mt-1 min-h-5 truncate text-sm text-muted-foreground">{user?.email ?? null}</p>
+              </div>
+            </div>
+            <Badge variant={githubConnection.isConnected ? "outline" : "muted"} className="w-fit whitespace-nowrap">
+              <GithubLogo weight="bold" />
+              {formatGitHubConnection(githubConnection)}
+            </Badge>
+          </div>
+
+          <div className="flex flex-col gap-3 border-t border-border px-5 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+            <p className="min-w-0">
+              GitHub repository access comes from the connected GitHub App installation. To switch GitHub accounts,
+              disconnect this installation and connect again.
+            </p>
+            {githubConnection.isConnected ? (
+              <div className="flex shrink-0 flex-wrap gap-2">
+                {manageGitHubUrl ? (
+                  <Button type="button" variant="outline" size="sm" onClick={handleManageGitHub}>
+                    <GithubLogo weight="bold" />
+                    Manage on GitHub
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => {
+                    setDisconnectError(null);
+                    setIsDisconnectDialogOpen(true);
+                  }}
+                >
+                  Disconnect
+                </Button>
+              </div>
+            ) : null}
+            {disconnectError ? <p className="text-sm text-destructive sm:basis-full">{disconnectError}</p> : null}
+          </div>
+        </Card>
+
+        <Card className="overflow-hidden p-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+            <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
+              <ChartLineUp weight="bold" />
+              Usage
+            </h2>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">{usageWindowLabel}</span>
+              <Badge variant={usageSummary ? "outline" : "muted"}>{usageSummary ? "Live" : "Loading"}</Badge>
+            </div>
+          </div>
+
+          <div className="p-5">
+            <div className="grid overflow-hidden border border-border bg-background sm:grid-cols-3">
+              <UsageMetric
+                label="Tokens"
+                description={USAGE_DESCRIPTIONS.tokens}
+                value={usageSummary ? COMPACT_NUMBER_FORMATTER.format(usageSummary.totals.totalTokens) : "Loading"}
+                detail={usageSummary ? `${INTEGER_FORMATTER.format(usageSummary.totals.totalTokens)} total` : undefined}
+                isLoading={!usageSummary}
+              />
+              <UsageMetric
+                label="Events"
+                description={USAGE_DESCRIPTIONS.events}
+                value={usageSummary ? INTEGER_FORMATTER.format(usageSummary.totals.events) : "Loading"}
+                detail="Metered LLM usage records"
+                isLoading={!usageSummary}
+              />
+              <UsageMetric
+                label="Cost"
+                description={USAGE_DESCRIPTIONS.cost}
+                value={usageSummary ? USD_FORMATTER.format(usageSummary.totals.costUsd) : "Loading"}
+                detail="Estimated provider spend"
+                isLoading={!usageSummary}
+              />
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <FeatureUsageLine
+                icon={<ChatCircleText weight="bold" />}
+                label="Chat"
+                description={USAGE_DESCRIPTIONS.chat}
+                value={usageSummary ? USD_FORMATTER.format(usageSummary.byFeature.chat.costUsd) : "Loading"}
+                detail={
+                  usageSummary
+                    ? formatCountLabel(usageSummary.byFeature.chat.events, "metered reply", "metered replies")
+                    : undefined
+                }
+                isLoading={!usageSummary}
+              />
+              <FeatureUsageLine
+                icon={<Sparkle weight="bold" />}
+                label="System Design"
+                description={USAGE_DESCRIPTIONS.systemDesign}
+                value={usageSummary ? USD_FORMATTER.format(usageSummary.byFeature.systemDesign.costUsd) : "Loading"}
+                detail={
+                  usageSummary
+                    ? formatCountLabel(usageSummary.byFeature.systemDesign.events, "artifact run", "artifact runs")
+                    : undefined
+                }
+                isLoading={!usageSummary}
+              />
+            </div>
+
+            <div className="mt-4 border border-border bg-background p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-2 text-sm font-semibold">
+                    <Wallet weight="bold" />
+                    Daily sandbox budget
+                    <MetricInfoTooltip label="Daily sandbox budget" description={USAGE_DESCRIPTIONS.sandboxBudget} />
+                  </p>
+                  <div className="mt-1 min-h-10 text-sm leading-5 text-muted-foreground">
+                    {usageSummary ? (
+                      <p>
+                        {USD_FORMATTER.format(usageSummary.sandboxDailyBudget.remainingUsd)} remaining for
+                        sandbox-grounded work. Resets at midnight UTC.
+                      </p>
+                    ) : (
+                      <div className="space-y-1.5 py-0.5" aria-hidden="true">
+                        <Skeleton className="h-3 w-full max-w-[32rem]" />
+                        <Skeleton className="h-3 w-48" />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <p className="shrink-0 text-sm font-semibold tabular-nums">
+                  {usageSummary
+                    ? `${USD_FORMATTER.format(usageSummary.sandboxDailyBudget.usedUsd)} / ${USD_FORMATTER.format(
+                        usageSummary.sandboxDailyBudget.capacityUsd,
+                      )}`
+                    : "Loading"}
+                </p>
+              </div>
+              <div className="mt-4 h-2 overflow-hidden bg-muted" aria-hidden="true">
+                <div className="h-full bg-primary" style={{ width: `${sandboxBudgetPercent}%` }} />
+              </div>
+            </div>
+          </div>
+        </Card>
+        <ConfirmDialog
+          open={isDisconnectDialogOpen}
+          onOpenChange={setIsDisconnectDialogOpen}
+          title="Disconnect GitHub?"
+          description="Systify will stop using this GitHub App installation for repository access. Imported repository data stays in Systify, but new imports and permission updates require connecting GitHub again."
+          actionLabel="Disconnect"
+          loadingLabel="Disconnecting"
+          isPending={isDisconnectingGitHub}
+          onConfirm={() => {
+            void handleDisconnectGitHub();
+          }}
+        />
+      </section>
+    </TooltipProvider>
   );
 }
 
@@ -221,13 +453,118 @@ function PlaceholderSettingsSection({ title }: { title: string }) {
   );
 }
 
-function UsageMetric({ label, value }: { label: string; value: string }) {
+function UsageMetric({
+  label,
+  description,
+  value,
+  detail,
+  isLoading = false,
+}: {
+  label: string;
+  description: string;
+  value: string;
+  detail?: string;
+  isLoading?: boolean;
+}) {
   return (
-    <div className="border border-border bg-background p-3">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm font-semibold tabular-nums">{value}</p>
+    <div className="min-w-0 border-b border-border p-4 last:border-b-0 sm:border-b-0 sm:border-r sm:last:border-r-0">
+      <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+        <MetricInfoTooltip label={label} description={description} />
+      </p>
+      {isLoading ? (
+        <Skeleton className="mt-2 h-8 w-24" aria-label={`Loading ${label.toLowerCase()}`} />
+      ) : (
+        <p className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
+      )}
+      {isLoading ? (
+        <Skeleton className="mt-1 h-3 w-32" aria-hidden="true" />
+      ) : (
+        <p className="mt-1 min-h-4 truncate text-xs text-muted-foreground">{detail ?? null}</p>
+      )}
     </div>
   );
+}
+
+function FeatureUsageLine({
+  icon,
+  label,
+  description,
+  value,
+  detail,
+  isLoading = false,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  description: string;
+  value: string;
+  detail?: string;
+  isLoading?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 border border-border bg-background p-4">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex size-8 shrink-0 items-center justify-center border border-border bg-muted/40 text-muted-foreground">
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <p className="flex items-center gap-1.5 truncate text-sm font-semibold">
+            {label}
+            <MetricInfoTooltip label={label} description={description} />
+          </p>
+          {isLoading ? (
+            <Skeleton className="mt-1.5 h-3 w-20" aria-hidden="true" />
+          ) : (
+            <p className="mt-0.5 min-h-4 truncate text-xs text-muted-foreground">{detail ?? null}</p>
+          )}
+        </div>
+      </div>
+      {isLoading ? (
+        <Skeleton className="h-5 w-16 shrink-0" aria-label={`Loading ${label.toLowerCase()} usage`} />
+      ) : (
+        <p className="shrink-0 text-base font-semibold tabular-nums">{value}</p>
+      )}
+    </div>
+  );
+}
+
+function MetricInfoTooltip({ label, description }: { label: string; description: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={`${label} explanation`}
+        >
+          <Info size={13} weight="bold" aria-hidden="true" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-72">
+        {description}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function formatCountLabel(count: number, singular: string, plural = `${singular}s`): string {
+  if (count === 0) {
+    return `No ${plural}`;
+  }
+  return `${INTEGER_FORMATTER.format(count)} ${count === 1 ? singular : plural}`;
+}
+
+function formatGitHubConnection(connection: ReturnType<typeof useGitHubConnection>): string {
+  if (connection.isLoading) {
+    return "Loading";
+  }
+  if (connection.isSuspended && connection.accountLogin) {
+    return `${connection.accountLogin} suspended`;
+  }
+  if (connection.isConnected && connection.accountLogin) {
+    return `${connection.accountLogin} connected`;
+  }
+  return "Not connected";
 }
 
 function parseSettingsSection(section: string | undefined): SettingsSectionId | null {

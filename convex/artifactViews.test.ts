@@ -1,46 +1,25 @@
 /// <reference types="vite/client" />
 
 import { describe, expect, test } from "vitest";
-import { convexTest } from "convex-test";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import schema from "./schema";
-
-const modules = import.meta.glob("./**/*.ts");
+import { insertTestArtifact, insertTestRepository, insertTestThread } from "../test/convex/fixtures";
+import { createTestConvex, type SystifyTestConvex } from "../test/convex/harness";
 
 const OWNER = "user|artifact-views-test";
 const OTHER_OWNER = "user|artifact-views-other";
 
-async function seedRepository(
-  t: ReturnType<typeof makeHarness>,
-  ownerTokenIdentifier: string = OWNER,
-): Promise<Id<"repositories">> {
-  return await t.run(async (ctx) =>
-    ctx.db.insert("repositories", {
-      ownerTokenIdentifier,
-      sourceHost: "github",
-      sourceUrl: "https://github.com/acme/widget",
-      sourceRepoFullName: "acme/widget",
-      sourceRepoOwner: "acme",
-      sourceRepoName: "widget",
-      visibility: "unknown",
-      accessMode: "private",
-      importStatus: "idle",
-      detectedLanguages: [],
-      packageManagers: [],
-      entrypoints: [],
-      fileCount: 0,
-      color: "blue",
-      lastAccessedAt: Date.now(),
-    }),
-  );
+async function seedRepository(t: SystifyTestConvex, ownerTokenIdentifier: string = OWNER): Promise<Id<"repositories">> {
+  return await insertTestRepository(t, {
+    ownerTokenIdentifier,
+  });
 }
 
 async function seedRepoArtifact(
-  t: ReturnType<typeof makeHarness>,
+  t: SystifyTestConvex,
   args: { repositoryId: Id<"repositories">; ownerTokenIdentifier?: string },
 ): Promise<Id<"artifacts">> {
-  return await t.mutation(internal.artifactStore.createArtifact, {
+  return await insertTestArtifact(t, {
     repositoryId: args.repositoryId,
     ownerTokenIdentifier: args.ownerTokenIdentifier ?? OWNER,
     kind: "architecture_diagram",
@@ -50,16 +29,13 @@ async function seedRepoArtifact(
   });
 }
 
-async function seedThreadArtifact(t: ReturnType<typeof makeHarness>): Promise<Id<"artifacts">> {
-  const threadId = await t.run(async (ctx) =>
-    ctx.db.insert("threads", {
-      ownerTokenIdentifier: OWNER,
-      title: "discussion",
-      mode: "discuss",
-      lastMessageAt: Date.now(),
-    }),
-  );
-  return await t.mutation(internal.artifactStore.createArtifact, {
+async function seedThreadArtifact(t: SystifyTestConvex): Promise<Id<"artifacts">> {
+  const threadId = await insertTestThread(t, {
+    ownerTokenIdentifier: OWNER,
+    title: "discussion",
+    mode: "discuss",
+  });
+  return await insertTestArtifact(t, {
     threadId,
     ownerTokenIdentifier: OWNER,
     kind: "architecture_diagram",
@@ -69,15 +45,8 @@ async function seedThreadArtifact(t: ReturnType<typeof makeHarness>): Promise<Id
   });
 }
 
-/**
- * `convexTest` is generic, but `ReturnType<typeof convexTest>` drops the
- * schema type parameter — which means the inner `ctx.db.query("artifactViews")`
- * falls back to `SystemIndexes` and can't see our custom `by_artifactId`
- * index. Capturing the schema-bound test instance via the harness
- * factory below keeps the index types intact in helpers.
- */
 function makeHarness() {
-  return convexTest(schema, modules);
+  return createTestConvex();
 }
 
 async function countViews(t: ReturnType<typeof makeHarness>, artifactId: Id<"artifacts">): Promise<number> {

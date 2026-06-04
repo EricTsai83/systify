@@ -151,7 +151,9 @@ async function updateArtifactInternal(
     patch.updatedAt = Date.now();
     await ctx.db.patch(artifactId, patch);
     if (artifact.repositoryId && updates.contentMarkdown !== undefined) {
-      await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, { artifactId });
+      await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, {
+        artifactId,
+      });
     }
   }
 }
