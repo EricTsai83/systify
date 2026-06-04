@@ -294,6 +294,13 @@ export const remove = mutation({
       if (ownArtifacts.length > ARTIFACTS_PER_FOLDER_LIMIT) {
         throw new Error("Folder has too many artifacts to move safely.");
       }
+      const destArtifacts = await ctx.db
+        .query("artifacts")
+        .withIndex("by_folderId", (q) => q.eq("folderId", newParentId))
+        .take(ARTIFACT_OVERFLOW_READ_LIMIT);
+      if (destArtifacts.length + ownArtifacts.length > ARTIFACTS_PER_FOLDER_LIMIT) {
+        throw new Error("Destination folder would exceed artifact limit.");
+      }
       for (const artifact of ownArtifacts) {
         await replaceArtifactFolder(ctx, artifact, newParentId);
       }
@@ -321,7 +328,7 @@ export const remove = mutation({
       // Detect overflow: if the DFS collected < limit but stack is non-empty,
       // or if we stopped due to reaching the limit, there are unprocessed
       // descendants. Abort before any writes to prevent partial deletes.
-      if (stack.length > 0 || collected.length >= FOLDERS_PER_REPO_LIMIT) {
+      if (stack.length > 0 || collected.length > FOLDERS_PER_REPO_LIMIT) {
         throw new Error(
           "Folder subtree exceeds the per-repository limit; cannot delete all descendants in one operation.",
         );

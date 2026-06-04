@@ -976,8 +976,15 @@ export const getCachedSelectionStatus = query({
   }> => {
     const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
     const selections = Array.from(new Set(args.selections)).filter(isSystemDesignKind);
-    const provider = args.provider ?? DEFAULT_SYSTEM_DESIGN_PROVIDER;
-    const modelName = args.modelName ?? DEFAULT_SYSTEM_DESIGN_MODEL;
+    let provider = args.provider ?? DEFAULT_SYSTEM_DESIGN_PROVIDER;
+    let modelName = args.modelName ?? DEFAULT_SYSTEM_DESIGN_MODEL;
+    if (
+      (args.provider !== undefined || args.modelName !== undefined) &&
+      !isUserPickableModel(provider, modelName, "sandbox")
+    ) {
+      provider = DEFAULT_SYSTEM_DESIGN_PROVIDER;
+      modelName = DEFAULT_SYSTEM_DESIGN_MODEL;
+    }
     const commitSha = repository?.lastSyncedCommitSha;
     if (!repository || !commitSha) {
       return {

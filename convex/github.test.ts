@@ -112,7 +112,7 @@ function requestBodyText(init: RequestInit | undefined): string {
 }
 
 describe("parseGitHubUrl", () => {
-  test("preserves slash-containing branch names in /tree URLs", () => {
+  test("ignores subtree paths in /tree URLs", () => {
     const parsed = parseGitHubUrl("https://github.com/acme/widget/tree/feature/import-hardening");
 
     expect(parsed).toMatchObject({
@@ -120,7 +120,7 @@ describe("parseGitHubUrl", () => {
       owner: "acme",
       repo: "widget",
       fullName: "acme/widget",
-      branch: "feature/import-hardening",
+      branch: undefined,
     });
   });
 });

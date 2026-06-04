@@ -311,7 +311,7 @@ export const getReplyContext = internalQuery({
     }
 
     const repository = await ctx.db.get(thread.repositoryId);
-    if (!repository) {
+    if (!repository || repository.ownerTokenIdentifier !== thread.ownerTokenIdentifier) {
       throw new Error("Repository not found.");
     }
 

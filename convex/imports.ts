@@ -158,21 +158,23 @@ export const attachOnDemandSandboxRemoteInfo = internalMutation({
       repository.latestSandboxId === sandbox._id;
 
     if (!canProgress) {
-      await ctx.db.patch(args.sandboxId, {
-        remoteId: args.remoteId,
-        workDir: args.workDir,
-        repoPath: args.repoPath,
-        cpuLimit: args.cpuLimit,
-        memoryLimitGiB: args.memoryLimitGiB,
-        diskLimitGiB: args.diskLimitGiB,
-        ttlExpiresAt: Date.now(),
-        autoStopIntervalMinutes: args.autoStopIntervalMinutes,
-        autoArchiveIntervalMinutes: args.autoArchiveIntervalMinutes,
-        autoDeleteIntervalMinutes: args.autoDeleteIntervalMinutes,
-        networkBlockAll: args.networkBlockAll,
-        status: "failed",
-        lastErrorMessage: "Sandbox provisioning was cancelled before remote attach completed.",
-      });
+      if (sandbox.status === "provisioning") {
+        await ctx.db.patch(args.sandboxId, {
+          remoteId: args.remoteId,
+          workDir: args.workDir,
+          repoPath: args.repoPath,
+          cpuLimit: args.cpuLimit,
+          memoryLimitGiB: args.memoryLimitGiB,
+          diskLimitGiB: args.diskLimitGiB,
+          ttlExpiresAt: Date.now(),
+          autoStopIntervalMinutes: args.autoStopIntervalMinutes,
+          autoArchiveIntervalMinutes: args.autoArchiveIntervalMinutes,
+          autoDeleteIntervalMinutes: args.autoDeleteIntervalMinutes,
+          networkBlockAll: args.networkBlockAll,
+          status: "failed",
+          lastErrorMessage: "Sandbox provisioning was cancelled before remote attach completed.",
+        });
+      }
       return { attached: false };
     }
 
@@ -222,10 +224,12 @@ export const markOnDemandSandboxReady = internalMutation({
       repository.latestSandboxId === sandbox._id;
 
     if (!canProgress) {
-      await ctx.db.patch(args.sandboxId, {
-        status: "failed",
-        lastErrorMessage: "Sandbox provisioning was cancelled before ready state completed.",
-      });
+      if (sandbox.status === "provisioning") {
+        await ctx.db.patch(args.sandboxId, {
+          status: "failed",
+          lastErrorMessage: "Sandbox provisioning was cancelled before ready state completed.",
+        });
+      }
       return { ready: false };
     }
 

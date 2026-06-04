@@ -393,12 +393,17 @@ export function ImportRepoDialog({
     setConnectError(null);
     try {
       await disconnectGitHub({});
-      setAuthorizedRepos(null);
-      setAuthorizedRepoListMeta(null);
     } catch (error) {
       setConnectError(error instanceof Error ? error.message : "Failed to disconnect GitHub.");
     }
   });
+
+  useEffect(() => {
+    if (!isConnected) {
+      setAuthorizedRepos(null);
+      setAuthorizedRepoListMeta(null);
+    }
+  }, [isConnected]);
 
   // Fetch authorized repos
   const fetchAuthorizedRepos = useCallback(async () => {
@@ -423,10 +428,11 @@ export function ImportRepoDialog({
   // the GitHub connection status query has resolved — without this effect
   // fetchAuthorizedRepos would never be called and the Private tab stays empty.
   useEffect(() => {
+    if (isDisconnectingGitHub) return;
     if (open && isConnected && !authorizedRepos && !isLoadingAuthorized) {
       void fetchAuthorizedRepos();
     }
-  }, [open, isConnected, authorizedRepos, isLoadingAuthorized, fetchAuthorizedRepos]);
+  }, [open, isConnected, authorizedRepos, isLoadingAuthorized, isDisconnectingGitHub, fetchAuthorizedRepos]);
 
   // Auto-refresh authorized repos when the user returns to the window (e.g.
   // after configuring repos on GitHub in another tab).

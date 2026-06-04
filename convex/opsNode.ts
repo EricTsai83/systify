@@ -12,6 +12,8 @@ import {
 } from "./daytona";
 import { logErrorWithId, logInfo } from "./lib/observability";
 
+const CLEANUP_LEASE_EXTENSION_INTERVAL_MS = 5 * 60_000;
+
 export const runSandboxCleanup = internalAction({
   args: {
     sandboxId: v.id("sandboxes"),
@@ -25,6 +27,12 @@ export const runSandboxCleanup = internalAction({
     if (!sandbox.started) {
       return;
     }
+
+    const leaseTimer = setInterval(() => {
+      void ctx.runMutation(internal.ops.extendSandboxCleanupLease, {
+        jobId: args.jobId,
+      });
+    }, CLEANUP_LEASE_EXTENSION_INTERVAL_MS);
 
     try {
       if (sandbox.remoteId) {
@@ -48,6 +56,8 @@ export const runSandboxCleanup = internalAction({
           error instanceof Error ? error.message : "Unknown sandbox cleanup error"
         }\n\nReference: ${errorId}`,
       });
+    } finally {
+      clearInterval(leaseTimer);
     }
   },
 });

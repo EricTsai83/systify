@@ -12,6 +12,7 @@ import { normalizeReturnToUrl } from "./lib/returnTo";
 const GITHUB_INSTALLATION_REPOS_PAGE_LIMIT = 5;
 const GITHUB_USER_INSTALLATIONS_PAGE_LIMIT = 10;
 const GITHUB_REPO_SEARCH_QUERY_MAX_LENGTH = 256;
+const GITHUB_AUTH_FETCH_TIMEOUT_MS = 10_000;
 
 const installationUserVerificationResultValidator = v.union(
   v.object({ kind: v.literal("verified") }),
@@ -82,6 +83,21 @@ function getNextLinkUrl(linkHeader: string | null): string | null {
   return null;
 }
 
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMessage: string): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), GITHUB_AUTH_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(timeoutMessage);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function exchangeGitHubAppUserCode(args: {
   code: string;
   codeVerifier?: string;
@@ -99,15 +115,19 @@ async function exchangeGitHubAppUserCode(args: {
     body.set("code_verifier", args.codeVerifier);
   }
 
-  const response = await fetch("https://github.com/login/oauth/access_token", {
-    method: "POST",
-    headers: {
-      "Accept": "application/json",
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "systify",
+  const response = await fetchWithTimeout(
+    "https://github.com/login/oauth/access_token",
+    {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "systify",
+      },
+      body,
     },
-    body,
-  });
+    "GitHub user authorization token exchange timed out.",
+  );
 
   const responseBody = await response.text();
   if (!response.ok) {
@@ -146,13 +166,17 @@ async function gitHubUserCanAccessInstallation(userAccessToken: string, installa
 
   while (nextUrl && pagesRead < GITHUB_USER_INSTALLATIONS_PAGE_LIMIT) {
     pagesRead += 1;
-    const response: Response = await fetch(nextUrl, {
-      headers: {
-        "Accept": "application/vnd.github.v3+json",
-        "Authorization": `Bearer ${userAccessToken}`,
-        "User-Agent": "systify",
+    const response: Response = await fetchWithTimeout(
+      nextUrl,
+      {
+        headers: {
+          "Accept": "application/vnd.github.v3+json",
+          "Authorization": `Bearer ${userAccessToken}`,
+          "User-Agent": "systify",
+        },
       },
-    });
+      "GitHub installation verification timed out.",
+    );
 
     if (!response.ok) {
       const body = await response.text();

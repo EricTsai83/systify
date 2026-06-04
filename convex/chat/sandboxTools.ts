@@ -3,7 +3,7 @@
  *
  * Three tools the LLM can call during a sandbox-mode chat reply:
  *
- *   - `read_file`: UTF-8 file contents capped at 64 KiB.
+ *   - `read_file`: UTF-8 file contents for files up to 64 KiB.
  *   - `list_dir`: directory entries capped at 200 names.
  *   - `run_shell`: arbitrary shell command, output capped at 32 KiB,
  *     gated by a deny list of obviously-destructive patterns, bounded
@@ -37,11 +37,10 @@
  *      the same validator so the tool can never `cd` out of the repo subtree.
  *
  *   4. **Truncation is byte-level.** `downloadFile` returns the entire file
- *      as a `Uint8Array`. We slice the byte buffer to the cap *before*
- *      decoding so a multi-MB file doesn't materialise an intermediate
- *      multi-MB UTF-8 string just to be sliced down. The decoder runs with
- *      `fatal: false` so a truncation that lands inside a multi-byte
- *      sequence yields a single replacement character, not an exception.
+ *      as a `Uint8Array`. Production probes file size first and rejects
+ *      files above `SANDBOX_READ_FILE_MAX_BYTES` before download so a
+ *      multi-MB file doesn't materialise in memory. The decoder runs with
+ *      `fatal: false` for bounded fake clients and fallback adapters.
  *      `run_shell` truncates at the character level instead — Daytona returns
  *      the merged stdout/stderr as an already-decoded `string`, so the byte
  *      cost has already been paid; truncating earlier would force a re-encode
@@ -218,7 +217,14 @@ export interface SandboxShellExecuteOptions {
  * and combined output."
  */
 export type SandboxShellOutcome =
-  | { readonly kind: "ok"; readonly exitCode: number; readonly output: string }
+  | {
+      readonly kind: "ok";
+      readonly exitCode: number;
+      readonly output: string;
+      readonly bytesReturned?: number;
+      readonly totalBytes?: number;
+      readonly truncated?: boolean;
+    }
   | { readonly kind: "timeout"; readonly message: string };
 
 /**
@@ -1018,7 +1024,11 @@ export async function executeRunShell(
   }
 
   // Step 6 — truncate, redact, return.
-  const { output, bytesReturned, totalBytes, truncated } = truncateShellOutput(outcome.output);
+  const truncatedOutput = truncateShellOutput(outcome.output);
+  const output = truncatedOutput.output;
+  const bytesReturned = outcome.bytesReturned ?? truncatedOutput.bytesReturned;
+  const totalBytes = outcome.totalBytes ?? truncatedOutput.totalBytes;
+  const truncated = outcome.truncated ?? truncatedOutput.truncated;
   const { redacted, matchedTypes } = redact(output);
 
   // Convert the absolute workdir back to its repo-relative form for the
@@ -1124,7 +1134,7 @@ export function createSandboxTools(client: SandboxFsClient, repoPath: string) {
   return {
     read_file: tool({
       description:
-        "Read the UTF-8 contents of a file inside the repository. Output is capped at 64 KiB; the response includes a `truncated` flag and the file's `totalBytes` so you can decide whether to ask for a narrower section.",
+        "Read the UTF-8 contents of a file inside the repository. Files larger than 64 KiB return `errorCode: 'file_too_large_to_decode'`; use run_shell with `sed`, `head`, `tail`, or `grep` for a narrower section.",
       inputSchema: READ_FILE_INPUT_SCHEMA,
       execute: ({ path }) => executeReadFile(client, repoPath, path),
     }),

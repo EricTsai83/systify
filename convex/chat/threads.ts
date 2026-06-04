@@ -255,8 +255,10 @@ export const createLibraryAskThread = mutation({
     title: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { identity } = await requireOwnedDoc(ctx, args.repositoryId, {
+    const { identity } = await requireActiveRepositoryForViewer(ctx, {
+      repositoryId: args.repositoryId,
       notFoundMessage: "Repository not found.",
+      archivedMessage: "This repository is archived. Restore it to continue chatting.",
     });
 
     const artifactContext = args.artifactContext ?? [];
@@ -322,8 +324,10 @@ export const setThreadRepository = mutation({
     });
 
     if (args.repositoryId !== null) {
-      await requireOwnedDoc(ctx, args.repositoryId, {
+      await requireActiveRepositoryForViewer(ctx, {
+        repositoryId: args.repositoryId,
         notFoundMessage: "Repository not found.",
+        archivedMessage: "This repository is archived. Restore it to continue chatting.",
       });
       await touchRepositoryLastAccessed(ctx, { repositoryId: args.repositoryId });
       // Two transitions land in this branch:

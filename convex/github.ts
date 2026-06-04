@@ -197,6 +197,9 @@ export const consumeOAuthStateForInstallationVerification = internalMutation({
     if (!stateDoc.githubCodeVerifier) {
       throw new Error("GitHub authorization state is incomplete. Please restart the GitHub connection flow.");
     }
+    if (stateDoc.githubUserAuthorizationStartedAt === undefined) {
+      throw new Error("GitHub user authorization was not started. Please restart the GitHub connection flow.");
+    }
 
     await ctx.db.patch(stateDoc._id, { consumed: true });
 
@@ -204,7 +207,7 @@ export const consumeOAuthStateForInstallationVerification = internalMutation({
       ownerTokenIdentifier: stateDoc.ownerTokenIdentifier,
       returnTo: stateDoc.returnTo ?? null,
       installationId,
-      githubCodeVerifier: stateDoc.githubUserAuthorizationStartedAt !== undefined ? stateDoc.githubCodeVerifier : null,
+      githubCodeVerifier: stateDoc.githubCodeVerifier,
     };
   },
 });
@@ -255,10 +258,16 @@ async function getInstallationsByInstallationIdAndStatus(
   installationId: number,
   status: CurrentInstallationStatus,
 ): Promise<Doc<"githubInstallations">[]> {
-  return await ctx.db
+  const rows = await ctx.db
     .query("githubInstallations")
     .withIndex("by_installationId_and_status", (q) => q.eq("installationId", installationId).eq("status", status))
-    .take(INSTALLATION_LIFECYCLE_SCAN_LIMIT);
+    .take(INSTALLATION_LIFECYCLE_SCAN_LIMIT + 1);
+  if (rows.length > INSTALLATION_LIFECYCLE_SCAN_LIMIT) {
+    throw new Error(
+      "Too many current GitHub installation rows for installation id; refusing truncated lifecycle scan.",
+    );
+  }
+  return rows;
 }
 
 async function getCurrentInstallationsForInstallationId(
@@ -277,12 +286,16 @@ async function getInstallationsByOwnerAndStatus(
   ownerTokenIdentifier: string,
   status: CurrentInstallationStatus,
 ): Promise<Doc<"githubInstallations">[]> {
-  return await ctx.db
+  const rows = await ctx.db
     .query("githubInstallations")
     .withIndex("by_ownerTokenIdentifier_and_status", (q) =>
       q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("status", status),
     )
-    .take(INSTALLATION_LIFECYCLE_SCAN_LIMIT);
+    .take(INSTALLATION_LIFECYCLE_SCAN_LIMIT + 1);
+  if (rows.length > INSTALLATION_LIFECYCLE_SCAN_LIMIT) {
+    throw new Error("Too many current GitHub installation rows for owner; refusing truncated lifecycle scan.");
+  }
+  return rows;
 }
 
 async function getCurrentInstallationsForOwner(

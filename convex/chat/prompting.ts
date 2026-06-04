@@ -3,6 +3,9 @@ import type { ChatMode } from "../lib/chatMode";
 import { MAX_CONTEXT_ARTIFACTS } from "../lib/constants";
 import type { ReplyContext } from "./context";
 
+const MAX_CONVERSATION_HISTORY_MESSAGES = 24;
+const MAX_CONVERSATION_MESSAGE_CHARS = 1200;
+
 /**
  * UI language for the degraded heuristic response. The chat UI is currently
  * English-only, so we default to "en". The i18n map below is intentionally
@@ -218,7 +221,10 @@ export function buildUserPrompt(
       : context.messages;
   const conversationSection = historyMessages
     .filter((message) => message.content.trim().length > 0)
-    .map((message) => `${message.role.toUpperCase()}: ${message.content.trim().slice(0, 1200)}`)
+    .slice(-MAX_CONVERSATION_HISTORY_MESSAGES)
+    .map(
+      (message) => `${message.role.toUpperCase()}: ${message.content.trim().slice(0, MAX_CONVERSATION_MESSAGE_CHARS)}`,
+    )
     .join("\n\n");
 
   const hasRepoContext =

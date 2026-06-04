@@ -115,9 +115,9 @@ export function pickCapability(args: { mode: ChatMode; groundSandbox: boolean })
  * Returns `undefined` if the model name doesn't appear in the catalog —
  * the caller falls through to the capability default in that case.
  */
-function findCatalogEntryByModelName(modelName: string) {
+function findCatalogEntryByModelName(modelName: string, capability: UserPickableCapability) {
   return MODEL_CATALOG.find(
-    (entry) => entry.modelName === modelName && isUserPickableModel(entry.provider, entry.modelName),
+    (entry) => entry.modelName === modelName && isUserPickableModel(entry.provider, entry.modelName, capability),
   );
 }
 
@@ -189,7 +189,7 @@ export function resolveModelForReply(args: {
   // to the default rather than reaching the gateway with an unknown pair.
   if (args.overrideProvider !== undefined && args.overrideModelName !== undefined) {
     const entry = getCatalogEntry(args.overrideProvider, args.overrideModelName);
-    if (entry && isUserPickableModel(entry.provider, entry.modelName)) {
+    if (entry && isUserPickableModel(entry.provider, entry.modelName, capability)) {
       return {
         provider: entry.provider,
         modelName: entry.modelName,
@@ -202,7 +202,7 @@ export function resolveModelForReply(args: {
   // 2. Thread default. Looked up by model name alone — provider is
   // inferred from the catalog so we don't have to persist it redundantly.
   if (args.threadDefaultModelName !== undefined) {
-    const entry = findCatalogEntryByModelName(args.threadDefaultModelName);
+    const entry = findCatalogEntryByModelName(args.threadDefaultModelName, capability);
     if (entry) {
       return {
         provider: entry.provider,

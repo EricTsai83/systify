@@ -41,7 +41,7 @@ export function parseGitHubUrl(input: string): ParsedGitHubUrl {
 
   const owner = segments[0];
   const repo = sanitizeRepoName(segments[1]);
-  const branch = segments[2] === "tree" && segments.length > 3 ? segments.slice(3).join("/") : undefined;
+  const branch = segments[2] === "tree" && segments.length === 4 ? segments[3] : undefined;
 
   return {
     normalizedUrl: `https://github.com/${owner}/${repo}`,

@@ -112,11 +112,13 @@ export const runEval = internalAction({
         });
         repo = fetched.repository;
       } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        const sandboxReason = detail === "Repository not found." ? "repository_not_found" : "infrastructure_error";
         skipped.push({
           slug,
           reason: "sandbox_preparation_failed",
-          detail: error instanceof Error ? error.message : String(error),
-          sandboxReason: "repository_not_found",
+          detail,
+          sandboxReason,
         });
         continue;
       }

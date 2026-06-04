@@ -273,16 +273,22 @@ describe("ensureSandboxReady (via runSandboxActivation)", () => {
         ),
       ),
     );
-    provisionSandboxMock.mockResolvedValue({
-      remoteId: "remote-unattached",
-      workDir: "/workspace",
-      repoPath: "/workspace/repo",
-      cpuLimit: 2,
-      diskLimitGiB: 10,
-      autoStopIntervalMinutes: 30,
-      autoArchiveIntervalMinutes: 60,
-      autoDeleteIntervalMinutes: 120,
-      networkBlockAll: false,
+    provisionSandboxMock.mockImplementation(async ({ sandboxId }) => {
+      await t.run(async (ctx) => {
+        await ctx.db.patch(sandboxId, { status: "archived" });
+      });
+      return {
+        remoteId: "remote-unattached",
+        workDir: "/workspace",
+        repoPath: "/workspace/repo",
+        cpuLimit: 2,
+        memoryLimitGiB: 4,
+        diskLimitGiB: 10,
+        autoStopIntervalMinutes: 30,
+        autoArchiveIntervalMinutes: 60,
+        autoDeleteIntervalMinutes: 120,
+        networkBlockAll: false,
+      };
     });
     deleteSandboxMock.mockResolvedValue(undefined);
 
@@ -319,13 +325,9 @@ describe("ensureSandboxReady (via runSandboxActivation)", () => {
         .take(10);
       return { sandbox, jobs };
     });
-    expect(state.sandbox?.status).toBe("failed");
+    expect(state.sandbox?.status).toBe("archived");
     expect(state.sandbox?.remoteId).toBe("");
-    expect(
-      state.jobs.some(
-        (job) => job.kind === "cleanup" && job.sandboxId === state.sandbox?._id && job.status === "queued",
-      ),
-    ).toBe(true);
+    expect(state.jobs.some((job) => job.kind === "cleanup" && job.sandboxId === state.sandbox?._id)).toBe(false);
   });
 });
 

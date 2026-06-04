@@ -500,14 +500,50 @@ const DAYTONA_OUTPUT_LIMIT_COMMAND = `bash -lc ${posixSingleQuote(
   [
     "set +e",
     'limit="${SYSTIFY_OUTPUT_LIMIT_BYTES:-32769}"',
+    'token="${SYSTIFY_OUTPUT_METADATA_TOKEN:?missing metadata token}"',
     'tmp="$(mktemp)"',
-    'bash -lc "$SYSTIFY_USER_COMMAND" 2>&1 | head -c "$limit" > "$tmp"',
-    "status=${PIPESTATUS[0]}",
+    'rest="$(mktemp)"',
+    'fifo="$(mktemp -u)"',
+    'mkfifo "$fifo"',
+    '{ dd bs=1 count="$limit" of="$tmp" 2>/dev/null; cat > "$rest"; } < "$fifo" & reader_pid=$!',
+    'bash -lc "$SYSTIFY_USER_COMMAND" > "$fifo" 2>&1 & child_pid=$!',
+    'wait "$child_pid"',
+    "status=$?",
+    'wait "$reader_pid"',
+    'bytes_returned="$(wc -c < "$tmp" | tr -d " ")"',
+    'remaining_bytes="$(wc -c < "$rest" | tr -d " ")"',
+    'total_bytes="$((bytes_returned + remaining_bytes))"',
     'cat "$tmp"',
-    'rm -f "$tmp"',
+    'printf "\\n__SYSTIFY_OUTPUT_METADATA_%s__%s:%s:%s\\n" "$token" "$status" "$bytes_returned" "$total_bytes"',
+    'rm -f "$tmp" "$rest" "$fifo"',
     'exit "$status"',
   ].join("\n"),
 )}`;
+
+function parseBoundedShellOutput(output: string, token: string, requestedLimitBytes: number): SandboxShellOutcome {
+  const marker = `\n__SYSTIFY_OUTPUT_METADATA_${token}__`;
+  const markerIndex = output.lastIndexOf(marker);
+  if (markerIndex === -1) {
+    return { kind: "ok", exitCode: 1, output };
+  }
+  const metadata = output.slice(markerIndex + marker.length).trim();
+  const [statusRaw, bytesReturnedRaw, totalBytesRaw] = metadata.split(":");
+  const exitCode = Number(statusRaw);
+  const adapterBytesReturned = Number(bytesReturnedRaw);
+  const totalBytes = Number(totalBytesRaw);
+  const clippedOutput = output.slice(0, markerIndex);
+  const truncated = Number.isFinite(totalBytes) && totalBytes > requestedLimitBytes;
+  return {
+    kind: "ok",
+    exitCode: Number.isFinite(exitCode) ? exitCode : 1,
+    output: clippedOutput,
+    bytesReturned: Number.isFinite(adapterBytesReturned)
+      ? Math.min(adapterBytesReturned, requestedLimitBytes)
+      : undefined,
+    totalBytes: Number.isFinite(totalBytes) ? totalBytes : undefined,
+    truncated,
+  };
+}
 
 function parseBoundedListOutput(output: string, maxEntries: number): SandboxLimitedListResult {
   const records = output.split("\0").filter((record) => record.length > 0);
@@ -802,15 +838,20 @@ export async function getSandboxFsClient(remoteId: string): Promise<SandboxFsCli
         const maxOutputBytes = options.maxOutputBytes;
         const bounded = typeof maxOutputBytes === "number" && Number.isFinite(maxOutputBytes) && maxOutputBytes > 0;
         const responseLimitBytes = bounded ? Math.floor(maxOutputBytes) + 1 : undefined;
+        const metadataToken = bounded ? crypto.randomUUID() : "";
         const commandToRun = bounded ? DAYTONA_OUTPUT_LIMIT_COMMAND : command;
         const env = bounded
           ? {
               ...options.env,
               SYSTIFY_OUTPUT_LIMIT_BYTES: String(responseLimitBytes),
+              SYSTIFY_OUTPUT_METADATA_TOKEN: metadataToken,
               SYSTIFY_USER_COMMAND: command,
             }
           : options.env;
         const response = await sandbox.process.executeCommand(commandToRun, options.cwd, env, options.timeoutSeconds);
+        if (bounded && responseLimitBytes !== undefined) {
+          return parseBoundedShellOutput(response.result, metadataToken, Math.floor(maxOutputBytes));
+        }
         return {
           kind: "ok",
           exitCode: response.exitCode,

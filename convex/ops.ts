@@ -183,6 +183,22 @@ export const markSandboxCleanupRunning = internalMutation({
   },
 });
 
+export const extendSandboxCleanupLease = internalMutation({
+  args: {
+    jobId: v.id("jobs"),
+  },
+  handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job || job.kind !== "cleanup" || job.status !== "running") {
+      return { extended: false as const };
+    }
+    await ctx.db.patch(args.jobId, {
+      leaseExpiresAt: Date.now() + CLEANUP_JOB_LEASE_MS,
+    });
+    return { extended: true as const };
+  },
+});
+
 export const completeSandboxCleanup = internalMutation({
   args: {
     sandboxId: v.id("sandboxes"),
