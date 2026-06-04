@@ -31,8 +31,6 @@ import { DEFAULT_AUTHENTICATED_PATH, repositoryPath } from "@/route-paths";
  * context — Resources is a navigation surface, not a control plane.
  */
 export function ResourcesPage() {
-  const inventory = useQuery(api.repositories.listResourceInventory, {});
-
   return (
     <div className="flex h-dvh w-full flex-1 flex-col overflow-y-auto bg-background">
       <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80">
@@ -72,27 +70,37 @@ export function ResourcesPage() {
             </Link>
           </Button>
 
-          <p className="mb-4 text-sm leading-relaxed text-muted-foreground sm:mb-5">
-            Live status for every repository you have imported. Sandboxes auto-archive after their TTL — open a
-            repository to refresh or activate one.
-          </p>
-
-          {inventory === undefined ? (
-            <ResourceListSkeleton />
-          ) : inventory.length === 0 ? (
-            <ResourceEmptyState />
-          ) : (
-            <ul className="mt-4 flex flex-col gap-2.5">
-              {inventory.map((row) => (
-                <li key={row.repositoryId}>
-                  <ResourceRow row={row} />
-                </li>
-              ))}
-            </ul>
-          )}
+          <ResourcesSettingsSection />
         </div>
       </main>
     </div>
+  );
+}
+
+export function ResourcesSettingsSection() {
+  const inventory = useQuery(api.repositories.listResourceInventory, {});
+
+  return (
+    <>
+      <p className="mb-4 text-sm leading-relaxed text-muted-foreground sm:mb-5">
+        Live status for every repository you have imported. Sandboxes auto-archive after their TTL — open a repository
+        to refresh or activate one.
+      </p>
+
+      {inventory === undefined ? (
+        <ResourceListSkeleton />
+      ) : inventory.length === 0 ? (
+        <ResourceEmptyState />
+      ) : (
+        <ul className="mt-4 flex flex-col gap-2.5">
+          {inventory.map((row) => (
+            <li key={row.repositoryId}>
+              <ResourceRow row={row} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
   );
 }
 

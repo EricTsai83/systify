@@ -1,6 +1,6 @@
 import { useAuth } from "@workos-inc/authkit-react";
-import { Link } from "react-router-dom";
-import { Archive, Moon, Sun, SignOut, UserCircle, Stack, ChartLineUp } from "@phosphor-icons/react";
+import { Link, useLocation } from "react-router-dom";
+import { ChatCircleText, Moon, Sun, SignOut, UserCircle, Gear } from "@phosphor-icons/react";
 import { useTheme } from "@/providers/theme-provider";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { ARCHIVE_PATH, RESOURCES_PATH } from "@/route-paths";
+import { DEFAULT_AUTHENTICATED_PATH, SETTINGS_PATH, settingsPath } from "@/route-paths";
 
 /**
  * Compact profile avatar with dropdown menu. Shows only the avatar circle —
@@ -21,6 +21,7 @@ import { ARCHIVE_PATH, RESOURCES_PATH } from "@/route-paths";
 export function ProfileCard() {
   const { user, signIn, signOut } = useAuth();
   const { theme, setTheme } = useTheme();
+  const location = useLocation();
   const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
 
   if (!user) {
@@ -47,6 +48,8 @@ export function ProfileCard() {
     : (user.email ?? "User");
 
   const avatarUrl = user.profilePictureUrl;
+  const currentPath = `${location.pathname}${location.search}${location.hash}`;
+  const settingsFrom = location.pathname.startsWith(SETTINGS_PATH) ? DEFAULT_AUTHENTICATED_PATH : currentPath;
 
   return (
     <DropdownMenu>
@@ -69,20 +72,14 @@ export function ProfileCard() {
         </div>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link to={ARCHIVE_PATH}>
-            <Archive weight="bold" />
-            <span>Archive</span>
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link to={RESOURCES_PATH}>
-            <Stack weight="bold" />
-            <span>Resources</span>
+          <Link to={settingsPath("customization", settingsFrom)}>
+            <Gear weight="bold" />
+            <span>Settings</span>
           </Link>
         </DropdownMenuItem>
         <DropdownMenuItem disabled title="Coming soon">
-          <ChartLineUp weight="bold" />
-          <span>Usage</span>
+          <ChatCircleText weight="bold" />
+          <span>Feedback</span>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => setTheme(isDark ? "light" : "dark")}>

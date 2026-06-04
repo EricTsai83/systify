@@ -27,7 +27,7 @@ export type ModeInfoEntry = {
 
 /**
  * `(i)` info trigger next to the mode selector that opens a
- * popover with a side-by-side comparison of all three modes. This is
+ * popover with a side-by-side comparison of the top-level modes. This is
  * deliberately **user-initiated** — modal popovers on mode switch are
  * rejected (Linear / Cursor / ChatGPT all use passive disclosure for
  * the same reason: mode switch is a high-frequency action). Putting

@@ -73,7 +73,7 @@ export const NARRATIVE: ReadonlyArray<NarrativeEntry> = [
   {
     num: "01",
     lead: "Search a GitHub repo by name.",
-    trail: "Pick one and we clone it into an isolated Daytona sandbox.",
+    trail: "Pick one and we import its metadata through the GitHub API.",
   },
   {
     num: "02",
@@ -110,7 +110,7 @@ export const MODES: ReadonlyArray<Mode> = [
     scenarios: [
       "Architecture & onboarding from generated System Design artifacts",
       "Concept traces with file citations",
-      "Best CP for grounded answers — no live-fs cost",
+      "Best CP for grounded answers — no live-source cost",
     ],
     tone: "sky",
   },
@@ -127,7 +127,7 @@ export const FAQS: ReadonlyArray<FaqEntry> = [
   },
   {
     q: "Is my code secure?",
-    a: "Yes. Your cloned code lives in an isolated, per-session Daytona sandbox. Each session is ephemeral and fully isolated from other users. Your code is never added to a shared training set.",
+    a: "Repository import reads through the GitHub API. When you enable Sandbox grounding, Systify prepares an isolated Daytona session for live-source checks; your code is never added to a shared training set.",
   },
   {
     q: "Can I import private repositories?",

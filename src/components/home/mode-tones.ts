@@ -16,8 +16,4 @@ export const MODE_TONE_CLASSES: Record<ModeTone, { title: string; fill: string }
     title: "text-sky-500",
     fill: "bg-sky-500",
   },
-  amber: {
-    title: "text-amber-500",
-    fill: "bg-amber-500",
-  },
 };

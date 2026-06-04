@@ -32,29 +32,7 @@ const NEXT_PAGE_SIZE = 20;
 
 export function ArchivePage() {
   const navigate = useNavigate();
-  const [pendingPermanentDelete, setPendingPermanentDelete] = useState<Doc<"repositories"> | null>(null);
-  const [query, setQuery] = useState("");
   const handleBack = useCallback(() => void navigate(DEFAULT_AUTHENTICATED_PATH), [navigate]);
-
-  const trimmedQuery = query.trim();
-  const isSearching = trimmedQuery.length > 0;
-
-  const {
-    results: archived,
-    status,
-    loadMore,
-  } = usePaginatedQuery(
-    api.repositories.listArchivedRepositories,
-    { searchTerm: isSearching ? trimmedQuery : undefined },
-    { initialNumItems: INITIAL_PAGE_SIZE },
-  );
-
-  const isLoadingFirstPage = status === "LoadingFirstPage";
-  const canLoadMore = status === "CanLoadMore";
-  const isLoadingMore = status === "LoadingMore";
-  // `usePaginatedQuery` reports an internal "LoadingPaused" state on disconnect;
-  // we treat it as "settled, can't load more right now" — same UI as exhausted.
-  const isExhausted = status === "Exhausted";
 
   return (
     <div className="flex h-dvh w-full flex-1 flex-col overflow-y-auto bg-background">
@@ -81,24 +59,65 @@ export function ArchivePage() {
 
       <main className="flex-1 px-4 pb-10 pt-5 sm:px-6 sm:pb-12 sm:pt-8">
         <div className="mx-auto w-full max-w-4xl">
-          <ArchiveContent
-            archived={archived}
-            isLoadingFirstPage={isLoadingFirstPage}
-            canLoadMore={canLoadMore}
-            isLoadingMore={isLoadingMore}
-            isExhausted={isExhausted}
-            isSearching={isSearching}
-            query={query}
-            onQueryChange={setQuery}
-            onLoadMore={() => loadMore(NEXT_PAGE_SIZE)}
-            onBackToChat={handleBack}
-            onRequestPermanentDelete={setPendingPermanentDelete}
-          />
+          <Button asChild variant="ghost" size="sm" className="-ml-2 mb-3 text-muted-foreground hover:text-foreground">
+            <Link to={DEFAULT_AUTHENTICATED_PATH}>
+              <CaretLeftIcon weight="bold" />
+              Back to chat
+            </Link>
+          </Button>
+          <ArchiveSettingsSection onBackToChat={handleBack} />
         </div>
       </main>
-
-      <PermanentDeleteDialog repo={pendingPermanentDelete} onClose={() => setPendingPermanentDelete(null)} />
     </div>
+  );
+}
+
+export function ArchiveSettingsSection({ onBackToChat }: { onBackToChat?: () => void }) {
+  const navigate = useNavigate();
+  const [pendingPermanentDelete, setPendingPermanentDelete] = useState<Doc<"repositories"> | null>(null);
+  const [query, setQuery] = useState("");
+  const handleBack = useCallback(
+    () => (onBackToChat ? onBackToChat() : void navigate(DEFAULT_AUTHENTICATED_PATH)),
+    [navigate, onBackToChat],
+  );
+
+  const trimmedQuery = query.trim();
+  const isSearching = trimmedQuery.length > 0;
+
+  const {
+    results: archived,
+    status,
+    loadMore,
+  } = usePaginatedQuery(
+    api.repositories.listArchivedRepositories,
+    { searchTerm: isSearching ? trimmedQuery : undefined },
+    { initialNumItems: INITIAL_PAGE_SIZE },
+  );
+
+  const isLoadingFirstPage = status === "LoadingFirstPage";
+  const canLoadMore = status === "CanLoadMore";
+  const isLoadingMore = status === "LoadingMore";
+  // `usePaginatedQuery` reports an internal "LoadingPaused" state on disconnect;
+  // we treat it as "settled, can't load more right now" — same UI as exhausted.
+  const isExhausted = status === "Exhausted";
+
+  return (
+    <>
+      <ArchiveContent
+        archived={archived}
+        isLoadingFirstPage={isLoadingFirstPage}
+        canLoadMore={canLoadMore}
+        isLoadingMore={isLoadingMore}
+        isExhausted={isExhausted}
+        isSearching={isSearching}
+        query={query}
+        onQueryChange={setQuery}
+        onLoadMore={() => loadMore(NEXT_PAGE_SIZE)}
+        onBackToChat={handleBack}
+        onRequestPermanentDelete={setPendingPermanentDelete}
+      />
+      <PermanentDeleteDialog repo={pendingPermanentDelete} onClose={() => setPendingPermanentDelete(null)} />
+    </>
   );
 }
 
