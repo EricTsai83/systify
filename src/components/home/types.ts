@@ -13,12 +13,11 @@ export type NarrativeEntry = {
 };
 
 /**
- * The three knowledge layers, in order of depth (shallow → deep).
- * Each {@link Mode} reads from a prefix of this list. Listing them by
- * name in the panel turns the abstract idea of "depth" into a literal
- * checklist of what the mode reaches into.
+ * The top-level mode knowledge layers, in order of depth (shallow → deep).
+ * Sandbox is intentionally not listed here because it is a per-message
+ * Discuss grounding toggle, not a separate top-level mode.
  */
-export const LAYERS = ["model", "indexed docs", "live fs"] as const;
+export const LAYERS = ["model", "design artifacts"] as const;
 
 export type Layer = (typeof LAYERS)[number];
 
@@ -31,13 +30,13 @@ export type Layer = (typeof LAYERS)[number];
  * Concrete Tailwind classes for each tone live in `mode-tones.ts` so
  * the data stays presentation-free.
  */
-export type ModeTone = "emerald" | "sky" | "amber";
+export type ModeTone = "emerald" | "sky";
 
 export type Mode = {
   name: string;
   pitch: string;
-  /** 1..3 — number of layers from {@link LAYERS} (in order) that this mode reads. */
-  depth: 1 | 2 | 3;
+  /** 1..2 — number of layers from {@link LAYERS} (in order) that this mode reads. */
+  depth: 1 | 2;
   /** Concrete situations where this mode is the right pick — the user's "when do I use this?" answer. */
   scenarios: ReadonlyArray<string>;
   tone: ModeTone;

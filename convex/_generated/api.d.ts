@@ -99,6 +99,7 @@ import type * as repositories from "../repositories.js";
 import type * as repositoryModeEligibility from "../repositoryModeEligibility.js";
 import type * as repositoryPreferences from "../repositoryPreferences.js";
 import type * as sandboxActivationNode from "../sandboxActivationNode.js";
+import type * as sandboxProvisioning from "../sandboxProvisioning.js";
 import type * as sandboxSessions from "../sandboxSessions.js";
 import type * as sandboxSessionsNode from "../sandboxSessionsNode.js";
 import type * as systemDesign from "../systemDesign.js";
@@ -204,6 +205,7 @@ declare const fullApi: ApiFromModules<{
   repositoryModeEligibility: typeof repositoryModeEligibility;
   repositoryPreferences: typeof repositoryPreferences;
   sandboxActivationNode: typeof sandboxActivationNode;
+  sandboxProvisioning: typeof sandboxProvisioning;
   sandboxSessions: typeof sandboxSessions;
   sandboxSessionsNode: typeof sandboxSessionsNode;
   systemDesign: typeof systemDesign;

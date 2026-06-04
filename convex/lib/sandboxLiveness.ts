@@ -309,7 +309,7 @@ async function provisionAndClone(
   const detectedVisibility = accessCheck.isPrivate ? ("private" as const) : ("public" as const);
 
   await safeStage(onStage, "provisioning");
-  const { sandboxId, alreadyExisted } = await ctx.runMutation(internal.imports.reserveOnDemandSandboxRow, {
+  const { sandboxId, alreadyExisted } = await ctx.runMutation(internal.sandboxProvisioning.reserveOnDemandSandboxRow, {
     repositoryId: repository._id,
     ownerTokenIdentifier: repository.ownerTokenIdentifier,
     sourceAdapter: "git_clone",
@@ -344,7 +344,7 @@ async function provisionAndClone(
     remoteIdForCleanup = provisioned.remoteId;
 
     const attachResult: { attached: boolean } = await ctx.runMutation(
-      internal.imports.attachOnDemandSandboxRemoteInfo,
+      internal.sandboxProvisioning.attachOnDemandSandboxRemoteInfo,
       {
         sandboxId,
         remoteId: provisioned.remoteId,
@@ -384,12 +384,15 @@ async function provisionAndClone(
       token: githubToken,
     });
 
-    const readyResult: { ready: boolean } = await ctx.runMutation(internal.imports.markOnDemandSandboxReady, {
-      sandboxId,
-      repositoryId: repository._id,
-      commitSha: cloneResult.commitSha,
-      branch: cloneResult.branch,
-    });
+    const readyResult: { ready: boolean } = await ctx.runMutation(
+      internal.sandboxProvisioning.markOnDemandSandboxReady,
+      {
+        sandboxId,
+        repositoryId: repository._id,
+        commitSha: cloneResult.commitSha,
+        branch: cloneResult.branch,
+      },
+    );
     if (!readyResult.ready) {
       throw new Error("Sandbox provisioning was cancelled before ready state completed.");
     }
@@ -419,7 +422,7 @@ async function provisionAndClone(
       sandboxId,
       repositoryId: repository._id,
     });
-    await ctx.runMutation(internal.imports.failOnDemandSandboxProvisioning, {
+    await ctx.runMutation(internal.sandboxProvisioning.failOnDemandSandboxProvisioning, {
       sandboxId,
       errorMessage: error instanceof Error ? error.message : String(error),
     });

@@ -339,7 +339,7 @@ describe("reserveOnDemandSandboxRow CAS", () => {
       sandbox: { status: "archived", remoteId: "rid-archived" },
     });
 
-    const result = await t.mutation(internal.imports.reserveOnDemandSandboxRow, {
+    const result = await t.mutation(internal.sandboxProvisioning.reserveOnDemandSandboxRow, {
       repositoryId,
       ownerTokenIdentifier,
       sourceAdapter: "git_clone",
@@ -363,12 +363,12 @@ describe("reserveOnDemandSandboxRow CAS", () => {
       sandbox: { status: "archived", remoteId: "rid-archived" },
     });
 
-    const first = await t.mutation(internal.imports.reserveOnDemandSandboxRow, {
+    const first = await t.mutation(internal.sandboxProvisioning.reserveOnDemandSandboxRow, {
       repositoryId,
       ownerTokenIdentifier,
       sourceAdapter: "git_clone",
     });
-    const second = await t.mutation(internal.imports.reserveOnDemandSandboxRow, {
+    const second = await t.mutation(internal.sandboxProvisioning.reserveOnDemandSandboxRow, {
       repositoryId,
       ownerTokenIdentifier,
       sourceAdapter: "git_clone",
@@ -398,7 +398,7 @@ describe("reserveOnDemandSandboxRow CAS", () => {
       sandbox: { status: "ready", remoteId: "rid-ready" },
     });
 
-    const result = await t.mutation(internal.imports.reserveOnDemandSandboxRow, {
+    const result = await t.mutation(internal.sandboxProvisioning.reserveOnDemandSandboxRow, {
       repositoryId,
       ownerTokenIdentifier,
       sourceAdapter: "git_clone",

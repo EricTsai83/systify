@@ -302,7 +302,7 @@ export const MessageBubble = memo(function MessageBubble({
                 </span>
                 <span className="inline-flex items-center gap-1">
                   <ClockIcon size={12} />
-                  {nerdStats.timeToFirstToken}
+                  {nerdStats.generationTime}
                 </span>
               </div>
             ) : costTicker ? (
@@ -453,7 +453,7 @@ function buildNerdStats(
   model: string;
   tokensPerSecond: string;
   messageTokens: string;
-  timeToFirstToken: string;
+  generationTime: string;
 } {
   const outputTokens = message.estimatedOutputTokens ?? estimateMessageTokens(displayContent);
   const streamTiming =
@@ -471,7 +471,9 @@ function buildNerdStats(
         ? `${formatTokensPerSecond(streamTiming.tokenCount / (streamTiming.elapsedMs / 1000))} tok/sec`
         : "tok/sec unavailable",
     messageTokens: `${formatTokenCount(outputTokens)} est. tokens`,
-    timeToFirstToken: streamTiming ? `TTFT <= ${formatDurationSeconds(streamTiming.elapsedMs)}` : "TTFT unavailable",
+    generationTime: streamTiming
+      ? `Generation time ${formatDurationSeconds(streamTiming.elapsedMs)}`
+      : "Generation time unavailable",
   };
 }
 
@@ -480,7 +482,7 @@ function estimateMessageTokens(content: string): number {
   if (!trimmed) {
     return 0;
   }
-  return Math.max(1, Math.ceil(Array.from(trimmed).length / 4));
+  return Math.max(1, Math.ceil(trimmed.length / 4));
 }
 
 function formatTokensPerSecond(value: number): string {

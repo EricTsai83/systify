@@ -7,11 +7,10 @@ import { CornerMarks } from "../primitives/corner-marks";
 const HEADING_ID = "modes-heading";
 
 /**
- * One terminal panel per mode. Each panel owns its color via the `tone`
- * field on `<Mode>` — see `mode-tones.ts`. The depth metaphor in the
- * section title is made literal by an explicit SOURCES list: the user
- * reads exactly which knowledge layers each mode consults. Every visual
- * element carries information — no decorative chrome.
+ * One terminal panel per top-level mode. Each panel owns its color via
+ * the `tone` field on `<Mode>` — see `mode-tones.ts`. Sandbox grounding
+ * stays out of this list because it is a per-message Discuss toggle, not
+ * a third route or persisted mode literal.
  */
 export function Modes() {
   return (
@@ -23,10 +22,10 @@ export function Modes() {
               id={HEADING_ID}
               className="max-w-3xl text-balance text-2xl font-semibold leading-tight tracking-tight sm:text-4xl"
             >
-              Three depths of grounding. <span className="text-muted-foreground">Match the mode to the question.</span>
+              Two work surfaces. <span className="text-muted-foreground">Add live source only when needed.</span>
             </h2>
             <p className="font-mono text-[10.5px] uppercase tracking-[0.2em] text-muted-foreground sm:text-[11px]">
-              shallow → deep · rough → precise
+              discuss → library · optional sandbox grounding
             </p>
           </div>
 
@@ -54,7 +53,7 @@ function ModePanel({ mode, index }: { mode: Mode; index: number }) {
           <h3 className={`text-2xl font-semibold tracking-tight sm:text-3xl ${tone.title}`}>{mode.name}</h3>
         </div>
 
-        {/* Sources — what the mode reads from. The literal definition of "depth" for this mode.
+        {/* Sources — what the mode reads from.
             Each row is a knowledge layer: lit row = consulted, dim row = not consulted. */}
         <div className="mt-5 flex flex-col gap-2 border-t border-border/60 px-4 pt-4 sm:px-5">
           <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground/80">

@@ -33,6 +33,15 @@ function normalizePreferences(value: UserPreferences): UserPreferences {
   };
 }
 
+function parseUserPreferences(raw: string): UserPreferences | null {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return isUserPreferences(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 function dedupeTraits(traits: readonly string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -62,8 +71,7 @@ export function useUserPreferences(): readonly [
 
   useEffect(() => {
     return onLocalStorageChange(USER_PREFERENCES_STORAGE_KEY, (newValue) => {
-      const next =
-        newValue === null ? DEFAULT_USER_PREFERENCES : readJSON(USER_PREFERENCES_STORAGE_KEY, isUserPreferences);
+      const next = newValue === null ? DEFAULT_USER_PREFERENCES : parseUserPreferences(newValue);
       hasUserSetRef.current = newValue !== null;
       setPreferences(normalizePreferences(next ?? DEFAULT_USER_PREFERENCES));
     });

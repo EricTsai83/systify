@@ -239,6 +239,9 @@ function getSafeFrom(rawFrom: string | null): string | null {
   if (!rawFrom) {
     return null;
   }
+  if (rawFrom.startsWith("//")) {
+    return null;
+  }
   try {
     const url = new URL(rawFrom, window.location.origin);
     if (url.origin !== window.location.origin) {
@@ -267,8 +270,8 @@ function StatsForNerdsSection() {
             Stats for Nerds
           </h2>
           <p className="text-sm leading-6 text-muted-foreground">
-            Enables more insights into message stats including tokens per second, time to first token, and estimated
-            tokens in the message.
+            Enables more insights into message stats including tokens per second, generation time, and estimated tokens
+            in the message.
           </p>
         </div>
         <Button
