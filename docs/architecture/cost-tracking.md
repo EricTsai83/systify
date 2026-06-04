@@ -75,8 +75,7 @@ without a call-site change.
 
 ### Per-message persistence (chat)
 
-`messages` carries cost fields on the assistant reply
-(`convex/schema.ts:798-858`):
+`messages` carries cost fields on the assistant reply (`convex/schema.ts`):
 
 - `estimatedInputTokens`, `estimatedOutputTokens`
 - `estimatedCachedInputTokens`, `estimatedReasoningTokens` — prompt-cache /
@@ -87,10 +86,10 @@ without a call-site change.
 
 All five are optional because pre-PR-A2 / pre-PR-A3 rows lack them; new writes
 always set them when the gateway produced a usage frame. The fields are written
-inside `finalizeAssistantReply` / `failAssistantReply` / `markAssistantReplyCancelled`
-in `convex/chat/streaming.ts:475-616` — the cancel and fail paths persist
-partial cost because that spend is real (billing happens per-token, not on
-stream completion).
+inside `finalizeAssistantReply` / `failAssistantReply` /
+`markAssistantReplyCancelled` in `convex/chat/streaming.ts` — the cancel and
+fail paths persist partial cost because that spend is real (billing happens
+per-token, not on stream completion).
 
 The gateway stream handle is hoisted in `convex/chat/generation.ts` so every
 exit path (success, fail, cancel, aborted-orphan) can settle whatever
@@ -100,10 +99,10 @@ swallows resolution failures so partial → silent-undefined degrades gracefully
 
 ### Per-kind persistence (System Design)
 
-`systemDesignKindRuns` is the append-only attempt log
-(`convex/schema.ts:1187-1242`). One row per `(jobId, kind)` attempt — including
-cache hits and quality rejects — so eval and cost analytics can distinguish "the
-kind ran" from "the kind resolved without rerunning". Fields:
+`systemDesignKindRuns` is the append-only attempt log (`convex/schema.ts`). One
+row per `(jobId, kind)` attempt — including cache hits and quality rejects — so
+eval and cost analytics can distinguish "the kind ran" from "the kind resolved
+without rerunning". Fields:
 
 - `provider`, `modelName`, `promptVersion` — required (not optional like on
   `messages`)
@@ -113,23 +112,21 @@ kind ran" from "the kind resolved without rerunning". Fields:
   usage
 
 The kind-run row is written by `recordKindRun` in `convex/systemDesign.ts`,
-called from the System Design action at `convex/systemDesignNode.ts:327-350`
-which passes `totalCostUsd: costUsd` directly.
+called from the System Design action in `convex/systemDesignNode.ts`, which
+passes `totalCostUsd: costUsd` directly.
 
-`jobs.estimatedCostUsd` (`convex/schema.ts:337`) summarizes the full run. The
-per-job number is fed by the same `completeRunningJob` helper that powers chat
-job completion.
+`jobs.estimatedCostUsd` summarizes the full run. The per-job number is fed by
+the same `completeRunningJob` helper that powers chat job completion.
 
-### Aggregation: `getUserCostBreakdown`
+### Aggregation: raw breakdown
 
 `convex/lib/userCost.ts` exposes an `internalQuery` that walks three sources:
 
-1. `systemDesignKindRuns` via `by_owner_and_startedAt`
-   (`convex/schema.ts:1232`) — source of truth for the System Design path
-   because the row already carries provider, model, normalized usage, and cost
-   in one place.
-2. `messages` via `by_ownerTokenIdentifier` (`convex/schema.ts:989`) — chat
-   spend. The loop filters by `_creationTime` within the requested window
+1. `systemDesignKindRuns` via `by_owner_and_startedAt` — source of truth for
+   the System Design path because the row already carries provider, model,
+   normalized usage, and cost in one place.
+2. `messages` via `by_ownerTokenIdentifier` — chat spend. The loop filters by
+   `_creationTime` within the requested window
    (`sinceMs` inclusive, `untilMs` exclusive, default `Date.now()`).
 3. `jobs.estimatedCostUsd` is intentionally NOT read. The same money is already
    counted under `messages` (chat) and `systemDesignKindRuns` (System Design);
@@ -145,25 +142,72 @@ that renders a stacked bar chart per provider can reuse the same accessor over
 
 Chat rows without `provider`/`modelName` (legacy or pricing-miss rows) still
 contribute to `total`, `byFeature.chat`, and `byDay`, but skip the per-provider
-and per-model dimensions — the loop branches on
-`if (message.provider && message.modelName)` at `convex/lib/userCost.ts:229`.
+and per-model dimensions.
+
+### Viewer usage summary rollups
+
+The viewer settings usage card does NOT call `getUserCostBreakdown`. That
+query is raw-row based and appropriate for CLI / admin inspection, but it can
+grow with every assistant reply and every System Design kind run in the
+requested window. The public viewer-facing query instead reads
+`userUsageDailyRollups`, a bounded operational summary table.
+
+`recordUserUsageEvent` in `convex/lib/userCost.ts` is the single write
+interface for this summary. Callers provide a stable `sourceId`,
+`ownerTokenIdentifier`, feature (`chat` or `systemDesign`), occurrence time,
+and the normalized cost / token fields. The helper owns the important
+accounting invariants:
+
+- empty, zero, negative, and non-finite usage is ignored;
+- `sourceId` is required and must be non-empty;
+- `userUsageEvents.by_sourceId` is checked first, so retries and future
+  backfills are idempotent;
+- the event is persisted in `userUsageEvents` as a durable dedupe ledger;
+- the daily counter is written to one of 16 stable shards under
+  `(ownerTokenIdentifier, yyyymmdd, feature, shard)`.
+
+The sharding is deliberate. A single daily counter document would keep reads
+cheap but concentrate every same-user same-day chat finalization into one
+Convex document, creating avoidable OCC contention under tab-spam or parallel
+System Design runs. Sixteen shards keep write contention low while the viewer
+query remains bounded: at most `30 days * 2 features * 16 shards = 960` rollup
+rows. The query reads one extra row and throws if the cardinality invariant is
+exceeded, so data-model drift cannot silently undercount user spend.
+
+Current source ids:
+
+- Chat assistant replies use `message:${message._id}` from
+  `convex/chat/streaming.ts`.
+- System Design kind runs use `systemDesignKindRun:${kindRunId}` from
+  `convex/systemDesign.ts`.
+
+System Design `cached_hit` rows are intentionally skipped. They represent an
+idempotency match against an already-paid artifact, not a new LLM call. Failed
+or quality-rejected rows are recorded only when they carry real cost or token
+usage; a transport failure with no usage frame remains absent from the viewer
+summary instead of being counted as a free event.
+
+Historical raw `messages` / `systemDesignKindRuns` rows do not automatically
+appear in the viewer settings card. A backfill should replay those source rows
+through `recordUserUsageEvent` using the same stable source ids; the ledger
+makes the job safe to rerun.
 
 ### Daily cap settlement
 
 Three settlement call sites, all routing through
 `consumeSandboxDailyCost(ctx, {ownerTokenIdentifier, repositoryId, cents})`
-(`convex/lib/rateLimit.ts:597-612`):
+in `convex/lib/rateLimit.ts`:
 
-- Chat: `settleSandboxReplyCost` inside `convex/chat/streaming.ts:115-163`,
-  invoked from the chat finalize / fail / cancel mutations. Converts
+- Chat: `settleSandboxReplyCost` inside `convex/chat/streaming.ts`, invoked
+  from the chat finalize / fail / cancel mutations. Converts
   `args.costUsd` via `costUsdToCents`, looks up the thread's `repositoryId`, and
   settles against both the per-user and per-repository buckets. A heuristic
   reply (no `OPENAI_API_KEY`) and a pricing-miss reply both arrive with
   `cents === undefined`; the helper returns early without settlement (the
   conservative direction — better to under-settle than to fabricate a number
   that starves a user's quota).
-- System Design: `convex/systemDesign.ts:825-836` settles after writing the
-  kindRun row inside `recordKindRun`. `cached_hit` runs skip settlement (the
+- System Design: `recordKindRun` in `convex/systemDesign.ts` settles after
+  writing the kindRun row. `cached_hit` runs skip settlement (the
   artifact was already paid for on the run that produced it). The
   `consumeSandboxDailyCost` short-circuit on `cents <= 0` handles pricing
   misses uniformly.
@@ -177,7 +221,7 @@ Three settlement call sites, all routing through
 Cap config defaults live in `convex/lib/rateLimit.ts` under
 `sandboxCostUsdPerUserDaily` and `sandboxCostUsdPerRepositoryDaily`. Live
 consumption is observable via `peekSandboxDailyCostForUser` /
-`peekSandboxDailyCostForRepository` (`convex/lib/rateLimit.ts:465-480`).
+`peekSandboxDailyCostForRepository` in `convex/lib/rateLimit.ts`.
 
 ### CLI
 

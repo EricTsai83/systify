@@ -703,11 +703,11 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
       await settleSandboxReplyCost(ctx, {
         jobId: outcome.jobId,
         assistantMessage: message,
-        costUsd: outcome.usage?.costUsd,
+        costUsd: usage?.costUsd,
       });
       await recordSandboxSessionActivityForReply(ctx, {
         assistantMessage: message,
-        costUsd: outcome.usage?.costUsd,
+        costUsd: usage?.costUsd,
       });
       if (message) {
         await recordUserUsageEvent(ctx, {
