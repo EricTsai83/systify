@@ -6,6 +6,7 @@ import {
   NotFoundRoute,
   ProtectedLayout,
   RouteErrorBoundary,
+  RouterHydrateFallback,
 } from "@/router-layouts";
 import { AUTH_CALLBACK_ROUTE_SEGMENT, PROTECTED_ROUTE_SEGMENTS } from "@/route-paths";
 import type { ThreadId } from "@/lib/types";
@@ -81,6 +82,7 @@ export const appRoutes: RouteObject[] = [
   {
     path: "/",
     Component: AppLayout,
+    HydrateFallback: RouterHydrateFallback,
     ErrorBoundary: RouteErrorBoundary,
     children: [
       { index: true, Component: LandingRoute },

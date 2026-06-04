@@ -29,32 +29,18 @@ export function createMemoryStorage(): Storage {
   } satisfies Storage;
 }
 
-function isUsableStorage(storage: Storage | undefined): boolean {
-  if (!storage || typeof storage.clear !== "function") return false;
-  try {
-    storage.clear();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export function installMockStorages(): void {
-  // Only patch when the runtime ships an incomplete `Storage` — JSDOM in some
-  // configurations exposes a real implementation. Patching a working storage
-  // would lose state between calls within the same test.
-  if (!isUsableStorage(window.localStorage)) {
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: createMemoryStorage(),
-    });
-  }
-  if (!isUsableStorage(window.sessionStorage)) {
-    Object.defineProperty(window, "sessionStorage", {
-      configurable: true,
-      value: createMemoryStorage(),
-    });
-  }
+  // Replace storage without first reading the runtime getter. On recent Node
+  // versions, accessing the getter can emit `--localstorage-file` warnings when
+  // no persistence path is configured.
+  Object.defineProperty(window, "localStorage", {
+    configurable: true,
+    value: createMemoryStorage(),
+  });
+  Object.defineProperty(window, "sessionStorage", {
+    configurable: true,
+    value: createMemoryStorage(),
+  });
 }
 
 export function clearAllStorage(): void {

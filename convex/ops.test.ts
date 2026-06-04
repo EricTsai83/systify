@@ -361,6 +361,7 @@ describe("expired sandbox sweep", () => {
 
     const firstCleanup = await t.mutation(internal.ops.scheduleSandboxCleanup, {
       sandboxId: ids.supersededSandboxId,
+      skipRun: true,
     });
     if (!firstCleanup.jobId) {
       throw new Error("Expected cleanup job to be queued.");
@@ -377,6 +378,7 @@ describe("expired sandbox sweep", () => {
 
     const retryCleanup = await t.mutation(internal.ops.scheduleSandboxCleanup, {
       sandboxId: ids.supersededSandboxId,
+      skipRun: true,
     });
 
     const state = await t.run(async (ctx) => ({
@@ -458,6 +460,7 @@ describe("expired sandbox sweep", () => {
 
     const result = await t.mutation(internal.ops.scheduleSandboxCleanup, {
       sandboxId: ids.sandboxId,
+      skipRun: true,
     });
 
     expect(result.jobId).toBeTruthy();

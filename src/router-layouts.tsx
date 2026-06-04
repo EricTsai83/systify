@@ -50,6 +50,10 @@ export function AppLayout() {
   );
 }
 
+export function RouterHydrateFallback() {
+  return null;
+}
+
 export function LandingRoute() {
   const { isAuthenticated, isLoading } = useConvexAuth();
 

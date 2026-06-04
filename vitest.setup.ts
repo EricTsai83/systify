@@ -28,6 +28,7 @@ class ResizeObserverStub {
 // JSDOM-or-better environments — we only assign it when missing.
 const globalScope = globalThis as unknown as {
   ResizeObserver?: unknown;
+  document?: unknown;
   window?: {
     localStorage?: {
       clear?: () => void;
@@ -53,10 +54,12 @@ if (typeof globalScope.ResizeObserver === "undefined") {
  * layout; tests that need a specific breakpoint should override
  * `window.matchMedia` at the test level.
  */
+const hasDocument = typeof globalScope.document !== "undefined";
+
 const windowScope = globalScope as unknown as {
   window?: { matchMedia?: (query: string) => unknown };
 };
-if (typeof windowScope.window !== "undefined" && typeof windowScope.window.matchMedia !== "function") {
+if (hasDocument && typeof windowScope.window !== "undefined" && typeof windowScope.window.matchMedia !== "function") {
   windowScope.window.matchMedia = (query: string) => ({
     matches: false,
     media: query,
@@ -110,35 +113,24 @@ function createMemoryStorage(): AnyStorage {
   };
 }
 
-function isUsableStorage(storage: { clear?: () => void } | undefined): boolean {
-  if (!storage || typeof storage.clear !== "function") return false;
-  try {
-    storage.clear();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-// Only patch when running in a JSDOM-like environment (Convex edge-runtime
-// tests have no `window`, and they don't need storage either).
-if (typeof globalScope.window !== "undefined") {
+// Only patch when running in a JSDOM-like environment. Edge-runtime exposes
+// `window.localStorage` / `window.sessionStorage` getters in recent Node
+// versions, but reading either without `--localstorage-file=<path>` emits a
+// warning. DOM tests are the only ones that need browser storage, so gate this
+// on `document` and replace storage without first reading the getter.
+if (hasDocument && typeof globalScope.window !== "undefined") {
   const win = globalScope.window as unknown as {
     localStorage: AnyStorage;
     sessionStorage: AnyStorage;
   };
-  if (!isUsableStorage(win.localStorage)) {
-    Object.defineProperty(win, "localStorage", {
-      configurable: true,
-      value: createMemoryStorage(),
-    });
-  }
-  if (!isUsableStorage(win.sessionStorage)) {
-    Object.defineProperty(win, "sessionStorage", {
-      configurable: true,
-      value: createMemoryStorage(),
-    });
-  }
+  Object.defineProperty(win, "localStorage", {
+    configurable: true,
+    value: createMemoryStorage(),
+  });
+  Object.defineProperty(win, "sessionStorage", {
+    configurable: true,
+    value: createMemoryStorage(),
+  });
   beforeEach(() => {
     try {
       win.localStorage.clear();

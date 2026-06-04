@@ -231,7 +231,9 @@ async function seedSystemDesignKindRun(
     startedAt: number;
     inputTokens: number;
     outputTokens: number;
+    cachedInputTokens?: number;
     cacheWriteTokens?: number;
+    reasoningTokens?: number;
     costUsd: number;
   },
 ) {
@@ -279,7 +281,9 @@ async function seedSystemDesignKindRun(
       actualSteps: 3,
       inputTokens: args.inputTokens,
       outputTokens: args.outputTokens,
+      cachedInputTokens: args.cachedInputTokens,
       cacheWriteTokens: args.cacheWriteTokens,
+      reasoningTokens: args.reasoningTokens,
       totalCostUsd: args.costUsd,
       durationMs: 1_000,
       status: "succeeded",

@@ -52,6 +52,7 @@ async function queueSandboxCleanupJob(
   sandbox: Doc<"sandboxes">,
   triggerSource: "user" | "system",
   activeCleanupJobs?: Map<Id<"sandboxes">, Id<"jobs">>,
+  skipRun?: boolean,
 ): Promise<Id<"jobs"> | null> {
   if (sandbox.status === "archived") {
     return null;
@@ -73,10 +74,12 @@ async function queueSandboxCleanupJob(
     leaseMs: CLEANUP_JOB_LEASE_MS,
   });
 
-  await ctx.scheduler.runAfter(0, internal.opsNode.runSandboxCleanup, {
-    sandboxId: sandbox._id,
-    jobId,
-  });
+  if (!skipRun) {
+    await ctx.scheduler.runAfter(0, internal.opsNode.runSandboxCleanup, {
+      sandboxId: sandbox._id,
+      jobId,
+    });
+  }
   jobsBySandbox.set(sandbox._id, jobId);
 
   return jobId;
@@ -140,6 +143,7 @@ export const scheduleSandboxCleanup = internalMutation({
   args: {
     sandboxId: v.id("sandboxes"),
     triggerSource: v.optional(v.union(v.literal("user"), v.literal("system"))),
+    skipRun: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const sandbox = await ctx.db.get(args.sandboxId);
@@ -147,7 +151,7 @@ export const scheduleSandboxCleanup = internalMutation({
       return { jobId: null };
     }
 
-    const jobId = await queueSandboxCleanupJob(ctx, sandbox, args.triggerSource ?? "system");
+    const jobId = await queueSandboxCleanupJob(ctx, sandbox, args.triggerSource ?? "system", undefined, args.skipRun);
     return { jobId };
   },
 });

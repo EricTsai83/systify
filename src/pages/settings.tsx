@@ -329,7 +329,9 @@ function AccountSettingsSection() {
                 description={USAGE_DESCRIPTIONS.chat}
                 value={usageSummary ? USD_FORMATTER.format(usageSummary.byFeature.chat.costUsd) : "Loading"}
                 detail={
-                  usageSummary ? formatCountLabel(usageSummary.byFeature.chat.events, "metered reply") : undefined
+                  usageSummary
+                    ? formatCountLabel(usageSummary.byFeature.chat.events, "metered reply", "metered replies")
+                    : undefined
                 }
                 isLoading={!usageSummary}
               />
@@ -340,7 +342,7 @@ function AccountSettingsSection() {
                 value={usageSummary ? USD_FORMATTER.format(usageSummary.byFeature.systemDesign.costUsd) : "Loading"}
                 detail={
                   usageSummary
-                    ? formatCountLabel(usageSummary.byFeature.systemDesign.events, "artifact run")
+                    ? formatCountLabel(usageSummary.byFeature.systemDesign.events, "artifact run", "artifact runs")
                     : undefined
                 }
                 isLoading={!usageSummary}
@@ -556,11 +558,11 @@ function formatGitHubConnection(connection: ReturnType<typeof useGitHubConnectio
   if (connection.isLoading) {
     return "Loading";
   }
-  if (connection.isConnected && connection.accountLogin) {
-    return `${connection.accountLogin} connected`;
-  }
   if (connection.isSuspended && connection.accountLogin) {
     return `${connection.accountLogin} suspended`;
+  }
+  if (connection.isConnected && connection.accountLogin) {
+    return `${connection.accountLogin} connected`;
   }
   return "Not connected";
 }

@@ -41,6 +41,7 @@ interface CreateArtifactArgs {
    * the artifact is created.
    */
   kindRunId?: Id<"systemDesignKindRuns">;
+  skipReindexing?: boolean;
 }
 
 /**
@@ -98,7 +99,7 @@ export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArt
     promptVersion: args.promptVersion,
     kindRunId: args.kindRunId,
   });
-  if (args.repositoryId) {
+  if (args.repositoryId && !args.skipReindexing) {
     await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, { artifactId });
   }
   return artifactId;
@@ -112,6 +113,7 @@ async function updateArtifactInternal(
   ctx: MutationCtx,
   artifactId: Id<"artifacts">,
   updates: { title?: string; summary?: string; contentMarkdown?: string },
+  options: { skipReindexing?: boolean } = {},
 ): Promise<void> {
   const artifact = await ctx.db.get(artifactId);
   if (!artifact) {
@@ -150,8 +152,10 @@ async function updateArtifactInternal(
     patch.version = artifact.version + 1;
     patch.updatedAt = Date.now();
     await ctx.db.patch(artifactId, patch);
-    if (artifact.repositoryId && updates.contentMarkdown !== undefined) {
-      await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, { artifactId });
+    if (artifact.repositoryId && updates.contentMarkdown !== undefined && !options.skipReindexing) {
+      await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, {
+        artifactId,
+      });
     }
   }
 }
@@ -269,8 +273,16 @@ export const createArtifact = internalMutation({
     generatedByModel: v.optional(v.string()),
     promptVersion: v.optional(v.number()),
     kindRunId: v.optional(v.id("systemDesignKindRuns")),
+    skipReindexing: v.optional(v.boolean()),
   },
-  handler: (ctx, args) => createArtifactInMutation(ctx, args),
+  handler: (ctx, args) =>
+    createArtifactInMutation(ctx, {
+      ...args,
+      // Direct callers of this internal mutation are test and maintenance
+      // harnesses in this repo. Production artifact generation calls
+      // createArtifactInMutation directly and keeps reindexing enabled.
+      skipReindexing: args.skipReindexing ?? true,
+    }),
 });
 
 export const getArtifact = internalQuery({
@@ -284,13 +296,19 @@ export const updateArtifact = internalMutation({
     title: v.optional(v.string()),
     summary: v.optional(v.string()),
     contentMarkdown: v.optional(v.string()),
+    skipReindexing: v.optional(v.boolean()),
   },
   handler: (ctx, args) =>
-    updateArtifactInternal(ctx, args.artifactId, {
-      title: args.title,
-      summary: args.summary,
-      contentMarkdown: args.contentMarkdown,
-    }),
+    updateArtifactInternal(
+      ctx,
+      args.artifactId,
+      {
+        title: args.title,
+        summary: args.summary,
+        contentMarkdown: args.contentMarkdown,
+      },
+      { skipReindexing: args.skipReindexing ?? true },
+    ),
 });
 
 export const deleteArtifact = internalMutation({
