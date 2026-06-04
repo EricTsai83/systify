@@ -31,8 +31,13 @@
  */
 
 import { v } from "convex/values";
-import { internalQuery } from "../_generated/server";
+import { internalQuery, query, type QueryCtx } from "../_generated/server";
+import { requireViewerIdentity } from "./auth";
+import { peekSandboxDailyCostForUser } from "./rateLimit";
 import type { LlmProvider } from "./llmProvider";
+
+const VIEWER_USAGE_WINDOW_DAYS = 30;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
  * Per-bucket money + token accumulator. Reused across every grouping
@@ -79,6 +84,42 @@ export interface UserCostBreakdown {
   byDay: Array<{ yyyymmdd: string; bucket: CostBucket }>;
 }
 
+export interface ViewerUsageSummary {
+  window: {
+    sinceMs: number;
+    untilMs: number;
+    days: number;
+  };
+  totals: {
+    costUsd: number;
+    events: number;
+    totalTokens: number;
+    inputTokens: number;
+    outputTokens: number;
+    cachedInputTokens: number;
+    cacheWriteTokens: number;
+    reasoningTokens: number;
+  };
+  byFeature: {
+    chat: {
+      costUsd: number;
+      events: number;
+      totalTokens: number;
+    };
+    systemDesign: {
+      costUsd: number;
+      events: number;
+      totalTokens: number;
+    };
+  };
+  sandboxDailyBudget: {
+    usedUsd: number;
+    remainingUsd: number;
+    capacityUsd: number;
+    resetAtMs: number;
+  };
+}
+
 function makeBucket(): CostBucket {
   return {
     usd: 0,
@@ -123,6 +164,179 @@ function utcDayKey(ms: number): string {
   return `${yyyy}-${mm}-${dd}`;
 }
 
+function tokenTotal(bucket: CostBucket): number {
+  return (
+    bucket.inputTokens +
+    bucket.outputTokens +
+    bucket.cachedInputTokens +
+    bucket.cacheWriteTokens +
+    bucket.reasoningTokens
+  );
+}
+
+function summarizeBucket(bucket: CostBucket): { costUsd: number; events: number; totalTokens: number } {
+  return {
+    costUsd: bucket.usd,
+    events: bucket.count,
+    totalTokens: tokenTotal(bucket),
+  };
+}
+
+async function aggregateUserCostBreakdown(
+  ctx: QueryCtx,
+  args: {
+    ownerTokenIdentifier: string;
+    sinceMs: number;
+    untilMs?: number;
+  },
+): Promise<UserCostBreakdown> {
+  const untilMs = args.untilMs ?? Date.now();
+  const total = makeBucket();
+  const byProvider: Record<LlmProvider, CostBucket> = {
+    openai: makeBucket(),
+    anthropic: makeBucket(),
+  };
+  const byModel: Record<string, CostBucket> = {};
+  const byFeature = {
+    chat: makeBucket(),
+    systemDesign: makeBucket(),
+  };
+  const dayMap = new Map<string, CostBucket>();
+  const bucketForDay = (dayKey: string): CostBucket => {
+    const existing = dayMap.get(dayKey);
+    if (existing) return existing;
+    const created = makeBucket();
+    dayMap.set(dayKey, created);
+    return created;
+  };
+
+  // ── System Design path ──────────────────────────────────────────
+  // `systemDesignKindRuns` carries provider + model + full token
+  // mix, so the breakdown dimensions all populate from this slice.
+  const kindRuns = await ctx.db
+    .query("systemDesignKindRuns")
+    .withIndex("by_owner_and_startedAt", (q) =>
+      q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier).gte("startedAt", args.sinceMs).lt("startedAt", untilMs),
+    )
+    .collect();
+
+  for (const row of kindRuns) {
+    const provider = row.provider;
+    const modelKey = `${row.provider}:${row.modelName}`;
+    const dayKey = utcDayKey(row.startedAt);
+    const payload = {
+      usd: row.totalCostUsd,
+      inputTokens: row.inputTokens,
+      outputTokens: row.outputTokens,
+      cachedInputTokens: row.cachedInputTokens,
+      cacheWriteTokens: row.cacheWriteTokens,
+      reasoningTokens: row.reasoningTokens,
+    };
+    addToBucket(total, payload);
+    addToBucket(byProvider[provider], payload);
+    addToBucket((byModel[modelKey] ??= makeBucket()), payload);
+    addToBucket(byFeature.systemDesign, payload);
+    addToBucket(bucketForDay(dayKey), payload);
+  }
+
+  // ── Chat path ───────────────────────────────────────────────────
+  // PR-A2: messages do NOT carry `provider` / `modelName` yet — that
+  // lands in PR-A3. Aggregation here adds to `byFeature.chat` (and
+  // `total`, `byDay`) but does NOT populate `byProvider` / `byModel`
+  // for chat rows. When PR-A3 lands the same loop reads the new
+  // optional columns and routes them into the provider / model
+  // dimensions automatically.
+  const messages = await ctx.db
+    .query("messages")
+    .withIndex("by_ownerTokenIdentifier", (q) =>
+      q
+        .eq("ownerTokenIdentifier", args.ownerTokenIdentifier)
+        .gte("_creationTime", args.sinceMs)
+        .lt("_creationTime", untilMs),
+    )
+    .collect();
+
+  for (const message of messages) {
+    if (message.role !== "assistant") {
+      continue;
+    }
+    const payload = {
+      usd: message.estimatedCostUsd,
+      inputTokens: message.estimatedInputTokens,
+      outputTokens: message.estimatedOutputTokens,
+      cachedInputTokens: message.estimatedCachedInputTokens,
+      reasoningTokens: message.estimatedReasoningTokens,
+    };
+    // Skip rows with no recordable cost / tokens — heuristic replies
+    // and library-mode rows that never went through pricing.
+    if (
+      (payload.usd === undefined || payload.usd === 0) &&
+      (payload.inputTokens ?? 0) === 0 &&
+      (payload.outputTokens ?? 0) === 0
+    ) {
+      continue;
+    }
+    addToBucket(total, payload);
+    addToBucket(byFeature.chat, payload);
+    addToBucket(bucketForDay(utcDayKey(message._creationTime)), payload);
+    if (message.provider && message.modelName) {
+      addToBucket(byProvider[message.provider], payload);
+      const modelKey = `${message.provider}:${message.modelName}`;
+      addToBucket((byModel[modelKey] ??= makeBucket()), payload);
+    }
+  }
+
+  const byDay: UserCostBreakdown["byDay"] = Array.from(dayMap.entries())
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([yyyymmdd, bucket]) => ({ yyyymmdd, bucket }));
+
+  return { total, byProvider, byModel, byFeature, byDay };
+}
+
+export const getViewerUsageSummary = query({
+  args: {},
+  handler: async (ctx): Promise<ViewerUsageSummary> => {
+    const identity = await requireViewerIdentity(ctx);
+    const untilMs = Date.now();
+    const sinceMs = untilMs - VIEWER_USAGE_WINDOW_DAYS * MS_PER_DAY;
+    const breakdown = await aggregateUserCostBreakdown(ctx, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      sinceMs,
+      untilMs,
+    });
+    const dailyBudget = await peekSandboxDailyCostForUser(ctx, identity.tokenIdentifier);
+    const usedCents = Math.max(0, dailyBudget.capacityCents - dailyBudget.remainingCents);
+
+    return {
+      window: {
+        sinceMs,
+        untilMs,
+        days: VIEWER_USAGE_WINDOW_DAYS,
+      },
+      totals: {
+        costUsd: breakdown.total.usd,
+        events: breakdown.total.count,
+        totalTokens: tokenTotal(breakdown.total),
+        inputTokens: breakdown.total.inputTokens,
+        outputTokens: breakdown.total.outputTokens,
+        cachedInputTokens: breakdown.total.cachedInputTokens,
+        cacheWriteTokens: breakdown.total.cacheWriteTokens,
+        reasoningTokens: breakdown.total.reasoningTokens,
+      },
+      byFeature: {
+        chat: summarizeBucket(breakdown.byFeature.chat),
+        systemDesign: summarizeBucket(breakdown.byFeature.systemDesign),
+      },
+      sandboxDailyBudget: {
+        usedUsd: usedCents / 100,
+        remainingUsd: dailyBudget.remainingCents / 100,
+        capacityUsd: dailyBudget.capacityCents / 100,
+        resetAtMs: dailyBudget.resetAtMs,
+      },
+    };
+  },
+});
+
 /**
  * Aggregate a single user's LLM spend across an arbitrary time window.
  *
@@ -139,107 +353,7 @@ export const getUserCostBreakdown = internalQuery({
     untilMs: v.optional(v.number()),
   },
   handler: async (ctx, args): Promise<UserCostBreakdown> => {
-    const untilMs = args.untilMs ?? Date.now();
-    const total = makeBucket();
-    const byProvider: Record<LlmProvider, CostBucket> = {
-      openai: makeBucket(),
-      anthropic: makeBucket(),
-    };
-    const byModel: Record<string, CostBucket> = {};
-    const byFeature = {
-      chat: makeBucket(),
-      systemDesign: makeBucket(),
-    };
-    const dayMap = new Map<string, CostBucket>();
-    const bucketForDay = (dayKey: string): CostBucket => {
-      const existing = dayMap.get(dayKey);
-      if (existing) return existing;
-      const created = makeBucket();
-      dayMap.set(dayKey, created);
-      return created;
-    };
-
-    // ── System Design path ──────────────────────────────────────────
-    // `systemDesignKindRuns` carries provider + model + full token
-    // mix, so the breakdown dimensions all populate from this slice.
-    const kindRuns = await ctx.db
-      .query("systemDesignKindRuns")
-      .withIndex("by_owner_and_startedAt", (q) =>
-        q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier).gte("startedAt", args.sinceMs).lt("startedAt", untilMs),
-      )
-      .collect();
-
-    for (const row of kindRuns) {
-      const provider = row.provider;
-      const modelKey = `${row.provider}:${row.modelName}`;
-      const dayKey = utcDayKey(row.startedAt);
-      const payload = {
-        usd: row.totalCostUsd,
-        inputTokens: row.inputTokens,
-        outputTokens: row.outputTokens,
-        cachedInputTokens: row.cachedInputTokens,
-        cacheWriteTokens: row.cacheWriteTokens,
-        reasoningTokens: row.reasoningTokens,
-      };
-      addToBucket(total, payload);
-      addToBucket(byProvider[provider], payload);
-      addToBucket((byModel[modelKey] ??= makeBucket()), payload);
-      addToBucket(byFeature.systemDesign, payload);
-      addToBucket(bucketForDay(dayKey), payload);
-    }
-
-    // ── Chat path ───────────────────────────────────────────────────
-    // PR-A2: messages do NOT carry `provider` / `modelName` yet — that
-    // lands in PR-A3. Aggregation here adds to `byFeature.chat` (and
-    // `total`, `byDay`) but does NOT populate `byProvider` / `byModel`
-    // for chat rows. When PR-A3 lands the same loop reads the new
-    // optional columns and routes them into the provider / model
-    // dimensions automatically.
-    const messages = await ctx.db
-      .query("messages")
-      .withIndex("by_ownerTokenIdentifier", (q) =>
-        q
-          .eq("ownerTokenIdentifier", args.ownerTokenIdentifier)
-          .gte("_creationTime", args.sinceMs)
-          .lt("_creationTime", untilMs),
-      )
-      .collect();
-
-    for (const message of messages) {
-      if (message.role !== "assistant") {
-        continue;
-      }
-      const payload = {
-        usd: message.estimatedCostUsd,
-        inputTokens: message.estimatedInputTokens,
-        outputTokens: message.estimatedOutputTokens,
-        cachedInputTokens: message.estimatedCachedInputTokens,
-        reasoningTokens: message.estimatedReasoningTokens,
-      };
-      // Skip rows with no recordable cost / tokens — heuristic replies
-      // and library-mode rows that never went through pricing.
-      if (
-        (payload.usd === undefined || payload.usd === 0) &&
-        (payload.inputTokens ?? 0) === 0 &&
-        (payload.outputTokens ?? 0) === 0
-      ) {
-        continue;
-      }
-      addToBucket(total, payload);
-      addToBucket(byFeature.chat, payload);
-      addToBucket(bucketForDay(utcDayKey(message._creationTime)), payload);
-      if (message.provider && message.modelName) {
-        addToBucket(byProvider[message.provider], payload);
-        const modelKey = `${message.provider}:${message.modelName}`;
-        addToBucket(byModel[modelKey], payload);
-      }
-    }
-
-    const byDay: UserCostBreakdown["byDay"] = Array.from(dayMap.entries())
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([yyyymmdd, bucket]) => ({ yyyymmdd, bucket }));
-
-    return { total, byProvider, byModel, byFeature, byDay };
+    return await aggregateUserCostBreakdown(ctx, args);
   },
 });
 
@@ -251,4 +365,5 @@ export const TEST_INTERNALS = {
   makeBucket,
   addToBucket,
   utcDayKey,
+  tokenTotal,
 } as const;
