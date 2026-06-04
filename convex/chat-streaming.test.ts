@@ -134,6 +134,12 @@ describe("chat streaming lifecycle", () => {
         .withIndex("by_streamId_and_sequence", (q) => q.eq("streamId", streamId))
         .take(20),
       job: await ctx.db.get(jobId),
+      usageRollups: await ctx.db
+        .query("userUsageDailyRollups")
+        .withIndex("by_ownerTokenIdentifier_and_yyyymmdd", (q) =>
+          q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("yyyymmdd", "2026-04-23"),
+        )
+        .take(10),
     }));
 
     expect(finalized.message?.status).toBe("completed");
@@ -146,6 +152,14 @@ describe("chat streaming lifecycle", () => {
     expect(finalized.job?.estimatedInputTokens).toBe(1200);
     expect(finalized.job?.estimatedOutputTokens).toBe(300);
     expect(finalized.job?.estimatedCostUsd).toBe(0.00036);
+    expect(finalized.usageRollups).toHaveLength(1);
+    expect(finalized.usageRollups[0]).toMatchObject({
+      feature: "chat",
+      events: 1,
+      inputTokens: 1200,
+      outputTokens: 300,
+      costUsd: 0.00036,
+    });
   });
 
   test("cancel before action start prevents queued job from moving to running", async () => {

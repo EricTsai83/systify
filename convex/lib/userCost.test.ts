@@ -3,11 +3,11 @@
 import { describe, expect, it } from "vitest";
 import { register as registerRateLimiter } from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import schema from "../schema";
 import { TEST_INTERNALS } from "./userCost";
 
-const { makeBucket, addToBucket, utcDayKey } = TEST_INTERNALS;
+const { makeBucket, addToBucket, utcDayKey, hasRecordableUsage } = TEST_INTERNALS;
 const modules = import.meta.glob("/convex/**/*.ts");
 
 function createTestConvex() {
@@ -80,6 +80,21 @@ describe("userCost.utcDayKey", () => {
   });
 });
 
+describe("userCost.hasRecordableUsage", () => {
+  it("treats cost or any token slice as metered usage", () => {
+    expect(hasRecordableUsage({ usd: 0.01 })).toBe(true);
+    expect(hasRecordableUsage({ cachedInputTokens: 10 })).toBe(true);
+    expect(hasRecordableUsage({ cacheWriteTokens: 10 })).toBe(true);
+    expect(hasRecordableUsage({ reasoningTokens: 10 })).toBe(true);
+  });
+
+  it("rejects empty, zero, negative, and non-finite usage", () => {
+    expect(hasRecordableUsage({})).toBe(false);
+    expect(hasRecordableUsage({ usd: 0, inputTokens: 0, outputTokens: 0 })).toBe(false);
+    expect(hasRecordableUsage({ usd: -1, inputTokens: Number.NaN })).toBe(false);
+  });
+});
+
 describe("getViewerUsageSummary", () => {
   it("summarizes only the authenticated viewer's recent priced usage", async () => {
     const ownerTokenIdentifier = "user|usage-summary-owner";
@@ -87,38 +102,50 @@ describe("getViewerUsageSummary", () => {
     const t = createTestConvex();
     const now = Date.now();
 
-    await seedPricedAssistantMessage(t, {
+    await recordUsage(t, {
+      sourceId: "chat:recent-owner",
       ownerTokenIdentifier,
-      now,
+      feature: "chat",
+      occurredAtMs: now,
       inputTokens: 1_000,
       outputTokens: 500,
       cachedInputTokens: 100,
       reasoningTokens: 50,
-      costUsd: 0.0123,
+      usd: 0.0123,
     });
-    await seedPricedAssistantMessage(t, {
+    await recordUsage(t, {
+      sourceId: "chat:recent-other-owner",
       ownerTokenIdentifier: otherOwnerTokenIdentifier,
-      now,
+      feature: "chat",
+      occurredAtMs: now,
       inputTokens: 9_000,
       outputTokens: 9_000,
-      costUsd: 9,
+      usd: 9,
     });
-    await seedSystemDesignKindRun(t, {
+    await recordUsage(t, {
+      sourceId: "system-design:recent-owner",
       ownerTokenIdentifier,
-      now,
-      startedAt: now - 60_000,
+      feature: "systemDesign",
+      occurredAtMs: now - 60_000,
       inputTokens: 2_000,
       outputTokens: 750,
       cacheWriteTokens: 25,
-      costUsd: 0.045,
+      usd: 0.045,
     });
-    await seedSystemDesignKindRun(t, {
+    await recordUsage(t, {
+      sourceId: "system-design:old-owner",
       ownerTokenIdentifier,
-      now,
-      startedAt: now - 31 * 24 * 60 * 60 * 1000,
+      feature: "systemDesign",
+      occurredAtMs: now - 31 * 24 * 60 * 60 * 1000,
       inputTokens: 100_000,
       outputTokens: 100_000,
-      costUsd: 100,
+      usd: 100,
+    });
+    await recordUsage(t, {
+      sourceId: "system-design:empty-owner",
+      ownerTokenIdentifier,
+      feature: "systemDesign",
+      occurredAtMs: now,
     });
 
     const summary = await t
@@ -144,6 +171,59 @@ describe("getViewerUsageSummary", () => {
     });
   });
 
+  it("deduplicates repeated rollup writes for the same source event", async () => {
+    const ownerTokenIdentifier = "user|usage-summary-dedupe";
+    const t = createTestConvex();
+    const now = Date.now();
+
+    await recordUsage(t, {
+      sourceId: "message:dedupe",
+      ownerTokenIdentifier,
+      feature: "chat",
+      occurredAtMs: now,
+      inputTokens: 1_000,
+      outputTokens: 500,
+      usd: 0.0123,
+    });
+    await recordUsage(t, {
+      sourceId: "message:dedupe",
+      ownerTokenIdentifier,
+      feature: "chat",
+      occurredAtMs: now,
+      inputTokens: 9_000,
+      outputTokens: 9_000,
+      usd: 9,
+    });
+
+    const summary = await t
+      .withIdentity({ tokenIdentifier: ownerTokenIdentifier })
+      .query(api.lib.userCost.getViewerUsageSummary, {});
+
+    expect(summary.totals.events).toBe(1);
+    expect(summary.totals.costUsd).toBeCloseTo(0.0123, 5);
+    expect(summary.totals.inputTokens).toBe(1_000);
+    expect(summary.totals.outputTokens).toBe(500);
+  });
+
+  it("does not scan raw messages when no daily rollup exists", async () => {
+    const ownerTokenIdentifier = "user|usage-summary-raw-only";
+    const t = createTestConvex();
+    await seedRawPricedAssistantMessage(t, {
+      ownerTokenIdentifier,
+      inputTokens: 1_000,
+      outputTokens: 500,
+      costUsd: 0.0123,
+    });
+
+    const summary = await t
+      .withIdentity({ tokenIdentifier: ownerTokenIdentifier })
+      .query(api.lib.userCost.getViewerUsageSummary, {});
+
+    expect(summary.totals.events).toBe(0);
+    expect(summary.totals.totalTokens).toBe(0);
+    expect(summary.totals.costUsd).toBe(0);
+  });
+
   it("requires an authenticated viewer instead of accepting an owner argument", async () => {
     const t = createTestConvex();
 
@@ -151,62 +231,54 @@ describe("getViewerUsageSummary", () => {
   });
 });
 
-async function seedPricedAssistantMessage(
+async function recordUsage(
+  t: ReturnType<typeof createTestConvex>,
+  args: {
+    sourceId: string;
+    ownerTokenIdentifier: string;
+    feature: "chat" | "systemDesign";
+    occurredAtMs: number;
+    inputTokens?: number;
+    outputTokens?: number;
+    cachedInputTokens?: number;
+    cacheWriteTokens?: number;
+    reasoningTokens?: number;
+    usd?: number;
+  },
+) {
+  await t.mutation(internal.lib.userCost.recordUsageEvent, {
+    sourceId: args.sourceId,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    feature: args.feature,
+    occurredAtMs: args.occurredAtMs,
+    inputTokens: args.inputTokens,
+    outputTokens: args.outputTokens,
+    cachedInputTokens: args.cachedInputTokens,
+    cacheWriteTokens: args.cacheWriteTokens,
+    reasoningTokens: args.reasoningTokens,
+    usd: args.usd,
+  });
+}
+
+async function seedRawPricedAssistantMessage(
   t: ReturnType<typeof createTestConvex>,
   args: {
     ownerTokenIdentifier: string;
-    now: number;
     inputTokens: number;
     outputTokens: number;
-    cachedInputTokens?: number;
-    reasoningTokens?: number;
     costUsd: number;
   },
 ) {
+  const now = Date.now();
   await t.run(async (ctx) => {
-    const repositoryId = await ctx.db.insert("repositories", {
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      sourceHost: "github",
-      sourceUrl: `https://github.com/acme/${args.ownerTokenIdentifier}`,
-      sourceRepoFullName: `acme/${args.ownerTokenIdentifier}`,
-      sourceRepoOwner: "acme",
-      sourceRepoName: args.ownerTokenIdentifier,
-      defaultBranch: "main",
-      visibility: "private",
-      accessMode: "private",
-      importStatus: "completed",
-      detectedLanguages: [],
-      packageManagers: [],
-      entrypoints: [],
-      fileCount: 1,
-      color: "blue",
-      lastAccessedAt: args.now,
-      lastImportedAt: args.now,
-    });
     const threadId = await ctx.db.insert("threads", {
-      repositoryId,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
-      title: "Usage summary fixture",
+      title: "Raw usage fixture",
       mode: "discuss",
-      lastMessageAt: args.now,
-    });
-    const jobId = await ctx.db.insert("jobs", {
-      repositoryId,
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      threadId,
-      kind: "chat",
-      status: "completed",
-      stage: "completed",
-      progress: 1,
-      costCategory: "chat",
-      triggerSource: "user",
-      startedAt: args.now,
-      completedAt: args.now,
+      lastMessageAt: now,
     });
     await ctx.db.insert("messages", {
-      repositoryId,
       threadId,
-      jobId,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       role: "assistant",
       status: "completed",
@@ -216,78 +288,7 @@ async function seedPricedAssistantMessage(
       modelName: "gpt-4o-mini",
       estimatedInputTokens: args.inputTokens,
       estimatedOutputTokens: args.outputTokens,
-      estimatedCachedInputTokens: args.cachedInputTokens,
-      estimatedReasoningTokens: args.reasoningTokens,
       estimatedCostUsd: args.costUsd,
-    });
-  });
-}
-
-async function seedSystemDesignKindRun(
-  t: ReturnType<typeof createTestConvex>,
-  args: {
-    ownerTokenIdentifier: string;
-    now: number;
-    startedAt: number;
-    inputTokens: number;
-    outputTokens: number;
-    cachedInputTokens?: number;
-    cacheWriteTokens?: number;
-    reasoningTokens?: number;
-    costUsd: number;
-  },
-) {
-  await t.run(async (ctx) => {
-    const repositoryId = await ctx.db.insert("repositories", {
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      sourceHost: "github",
-      sourceUrl: `https://github.com/acme/system-${args.startedAt}`,
-      sourceRepoFullName: `acme/system-${args.startedAt}`,
-      sourceRepoOwner: "acme",
-      sourceRepoName: `system-${args.startedAt}`,
-      defaultBranch: "main",
-      visibility: "private",
-      accessMode: "private",
-      importStatus: "completed",
-      detectedLanguages: [],
-      packageManagers: [],
-      entrypoints: [],
-      fileCount: 1,
-      color: "blue",
-      lastAccessedAt: args.now,
-      lastImportedAt: args.now,
-    });
-    const jobId = await ctx.db.insert("jobs", {
-      repositoryId,
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      kind: "system_design",
-      status: "completed",
-      stage: "completed",
-      progress: 1,
-      costCategory: "system_design",
-      triggerSource: "user",
-      startedAt: args.startedAt,
-      completedAt: args.now,
-    });
-    await ctx.db.insert("systemDesignKindRuns", {
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      repositoryId,
-      jobId,
-      kind: "readme_summary",
-      provider: "anthropic",
-      modelName: "claude-sonnet-4-6",
-      promptVersion: 1,
-      stepCap: 20,
-      actualSteps: 3,
-      inputTokens: args.inputTokens,
-      outputTokens: args.outputTokens,
-      cachedInputTokens: args.cachedInputTokens,
-      cacheWriteTokens: args.cacheWriteTokens,
-      reasoningTokens: args.reasoningTokens,
-      totalCostUsd: args.costUsd,
-      durationMs: 1_000,
-      status: "succeeded",
-      startedAt: args.startedAt,
     });
   });
 }

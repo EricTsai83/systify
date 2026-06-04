@@ -48,6 +48,7 @@ import {
 } from "./lib/functionResultSchemas";
 import { logInfo, logWarn } from "./lib/observability";
 import { SYSTEM_DESIGN_PROMPT_VERSIONS } from "./lib/systemDesignPrompts";
+import { recordUserUsageEvent } from "./lib/userCost";
 
 /**
  * Default LLM pick for System Design jobs when the caller does not
@@ -869,6 +870,21 @@ export const recordKindRun = internalMutation({
       missingSections: args.missingSections,
       startedAt: args.startedAt,
     });
+
+    if (args.status !== "cached_hit") {
+      await recordUserUsageEvent(ctx, {
+        sourceId: `systemDesignKindRun:${kindRunId}`,
+        ownerTokenIdentifier: args.ownerTokenIdentifier,
+        feature: "systemDesign",
+        occurredAtMs: args.startedAt,
+        usd: args.totalCostUsd,
+        inputTokens: args.inputTokens,
+        outputTokens: args.outputTokens,
+        cachedInputTokens: args.cachedInputTokens,
+        cacheWriteTokens: args.cacheWriteTokens,
+        reasoningTokens: args.reasoningTokens,
+      });
+    }
 
     // Daily cap settlement. `cached_hit` rows have no incremental
     // spend (the artifact was already paid for). Non-positive costs

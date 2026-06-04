@@ -6,6 +6,7 @@ import { CHAT_JOB_LEASE_MS, consumeSandboxDailyCost } from "../lib/rateLimit";
 import { jobCancellationStatusValidator, startedResultValidator } from "../lib/functionResultSchemas";
 import { costUsdToCents } from "../lib/llmPricing";
 import { logInfo, logWarn } from "../lib/observability";
+import { recordUserUsageEvent } from "../lib/userCost";
 import {
   MAX_LIVE_REASONING_CHARS,
   MAX_TOOL_CALL_EVENTS_PER_MESSAGE,
@@ -360,6 +361,22 @@ const MUTATION_LABEL_BY_KIND: Record<TerminalOutcome["kind"], string> = {
   stale: "recoverStaleChatJob",
 };
 
+function usageForChatRollup(outcome: TerminalOutcome, message: Doc<"messages"> | null): TerminalUsage | undefined {
+  if (outcome.kind === "stale" || !message) {
+    return undefined;
+  }
+  if (outcome.kind === "completed") {
+    return outcome.usage;
+  }
+  return {
+    inputTokens: outcome.usage?.inputTokens ?? message.estimatedInputTokens,
+    outputTokens: outcome.usage?.outputTokens ?? message.estimatedOutputTokens,
+    cachedInputTokens: outcome.usage?.cachedInputTokens ?? message.estimatedCachedInputTokens,
+    reasoningTokens: outcome.usage?.reasoningTokens ?? message.estimatedReasoningTokens,
+    costUsd: outcome.usage?.costUsd ?? message.estimatedCostUsd,
+  };
+}
+
 /**
  * Single seam for the four terminal-state transitions an assistant reply
  * can reach: completed, failed, cancelled, and stale-recovered.
@@ -682,6 +699,7 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
     // entirely (see the per-kind comment above). Settle is a no-op for
     // non-sandbox replies and for `costUsd === undefined`.
     if (outcome.kind !== "stale") {
+      const usage = usageForChatRollup(outcome, message);
       await settleSandboxReplyCost(ctx, {
         jobId: outcome.jobId,
         assistantMessage: message,
@@ -691,6 +709,19 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
         assistantMessage: message,
         costUsd: outcome.usage?.costUsd,
       });
+      if (message) {
+        await recordUserUsageEvent(ctx, {
+          sourceId: `message:${message._id}`,
+          ownerTokenIdentifier: message.ownerTokenIdentifier,
+          feature: "chat",
+          occurredAtMs: now,
+          usd: usage?.costUsd,
+          inputTokens: usage?.inputTokens,
+          outputTokens: usage?.outputTokens,
+          cachedInputTokens: usage?.cachedInputTokens,
+          reasoningTokens: usage?.reasoningTokens,
+        });
+      }
     }
 
     return applied;

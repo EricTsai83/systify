@@ -87,6 +87,8 @@ const kindRunStatus = v.union(
   v.literal("quality_rejected"),
 );
 
+const usageRollupFeature = v.union(v.literal("chat"), v.literal("systemDesign"));
+
 const jobStatus = v.union(
   v.literal("queued"),
   v.literal("running"),
@@ -1006,6 +1008,62 @@ export default defineSchema({
      * declaring it here explicitly.
      */
     .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
+
+  /**
+   * Per-viewer, per-UTC-day LLM usage rollups. The settings page reads
+   * this table instead of scanning raw `messages` / `systemDesignKindRuns`
+   * rows, so the viewer-facing query stays bounded at roughly
+   * `(days * feature-count * shard-count)` documents.
+   *
+   * Raw source rows and `userUsageEvents` remain the forensic source of
+   * truth. This table is an operational sharded counter written
+   * transactionally when a usage-bearing chat reply or System Design kind
+   * run settles.
+   */
+  userUsageDailyRollups: defineTable({
+    ownerTokenIdentifier: v.string(),
+    yyyymmdd: v.string(),
+    feature: usageRollupFeature,
+    shard: v.number(),
+    costUsd: v.number(),
+    events: v.number(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    cachedInputTokens: v.number(),
+    cacheWriteTokens: v.number(),
+    reasoningTokens: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_ownerTokenIdentifier_and_yyyymmdd", ["ownerTokenIdentifier", "yyyymmdd"])
+    .index("by_ownerTokenIdentifier_and_yyyymmdd_and_feature_and_shard", [
+      "ownerTokenIdentifier",
+      "yyyymmdd",
+      "feature",
+      "shard",
+    ]),
+
+  /**
+   * Idempotency ledger for usage rollups. Each metered source event (assistant
+   * message finalization, System Design kind run, future backfill row) writes
+   * exactly one ledger row keyed by `sourceId` before updating its daily
+   * rollup shard.
+   */
+  userUsageEvents: defineTable({
+    sourceId: v.string(),
+    ownerTokenIdentifier: v.string(),
+    yyyymmdd: v.string(),
+    feature: usageRollupFeature,
+    shard: v.number(),
+    costUsd: v.number(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    cachedInputTokens: v.number(),
+    cacheWriteTokens: v.number(),
+    reasoningTokens: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_sourceId", ["sourceId"])
+    .index("by_ownerTokenIdentifier_and_yyyymmdd", ["ownerTokenIdentifier", "yyyymmdd"]),
 
   /**
    * Application invariant: each assistant reply owns at most one `messageStreams`

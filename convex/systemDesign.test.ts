@@ -184,6 +184,84 @@ describe("findCachedArtifact", () => {
   });
 });
 
+describe("recordKindRun usage rollups", () => {
+  test("records metered System Design usage and skips cached hits", async () => {
+    const ownerTokenIdentifier = "user|system-design-rollup";
+    const t = createTestConvex();
+    const startedAt = Date.UTC(2026, 3, 24, 10, 0, 0);
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await t.run(async (ctx) => {
+      return await ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "system_design",
+        status: "running",
+        stage: "generating",
+        progress: 0.5,
+        costCategory: "system_design",
+        triggerSource: "user",
+        startedAt,
+      });
+    });
+    const cachedArtifactId = await insertArtifact(t, {
+      ownerTokenIdentifier,
+      repositoryId,
+      kind: "security_overview",
+    });
+
+    await t.mutation(internal.systemDesign.recordKindRun, {
+      ownerTokenIdentifier,
+      repositoryId,
+      jobId,
+      kind: "readme_summary",
+      provider: "anthropic",
+      modelName: "claude-sonnet-4-6",
+      promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
+      stepCap: 20,
+      actualSteps: 3,
+      inputTokens: 2_000,
+      outputTokens: 750,
+      cacheWriteTokens: 25,
+      durationMs: 1_000,
+      status: "succeeded",
+      startedAt,
+    });
+    await t.mutation(internal.systemDesign.recordKindRun, {
+      ownerTokenIdentifier,
+      repositoryId,
+      jobId,
+      kind: "security_overview",
+      artifactId: cachedArtifactId,
+      provider: "anthropic",
+      modelName: "claude-sonnet-4-6",
+      promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.security_overview,
+      stepCap: 20,
+      actualSteps: 0,
+      durationMs: 10,
+      status: "cached_hit",
+      startedAt,
+    });
+
+    const rollups = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("userUsageDailyRollups")
+        .withIndex("by_ownerTokenIdentifier_and_yyyymmdd", (q) =>
+          q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("yyyymmdd", "2026-04-24"),
+        )
+        .take(10);
+    });
+
+    expect(rollups).toHaveLength(1);
+    expect(rollups[0]).toMatchObject({
+      feature: "systemDesign",
+      events: 1,
+      inputTokens: 2_000,
+      outputTokens: 750,
+      cacheWriteTokens: 25,
+    });
+  });
+});
+
 describe("getCachedSelectionStatus", () => {
   test("deduplicates repeated selections before reporting totals", async () => {
     const ownerTokenIdentifier = "user|cached-selection-dedupe";
