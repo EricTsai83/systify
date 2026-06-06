@@ -12,6 +12,10 @@ export const LANDING_PATH = "/";
 export const AUTH_CALLBACK_ROUTE_SEGMENT = "callback";
 export const AUTH_CALLBACK_PATH = `/${AUTH_CALLBACK_ROUTE_SEGMENT}` as const;
 
+export const PUBLIC_ROUTE_SEGMENTS = {
+  sharedThread: "share/t/:token",
+} as const;
+
 /**
  * Authenticated route segments.
  *
@@ -104,6 +108,10 @@ export function repositoryPath(repositoryId: RepositoryId): string {
  */
 export function repolessThreadPath(threadId: ThreadId): string {
   return `/chat/${threadId}`;
+}
+
+export function sharedThreadPath(token: string): string {
+  return `/share/t/${encodeURIComponent(token)}`;
 }
 
 /**

@@ -32,7 +32,7 @@ function isUserPreferences(value: unknown): value is UserPreferences {
   );
 }
 
-function normalizePreferences(value: UserPreferences): UserPreferences {
+export function normalizeUserPreferences(value: UserPreferences): UserPreferences {
   return {
     traits: dedupeTraits(value.traits),
     customInstructions: normalizeCustomInstructions(value.customInstructions),
@@ -57,7 +57,7 @@ function dedupeTraits(traits: readonly string[]): string[] {
   return out;
 }
 
-function arePreferencesEqual(a: UserPreferences, b: UserPreferences): boolean {
+export function areUserPreferencesEqual(a: UserPreferences, b: UserPreferences): boolean {
   return (
     a.customInstructions === b.customInstructions &&
     a.traits.length === b.traits.length &&
@@ -66,7 +66,7 @@ function arePreferencesEqual(a: UserPreferences, b: UserPreferences): boolean {
 }
 
 function isDefaultPreferences(value: UserPreferences): boolean {
-  return arePreferencesEqual(value, DEFAULT_USER_PREFERENCES);
+  return areUserPreferencesEqual(value, DEFAULT_USER_PREFERENCES);
 }
 
 function preferencesFromViewerPreferences(
@@ -74,7 +74,7 @@ function preferencesFromViewerPreferences(
 ): UserPreferences {
   return viewerPreferences === null
     ? DEFAULT_USER_PREFERENCES
-    : normalizePreferences({
+    : normalizeUserPreferences({
         traits: viewerPreferences.traits,
         customInstructions: viewerPreferences.customInstructions,
       });
@@ -86,7 +86,7 @@ export function useUserPreferences(): readonly [
 ] {
   const [cachedPreferences] = useState<UserPreferences | null>(() => {
     const cached = readJSON(USER_PREFERENCES_STORAGE_KEY, isUserPreferences);
-    return cached ? normalizePreferences(cached) : null;
+    return cached ? normalizeUserPreferences(cached) : null;
   });
   const cachedPreferencesRef = useRef<UserPreferences | null>(cachedPreferences);
   const [preferences, setPreferences] = useState<UserPreferences>(() => cachedPreferences ?? DEFAULT_USER_PREFERENCES);
@@ -138,7 +138,7 @@ export function useUserPreferences(): readonly [
     const next = preferencesFromViewerPreferences(viewerPreferences);
     const pendingServerEcho = serverEchoPendingRef.current;
     if (pendingServerEcho !== null) {
-      if (arePreferencesEqual(next, pendingServerEcho)) {
+      if (areUserPreferencesEqual(next, pendingServerEcho)) {
         serverEchoPendingRef.current = null;
       } else {
         return;
@@ -156,7 +156,7 @@ export function useUserPreferences(): readonly [
       (viewerPreferences === null || viewerPreferences.customizationUpdatedAt === null);
 
     if (shouldMigrateCache) {
-      const preferencesToMigrate = normalizePreferences(cached);
+      const preferencesToMigrate = normalizeUserPreferences(cached);
       migrationInFlightRef.current = true;
       clearRetryTimer();
       void updateCustomization(preferencesToMigrate)
@@ -175,7 +175,7 @@ export function useUserPreferences(): readonly [
       return;
     }
 
-    if (!arePreferencesEqual(preferences, next)) {
+    if (!areUserPreferencesEqual(preferences, next)) {
       const handle = window.setTimeout(() => setPreferences(next), 0);
       return () => window.clearTimeout(handle);
     }
@@ -187,7 +187,7 @@ export function useUserPreferences(): readonly [
     }
 
     const version = localEditVersionRef.current;
-    const preferencesToSave = normalizePreferences(preferences);
+    const preferencesToSave = normalizeUserPreferences(preferences);
     clearRetryTimer();
     const handle = window.setTimeout(() => {
       void updateCustomization(preferencesToSave)
@@ -211,7 +211,7 @@ export function useUserPreferences(): readonly [
   const setPersistedPreferences = useCallback(
     (next: UserPreferences | ((prev: UserPreferences) => UserPreferences)) => {
       localEditVersionRef.current += 1;
-      setPreferences((prev) => normalizePreferences(typeof next === "function" ? next(prev) : next));
+      setPreferences((prev) => normalizeUserPreferences(typeof next === "function" ? next(prev) : next));
     },
     [],
   );

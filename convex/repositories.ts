@@ -9,6 +9,7 @@ import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
 import { getRepositorySandboxStatus } from "./lib/repositorySandbox";
 import { makeRepositoryTitle, parseGitHubUrl } from "./lib/github";
 import { pickNextRepositoryColor, touchRepositoryLastAccessed } from "./lib/repositoryPalette";
+import { recordThreadCreatedInHistory } from "./chat/historyState";
 import { startedResultValidator } from "./lib/functionResultSchemas";
 import { runRepositoryCascadeDelete } from "./lib/repositoryCascade";
 import { archiveOwnedRepository, requestRepositoryDeletion, restoreOwnedRepository } from "./lib/repositoryRetirement";
@@ -420,6 +421,8 @@ export const createRepositoryImport = mutation({
         mode: defaultThreadMode,
         lastMessageAt: Date.now(),
       });
+      const defaultThreadRow = (await ctx.db.get(defaultThreadId))!;
+      await recordThreadCreatedInHistory(ctx, defaultThreadRow);
     } else {
       defaultThreadMode = defaultThread.mode;
     }

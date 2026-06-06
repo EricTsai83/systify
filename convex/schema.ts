@@ -815,6 +815,35 @@ export default defineSchema({
     .index("by_repositoryId_mode_and_pinnedAt", ["repositoryId", "mode", "pinnedAt"])
     .index("by_mode", ["mode"]),
 
+  chatHistoryGroups: defineTable({
+    ownerTokenIdentifier: v.string(),
+    groupKey: v.string(),
+    repositoryId: v.optional(v.id("repositories")),
+    lastThreadAt: v.number(),
+    lastThreadId: v.id("threads"),
+    threadCount: v.number(),
+  })
+    .index("by_ownerTokenIdentifier_and_lastThreadAt", ["ownerTokenIdentifier", "lastThreadAt"])
+    .index("by_ownerTokenIdentifier_and_groupKey", ["ownerTokenIdentifier", "groupKey"])
+    .index("by_repositoryId", ["repositoryId"]),
+
+  threadShares: defineTable({
+    ownerTokenIdentifier: v.string(),
+    threadId: v.id("threads"),
+    repositoryId: v.optional(v.id("repositories")),
+    token: v.string(),
+    tokenPrefix: v.string(),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    revokedAt: v.optional(v.number()),
+  })
+    .index("by_token", ["token"])
+    .index("by_ownerTokenIdentifier_and_createdAt", ["ownerTokenIdentifier", "createdAt"])
+    .index("by_ownerTokenIdentifier_and_threadId", ["ownerTokenIdentifier", "threadId"])
+    .index("by_threadId", ["threadId"])
+    .index("by_repositoryId", ["repositoryId"])
+    .index("by_expiresAt", ["expiresAt"]),
+
   messages: defineTable({
     repositoryId: v.optional(v.id("repositories")),
     threadId: v.id("threads"),

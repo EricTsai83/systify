@@ -12,6 +12,12 @@ import { MAX_STREAM_CHUNKS_PER_PASS } from "../lib/constants";
 import { touchRepositoryLastAccessed } from "../lib/repositoryPalette";
 import { deleteMessageStreamState } from "./streamStore";
 import { drainMessageToolCallEvents } from "./toolCallEventStore";
+import {
+  drainThreadSharesByThreadId,
+  recordThreadCreatedInHistory,
+  recordThreadMovedInHistory,
+  recordThreadRemovedFromHistory,
+} from "./historyState";
 
 /**
  * Upper bound on the per-thread Ask scope filter. 20 ids keeps the filter
@@ -237,6 +243,8 @@ export const createThread = mutation({
       mode,
       lastMessageAt: Date.now(),
     });
+    const thread = (await ctx.db.get(threadId))!;
+    await recordThreadCreatedInHistory(ctx, thread);
     return { _id: threadId, mode };
   },
 });
@@ -285,6 +293,8 @@ export const createLibraryAskThread = mutation({
       lastMessageAt: Date.now(),
       artifactContext: artifactContext.length > 0 ? artifactContext : undefined,
     });
+    const thread = (await ctx.db.get(threadId))!;
+    await recordThreadCreatedInHistory(ctx, thread);
     return { _id: threadId, mode: "library" as const };
   },
 });
@@ -343,6 +353,11 @@ export const setThreadRepository = mutation({
         mode: nextMode,
         ...(swappedFromRepositoryId ? { artifactContext: undefined } : {}),
       });
+      const updatedThread = (await ctx.db.get(args.threadId))!;
+      await recordThreadMovedInHistory(ctx, {
+        previousThread: thread,
+        updatedThread,
+      });
       return {
         repositoryId: args.repositoryId,
         mode: nextMode,
@@ -362,6 +377,11 @@ export const setThreadRepository = mutation({
       defaultGroundLibrary: false,
       defaultGroundSandbox: false,
       artifactContext: undefined,
+    });
+    const updatedThread = (await ctx.db.get(args.threadId))!;
+    await recordThreadMovedInHistory(ctx, {
+      previousThread: thread,
+      updatedThread,
     });
     return { repositoryId: null as null, mode: detachedMode };
   },
@@ -483,6 +503,13 @@ async function deleteThreadImpl(ctx: MutationCtx, args: { threadId: Id<"threads"
     }
   }
 
+  const sharesStillRemain = await drainThreadSharesByThreadId(ctx, args.threadId);
+  if (sharesStillRemain) {
+    await ctx.scheduler.runAfter(0, internal.chat.threads.deleteThreadContinuation, args);
+    return;
+  }
+
+  await recordThreadRemovedFromHistory(ctx, thread);
   await ctx.db.delete(args.threadId);
 
   if (streamBudgetExhausted || streams.length === 500) {
