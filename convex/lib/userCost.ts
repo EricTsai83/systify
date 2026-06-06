@@ -38,6 +38,30 @@ export const ARTIFACT_INDEXING_BATCH_BUDGET_ESTIMATE_USD = 0.01;
 export const LIBRARY_RETRIEVAL_BUDGET_ESTIMATE_USD = 0.001;
 export const TITLE_GENERATION_BUDGET_ESTIMATE_USD = 0.001;
 
+export function isUsageBudgetExceededError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("data" in error)) {
+    return false;
+  }
+  const data = error.data;
+  if (typeof data === "object" && data !== null && "code" in data) {
+    return data.code === "USER_USAGE_BUDGET_EXCEEDED";
+  }
+  if (typeof data === "string") {
+    try {
+      const parsed = JSON.parse(data);
+      return (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "code" in parsed &&
+        parsed.code === "USER_USAGE_BUDGET_EXCEEDED"
+      );
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 const usageFeatureValidator = v.union(
   v.literal("chat"),
   v.literal("systemDesign"),
@@ -985,7 +1009,7 @@ export async function recordUserUsageEvent(
     } else {
       await ctx.db.patch(budgetPeriod._id, {
         budgetUsd: profile.budgetUsd,
-        spentUsd: Math.max(budgetPeriod.spentUsd, budgetPeriod.spentUsd + delta.costUsd),
+        spentUsd: budgetPeriod.spentUsd + delta.costUsd,
         updatedAt: now,
       });
     }

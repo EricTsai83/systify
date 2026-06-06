@@ -36,18 +36,20 @@ function getUsageBudgetExceededMessage(error: unknown) {
     return null;
   }
 
-  const resetSuffix =
+  const resetDate =
     "periodEndMs" in data && typeof data.periodEndMs === "number" && Number.isFinite(data.periodEndMs)
-      ? ` Resets ${formatUsageResetDate(data.periodEndMs)}.`
-      : "";
+      ? new Date(data.periodEndMs)
+      : null;
+  const hasValidResetDate = resetDate !== null && !Number.isNaN(resetDate.getTime());
+  const resetSuffix = hasValidResetDate ? ` Resets ${formatUsageResetDate(resetDate)}.` : "";
   return `Usage budget reached for the current cycle. Review Settings → Usage.${resetSuffix}`;
 }
 
-function formatUsageResetDate(ms: number) {
+function formatUsageResetDate(date: Date) {
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
-  }).format(new Date(ms));
+  }).format(date);
 }
 
 export function toUserErrorMessage(error: unknown, fallback: string) {

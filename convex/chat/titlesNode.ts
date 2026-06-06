@@ -29,6 +29,7 @@ import { isDefaultTitle } from "../lib/threadDefaults";
 import { sanitizeTitle } from "../lib/titleSanitization";
 import { logErrorWithId } from "../lib/observability";
 import { ROLE_MODELS } from "../lib/llmCatalog";
+import { isUsageBudgetExceededError } from "../lib/userCost";
 import type { TitleGenContext } from "./titles";
 
 /**
@@ -185,27 +186,3 @@ export const generateThreadTitle = internalAction({
     }
   },
 });
-
-function isUsageBudgetExceededError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null || !("data" in error)) {
-    return false;
-  }
-  const data = error.data;
-  if (typeof data === "object" && data !== null && "code" in data) {
-    return data.code === "USER_USAGE_BUDGET_EXCEEDED";
-  }
-  if (typeof data === "string") {
-    try {
-      const parsed = JSON.parse(data);
-      return (
-        typeof parsed === "object" &&
-        parsed !== null &&
-        "code" in parsed &&
-        parsed.code === "USER_USAGE_BUDGET_EXCEEDED"
-      );
-    } catch {
-      return false;
-    }
-  }
-  return false;
-}

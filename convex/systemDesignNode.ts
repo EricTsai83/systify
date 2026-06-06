@@ -24,6 +24,7 @@ import {
   validateMermaidBlock,
   validateRequiredSections,
 } from "./lib/systemDesignPrompts";
+import { isUsageBudgetExceededError } from "./lib/userCost";
 
 /**
  * Library System Design generator.
@@ -504,30 +505,6 @@ function classifyLlmError(
     return "model_empty_output";
   }
   return "infra";
-}
-
-function isUsageBudgetExceededError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null || !("data" in error)) {
-    return false;
-  }
-  const data = error.data;
-  if (typeof data === "object" && data !== null && "code" in data) {
-    return data.code === "USER_USAGE_BUDGET_EXCEEDED";
-  }
-  if (typeof data === "string") {
-    try {
-      const parsed = JSON.parse(data);
-      return (
-        typeof parsed === "object" &&
-        parsed !== null &&
-        "code" in parsed &&
-        parsed.code === "USER_USAGE_BUDGET_EXCEEDED"
-      );
-    } catch {
-      return false;
-    }
-  }
-  return false;
 }
 
 /**

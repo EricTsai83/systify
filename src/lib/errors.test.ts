@@ -45,4 +45,16 @@ describe("toUserErrorMessage", () => {
     expect(message).toContain("Settings → Usage");
     expect(message).toContain("Resets");
   });
+
+  test("omits usage-budget reset copy for invalid reset timestamps", () => {
+    const error = Object.assign(new Error("ConvexError"), {
+      data: {
+        code: "USER_USAGE_BUDGET_EXCEEDED",
+        periodEndMs: 8.64e15 + 1,
+      },
+    });
+
+    const message = toUserErrorMessage(error, "Fallback message.");
+    expect(message).toBe("Usage budget reached for the current cycle. Review Settings → Usage.");
+  });
 });

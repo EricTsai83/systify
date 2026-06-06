@@ -13,6 +13,7 @@ import {
 import { embedViaGateway } from "./lib/llmGateway";
 import { costUsdToCents } from "./lib/llmPricing";
 import { logInfo, logWarn } from "./lib/observability";
+import { isUsageBudgetExceededError } from "./lib/userCost";
 
 /**
  * Embedding model used for artifact chunk indexing. Must match a
@@ -258,30 +259,6 @@ async function embedArtifactChunks(
     });
   }
   return embeddings;
-}
-
-function isUsageBudgetExceededError(error: unknown): boolean {
-  if (typeof error !== "object" || error === null || !("data" in error)) {
-    return false;
-  }
-  const data = error.data;
-  if (typeof data === "object" && data !== null && "code" in data) {
-    return data.code === "USER_USAGE_BUDGET_EXCEEDED";
-  }
-  if (typeof data === "string") {
-    try {
-      const parsed = JSON.parse(data);
-      return (
-        typeof parsed === "object" &&
-        parsed !== null &&
-        "code" in parsed &&
-        parsed.code === "USER_USAGE_BUDGET_EXCEEDED"
-      );
-    } catch {
-      return false;
-    }
-  }
-  return false;
 }
 
 function readNumberEnv(name: string, fallback: number): number {

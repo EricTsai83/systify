@@ -615,6 +615,7 @@ function UsageSettingsSection() {
     (Number(cycleAnchorDay) !== dashboard.profile.cycleAnchorDay ||
       (normalizedTimeZone.valid && normalizedTimeZone.value !== dashboard.profile.timeZone) ||
       parsedBudget.value !== dashboard.profile.budgetUsd ||
+      (dashboard.profile.budgetUsd === null && parsedBudget.value === null && budgetInput.trim() !== "") ||
       hardCapEnabled !== persistedHardCapEnabled);
   const usageProfileStatus = !dashboard
     ? USAGE_COPY.section.loadingStatus
