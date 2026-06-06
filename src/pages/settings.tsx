@@ -5,6 +5,7 @@ import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import {
   CaretLeftIcon,
   CaretRightIcon,
+  CaretUpDownIcon,
   ChatCircleText,
   ChartLineUp,
   CheckCircle,
@@ -27,13 +28,24 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import {
+  Combobox,
+  ComboboxCollection,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+  ComboboxTrigger,
+} from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useComboboxAnchor } from "@/components/ui/use-combobox-anchor";
 import {
   CUSTOM_INSTRUCTIONS_MAX_LENGTH,
   type UserPreferences,
@@ -51,6 +63,7 @@ import {
 } from "@/route-paths";
 import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import { toUserErrorMessage } from "@/lib/errors";
+import { cn } from "@/lib/utils";
 
 type SetUserPreferences = (next: UserPreferences | ((prev: UserPreferences) => UserPreferences)) => void;
 
@@ -100,8 +113,62 @@ const DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
 const BROWSER_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const USAGE_HISTORY_PERIOD_COUNT = 12;
 const MAX_VIEWER_USAGE_DASHBOARD_CACHE_ENTRIES = 4;
+const BUDGET_PRESETS_USD = [5, 10, 25, 50] as const;
+const COMMON_TIME_ZONES = [
+  "UTC",
+  "Asia/Taipei",
+  "Asia/Tokyo",
+  "Asia/Seoul",
+  "Asia/Singapore",
+  "Asia/Hong_Kong",
+  "Asia/Shanghai",
+  "Asia/Bangkok",
+  "Asia/Kolkata",
+  "Asia/Dubai",
+  "Europe/London",
+  "Europe/Berlin",
+  "Europe/Paris",
+  "Europe/Amsterdam",
+  "Europe/Madrid",
+  "Europe/Rome",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "America/Toronto",
+  "America/Vancouver",
+  "America/Sao_Paulo",
+  "Australia/Sydney",
+  "Australia/Melbourne",
+  "Pacific/Auckland",
+] as const;
+const TIME_ZONE_SEARCH_ALIASES: Record<string, string> = {
+  "Asia/Taipei": "Taipei Taiwan 台北",
+  "Asia/Tokyo": "Tokyo Japan",
+  "Asia/Seoul": "Seoul Korea",
+  "Asia/Singapore": "Singapore SG",
+  "Asia/Hong_Kong": "Hong Kong HK",
+  "Asia/Shanghai": "Shanghai Beijing China",
+  "Asia/Bangkok": "Bangkok Thailand",
+  "Asia/Kolkata": "India Delhi Mumbai",
+  "Europe/London": "London UK England",
+  "Europe/Berlin": "Berlin Germany",
+  "Europe/Paris": "Paris France",
+  "America/New_York": "New York Eastern ET EST EDT",
+  "America/Chicago": "Chicago Central CT CST CDT",
+  "America/Denver": "Denver Mountain MT MST MDT",
+  "America/Los_Angeles": "Los Angeles Pacific PT PST PDT California",
+  "UTC": "Coordinated Universal Time GMT Zulu",
+};
 
 type ViewerUsageDashboard = NonNullable<ReturnType<typeof useQuery<typeof api.lib.userCost.getViewerUsageDashboard>>>;
+
+type TimeZoneOption = {
+  value: string;
+  label: string;
+  detail: string;
+  searchText: string;
+};
 
 const viewerUsageDashboardCache = new Map<string, ViewerUsageDashboard>();
 
@@ -403,6 +470,117 @@ function useCachedViewerUsageDashboard(cacheKey: string | null): {
   };
 }
 
+function getSupportedTimeZoneValues(): string[] {
+  const intlWithSupportedValues = Intl as typeof Intl & {
+    supportedValuesOf?: (key: "timeZone") => string[];
+  };
+  const supportedTimeZones =
+    typeof intlWithSupportedValues.supportedValuesOf === "function"
+      ? intlWithSupportedValues.supportedValuesOf("timeZone")
+      : [];
+
+  return dedupeStrings(["UTC", BROWSER_TIME_ZONE, ...COMMON_TIME_ZONES, ...supportedTimeZones]);
+}
+
+function dedupeStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter((value) => value.trim().length > 0)));
+}
+
+function buildTimeZoneOption(timeZone: string): TimeZoneOption {
+  const city = formatTimeZoneCity(timeZone);
+  const offset = formatTimeZoneOffset(timeZone);
+  const alias = TIME_ZONE_SEARCH_ALIASES[timeZone] ?? "";
+  return {
+    value: timeZone,
+    label: timeZone,
+    detail: `${offset} · ${city}`,
+    searchText: `${timeZone} ${city} ${offset} ${alias}`,
+  };
+}
+
+function buildTimeZoneOptions(currentValue: string): TimeZoneOption[] {
+  const normalizedCurrent = normalizeTimeZoneInput(currentValue);
+  const values = dedupeStrings(
+    [
+      "UTC",
+      BROWSER_TIME_ZONE,
+      normalizedCurrent.valid ? normalizedCurrent.value : null,
+      ...getSupportedTimeZoneValues(),
+    ].filter((value): value is string => value !== null),
+  );
+  const favorites = new Set(["UTC", BROWSER_TIME_ZONE, normalizedCurrent.valid ? normalizedCurrent.value : ""]);
+  const favoriteOptions = values
+    .filter((value) => favorites.has(value))
+    .map(buildTimeZoneOption)
+    .sort((a, b) => {
+      if (a.value === BROWSER_TIME_ZONE) return -1;
+      if (b.value === BROWSER_TIME_ZONE) return 1;
+      if (a.value === "UTC") return -1;
+      if (b.value === "UTC") return 1;
+      return a.value.localeCompare(b.value);
+    });
+  const remainingOptions = values
+    .filter((value) => !favorites.has(value))
+    .map(buildTimeZoneOption)
+    .sort((a, b) => a.value.localeCompare(b.value));
+
+  return [...favoriteOptions, ...remainingOptions];
+}
+
+function normalizeTimeZoneInput(timeZone: string): { valid: true; value: string } | { valid: false } {
+  const trimmed = timeZone.trim();
+  if (!trimmed) {
+    return { valid: false };
+  }
+  try {
+    const resolvedTimeZone = new Intl.DateTimeFormat("en-US", { timeZone: trimmed }).resolvedOptions().timeZone;
+    return { valid: true, value: resolvedTimeZone };
+  } catch {
+    return { valid: false };
+  }
+}
+
+function formatTimeZoneCity(timeZone: string): string {
+  if (timeZone === "UTC") {
+    return "Coordinated Universal Time";
+  }
+  const parts = timeZone.split("/");
+  return (parts.at(-1) ?? timeZone).replaceAll("_", " ");
+}
+
+function formatTimeZoneOffset(timeZone: string): string {
+  try {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      timeZoneName: "shortOffset",
+      hour: "numeric",
+    });
+    return formatter.formatToParts(new Date()).find((part) => part.type === "timeZoneName")?.value ?? "GMT";
+  } catch {
+    return "GMT";
+  }
+}
+
+function parseBudgetUsdInput(rawBudget: string): { value: number | null; error: string | null } {
+  const trimmed = rawBudget.trim();
+  if (!trimmed) {
+    return { value: null, error: null };
+  }
+
+  const normalized = trimmed.replace(/^\$/, "").replaceAll(",", "");
+  const value = Number(normalized);
+  if (!Number.isFinite(value)) {
+    return { value: null, error: "Enter a valid USD amount, or leave it blank for no budget." };
+  }
+  if (value < 0.01) {
+    return { value, error: "Budget must be at least $0.01." };
+  }
+  if (value > 10_000) {
+    return { value, error: "Budget must be $10,000 or less." };
+  }
+  return { value, error: null };
+}
+
 function UsageSettingsSection() {
   const { user } = useAuth();
   const { dashboard, isRefreshing } = useCachedViewerUsageDashboard(user?.email ?? null);
@@ -419,7 +597,34 @@ function UsageSettingsSection() {
   const budgetInput =
     budgetInputDraft ??
     (dashboard?.profile.budgetUsd === null || !dashboard ? "" : String(dashboard.profile.budgetUsd));
-  const hardCapEnabled = hardCapEnabledDraft ?? dashboard?.profile.hardCapEnabled ?? false;
+  const parsedBudget = parseBudgetUsdInput(budgetInput);
+  const hasConfiguredBudget = parsedBudget.error === null && parsedBudget.value !== null;
+  const hardCapEnabled = hasConfiguredBudget
+    ? (hardCapEnabledDraft ?? dashboard?.profile.hardCapEnabled ?? false)
+    : false;
+  const normalizedTimeZone = normalizeTimeZoneInput(timeZone);
+  const timeZoneError = normalizedTimeZone.valid ? null : "Choose a valid IANA timezone.";
+  const hasFormErrors = parsedBudget.error !== null || timeZoneError !== null;
+  const persistedHardCapEnabled = dashboard
+    ? dashboard.profile.budgetUsd === null
+      ? false
+      : dashboard.profile.hardCapEnabled
+    : false;
+  const isUsageProfileDirty =
+    !!dashboard &&
+    (Number(cycleAnchorDay) !== dashboard.profile.cycleAnchorDay ||
+      (normalizedTimeZone.valid && normalizedTimeZone.value !== dashboard.profile.timeZone) ||
+      parsedBudget.value !== dashboard.profile.budgetUsd ||
+      hardCapEnabled !== persistedHardCapEnabled);
+  const usageProfileStatus = !dashboard
+    ? USAGE_COPY.section.loadingStatus
+    : isUsageProfileDirty
+      ? "Unsaved changes"
+      : saveStatus || "Saved";
+  const timeZoneOptions = useMemo(() => buildTimeZoneOptions(timeZone), [timeZone]);
+  const activeTimeZoneOption = normalizedTimeZone.valid
+    ? (timeZoneOptions.find((option) => option.value === normalizedTimeZone.value) ?? null)
+    : null;
 
   const budgetProgress = dashboard?.budget.percentUsed === null ? 0 : Math.min(100, dashboard?.budget.percentUsed ?? 0);
   const budgetState = normalizeBudgetState(dashboard?.budget.state);
@@ -448,16 +653,27 @@ function UsageSettingsSection() {
     setSaveError(null);
   }, []);
 
+  const resetUsageProfileDrafts = useCallback(() => {
+    setCycleAnchorDayDraft(null);
+    setTimeZoneDraft(null);
+    setBudgetInputDraft(null);
+    setHardCapEnabledDraft(null);
+    clearSaveFeedback();
+  }, [clearSaveFeedback]);
+
   const [isSaving, handleSave] = useAsyncCallback(async () => {
     setSaveError(null);
     setSaveStatus(null);
-    const parsedBudget = budgetInput.trim() === "" ? null : Number(budgetInput);
+    if (!normalizedTimeZone.valid || parsedBudget.error !== null) {
+      setSaveError("Fix the highlighted usage settings before saving.");
+      return;
+    }
     try {
       await updateUsageProfile({
         cycleAnchorDay: Number(cycleAnchorDay),
-        timeZone: timeZone.trim(),
-        budgetUsd: parsedBudget,
-        hardCapEnabled: parsedBudget !== null && hardCapEnabled,
+        timeZone: normalizedTimeZone.value,
+        budgetUsd: parsedBudget.value,
+        hardCapEnabled: parsedBudget.value !== null && hardCapEnabled,
       });
       setCycleAnchorDayDraft(null);
       setTimeZoneDraft(null);
@@ -627,7 +843,7 @@ function UsageSettingsSection() {
             <h2 className="text-sm font-semibold">Cycle History</h2>
           </div>
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[42rem] text-left text-sm">
+            <table className="w-full min-w-2xl text-left text-sm">
               <thead className="border-b border-border bg-muted/30 text-xs uppercase text-muted-foreground">
                 <tr>
                   <th className="px-5 py-3 font-semibold">Period</th>
@@ -663,89 +879,215 @@ function UsageSettingsSection() {
           </div>
         </Card>
 
-        <Card className="p-5">
-          <div className="flex flex-col gap-1">
-            <h2 className="text-sm font-semibold">Monitoring Settings</h2>
+        <Card className="overflow-hidden p-0">
+          <div className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold">Monitoring Settings</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Controls how estimated provider cost is grouped and when new LLM work should stop.
+              </p>
+            </div>
+            <Badge variant={isUsageProfileDirty ? "outline" : "muted"} className="w-fit">
+              {usageProfileStatus}
+            </Badge>
           </div>
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            <label className="flex flex-col gap-1.5 text-sm font-medium">
-              Cycle anchor day
-              <Select
-                value={cycleAnchorDay}
-                onValueChange={(value) => {
-                  setCycleAnchorDayDraft(value);
-                  clearSaveFeedback();
-                }}
-                disabled={!dashboard || isSaving}
+
+          <form
+            className="p-5"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void handleSave();
+            }}
+          >
+            <div className="grid gap-5 lg:grid-cols-2">
+              <UsageProfileField
+                label="Cycle anchor day"
+                description="The day each monthly usage cycle starts. Day 31 uses the last valid day in shorter months."
               >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {Array.from({ length: 31 }, (_, index) => String(index + 1)).map((day) => (
-                    <SelectItem key={day} value={day}>
-                      {day}
-                    </SelectItem>
+                <Select
+                  value={cycleAnchorDay}
+                  onValueChange={(value) => {
+                    setCycleAnchorDayDraft(value);
+                    clearSaveFeedback();
+                  }}
+                  disabled={!dashboard || isSaving}
+                >
+                  <SelectTrigger aria-label="Cycle anchor day">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {Array.from({ length: 31 }, (_, index) => String(index + 1)).map((day) => (
+                        <SelectItem key={day} value={day}>
+                          {formatCycleAnchorDayLabel(Number(day))}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </UsageProfileField>
+
+              <UsageProfileField
+                label="Timezone"
+                description={`Browser timezone: ${BROWSER_TIME_ZONE}`}
+                error={timeZoneError}
+              >
+                <TimeZoneSelector
+                  value={activeTimeZoneOption}
+                  options={timeZoneOptions}
+                  disabled={!dashboard || isSaving}
+                  invalid={timeZoneError !== null}
+                  onValueChange={(value) => {
+                    setTimeZoneDraft(value);
+                    clearSaveFeedback();
+                  }}
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    disabled={!dashboard || isSaving || timeZone === BROWSER_TIME_ZONE}
+                    onClick={() => {
+                      setTimeZoneDraft(BROWSER_TIME_ZONE);
+                      clearSaveFeedback();
+                    }}
+                  >
+                    Use browser timezone
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    disabled={!dashboard || isSaving || timeZone === "UTC"}
+                    onClick={() => {
+                      setTimeZoneDraft("UTC");
+                      clearSaveFeedback();
+                    }}
+                  >
+                    Use UTC
+                  </Button>
+                </div>
+              </UsageProfileField>
+
+              <UsageProfileField
+                label="Budget USD"
+                description="Leave blank to disable the self-managed budget. This is provider cost telemetry, not billing."
+                error={parsedBudget.error}
+              >
+                <Input
+                  value={budgetInput}
+                  inputMode="decimal"
+                  placeholder="No budget"
+                  aria-invalid={parsedBudget.error !== null}
+                  disabled={!dashboard || isSaving}
+                  onChange={(event) => {
+                    setBudgetInputDraft(event.target.value);
+                    clearSaveFeedback();
+                  }}
+                />
+                <div className="flex flex-wrap gap-2">
+                  {BUDGET_PRESETS_USD.map((amount) => (
+                    <Button
+                      key={amount}
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      disabled={!dashboard || isSaving}
+                      onClick={() => {
+                        setBudgetInputDraft(String(amount));
+                        clearSaveFeedback();
+                      }}
+                    >
+                      {USD_FORMATTER.format(amount)}
+                    </Button>
                   ))}
-                </SelectContent>
-              </Select>
-            </label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    disabled={!dashboard || isSaving || budgetInput.trim() === ""}
+                    onClick={() => {
+                      setBudgetInputDraft("");
+                      setHardCapEnabledDraft(false);
+                      clearSaveFeedback();
+                    }}
+                  >
+                    No budget
+                  </Button>
+                </div>
+              </UsageProfileField>
 
-            <label className="flex flex-col gap-1.5 text-sm font-medium">
-              Timezone
-              <Input
-                value={timeZone}
-                placeholder={BROWSER_TIME_ZONE}
-                disabled={!dashboard || isSaving}
-                onChange={(event) => {
-                  setTimeZoneDraft(event.target.value);
-                  clearSaveFeedback();
-                }}
-              />
-              <span className="text-xs font-normal text-muted-foreground">Browser timezone: {BROWSER_TIME_ZONE}</span>
-            </label>
+              <UsageProfileField
+                label="Hard cap"
+                description={
+                  hasConfiguredBudget
+                    ? "New LLM work is blocked once spend plus reservations exceeds the budget."
+                    : "Set a budget first to enable hard-cap enforcement."
+                }
+              >
+                <label
+                  className={cn(
+                    "flex min-h-24 items-start gap-3 border border-border bg-background p-4 text-sm transition-colors",
+                    hasConfiguredBudget && !isSaving
+                      ? "cursor-pointer hover:border-foreground/30 hover:bg-muted/30"
+                      : "cursor-not-allowed opacity-70",
+                    hardCapEnabled ? "border-foreground/30 bg-muted/20" : null,
+                  )}
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-1 size-4 accent-primary"
+                    checked={hardCapEnabled}
+                    disabled={!dashboard || isSaving || !hasConfiguredBudget}
+                    onChange={(event) => {
+                      setHardCapEnabledDraft(event.target.checked);
+                      clearSaveFeedback();
+                    }}
+                  />
+                  <span className="flex min-w-0 flex-1 flex-col gap-1">
+                    <span className="flex flex-wrap items-center gap-2 font-semibold">
+                      Hard cap new LLM work
+                      <Badge variant={hardCapEnabled ? "outline" : "muted"}>{hardCapEnabled ? "On" : "Off"}</Badge>
+                    </span>
+                    <span className="text-muted-foreground">
+                      {hasConfiguredBudget
+                        ? `Blocks new estimated work over ${USD_FORMATTER.format(parsedBudget.value ?? 0)}. Already-running work can still settle actual cost.`
+                        : "Budget disabled. Usage is still monitored, but no new work is blocked."}
+                    </span>
+                  </span>
+                </label>
+              </UsageProfileField>
+            </div>
 
-            <label className="flex flex-col gap-1.5 text-sm font-medium">
-              Budget USD
-              <Input
-                value={budgetInput}
-                inputMode="decimal"
-                placeholder="No budget"
-                disabled={!dashboard || isSaving}
-                onChange={(event) => {
-                  setBudgetInputDraft(event.target.value);
-                  clearSaveFeedback();
-                }}
-              />
-            </label>
-
-            <label className="flex items-start gap-3 border border-border bg-background p-3 text-sm font-medium">
-              <input
-                type="checkbox"
-                className="mt-0.5 size-4 accent-primary"
-                checked={hardCapEnabled}
-                disabled={!dashboard || isSaving || budgetInput.trim() === ""}
-                onChange={(event) => {
-                  setHardCapEnabledDraft(event.target.checked);
-                  clearSaveFeedback();
-                }}
-              />
-              <span className="flex flex-col gap-1">
-                <span>Hard cap new LLM work</span>
-                <span className="font-normal text-muted-foreground">
-                  Blocks new work when spend plus reservations exceeds the budget.
-                </span>
-              </span>
-            </label>
-          </div>
-          <div className="mt-4 flex flex-wrap items-center gap-3">
-            <Button type="button" size="sm" onClick={() => void handleSave()} disabled={!dashboard || isSaving}>
-              <CheckCircle weight="bold" />
-              {isSaving ? "Saving" : "Save"}
-            </Button>
-            {saveStatus ? <span className="text-sm text-muted-foreground">{saveStatus}</span> : null}
-            {saveError ? <span className="text-sm text-destructive">{saveError}</span> : null}
-          </div>
+            <div className="mt-5 flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="min-h-5 text-sm text-muted-foreground">
+                {saveError ? <span className="text-destructive">{saveError}</span> : null}
+                {!saveError && dashboard
+                  ? "Changes apply to future usage events. Existing cycles keep their boundaries."
+                  : null}
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={resetUsageProfileDrafts}
+                  disabled={!dashboard || isSaving || !isUsageProfileDirty}
+                >
+                  Reset
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={!dashboard || isSaving || !isUsageProfileDirty || hasFormErrors}
+                >
+                  <CheckCircle weight="bold" />
+                  {isSaving ? "Saving" : "Save settings"}
+                </Button>
+              </div>
+            </div>
+          </form>
         </Card>
       </section>
     </TooltipProvider>
@@ -800,6 +1142,108 @@ function PlaceholderSettingsSection({ title }: { title: string }) {
         This section is ready for future settings and account controls.
       </p>
     </Card>
+  );
+}
+
+function UsageProfileField({
+  label,
+  description,
+  error,
+  children,
+}: {
+  label: string;
+  description: string;
+  error?: string | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 flex-col gap-2">
+      <div className="flex min-h-12 flex-col gap-1">
+        <p className="text-sm font-semibold">{label}</p>
+        <p className={cn("text-xs leading-5", error ? "text-destructive" : "text-muted-foreground")}>
+          {error ?? description}
+        </p>
+      </div>
+      <div className="flex flex-col gap-2">{children}</div>
+    </div>
+  );
+}
+
+function TimeZoneSelector({
+  value,
+  options,
+  disabled,
+  invalid,
+  onValueChange,
+}: {
+  value: TimeZoneOption | null;
+  options: TimeZoneOption[];
+  disabled: boolean;
+  invalid: boolean;
+  onValueChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useComboboxAnchor();
+
+  return (
+    <Combobox<TimeZoneOption>
+      items={options}
+      value={value}
+      onValueChange={(option) => {
+        if (!option) {
+          return;
+        }
+        onValueChange(option.value);
+        setOpen(false);
+      }}
+      itemToStringLabel={(option) => option.searchText}
+      itemToStringValue={(option) => option.value}
+      isItemEqualToValue={(item, selectedValue) => item.value === selectedValue.value}
+      open={open}
+      onOpenChange={setOpen}
+    >
+      <div ref={anchorRef} className="flex min-w-0">
+        <ComboboxTrigger
+          render={
+            <Button
+              type="button"
+              variant="outline"
+              className={cn(
+                "h-10 w-full min-w-0 justify-between bg-background px-3 active:scale-100",
+                invalid ? "border-destructive focus-visible:ring-destructive/20" : null,
+              )}
+              aria-label="Timezone"
+              aria-invalid={invalid}
+              disabled={disabled}
+            />
+          }
+          icon={<CaretUpDownIcon weight="bold" className="size-3.5 shrink-0 text-muted-foreground" />}
+        >
+          <span className="flex min-w-0 flex-1 flex-col items-start">
+            <span className="max-w-full truncate text-sm font-medium">{value?.label ?? "Select timezone"}</span>
+            <span className="max-w-full truncate text-xs font-normal text-muted-foreground">
+              {value?.detail ?? "IANA timezone"}
+            </span>
+          </span>
+        </ComboboxTrigger>
+      </div>
+      <ComboboxContent anchor={anchorRef} align="start" className="w-(--anchor-width) min-w-(--anchor-width)">
+        <ComboboxInput placeholder="Search city, offset, or timezone…" showTrigger={false} />
+        <ComboboxList>
+          <ComboboxCollection>
+            {(option: TimeZoneOption) => (
+              <ComboboxItem key={option.value} value={option}>
+                <span className="flex min-w-0 flex-1 flex-col">
+                  <span className="truncate font-medium">{option.label}</span>
+                  <span className="truncate text-xs text-muted-foreground">{option.detail}</span>
+                </span>
+              </ComboboxItem>
+            )}
+          </ComboboxCollection>
+          <ComboboxEmpty>No matching timezone</ComboboxEmpty>
+        </ComboboxList>
+      </ComboboxContent>
+    </Combobox>
   );
 }
 
@@ -924,6 +1368,21 @@ function formatCountLabel(count: number, singular: string, plural = `${singular}
     return `No ${plural}`;
   }
   return `${INTEGER_FORMATTER.format(count)} ${count === 1 ? singular : plural}`;
+}
+
+function formatCycleAnchorDayLabel(day: number): string {
+  if (day === 31) {
+    return "31 · last valid day when needed";
+  }
+  const suffix =
+    day % 10 === 1 && day !== 11
+      ? "st"
+      : day % 10 === 2 && day !== 12
+        ? "nd"
+        : day % 10 === 3 && day !== 13
+          ? "rd"
+          : "th";
+  return `${day}${suffix} of each month`;
 }
 
 type UsageBudgetState = "unset" | "ok" | "notice" | "warning" | "exceeded";
