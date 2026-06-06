@@ -87,7 +87,17 @@ const kindRunStatus = v.union(
   v.literal("quality_rejected"),
 );
 
-const usageRollupFeature = v.union(v.literal("chat"), v.literal("systemDesign"));
+const usageRollupFeature = v.union(
+  v.literal("chat"),
+  v.literal("systemDesign"),
+  v.literal("artifactIndexing"),
+  v.literal("libraryRetrieval"),
+  v.literal("titleGeneration"),
+);
+
+const usageBudgetReservationStatus = v.union(v.literal("reserved"), v.literal("settled"), v.literal("released"));
+
+const artifactChunkingFailureReason = v.union(v.literal("embedding_failed"), v.literal("usage_budget_exceeded"));
 
 const jobStatus = v.union(
   v.literal("queued"),
@@ -494,6 +504,7 @@ export default defineSchema({
      *                  row up again.
      */
     chunkingStatus: v.optional(v.union(v.literal("pending"), v.literal("indexed"), v.literal("failed"))),
+    chunkingFailureReason: v.optional(artifactChunkingFailureReason),
     /**
      * Wall-clock ms epoch of the most recent successful chunk write. Used
      * by the cron to detect stuck `failed` rows and retry them after the
@@ -1044,9 +1055,8 @@ export default defineSchema({
 
   /**
    * Idempotency ledger for usage rollups. Each metered source event (assistant
-   * message finalization, System Design kind run, future backfill row) writes
-   * exactly one ledger row keyed by `sourceId` before updating its daily
-   * rollup shard.
+   * message finalization or System Design kind run) writes exactly one ledger
+   * row keyed by `sourceId` before updating its daily rollup shard.
    */
   userUsageEvents: defineTable({
     sourceId: v.string(),
@@ -1064,6 +1074,84 @@ export default defineSchema({
   })
     .index("by_sourceId", ["sourceId"])
     .index("by_ownerTokenIdentifier_and_yyyymmdd", ["ownerTokenIdentifier", "yyyymmdd"]),
+
+  userUsageProfiles: defineTable({
+    ownerTokenIdentifier: v.string(),
+    cycleAnchorDay: v.number(),
+    timeZone: v.string(),
+    budgetUsd: v.optional(v.number()),
+    hardCapEnabled: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
+
+  userUsageCycleRollups: defineTable({
+    ownerTokenIdentifier: v.string(),
+    periodKey: v.string(),
+    periodStartMs: v.number(),
+    periodEndMs: v.number(),
+    cycleAnchorDay: v.number(),
+    timeZone: v.string(),
+    feature: usageRollupFeature,
+    shard: v.number(),
+    costUsd: v.number(),
+    events: v.number(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    cachedInputTokens: v.number(),
+    cacheWriteTokens: v.number(),
+    reasoningTokens: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_ownerTokenIdentifier_and_periodStartMs", ["ownerTokenIdentifier", "periodStartMs"])
+    .index("by_ownerTokenIdentifier_and_periodKey_and_feature_and_shard", [
+      "ownerTokenIdentifier",
+      "periodKey",
+      "feature",
+      "shard",
+    ]),
+
+  userUsageTotals: defineTable({
+    ownerTokenIdentifier: v.string(),
+    feature: usageRollupFeature,
+    shard: v.number(),
+    costUsd: v.number(),
+    events: v.number(),
+    inputTokens: v.number(),
+    outputTokens: v.number(),
+    cachedInputTokens: v.number(),
+    cacheWriteTokens: v.number(),
+    reasoningTokens: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"])
+    .index("by_ownerTokenIdentifier_and_feature_and_shard", ["ownerTokenIdentifier", "feature", "shard"]),
+
+  userUsageBudgetPeriods: defineTable({
+    ownerTokenIdentifier: v.string(),
+    periodKey: v.string(),
+    periodStartMs: v.number(),
+    periodEndMs: v.number(),
+    budgetUsd: v.number(),
+    spentUsd: v.number(),
+    reservedUsd: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_ownerTokenIdentifier_and_periodKey", ["ownerTokenIdentifier", "periodKey"]),
+
+  userUsageBudgetReservations: defineTable({
+    sourceId: v.string(),
+    ownerTokenIdentifier: v.string(),
+    periodKey: v.string(),
+    feature: usageRollupFeature,
+    estimatedCostUsd: v.number(),
+    actualCostUsd: v.optional(v.number()),
+    status: usageBudgetReservationStatus,
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_sourceId", ["sourceId"])
+    .index("by_ownerTokenIdentifier_and_periodKey", ["ownerTokenIdentifier", "periodKey"]),
 
   /**
    * Application invariant: each assistant reply owns at most one `messageStreams`

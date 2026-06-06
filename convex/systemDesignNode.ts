@@ -242,6 +242,9 @@ export const runSystemDesignGeneration = internalAction({
           await ctx.runMutation(internal.systemDesign.assertKindCostBudget, {
             ownerTokenIdentifier: args.ownerTokenIdentifier,
             repositoryId: args.repositoryId,
+            jobId: args.jobId,
+            kind,
+            startedAt,
           });
 
           const result = await generateViaGateway(
@@ -358,6 +361,7 @@ export const runSystemDesignGeneration = internalAction({
         outputCharLength: outputCharLength > 0 ? outputCharLength : undefined,
         missingSections,
         startedAt,
+        sourceId: `systemDesign:${args.jobId}:${kind}:${startedAt}`,
       });
 
       if (artifactId && runStatus !== "cached_hit") {
@@ -486,6 +490,9 @@ function classifyLlmError(
   if (error instanceof LlmRateLimitError) {
     return "transport_rate_limit";
   }
+  if (isUsageBudgetExceededError(error)) {
+    return "transport_rate_limit";
+  }
   if (error instanceof APICallError) {
     if (error.statusCode === 429) {
       return "transport_rate_limit";
@@ -497,6 +504,30 @@ function classifyLlmError(
     return "model_empty_output";
   }
   return "infra";
+}
+
+function isUsageBudgetExceededError(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("data" in error)) {
+    return false;
+  }
+  const data = error.data;
+  if (typeof data === "object" && data !== null && "code" in data) {
+    return data.code === "USER_USAGE_BUDGET_EXCEEDED";
+  }
+  if (typeof data === "string") {
+    try {
+      const parsed = JSON.parse(data);
+      return (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "code" in parsed &&
+        parsed.code === "USER_USAGE_BUDGET_EXCEEDED"
+      );
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 /**

@@ -48,7 +48,7 @@ import {
 } from "./lib/functionResultSchemas";
 import { logInfo, logWarn } from "./lib/observability";
 import { SYSTEM_DESIGN_PROMPT_VERSIONS } from "./lib/systemDesignPrompts";
-import { recordUserUsageEvent } from "./lib/userCost";
+import { SYSTEM_DESIGN_KIND_BUDGET_ESTIMATE_USD, recordUserUsageEvent, reserveUserUsageBudget } from "./lib/userCost";
 
 /**
  * Default LLM pick for System Design jobs when the caller does not
@@ -797,12 +797,22 @@ export const assertKindCostBudget = internalMutation({
   args: {
     ownerTokenIdentifier: v.string(),
     repositoryId: v.id("repositories"),
+    jobId: v.id("jobs"),
+    kind: systemDesignKindValidator,
+    startedAt: v.number(),
   },
   handler: async (ctx, args): Promise<void> => {
     await assertSandboxDailyCostBudget(ctx, {
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId: args.repositoryId,
       estimateCents: getSandboxReplyEstimateCents(),
+    });
+    await reserveUserUsageBudget(ctx, {
+      sourceId: `systemDesign:${args.jobId}:${args.kind}:${args.startedAt}`,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      feature: "systemDesign",
+      estimatedCostUsd: SYSTEM_DESIGN_KIND_BUDGET_ESTIMATE_USD,
+      occurredAtMs: args.startedAt,
     });
   },
 });
@@ -842,6 +852,7 @@ export const recordKindRun = internalMutation({
     outputCharLength: v.optional(v.number()),
     missingSections: v.optional(v.array(v.string())),
     startedAt: v.number(),
+    sourceId: v.optional(v.string()),
   },
   returns: recordedKindRunResultValidator,
   handler: async (ctx, args): Promise<{ kindRunId: Id<"systemDesignKindRuns"> }> => {
@@ -873,7 +884,7 @@ export const recordKindRun = internalMutation({
 
     if (args.status !== "cached_hit") {
       await recordUserUsageEvent(ctx, {
-        sourceId: `systemDesignKindRun:${kindRunId}`,
+        sourceId: args.sourceId ?? `systemDesignKindRun:${kindRunId}`,
         ownerTokenIdentifier: args.ownerTokenIdentifier,
         feature: "systemDesign",
         occurredAtMs: args.startedAt,

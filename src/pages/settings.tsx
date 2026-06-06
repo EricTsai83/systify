@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useMutation, useQuery } from "convex/react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
@@ -28,6 +28,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -48,6 +50,7 @@ import {
   settingsPath,
 } from "@/route-paths";
 import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
+import { toUserErrorMessage } from "@/lib/errors";
 
 type SetUserPreferences = (next: UserPreferences | ((prev: UserPreferences) => UserPreferences)) => void;
 
@@ -64,6 +67,7 @@ const DEFAULT_TRAITS = [
 
 const SETTINGS_SECTIONS: Array<{ id: SettingsSectionId; label: string }> = [
   { id: "account", label: "Account" },
+  { id: "usage", label: "Usage" },
   { id: "customization", label: "Customization" },
   { id: "history", label: "History" },
   { id: "resources", label: "Resources" },
@@ -87,43 +91,62 @@ const USD_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 4,
 });
 
+const DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+});
+
+const BROWSER_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+const USAGE_HISTORY_PERIOD_COUNT = 12;
+const MAX_VIEWER_USAGE_DASHBOARD_CACHE_ENTRIES = 4;
+
+type ViewerUsageDashboard = NonNullable<ReturnType<typeof useQuery<typeof api.lib.userCost.getViewerUsageDashboard>>>;
+
+const viewerUsageDashboardCache = new Map<string, ViewerUsageDashboard>();
+
 /**
- * Presenter boundary for `getViewerUsageSummary`.
+ * Presenter boundary for `getViewerUsageDashboard`.
  *
  * The Convex query intentionally returns compact rollup names that match
- * `userUsageDailyRollups` / `userUsageEvents` (`events`, `costUsd`,
- * `sandboxDailyBudget`). This copy map keeps those DB-facing names stable
- * while giving users product-language labels.
+ * the durable usage tables (`events`, `costUsd`, feature literals). This
+ * copy map keeps those DB-facing names stable while giving users
+ * product-language labels.
  */
 const USAGE_COPY = {
   section: {
-    title: "AI Usage",
+    title: "Usage",
     readyStatus: "Current",
     loadingStatus: "Loading…",
+    refreshingStatus: "Refreshing…",
   },
   metrics: {
+    spend: {
+      label: "Current Cycle Spend",
+      description: "Estimated provider cost recorded in the active billing cycle. This is not an invoice.",
+      detail: "provider cost estimate",
+    },
+    remainingBudget: {
+      label: "Remaining Budget",
+      description: "Self-managed budget remaining after current spend and in-flight reservations.",
+      detail: "self-managed budget",
+    },
     llmTokens: {
-      label: "LLM Tokens",
+      label: "Total Tokens",
       description:
-        "Total LLM tokens recorded in this window, including input, output, cached input, cache writes, and reasoning tokens.",
+        "Total tokens recorded in this cycle, including input, output, cached input, cache writes, and reasoning tokens.",
       detail: "total tokens",
     },
     usageRecords: {
-      label: "Usage Records",
-      description:
-        "Count of metered usage records in this window. A recorded chat reply or Repository Guide section adds one record.",
+      label: "Metered Events",
+      description: "Count of metered usage records in this cycle.",
       detail: "metered records",
-    },
-    estimatedCost: {
-      label: "Estimated LLM Cost",
-      description: "Estimated LLM provider spend for this window. This is cost telemetry, not an invoice.",
-      detail: "provider cost estimate",
     },
   },
   features: {
-    chatReplies: {
+    chat: {
       label: "Chat Replies",
-      description: "LLM usage from replies in Discuss or Library Ask during this window.",
+      description: "LLM usage from replies in Discuss or Library Ask during this cycle.",
       singularRecord: "metered reply",
       pluralRecord: "metered replies",
     },
@@ -133,12 +156,24 @@ const USAGE_COPY = {
       singularRecord: REPOSITORY_GUIDE_COPY.sectionName,
       pluralRecord: REPOSITORY_GUIDE_COPY.sectionNamePlural,
     },
-  },
-  sandboxWorkCap: {
-    label: "Daily Live source Work Cap",
-    description:
-      "Daily spend cap for live source-grounded work, including live source-grounded chat replies and Repository Guide generation. Resets at midnight UTC.",
-    remainingSuffix: "remaining for live source-grounded work today. Resets at midnight UTC.",
+    artifactIndexing: {
+      label: "Artifact Indexing",
+      description: "Embedding usage from indexing Library artifacts for retrieval.",
+      singularRecord: "embedding batch",
+      pluralRecord: "embedding batches",
+    },
+    libraryRetrieval: {
+      label: "Library Retrieval",
+      description: "Semantic query embedding usage from Library retrieval.",
+      singularRecord: "retrieval embedding",
+      pluralRecord: "retrieval embeddings",
+    },
+    titleGeneration: {
+      label: "Title Generation",
+      description: "LLM usage from automatic thread title generation.",
+      singularRecord: "generated title",
+      pluralRecord: "generated titles",
+    },
   },
 } as const;
 
@@ -192,6 +227,7 @@ export function SettingsPage() {
           <SettingsSectionNav activeSection={activeSection} from={from} />
 
           {activeSection === "account" ? <AccountSettingsSection /> : null}
+          {activeSection === "usage" ? <UsageSettingsSection /> : null}
           {activeSection === "customization" ? (
             <CustomizationSettingsSection preferences={preferences} setPreferences={setPreferences} />
           ) : null}
@@ -234,7 +270,6 @@ function SettingsSectionNav({ activeSection, from }: { activeSection: SettingsSe
 function AccountSettingsSection() {
   const { user } = useAuth();
   const githubConnection = useGitHubConnection();
-  const usageSummary = useQuery(api.lib.userCost.getViewerUsageSummary);
   const disconnectGitHub = useMutation(api.github.disconnectGitHub);
   const [isDisconnectDialogOpen, setIsDisconnectDialogOpen] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
@@ -243,15 +278,6 @@ function AccountSettingsSection() {
     ? `${user.firstName}${user.lastName ? ` ${user.lastName}` : ""}`
     : (user?.email ?? "Signed-in user");
   const fallbackInitial = displayName.trim().charAt(0).toLocaleUpperCase() || "U";
-  const usageWindowLabel = usageSummary ? `Last ${usageSummary.window.days} days` : "Last 30 days";
-  const usageStatusLabel = usageSummary ? USAGE_COPY.section.readyStatus : USAGE_COPY.section.loadingStatus;
-  const sandboxBudgetPercent =
-    usageSummary && usageSummary.sandboxDailyBudget.capacityUsd > 0
-      ? Math.min(
-          100,
-          Math.max(0, (usageSummary.sandboxDailyBudget.usedUsd / usageSummary.sandboxDailyBudget.capacityUsd) * 100),
-        )
-      : 0;
 
   const manageGitHubUrl = githubConnection.installationId
     ? `https://github.com/settings/installations/${githubConnection.installationId}`
@@ -329,137 +355,6 @@ function AccountSettingsSection() {
           </div>
         </Card>
 
-        <Card className="overflow-hidden p-0">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
-            <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
-              <ChartLineUp weight="bold" />
-              {USAGE_COPY.section.title}
-            </h2>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">{usageWindowLabel}</span>
-              <Badge variant={usageSummary ? "outline" : "muted"}>{usageStatusLabel}</Badge>
-            </div>
-          </div>
-
-          <div className="p-5">
-            <div className="grid overflow-hidden border border-border bg-background sm:grid-cols-3">
-              <UsageMetric
-                label={USAGE_COPY.metrics.llmTokens.label}
-                description={USAGE_COPY.metrics.llmTokens.description}
-                value={
-                  usageSummary
-                    ? COMPACT_NUMBER_FORMATTER.format(usageSummary.totals.totalTokens)
-                    : USAGE_COPY.section.loadingStatus
-                }
-                detail={
-                  usageSummary
-                    ? `${INTEGER_FORMATTER.format(usageSummary.totals.totalTokens)} ${USAGE_COPY.metrics.llmTokens.detail}`
-                    : undefined
-                }
-                isLoading={!usageSummary}
-              />
-              <UsageMetric
-                label={USAGE_COPY.metrics.usageRecords.label}
-                description={USAGE_COPY.metrics.usageRecords.description}
-                value={
-                  usageSummary ? INTEGER_FORMATTER.format(usageSummary.totals.events) : USAGE_COPY.section.loadingStatus
-                }
-                detail={USAGE_COPY.metrics.usageRecords.detail}
-                isLoading={!usageSummary}
-              />
-              <UsageMetric
-                label={USAGE_COPY.metrics.estimatedCost.label}
-                description={USAGE_COPY.metrics.estimatedCost.description}
-                value={
-                  usageSummary ? USD_FORMATTER.format(usageSummary.totals.costUsd) : USAGE_COPY.section.loadingStatus
-                }
-                detail={USAGE_COPY.metrics.estimatedCost.detail}
-                isLoading={!usageSummary}
-              />
-            </div>
-
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <FeatureUsageLine
-                icon={<ChatCircleText weight="bold" />}
-                label={USAGE_COPY.features.chatReplies.label}
-                description={USAGE_COPY.features.chatReplies.description}
-                value={
-                  usageSummary
-                    ? USD_FORMATTER.format(usageSummary.byFeature.chat.costUsd)
-                    : USAGE_COPY.section.loadingStatus
-                }
-                detail={
-                  usageSummary
-                    ? formatCountLabel(
-                        usageSummary.byFeature.chat.events,
-                        USAGE_COPY.features.chatReplies.singularRecord,
-                        USAGE_COPY.features.chatReplies.pluralRecord,
-                      )
-                    : undefined
-                }
-                isLoading={!usageSummary}
-              />
-              <FeatureUsageLine
-                icon={<Sparkle weight="bold" />}
-                label={USAGE_COPY.features.systemDesign.label}
-                description={USAGE_COPY.features.systemDesign.description}
-                value={
-                  usageSummary
-                    ? USD_FORMATTER.format(usageSummary.byFeature.systemDesign.costUsd)
-                    : USAGE_COPY.section.loadingStatus
-                }
-                detail={
-                  usageSummary
-                    ? formatCountLabel(
-                        usageSummary.byFeature.systemDesign.events,
-                        USAGE_COPY.features.systemDesign.singularRecord,
-                        USAGE_COPY.features.systemDesign.pluralRecord,
-                      )
-                    : undefined
-                }
-                isLoading={!usageSummary}
-              />
-            </div>
-
-            <div className="mt-4 border border-border bg-background p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="flex items-center gap-2 text-sm font-semibold">
-                    <Wallet weight="bold" />
-                    {USAGE_COPY.sandboxWorkCap.label}
-                    <MetricInfoTooltip
-                      label={USAGE_COPY.sandboxWorkCap.label}
-                      description={USAGE_COPY.sandboxWorkCap.description}
-                    />
-                  </p>
-                  <div className="mt-1 min-h-10 text-sm leading-5 text-muted-foreground">
-                    {usageSummary ? (
-                      <p>
-                        {USD_FORMATTER.format(usageSummary.sandboxDailyBudget.remainingUsd)}{" "}
-                        {USAGE_COPY.sandboxWorkCap.remainingSuffix}
-                      </p>
-                    ) : (
-                      <div className="space-y-1.5 py-0.5" aria-hidden="true">
-                        <Skeleton className="h-3 w-full max-w-[32rem]" />
-                        <Skeleton className="h-3 w-48" />
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <p className="shrink-0 text-sm font-semibold tabular-nums">
-                  {usageSummary
-                    ? `${USD_FORMATTER.format(usageSummary.sandboxDailyBudget.usedUsd)} / ${USD_FORMATTER.format(
-                        usageSummary.sandboxDailyBudget.capacityUsd,
-                      )}`
-                    : USAGE_COPY.section.loadingStatus}
-                </p>
-              </div>
-              <div className="mt-4 h-2 overflow-hidden bg-muted" aria-hidden="true">
-                <div className="h-full bg-primary" style={{ width: `${sandboxBudgetPercent}%` }} />
-              </div>
-            </div>
-          </div>
-        </Card>
         <ConfirmDialog
           open={isDisconnectDialogOpen}
           onOpenChange={setIsDisconnectDialogOpen}
@@ -472,6 +367,386 @@ function AccountSettingsSection() {
             void handleDisconnectGitHub();
           }}
         />
+      </section>
+    </TooltipProvider>
+  );
+}
+
+function useCachedViewerUsageDashboard(cacheKey: string | null): {
+  dashboard: ViewerUsageDashboard | null;
+  isRefreshing: boolean;
+} {
+  const liveDashboard = useQuery(api.lib.userCost.getViewerUsageDashboard);
+  const cachedDashboard = cacheKey ? viewerUsageDashboardCache.get(cacheKey) : undefined;
+
+  useEffect(() => {
+    if (!cacheKey || liveDashboard === undefined) {
+      return;
+    }
+
+    if (
+      !viewerUsageDashboardCache.has(cacheKey) &&
+      viewerUsageDashboardCache.size >= MAX_VIEWER_USAGE_DASHBOARD_CACHE_ENTRIES
+    ) {
+      const oldestCacheKey = viewerUsageDashboardCache.keys().next().value;
+      if (oldestCacheKey) {
+        viewerUsageDashboardCache.delete(oldestCacheKey);
+      }
+    }
+
+    viewerUsageDashboardCache.set(cacheKey, liveDashboard);
+  }, [cacheKey, liveDashboard]);
+
+  return {
+    dashboard: liveDashboard ?? cachedDashboard ?? null,
+    isRefreshing: liveDashboard === undefined && cachedDashboard !== undefined,
+  };
+}
+
+function UsageSettingsSection() {
+  const { user } = useAuth();
+  const { dashboard, isRefreshing } = useCachedViewerUsageDashboard(user?.email ?? null);
+  const updateUsageProfile = useMutation(api.lib.userCost.updateViewerUsageProfile);
+  const [cycleAnchorDayDraft, setCycleAnchorDayDraft] = useState<string | null>(null);
+  const [timeZoneDraft, setTimeZoneDraft] = useState<string | null>(null);
+  const [budgetInputDraft, setBudgetInputDraft] = useState<string | null>(null);
+  const [hardCapEnabledDraft, setHardCapEnabledDraft] = useState<boolean | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+
+  const cycleAnchorDay = cycleAnchorDayDraft ?? String(dashboard?.profile.cycleAnchorDay ?? 1);
+  const timeZone = timeZoneDraft ?? dashboard?.profile.timeZone ?? BROWSER_TIME_ZONE;
+  const budgetInput =
+    budgetInputDraft ??
+    (dashboard?.profile.budgetUsd === null || !dashboard ? "" : String(dashboard.profile.budgetUsd));
+  const hardCapEnabled = hardCapEnabledDraft ?? dashboard?.profile.hardCapEnabled ?? false;
+
+  const budgetProgress = dashboard?.budget.percentUsed === null ? 0 : Math.min(100, dashboard?.budget.percentUsed ?? 0);
+  const budgetState = normalizeBudgetState(dashboard?.budget.state);
+  const usageStatusLabel = dashboard
+    ? isRefreshing
+      ? USAGE_COPY.section.refreshingStatus
+      : USAGE_COPY.section.readyStatus
+    : USAGE_COPY.section.loadingStatus;
+  const budgetStateLabel = dashboard ? formatBudgetStateLabel(budgetState) : USAGE_COPY.section.loadingStatus;
+  const currentPeriodLabel = dashboard
+    ? formatPeriodRange(dashboard.currentPeriod.periodStartMs, dashboard.currentPeriod.periodEndMs)
+    : "Current billing cycle";
+  const remainingBudgetValue = dashboard
+    ? dashboard.budget.remainingUsd === null
+      ? "No budget"
+      : USD_FORMATTER.format(dashboard.budget.remainingUsd)
+    : USAGE_COPY.section.loadingStatus;
+  const remainingBudgetDetail = dashboard
+    ? dashboard.budget.configured
+      ? `${USD_FORMATTER.format(dashboard.budget.reservedUsd)} reserved in flight`
+      : "Budget disabled"
+    : undefined;
+
+  const clearSaveFeedback = useCallback(() => {
+    setSaveStatus(null);
+    setSaveError(null);
+  }, []);
+
+  const [isSaving, handleSave] = useAsyncCallback(async () => {
+    setSaveError(null);
+    setSaveStatus(null);
+    const parsedBudget = budgetInput.trim() === "" ? null : Number(budgetInput);
+    try {
+      await updateUsageProfile({
+        cycleAnchorDay: Number(cycleAnchorDay),
+        timeZone: timeZone.trim(),
+        budgetUsd: parsedBudget,
+        hardCapEnabled: parsedBudget !== null && hardCapEnabled,
+      });
+      setCycleAnchorDayDraft(null);
+      setTimeZoneDraft(null);
+      setBudgetInputDraft(null);
+      setHardCapEnabledDraft(null);
+      setSaveStatus("Saved");
+    } catch (error) {
+      setSaveError(toUserErrorMessage(error, "Failed to save usage settings."));
+    }
+  });
+
+  const featureRows = useMemo(
+    () => [
+      {
+        key: "chat" as const,
+        icon: <ChatCircleText weight="bold" />,
+        copy: USAGE_COPY.features.chat,
+      },
+      {
+        key: "systemDesign" as const,
+        icon: <Sparkle weight="bold" />,
+        copy: USAGE_COPY.features.systemDesign,
+      },
+      {
+        key: "artifactIndexing" as const,
+        icon: <ChartLineUp weight="bold" />,
+        copy: USAGE_COPY.features.artifactIndexing,
+      },
+      {
+        key: "libraryRetrieval" as const,
+        icon: <Wallet weight="bold" />,
+        copy: USAGE_COPY.features.libraryRetrieval,
+      },
+      {
+        key: "titleGeneration" as const,
+        icon: <Sparkle weight="bold" />,
+        copy: USAGE_COPY.features.titleGeneration,
+      },
+    ],
+    [],
+  );
+
+  return (
+    <TooltipProvider delayDuration={150}>
+      <section className="flex flex-col gap-4">
+        <Card className="overflow-hidden p-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
+            <div className="min-w-0">
+              <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
+                <ChartLineUp weight="bold" />
+                {USAGE_COPY.section.title}
+              </h2>
+              <p className="mt-1 text-sm text-muted-foreground">Estimated provider cost, not an invoice.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="min-w-36 text-right text-sm text-muted-foreground">{currentPeriodLabel}</span>
+              <Badge variant={dashboard && !isRefreshing ? "outline" : "muted"} className="min-w-24 justify-center">
+                {usageStatusLabel}
+              </Badge>
+            </div>
+          </div>
+
+          <div className="p-5">
+            <div className="grid overflow-hidden border border-border bg-background sm:grid-cols-2 lg:grid-cols-4">
+              <UsageMetric
+                label={USAGE_COPY.metrics.spend.label}
+                description={USAGE_COPY.metrics.spend.description}
+                value={
+                  dashboard ? USD_FORMATTER.format(dashboard.currentPeriod.costUsd) : USAGE_COPY.section.loadingStatus
+                }
+                detail={USAGE_COPY.metrics.spend.detail}
+                isLoading={!dashboard}
+              />
+              <UsageMetric
+                label={USAGE_COPY.metrics.remainingBudget.label}
+                description={USAGE_COPY.metrics.remainingBudget.description}
+                value={remainingBudgetValue}
+                detail={remainingBudgetDetail}
+                isLoading={!dashboard}
+              />
+              <UsageMetric
+                label={USAGE_COPY.metrics.llmTokens.label}
+                description={USAGE_COPY.metrics.llmTokens.description}
+                value={
+                  dashboard
+                    ? COMPACT_NUMBER_FORMATTER.format(dashboard.currentPeriod.totalTokens)
+                    : USAGE_COPY.section.loadingStatus
+                }
+                detail={
+                  dashboard
+                    ? `${INTEGER_FORMATTER.format(dashboard.currentPeriod.totalTokens)} ${USAGE_COPY.metrics.llmTokens.detail}`
+                    : undefined
+                }
+                isLoading={!dashboard}
+              />
+              <UsageMetric
+                label={USAGE_COPY.metrics.usageRecords.label}
+                description={USAGE_COPY.metrics.usageRecords.description}
+                value={
+                  dashboard
+                    ? INTEGER_FORMATTER.format(dashboard.currentPeriod.events)
+                    : USAGE_COPY.section.loadingStatus
+                }
+                detail={USAGE_COPY.metrics.usageRecords.detail}
+                isLoading={!dashboard}
+              />
+            </div>
+
+            <div className="mt-4 border border-border bg-background p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-2 text-sm font-semibold">
+                    <Wallet weight="bold" />
+                    Budget Progress
+                    <MetricInfoTooltip
+                      label="Budget Progress"
+                      description="Progress includes current-cycle spend and in-flight reserved estimates."
+                    />
+                  </p>
+                  {dashboard ? (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {dashboard.budget.configured
+                        ? `${USD_FORMATTER.format(dashboard.budget.usedUsd)} used${
+                            dashboard.budget.reservedUsd > 0
+                              ? `, ${USD_FORMATTER.format(dashboard.budget.reservedUsd)} reserved`
+                              : ""
+                          } of ${USD_FORMATTER.format(dashboard.budget.budgetUsd ?? 0)}`
+                        : "Set a self-managed budget to enable progress tracking."}
+                    </p>
+                  ) : (
+                    <Skeleton className="mt-2 h-4 w-full max-w-sm" aria-hidden="true" />
+                  )}
+                </div>
+                <Badge variant={budgetBadgeVariant(budgetState)}>{budgetStateLabel}</Badge>
+              </div>
+              <Progress className="mt-4 h-2" value={budgetProgress} aria-label="Budget progress" />
+            </div>
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-sm font-semibold">Feature Breakdown</h2>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {featureRows.map((row) => {
+              const bucket = dashboard?.currentPeriod.byFeature[row.key];
+              return (
+                <FeatureUsageLine
+                  key={row.key}
+                  icon={row.icon}
+                  label={row.copy.label}
+                  description={row.copy.description}
+                  value={bucket ? USD_FORMATTER.format(bucket.costUsd) : USAGE_COPY.section.loadingStatus}
+                  detail={
+                    bucket ? formatCountLabel(bucket.events, row.copy.singularRecord, row.copy.pluralRecord) : undefined
+                  }
+                  isLoading={!dashboard}
+                />
+              );
+            })}
+          </div>
+        </Card>
+
+        <Card className="overflow-hidden p-0">
+          <div className="border-b border-border px-5 py-4">
+            <h2 className="text-sm font-semibold">Cycle History</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[42rem] text-left text-sm">
+              <thead className="border-b border-border bg-muted/30 text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-5 py-3 font-semibold">Period</th>
+                  <th className="px-5 py-3 font-semibold">Spend</th>
+                  <th className="px-5 py-3 font-semibold">Tokens</th>
+                  <th className="px-5 py-3 font-semibold">Events</th>
+                  <th className="px-5 py-3 font-semibold">Budget</th>
+                </tr>
+              </thead>
+              <tbody>
+                {dashboard ? (
+                  dashboard.history.map((period) => {
+                    const state = getHistoryBudgetState(period.costUsd, dashboard.profile.budgetUsd);
+                    return (
+                      <tr key={period.periodKey} className="border-b border-border last:border-b-0">
+                        <td className="px-5 py-3 text-foreground">
+                          {formatPeriodRange(period.periodStartMs, period.periodEndMs)}
+                        </td>
+                        <td className="px-5 py-3 tabular-nums">{USD_FORMATTER.format(period.costUsd)}</td>
+                        <td className="px-5 py-3 tabular-nums">{INTEGER_FORMATTER.format(period.totalTokens)}</td>
+                        <td className="px-5 py-3 tabular-nums">{INTEGER_FORMATTER.format(period.events)}</td>
+                        <td className="px-5 py-3">
+                          <Badge variant={budgetBadgeVariant(state)}>{formatBudgetStateLabel(state)}</Badge>
+                        </td>
+                      </tr>
+                    );
+                  })
+                ) : (
+                  <UsageHistorySkeletonRows />
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+
+        <Card className="p-5">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-sm font-semibold">Monitoring Settings</h2>
+          </div>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <label className="flex flex-col gap-1.5 text-sm font-medium">
+              Cycle anchor day
+              <Select
+                value={cycleAnchorDay}
+                onValueChange={(value) => {
+                  setCycleAnchorDayDraft(value);
+                  clearSaveFeedback();
+                }}
+                disabled={!dashboard || isSaving}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Array.from({ length: 31 }, (_, index) => String(index + 1)).map((day) => (
+                    <SelectItem key={day} value={day}>
+                      {day}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </label>
+
+            <label className="flex flex-col gap-1.5 text-sm font-medium">
+              Timezone
+              <Input
+                value={timeZone}
+                placeholder={BROWSER_TIME_ZONE}
+                disabled={!dashboard || isSaving}
+                onChange={(event) => {
+                  setTimeZoneDraft(event.target.value);
+                  clearSaveFeedback();
+                }}
+              />
+              <span className="text-xs font-normal text-muted-foreground">Browser timezone: {BROWSER_TIME_ZONE}</span>
+            </label>
+
+            <label className="flex flex-col gap-1.5 text-sm font-medium">
+              Budget USD
+              <Input
+                value={budgetInput}
+                inputMode="decimal"
+                placeholder="No budget"
+                disabled={!dashboard || isSaving}
+                onChange={(event) => {
+                  setBudgetInputDraft(event.target.value);
+                  clearSaveFeedback();
+                }}
+              />
+            </label>
+
+            <label className="flex items-start gap-3 border border-border bg-background p-3 text-sm font-medium">
+              <input
+                type="checkbox"
+                className="mt-0.5 size-4 accent-primary"
+                checked={hardCapEnabled}
+                disabled={!dashboard || isSaving || budgetInput.trim() === ""}
+                onChange={(event) => {
+                  setHardCapEnabledDraft(event.target.checked);
+                  clearSaveFeedback();
+                }}
+              />
+              <span className="flex flex-col gap-1">
+                <span>Hard cap new LLM work</span>
+                <span className="font-normal text-muted-foreground">
+                  Blocks new work when spend plus reservations exceeds the budget.
+                </span>
+              </span>
+            </label>
+          </div>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button type="button" size="sm" onClick={() => void handleSave()} disabled={!dashboard || isSaving}>
+              <CheckCircle weight="bold" />
+              {isSaving ? "Saving" : "Save"}
+            </Button>
+            {saveStatus ? <span className="text-sm text-muted-foreground">{saveStatus}</span> : null}
+            {saveError ? <span className="text-sm text-destructive">{saveError}</span> : null}
+          </div>
+        </Card>
       </section>
     </TooltipProvider>
   );
@@ -603,6 +878,28 @@ function FeatureUsageLine({
   );
 }
 
+function UsageHistorySkeletonRows() {
+  return Array.from({ length: USAGE_HISTORY_PERIOD_COUNT }, (_, index) => (
+    <tr key={index} className="border-b border-border last:border-b-0">
+      <td className="px-5 py-3">
+        <Skeleton className="h-4 w-44" />
+      </td>
+      <td className="px-5 py-3">
+        <Skeleton className="h-4 w-20" />
+      </td>
+      <td className="px-5 py-3">
+        <Skeleton className="h-4 w-24" />
+      </td>
+      <td className="px-5 py-3">
+        <Skeleton className="h-4 w-16" />
+      </td>
+      <td className="px-5 py-3">
+        <Skeleton className="h-5 w-20" />
+      </td>
+    </tr>
+  ));
+}
+
 function MetricInfoTooltip({ label, description }: { label: string; description: string }) {
   return (
     <Tooltip>
@@ -627,6 +924,67 @@ function formatCountLabel(count: number, singular: string, plural = `${singular}
     return `No ${plural}`;
   }
   return `${INTEGER_FORMATTER.format(count)} ${count === 1 ? singular : plural}`;
+}
+
+type UsageBudgetState = "unset" | "ok" | "notice" | "warning" | "exceeded";
+
+function normalizeBudgetState(value: string | undefined): UsageBudgetState {
+  switch (value) {
+    case "ok":
+    case "notice":
+    case "warning":
+    case "exceeded":
+      return value;
+    case "unset":
+    default:
+      return "unset";
+  }
+}
+
+function formatBudgetStateLabel(state: UsageBudgetState): string {
+  switch (state) {
+    case "unset":
+      return "Unset";
+    case "ok":
+      return "OK";
+    case "notice":
+      return "Notice";
+    case "warning":
+      return "Warning";
+    case "exceeded":
+      return "Exceeded";
+  }
+}
+
+function budgetBadgeVariant(state: UsageBudgetState | undefined): "muted" | "outline" | "accent" | "destructive" {
+  switch (state) {
+    case "exceeded":
+      return "destructive";
+    case "warning":
+      return "accent";
+    case "notice":
+      return "outline";
+    case "ok":
+      return "outline";
+    case "unset":
+    default:
+      return "muted";
+  }
+}
+
+function getHistoryBudgetState(costUsd: number, budgetUsd: number | null): UsageBudgetState {
+  if (budgetUsd === null) {
+    return "unset";
+  }
+  const percent = budgetUsd > 0 ? (costUsd / budgetUsd) * 100 : 100;
+  if (percent >= 100) return "exceeded";
+  if (percent >= 80) return "warning";
+  if (percent >= 50) return "notice";
+  return "ok";
+}
+
+function formatPeriodRange(startMs: number, endMs: number): string {
+  return `${DATE_FORMATTER.format(new Date(startMs))} - ${DATE_FORMATTER.format(new Date(Math.max(startMs, endMs - 1)))}`;
 }
 
 function formatGitHubConnection(connection: ReturnType<typeof useGitHubConnection>): string {

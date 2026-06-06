@@ -5,9 +5,9 @@ import { register as registerRateLimiter } from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
 import { api, internal } from "../_generated/api";
 import schema from "../schema";
-import { TEST_INTERNALS } from "./userCost";
+import { TEST_INTERNALS, type UsageFeature } from "./userCost";
 
-const { makeBucket, addToBucket, utcDayKey, hasRecordableUsage } = TEST_INTERNALS;
+const { makeBucket, addToBucket, utcDayKey, hasRecordableUsage, getUsagePeriodForMs } = TEST_INTERNALS;
 const modules = import.meta.glob("/convex/**/*.ts");
 
 function createTestConvex() {
@@ -92,6 +92,138 @@ describe("userCost.hasRecordableUsage", () => {
     expect(hasRecordableUsage({})).toBe(false);
     expect(hasRecordableUsage({ usd: 0, inputTokens: 0, outputTokens: 0 })).toBe(false);
     expect(hasRecordableUsage({ usd: -1, inputTokens: Number.NaN })).toBe(false);
+  });
+});
+
+describe("userCost billing cycle helpers", () => {
+  it("calculates UTC cycles for anchor day 1", () => {
+    const period = getUsagePeriodForMs(Date.UTC(2026, 5, 6, 12), {
+      cycleAnchorDay: 1,
+      timeZone: "UTC",
+      budgetUsd: null,
+      hardCapEnabled: false,
+    });
+
+    expect(period.periodStartMs).toBe(Date.UTC(2026, 5, 1));
+    expect(period.periodEndMs).toBe(Date.UTC(2026, 6, 1));
+  });
+
+  it("calculates UTC cycles for anchor day 15", () => {
+    const beforeAnchor = getUsagePeriodForMs(Date.UTC(2026, 5, 14, 23), {
+      cycleAnchorDay: 15,
+      timeZone: "UTC",
+      budgetUsd: null,
+      hardCapEnabled: false,
+    });
+    const atAnchor = getUsagePeriodForMs(Date.UTC(2026, 5, 15, 0), {
+      cycleAnchorDay: 15,
+      timeZone: "UTC",
+      budgetUsd: null,
+      hardCapEnabled: false,
+    });
+
+    expect(beforeAnchor.periodStartMs).toBe(Date.UTC(2026, 4, 15));
+    expect(beforeAnchor.periodEndMs).toBe(Date.UTC(2026, 5, 15));
+    expect(atAnchor.periodStartMs).toBe(Date.UTC(2026, 5, 15));
+    expect(atAnchor.periodEndMs).toBe(Date.UTC(2026, 6, 15));
+  });
+
+  it("clamps anchor day 31 to February in leap years", () => {
+    const february = getUsagePeriodForMs(Date.UTC(2024, 1, 15, 12), {
+      cycleAnchorDay: 31,
+      timeZone: "UTC",
+      budgetUsd: null,
+      hardCapEnabled: false,
+    });
+    const afterLeapDay = getUsagePeriodForMs(Date.UTC(2024, 2, 1, 12), {
+      cycleAnchorDay: 31,
+      timeZone: "UTC",
+      budgetUsd: null,
+      hardCapEnabled: false,
+    });
+
+    expect(february.periodStartMs).toBe(Date.UTC(2024, 0, 31));
+    expect(february.periodEndMs).toBe(Date.UTC(2024, 1, 29));
+    expect(afterLeapDay.periodStartMs).toBe(Date.UTC(2024, 1, 29));
+    expect(afterLeapDay.periodEndMs).toBe(Date.UTC(2024, 2, 31));
+  });
+
+  it("uses timezone-local midnight for cycle boundaries", () => {
+    const period = getUsagePeriodForMs(Date.UTC(2026, 4, 31, 16, 30), {
+      cycleAnchorDay: 1,
+      timeZone: "Asia/Taipei",
+      budgetUsd: null,
+      hardCapEnabled: false,
+    });
+
+    expect(period.periodStartMs).toBe(Date.UTC(2026, 4, 31, 16));
+    expect(period.periodEndMs).toBe(Date.UTC(2026, 5, 30, 16));
+  });
+});
+
+describe("usage profile", () => {
+  it("returns defaults when no profile row exists", async () => {
+    const ownerTokenIdentifier = "user|usage-profile-defaults";
+    const t = createTestConvex();
+
+    const dashboard = await t
+      .withIdentity({ tokenIdentifier: ownerTokenIdentifier })
+      .query(api.lib.userCost.getViewerUsageDashboard, {});
+
+    expect(dashboard.profile).toEqual({
+      cycleAnchorDay: 1,
+      timeZone: "UTC",
+      budgetUsd: null,
+      hardCapEnabled: false,
+    });
+    expect(dashboard.budget.state).toBe("unset");
+  });
+
+  it("validates profile updates", async () => {
+    const ownerTokenIdentifier = "user|usage-profile-validation";
+    const viewer = createTestConvex().withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    await expect(
+      viewer.mutation(api.lib.userCost.updateViewerUsageProfile, {
+        cycleAnchorDay: 0,
+        timeZone: "UTC",
+        budgetUsd: null,
+        hardCapEnabled: false,
+      }),
+    ).rejects.toThrow("Cycle anchor day");
+
+    await expect(
+      viewer.mutation(api.lib.userCost.updateViewerUsageProfile, {
+        cycleAnchorDay: 1,
+        timeZone: "Not/AZone",
+        budgetUsd: null,
+        hardCapEnabled: false,
+      }),
+    ).rejects.toThrow("Time zone");
+
+    await expect(
+      viewer.mutation(api.lib.userCost.updateViewerUsageProfile, {
+        cycleAnchorDay: 1,
+        timeZone: "UTC",
+        budgetUsd: 0,
+        hardCapEnabled: true,
+      }),
+    ).rejects.toThrow("Budget");
+
+    await viewer.mutation(api.lib.userCost.updateViewerUsageProfile, {
+      cycleAnchorDay: 15,
+      timeZone: "Asia/Taipei",
+      budgetUsd: 25,
+      hardCapEnabled: true,
+    });
+
+    const dashboard = await viewer.query(api.lib.userCost.getViewerUsageDashboard, {});
+    expect(dashboard.profile).toEqual({
+      cycleAnchorDay: 15,
+      timeZone: "Asia/Taipei",
+      budgetUsd: 25,
+      hardCapEnabled: true,
+    });
   });
 });
 
@@ -203,6 +335,13 @@ describe("getViewerUsageSummary", () => {
     expect(summary.totals.costUsd).toBeCloseTo(0.0123, 5);
     expect(summary.totals.inputTokens).toBe(1_000);
     expect(summary.totals.outputTokens).toBe(500);
+
+    const dashboard = await t
+      .withIdentity({ tokenIdentifier: ownerTokenIdentifier })
+      .query(api.lib.userCost.getViewerUsageDashboard, {});
+    expect(dashboard.currentPeriod.events).toBe(1);
+    expect(dashboard.allTime.events).toBe(1);
+    expect(dashboard.currentPeriod.byFeature.chat.events).toBe(1);
   });
 
   it("does not scan raw messages when no daily rollup exists", async () => {
@@ -231,12 +370,209 @@ describe("getViewerUsageSummary", () => {
   });
 });
 
+describe("getViewerUsageDashboard", () => {
+  it("returns current, previous, all-time, history, and every usage feature", async () => {
+    const ownerTokenIdentifier = "user|usage-dashboard-features";
+    const t = createTestConvex();
+    const now = Date.now();
+    const features: UsageFeature[] = [
+      "chat",
+      "systemDesign",
+      "artifactIndexing",
+      "libraryRetrieval",
+      "titleGeneration",
+    ];
+
+    for (const [index, feature] of features.entries()) {
+      await recordUsage(t, {
+        sourceId: `feature:${feature}`,
+        ownerTokenIdentifier,
+        feature,
+        occurredAtMs: now + index,
+        inputTokens: 100 + index,
+        outputTokens: feature === "artifactIndexing" || feature === "libraryRetrieval" ? undefined : 50,
+        usd: 0.01 + index / 100,
+      });
+    }
+
+    const dashboard = await t
+      .withIdentity({ tokenIdentifier: ownerTokenIdentifier })
+      .query(api.lib.userCost.getViewerUsageDashboard, {});
+
+    expect(dashboard.currentPeriod.events).toBe(features.length);
+    expect(dashboard.allTime.events).toBe(features.length);
+    expect(dashboard.previousPeriod).not.toBeNull();
+    expect(dashboard.history).toHaveLength(12);
+    for (const feature of features) {
+      expect(dashboard.currentPeriod.byFeature[feature].events).toBe(1);
+      expect(dashboard.allTime.byFeature[feature].events).toBe(1);
+    }
+  });
+
+  it("does not scan raw messages when no usage rollup exists", async () => {
+    const ownerTokenIdentifier = "user|usage-dashboard-raw-only";
+    const t = createTestConvex();
+    await seedRawPricedAssistantMessage(t, {
+      ownerTokenIdentifier,
+      inputTokens: 1_000,
+      outputTokens: 500,
+      costUsd: 0.0123,
+    });
+
+    const dashboard = await t
+      .withIdentity({ tokenIdentifier: ownerTokenIdentifier })
+      .query(api.lib.userCost.getViewerUsageDashboard, {});
+
+    expect(dashboard.currentPeriod.events).toBe(0);
+    expect(dashboard.allTime.events).toBe(0);
+    expect(dashboard.currentPeriod.costUsd).toBe(0);
+  });
+});
+
+describe("usage budget reservations", () => {
+  it("reserves, blocks over-budget work, and settles actual spend", async () => {
+    const ownerTokenIdentifier = "user|usage-budget-reservation";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const now = Date.now();
+
+    await viewer.mutation(api.lib.userCost.updateViewerUsageProfile, {
+      cycleAnchorDay: 1,
+      timeZone: "UTC",
+      budgetUsd: 0.1,
+      hardCapEnabled: true,
+    });
+
+    await t.mutation(internal.lib.userCost.reserveUsageBudget, {
+      sourceId: "message:budget-ok",
+      ownerTokenIdentifier,
+      feature: "chat",
+      estimatedCostUsd: 0.05,
+      occurredAtMs: now,
+    });
+
+    let dashboard = await viewer.query(api.lib.userCost.getViewerUsageDashboard, {});
+    expect(dashboard.budget.reservedUsd).toBeCloseTo(0.05, 5);
+    expect(dashboard.budget.remainingUsd).toBeCloseTo(0.05, 5);
+
+    await expect(
+      t.mutation(internal.lib.userCost.reserveUsageBudget, {
+        sourceId: "message:budget-blocked",
+        ownerTokenIdentifier,
+        feature: "chat",
+        estimatedCostUsd: 0.06,
+        occurredAtMs: now,
+      }),
+    ).rejects.toThrow("Usage budget reached");
+
+    await recordUsage(t, {
+      sourceId: "message:budget-ok",
+      ownerTokenIdentifier,
+      feature: "chat",
+      occurredAtMs: now,
+      inputTokens: 500,
+      outputTokens: 100,
+      usd: 0.03,
+    });
+
+    dashboard = await viewer.query(api.lib.userCost.getViewerUsageDashboard, {});
+    expect(dashboard.budget.usedUsd).toBeCloseTo(0.03, 5);
+    expect(dashboard.budget.reservedUsd).toBe(0);
+    expect(dashboard.budget.remainingUsd).toBeCloseTo(0.07, 5);
+
+    await expect(
+      t.mutation(internal.lib.userCost.reserveUsageBudget, {
+        sourceId: "message:budget-after-settle-blocked",
+        ownerTokenIdentifier,
+        feature: "chat",
+        estimatedCostUsd: 0.08,
+        occurredAtMs: now,
+      }),
+    ).rejects.toThrow("Usage budget reached");
+  });
+
+  it("allows actual cost to exceed the estimate and then blocks subsequent work", async () => {
+    const ownerTokenIdentifier = "user|usage-budget-overrun";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const now = Date.now();
+
+    await viewer.mutation(api.lib.userCost.updateViewerUsageProfile, {
+      cycleAnchorDay: 1,
+      timeZone: "UTC",
+      budgetUsd: 0.1,
+      hardCapEnabled: true,
+    });
+    await t.mutation(internal.lib.userCost.reserveUsageBudget, {
+      sourceId: "message:overrun",
+      ownerTokenIdentifier,
+      feature: "chat",
+      estimatedCostUsd: 0.05,
+      occurredAtMs: now,
+    });
+    await recordUsage(t, {
+      sourceId: "message:overrun",
+      ownerTokenIdentifier,
+      feature: "chat",
+      occurredAtMs: now,
+      inputTokens: 500,
+      outputTokens: 100,
+      usd: 0.12,
+    });
+
+    const dashboard = await viewer.query(api.lib.userCost.getViewerUsageDashboard, {});
+    expect(dashboard.budget.usedUsd).toBeCloseTo(0.12, 5);
+    expect(dashboard.budget.state).toBe("exceeded");
+
+    await expect(
+      t.mutation(internal.lib.userCost.reserveUsageBudget, {
+        sourceId: "message:blocked-after-overrun",
+        ownerTokenIdentifier,
+        feature: "chat",
+        estimatedCostUsd: 0.001,
+        occurredAtMs: now,
+      }),
+    ).rejects.toThrow("Usage budget reached");
+  });
+});
+
+describe("usage budget integration gates", () => {
+  it("blocks chat sends before scheduling assistant generation", async () => {
+    const ownerTokenIdentifier = "user|usage-budget-chat-send";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    await viewer.mutation(api.lib.userCost.updateViewerUsageProfile, {
+      cycleAnchorDay: 1,
+      timeZone: "UTC",
+      budgetUsd: 0.01,
+      hardCapEnabled: true,
+    });
+
+    await expect(
+      viewer.mutation(api.chat.send.sendMessageStartingNewThread, {
+        content: "Explain this repository",
+        mode: "discuss",
+      }),
+    ).rejects.toThrow("Usage budget reached");
+
+    const rows = await t.run(async (ctx) => ({
+      threads: await ctx.db.query("threads").take(10),
+      messages: await ctx.db.query("messages").take(10),
+      jobs: await ctx.db.query("jobs").take(10),
+    }));
+    expect(rows.threads).toHaveLength(0);
+    expect(rows.messages).toHaveLength(0);
+    expect(rows.jobs).toHaveLength(0);
+  });
+});
+
 async function recordUsage(
   t: ReturnType<typeof createTestConvex>,
   args: {
     sourceId: string;
     ownerTokenIdentifier: string;
-    feature: "chat" | "systemDesign";
+    feature: UsageFeature;
     occurredAtMs: number;
     inputTokens?: number;
     outputTokens?: number;

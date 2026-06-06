@@ -160,8 +160,7 @@ accounting invariants:
 
 - empty, zero, negative, and non-finite usage is ignored;
 - `sourceId` is required and must be non-empty;
-- `userUsageEvents.by_sourceId` is checked first, so retries and future
-  backfills are idempotent;
+- `userUsageEvents.by_sourceId` is checked first, so retries are idempotent;
 - the event is persisted in `userUsageEvents` as a durable dedupe ledger;
 - the daily counter is written to one of 16 stable shards under
   `(ownerTokenIdentifier, yyyymmdd, feature, shard)`.
@@ -186,11 +185,6 @@ idempotency match against an already-paid artifact, not a new LLM call. Failed
 or quality-rejected rows are recorded only when they carry real cost or token
 usage; a transport failure with no usage frame remains absent from the viewer
 summary instead of being counted as a free event.
-
-Historical raw `messages` / `systemDesignKindRuns` rows do not automatically
-appear in the viewer settings card. A backfill should replay those source rows
-through `recordUserUsageEvent` using the same stable source ids; the ledger
-makes the job safe to rerun.
 
 ### Daily cap settlement
 

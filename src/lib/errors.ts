@@ -30,7 +30,32 @@ function getStructuredErrorMessage(error: unknown) {
   return null;
 }
 
+function getUsageBudgetExceededMessage(error: unknown) {
+  const data = getStructuredErrorData(error);
+  if (!data || !("code" in data) || data.code !== "USER_USAGE_BUDGET_EXCEEDED") {
+    return null;
+  }
+
+  const resetSuffix =
+    "periodEndMs" in data && typeof data.periodEndMs === "number" && Number.isFinite(data.periodEndMs)
+      ? ` Resets ${formatUsageResetDate(data.periodEndMs)}.`
+      : "";
+  return `Usage budget reached for the current cycle. Review Settings → Usage.${resetSuffix}`;
+}
+
+function formatUsageResetDate(ms: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(ms));
+}
+
 export function toUserErrorMessage(error: unknown, fallback: string) {
+  const budgetMessage = getUsageBudgetExceededMessage(error);
+  if (budgetMessage) {
+    return budgetMessage;
+  }
+
   const structuredMessage = getStructuredErrorMessage(error);
   if (structuredMessage) {
     return structuredMessage;
