@@ -21,6 +21,7 @@ function makeContext(overrides: Partial<ReplyContext> & { artifacts?: ReplyConte
     mode: "library",
     groundLibrary: false,
     groundSandbox: false,
+    customization: { traits: [], customInstructions: "" },
     artifacts: [],
     chunks: [],
     messages: [],
@@ -282,6 +283,29 @@ describe("buildDiscussSystemPrompt composability", () => {
 });
 
 describe("buildUserPrompt artifact numbering", () => {
+  test("omits user preferences when no customization is set", () => {
+    const prompt = buildUserPrompt(makeContext(), "Summarize.", []);
+
+    expect(prompt).not.toContain("User preferences:");
+  });
+
+  test("includes stable user preferences when customization is set", () => {
+    const prompt = buildUserPrompt(
+      makeContext({
+        customization: {
+          traits: ["Direct", "Skeptical"],
+          customInstructions: "Prefer decision records when explaining trade-offs.",
+        },
+      }),
+      "How should we evolve this?",
+      [],
+    );
+
+    expect(prompt).toContain("User preferences:");
+    expect(prompt).toContain("Preferred traits: Direct, Skeptical");
+    expect(prompt).toContain("Prefer decision records when explaining trade-offs.");
+  });
+
   test("prefixes each rendered artifact with a 1-based [A#] marker", () => {
     const context = makeContext({
       artifacts: [

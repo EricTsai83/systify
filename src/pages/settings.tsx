@@ -48,6 +48,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { useComboboxAnchor } from "@/components/ui/use-combobox-anchor";
 import {
   CUSTOM_INSTRUCTIONS_MAX_LENGTH,
+  USER_TRAIT_MAX_LENGTH,
+  USER_TRAITS_MAX_COUNT,
   type UserPreferences,
   useStatsForNerdsPreference,
   useUserPreferences,
@@ -67,16 +69,7 @@ import { cn } from "@/lib/utils";
 
 type SetUserPreferences = (next: UserPreferences | ((prev: UserPreferences) => UserPreferences)) => void;
 
-const DEFAULT_TRAITS = [
-  "Direct",
-  "Pragmatic",
-  "Curious",
-  "Concise",
-  "Detail-oriented",
-  "Skeptical",
-  "Supportive",
-  "Technical",
-];
+const DEFAULT_TRAITS = ["concise", "empathetic", "curious", "creative", "friendly", "witty", "patient"];
 
 const SETTINGS_SECTIONS: Array<{ id: SettingsSectionId; label: string }> = [
   { id: "account", label: "Account" },
@@ -245,11 +238,11 @@ const USAGE_COPY = {
 } as const;
 
 export function SettingsPage() {
-  const [preferences, setPreferences] = useUserPreferences();
   const params = useParams<{ section?: string }>();
   const [searchParams] = useSearchParams();
   const from = getSafeFrom(searchParams.get("from"));
   const activeSection = parseSettingsSection(params.section);
+  const [customizationPreferences, setCustomizationPreferences] = useUserPreferences();
 
   if (!params.section) {
     return <Navigate to={settingsPath(DEFAULT_SETTINGS_SECTION, from)} replace />;
@@ -296,7 +289,10 @@ export function SettingsPage() {
           {activeSection === "account" ? <AccountSettingsSection /> : null}
           {activeSection === "usage" ? <UsageSettingsSection /> : null}
           {activeSection === "customization" ? (
-            <CustomizationSettingsSection preferences={preferences} setPreferences={setPreferences} />
+            <CustomizationSettingsSection
+              preferences={customizationPreferences}
+              setPreferences={setCustomizationPreferences}
+            />
           ) : null}
           {activeSection === "history" ? <HistorySettingsSection /> : null}
           {activeSection === "resources" ? <ResourcesSection /> : null}
@@ -335,11 +331,12 @@ function SettingsSectionNav({ activeSection, from }: { activeSection: SettingsSe
 }
 
 function AccountSettingsSection() {
-  const { user } = useAuth();
+  const { user, isLoading: isAuthLoading } = useAuth();
   const githubConnection = useGitHubConnection();
   const disconnectGitHub = useMutation(api.github.disconnectGitHub);
   const [isDisconnectDialogOpen, setIsDisconnectDialogOpen] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
+  const isAccountLoading = isAuthLoading || githubConnection.isLoading;
 
   const displayName = user?.firstName
     ? `${user.firstName}${user.lastName ? ` ${user.lastName}` : ""}`
@@ -369,56 +366,89 @@ function AccountSettingsSection() {
     <TooltipProvider delayDuration={150}>
       <section className="flex flex-col gap-4">
         <Card className="overflow-hidden p-0">
-          <div className="flex flex-col gap-4 border-b border-border bg-muted/20 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 items-center gap-3">
-              <Avatar size="lg" className="rounded-md">
-                <AvatarImage src={user?.profilePictureUrl ?? undefined} alt={displayName} className="rounded-md" />
-                <AvatarFallback className="rounded-md text-sm font-semibold uppercase">
-                  {fallbackInitial}
-                </AvatarFallback>
-              </Avatar>
-              <div className="min-w-0">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <h2 className="truncate text-base font-semibold tracking-tight">{displayName}</h2>
-                  <Badge variant="muted">WorkOS</Badge>
+          <div className="flex min-h-[104px] flex-col gap-4 border-b border-border bg-muted/20 px-5 py-4 sm:min-h-[73px] sm:flex-row sm:items-center sm:justify-between">
+            {isAccountLoading ? (
+              <>
+                <div className="flex min-w-0 items-center gap-3">
+                  <Skeleton className="size-10 shrink-0 rounded-md" aria-hidden="true" />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <Skeleton className="h-5 w-36 max-w-full" aria-hidden="true" />
+                      <Skeleton className="h-5 w-16" aria-hidden="true" />
+                    </div>
+                    <Skeleton className="h-5 w-52 max-w-full" aria-hidden="true" />
+                  </div>
                 </div>
-                <p className="mt-1 min-h-5 truncate text-sm text-muted-foreground">{user?.email ?? null}</p>
-              </div>
-            </div>
-            <Badge variant={githubConnection.isConnected ? "outline" : "muted"} className="w-fit whitespace-nowrap">
-              <GithubLogo weight="bold" />
-              {formatGitHubConnection(githubConnection)}
-            </Badge>
+                <Skeleton className="h-6 w-40" aria-hidden="true" />
+              </>
+            ) : (
+              <>
+                <div className="flex min-w-0 items-center gap-3">
+                  <Avatar size="lg" className="rounded-md">
+                    <AvatarImage src={user?.profilePictureUrl ?? undefined} alt={displayName} className="rounded-md" />
+                    <AvatarFallback className="rounded-md text-sm font-semibold uppercase">
+                      {fallbackInitial}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                      <h2 className="truncate text-base font-semibold tracking-tight">{displayName}</h2>
+                      <Badge variant="muted">WorkOS</Badge>
+                    </div>
+                    <p className="mt-1 min-h-5 truncate text-sm text-muted-foreground">{user?.email ?? null}</p>
+                  </div>
+                </div>
+                <Badge variant={githubConnection.isConnected ? "outline" : "muted"} className="w-fit whitespace-nowrap">
+                  <GithubLogo weight="bold" />
+                  {formatGitHubConnection(githubConnection)}
+                </Badge>
+              </>
+            )}
           </div>
 
-          <div className="flex flex-col gap-3 border-t border-border px-5 py-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-            <p className="min-w-0">
-              GitHub repository access comes from the connected GitHub App installation. To switch GitHub accounts,
-              disconnect this installation and connect again.
-            </p>
-            {githubConnection.isConnected ? (
-              <div className="flex shrink-0 flex-wrap gap-2">
-                {manageGitHubUrl ? (
-                  <Button type="button" variant="outline" size="sm" onClick={handleManageGitHub}>
-                    <GithubLogo weight="bold" />
-                    Manage on GitHub
-                  </Button>
+          <div className="flex min-h-[107px] flex-col gap-3 border-t border-border px-5 py-3 text-sm text-muted-foreground sm:min-h-14 sm:flex-row sm:items-center sm:justify-between">
+            {isAccountLoading ? (
+              <>
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Skeleton className="h-4 w-full" aria-hidden="true" />
+                  <Skeleton className="h-4 w-4/5 sm:hidden" aria-hidden="true" />
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Skeleton className="h-8 w-36" aria-hidden="true" />
+                  <Skeleton className="h-8 w-24" aria-hidden="true" />
+                </div>
+              </>
+            ) : (
+              <>
+                <p className="min-w-0">
+                  GitHub repository access comes from the connected GitHub App installation. To switch GitHub accounts,
+                  disconnect this installation and connect again.
+                </p>
+                {githubConnection.isConnected ? (
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    {manageGitHubUrl ? (
+                      <Button type="button" variant="outline" size="sm" onClick={handleManageGitHub}>
+                        <GithubLogo weight="bold" />
+                        Manage on GitHub
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => {
+                        setDisconnectError(null);
+                        setIsDisconnectDialogOpen(true);
+                      }}
+                    >
+                      Disconnect
+                    </Button>
+                  </div>
                 ) : null}
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => {
-                    setDisconnectError(null);
-                    setIsDisconnectDialogOpen(true);
-                  }}
-                >
-                  Disconnect
-                </Button>
-              </div>
-            ) : null}
-            {disconnectError ? <p className="text-sm text-destructive sm:basis-full">{disconnectError}</p> : null}
+                {disconnectError ? <p className="text-sm text-destructive sm:basis-full">{disconnectError}</p> : null}
+              </>
+            )}
           </div>
         </Card>
 
@@ -1210,7 +1240,7 @@ function TimeZoneSelector({
               type="button"
               variant="outline"
               className={cn(
-                "h-10 w-full min-w-0 justify-between bg-background px-3 active:scale-100",
+                "h-auto min-h-12 w-full min-w-0 justify-between bg-background px-3 py-2 active:scale-100",
                 invalid ? "border-destructive focus-visible:ring-destructive/20" : null,
               )}
               aria-label="Timezone"
@@ -1533,10 +1563,11 @@ function TraitsSection({
     (value: string) => {
       const trait = value.trim();
       if (!trait) return;
+      if (preferences.traits.length >= USER_TRAITS_MAX_COUNT) return;
       setPreferences((prev) => ({ ...prev, traits: [...prev.traits, trait] }));
       setTraitInput("");
     },
-    [setPreferences],
+    [preferences.traits.length, setPreferences],
   );
 
   const removeTrait = useCallback(
@@ -1547,6 +1578,8 @@ function TraitsSection({
   );
 
   const selectedTraits = new Set(preferences.traits.map((trait) => trait.toLocaleLowerCase()));
+  const traitLimitReached = preferences.traits.length >= USER_TRAITS_MAX_COUNT;
+  const availableDefaultTraits = DEFAULT_TRAITS.filter((trait) => !selectedTraits.has(trait.toLocaleLowerCase()));
 
   return (
     <section className="flex flex-col gap-3">
@@ -1577,7 +1610,7 @@ function TraitsSection({
       ) : null}
 
       <form
-        className="flex gap-2"
+        className="flex"
         onSubmit={(event) => {
           event.preventDefault();
           addTrait(traitInput);
@@ -1586,33 +1619,36 @@ function TraitsSection({
         <Input
           value={traitInput}
           onChange={(event) => setTraitInput(event.target.value)}
-          placeholder="Add a custom trait"
+          onKeyDown={(event) => {
+            if (event.key !== "Tab" || !traitInput.trim() || traitLimitReached) {
+              return;
+            }
+            event.preventDefault();
+            addTrait(traitInput);
+          }}
+          placeholder="Type a trait and press Enter or Tab..."
           aria-label="Add a custom trait"
+          maxLength={USER_TRAIT_MAX_LENGTH}
         />
-        <Button type="submit" variant="secondary" size="default" disabled={!traitInput.trim()}>
-          <Plus weight="bold" />
-          Add
-        </Button>
       </form>
 
-      <div className="flex flex-wrap gap-2">
-        {DEFAULT_TRAITS.map((trait) => {
-          const selected = selectedTraits.has(trait.toLocaleLowerCase());
-          return (
+      {availableDefaultTraits.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {availableDefaultTraits.map((trait) => (
             <Button
               key={trait}
               type="button"
-              variant={selected ? "default" : "outline"}
+              variant="outline"
               size="xs"
-              disabled={selected}
+              disabled={traitLimitReached}
               onClick={() => addTrait(trait)}
             >
-              {selected ? <CheckCircle weight="fill" /> : <Plus weight="bold" />}
+              <Plus weight="bold" />
               {trait}
             </Button>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      ) : null}
     </section>
   );
 }
