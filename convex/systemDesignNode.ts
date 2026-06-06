@@ -1,45 +1,34 @@
 "use node";
 
-import { APICallError, stepCountIs } from "ai";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
-import { createSandboxTools } from "./chat/sandboxTools";
-import { getSandboxFsClient } from "./daytona";
 import { getCatalogEntry, isSupportedReasoningEffort } from "./lib/llmCatalog";
-import { generateViaGateway, LlmRateLimitError } from "./lib/llmGateway";
-import type { LlmProvider, NormalizedUsage } from "./lib/llmProvider";
+import type { LlmProvider } from "./lib/llmProvider";
 import {
   ensureSandboxReady,
   type EnsureSandboxReadyResult,
   SandboxPreparationError,
   type SandboxPreparationStage,
 } from "./lib/sandboxLiveness";
-import { emitMetric, logErrorWithId, logInfo, logWarn } from "./lib/observability";
-import { SYSTEM_DESIGN_KIND_TITLES, isSystemDesignKind, systemDesignKindValidator } from "./lib/systemDesign";
-import {
-  budgetSuffix,
-  getKindRunConfig,
-  validateMermaidBlock,
-  validateRequiredSections,
-} from "./lib/systemDesignPrompts";
-import { isUsageBudgetExceededError } from "./lib/userCost";
+import { logInfo } from "./lib/observability";
+import { isSystemDesignKind, systemDesignKindValidator } from "./lib/systemDesign";
+import { runSystemDesignKind } from "./systemDesignKindRun";
 
 /**
  * Library System Design generator.
  *
  * Every kind is LLM-backed: the action prepares a Daytona sandbox once via
- * `ensureSandboxReady`, then runs one `generateViaGateway` call per selected
- * kind against the sandbox-backed model with the same `read_file` /
- * `list_dir` / `run_shell` tool factory the chat-sandbox path uses. Kinds
- * run serially to honour the per-sandbox tool budget and the gateway's
- * per-user concurrency cap; the job lease is refreshed before each one so
- * a long publication (e.g. all seven kinds with high step budgets) does
- * not trip the stale-recovery sweep while the action is still making
- * progress.
+ * `ensureSandboxReady`, then calls the System Design kind-run Module once
+ * per selected kind. That Module owns the `generateViaGateway` call against
+ * the sandbox-backed model with the same `read_file` / `list_dir` /
+ * `run_shell` tool factory the chat-sandbox path uses. Kinds run serially
+ * to honour the per-sandbox tool budget and the gateway's per-user
+ * concurrency cap; the job lease is refreshed before each one so a long
+ * publication (e.g. all seven kinds with high step budgets) does not trip
+ * the stale-recovery sweep while the action is still making progress.
  *
- * **Per-kind lifecycle** (each pass through the for-loop):
+ * **Per-kind lifecycle** (inside the kind-run Module):
  *
  *   1. Refresh lease.
  *   2. Cache probe via `findCachedArtifact` keyed on
@@ -194,237 +183,20 @@ export const runSystemDesignGeneration = internalAction({
       // stale-recovery while progress is still happening.
       await ctx.runMutation(internal.systemDesign.refreshGenerationLease, { jobId: args.jobId });
 
-      const startedAt = Date.now();
-      const config = getKindRunConfig(kind);
-
-      emitMetric("systemdesign_kind_started", {
-        tags: {
-          kind,
-          provider: modelChoice.provider,
-          model: modelChoice.modelName,
-          prompt_version: config.promptVersion,
-        },
-        details: { jobId: args.jobId, repositoryId: args.repositoryId },
-      });
-
-      // ── 1. Cache probe ────────────────────────────────────────────────
-      let runStatus: Doc<"systemDesignKindRuns">["status"] = "failed";
-      let failureReason: ReturnType<typeof classifyLlmError> | undefined;
-      let artifactId: Id<"artifacts"> | undefined;
-      let usage: NormalizedUsage = {};
-      let costUsd: number | undefined;
-      let actualSteps = 0;
-      let outputCharLength = 0;
-      let missingSections: string[] | undefined;
-
-      if (!forceRegenerate && commitSha) {
-        const cached = await ctx.runQuery(internal.systemDesign.findCachedArtifact, {
-          repositoryId: args.repositoryId,
-          kind,
-          alignedImportCommitSha: commitSha,
-          generatedByProvider: modelChoice.provider,
-          generatedByModel: modelChoice.modelName,
-          promptVersion: config.promptVersion,
-        });
-        if (cached) {
-          runStatus = "cached_hit";
-          artifactId = cached._id;
-          outputCharLength = cached.contentMarkdown.length;
-          emitMetric("systemdesign_kind_cache_hit", {
-            tags: { kind, provider: modelChoice.provider, model: modelChoice.modelName },
-            details: { repositoryId: args.repositoryId, commitSha },
-          });
-        }
-      }
-
-      // ── 2. LLM call (skipped on cache hit) ────────────────────────────
-      if (runStatus !== "cached_hit") {
-        try {
-          await ctx.runMutation(internal.systemDesign.assertKindCostBudget, {
-            ownerTokenIdentifier: args.ownerTokenIdentifier,
-            repositoryId: args.repositoryId,
-            jobId: args.jobId,
-            kind,
-            startedAt,
-          });
-
-          const result = await generateViaGateway(
-            ctx,
-            {
-              provider: modelChoice.provider,
-              modelName: modelChoice.modelName,
-              ownerTokenIdentifier: args.ownerTokenIdentifier,
-              capability: "sandbox",
-              feature: "system_design",
-              jobId: args.jobId,
-            },
-            {
-              system: config.prompt + budgetSuffix(config.stepBudget),
-              prompt: buildUserPrompt(context.repository),
-              tools: createSandboxTools(await getSandboxFsClient(prepared.remoteId), prepared.repoPath),
-              stopWhen: stepCountIs(config.stepBudget),
-              // Per-job override takes priority over the catalog
-              // default. Wired through `getJobModelChoice` so a
-              // stale-recovery resume picks up the same effort.
-              reasoningEffort,
-            },
-          );
-
-          usage = result.usage;
-          costUsd = result.costUsd;
-          actualSteps = result.steps.length;
-          const text = result.text.trim();
-          outputCharLength = text.length;
-
-          if (text.length === 0) {
-            runStatus = "failed";
-            failureReason = "model_empty_output";
-          } else {
-            const validation = validateRequiredSections(text, config.expectedSections);
-            const mermaidOk = kind !== "architecture_diagram" || validateMermaidBlock(text);
-            if (!validation.ok || !mermaidOk) {
-              runStatus = "quality_rejected";
-              failureReason = "output_quality";
-              missingSections = [...validation.missingSections];
-              if (!mermaidOk) {
-                missingSections.push("mermaid_block");
-              }
-            } else {
-              const persisted = await ctx.runMutation(internal.systemDesign.persistGeneratedArtifact, {
-                repositoryId: args.repositoryId,
-                ownerTokenIdentifier: args.ownerTokenIdentifier,
-                jobId: args.jobId,
-                kind,
-                title: SYSTEM_DESIGN_KIND_TITLES[kind],
-                summary: extractSummary(text),
-                contentMarkdown: text,
-                alignedImportCommitSha: commitSha,
-                generatedByProvider: modelChoice.provider,
-                generatedByModel: modelChoice.modelName,
-                promptVersion: config.promptVersion,
-              });
-              artifactId = persisted.artifactId;
-              runStatus = "succeeded";
-            }
-          }
-        } catch (error) {
-          runStatus = "failed";
-          failureReason = classifyLlmError(error);
-          const errorId = logErrorWithId("systemDesign", "kind_generation_failed", error, {
-            jobId: args.jobId,
-            repositoryId: args.repositoryId,
-            kind,
-            provider: modelChoice.provider,
-            modelName: modelChoice.modelName,
-            failureReason,
-          });
-          logWarn("systemDesign", "kind_skipped", {
-            jobId: args.jobId,
-            kind,
-            errorId,
-            failureReason,
-          });
-          const rawMessage = error instanceof Error ? error.message : String(error);
-          await ctx.runMutation(internal.systemDesign.recordKindFailure, {
-            jobId: args.jobId,
-            kind,
-            errorId,
-            message: rawMessage,
-            reason: failureReason,
-          });
-        }
-      }
-
-      const durationMs = Date.now() - startedAt;
-
-      // ── 3. Telemetry: kindRun row + cost settlement ───────────────────
-      const recorded = await ctx.runMutation(internal.systemDesign.recordKindRun, {
-        ownerTokenIdentifier: args.ownerTokenIdentifier,
-        repositoryId: args.repositoryId,
+      const outcome = await runSystemDesignKind(ctx, {
         jobId: args.jobId,
+        repositoryId: args.repositoryId,
+        ownerTokenIdentifier: args.ownerTokenIdentifier,
         kind,
-        ...(runStatus === "cached_hit" && artifactId ? { artifactId } : {}),
-        provider: modelChoice.provider,
-        modelName: modelChoice.modelName,
-        promptVersion: config.promptVersion,
-        alignedImportCommitSha: commitSha,
-        stepCap: config.stepBudget,
-        actualSteps,
-        inputTokens: usage.inputTokens,
-        outputTokens: usage.outputTokens,
-        cachedInputTokens: usage.cachedInputTokens,
-        cacheWriteTokens: usage.cacheWriteTokens,
-        reasoningTokens: usage.reasoningTokens,
-        totalCostUsd: costUsd,
-        durationMs,
-        status: runStatus,
-        failureReason,
-        outputCharLength: outputCharLength > 0 ? outputCharLength : undefined,
-        missingSections,
-        startedAt,
-        sourceId: `systemDesign:${args.jobId}:${kind}:${startedAt}`,
+        repository: context.repository,
+        prepared,
+        modelChoice,
+        reasoningEffort,
+        commitSha,
+        forceRegenerate,
       });
 
-      if (artifactId && runStatus !== "cached_hit") {
-        await ctx.runMutation(internal.systemDesign.linkKindRun, {
-          artifactId,
-          kindRunId: recorded.kindRunId,
-        });
-      }
-
-      // ── 4. Per-kind metrics ───────────────────────────────────────────
-      emitMetric("systemdesign_kind_duration_ms", {
-        value: durationMs,
-        tags: {
-          kind,
-          provider: modelChoice.provider,
-          model: modelChoice.modelName,
-          status: runStatus,
-        },
-        details: { jobId: args.jobId },
-      });
-      emitMetric("systemdesign_kind_steps_used", {
-        value: actualSteps,
-        tags: {
-          kind,
-          provider: modelChoice.provider,
-          model: modelChoice.modelName,
-          hit_budget: actualSteps >= config.stepBudget,
-        },
-        details: { jobId: args.jobId },
-      });
-      if (costUsd !== undefined) {
-        emitMetric("systemdesign_kind_cost_usd", {
-          value: costUsd,
-          tags: { kind, provider: modelChoice.provider, model: modelChoice.modelName },
-          details: { jobId: args.jobId },
-        });
-      }
-      if (usage.inputTokens !== undefined || usage.outputTokens !== undefined) {
-        emitMetric("systemdesign_kind_tokens", {
-          tags: { kind, provider: modelChoice.provider, model: modelChoice.modelName },
-          details: {
-            input: usage.inputTokens,
-            output: usage.outputTokens,
-            cached_input: usage.cachedInputTokens,
-            cache_write: usage.cacheWriteTokens,
-            reasoning: usage.reasoningTokens,
-          },
-        });
-      }
-      if (runStatus === "failed" || runStatus === "quality_rejected") {
-        emitMetric("systemdesign_kind_failed", {
-          tags: {
-            kind,
-            provider: modelChoice.provider,
-            model: modelChoice.modelName,
-            reason: failureReason ?? "unknown",
-          },
-          details: { jobId: args.jobId },
-        });
-      }
-
-      if (runStatus === "succeeded" || runStatus === "cached_hit") {
+      if (outcome.countsAsSucceeded) {
         succeeded += 1;
       } else {
         failed += 1;
@@ -434,7 +206,7 @@ export const runSystemDesignGeneration = internalAction({
         jobId: args.jobId,
         completedCount,
         totalCount,
-        stage: `Generated ${completedCount} of ${totalCount}: ${SYSTEM_DESIGN_KIND_TITLES[kind]}`,
+        stage: `Generated ${completedCount} of ${totalCount}: ${outcome.title}`,
       });
     }
 
@@ -456,90 +228,6 @@ export const runSystemDesignGeneration = internalAction({
     });
   },
 });
-
-/**
- * Map an LLM call exception into one of the structured
- * `kindFailureReason` literals. Order matters:
- *
- *   1. `SandboxPreparationError` — should never reach here (caught
- *      higher up) but kept defensively for safety.
- *   2. `LlmRateLimitError` — gateway-level fairness denial (per-user
- *      RPM or concurrency cap). Distinct from provider 429 but both
- *      surface as `transport_rate_limit` in the kindRun row so the
- *      banner copy works without sniffing the error class.
- *   3. `APICallError` with 429 — provider rate-limited the call past
- *      `withLlmRetry`'s ceiling.
- *   4. `APICallError` other — provider returned a non-429 transport
- *      fault (5xx, 4xx other than 429, network without status).
- *   5. Legacy `empty document` substring — pre-PR-A2 callers threw
- *      this on empty output; keep for backwards compatibility with
- *      historical eval fixtures.
- *   6. Default — `infra`. Convex / our-side bug; engineering alerted.
- */
-function classifyLlmError(
-  error: unknown,
-):
-  | "live_source_unavailable"
-  | "model_empty_output"
-  | "transport_rate_limit"
-  | "transport_other"
-  | "output_quality"
-  | "infra" {
-  if (error instanceof SandboxPreparationError) {
-    return "live_source_unavailable";
-  }
-  if (error instanceof LlmRateLimitError) {
-    return "transport_rate_limit";
-  }
-  if (isUsageBudgetExceededError(error)) {
-    return "transport_rate_limit";
-  }
-  if (error instanceof APICallError) {
-    if (error.statusCode === 429) {
-      return "transport_rate_limit";
-    }
-    return "transport_other";
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  if (/empty document/i.test(message)) {
-    return "model_empty_output";
-  }
-  return "infra";
-}
-
-/**
- * Per-kind user-prompt shell. The system prompt carries the
- * per-kind directive; this user prompt only supplies the repository
- * identification + an opening instruction. The two are concatenated
- * inside the gateway call so the model sees `system` and `prompt`
- * the way AI SDK expects.
- */
-function buildUserPrompt(repository: Doc<"repositories">): string {
-  return [
-    `Repository: ${repository.sourceRepoFullName ?? "(unknown)"}`,
-    repository.defaultBranch ? `Default branch: ${repository.defaultBranch}` : null,
-    "",
-    "Begin by listing the repository root, then inspect the most relevant files",
-    "before writing the document. Stay within the repo subtree.",
-  ]
-    .filter((line): line is string => line !== null)
-    .join("\n");
-}
-
-/**
- * Extract a 1-line preview from a generated markdown document — first
- * non-heading, non-blank line, capped at 280 characters. Falls back to
- * a generic label so artifacts always have a summary.
- */
-function extractSummary(markdown: string): string {
-  const lines = markdown.split("\n");
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    return trimmed.slice(0, 280);
-  }
-  return "Generated by Library System Design.";
-}
 
 /**
  * Type-only re-export for downstream eval / report callers that want
