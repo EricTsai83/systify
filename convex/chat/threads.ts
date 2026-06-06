@@ -14,6 +14,7 @@ import { deleteMessageStreamState } from "./streamStore";
 import { drainMessageToolCallEvents } from "./toolCallEventStore";
 import {
   drainThreadSharesByThreadId,
+  patchThreadSharesRepositoryByThreadId,
   recordThreadCreatedInHistory,
   recordThreadMovedInHistory,
   recordThreadRemovedFromHistory,
@@ -53,34 +54,46 @@ export const listThreads = query({
     const pinned = mode
       ? await ctx.db
           .query("threads")
-          .withIndex("by_ownerTokenIdentifier_repositoryId_mode_and_pinnedAt", (q) =>
+          .withIndex("by_ownerTokenIdentifier_repositoryId_mode_deletionRequestedAt_and_pinnedAt", (q) =>
             q
               .eq("ownerTokenIdentifier", ownerTokenIdentifier)
               .eq("repositoryId", repositoryId)
               .eq("mode", mode)
+              .eq("deletionRequestedAt", undefined)
               .gt("pinnedAt", 0),
           )
           .order("desc")
           .take(20)
       : await ctx.db
           .query("threads")
-          .withIndex("by_ownerTokenIdentifier_repositoryId_and_pinnedAt", (q) =>
-            q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("repositoryId", repositoryId).gt("pinnedAt", 0),
+          .withIndex("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_pinnedAt", (q) =>
+            q
+              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
+              .eq("repositoryId", repositoryId)
+              .eq("deletionRequestedAt", undefined)
+              .gt("pinnedAt", 0),
           )
           .order("desc")
           .take(20);
     const recent = mode
       ? await ctx.db
           .query("threads")
-          .withIndex("by_ownerTokenIdentifier_repositoryId_mode_and_lastMessageAt", (q) =>
-            q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("repositoryId", repositoryId).eq("mode", mode),
+          .withIndex("by_ownerTokenIdentifier_repositoryId_mode_deletionRequestedAt_and_lastMessageAt", (q) =>
+            q
+              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
+              .eq("repositoryId", repositoryId)
+              .eq("mode", mode)
+              .eq("deletionRequestedAt", undefined),
           )
           .order("desc")
           .take(20)
       : await ctx.db
           .query("threads")
-          .withIndex("by_ownerTokenIdentifier_repositoryId_and_lastMessageAt", (q) =>
-            q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("repositoryId", repositoryId),
+          .withIndex("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_lastMessageAt", (q) =>
+            q
+              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
+              .eq("repositoryId", repositoryId)
+              .eq("deletionRequestedAt", undefined),
           )
           .order("desc")
           .take(20);
@@ -109,15 +122,22 @@ export const listRepolessThreads = query({
     const identity = await requireViewerIdentity(ctx);
     const pinned = await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_repositoryId_and_pinnedAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("repositoryId", undefined).gt("pinnedAt", 0),
+      .withIndex("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_pinnedAt", (q) =>
+        q
+          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+          .eq("repositoryId", undefined)
+          .eq("deletionRequestedAt", undefined)
+          .gt("pinnedAt", 0),
       )
       .order("desc")
       .take(20);
     const recent = await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_repositoryId_and_lastMessageAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("repositoryId", undefined),
+      .withIndex("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_lastMessageAt", (q) =>
+        q
+          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+          .eq("repositoryId", undefined)
+          .eq("deletionRequestedAt", undefined),
       )
       .order("desc")
       .take(20);
@@ -149,6 +169,9 @@ export const listMessagesPaginated = query({
     const { doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
+    if (thread.deletionRequestedAt !== undefined) {
+      throw new Error("Thread not found.");
+    }
 
     if (thread.repositoryId) {
       await requireOwnedDoc(ctx, thread.repositoryId, {
@@ -183,8 +206,8 @@ export const listAllOwnerThreadIds = query({
     const identity = await requireViewerIdentity(ctx);
     const rows = await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_and_lastMessageAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier),
+      .withIndex("by_ownerTokenIdentifier_deletionRequestedAt_and_lastMessageAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
       )
       .order("desc")
       .take(1000);
@@ -207,7 +230,7 @@ export const getThreadSummary = query({
   },
   handler: async (ctx, args) => {
     const { doc: thread } = await loadOwnedDoc(ctx, args.threadId);
-    return thread;
+    return thread?.deletionRequestedAt === undefined ? thread : null;
   },
 });
 
@@ -332,6 +355,9 @@ export const setThreadRepository = mutation({
     const { doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
+    if (thread.deletionRequestedAt !== undefined) {
+      throw new Error("Thread not found.");
+    }
 
     if (args.repositoryId !== null) {
       await requireActiveRepositoryForViewer(ctx, {
@@ -358,6 +384,15 @@ export const setThreadRepository = mutation({
         previousThread: thread,
         updatedThread,
       });
+      const shareRowsRemain = await patchThreadSharesRepositoryByThreadId(ctx, {
+        threadId: args.threadId,
+        repositoryId: updatedThread.repositoryId,
+      });
+      if (shareRowsRemain) {
+        await ctx.scheduler.runAfter(0, internal.chat.threads.continueThreadShareRepositoryScopeUpdate, {
+          threadId: args.threadId,
+        });
+      }
       return {
         repositoryId: args.repositoryId,
         mode: nextMode,
@@ -383,7 +418,35 @@ export const setThreadRepository = mutation({
       previousThread: thread,
       updatedThread,
     });
+    const shareRowsRemain = await patchThreadSharesRepositoryByThreadId(ctx, {
+      threadId: args.threadId,
+      repositoryId: updatedThread.repositoryId,
+    });
+    if (shareRowsRemain) {
+      await ctx.scheduler.runAfter(0, internal.chat.threads.continueThreadShareRepositoryScopeUpdate, {
+        threadId: args.threadId,
+      });
+    }
     return { repositoryId: null as null, mode: detachedMode };
+  },
+});
+
+export const continueThreadShareRepositoryScopeUpdate = internalMutation({
+  args: {
+    threadId: v.id("threads"),
+  },
+  handler: async (ctx, args) => {
+    const thread = await ctx.db.get(args.threadId);
+    if (!thread) {
+      return;
+    }
+    const shareRowsRemain = await patchThreadSharesRepositoryByThreadId(ctx, {
+      threadId: args.threadId,
+      repositoryId: thread.repositoryId,
+    });
+    if (shareRowsRemain) {
+      await ctx.scheduler.runAfter(0, internal.chat.threads.continueThreadShareRepositoryScopeUpdate, args);
+    }
   },
 });
 
@@ -401,9 +464,12 @@ export const setThreadPinned = mutation({
     pinned: v.boolean(),
   },
   handler: async (ctx, args) => {
-    await requireOwnedDoc(ctx, args.threadId, {
+    const { doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
+    if (thread.deletionRequestedAt !== undefined) {
+      throw new Error("Thread not found.");
+    }
     await ctx.db.patch(args.threadId, {
       pinnedAt: args.pinned ? Date.now() : undefined,
     });
@@ -448,6 +514,17 @@ async function deleteThreadImpl(ctx: MutationCtx, args: { threadId: Id<"threads"
   if (!thread) {
     // Already deleted — either a concurrent caller finished the job or a
     // continuation tick fired after the row went away. Nothing to do.
+    return;
+  }
+
+  if (thread.deletionRequestedAt === undefined) {
+    await ctx.db.patch(args.threadId, { deletionRequestedAt: Date.now() });
+    await recordThreadRemovedFromHistory(ctx, thread);
+  }
+
+  const sharesStillRemain = await drainThreadSharesByThreadId(ctx, args.threadId);
+  if (sharesStillRemain) {
+    await ctx.scheduler.runAfter(0, internal.chat.threads.deleteThreadContinuation, args);
     return;
   }
 
@@ -503,13 +580,6 @@ async function deleteThreadImpl(ctx: MutationCtx, args: { threadId: Id<"threads"
     }
   }
 
-  const sharesStillRemain = await drainThreadSharesByThreadId(ctx, args.threadId);
-  if (sharesStillRemain) {
-    await ctx.scheduler.runAfter(0, internal.chat.threads.deleteThreadContinuation, args);
-    return;
-  }
-
-  await recordThreadRemovedFromHistory(ctx, thread);
   await ctx.db.delete(args.threadId);
 
   if (streamBudgetExhausted || streams.length === 500) {

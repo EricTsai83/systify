@@ -45,11 +45,16 @@ async function findActiveShareForThread(
 ): Promise<ActiveThreadShareSummary | null> {
   const shares = await ctx.db
     .query("threadShares")
-    .withIndex("by_ownerTokenIdentifier_and_threadId", (q) =>
-      q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier).eq("threadId", args.threadId),
+    .withIndex("by_ownerTokenIdentifier_threadId_revokedAt_and_expiresAt", (q) =>
+      q
+        .eq("ownerTokenIdentifier", args.ownerTokenIdentifier)
+        .eq("threadId", args.threadId)
+        .eq("revokedAt", undefined)
+        .gt("expiresAt", args.now),
     )
-    .collect();
-  const share = shares.find((candidate) => candidate.revokedAt === undefined && candidate.expiresAt > args.now);
+    .order("desc")
+    .take(1);
+  const share = shares[0] ?? null;
   return share
     ? {
         _id: share._id,
@@ -113,8 +118,11 @@ export const listThreadsForHistoryGroup = query({
 
     const result = await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_repositoryId_and_lastMessageAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("repositoryId", repositoryId),
+      .withIndex("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_lastMessageAt", (q) =>
+        q
+          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+          .eq("repositoryId", repositoryId)
+          .eq("deletionRequestedAt", undefined),
       )
       .order("desc")
       .paginate(args.paginationOpts);

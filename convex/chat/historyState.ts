@@ -3,6 +3,7 @@ import type { MutationCtx } from "../_generated/server";
 import { CASCADE_BATCH_SIZE } from "../lib/constants";
 
 export const NO_REPOSITORY_HISTORY_GROUP_KEY = "no_repository";
+const HISTORY_GROUP_DUPLICATE_REPAIR_LIMIT = 10;
 
 type HistoryRepositoryId = Id<"repositories"> | undefined;
 
@@ -19,7 +20,7 @@ async function loadHistoryGroupRows(
     .withIndex("by_ownerTokenIdentifier_and_groupKey", (q) =>
       q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier).eq("groupKey", getHistoryGroupKey(args.repositoryId)),
     )
-    .collect();
+    .take(HISTORY_GROUP_DUPLICATE_REPAIR_LIMIT);
 }
 
 async function normalizeGroupRows(
@@ -33,6 +34,28 @@ async function normalizeGroupRows(
   return primary ?? null;
 }
 
+async function loadLatestVisibleThreadInGroup(
+  ctx: MutationCtx,
+  args: {
+    ownerTokenIdentifier: string;
+    repositoryId: HistoryRepositoryId;
+    excludeThreadId?: Id<"threads">;
+  },
+): Promise<Doc<"threads"> | null> {
+  const candidates = await ctx.db
+    .query("threads")
+    .withIndex("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_lastMessageAt", (q) =>
+      q
+        .eq("ownerTokenIdentifier", args.ownerTokenIdentifier)
+        .eq("repositoryId", args.repositoryId)
+        .eq("deletionRequestedAt", undefined),
+    )
+    .order("desc")
+    .take(args.excludeThreadId ? 2 : 1);
+
+  return candidates.find((thread) => thread._id !== args.excludeThreadId) ?? null;
+}
+
 export async function refreshHistoryGroup(
   ctx: MutationCtx,
   args: {
@@ -43,31 +66,23 @@ export async function refreshHistoryGroup(
 ): Promise<void> {
   const rows = await loadHistoryGroupRows(ctx, args);
   const group = await normalizeGroupRows(ctx, rows);
-  const threads = (
-    await ctx.db
-      .query("threads")
-      .withIndex("by_ownerTokenIdentifier_repositoryId_and_lastMessageAt", (q) =>
-        q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier).eq("repositoryId", args.repositoryId),
-      )
-      .order("desc")
-      .collect()
-  ).filter((thread) => thread._id !== args.excludeThreadId);
+  const latestThread = await loadLatestVisibleThreadInGroup(ctx, args);
 
-  if (threads.length === 0) {
+  if (!latestThread) {
     if (group) {
       await ctx.db.delete(group._id);
     }
     return;
   }
 
-  const latestThread = threads[0]!;
+  const threadCount = group && args.excludeThreadId ? Math.max(1, group.threadCount - 1) : (group?.threadCount ?? 1);
   const patch = {
     ownerTokenIdentifier: args.ownerTokenIdentifier,
     groupKey: getHistoryGroupKey(args.repositoryId),
     repositoryId: args.repositoryId,
     lastThreadAt: latestThread.lastMessageAt,
     lastThreadId: latestThread._id,
-    threadCount: threads.length,
+    threadCount,
   };
 
   if (group) {
@@ -78,6 +93,10 @@ export async function refreshHistoryGroup(
 }
 
 export async function recordThreadCreatedInHistory(ctx: MutationCtx, thread: Doc<"threads">): Promise<void> {
+  if (thread.deletionRequestedAt !== undefined) {
+    return;
+  }
+
   const rows = await loadHistoryGroupRows(ctx, {
     ownerTokenIdentifier: thread.ownerTokenIdentifier,
     repositoryId: thread.repositoryId,
@@ -103,6 +122,10 @@ export async function recordThreadCreatedInHistory(ctx: MutationCtx, thread: Doc
 }
 
 export async function recordThreadActivityInHistory(ctx: MutationCtx, thread: Doc<"threads">): Promise<void> {
+  if (thread.deletionRequestedAt !== undefined) {
+    return;
+  }
+
   const rows = await loadHistoryGroupRows(ctx, {
     ownerTokenIdentifier: thread.ownerTokenIdentifier,
     repositoryId: thread.repositoryId,
@@ -134,17 +157,32 @@ export async function recordThreadRemovedFromHistory(ctx: MutationCtx, thread: D
     return;
   }
 
-  if (group.threadCount <= 1 || group.lastThreadId === thread._id) {
-    await refreshHistoryGroup(ctx, {
+  const nextThreadCount = Math.max(0, group.threadCount - 1);
+  if (nextThreadCount === 0) {
+    await ctx.db.delete(group._id);
+    return;
+  }
+
+  if (group.lastThreadId === thread._id) {
+    const latestThread = await loadLatestVisibleThreadInGroup(ctx, {
       ownerTokenIdentifier: thread.ownerTokenIdentifier,
       repositoryId: thread.repositoryId,
       excludeThreadId: thread._id,
+    });
+    if (!latestThread) {
+      await ctx.db.delete(group._id);
+      return;
+    }
+    await ctx.db.patch(group._id, {
+      lastThreadAt: latestThread.lastMessageAt,
+      lastThreadId: latestThread._id,
+      threadCount: nextThreadCount,
     });
     return;
   }
 
   await ctx.db.patch(group._id, {
-    threadCount: Math.max(0, group.threadCount - 1),
+    threadCount: nextThreadCount,
   });
 }
 
@@ -181,6 +219,20 @@ export async function drainThreadSharesByRepositoryId(
     .take(CASCADE_BATCH_SIZE);
   for (const share of shares) {
     await ctx.db.delete(share._id);
+  }
+  return shares.length === CASCADE_BATCH_SIZE;
+}
+
+export async function patchThreadSharesRepositoryByThreadId(
+  ctx: MutationCtx,
+  args: { threadId: Id<"threads">; repositoryId: Id<"repositories"> | undefined },
+): Promise<boolean> {
+  const shares = await ctx.db
+    .query("threadShares")
+    .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
+    .take(CASCADE_BATCH_SIZE);
+  for (const share of shares) {
+    await ctx.db.patch(share._id, { repositoryId: args.repositoryId });
   }
   return shares.length === CASCADE_BATCH_SIZE;
 }

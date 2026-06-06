@@ -277,8 +277,11 @@ export const getRepositoryDetail = query({
 
     const threads = await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_repositoryId_and_lastMessageAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("repositoryId", args.repositoryId),
+      .withIndex("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_lastMessageAt", (q) =>
+        q
+          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+          .eq("repositoryId", args.repositoryId)
+          .eq("deletionRequestedAt", undefined),
       )
       .order("desc")
       .take(10);

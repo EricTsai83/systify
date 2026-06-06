@@ -418,6 +418,9 @@ export const sendMessage = mutation({
     const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
+    if (thread.deletionRequestedAt !== undefined) {
+      throw new Error("Thread not found.");
+    }
 
     let repository: Doc<"repositories"> | null = null;
     if (thread.repositoryId) {

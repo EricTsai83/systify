@@ -9,6 +9,7 @@ import { isOwnedBy, requireOwnedDoc } from "../lib/ownedDocs";
 const THREAD_SHARE_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 const SHARE_TOKEN_LENGTH = 40;
 const SHARE_TOKEN_PREFIX_LENGTH = 10;
+const PUBLIC_TRANSCRIPT_MAX_SCAN_PAGES = 16;
 
 type PublicShareMetadata = {
   _id: Id<"threadShares">;
@@ -49,7 +50,7 @@ async function repositoryLabelForThread(
 
 async function publicShareMetadata(ctx: QueryCtx, share: Doc<"threadShares">): Promise<PublicShareMetadata | null> {
   const thread = await ctx.db.get(share.threadId);
-  if (!isOwnedBy(thread, share.ownerTokenIdentifier)) {
+  if (!isOwnedBy(thread, share.ownerTokenIdentifier) || thread.deletionRequestedAt !== undefined) {
     return null;
   }
 
@@ -76,14 +77,22 @@ export const createOrGetThreadShare = mutation({
     const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
+    if (thread.deletionRequestedAt !== undefined) {
+      throw new Error("Thread not found.");
+    }
     const now = Date.now();
     const existingShares = await ctx.db
       .query("threadShares")
-      .withIndex("by_ownerTokenIdentifier_and_threadId", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("threadId", args.threadId),
+      .withIndex("by_ownerTokenIdentifier_threadId_revokedAt_and_expiresAt", (q) =>
+        q
+          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+          .eq("threadId", args.threadId)
+          .eq("revokedAt", undefined)
+          .gt("expiresAt", now),
       )
-      .collect();
-    const activeShare = existingShares.find((share) => isActiveShare(share, now));
+      .order("desc")
+      .take(1);
+    const activeShare = existingShares[0];
     if (activeShare) {
       return {
         _id: activeShare._id,
@@ -137,19 +146,17 @@ export const listActiveThreadShares = query({
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
+    const now = Date.now();
     const result = await ctx.db
       .query("threadShares")
-      .withIndex("by_ownerTokenIdentifier_and_createdAt", (q) => q.eq("ownerTokenIdentifier", identity.tokenIdentifier))
+      .withIndex("by_ownerTokenIdentifier_revokedAt_and_expiresAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("revokedAt", undefined).gt("expiresAt", now),
+      )
       .order("desc")
       .paginate(args.paginationOpts);
-    const now = Date.now();
-    const page = (
-      await Promise.all(
-        result.page
-          .filter((share) => isActiveShare(share, now))
-          .map(async (share) => await publicShareMetadata(ctx, share)),
-      )
-    ).filter((share): share is PublicShareMetadata => share !== null);
+    const page = (await Promise.all(result.page.map(async (share) => await publicShareMetadata(ctx, share)))).filter(
+      (share): share is PublicShareMetadata => share !== null,
+    );
 
     return {
       ...result,
@@ -200,25 +207,52 @@ export const listPublicThreadShareMessages = query({
       throw new Error("Share link not found.");
     }
     const thread = await ctx.db.get(share.threadId);
-    if (!isOwnedBy(thread, share.ownerTokenIdentifier)) {
+    if (!isOwnedBy(thread, share.ownerTokenIdentifier) || thread.deletionRequestedAt !== undefined) {
       throw new Error("Share link not found.");
     }
-    const result = await ctx.db
-      .query("messages")
-      .withIndex("by_threadId", (q) => q.eq("threadId", share.threadId))
-      .order("asc")
-      .paginate(args.paginationOpts);
-    return {
-      ...result,
-      page: result.page
-        .filter((message) => message.role === "user" || message.role === "assistant")
-        .map((message) => ({
+
+    let cursor = args.paginationOpts.cursor;
+    let continueCursor = cursor ?? "";
+    let isDone = false;
+    let pagesScanned = 0;
+    const page: Array<{
+      _id: Id<"messages">;
+      role: "user" | "assistant";
+      content: string;
+      status: Doc<"messages">["status"];
+      createdAt: number;
+    }> = [];
+
+    while (page.length < args.paginationOpts.numItems && !isDone && pagesScanned < PUBLIC_TRANSCRIPT_MAX_SCAN_PAGES) {
+      const remaining = Math.max(1, args.paginationOpts.numItems - page.length);
+      const result = await ctx.db
+        .query("messages")
+        .withIndex("by_threadId", (q) => q.eq("threadId", share.threadId))
+        .order("asc")
+        .paginate({ numItems: remaining, cursor });
+      pagesScanned += 1;
+      cursor = result.continueCursor;
+      continueCursor = result.continueCursor;
+      isDone = result.isDone;
+
+      for (const message of result.page) {
+        if (message.role !== "user" && message.role !== "assistant") {
+          continue;
+        }
+        page.push({
           _id: message._id,
           role: message.role,
           content: message.content,
           status: message.status,
           createdAt: message._creationTime,
-        })),
+        });
+      }
+    }
+
+    return {
+      page,
+      isDone,
+      continueCursor,
     };
   },
 });

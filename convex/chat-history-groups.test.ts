@@ -131,6 +131,40 @@ describe("chat history groups", () => {
     expect(state.groups[0]?.lastThreadId).toBe(olderThread._id);
   });
 
+  test("long thread delete immediately invalidates shares and removes the history group before continuation", async () => {
+    const ownerTokenIdentifier = "user|history-long-delete-thread";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const thread = await viewer.mutation(api.chat.threads.createThread, {});
+    const share = await viewer.mutation(api.chat.threadShares.createOrGetThreadShare, { threadId: thread._id });
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 500; index += 1) {
+        await ctx.db.insert("messages", {
+          threadId: thread._id,
+          ownerTokenIdentifier,
+          role: index % 2 === 0 ? "user" : "assistant",
+          status: "completed",
+          mode: "discuss",
+          content: `message ${index}`,
+        });
+      }
+    });
+
+    await viewer.mutation(api.chat.threads.deleteThread, { threadId: thread._id });
+
+    expect(await t.query(api.chat.threadShares.getPublicThreadShare, { token: share.token })).toBeNull();
+    const groups = await viewer.query(api.chat.history.listThreadHistoryGroups, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    const state = await t.run(async (ctx) => {
+      return await ctx.db.get(thread._id);
+    });
+
+    expect(groups.page).toHaveLength(0);
+    expect(state?.deletionRequestedAt).toBeTypeOf("number");
+  });
+
   test("repository cascade removes related history groups and share rows", async () => {
     const ownerTokenIdentifier = "user|history-repository-cascade";
     const { t, repositoryId } = await insertRepository(ownerTokenIdentifier, "history-cascade");
@@ -164,6 +198,35 @@ describe("chat history groups", () => {
     expect(remaining.groups).toHaveLength(0);
     expect(remaining.shares).toHaveLength(0);
     expect(remaining.threads).toHaveLength(0);
+  });
+
+  test("moving a thread updates existing share repository scope", async () => {
+    const ownerTokenIdentifier = "user|history-share-move";
+    const { t, repositoryId: firstRepositoryId } = await insertRepository(ownerTokenIdentifier, "history-share-a");
+    const secondRepositoryId = await insertTestRepository(t, {
+      ownerTokenIdentifier,
+      sourceUrl: "https://github.com/acme/history-share-b",
+      sourceRepoFullName: "acme/history-share-b",
+      sourceRepoName: "history-share-b",
+      visibility: "private",
+      importStatus: "completed",
+    });
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const thread = await viewer.mutation(api.chat.threads.createThread, {
+      repositoryId: firstRepositoryId,
+      mode: "discuss",
+    });
+    const share = await viewer.mutation(api.chat.threadShares.createOrGetThreadShare, { threadId: thread._id });
+
+    await viewer.mutation(api.chat.threads.setThreadRepository, {
+      threadId: thread._id,
+      repositoryId: secondRepositoryId,
+    });
+
+    const shareRow = await t.run(async (ctx) => {
+      return await ctx.db.get(share._id);
+    });
+    expect(shareRow?.repositoryId).toBe(secondRepositoryId);
   });
 });
 
@@ -270,5 +333,52 @@ describe("thread shares", () => {
     expect(transcript.page[1]).not.toHaveProperty("reasoning");
     expect(transcript.page[1]).not.toHaveProperty("toolCalls");
     expect(transcript.page[0]).not.toHaveProperty("estimatedCostUsd");
+  });
+
+  test("public transcript scans past leading tool rows to fill the requested page", async () => {
+    const ownerTokenIdentifier = "user|thread-share-leading-tools";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const thread = await viewer.mutation(api.chat.threads.createThread, {});
+    const share = await viewer.mutation(api.chat.threadShares.createOrGetThreadShare, { threadId: thread._id });
+
+    await t.run(async (ctx) => {
+      for (const role of ["tool", "system"] as const) {
+        await ctx.db.insert("messages", {
+          threadId: thread._id,
+          ownerTokenIdentifier,
+          role,
+          status: "completed",
+          mode: "discuss",
+          content: `${role} content`,
+        });
+      }
+      await ctx.db.insert("messages", {
+        threadId: thread._id,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "discuss",
+        content: "Visible user message",
+      });
+      await ctx.db.insert("messages", {
+        threadId: thread._id,
+        ownerTokenIdentifier,
+        role: "assistant",
+        status: "completed",
+        mode: "discuss",
+        content: "Visible assistant message",
+      });
+    });
+
+    const transcript = await t.query(api.chat.threadShares.listPublicThreadShareMessages, {
+      token: share.token,
+      paginationOpts: { numItems: 2, cursor: null },
+    });
+
+    expect(transcript.page.map((message) => message.content)).toEqual([
+      "Visible user message",
+      "Visible assistant message",
+    ]);
   });
 });
