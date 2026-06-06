@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useMutation, usePaginatedQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import {
   ArchiveIcon,
   ArrowCounterClockwiseIcon,
@@ -8,9 +8,7 @@ import {
   CaretRightIcon,
   ChatCircleText,
   ClockCounterClockwiseIcon,
-  MagnifyingGlassIcon,
   TrashIcon,
-  XIcon,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
@@ -19,7 +17,7 @@ import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -33,6 +31,7 @@ import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
 const INITIAL_PAGE_SIZE = 20;
 const NEXT_PAGE_SIZE = 20;
 const THREAD_ARCHIVE_PAGE_SIZE = 10;
+const NO_REPOSITORY_ARCHIVE_SCOPE_VALUE = "no_repository";
 
 export function ArchivePage() {
   const navigate = useNavigate();
@@ -80,24 +79,16 @@ export function ArchiveSettingsSection({ onBackToChat }: { onBackToChat?: () => 
   const navigate = useNavigate();
   const [pendingPermanentDelete, setPendingPermanentDelete] = useState<Doc<"repositories"> | null>(null);
   const [pendingThreadPermanentDelete, setPendingThreadPermanentDelete] = useState<ArchivedThread | null>(null);
-  const [query, setQuery] = useState("");
   const handleBack = useCallback(
     () => (onBackToChat ? onBackToChat() : void navigate(DEFAULT_AUTHENTICATED_PATH)),
     [navigate, onBackToChat],
   );
 
-  const trimmedQuery = query.trim();
-  const isSearching = trimmedQuery.length > 0;
-
   const {
     results: archived,
     status,
     loadMore,
-  } = usePaginatedQuery(
-    api.repositories.listArchivedRepositories,
-    { searchTerm: isSearching ? trimmedQuery : undefined },
-    { initialNumItems: INITIAL_PAGE_SIZE },
-  );
+  } = usePaginatedQuery(api.repositories.listArchivedRepositories, {}, { initialNumItems: INITIAL_PAGE_SIZE });
 
   const isLoadingFirstPage = status === "LoadingFirstPage";
   const canLoadMore = status === "CanLoadMore";
@@ -116,9 +107,6 @@ export function ArchiveSettingsSection({ onBackToChat }: { onBackToChat?: () => 
         canLoadMore={loadMoreState.canLoadMore}
         isLoadingMore={loadMoreState.isLoadingMore}
         isExhausted={isExhausted}
-        isSearching={isSearching}
-        query={query}
-        onQueryChange={setQuery}
         onLoadMore={() => {
           loadMoreState.markLoadMoreStarted();
           loadMore(NEXT_PAGE_SIZE);
@@ -147,67 +135,206 @@ type ArchivedThread = {
   } | null;
 };
 
+type ArchivedThreadRepositoryScope = {
+  repositoryId: RepositoryId | null;
+  label: string;
+};
+
 function ArchivedThreadsSection({
   onRequestPermanentDelete,
 }: {
   onRequestPermanentDelete: (thread: ArchivedThread) => void;
 }) {
+  const scopes = useQuery(api.chat.threads.listArchivedThreadRepositoryScopes) as
+    | ArchivedThreadRepositoryScope[]
+    | undefined;
+  const restoreArchivedThreadsForRepository = useMutation(api.chat.threads.restoreArchivedThreadsForRepository);
+  const deleteArchivedThreadsForRepository = useMutation(api.chat.threads.deleteArchivedThreadsForRepository);
+  const [selectedScopeValue, setSelectedScopeValue] = useState<string | null>(null);
+  const [pendingBulkAction, setPendingBulkAction] = useState<"restore" | "delete" | null>(null);
+
+  const selectedScope =
+    scopes?.find((scope) => getArchiveScopeValue(scope) === selectedScopeValue) ?? scopes?.[0] ?? null;
+  const selectedRepositoryId = selectedScope?.repositoryId ?? null;
   const {
     results: archivedThreads,
     status,
     loadMore,
-  } = usePaginatedQuery(api.chat.threads.listArchivedThreads, {}, { initialNumItems: THREAD_ARCHIVE_PAGE_SIZE });
+  } = usePaginatedQuery(
+    api.chat.threads.listArchivedThreads,
+    selectedScope ? { repositoryId: selectedRepositoryId } : "skip",
+    { initialNumItems: THREAD_ARCHIVE_PAGE_SIZE },
+  );
 
   const isLoadingFirstPage = status === "LoadingFirstPage";
   const isLoadingMore = status === "LoadingMore";
   const canLoadMore = status === "CanLoadMore";
   const loadMoreState = useStableLoadMoreState({ canLoadMore, isLoadingMore });
   const rows = archivedThreads;
+  const [isBulkMutating, handleConfirmBulkAction] = useAsyncCallback(
+    useCallback(async () => {
+      if (!pendingBulkAction || !selectedScope) {
+        return;
+      }
+      try {
+        if (pendingBulkAction === "restore") {
+          await restoreArchivedThreadsForRepository({ repositoryId: selectedRepositoryId });
+          toast.success("Archived threads restored");
+        } else {
+          await deleteArchivedThreadsForRepository({ repositoryId: selectedRepositoryId });
+          toast.success("Archived threads queued for permanent deletion");
+        }
+        setPendingBulkAction(null);
+      } catch (error) {
+        toast.error(toUserErrorMessage(error, "Failed to update archived threads."));
+      }
+    }, [
+      deleteArchivedThreadsForRepository,
+      pendingBulkAction,
+      restoreArchivedThreadsForRepository,
+      selectedRepositoryId,
+      selectedScope,
+    ]),
+  );
 
   return (
-    <section className="mb-6 flex flex-col gap-3" aria-labelledby="archived-threads-heading">
-      <div>
-        <h2 id="archived-threads-heading" className="text-base font-semibold tracking-tight">
-          Archived Threads
-        </h2>
-        <p className="mt-1 text-sm text-muted-foreground">Restore archived threads or delete them permanently.</p>
-      </div>
-      {isLoadingFirstPage ? (
-        <ArchiveListSkeleton />
-      ) : rows.length === 0 ? (
-        <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
-          No archived threads.
-        </div>
-      ) : (
-        <div className="border border-border bg-card">
-          {rows.map((thread) => (
-            <ArchivedThreadRow key={thread._id} thread={thread} onRequestPermanentDelete={onRequestPermanentDelete} />
-          ))}
-          {loadMoreState.shouldRender ? (
-            <div className="flex justify-end border-t border-border px-3 py-2">
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={!loadMoreState.canLoadMore || loadMoreState.isLoadingMore}
-                onClick={() => {
-                  loadMoreState.markLoadMoreStarted();
-                  loadMore(THREAD_ARCHIVE_PAGE_SIZE);
-                }}
-              >
-                {loadMoreState.isLoadingMore ? <Spinner size={13} /> : null}
-                <ButtonStateText
-                  current={loadMoreState.isLoadingMore ? "Loading" : "Next"}
-                  states={["Next", "Loading"]}
-                />
-                <CaretRightIcon weight="bold" />
-              </Button>
-            </div>
+    <>
+      <section className="mb-6 flex flex-col gap-3" aria-labelledby="archived-threads-heading">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 id="archived-threads-heading" className="text-base font-semibold tracking-tight">
+              Archived Threads
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">Restore archived threads or delete them permanently.</p>
+          </div>
+          {scopes && scopes.length > 0 ? (
+            <ArchiveRepositorySelector
+              scopes={scopes}
+              value={getArchiveScopeValue(selectedScope ?? scopes[0])}
+              onValueChange={setSelectedScopeValue}
+            />
           ) : null}
         </div>
-      )}
-    </section>
+        {!scopes ? (
+          <ArchiveListSkeleton />
+        ) : scopes.length === 0 ? (
+          <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+            No archived threads.
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={rows.length === 0 || isBulkMutating}
+                onClick={() => setPendingBulkAction("restore")}
+              >
+                <ArrowCounterClockwiseIcon weight="bold" />
+                Unarchive all
+              </Button>
+              <Button
+                type="button"
+                variant="destructive"
+                size="sm"
+                disabled={rows.length === 0 || isBulkMutating}
+                onClick={() => setPendingBulkAction("delete")}
+              >
+                <TrashIcon weight="bold" />
+                Permanently delete all
+              </Button>
+            </div>
+            {isLoadingFirstPage ? (
+              <ArchiveListSkeleton />
+            ) : rows.length === 0 ? (
+              <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+                No archived threads for this repository.
+              </div>
+            ) : (
+              <div className="border border-border bg-card">
+                {rows.map((thread) => (
+                  <ArchivedThreadRow
+                    key={thread._id}
+                    thread={thread}
+                    onRequestPermanentDelete={onRequestPermanentDelete}
+                  />
+                ))}
+                {loadMoreState.shouldRender ? (
+                  <div className="flex justify-end border-t border-border px-3 py-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={!loadMoreState.canLoadMore || loadMoreState.isLoadingMore}
+                      onClick={() => {
+                        loadMoreState.markLoadMoreStarted();
+                        loadMore(THREAD_ARCHIVE_PAGE_SIZE);
+                      }}
+                    >
+                      {loadMoreState.isLoadingMore ? <Spinner size={13} /> : null}
+                      <ButtonStateText
+                        current={loadMoreState.isLoadingMore ? "Loading" : "Next"}
+                        states={["Next", "Loading"]}
+                      />
+                      <CaretRightIcon weight="bold" />
+                    </Button>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </>
+        )}
+      </section>
+      <ConfirmDialog
+        open={pendingBulkAction !== null}
+        onOpenChange={(open) => !open && setPendingBulkAction(null)}
+        title={pendingBulkAction === "delete" ? "Permanently delete all archived threads?" : "Unarchive all threads?"}
+        description={
+          selectedScope
+            ? pendingBulkAction === "delete"
+              ? `All archived threads for ${selectedScope.label} will be permanently deleted with their messages and share links. This cannot be undone.`
+              : `All archived threads for ${selectedScope.label} will be restored to active chat history.`
+            : ""
+        }
+        actionLabel={pendingBulkAction === "delete" ? "Permanently delete all" : "Unarchive all"}
+        loadingLabel={pendingBulkAction === "delete" ? "Deleting…" : "Restoring…"}
+        isPending={isBulkMutating}
+        onConfirm={() => void handleConfirmBulkAction()}
+      />
+    </>
   );
+}
+
+function ArchiveRepositorySelector({
+  scopes,
+  value,
+  onValueChange,
+}: {
+  scopes: ArchivedThreadRepositoryScope[];
+  value: string;
+  onValueChange: (value: string) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger aria-label="Select archive repository" className="h-9 w-full bg-background sm:w-64">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          {scopes.map((scope) => (
+            <SelectItem key={getArchiveScopeValue(scope)} value={getArchiveScopeValue(scope)}>
+              {scope.label}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  );
+}
+
+function getArchiveScopeValue(scope: ArchivedThreadRepositoryScope): string {
+  return scope.repositoryId ?? NO_REPOSITORY_ARCHIVE_SCOPE_VALUE;
 }
 
 function ArchivedThreadRow({
@@ -265,9 +392,6 @@ function ArchiveContent({
   canLoadMore,
   isLoadingMore,
   isExhausted,
-  isSearching,
-  query,
-  onQueryChange,
   onLoadMore,
   onBackToChat,
   onRequestPermanentDelete,
@@ -277,16 +401,10 @@ function ArchiveContent({
   canLoadMore: boolean;
   isLoadingMore: boolean;
   isExhausted: boolean;
-  isSearching: boolean;
-  query: string;
-  onQueryChange: (value: string) => void;
   onLoadMore: () => void;
   onBackToChat: () => void;
   onRequestPermanentDelete: (repo: Doc<"repositories">) => void;
 }) {
-  // Description + search input always render so the layout stays stable
-  // across loading, empty, and populated states. Only the area below them
-  // swaps between skeleton, empty state, no-results, or the list itself.
   return (
     <>
       <p className="mb-4 text-sm leading-relaxed text-muted-foreground sm:mb-5">
@@ -294,16 +412,10 @@ function ArchiveContent({
         restoring, sync the repository to provision a fresh sandbox before resuming chat.
       </p>
 
-      <ArchiveSearchInput query={query} onQueryChange={onQueryChange} />
-
-      {isLoadingFirstPage && !isSearching ? (
+      {isLoadingFirstPage ? (
         <ArchiveListSkeleton />
-      ) : isLoadingFirstPage && isSearching ? (
-        <SearchPendingState />
-      ) : !isSearching && archived.length === 0 && isExhausted ? (
+      ) : archived.length === 0 && isExhausted ? (
         <ArchiveEmptyState onBackToChat={onBackToChat} />
-      ) : archived.length === 0 ? (
-        <SearchNoResults query={query} onClear={() => onQueryChange("")} />
       ) : (
         <ArchiveList
           archived={archived}
@@ -418,17 +530,6 @@ function ArchiveListSkeleton() {
   );
 }
 
-function SearchPendingState() {
-  return (
-    <div className="mt-4 flex items-center justify-center border border-dashed border-border bg-card/40 px-6 py-10 text-center">
-      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-        <Spinner size={14} />
-        Searching archived repositories
-      </div>
-    </div>
-  );
-}
-
 function ArchiveEmptyState({ onBackToChat }: { onBackToChat: () => void }) {
   return (
     <div className="mt-4 flex flex-col items-center justify-center px-4 py-12 text-center sm:py-16">
@@ -439,51 +540,6 @@ function ArchiveEmptyState({ onBackToChat }: { onBackToChat: () => void }) {
       <Button variant="secondary" size="sm" className="mt-6" onClick={onBackToChat}>
         <CaretLeftIcon weight="bold" />
         Back to chat
-      </Button>
-    </div>
-  );
-}
-
-function ArchiveSearchInput({ query, onQueryChange }: { query: string; onQueryChange: (value: string) => void }) {
-  return (
-    <div className="relative">
-      <MagnifyingGlassIcon
-        size={14}
-        weight="bold"
-        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-      />
-      <Input
-        type="search"
-        value={query}
-        onChange={(e) => onQueryChange(e.target.value)}
-        placeholder="Search archived repositories"
-        aria-label="Search archived repositories"
-        className="pl-9 pr-9"
-      />
-      {query ? (
-        <button
-          type="button"
-          onClick={() => onQueryChange("")}
-          aria-label="Clear search"
-          className="absolute right-2 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <XIcon size={12} weight="bold" />
-        </button>
-      ) : null}
-    </div>
-  );
-}
-
-function SearchNoResults({ query, onClear }: { query: string; onClear: () => void }) {
-  return (
-    <div className="mt-4 flex flex-col items-center justify-center border border-dashed border-border bg-card/40 px-6 py-10 text-center">
-      <MagnifyingGlassIcon size={22} weight="duotone" className="text-muted-foreground" />
-      <p className="mt-3 text-sm text-foreground">
-        No matches for <span className="font-medium">&ldquo;{query}&rdquo;</span>
-      </p>
-      <p className="mt-1 text-xs text-muted-foreground">Try a different name or clear the search.</p>
-      <Button variant="ghost" size="sm" className="mt-4" onClick={onClear}>
-        Clear search
       </Button>
     </div>
   );

@@ -49,9 +49,17 @@ async function repositoryLabelForThread(
   return isOwnedBy(repository, args.ownerTokenIdentifier) ? repository.sourceRepoFullName : "Repository unavailable";
 }
 
-async function publicShareMetadata(ctx: QueryCtx, share: Doc<"threadShares">): Promise<PublicShareMetadata | null> {
+async function publicShareMetadata(
+  ctx: QueryCtx,
+  share: Doc<"threadShares">,
+  options: { includeArchivedThread: boolean },
+): Promise<PublicShareMetadata | null> {
   const thread = await ctx.db.get(share.threadId);
-  if (!isOwnedBy(thread, share.ownerTokenIdentifier) || thread.deletionRequestedAt !== undefined) {
+  if (
+    !isOwnedBy(thread, share.ownerTokenIdentifier) ||
+    thread.deletionRequestedAt !== undefined ||
+    (!options.includeArchivedThread && thread.archivedAt !== undefined)
+  ) {
     return null;
   }
 
@@ -152,9 +160,11 @@ export const listActiveThreadShares = query({
       )
       .order("desc")
       .paginate(args.paginationOpts);
-    const page = (await Promise.all(result.page.map(async (share) => await publicShareMetadata(ctx, share)))).filter(
-      (share): share is PublicShareMetadata => share !== null,
-    );
+    const page = (
+      await Promise.all(
+        result.page.map(async (share) => await publicShareMetadata(ctx, share, { includeArchivedThread: false })),
+      )
+    ).filter((share): share is PublicShareMetadata => share !== null);
 
     return {
       ...result,
@@ -190,7 +200,7 @@ export const getPublicThreadShare = query({
     if (!share) {
       return null;
     }
-    return await publicShareMetadata(ctx, share);
+    return await publicShareMetadata(ctx, share, { includeArchivedThread: true });
   },
 });
 

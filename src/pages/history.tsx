@@ -21,7 +21,6 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonStateText } from "@/components/ui/button-state-text";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
@@ -32,11 +31,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useStableLoadMoreState } from "@/hooks/use-stable-load-more-state";
 import { formatExpiry } from "@/lib/format-expiry";
 import { formatRelativeTime } from "@/lib/format";
 import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
-import { cn } from "@/lib/utils";
 import { modeAwareThreadPath, repolessThreadPath, sharedThreadPath } from "@/route-paths";
 
 const GROUP_PAGE_SIZE = 8;
@@ -48,7 +47,8 @@ const THREAD_INITIAL_PAGE_SIZE = 8;
 const THREAD_NEXT_PAGE_SIZE = 12;
 const SHARE_INITIAL_PAGE_SIZE = 20;
 const SHARE_NEXT_PAGE_SIZE = 20;
-const DEFAULT_OPEN_GROUP_COUNT = 3;
+const HISTORY_SELECTOR_PAGE_SIZE = 100;
+const NO_REPOSITORY_SELECTOR_VALUE = "no_repository";
 
 type HistoryGroup = {
   _id: Id<"chatHistoryGroups">;
@@ -97,13 +97,13 @@ export function HistoryPage() {
   const [pendingDelete, setPendingDelete] = useState<HistoryThread | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
-  const [groupPageIndex, setGroupPageIndex] = useState(0);
+  const [selectedHistoryScope, setSelectedHistoryScope] = useState<string | null>(null);
 
-  const {
-    results: groups,
-    status: groupsStatus,
-    loadMore: loadMoreGroups,
-  } = usePaginatedQuery(api.chat.history.listThreadHistoryGroups, {}, { initialNumItems: GROUP_PAGE_SIZE });
+  const { results: groups, status: groupsStatus } = usePaginatedQuery(
+    api.chat.history.listThreadHistoryGroups,
+    {},
+    { initialNumItems: HISTORY_SELECTOR_PAGE_SIZE },
+  );
   const {
     results: activeShares,
     status: activeSharesStatus,
@@ -111,15 +111,10 @@ export function HistoryPage() {
   } = usePaginatedQuery(api.chat.threadShares.listActiveThreadShares, {}, { initialNumItems: SHARE_INITIAL_PAGE_SIZE });
 
   const orderedGroups = useMemo(() => orderHistoryGroups(groups as HistoryGroup[]), [groups]);
-  const displayedGroupPageIndex = getLoadedPageIndex(orderedGroups.length, groupPageIndex, GROUP_PAGE_SIZE);
-  const visibleGroups = useMemo(
+  const selectedGroup = useMemo(
     () =>
-      orderedGroups.slice(displayedGroupPageIndex * GROUP_PAGE_SIZE, (displayedGroupPageIndex + 1) * GROUP_PAGE_SIZE),
-    [displayedGroupPageIndex, orderedGroups],
-  );
-  const defaultOpenGroupIds = useMemo(
-    () => new Set((groups as HistoryGroup[]).slice(0, DEFAULT_OPEN_GROUP_COUNT).map((group) => group._id)),
-    [groups],
+      orderedGroups.find((group) => getHistoryScopeValue(group) === selectedHistoryScope) ?? orderedGroups[0] ?? null,
+    [orderedGroups, selectedHistoryScope],
   );
   const summary = useMemo(
     () => summarizeHistory(groups as HistoryGroup[], activeShares as ActiveShare[]),
@@ -175,42 +170,8 @@ export function HistoryPage() {
   }, [archiveThread, pendingDelete]);
 
   const isLoadingGroups = groupsStatus === "LoadingFirstPage";
-  const canLoadMoreGroups = groupsStatus === "CanLoadMore";
-  const isLoadingMoreGroups = groupsStatus === "LoadingMore";
-  const isPendingGroupPage = groupPageIndex > displayedGroupPageIndex && (canLoadMoreGroups || isLoadingMoreGroups);
-  const canGoToPreviousGroupPage = displayedGroupPageIndex > 0 || isPendingGroupPage;
-  const canGoToNextGroupPage =
-    (displayedGroupPageIndex + 1) * GROUP_PAGE_SIZE < orderedGroups.length || canLoadMoreGroups;
   const canLoadMoreShares = activeSharesStatus === "CanLoadMore";
   const isLoadingMoreShares = activeSharesStatus === "LoadingMore";
-  const groupLoadMoreState = useStableLoadMoreState({
-    canLoadMore: canGoToNextGroupPage,
-    isLoadingMore: isLoadingMoreGroups || isPendingGroupPage,
-  });
-  const markGroupLoadMoreStarted = groupLoadMoreState.markLoadMoreStarted;
-  const handlePreviousGroupPage = useCallback(() => {
-    setGroupPageIndex(Math.max(0, displayedGroupPageIndex - 1));
-  }, [displayedGroupPageIndex]);
-  const handleNextGroupPage = useCallback(() => {
-    const nextPageIndex = displayedGroupPageIndex + 1;
-    const nextStart = nextPageIndex * GROUP_PAGE_SIZE;
-    if (nextStart < orderedGroups.length) {
-      setGroupPageIndex(nextPageIndex);
-      return;
-    }
-    if (canLoadMoreGroups && !isLoadingMoreGroups) {
-      markGroupLoadMoreStarted();
-      setGroupPageIndex(nextPageIndex);
-      loadMoreGroups(GROUP_PAGE_SIZE);
-    }
-  }, [
-    canLoadMoreGroups,
-    displayedGroupPageIndex,
-    isLoadingMoreGroups,
-    loadMoreGroups,
-    markGroupLoadMoreStarted,
-    orderedGroups.length,
-  ]);
 
   return (
     <>
@@ -231,7 +192,13 @@ export function HistoryPage() {
             <h3 id="chat-history-heading" className="text-sm font-semibold">
               Chat History
             </h3>
-            {isLoadingGroups ? (
+            {orderedGroups.length > 0 ? (
+              <HistoryRepositorySelector
+                groups={orderedGroups}
+                value={getHistoryScopeValue(selectedGroup ?? orderedGroups[0])}
+                onValueChange={setSelectedHistoryScope}
+              />
+            ) : isLoadingGroups ? (
               <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
                 <Spinner size={13} />
                 Loading
@@ -249,21 +216,16 @@ export function HistoryPage() {
               <HistoryGroupSkeleton />
             ) : orderedGroups.length === 0 ? (
               <EmptyHistoryState />
+            ) : selectedGroup ? (
+              <HistoryThreadsForScope
+                key={getHistoryScopeValue(selectedGroup)}
+                group={selectedGroup}
+                onOpenThread={handleOpenThread}
+                onShareThread={handleShareThread}
+                onRequestDelete={setPendingDelete}
+              />
             ) : (
-              <div className="flex flex-1 flex-col justify-between">
-                <div className="flex flex-col">
-                  {visibleGroups.map((group) => (
-                    <HistoryGroupSection
-                      key={group._id}
-                      group={group}
-                      defaultOpen={defaultOpenGroupIds.has(group._id)}
-                      onOpenThread={handleOpenThread}
-                      onShareThread={handleShareThread}
-                      onRequestDelete={setPendingDelete}
-                    />
-                  ))}
-                </div>
-              </div>
+              <EmptyHistoryState />
             )}
             <div className="mt-auto flex flex-col gap-3 border-t border-border bg-background/40 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
               <Button
@@ -276,13 +238,6 @@ export function HistoryPage() {
                 <ArchiveIcon weight="bold" />
                 Open Archive
               </Button>
-              <PageControls
-                canPrevious={canGoToPreviousGroupPage}
-                canNext={groupLoadMoreState.canLoadMore}
-                isLoadingNext={groupLoadMoreState.isLoadingMore}
-                onPrevious={handlePreviousGroupPage}
-                onNext={handleNextGroupPage}
-              />
             </div>
           </div>
         </section>
@@ -336,11 +291,15 @@ function SummaryStrip({
     { label: "Shared links", value: summary.sharedLinks },
   ];
   return (
-    <div className="grid gap-2 border-y border-border py-2 sm:grid-cols-3" aria-label="History summary">
+    <div className="grid gap-2 sm:grid-cols-3" aria-label="History summary">
       {items.map((item) => (
-        <div key={item.label} className="flex min-h-10 items-center justify-between gap-3 px-1">
-          <span className="text-xs font-medium text-muted-foreground">{item.label}</span>
-          <span className="font-mono text-sm font-semibold tabular-nums">{item.value}</span>
+        <div
+          key={item.label}
+          className="flex min-h-16 flex-col justify-center border border-border bg-card px-3 py-2"
+          aria-label={`${item.label}: ${item.value}`}
+        >
+          <span className="font-mono text-lg font-semibold leading-6 tabular-nums text-foreground">{item.value}</span>
+          <span className="mt-1 text-xs font-medium leading-4 text-muted-foreground">{item.label}</span>
         </div>
       ))}
     </div>
@@ -380,20 +339,44 @@ function getLoadedPageIndex(itemCount: number, requestedPageIndex: number, pageS
   return Math.min(requestedPageIndex, Math.ceil(itemCount / pageSize) - 1);
 }
 
-function HistoryGroupSection({
+function HistoryRepositorySelector({
+  groups,
+  value,
+  onValueChange,
+}: {
+  groups: HistoryGroup[];
+  value: string;
+  onValueChange: (value: string) => void;
+}) {
+  return (
+    <Select value={value} onValueChange={onValueChange}>
+      <SelectTrigger aria-label="Select chat history repository" className="h-9 w-56 max-w-[65vw] bg-background">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          {groups.map((group) => (
+            <SelectItem key={group._id} value={getHistoryScopeValue(group)}>
+              {getGroupLabel(group)}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  );
+}
+
+function HistoryThreadsForScope({
   group,
-  defaultOpen,
   onOpenThread,
   onShareThread,
   onRequestDelete,
 }: {
   group: HistoryGroup;
-  defaultOpen: boolean;
   onOpenThread: (thread: HistoryThread) => void;
   onShareThread: (thread: HistoryThread) => Promise<void>;
   onRequestDelete: (thread: HistoryThread) => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
   const [pageIndex, setPageIndex] = useState(0);
   const repositoryIdArg = group.repositoryId ?? null;
   const {
@@ -402,8 +385,10 @@ function HistoryGroupSection({
     loadMore,
   } = usePaginatedQuery(
     api.chat.history.listThreadsForHistoryGroup,
-    open ? { repositoryId: repositoryIdArg } : "skip",
-    { initialNumItems: THREAD_INITIAL_PAGE_SIZE },
+    { repositoryId: repositoryIdArg },
+    {
+      initialNumItems: THREAD_INITIAL_PAGE_SIZE,
+    },
   );
   const isNoRepository = !group.repositoryId;
   const canLoadMore = status === "CanLoadMore";
@@ -440,75 +425,59 @@ function HistoryGroupSection({
   }, [canLoadMore, displayedPageIndex, isLoadingMore, loadMore, markLoadMoreStarted, threadRows.length]);
 
   return (
-    <Collapsible open={open} onOpenChange={setOpen}>
-      <div className="border-b border-border bg-card last:border-b-0">
-        <CollapsibleTrigger asChild>
-          <button
-            type="button"
-            className="flex w-full items-start justify-between gap-3 px-3 py-3 text-left transition-colors hover:bg-muted/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:items-center sm:px-4"
-            aria-label={`${open ? "Collapse" : "Expand"} ${getGroupLabel(group)}`}
-          >
-            <div className="flex min-w-0 items-start gap-3">
-              <GroupIcon group={group} />
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <h4 className="truncate text-sm font-semibold">{getGroupLabel(group)}</h4>
-                  {group.repository?.archivedAt ? <Badge variant="muted">Archived</Badge> : null}
-                </div>
-                {isNoRepository ? (
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    General chats that are not attached to a repository.
-                  </p>
-                ) : null}
-              </div>
+    <div className="flex flex-1 flex-col bg-card">
+      <div className="flex items-start justify-between gap-3 border-b border-border px-3 py-3 sm:items-center sm:px-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <GroupIcon group={group} />
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <h4 className="truncate text-sm font-semibold">{getGroupLabel(group)}</h4>
+              {group.repository?.archivedAt ? <Badge variant="muted">Archived</Badge> : null}
             </div>
-            <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
-              <span>{group.threadCount} threads</span>
-              <span className="hidden sm:inline">{formatRelativeTime(group.lastThreadAt)}</span>
-              <CaretDownIcon
-                size={14}
-                weight="bold"
-                className={cn("transition-transform", open ? "rotate-180" : "rotate-0")}
-                aria-hidden="true"
-              />
-            </div>
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          <div className="border-t border-border">
-            {status === "LoadingFirstPage" ? (
-              <ThreadRowsSkeleton />
-            ) : threadRows.length === 0 ? (
-              <p className="px-4 py-5 text-sm text-muted-foreground">No threads in this group.</p>
-            ) : (
-              <div className="flex flex-col">
-                {visibleThreads.map((thread) => (
-                  <ThreadHistoryRow
-                    key={thread._id}
-                    thread={thread}
-                    noRepository={isNoRepository}
-                    onOpenThread={onOpenThread}
-                    onShareThread={onShareThread}
-                    onRequestDelete={onRequestDelete}
-                  />
-                ))}
-              </div>
-            )}
-            {canGoToPreviousPage || loadMoreState.shouldRender ? (
-              <div className="flex justify-end border-t border-border px-4 py-2">
-                <PageControls
-                  canPrevious={canGoToPreviousPage}
-                  canNext={loadMoreState.canLoadMore}
-                  isLoadingNext={loadMoreState.isLoadingMore}
-                  onPrevious={handlePreviousPage}
-                  onNext={handleNextPage}
-                />
-              </div>
+            {isNoRepository ? (
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                General chats that are not attached to a repository.
+              </p>
             ) : null}
           </div>
-        </CollapsibleContent>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1 text-xs text-muted-foreground sm:flex-row sm:items-center sm:gap-3">
+          <span>{group.threadCount} threads</span>
+          <span className="hidden sm:inline">{formatRelativeTime(group.lastThreadAt)}</span>
+        </div>
       </div>
-    </Collapsible>
+      <div>
+        {status === "LoadingFirstPage" ? (
+          <ThreadRowsSkeleton />
+        ) : threadRows.length === 0 ? (
+          <p className="px-4 py-5 text-sm text-muted-foreground">No threads in this repository.</p>
+        ) : (
+          <div className="flex flex-col">
+            {visibleThreads.map((thread) => (
+              <ThreadHistoryRow
+                key={thread._id}
+                thread={thread}
+                noRepository={isNoRepository}
+                onOpenThread={onOpenThread}
+                onShareThread={onShareThread}
+                onRequestDelete={onRequestDelete}
+              />
+            ))}
+          </div>
+        )}
+        {canGoToPreviousPage || loadMoreState.shouldRender ? (
+          <div className="flex justify-end border-t border-border px-4 py-2">
+            <PageControls
+              canPrevious={canGoToPreviousPage}
+              canNext={loadMoreState.canLoadMore}
+              isLoadingNext={loadMoreState.isLoadingMore}
+              onPrevious={handlePreviousPage}
+              onNext={handleNextPage}
+            />
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -770,7 +739,7 @@ function EmptyHistoryState() {
 function orderHistoryGroups(groups: HistoryGroup[]): HistoryGroup[] {
   const noRepository = groups.filter((group) => !group.repositoryId);
   const repositoryGroups = groups.filter((group) => group.repositoryId);
-  return [...noRepository, ...repositoryGroups];
+  return [...repositoryGroups, ...noRepository];
 }
 
 function summarizeHistory(groups: HistoryGroup[], activeShares: ActiveShare[]) {
@@ -792,6 +761,10 @@ function getGroupLabel(group: HistoryGroup): string {
     return "No repository";
   }
   return group.repository?.sourceRepoFullName ?? "Repository unavailable";
+}
+
+function getHistoryScopeValue(group: HistoryGroup): string {
+  return group.repositoryId ?? NO_REPOSITORY_SELECTOR_VALUE;
 }
 
 function getThreadModeLabel(thread: HistoryThread, noRepository: boolean): string {

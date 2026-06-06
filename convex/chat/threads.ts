@@ -40,6 +40,7 @@ type ThreadShareRepositoryScopeUpdateArgs = {
  * array) instead.
  */
 const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
+const ARCHIVED_THREAD_BULK_MUTATION_BATCH_SIZE = 10;
 
 export const listThreads = query({
   args: {
@@ -538,19 +539,80 @@ async function summarizeArchivedThreadRepository(
     : null;
 }
 
+async function loadArchivedThreadsForRepositoryScope(
+  ctx: QueryCtx,
+  args: {
+    ownerTokenIdentifier: string;
+    repositoryId: Id<"repositories"> | undefined;
+    limit: number;
+  },
+) {
+  return await ctx.db
+    .query("threads")
+    .withIndex(
+      "by_ownerTokenIdentifier_and_repositoryId_and_deletionRequestedAt_and_archivedAt_and_lastMessageAt",
+      (q) =>
+        q
+          .eq("ownerTokenIdentifier", args.ownerTokenIdentifier)
+          .eq("repositoryId", args.repositoryId)
+          .eq("deletionRequestedAt", undefined)
+          .gt("archivedAt", 0),
+    )
+    .order("desc")
+    .take(args.limit);
+}
+
+async function requireArchivedThreadRepositoryScope(
+  ctx: MutationCtx | QueryCtx,
+  args: { repositoryId: Id<"repositories"> | null; ownerTokenIdentifier?: string },
+): Promise<Id<"repositories"> | undefined> {
+  if (!args.repositoryId) {
+    return undefined;
+  }
+  const repository = await ctx.db.get(args.repositoryId);
+  const ownerTokenIdentifier = args.ownerTokenIdentifier;
+  if (!repository || (ownerTokenIdentifier && repository.ownerTokenIdentifier !== ownerTokenIdentifier)) {
+    throw new Error("Repository not found.");
+  }
+  return repository._id;
+}
+
 export const listArchivedThreads = query({
   args: {
+    repositoryId: v.optional(v.union(v.id("repositories"), v.null())),
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
-    const result = await ctx.db
-      .query("threads")
-      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_archivedAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined).gt("archivedAt", 0),
-      )
-      .order("desc")
-      .paginate(args.paginationOpts);
+    const repositoryId = await requireArchivedThreadRepositoryScope(ctx, {
+      repositoryId: args.repositoryId ?? null,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+    });
+    const result =
+      args.repositoryId === undefined
+        ? await ctx.db
+            .query("threads")
+            .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_archivedAt", (q) =>
+              q
+                .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+                .eq("deletionRequestedAt", undefined)
+                .gt("archivedAt", 0),
+            )
+            .order("desc")
+            .paginate(args.paginationOpts)
+        : await ctx.db
+            .query("threads")
+            .withIndex(
+              "by_ownerTokenIdentifier_and_repositoryId_and_deletionRequestedAt_and_archivedAt_and_lastMessageAt",
+              (q) =>
+                q
+                  .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+                  .eq("repositoryId", repositoryId)
+                  .eq("deletionRequestedAt", undefined)
+                  .gt("archivedAt", 0),
+            )
+            .order("desc")
+            .paginate(args.paginationOpts);
 
     const page = await Promise.all(
       result.page.map(async (thread) => ({
@@ -569,6 +631,167 @@ export const listArchivedThreads = query({
     };
   },
 });
+
+export const listArchivedThreadRepositoryScopes = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await requireViewerIdentity(ctx);
+    const threads = await ctx.db
+      .query("threads")
+      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_archivedAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined).gt("archivedAt", 0),
+      )
+      .order("desc")
+      .take(1000);
+
+    const noRepositoryThread = threads.find((thread) => thread.repositoryId === undefined);
+    const repositoryIds = Array.from(
+      new Set(threads.flatMap((thread) => (thread.repositoryId ? [thread.repositoryId] : []))),
+    );
+    const repositories = await Promise.all(
+      repositoryIds.map(async (repositoryId) => await summarizeArchivedThreadRepository(ctx, repositoryId)),
+    );
+
+    return [
+      ...(noRepositoryThread
+        ? [
+            {
+              repositoryId: null,
+              label: "No repository",
+            },
+          ]
+        : []),
+      ...repositories.flatMap((repository) =>
+        repository
+          ? [
+              {
+                repositoryId: repository._id,
+                label: repository.sourceRepoFullName,
+              },
+            ]
+          : [],
+      ),
+    ];
+  },
+});
+
+export const restoreArchivedThreadsForRepository = mutation({
+  args: {
+    repositoryId: v.union(v.id("repositories"), v.null()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireViewerIdentity(ctx);
+    const repositoryId = await requireArchivedThreadRepositoryScope(ctx, {
+      repositoryId: args.repositoryId,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+    });
+    await restoreArchivedThreadsForRepositoryScope(ctx, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      repositoryId,
+    });
+  },
+});
+
+export const restoreArchivedThreadsForRepositoryContinuation = internalMutation({
+  args: {
+    ownerTokenIdentifier: v.string(),
+    repositoryId: v.union(v.id("repositories"), v.null()),
+  },
+  handler: async (ctx, args) => {
+    const repositoryId = await requireArchivedThreadRepositoryScope(ctx, {
+      repositoryId: args.repositoryId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+    });
+    await restoreArchivedThreadsForRepositoryScope(ctx, {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId,
+    });
+  },
+});
+
+async function restoreArchivedThreadsForRepositoryScope(
+  ctx: MutationCtx,
+  args: {
+    ownerTokenIdentifier: string;
+    repositoryId: Id<"repositories"> | undefined;
+  },
+) {
+  const threads = await loadArchivedThreadsForRepositoryScope(ctx, {
+    ...args,
+    limit: ARCHIVED_THREAD_BULK_MUTATION_BATCH_SIZE,
+  });
+
+  for (const thread of threads) {
+    await ctx.db.patch(thread._id, { archivedAt: undefined });
+    const restored = (await ctx.db.get(thread._id))!;
+    await recordThreadCreatedInHistory(ctx, restored);
+  }
+
+  if (threads.length === ARCHIVED_THREAD_BULK_MUTATION_BATCH_SIZE) {
+    await ctx.scheduler.runAfter(0, internal.chat.threads.restoreArchivedThreadsForRepositoryContinuation, {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId: args.repositoryId ?? null,
+    });
+  }
+}
+
+export const deleteArchivedThreadsForRepository = mutation({
+  args: {
+    repositoryId: v.union(v.id("repositories"), v.null()),
+  },
+  handler: async (ctx, args) => {
+    const identity = await requireViewerIdentity(ctx);
+    const repositoryId = await requireArchivedThreadRepositoryScope(ctx, {
+      repositoryId: args.repositoryId,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+    });
+    await deleteArchivedThreadsForRepositoryScope(ctx, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      repositoryId,
+    });
+  },
+});
+
+export const deleteArchivedThreadsForRepositoryContinuation = internalMutation({
+  args: {
+    ownerTokenIdentifier: v.string(),
+    repositoryId: v.union(v.id("repositories"), v.null()),
+  },
+  handler: async (ctx, args) => {
+    const repositoryId = await requireArchivedThreadRepositoryScope(ctx, {
+      repositoryId: args.repositoryId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+    });
+    await deleteArchivedThreadsForRepositoryScope(ctx, {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId,
+    });
+  },
+});
+
+async function deleteArchivedThreadsForRepositoryScope(
+  ctx: MutationCtx,
+  args: {
+    ownerTokenIdentifier: string;
+    repositoryId: Id<"repositories"> | undefined;
+  },
+) {
+  const threads = await loadArchivedThreadsForRepositoryScope(ctx, {
+    ...args,
+    limit: ARCHIVED_THREAD_BULK_MUTATION_BATCH_SIZE,
+  });
+
+  for (const thread of threads) {
+    await deleteThreadImpl(ctx, { threadId: thread._id });
+  }
+
+  if (threads.length === ARCHIVED_THREAD_BULK_MUTATION_BATCH_SIZE) {
+    await ctx.scheduler.runAfter(0, internal.chat.threads.deleteArchivedThreadsForRepositoryContinuation, {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId: args.repositoryId ?? null,
+    });
+  }
+}
 
 export const archiveThread = mutation({
   args: {

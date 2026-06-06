@@ -469,6 +469,10 @@ describe("thread shares", () => {
     await viewer.mutation(api.chat.threads.archiveThread, { threadId: unsharedThread._id });
 
     expect(await t.query(api.chat.threadShares.getPublicThreadShare, { token: share.token })).not.toBeNull();
+    const activeShares = await viewer.query(api.chat.threadShares.listActiveThreadShares, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    expect(activeShares.page).toEqual([]);
     await expect(
       viewer.mutation(api.chat.threadShares.createOrGetThreadShare, { threadId: unsharedThread._id }),
     ).rejects.toThrow(/thread not found/i);

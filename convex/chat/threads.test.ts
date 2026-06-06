@@ -351,6 +351,61 @@ describe("archiveThread", () => {
       }),
     ).rejects.toThrow(/thread not found/i);
   });
+
+  test("archived thread listing can be scoped by repository or no-repository", async () => {
+    const ownerTokenIdentifier = "user|archive-list-scope";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier, "archive-list-scope");
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const repositoryThread = await viewer.mutation(api.chat.threads.createThread, { repositoryId, mode: "discuss" });
+    const noRepositoryThread = await viewer.mutation(api.chat.threads.createThread, {});
+    await viewer.mutation(api.chat.threads.archiveThread, { threadId: repositoryThread._id });
+    await viewer.mutation(api.chat.threads.archiveThread, { threadId: noRepositoryThread._id });
+
+    const repositoryPage = await viewer.query(api.chat.threads.listArchivedThreads, {
+      repositoryId,
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    const noRepositoryPage = await viewer.query(api.chat.threads.listArchivedThreads, {
+      repositoryId: null,
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    const scopes = await viewer.query(api.chat.threads.listArchivedThreadRepositoryScopes, {});
+
+    expect(repositoryPage.page.map((thread) => thread._id)).toEqual([repositoryThread._id]);
+    expect(noRepositoryPage.page.map((thread) => thread._id)).toEqual([noRepositoryThread._id]);
+    expect(scopes).toEqual([
+      { repositoryId: null, label: "No repository" },
+      { repositoryId, label: "acme/archive-list-scope" },
+    ]);
+  });
+
+  test("bulk archived thread restore and delete are scoped to the selected repository", async () => {
+    const ownerTokenIdentifier = "user|archive-bulk-scope";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier, "archive-bulk-scope");
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const repositoryThread = await viewer.mutation(api.chat.threads.createThread, { repositoryId, mode: "discuss" });
+    const noRepositoryThread = await viewer.mutation(api.chat.threads.createThread, {});
+    await viewer.mutation(api.chat.threads.archiveThread, { threadId: repositoryThread._id });
+    await viewer.mutation(api.chat.threads.archiveThread, { threadId: noRepositoryThread._id });
+
+    await viewer.mutation(api.chat.threads.restoreArchivedThreadsForRepository, { repositoryId });
+
+    const afterRestoreRepository = await t.run((ctx) => ctx.db.get(repositoryThread._id));
+    const afterRestoreNoRepository = await t.run((ctx) => ctx.db.get(noRepositoryThread._id));
+    expect(afterRestoreRepository?.archivedAt).toBeUndefined();
+    expect(afterRestoreNoRepository?.archivedAt).toBeTypeOf("number");
+
+    await viewer.mutation(api.chat.threads.deleteArchivedThreadsForRepository, { repositoryId: null });
+
+    const afterDeleteRepository = await t.run((ctx) => ctx.db.get(repositoryThread._id));
+    const afterDeleteNoRepository = await t.run((ctx) => ctx.db.get(noRepositoryThread._id));
+    expect(afterDeleteRepository).not.toBeNull();
+    expect(afterDeleteNoRepository).toBeNull();
+  });
 });
 
 describe("listRepolessThreads", () => {

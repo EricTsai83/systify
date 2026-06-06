@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { useMutation, usePaginatedQuery } from "convex/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { getFunctionName } from "convex/server";
 import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -15,6 +15,7 @@ const clipboardWriteTextMock = vi.fn();
 vi.mock("convex/react", () => ({
   useMutation: vi.fn(),
   usePaginatedQuery: vi.fn(),
+  useQuery: vi.fn(),
 }));
 
 function functionName(reference: unknown): string {
@@ -132,12 +133,14 @@ beforeEach(() => {
     }
     return paginated([]);
   });
+  vi.mocked(useQuery).mockReturnValue([]);
 });
 
 afterEach(() => {
   cleanup();
   vi.mocked(useMutation).mockReset();
   vi.mocked(usePaginatedQuery).mockReset();
+  vi.mocked(useQuery).mockReset();
   createShareMock.mockReset();
   archiveThreadMock.mockReset();
   revokeShareMock.mockReset();
@@ -145,19 +148,19 @@ afterEach(() => {
 });
 
 describe("HistoryPage", () => {
-  test("renders archive action, repository groups, no-repository group, and no search input", () => {
+  test("renders archive action, repository selector, selected repository threads, and no search input", () => {
     renderHistoryPage();
 
     expect(screen.getByRole("button", { name: /open archive/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /previous/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /next/i })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: /chat history pages/i })).toHaveStyle({ minHeight: "632px" });
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Repository threads: 2")).toBeInTheDocument();
+    expect(screen.getByLabelText("No repository chats: 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Shared links: 1")).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: /select chat history repository/i })).toHaveTextContent("acme/systify");
     expect(screen.getAllByText("acme/systify").length).toBeGreaterThan(0);
-    expect(screen.getByText("No repository")).toBeInTheDocument();
-    expect(screen.getByText("General chats that are not attached to a repository.")).toBeInTheDocument();
+    expect(screen.queryByText("General planning")).not.toBeInTheDocument();
     expect(screen.getByText("Library Ask")).toBeInTheDocument();
-    expect(screen.getByText("Chat")).toBeInTheDocument();
   });
 
   test("keeps archive available when chat history is empty", () => {
@@ -173,11 +176,9 @@ describe("HistoryPage", () => {
 
     expect(screen.getByText("No chat history yet.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /open archive/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /previous/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /next/i })).toBeInTheDocument();
   });
 
-  test("opens repository and no-repository threads on their canonical routes", () => {
+  test("opens repository threads on their canonical routes", () => {
     renderHistoryPage();
 
     fireEvent.click(openButtonForRow("Discuss thread"));
@@ -185,6 +186,43 @@ describe("HistoryPage", () => {
 
     fireEvent.click(openButtonForRow("Library thread"));
     expect(screen.getByTestId("location")).toHaveTextContent("/r/repo_1/library?ask=thread_repo_library");
+  });
+
+  test("opens no-repository threads on their canonical route", () => {
+    vi.mocked(usePaginatedQuery).mockImplementation((reference, args) => {
+      const name = functionName(reference);
+      if (name.endsWith("listThreadHistoryGroups")) {
+        return paginated([
+          {
+            _id: "group_no_repo",
+            groupKey: "no_repository",
+            lastThreadAt: 200,
+            lastThreadId: "thread_no_repo",
+            threadCount: 1,
+            repository: null,
+          },
+        ]);
+      }
+      if (name.endsWith("listActiveThreadShares")) return paginated([]);
+      if (name.endsWith("listThreadsForHistoryGroup")) {
+        const repositoryId =
+          typeof args === "object" && args !== null && "repositoryId" in args ? args.repositoryId : null;
+        return repositoryId === null
+          ? paginated([
+              {
+                _id: "thread_no_repo",
+                title: "General planning",
+                mode: "discuss",
+                lastMessageAt: 200,
+                activeShare: null,
+              },
+            ])
+          : paginated([]);
+      }
+      return paginated([]);
+    });
+
+    renderHistoryPage();
 
     fireEvent.click(openButtonForRow("General planning"));
     expect(screen.getByTestId("location")).toHaveTextContent("/chat/thread_no_repo");
