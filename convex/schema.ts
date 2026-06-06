@@ -808,14 +808,14 @@ export default defineSchema({
       "repositoryId",
       "lastMessageAt",
     ])
-    .index("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_lastMessageAt", [
+    .index("by_ownerToken_repositoryId_deletionRequestedAt_lastMessageAt", [
       "ownerTokenIdentifier",
       "repositoryId",
       "deletionRequestedAt",
       "lastMessageAt",
     ])
     .index("by_ownerTokenIdentifier_repositoryId_and_pinnedAt", ["ownerTokenIdentifier", "repositoryId", "pinnedAt"])
-    .index("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_pinnedAt", [
+    .index("by_ownerToken_repositoryId_deletionRequestedAt_pinnedAt", [
       "ownerTokenIdentifier",
       "repositoryId",
       "deletionRequestedAt",
@@ -827,7 +827,7 @@ export default defineSchema({
       "mode",
       "lastMessageAt",
     ])
-    .index("by_ownerTokenIdentifier_repositoryId_mode_deletionRequestedAt_and_lastMessageAt", [
+    .index("by_ownerToken_repoId_mode_deletionRequestedAt_lastMessageAt", [
       "ownerTokenIdentifier",
       "repositoryId",
       "mode",
@@ -840,7 +840,7 @@ export default defineSchema({
       "mode",
       "pinnedAt",
     ])
-    .index("by_ownerTokenIdentifier_repositoryId_mode_deletionRequestedAt_and_pinnedAt", [
+    .index("by_ownerToken_repositoryId_mode_deletionRequestedAt_pinnedAt", [
       "ownerTokenIdentifier",
       "repositoryId",
       "mode",

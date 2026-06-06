@@ -54,7 +54,7 @@ export const listThreads = query({
     const pinned = mode
       ? await ctx.db
           .query("threads")
-          .withIndex("by_ownerTokenIdentifier_repositoryId_mode_deletionRequestedAt_and_pinnedAt", (q) =>
+          .withIndex("by_ownerToken_repositoryId_mode_deletionRequestedAt_pinnedAt", (q) =>
             q
               .eq("ownerTokenIdentifier", ownerTokenIdentifier)
               .eq("repositoryId", repositoryId)
@@ -66,7 +66,7 @@ export const listThreads = query({
           .take(20)
       : await ctx.db
           .query("threads")
-          .withIndex("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_pinnedAt", (q) =>
+          .withIndex("by_ownerToken_repositoryId_deletionRequestedAt_pinnedAt", (q) =>
             q
               .eq("ownerTokenIdentifier", ownerTokenIdentifier)
               .eq("repositoryId", repositoryId)
@@ -78,7 +78,7 @@ export const listThreads = query({
     const recent = mode
       ? await ctx.db
           .query("threads")
-          .withIndex("by_ownerTokenIdentifier_repositoryId_mode_deletionRequestedAt_and_lastMessageAt", (q) =>
+          .withIndex("by_ownerToken_repoId_mode_deletionRequestedAt_lastMessageAt", (q) =>
             q
               .eq("ownerTokenIdentifier", ownerTokenIdentifier)
               .eq("repositoryId", repositoryId)
@@ -89,7 +89,7 @@ export const listThreads = query({
           .take(20)
       : await ctx.db
           .query("threads")
-          .withIndex("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_lastMessageAt", (q) =>
+          .withIndex("by_ownerToken_repositoryId_deletionRequestedAt_lastMessageAt", (q) =>
             q
               .eq("ownerTokenIdentifier", ownerTokenIdentifier)
               .eq("repositoryId", repositoryId)
@@ -122,7 +122,7 @@ export const listRepolessThreads = query({
     const identity = await requireViewerIdentity(ctx);
     const pinned = await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_pinnedAt", (q) =>
+      .withIndex("by_ownerToken_repositoryId_deletionRequestedAt_pinnedAt", (q) =>
         q
           .eq("ownerTokenIdentifier", identity.tokenIdentifier)
           .eq("repositoryId", undefined)
@@ -133,7 +133,7 @@ export const listRepolessThreads = query({
       .take(20);
     const recent = await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_lastMessageAt", (q) =>
+      .withIndex("by_ownerToken_repositoryId_deletionRequestedAt_lastMessageAt", (q) =>
         q
           .eq("ownerTokenIdentifier", identity.tokenIdentifier)
           .eq("repositoryId", undefined)

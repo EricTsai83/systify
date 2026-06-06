@@ -118,7 +118,7 @@ export const listThreadsForHistoryGroup = query({
 
     const result = await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_repositoryId_deletionRequestedAt_and_lastMessageAt", (q) =>
+      .withIndex("by_ownerToken_repositoryId_deletionRequestedAt_lastMessageAt", (q) =>
         q
           .eq("ownerTokenIdentifier", identity.tokenIdentifier)
           .eq("repositoryId", repositoryId)
