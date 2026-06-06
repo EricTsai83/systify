@@ -10,6 +10,7 @@ export const CUSTOM_INSTRUCTIONS_MAX_LENGTH = 3000;
 export const USER_TRAITS_MAX_COUNT = 16;
 export const USER_TRAIT_MAX_LENGTH = 40;
 const USER_PREFERENCES_SAVE_DEBOUNCE_MS = 600;
+const USER_PREFERENCES_SAVE_RETRY_MS = 3000;
 
 export type UserPreferences = {
   traits: string[];
@@ -64,6 +65,17 @@ function isDefaultPreferences(value: UserPreferences): boolean {
   return arePreferencesEqual(value, DEFAULT_USER_PREFERENCES);
 }
 
+function preferencesFromViewerPreferences(
+  viewerPreferences: { traits: string[]; customInstructions: string } | null,
+): UserPreferences {
+  return viewerPreferences === null
+    ? DEFAULT_USER_PREFERENCES
+    : normalizePreferences({
+        traits: viewerPreferences.traits,
+        customInstructions: viewerPreferences.customInstructions,
+      });
+}
+
 export function useUserPreferences(): readonly [
   UserPreferences,
   (next: UserPreferences | ((prev: UserPreferences) => UserPreferences)) => void,
@@ -78,7 +90,37 @@ export function useUserPreferences(): readonly [
   const updateCustomization = useMutation(api.userPreferences.updateViewerCustomization);
   const localEditVersionRef = useRef(0);
   const savedEditVersionRef = useRef(0);
-  const migrationAttemptedRef = useRef(false);
+  const migrationInFlightRef = useRef(false);
+  const serverEchoPendingRef = useRef<UserPreferences | null>(null);
+  const retryTimerRef = useRef<number | null>(null);
+  const isMountedRef = useRef(false);
+  const [retryNonce, setRetryNonce] = useState(0);
+
+  const clearRetryTimer = useCallback(() => {
+    if (retryTimerRef.current === null) {
+      return;
+    }
+    window.clearTimeout(retryTimerRef.current);
+    retryTimerRef.current = null;
+  }, []);
+
+  const scheduleRetry = useCallback(() => {
+    if (!isMountedRef.current || retryTimerRef.current !== null) {
+      return;
+    }
+    retryTimerRef.current = window.setTimeout(() => {
+      retryTimerRef.current = null;
+      setRetryNonce((nonce) => nonce + 1);
+    }, USER_PREFERENCES_SAVE_RETRY_MS);
+  }, []);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      clearRetryTimer();
+    };
+  }, [clearRetryTimer]);
 
   useEffect(() => {
     writeJSON(USER_PREFERENCES_STORAGE_KEY, preferences);
@@ -89,33 +131,50 @@ export function useUserPreferences(): readonly [
       return;
     }
 
+    const next = preferencesFromViewerPreferences(viewerPreferences);
+    const pendingServerEcho = serverEchoPendingRef.current;
+    if (pendingServerEcho !== null) {
+      if (arePreferencesEqual(next, pendingServerEcho)) {
+        serverEchoPendingRef.current = null;
+      } else {
+        return;
+      }
+    }
+
     const cached = cachedPreferencesRef.current;
+    const serverHasCustomization =
+      viewerPreferences !== null && !isDefaultPreferences(preferencesFromViewerPreferences(viewerPreferences));
     const shouldMigrateCache =
-      !migrationAttemptedRef.current &&
+      !migrationInFlightRef.current &&
       cached !== null &&
       !isDefaultPreferences(cached) &&
+      !serverHasCustomization &&
       (viewerPreferences === null || viewerPreferences.customizationUpdatedAt === null);
 
     if (shouldMigrateCache) {
-      migrationAttemptedRef.current = true;
-      void updateCustomization(cached).catch((error) => {
-        console.error("Failed to migrate cached customization preferences", error);
-      });
+      migrationInFlightRef.current = true;
+      clearRetryTimer();
+      void updateCustomization(cached)
+        .then(() => {
+          if (localEditVersionRef.current === savedEditVersionRef.current) {
+            serverEchoPendingRef.current = cached;
+          }
+        })
+        .catch((error) => {
+          console.error("Failed to migrate cached customization preferences", error);
+          scheduleRetry();
+        })
+        .finally(() => {
+          migrationInFlightRef.current = false;
+        });
       return;
     }
 
-    const next =
-      viewerPreferences === null
-        ? DEFAULT_USER_PREFERENCES
-        : normalizePreferences({
-            traits: viewerPreferences.traits,
-            customInstructions: viewerPreferences.customInstructions,
-          });
     if (!arePreferencesEqual(preferences, next)) {
       const handle = window.setTimeout(() => setPreferences(next), 0);
       return () => window.clearTimeout(handle);
     }
-  }, [preferences, updateCustomization, viewerPreferences]);
+  }, [clearRetryTimer, preferences, retryNonce, scheduleRetry, updateCustomization, viewerPreferences]);
 
   useEffect(() => {
     if (localEditVersionRef.current === savedEditVersionRef.current) {
@@ -123,20 +182,26 @@ export function useUserPreferences(): readonly [
     }
 
     const version = localEditVersionRef.current;
+    const preferencesToSave = preferences;
+    clearRetryTimer();
     const handle = window.setTimeout(() => {
-      void updateCustomization(preferences)
+      void updateCustomization(preferencesToSave)
         .then(() => {
           if (localEditVersionRef.current === version) {
             savedEditVersionRef.current = version;
+            serverEchoPendingRef.current = preferencesToSave;
           }
         })
         .catch((error) => {
           console.error("Failed to save customization preferences", error);
+          if (localEditVersionRef.current === version) {
+            scheduleRetry();
+          }
         });
     }, USER_PREFERENCES_SAVE_DEBOUNCE_MS);
 
     return () => window.clearTimeout(handle);
-  }, [preferences, updateCustomization]);
+  }, [clearRetryTimer, preferences, retryNonce, scheduleRetry, updateCustomization]);
 
   const setPersistedPreferences = useCallback(
     (next: UserPreferences | ((prev: UserPreferences) => UserPreferences)) => {

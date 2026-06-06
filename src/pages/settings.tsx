@@ -238,7 +238,6 @@ const USAGE_COPY = {
 } as const;
 
 export function SettingsPage() {
-  const [preferences, setPreferences] = useUserPreferences();
   const params = useParams<{ section?: string }>();
   const [searchParams] = useSearchParams();
   const from = getSafeFrom(searchParams.get("from"));
@@ -288,9 +287,7 @@ export function SettingsPage() {
 
           {activeSection === "account" ? <AccountSettingsSection /> : null}
           {activeSection === "usage" ? <UsageSettingsSection /> : null}
-          {activeSection === "customization" ? (
-            <CustomizationSettingsSection preferences={preferences} setPreferences={setPreferences} />
-          ) : null}
+          {activeSection === "customization" ? <CustomizationSettingsSection /> : null}
           {activeSection === "history" ? <HistorySettingsSection /> : null}
           {activeSection === "resources" ? <ResourcesSection /> : null}
           {activeSection === "models" ? <PlaceholderSettingsSection title="Models" /> : null}
@@ -1122,13 +1119,9 @@ function UsageSettingsSection() {
   );
 }
 
-function CustomizationSettingsSection({
-  preferences,
-  setPreferences,
-}: {
-  preferences: UserPreferences;
-  setPreferences: SetUserPreferences;
-}) {
+function CustomizationSettingsSection() {
+  const [preferences, setPreferences] = useUserPreferences();
+
   return (
     <Card className="p-5">
       <div className="flex flex-col gap-5">
