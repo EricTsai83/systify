@@ -107,7 +107,6 @@ const DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
 
 const BROWSER_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const USAGE_HISTORY_PERIOD_COUNT = 12;
-const MAX_VIEWER_USAGE_DASHBOARD_CACHE_ENTRIES = 4;
 const BUDGET_PRESETS_USD = [5, 10, 25, 50] as const;
 const COMMON_TIME_ZONES = [
   "UTC",
@@ -165,8 +164,6 @@ type TimeZoneOption = {
   searchText: string;
 };
 
-const viewerUsageDashboardCache = new Map<string, ViewerUsageDashboard>();
-
 /**
  * Presenter boundary for `getViewerUsageDashboard`.
  *
@@ -180,7 +177,6 @@ const USAGE_COPY = {
     title: "Usage",
     readyStatus: "Current",
     loadingStatus: "Loading…",
-    refreshingStatus: "Refreshing…",
   },
   metrics: {
     spend: {
@@ -289,7 +285,7 @@ export function SettingsPage() {
           <SettingsSectionNav activeSection={activeSection} from={from} />
 
           {activeSection === "account" ? <AccountSettingsSection /> : null}
-          {activeSection === "usage" ? <UsageSettingsSection /> : null}
+          <UsageSettingsBoundary isActive={activeSection === "usage"} />
           {activeSection === "customization" ? (
             <CustomizationSettingsSection
               preferences={customizationPreferences}
@@ -306,6 +302,16 @@ export function SettingsPage() {
       </main>
     </div>
   );
+}
+
+function UsageSettingsBoundary({ isActive }: { isActive: boolean }) {
+  const dashboard = useViewerUsageDashboardSubscription(isActive);
+
+  return isActive ? <UsageSettingsSection dashboard={dashboard} /> : null;
+}
+
+function useViewerUsageDashboardSubscription(isActive: boolean): ViewerUsageDashboard | undefined {
+  return useQuery(api.lib.userCost.getViewerUsageDashboard, isActive ? {} : "skip");
 }
 
 function SettingsSectionNav({ activeSection, from }: { activeSection: SettingsSectionId; from: string | null }) {
@@ -471,37 +477,6 @@ function AccountSettingsSection() {
   );
 }
 
-function useCachedViewerUsageDashboard(cacheKey: string | null): {
-  dashboard: ViewerUsageDashboard | null;
-  isRefreshing: boolean;
-} {
-  const liveDashboard = useQuery(api.lib.userCost.getViewerUsageDashboard);
-  const cachedDashboard = cacheKey ? viewerUsageDashboardCache.get(cacheKey) : undefined;
-
-  useEffect(() => {
-    if (!cacheKey || liveDashboard === undefined) {
-      return;
-    }
-
-    if (
-      !viewerUsageDashboardCache.has(cacheKey) &&
-      viewerUsageDashboardCache.size >= MAX_VIEWER_USAGE_DASHBOARD_CACHE_ENTRIES
-    ) {
-      const oldestCacheKey = viewerUsageDashboardCache.keys().next().value;
-      if (oldestCacheKey) {
-        viewerUsageDashboardCache.delete(oldestCacheKey);
-      }
-    }
-
-    viewerUsageDashboardCache.set(cacheKey, liveDashboard);
-  }, [cacheKey, liveDashboard]);
-
-  return {
-    dashboard: liveDashboard ?? cachedDashboard ?? null,
-    isRefreshing: liveDashboard === undefined && cachedDashboard !== undefined,
-  };
-}
-
 function getSupportedTimeZoneValues(): string[] {
   const intlWithSupportedValues = Intl as typeof Intl & {
     supportedValuesOf?: (key: "timeZone") => string[];
@@ -613,9 +588,7 @@ function parseBudgetUsdInput(rawBudget: string): { value: number | null; error: 
   return { value, error: null };
 }
 
-function UsageSettingsSection() {
-  const { user } = useAuth();
-  const { dashboard, isRefreshing } = useCachedViewerUsageDashboard(user?.email ?? null);
+function UsageSettingsSection({ dashboard }: { dashboard: ViewerUsageDashboard | undefined }) {
   const updateUsageProfile = useMutation(api.lib.userCost.updateViewerUsageProfile);
   const [cycleAnchorDayDraft, setCycleAnchorDayDraft] = useState<string | null>(null);
   const [timeZoneDraft, setTimeZoneDraft] = useState<string | null>(null);
@@ -661,11 +634,7 @@ function UsageSettingsSection() {
 
   const budgetProgress = dashboard?.budget.percentUsed === null ? 0 : Math.min(100, dashboard?.budget.percentUsed ?? 0);
   const budgetState = normalizeBudgetState(dashboard?.budget.state);
-  const usageStatusLabel = dashboard
-    ? isRefreshing
-      ? USAGE_COPY.section.refreshingStatus
-      : USAGE_COPY.section.readyStatus
-    : USAGE_COPY.section.loadingStatus;
+  const usageStatusLabel = dashboard ? USAGE_COPY.section.readyStatus : USAGE_COPY.section.loadingStatus;
   const budgetStateLabel = dashboard ? formatBudgetStateLabel(budgetState) : USAGE_COPY.section.loadingStatus;
   const currentPeriodLabel = dashboard
     ? formatPeriodRange(dashboard.currentPeriod.periodStartMs, dashboard.currentPeriod.periodEndMs)
@@ -763,7 +732,7 @@ function UsageSettingsSection() {
             </div>
             <div className="flex items-center gap-2">
               <span className="min-w-36 text-right text-sm text-muted-foreground">{currentPeriodLabel}</span>
-              <Badge variant={dashboard && !isRefreshing ? "outline" : "muted"} className="min-w-24 justify-center">
+              <Badge variant={dashboard ? "outline" : "muted"} className="min-w-24 justify-center">
                 {usageStatusLabel}
               </Badge>
             </div>
