@@ -2,7 +2,63 @@
 
 This folder contains the system design documentation for the current Systify codebase. The documents focus on the current state and are meant to help engineers quickly understand the system boundaries, core data model, key workflows, and external integrations.
 
-For cross-cutting infrastructure concerns (LLM gateway, multi-provider strategy, rate limiting and fairness, System Design generation, cost tracking, and the eval harness), see [`architecture/`](./architecture/README.md) as the source of truth. The docs in this folder focus on product flows and reference the architecture docs where needed.
+For cross-cutting infrastructure concerns (LLM gateway, multi-provider strategy, rate limiting and fairness, System Design generation, cost tracking, and the eval harness), see [`architecture/`](./architecture/README.md) as the source of truth. The docs in this folder focus on product flows and reference the architecture docs where needed. For provider-level cost surfaces across WorkOS, GitHub, Convex, Daytona, LLM providers, and Vercel, see [`external-service-pricing.md`](./external-service-pricing.md).
+
+## Document Structure
+
+The docs are organized by responsibility, even when most focused docs still live
+in this folder for link stability:
+
+- **Core model**
+  - `system-overview.md`
+  - `domain-and-data-model.md`
+  - `auth-and-access.md`
+- **External services, operations, and provider cost**
+  - `integrations-and-operations.md`
+  - `external-service-pricing.md`
+  - `github-app-integration-system-design.md`
+  - `github-callback-returnto-allowlist-system-design.md`
+  - `vercel-convex-deployment-system-design.md`
+- **Repository and import lifecycle**
+  - `repository-lifecycle.md`
+  - `import-persistence-system-design.md`
+  - `repository-filecount-rollout-system-design.md`
+  - `repository-remote-freshness-check-system-design.md`
+  - `repository-persistence-system-design.md`
+  - `artifact-import-drift-system-design.md`
+- **Chat, Library, and service modes**
+  - `chat-and-analysis-pipeline.md`
+  - `service-modes-discuss-library-system-design.md`
+  - `chat-context-retrieval-system-design.md`
+  - `streaming-reply-optimization-system-design.md`
+  - `instant-view-switching-system-design.md`
+  - `artifact-view-state-system-design.md`
+- **Sandbox operations and safety**
+  - `sandbox-mode-system-design.md`
+  - `sandbox-mode-security-system-design.md`
+  - `sandbox-mode-runbook.md`
+  - `sandbox-provisioning-cleanup-system-design.md`
+  - `sandbox-tool-call-audit-log-system-design.md`
+  - `daytona-webhook-reconciliation-system-design.md`
+  - `orphan-resource-handling.md`
+- **Client and UI state**
+  - `client-storage-architecture.md`
+  - `client-storage-strategy.md`
+  - `archive-listing-system-design.md`
+  - `landing-auth-hint-system-design.md`
+- **Cross-cutting architecture source of truth**
+  - `architecture/README.md`
+  - `architecture/llm-gateway.md`
+  - `architecture/multi-provider-strategy.md`
+  - `architecture/rate-limiting-and-fairness.md`
+  - `architecture/system-design-generation.md`
+  - `architecture/cost-tracking.md`
+  - `architecture/eval-workflow.md`
+
+When adding a new document, choose the narrowest owner above. If the topic is a
+cross-cutting mechanism shared by multiple features, put it under
+`architecture/`; if it is a feature flow or operational boundary, keep it in
+this folder and add it to the appropriate group.
 
 ## Recommended Reading Order
 
@@ -87,12 +143,16 @@ For cross-cutting infrastructure concerns (LLM gateway, multi-provider strategy,
 - `landing-auth-hint-system-design.md`
   - How does the landing page hint at auth state without leaking identity before sign-in?
   - Why is the auth-hint path separate from the authenticated session boot?
+- `external-service-pricing.md`
+  - Which external services can create provider bills or quota pressure?
+  - Which Systify flows trigger each service's cost model, and where should LLM-specific pricing details live?
 
 ## Topic Index
 
 Use this as a guided reading order for finding the doc that answers a specific topic. For cross-cutting infrastructure (LLM gateway, multi-provider strategy, rate limiting and fairness, System Design generation, cost tracking, eval harness), see the sibling [`architecture/`](./architecture/README.md) index — those docs are the source of truth for those areas, and the entries below cross-link rather than duplicate them.
 
 - Rate limiting and lease recovery: `integrations-and-operations.md` (see also `architecture/rate-limiting-and-fairness.md` for the gateway-side fairness model)
+- External service pricing and cost triggers: `external-service-pricing.md` (see also `architecture/cost-tracking.md` for LLM token math)
 - Daytona orphan protection and reconciliation layers: `orphan-resource-handling.md`
 - Daytona provisioning failure cleanup: `sandbox-provisioning-cleanup-system-design.md`
 - Daytona webhook reconciliation path: `daytona-webhook-reconciliation-system-design.md`
@@ -146,6 +206,12 @@ Use this as a guided reading order for finding the doc that answers a specific t
 - What roles do GitHub, Daytona, and OpenAI each play?
 - How do the HTTP callback/webhook, cron, and cleanup flows work?
 - How are frontend `.env` variables and Convex runtime environment variables separated?
+
+### `external-service-pricing.md`
+
+- Which external providers have direct bills, usage meters, or quota pressure?
+- Which Systify workflows trigger each provider's cost model?
+- Which focused design docs own the implementation details behind each cost surface?
 
 ### `orphan-resource-handling.md`
 
