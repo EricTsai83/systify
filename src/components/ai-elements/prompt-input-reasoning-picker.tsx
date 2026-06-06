@@ -52,7 +52,7 @@ export interface PromptInputReasoningPickerProps {
    * level; the gateway remains responsible for applying that default.
    */
   value: ReasoningEffort | null;
-  onChange: (next: ReasoningEffort) => void;
+  onChange: (next: ReasoningEffort | null) => void;
   /** Provider currently selected in the sibling model picker. */
   provider: LlmProvider | undefined;
   /**

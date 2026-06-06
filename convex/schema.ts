@@ -839,31 +839,35 @@ export default defineSchema({
       "deletionRequestedAt",
       "archivedAt",
     ])
-    .index("by_ownerTokenIdentifier_and_deletionRequestedAt_and_archivedAt_and_lastMessageAt", [
+    .index("by_owner_delete_archive_lastMsg", [
       "ownerTokenIdentifier",
       "deletionRequestedAt",
       "archivedAt",
       "lastMessageAt",
     ])
-    .index("by_ownerTokenIdentifier_and_repositoryId_and_deletionRequestedAt_and_archivedAt_and_lastMessageAt", [
+    .index("by_owner_repo_delete_archive_lastMsg", [
       "ownerTokenIdentifier",
       "repositoryId",
       "deletionRequestedAt",
       "archivedAt",
       "lastMessageAt",
     ])
-    .index("by_ownerTokenIdentifier_and_repositoryId_and_deletionRequestedAt_and_archivedAt_and_pinnedAt", [
+    .index("by_owner_repo_delete_archive_pinned", [
       "ownerTokenIdentifier",
       "repositoryId",
       "deletionRequestedAt",
       "archivedAt",
       "pinnedAt",
     ])
-    .index(
-      "by_ownerTokenIdentifier_and_repositoryId_and_mode_and_deletionRequestedAt_and_archivedAt_and_lastMessageAt",
-      ["ownerTokenIdentifier", "repositoryId", "mode", "deletionRequestedAt", "archivedAt", "lastMessageAt"],
-    )
-    .index("by_ownerTokenIdentifier_and_repositoryId_and_mode_and_deletionRequestedAt_and_archivedAt_and_pinnedAt", [
+    .index("by_owner_repo_mode_delete_archive_lastMsg", [
+      "ownerTokenIdentifier",
+      "repositoryId",
+      "mode",
+      "deletionRequestedAt",
+      "archivedAt",
+      "lastMessageAt",
+    ])
+    .index("by_owner_repo_mode_delete_archive_pinned", [
       "ownerTokenIdentifier",
       "repositoryId",
       "mode",

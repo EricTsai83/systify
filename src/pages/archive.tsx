@@ -38,7 +38,7 @@ export function ArchivePage() {
   const handleBack = useCallback(() => void navigate(DEFAULT_AUTHENTICATED_PATH), [navigate]);
 
   return (
-    <div className="flex h-dvh w-full flex-1 flex-col overflow-y-auto bg-background">
+    <div className="flex h-dvh w-full flex-1 flex-col overflow-y-auto bg-background [scrollbar-gutter:stable]">
       <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80">
         <div className="mx-auto flex h-14 w-full max-w-4xl items-center gap-3 px-4 sm:px-6">
           <Link
@@ -75,14 +75,14 @@ export function ArchivePage() {
   );
 }
 
-export function ArchiveSettingsSection({ onBackToChat }: { onBackToChat?: () => void }) {
-  const navigate = useNavigate();
+export function ArchiveSettingsSection({
+  showThreadHeading = true,
+}: {
+  onBackToChat?: () => void;
+  showThreadHeading?: boolean;
+}) {
   const [pendingPermanentDelete, setPendingPermanentDelete] = useState<Doc<"repositories"> | null>(null);
   const [pendingThreadPermanentDelete, setPendingThreadPermanentDelete] = useState<ArchivedThread | null>(null);
-  const handleBack = useCallback(
-    () => (onBackToChat ? onBackToChat() : void navigate(DEFAULT_AUTHENTICATED_PATH)),
-    [navigate, onBackToChat],
-  );
 
   const {
     results: archived,
@@ -99,8 +99,11 @@ export function ArchiveSettingsSection({ onBackToChat }: { onBackToChat?: () => 
   const isExhausted = status === "Exhausted";
 
   return (
-    <>
-      <ArchivedThreadsSection onRequestPermanentDelete={setPendingThreadPermanentDelete} />
+    <div className="flex h-full min-h-0 flex-col">
+      <ArchivedThreadsSection
+        showHeading={showThreadHeading}
+        onRequestPermanentDelete={setPendingThreadPermanentDelete}
+      />
       <ArchiveContent
         archived={archived}
         isLoadingFirstPage={isLoadingFirstPage}
@@ -111,7 +114,6 @@ export function ArchiveSettingsSection({ onBackToChat }: { onBackToChat?: () => 
           loadMoreState.markLoadMoreStarted();
           loadMore(NEXT_PAGE_SIZE);
         }}
-        onBackToChat={handleBack}
         onRequestPermanentDelete={setPendingPermanentDelete}
       />
       <PermanentDeleteDialog repo={pendingPermanentDelete} onClose={() => setPendingPermanentDelete(null)} />
@@ -119,7 +121,7 @@ export function ArchiveSettingsSection({ onBackToChat }: { onBackToChat?: () => 
         thread={pendingThreadPermanentDelete}
         onClose={() => setPendingThreadPermanentDelete(null)}
       />
-    </>
+    </div>
   );
 }
 
@@ -141,8 +143,10 @@ type ArchivedThreadRepositoryScope = {
 };
 
 function ArchivedThreadsSection({
+  showHeading,
   onRequestPermanentDelete,
 }: {
+  showHeading: boolean;
   onRequestPermanentDelete: (thread: ArchivedThread) => void;
 }) {
   const scopes = useQuery(api.chat.threads.listArchivedThreadRepositoryScopes) as
@@ -171,6 +175,9 @@ function ArchivedThreadsSection({
   const canLoadMore = status === "CanLoadMore";
   const loadMoreState = useStableLoadMoreState({ canLoadMore, isLoadingMore });
   const rows = archivedThreads;
+  const shouldShowBulkActions = scopes === undefined || scopes.length > 0;
+  const isBulkActionDisabled =
+    scopes === undefined || selectedScope === null || isLoadingFirstPage || rows.length === 0;
   const [isBulkMutating, handleConfirmBulkAction] = useAsyncCallback(
     useCallback(async () => {
       if (!pendingBulkAction || !selectedScope) {
@@ -199,36 +206,26 @@ function ArchivedThreadsSection({
 
   return (
     <>
-      <section className="mb-6 flex flex-col gap-3" aria-labelledby="archived-threads-heading">
+      <section className="flex min-h-0 flex-1 flex-col gap-3" aria-labelledby="archived-threads-heading">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-          <div>
+          {showHeading ? (
             <h2 id="archived-threads-heading" className="text-base font-semibold tracking-tight">
               Archived Threads
             </h2>
-            <p className="mt-1 text-sm text-muted-foreground">Restore archived threads or delete them permanently.</p>
-          </div>
-          {scopes && scopes.length > 0 ? (
-            <ArchiveRepositorySelector
-              scopes={scopes}
-              value={getArchiveScopeValue(selectedScope ?? scopes[0])}
-              onValueChange={setSelectedScopeValue}
-            />
-          ) : null}
+          ) : (
+            <span id="archived-threads-heading" className="sr-only">
+              Archived Threads
+            </span>
+          )}
         </div>
-        {!scopes ? (
-          <ArchiveListSkeleton />
-        ) : scopes.length === 0 ? (
-          <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
-            No archived threads.
-          </div>
-        ) : (
-          <>
+        {shouldShowBulkActions ? (
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
-                disabled={rows.length === 0 || isBulkMutating}
+                disabled={isBulkActionDisabled || isBulkMutating}
                 onClick={() => setPendingBulkAction("restore")}
               >
                 <ArrowCounterClockwiseIcon weight="bold" />
@@ -238,53 +235,72 @@ function ArchivedThreadsSection({
                 type="button"
                 variant="destructive"
                 size="sm"
-                disabled={rows.length === 0 || isBulkMutating}
+                disabled={isBulkActionDisabled || isBulkMutating}
                 onClick={() => setPendingBulkAction("delete")}
               >
                 <TrashIcon weight="bold" />
                 Permanently delete all
               </Button>
             </div>
-            {isLoadingFirstPage ? (
-              <ArchiveListSkeleton />
-            ) : rows.length === 0 ? (
-              <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
-                No archived threads for this repository.
-              </div>
-            ) : (
-              <div className="border border-border bg-card">
-                {rows.map((thread) => (
-                  <ArchivedThreadRow
-                    key={thread._id}
-                    thread={thread}
-                    onRequestPermanentDelete={onRequestPermanentDelete}
-                  />
-                ))}
-                {loadMoreState.shouldRender ? (
-                  <div className="flex justify-end border-t border-border px-3 py-2">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={!loadMoreState.canLoadMore || loadMoreState.isLoadingMore}
-                      onClick={() => {
-                        loadMoreState.markLoadMoreStarted();
-                        loadMore(THREAD_ARCHIVE_PAGE_SIZE);
-                      }}
-                    >
+            {scopes === undefined ? (
+              <Skeleton className="h-9 w-full sm:w-64" aria-hidden="true" />
+            ) : scopes.length > 0 ? (
+              <ArchiveRepositorySelector
+                scopes={scopes}
+                value={getArchiveScopeValue(selectedScope ?? scopes[0])}
+                onValueChange={setSelectedScopeValue}
+              />
+            ) : null}
+          </div>
+        ) : null}
+        <div className="min-h-32 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
+          {!scopes ? (
+            <ArchiveListSkeleton rowCount={1} />
+          ) : scopes.length === 0 ? (
+            <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+              No archived threads.
+            </div>
+          ) : isLoadingFirstPage ? (
+            <ArchiveListSkeleton rowCount={1} />
+          ) : rows.length === 0 ? (
+            <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+              No archived threads for this repository.
+            </div>
+          ) : (
+            <div className="border border-border bg-card">
+              {rows.map((thread) => (
+                <ArchivedThreadRow
+                  key={thread._id}
+                  thread={thread}
+                  onRequestPermanentDelete={onRequestPermanentDelete}
+                />
+              ))}
+              {loadMoreState.shouldRender ? (
+                <div className="flex justify-end border-t border-border px-3 py-2">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={!loadMoreState.canLoadMore || loadMoreState.isLoadingMore}
+                    onClick={() => {
+                      loadMoreState.markLoadMoreStarted();
+                      loadMore(THREAD_ARCHIVE_PAGE_SIZE);
+                    }}
+                  >
+                    <span className="inline-flex size-[13px] items-center justify-center">
                       {loadMoreState.isLoadingMore ? <Spinner size={13} /> : null}
-                      <ButtonStateText
-                        current={loadMoreState.isLoadingMore ? "Loading" : "Next"}
-                        states={["Next", "Loading"]}
-                      />
-                      <CaretRightIcon weight="bold" />
-                    </Button>
-                  </div>
-                ) : null}
-              </div>
-            )}
-          </>
-        )}
+                    </span>
+                    <ButtonStateText
+                      current={loadMoreState.isLoadingMore ? "Loading" : "Next"}
+                      states={["Next", "Loading"]}
+                    />
+                    <CaretRightIcon weight="bold" />
+                  </Button>
+                </div>
+              ) : null}
+            </div>
+          )}
+        </div>
       </section>
       <ConfirmDialog
         open={pendingBulkAction !== null}
@@ -379,7 +395,7 @@ function ArchivedThreadRow({
         </Button>
         <Button type="button" variant="destructive" size="sm" onClick={() => onRequestPermanentDelete(thread)}>
           <TrashIcon weight="bold" />
-          Delete now
+          Delete
         </Button>
       </div>
     </div>
@@ -393,7 +409,6 @@ function ArchiveContent({
   isLoadingMore,
   isExhausted,
   onLoadMore,
-  onBackToChat,
   onRequestPermanentDelete,
 }: {
   archived: ReadonlyArray<Doc<"repositories">>;
@@ -402,21 +417,13 @@ function ArchiveContent({
   isLoadingMore: boolean;
   isExhausted: boolean;
   onLoadMore: () => void;
-  onBackToChat: () => void;
   onRequestPermanentDelete: (repo: Doc<"repositories">) => void;
 }) {
   return (
     <>
-      <p className="mb-4 text-sm leading-relaxed text-muted-foreground sm:mb-5">
-        Threads, messages, and analysis artifacts are preserved while sandboxes are stopped to free resources. After
-        restoring, sync the repository to provision a fresh sandbox before resuming chat.
-      </p>
-
       {isLoadingFirstPage ? (
-        <ArchiveListSkeleton />
-      ) : archived.length === 0 && isExhausted ? (
-        <ArchiveEmptyState onBackToChat={onBackToChat} />
-      ) : (
+        <ArchiveListSkeleton rowCount={1} />
+      ) : archived.length === 0 && isExhausted ? null : (
         <ArchiveList
           archived={archived}
           canLoadMore={canLoadMore}
@@ -504,10 +511,10 @@ function ArchiveList({
   );
 }
 
-function ArchiveListSkeleton() {
+function ArchiveListSkeleton({ rowCount = 4 }: { rowCount?: number }) {
   return (
     <ul aria-hidden="true" className="mt-4 flex flex-col gap-2.5">
-      {Array.from({ length: 4 }).map((_, index) => (
+      {Array.from({ length: rowCount }).map((_, index) => (
         <li key={index}>
           <Card className="p-4">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
@@ -527,21 +534,6 @@ function ArchiveListSkeleton() {
         </li>
       ))}
     </ul>
-  );
-}
-
-function ArchiveEmptyState({ onBackToChat }: { onBackToChat: () => void }) {
-  return (
-    <div className="mt-4 flex flex-col items-center justify-center px-4 py-12 text-center sm:py-16">
-      <h2 className="text-base font-semibold tracking-tight sm:text-lg">Nothing in your archive</h2>
-      <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">
-        Archived repositories rest here. Restore or delete any time.
-      </p>
-      <Button variant="secondary" size="sm" className="mt-6" onClick={onBackToChat}>
-        <CaretLeftIcon weight="bold" />
-        Back to chat
-      </Button>
-    </div>
   );
 }
 

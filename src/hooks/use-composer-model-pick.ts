@@ -25,12 +25,12 @@ export interface ComposerModelPickResolution {
 
 export function resolveComposerModelPick(args: {
   threadId: ThreadId | null;
-  explicitPick: ThreadScopedModelPick;
+  explicitPick: ThreadScopedModelPick | null;
   defaultModelPick: DefaultModelPick | undefined;
   threadLockedProvider: LlmProvider | null;
   threadDefaultModelName: string | null;
 }): ComposerModelPickResolution {
-  const userPickedModel = args.explicitPick.threadId === args.threadId ? args.explicitPick : null;
+  const userPickedModel = args.explicitPick?.threadId === args.threadId ? args.explicitPick : null;
   return {
     selectedProvider: userPickedModel?.provider ?? args.defaultModelPick?.provider ?? args.threadLockedProvider ?? null,
     selectedModelName: userPickedModel?.modelName ?? args.defaultModelPick?.modelName ?? args.threadDefaultModelName,
@@ -53,19 +53,13 @@ export function useComposerModelPick(args: {
   selectedModel: ComposerModelPickValue | null;
   setSelectedModel: (next: ComposerModelPickValue) => void;
   selectedReasoningEffort: ReasoningEffort | null;
-  setSelectedReasoningEffort: (next: ReasoningEffort) => void;
+  setSelectedReasoningEffort: (next: ReasoningEffort | null) => void;
 } {
   const threadLockedProvider = args.threadLockedProvider ?? null;
   const threadDefaultModelName = args.threadDefaultModelName ?? null;
-  const [modelByThread, setModelByThread] = useState<ThreadScopedModelPick>({
-    threadId: null,
-    provider: null,
-    modelName: null,
-  });
-  const [reasoningByThread, setReasoningByThread] = useState<ThreadScopedReasoningPick>({
-    threadId: null,
-    effort: null,
-  });
+  const [modelByThread, setModelByThread] = useState<Record<string, ThreadScopedModelPick>>({});
+  const [reasoningByThread, setReasoningByThread] = useState<Record<string, ThreadScopedReasoningPick>>({});
+  const threadKey = args.threadId ?? "__new_thread__";
 
   const defaultModelPick = useDefaultModelPick({
     capability: args.capability,
@@ -77,12 +71,12 @@ export function useComposerModelPick(args: {
     () =>
       resolveComposerModelPick({
         threadId: args.threadId,
-        explicitPick: modelByThread,
+        explicitPick: modelByThread[threadKey] ?? null,
         defaultModelPick,
         threadLockedProvider,
         threadDefaultModelName,
       }),
-    [args.threadId, defaultModelPick, modelByThread, threadDefaultModelName, threadLockedProvider],
+    [args.threadId, defaultModelPick, modelByThread, threadDefaultModelName, threadKey, threadLockedProvider],
   );
 
   const selectedModel = useMemo<ComposerModelPickValue | null>(
@@ -92,17 +86,23 @@ export function useComposerModelPick(args: {
 
   const setSelectedModel = useCallback(
     (next: ComposerModelPickValue) => {
-      setModelByThread({ threadId: args.threadId, provider: next.provider, modelName: next.modelName });
+      setModelByThread((prev) => ({
+        ...prev,
+        [threadKey]: { threadId: args.threadId, provider: next.provider, modelName: next.modelName },
+      }));
     },
-    [args.threadId],
+    [args.threadId, threadKey],
   );
 
-  const selectedReasoningEffort = reasoningByThread.threadId === args.threadId ? reasoningByThread.effort : null;
+  const selectedReasoningEffort = reasoningByThread[threadKey]?.effort ?? null;
   const setSelectedReasoningEffort = useCallback(
-    (next: ReasoningEffort) => {
-      setReasoningByThread({ threadId: args.threadId, effort: next });
+    (next: ReasoningEffort | null) => {
+      setReasoningByThread((prev) => ({
+        ...prev,
+        [threadKey]: { threadId: args.threadId, effort: next },
+      }));
     },
-    [args.threadId],
+    [args.threadId, threadKey],
   );
 
   return {

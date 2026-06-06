@@ -92,7 +92,7 @@ type ChatPanelProps = {
    * resets between sends unless the shell chooses to remember it.
    */
   selectedReasoningEffort?: ReasoningEffort | null;
-  setSelectedReasoningEffort?: (next: ReasoningEffort) => void;
+  setSelectedReasoningEffort?: (next: ReasoningEffort | null) => void;
   threadLockedProvider?: LlmProvider | null;
   /**
    * Per-axis availability verdict from `repositoryModeEligibility.evaluate`.

@@ -37,10 +37,43 @@ async function normalizeScopeRows(
   rows: Doc<"archivedThreadScopes">[],
 ): Promise<Doc<"archivedThreadScopes"> | null> {
   const [primary, ...duplicates] = rows;
+  if (!primary) {
+    return null;
+  }
+
+  const scopedThreads = await ctx.db
+    .query("threads")
+    .withIndex("by_ownerTokenIdentifier_and_archiveScopeKey_and_archivedAt", (q) =>
+      q.eq("ownerTokenIdentifier", primary.ownerTokenIdentifier).eq("archiveScopeKey", primary.scopeKey),
+    )
+    .order("desc")
+    .collect();
+  const activeArchivedThreads = scopedThreads.filter(
+    (thread) =>
+      thread.archivedAt !== undefined &&
+      thread.deletionRequestedAt === undefined &&
+      thread.archiveScopeKey === primary.scopeKey,
+  );
+
+  if (activeArchivedThreads.length === 0) {
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+    }
+    return null;
+  }
+
+  const latestThread = activeArchivedThreads[0]!;
+  const primaryPatch = {
+    repositoryId: latestThread.repositoryId,
+    lastArchivedAt: latestThread.archivedAt!,
+    lastThreadId: latestThread._id,
+    threadCount: activeArchivedThreads.length,
+  };
+  await ctx.db.patch(primary._id, primaryPatch);
   for (const duplicate of duplicates) {
     await ctx.db.delete(duplicate._id);
   }
-  return primary ?? null;
+  return { ...primary, ...primaryPatch };
 }
 
 async function loadArchiveScope(

@@ -96,6 +96,14 @@ async function paginateHistoryGroupsExcludingNoRepository(
   let isDone = false;
   let pagesScanned = 0;
 
+  if (args.maxItems <= 0) {
+    return {
+      page,
+      continueCursor,
+      isDone,
+    };
+  }
+
   while (page.length < args.maxItems && !isDone && pagesScanned < HISTORY_GROUP_PAGE_SCAN_LIMIT) {
     const remaining = Math.max(1, args.maxItems - page.length);
     const result = await ctx.db
@@ -134,7 +142,7 @@ export const listThreadHistoryGroups = query({
     const noRepositoryGroup = shouldPinNoRepositoryGroup
       ? await loadNoRepositoryHistoryGroup(ctx, identity.tokenIdentifier)
       : null;
-    const repositoryGroupLimit = Math.max(1, args.paginationOpts.numItems - (noRepositoryGroup ? 1 : 0));
+    const repositoryGroupLimit = Math.max(0, args.paginationOpts.numItems - (noRepositoryGroup ? 1 : 0));
     const result = await paginateHistoryGroupsExcludingNoRepository(ctx, {
       ownerTokenIdentifier: identity.tokenIdentifier,
       paginationOpts: args.paginationOpts,
@@ -181,14 +189,12 @@ export const listThreadsForHistoryGroup = query({
 
     const result = await ctx.db
       .query("threads")
-      .withIndex(
-        "by_ownerTokenIdentifier_and_repositoryId_and_deletionRequestedAt_and_archivedAt_and_lastMessageAt",
-        (q) =>
-          q
-            .eq("ownerTokenIdentifier", identity.tokenIdentifier)
-            .eq("repositoryId", repositoryId)
-            .eq("deletionRequestedAt", undefined)
-            .eq("archivedAt", undefined),
+      .withIndex("by_owner_repo_delete_archive_lastMsg", (q) =>
+        q
+          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+          .eq("repositoryId", repositoryId)
+          .eq("deletionRequestedAt", undefined)
+          .eq("archivedAt", undefined),
       )
       .order("desc")
       .paginate(args.paginationOpts);

@@ -67,58 +67,50 @@ export const listThreads = query({
     const pinned = mode
       ? await ctx.db
           .query("threads")
-          .withIndex(
-            "by_ownerTokenIdentifier_and_repositoryId_and_mode_and_deletionRequestedAt_and_archivedAt_and_pinnedAt",
-            (q) =>
-              q
-                .eq("ownerTokenIdentifier", ownerTokenIdentifier)
-                .eq("repositoryId", repositoryId)
-                .eq("mode", mode)
-                .eq("deletionRequestedAt", undefined)
-                .eq("archivedAt", undefined)
-                .gt("pinnedAt", 0),
+          .withIndex("by_owner_repo_mode_delete_archive_pinned", (q) =>
+            q
+              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
+              .eq("repositoryId", repositoryId)
+              .eq("mode", mode)
+              .eq("deletionRequestedAt", undefined)
+              .eq("archivedAt", undefined)
+              .gt("pinnedAt", 0),
           )
           .order("desc")
           .take(20)
       : await ctx.db
           .query("threads")
-          .withIndex(
-            "by_ownerTokenIdentifier_and_repositoryId_and_deletionRequestedAt_and_archivedAt_and_pinnedAt",
-            (q) =>
-              q
-                .eq("ownerTokenIdentifier", ownerTokenIdentifier)
-                .eq("repositoryId", repositoryId)
-                .eq("deletionRequestedAt", undefined)
-                .eq("archivedAt", undefined)
-                .gt("pinnedAt", 0),
+          .withIndex("by_owner_repo_delete_archive_pinned", (q) =>
+            q
+              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
+              .eq("repositoryId", repositoryId)
+              .eq("deletionRequestedAt", undefined)
+              .eq("archivedAt", undefined)
+              .gt("pinnedAt", 0),
           )
           .order("desc")
           .take(20);
     const recent = mode
       ? await ctx.db
           .query("threads")
-          .withIndex(
-            "by_ownerTokenIdentifier_and_repositoryId_and_mode_and_deletionRequestedAt_and_archivedAt_and_lastMessageAt",
-            (q) =>
-              q
-                .eq("ownerTokenIdentifier", ownerTokenIdentifier)
-                .eq("repositoryId", repositoryId)
-                .eq("mode", mode)
-                .eq("deletionRequestedAt", undefined)
-                .eq("archivedAt", undefined),
+          .withIndex("by_owner_repo_mode_delete_archive_lastMsg", (q) =>
+            q
+              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
+              .eq("repositoryId", repositoryId)
+              .eq("mode", mode)
+              .eq("deletionRequestedAt", undefined)
+              .eq("archivedAt", undefined),
           )
           .order("desc")
           .take(20)
       : await ctx.db
           .query("threads")
-          .withIndex(
-            "by_ownerTokenIdentifier_and_repositoryId_and_deletionRequestedAt_and_archivedAt_and_lastMessageAt",
-            (q) =>
-              q
-                .eq("ownerTokenIdentifier", ownerTokenIdentifier)
-                .eq("repositoryId", repositoryId)
-                .eq("deletionRequestedAt", undefined)
-                .eq("archivedAt", undefined),
+          .withIndex("by_owner_repo_delete_archive_lastMsg", (q) =>
+            q
+              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
+              .eq("repositoryId", repositoryId)
+              .eq("deletionRequestedAt", undefined)
+              .eq("archivedAt", undefined),
           )
           .order("desc")
           .take(20);
@@ -147,7 +139,7 @@ export const listRepolessThreads = query({
     const identity = await requireViewerIdentity(ctx);
     const pinned = await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_and_repositoryId_and_deletionRequestedAt_and_archivedAt_and_pinnedAt", (q) =>
+      .withIndex("by_owner_repo_delete_archive_pinned", (q) =>
         q
           .eq("ownerTokenIdentifier", identity.tokenIdentifier)
           .eq("repositoryId", undefined)
@@ -159,14 +151,12 @@ export const listRepolessThreads = query({
       .take(20);
     const recent = await ctx.db
       .query("threads")
-      .withIndex(
-        "by_ownerTokenIdentifier_and_repositoryId_and_deletionRequestedAt_and_archivedAt_and_lastMessageAt",
-        (q) =>
-          q
-            .eq("ownerTokenIdentifier", identity.tokenIdentifier)
-            .eq("repositoryId", undefined)
-            .eq("deletionRequestedAt", undefined)
-            .eq("archivedAt", undefined),
+      .withIndex("by_owner_repo_delete_archive_lastMsg", (q) =>
+        q
+          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+          .eq("repositoryId", undefined)
+          .eq("deletionRequestedAt", undefined)
+          .eq("archivedAt", undefined),
       )
       .order("desc")
       .take(20);
@@ -231,11 +221,8 @@ export const listAllOwnerThreadIds = query({
     const identity = await requireViewerIdentity(ctx);
     const rows = await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_archivedAt_and_lastMessageAt", (q) =>
-        q
-          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
-          .eq("deletionRequestedAt", undefined)
-          .eq("archivedAt", undefined),
+      .withIndex("by_owner_delete_archive_lastMsg", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
       )
       .order("desc")
       .take(1000);
@@ -550,14 +537,12 @@ async function loadArchivedThreadsForRepositoryScope(
 ) {
   return await ctx.db
     .query("threads")
-    .withIndex(
-      "by_ownerTokenIdentifier_and_repositoryId_and_deletionRequestedAt_and_archivedAt_and_lastMessageAt",
-      (q) =>
-        q
-          .eq("ownerTokenIdentifier", args.ownerTokenIdentifier)
-          .eq("repositoryId", args.repositoryId)
-          .eq("deletionRequestedAt", undefined)
-          .gt("archivedAt", 0),
+    .withIndex("by_owner_repo_delete_archive_lastMsg", (q) =>
+      q
+        .eq("ownerTokenIdentifier", args.ownerTokenIdentifier)
+        .eq("repositoryId", args.repositoryId)
+        .eq("deletionRequestedAt", undefined)
+        .gt("archivedAt", 0),
     )
     .order("desc")
     .take(args.limit);
@@ -603,14 +588,12 @@ export const listArchivedThreads = query({
             .paginate(args.paginationOpts)
         : await ctx.db
             .query("threads")
-            .withIndex(
-              "by_ownerTokenIdentifier_and_repositoryId_and_deletionRequestedAt_and_archivedAt_and_lastMessageAt",
-              (q) =>
-                q
-                  .eq("ownerTokenIdentifier", identity.tokenIdentifier)
-                  .eq("repositoryId", repositoryId)
-                  .eq("deletionRequestedAt", undefined)
-                  .gt("archivedAt", 0),
+            .withIndex("by_owner_repo_delete_archive_lastMsg", (q) =>
+              q
+                .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+                .eq("repositoryId", repositoryId)
+                .eq("deletionRequestedAt", undefined)
+                .gt("archivedAt", 0),
             )
             .order("desc")
             .paginate(args.paginationOpts);

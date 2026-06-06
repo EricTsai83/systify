@@ -93,7 +93,7 @@ export function RepositoryShell({
   const [threadToArchive, setThreadToArchive] = useState<ThreadId | null>(null);
   const [showArchiveDialog, setShowArchiveDialog] = useState(false);
   const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] = useState(false);
-  const chatMode: ChatMode = "discuss";
+  const chatMode: ChatMode = landingDecision.intendedChatMode;
 
   const [groundingByThread, setGroundingByThread] = useState<{
     threadId: ThreadId | null;
@@ -113,7 +113,7 @@ export function RepositoryShell({
   const { selectedProvider, selectedModelName, setSelectedModel, selectedReasoningEffort, setSelectedReasoningEffort } =
     useComposerModelPick({
       threadId: urlThreadId,
-      capability: "discuss",
+      capability: chatMode,
       threadLockedProvider: capabilities.lockedProvider,
       threadDefaultModelName: capabilities.defaultModelName,
     });

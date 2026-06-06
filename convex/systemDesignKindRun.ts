@@ -200,37 +200,46 @@ export async function runSystemDesignKind(
   }
 
   const durationMs = Date.now() - startedAt;
-  const recorded = await ctx.runMutation(internal.systemDesign.recordKindRun, {
-    ownerTokenIdentifier: args.ownerTokenIdentifier,
-    repositoryId: args.repositoryId,
-    jobId: args.jobId,
-    kind: args.kind,
-    ...(runStatus === "cached_hit" && artifactId ? { artifactId } : {}),
-    provider: args.modelChoice.provider,
-    modelName: args.modelChoice.modelName,
-    promptVersion: config.promptVersion,
-    alignedImportCommitSha: args.commitSha,
-    stepCap: config.stepBudget,
-    actualSteps,
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    cachedInputTokens: usage.cachedInputTokens,
-    cacheWriteTokens: usage.cacheWriteTokens,
-    reasoningTokens: usage.reasoningTokens,
-    totalCostUsd: costUsd,
-    durationMs,
-    status: runStatus,
-    failureReason,
-    outputCharLength: outputCharLength > 0 ? outputCharLength : undefined,
-    missingSections,
-    startedAt,
-    sourceId: `systemDesign:${args.jobId}:${args.kind}:${startedAt}`,
-  });
+  try {
+    const recorded = await ctx.runMutation(internal.systemDesign.recordKindRun, {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId: args.repositoryId,
+      jobId: args.jobId,
+      kind: args.kind,
+      ...(runStatus === "cached_hit" && artifactId ? { artifactId } : {}),
+      provider: args.modelChoice.provider,
+      modelName: args.modelChoice.modelName,
+      promptVersion: config.promptVersion,
+      alignedImportCommitSha: args.commitSha,
+      stepCap: config.stepBudget,
+      actualSteps,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cachedInputTokens: usage.cachedInputTokens,
+      cacheWriteTokens: usage.cacheWriteTokens,
+      reasoningTokens: usage.reasoningTokens,
+      totalCostUsd: costUsd,
+      durationMs,
+      status: runStatus,
+      failureReason,
+      outputCharLength: outputCharLength > 0 ? outputCharLength : undefined,
+      missingSections,
+      startedAt,
+      sourceId: `systemDesign:${args.jobId}:${args.kind}:${startedAt}`,
+    });
 
-  if (artifactId && runStatus !== "cached_hit") {
-    await ctx.runMutation(internal.systemDesign.linkKindRun, {
-      artifactId,
-      kindRunId: recorded.kindRunId,
+    if (artifactId && runStatus !== "cached_hit" && recorded.kindRunId) {
+      await ctx.runMutation(internal.systemDesign.linkKindRun, {
+        artifactId,
+        kindRunId: recorded.kindRunId,
+      });
+    }
+  } catch (telemetryError) {
+    logWarn("systemDesign", "kind_run_telemetry_failed", {
+      jobId: args.jobId,
+      kind: args.kind,
+      status: runStatus,
+      error: telemetryError instanceof Error ? telemetryError.message : String(telemetryError),
     });
   }
 

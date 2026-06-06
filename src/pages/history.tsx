@@ -21,7 +21,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ButtonStateText } from "@/components/ui/button-state-text";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -289,12 +289,13 @@ export function HistoryPage() {
         onConfirm={() => void handleConfirmArchive()}
       />
       <Dialog open={isArchiveOpen} onOpenChange={setIsArchiveOpen}>
-        <DialogContent className="sm:max-w-4xl">
+        <DialogContent className="h-[clamp(28rem,82dvh,46rem)] w-[calc(100vw-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-4xl [scrollbar-gutter:stable]">
           <DialogHeader>
-            <DialogTitle>Archive</DialogTitle>
-            <DialogDescription>Restore or permanently delete archived threads and repositories.</DialogDescription>
+            <DialogTitle>Archived Threads</DialogTitle>
           </DialogHeader>
-          <ArchiveSettingsSection onBackToChat={() => setIsArchiveOpen(false)} />
+          <div className="min-h-0 overflow-hidden">
+            <ArchiveSettingsSection showThreadHeading={false} onBackToChat={() => setIsArchiveOpen(false)} />
+          </div>
         </DialogContent>
       </Dialog>
     </>
@@ -471,7 +472,9 @@ function HistoryThreadsForScope({
         {status === "LoadingFirstPage" ? (
           <ThreadRowsSkeleton />
         ) : threadRows.length === 0 ? (
-          <p className="px-4 py-5 text-sm text-muted-foreground">No threads in this repository.</p>
+          <p className="px-4 py-5 text-sm text-muted-foreground">
+            {isNoRepository ? "No threads in this group." : "No threads in this repository."}
+          </p>
         ) : (
           <div className="flex flex-col">
             {visibleThreads.map((thread) => (
@@ -589,6 +592,8 @@ function SharedThreadsSection({
 }) {
   const revokeThreadShare = useMutation(api.chat.threadShares.revokeThreadShare);
   const loadMoreState = useStableLoadMoreState({ canLoadMore, isLoadingMore });
+  const settledCanLoadMore = loadMoreState.canLoadMore;
+  const settledIsLoadingMore = loadMoreState.isLoadingMore;
 
   const handleCopy = useCallback(async (token: string) => {
     const publicUrl = new URL(sharedThreadPath(token), window.location.origin).toString();
@@ -628,7 +633,7 @@ function SharedThreadsSection({
 
       {isLoadingFirstPage ? (
         <SharedRowsSkeleton />
-      ) : activeShares.length === 0 && !canLoadMore && !isLoadingMore ? (
+      ) : activeShares.length === 0 && !settledCanLoadMore && !settledIsLoadingMore ? (
         <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
           No active public share links.
         </div>

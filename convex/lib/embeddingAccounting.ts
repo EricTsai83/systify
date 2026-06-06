@@ -90,14 +90,26 @@ export async function embedWithAccounting(
     },
     { values: args.values },
   ).catch(async (error: unknown) => {
-    await recordEmbeddingFailure(ctx, {
-      sourceId: args.sourceId,
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      usageFeature: args.usageFeature,
-      occurredAtMs,
-      error,
-    });
-    throw error;
+    const originalError = error;
+    const [failureRecord] = await Promise.allSettled([
+      recordEmbeddingFailure(ctx, {
+        sourceId: args.sourceId,
+        ownerTokenIdentifier: args.ownerTokenIdentifier,
+        usageFeature: args.usageFeature,
+        occurredAtMs,
+        error: originalError,
+      }),
+    ]);
+    if (failureRecord.status === "rejected") {
+      logWarn("embeddingAccounting", "failure_release_failed", {
+        sourceId: args.sourceId,
+        feature: args.usageFeature,
+        originalError: originalError instanceof Error ? originalError.message : String(originalError),
+        releaseError:
+          failureRecord.reason instanceof Error ? failureRecord.reason.message : String(failureRecord.reason),
+      });
+    }
+    throw originalError;
   });
 
   const settledCents = await settleEmbeddingUsage(ctx, {
@@ -156,18 +168,12 @@ async function settleEmbeddingUsage(
   },
 ): Promise<number | undefined> {
   const settledCents = costUsdToCents(args.result.costUsd);
-  if (settledCents !== undefined && settledCents > 0) {
-    await ctx.runMutation(internal.lib.rateLimit.settleSandboxDailyCost, {
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      repositoryId: args.repositoryId,
-      cents: settledCents,
-    });
-  }
-
-  await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
+  await ctx.runMutation(internal.lib.embeddingAccountingMutations.settleAndRecordUsage, {
     sourceId: args.sourceId,
     ownerTokenIdentifier: args.ownerTokenIdentifier,
     feature: args.usageFeature,
+    repositoryId: args.repositoryId,
+    cents: settledCents ?? 0,
     occurredAtMs: args.occurredAtMs,
     ...(args.result.costUsd !== undefined ? { usd: args.result.costUsd } : {}),
     inputTokens: args.result.usage.inputTokens,
