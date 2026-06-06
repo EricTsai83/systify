@@ -305,13 +305,13 @@ export function SettingsPage() {
 }
 
 function UsageSettingsBoundary({ isActive }: { isActive: boolean }) {
-  const dashboard = useViewerUsageDashboardSubscription();
+  const dashboard = useViewerUsageDashboardSubscription(isActive);
 
   return isActive ? <UsageSettingsSection dashboard={dashboard} /> : null;
 }
 
-function useViewerUsageDashboardSubscription(): ViewerUsageDashboard | undefined {
-  return useQuery(api.lib.userCost.getViewerUsageDashboard);
+function useViewerUsageDashboardSubscription(isActive: boolean): ViewerUsageDashboard | undefined {
+  return useQuery(api.lib.userCost.getViewerUsageDashboard, isActive ? {} : "skip");
 }
 
 function SettingsSectionNav({ activeSection, from }: { activeSection: SettingsSectionId; from: string | null }) {
