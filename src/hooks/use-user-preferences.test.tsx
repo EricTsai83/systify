@@ -59,9 +59,11 @@ describe("useUserPreferences", () => {
     useMutationMock.mockReset();
     updateCustomizationMock.mockReset();
     useMutationMock.mockReturnValue(updateCustomizationMock);
+    window.localStorage.removeItem(USER_PREFERENCES_STORAGE_KEY);
   });
 
   afterEach(() => {
+    window.localStorage.removeItem(USER_PREFERENCES_STORAGE_KEY);
     vi.useRealTimers();
     vi.restoreAllMocks();
   });

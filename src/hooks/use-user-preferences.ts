@@ -35,8 +35,12 @@ function isUserPreferences(value: unknown): value is UserPreferences {
 function normalizePreferences(value: UserPreferences): UserPreferences {
   return {
     traits: dedupeTraits(value.traits),
-    customInstructions: value.customInstructions.slice(0, CUSTOM_INSTRUCTIONS_MAX_LENGTH),
+    customInstructions: normalizeCustomInstructions(value.customInstructions),
   };
+}
+
+function normalizeCustomInstructions(value: string): string {
+  return value.trim().slice(0, CUSTOM_INSTRUCTIONS_MAX_LENGTH);
 }
 
 function dedupeTraits(traits: readonly string[]): string[] {
@@ -152,12 +156,13 @@ export function useUserPreferences(): readonly [
       (viewerPreferences === null || viewerPreferences.customizationUpdatedAt === null);
 
     if (shouldMigrateCache) {
+      const preferencesToMigrate = normalizePreferences(cached);
       migrationInFlightRef.current = true;
       clearRetryTimer();
-      void updateCustomization(cached)
+      void updateCustomization(preferencesToMigrate)
         .then(() => {
           if (localEditVersionRef.current === savedEditVersionRef.current) {
-            serverEchoPendingRef.current = cached;
+            serverEchoPendingRef.current = preferencesToMigrate;
           }
         })
         .catch((error) => {
@@ -182,7 +187,7 @@ export function useUserPreferences(): readonly [
     }
 
     const version = localEditVersionRef.current;
-    const preferencesToSave = preferences;
+    const preferencesToSave = normalizePreferences(preferences);
     clearRetryTimer();
     const handle = window.setTimeout(() => {
       void updateCustomization(preferencesToSave)

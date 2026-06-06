@@ -127,6 +127,11 @@ export async function upsertViewerCustomization(
     current.traits.length === next.traits.length &&
     current.traits.every((trait, index) => trait === next.traits[index])
   ) {
+    if (existing.customizationUpdatedAt === undefined) {
+      await ctx.db.patch(existing._id, {
+        customizationUpdatedAt: Date.now(),
+      });
+    }
     return;
   }
 

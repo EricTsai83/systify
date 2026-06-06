@@ -242,6 +242,7 @@ export function SettingsPage() {
   const [searchParams] = useSearchParams();
   const from = getSafeFrom(searchParams.get("from"));
   const activeSection = parseSettingsSection(params.section);
+  const [customizationPreferences, setCustomizationPreferences] = useUserPreferences();
 
   if (!params.section) {
     return <Navigate to={settingsPath(DEFAULT_SETTINGS_SECTION, from)} replace />;
@@ -287,7 +288,12 @@ export function SettingsPage() {
 
           {activeSection === "account" ? <AccountSettingsSection /> : null}
           {activeSection === "usage" ? <UsageSettingsSection /> : null}
-          {activeSection === "customization" ? <CustomizationSettingsSection /> : null}
+          {activeSection === "customization" ? (
+            <CustomizationSettingsSection
+              preferences={customizationPreferences}
+              setPreferences={setCustomizationPreferences}
+            />
+          ) : null}
           {activeSection === "history" ? <HistorySettingsSection /> : null}
           {activeSection === "resources" ? <ResourcesSection /> : null}
           {activeSection === "models" ? <PlaceholderSettingsSection title="Models" /> : null}
@@ -1119,9 +1125,13 @@ function UsageSettingsSection() {
   );
 }
 
-function CustomizationSettingsSection() {
-  const [preferences, setPreferences] = useUserPreferences();
-
+function CustomizationSettingsSection({
+  preferences,
+  setPreferences,
+}: {
+  preferences: UserPreferences;
+  setPreferences: SetUserPreferences;
+}) {
   return (
     <Card className="p-5">
       <div className="flex flex-col gap-5">
