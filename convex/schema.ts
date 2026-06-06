@@ -658,6 +658,12 @@ export default defineSchema({
     description: v.optional(v.string()),
     pinnedAt: v.optional(v.number()),
     /**
+     * User-facing archive marker. Archived threads are hidden from active
+     * history/sidebar/chat queries but keep their messages and share links
+     * until the user permanently deletes them from Archive.
+     */
+    archivedAt: v.optional(v.number()),
+    /**
      * Stable identifier for folders seeded by the System Design generator
      * (`overview`, `architecture`, `data_model`, `api`, `infrastructure`,
      * `security`, `operations`). Lets `generateSystemDesignDocs` find the
@@ -762,6 +768,12 @@ export default defineSchema({
      */
     pinnedAt: v.optional(v.number()),
     /**
+     * User-facing archive marker. Archived threads are hidden from active
+     * history/sidebar/chat queries but keep their messages and share links
+     * until the user permanently deletes them from Archive.
+     */
+    archivedAt: v.optional(v.number()),
+    /**
      * Soft-delete marker set before the heavy message / stream cascade starts.
      * User-facing thread queries exclude rows with this field so a long delete
      * cannot leave the thread or its public shares visible while continuation
@@ -803,6 +815,9 @@ export default defineSchema({
       "deletionRequestedAt",
       "lastMessageAt",
     ])
+    .index("by_ownerTokenIdentifier_archivedAt", ["ownerTokenIdentifier", "archivedAt"])
+    .index("by_owner_del_arch", ["ownerTokenIdentifier", "deletionRequestedAt", "archivedAt"])
+    .index("by_owner_del_arch_last", ["ownerTokenIdentifier", "deletionRequestedAt", "archivedAt", "lastMessageAt"])
     .index("by_ownerTokenIdentifier_repositoryId_and_lastMessageAt", [
       "ownerTokenIdentifier",
       "repositoryId",
@@ -814,11 +829,25 @@ export default defineSchema({
       "deletionRequestedAt",
       "lastMessageAt",
     ])
+    .index("by_owner_repo_del_arch_last", [
+      "ownerTokenIdentifier",
+      "repositoryId",
+      "deletionRequestedAt",
+      "archivedAt",
+      "lastMessageAt",
+    ])
     .index("by_ownerTokenIdentifier_repositoryId_and_pinnedAt", ["ownerTokenIdentifier", "repositoryId", "pinnedAt"])
     .index("by_ownerToken_repositoryId_deletionRequestedAt_pinnedAt", [
       "ownerTokenIdentifier",
       "repositoryId",
       "deletionRequestedAt",
+      "pinnedAt",
+    ])
+    .index("by_owner_repo_del_arch_pin", [
+      "ownerTokenIdentifier",
+      "repositoryId",
+      "deletionRequestedAt",
+      "archivedAt",
       "pinnedAt",
     ])
     .index("by_ownerTokenIdentifier_repositoryId_mode_and_lastMessageAt", [
@@ -834,6 +863,14 @@ export default defineSchema({
       "deletionRequestedAt",
       "lastMessageAt",
     ])
+    .index("by_owner_repo_mode_del_arch_last", [
+      "ownerTokenIdentifier",
+      "repositoryId",
+      "mode",
+      "deletionRequestedAt",
+      "archivedAt",
+      "lastMessageAt",
+    ])
     .index("by_ownerTokenIdentifier_repositoryId_mode_and_pinnedAt", [
       "ownerTokenIdentifier",
       "repositoryId",
@@ -845,6 +882,14 @@ export default defineSchema({
       "repositoryId",
       "mode",
       "deletionRequestedAt",
+      "pinnedAt",
+    ])
+    .index("by_owner_repo_mode_del_arch_pin", [
+      "ownerTokenIdentifier",
+      "repositoryId",
+      "mode",
+      "deletionRequestedAt",
+      "archivedAt",
       "pinnedAt",
     ])
     .index("by_repositoryId_and_pinnedAt", ["repositoryId", "pinnedAt"])

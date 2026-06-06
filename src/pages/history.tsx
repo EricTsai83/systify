@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useMutation, usePaginatedQuery } from "convex/react";
 import {
   ArchiveIcon,
@@ -12,15 +12,17 @@ import {
   LinkBreak,
   LockKey,
   ShareNetwork,
-  TrashIcon,
 } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { ArchiveSettingsSection } from "@/pages/archive";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -30,10 +32,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { formatExpiry } from "@/lib/format-expiry";
 import { formatRelativeTime } from "@/lib/format";
 import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { ARCHIVE_PATH, modeAwareThreadPath, repolessThreadPath, sharedThreadPath } from "@/route-paths";
+import { modeAwareThreadPath, repolessThreadPath, sharedThreadPath } from "@/route-paths";
 
 const GROUP_INITIAL_PAGE_SIZE = 20;
 const GROUP_NEXT_PAGE_SIZE = 20;
@@ -86,9 +89,12 @@ type ActiveShare = {
 export function HistoryPage() {
   const navigate = useNavigate();
   const createOrGetThreadShare = useMutation(api.chat.threadShares.createOrGetThreadShare);
-  const deleteThread = useMutation(api.chat.threads.deleteThread);
+  const archiveThread = useMutation(api.chat.threads.archiveThread);
   const [pendingDelete, setPendingDelete] = useState<HistoryThread | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isArchiveOpen, setIsArchiveOpen] = useState(false);
+  const [groupPageIndex, setGroupPageIndex] = useState(0);
+  const [pendingGroupPageIndex, setPendingGroupPageIndex] = useState<number | null>(null);
 
   const {
     results: groups,
@@ -102,6 +108,10 @@ export function HistoryPage() {
   } = usePaginatedQuery(api.chat.threadShares.listActiveThreadShares, {}, { initialNumItems: SHARE_INITIAL_PAGE_SIZE });
 
   const orderedGroups = useMemo(() => orderHistoryGroups(groups as HistoryGroup[]), [groups]);
+  const visibleGroups = useMemo(
+    () => orderedGroups.slice(groupPageIndex * GROUP_INITIAL_PAGE_SIZE, (groupPageIndex + 1) * GROUP_INITIAL_PAGE_SIZE),
+    [groupPageIndex, orderedGroups],
+  );
   const defaultOpenGroupIds = useMemo(
     () => new Set((groups as HistoryGroup[]).slice(0, DEFAULT_OPEN_GROUP_COUNT).map((group) => group._id)),
     [groups],
@@ -149,21 +159,44 @@ export function HistoryPage() {
     }
     setIsDeleting(true);
     try {
-      await deleteThread({ threadId: pendingDelete._id });
-      toast.success("Thread deleted");
+      await archiveThread({ threadId: pendingDelete._id });
+      toast.success("Thread archived");
       setPendingDelete(null);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to delete thread.");
+      toast.error(error instanceof Error ? error.message : "Failed to archive thread.");
     } finally {
       setIsDeleting(false);
     }
-  }, [deleteThread, pendingDelete]);
+  }, [archiveThread, pendingDelete]);
 
   const isLoadingGroups = groupsStatus === "LoadingFirstPage";
   const canLoadMoreGroups = groupsStatus === "CanLoadMore";
   const isLoadingMoreGroups = groupsStatus === "LoadingMore";
+  const canGoToPreviousGroupPage = groupPageIndex > 0;
+  const canGoToNextGroupPage =
+    (groupPageIndex + 1) * GROUP_INITIAL_PAGE_SIZE < orderedGroups.length || canLoadMoreGroups;
   const canLoadMoreShares = activeSharesStatus === "CanLoadMore";
   const isLoadingMoreShares = activeSharesStatus === "LoadingMore";
+  const handlePreviousGroupPage = useCallback(() => {
+    setGroupPageIndex((current) => Math.max(0, current - 1));
+  }, []);
+  const handleNextGroupPage = useCallback(() => {
+    const nextPageIndex = groupPageIndex + 1;
+    const nextStart = nextPageIndex * GROUP_INITIAL_PAGE_SIZE;
+    if (nextStart < orderedGroups.length) {
+      setGroupPageIndex(nextPageIndex);
+      return;
+    }
+    if (canLoadMoreGroups && !isLoadingMoreGroups) {
+      setPendingGroupPageIndex(nextPageIndex);
+      loadMoreGroups(GROUP_NEXT_PAGE_SIZE);
+    }
+  }, [canLoadMoreGroups, groupPageIndex, isLoadingMoreGroups, loadMoreGroups, orderedGroups.length]);
+
+  if (pendingGroupPageIndex !== null && orderedGroups.length > pendingGroupPageIndex * GROUP_INITIAL_PAGE_SIZE) {
+    setGroupPageIndex(pendingGroupPageIndex);
+    setPendingGroupPageIndex(null);
+  }
 
   return (
     <>
@@ -175,12 +208,6 @@ export function HistoryPage() {
               Review past conversations, manage shared threads, and open archived repositories.
             </p>
           </div>
-          <Button asChild variant="secondary" className="w-fit sm:shrink-0">
-            <Link to={ARCHIVE_PATH}>
-              <ArchiveIcon weight="bold" />
-              Open Archive
-            </Link>
-          </Button>
         </div>
 
         <SummaryStrip summary={summary} />
@@ -204,7 +231,7 @@ export function HistoryPage() {
             <EmptyHistoryState />
           ) : (
             <div className="flex flex-col gap-2">
-              {orderedGroups.map((group) => (
+              {visibleGroups.map((group) => (
                 <HistoryGroupSection
                   key={group._id}
                   group={group}
@@ -214,20 +241,27 @@ export function HistoryPage() {
                   onRequestDelete={setPendingDelete}
                 />
               ))}
-              {canLoadMoreGroups || isLoadingMoreGroups ? (
-                <div className="flex justify-center pt-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={!canLoadMoreGroups || isLoadingMoreGroups}
-                    onClick={() => loadMoreGroups(GROUP_NEXT_PAGE_SIZE)}
-                  >
-                    {isLoadingMoreGroups ? <Spinner size={13} /> : null}
-                    {isLoadingMoreGroups ? "Loading" : "Load more groups"}
-                  </Button>
-                </div>
-              ) : null}
+              <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="w-fit"
+                  onClick={() => setIsArchiveOpen(true)}
+                >
+                  <ArchiveIcon weight="bold" />
+                  Archive
+                </Button>
+                {canGoToPreviousGroupPage || canGoToNextGroupPage || isLoadingMoreGroups ? (
+                  <PageControls
+                    canPrevious={canGoToPreviousGroupPage}
+                    canNext={canGoToNextGroupPage}
+                    isLoadingNext={isLoadingMoreGroups || pendingGroupPageIndex !== null}
+                    onPrevious={handlePreviousGroupPage}
+                    onNext={handleNextGroupPage}
+                  />
+                ) : null}
+              </div>
             </div>
           )}
         </section>
@@ -246,17 +280,26 @@ export function HistoryPage() {
         onOpenChange={(open) => {
           if (!open) setPendingDelete(null);
         }}
-        title="Delete thread?"
+        title="Archive thread?"
         description={
           pendingDelete
-            ? `${pendingDelete.title} will be permanently deleted along with its messages and share links. This cannot be undone.`
+            ? `${pendingDelete.title} will be removed from active history. You can restore or permanently delete it from Archive.`
             : ""
         }
-        actionLabel="Delete thread"
-        loadingLabel="Deleting..."
+        actionLabel="Archive thread"
+        loadingLabel="Archiving..."
         isPending={isDeleting}
         onConfirm={() => void handleConfirmDelete()}
       />
+      <Dialog open={isArchiveOpen} onOpenChange={setIsArchiveOpen}>
+        <DialogContent className="sm:max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Archive</DialogTitle>
+            <DialogDescription>Restore or permanently delete archived threads and repositories.</DialogDescription>
+          </DialogHeader>
+          <ArchiveSettingsSection onBackToChat={() => setIsArchiveOpen(false)} />
+        </DialogContent>
+      </Dialog>
     </>
   );
 }
@@ -283,6 +326,34 @@ function SummaryStrip({
   );
 }
 
+function PageControls({
+  canPrevious,
+  canNext,
+  isLoadingNext,
+  onPrevious,
+  onNext,
+}: {
+  canPrevious: boolean;
+  canNext: boolean;
+  isLoadingNext: boolean;
+  onPrevious: () => void;
+  onNext: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-1" aria-label="Pagination">
+      <Button type="button" variant="ghost" size="sm" disabled={!canPrevious} onClick={onPrevious}>
+        <CaretDownIcon weight="bold" className="rotate-90" />
+        Previous
+      </Button>
+      <Button type="button" variant="ghost" size="sm" disabled={!canNext || isLoadingNext} onClick={onNext}>
+        {isLoadingNext ? <Spinner size={13} /> : null}
+        <ButtonStateText current={isLoadingNext ? "Loading" : "Next"} states={["Next", "Loading"]} />
+        <CaretDownIcon weight="bold" className="-rotate-90" />
+      </Button>
+    </div>
+  );
+}
+
 function HistoryGroupSection({
   group,
   defaultOpen,
@@ -297,6 +368,8 @@ function HistoryGroupSection({
   onRequestDelete: (thread: HistoryThread) => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [pageIndex, setPageIndex] = useState(0);
+  const [pendingPageIndex, setPendingPageIndex] = useState<number | null>(null);
   const repositoryIdArg = group.repositoryId ?? null;
   const {
     results: threads,
@@ -310,6 +383,33 @@ function HistoryGroupSection({
   const isNoRepository = !group.repositoryId;
   const canLoadMore = status === "CanLoadMore";
   const isLoadingMore = status === "LoadingMore";
+  const threadRows = threads as HistoryThread[];
+  const visibleThreads = threadRows.slice(
+    pageIndex * THREAD_INITIAL_PAGE_SIZE,
+    (pageIndex + 1) * THREAD_INITIAL_PAGE_SIZE,
+  );
+  const canGoToPreviousPage = pageIndex > 0;
+  const canGoToNextPage = (pageIndex + 1) * THREAD_INITIAL_PAGE_SIZE < threadRows.length || canLoadMore;
+  const handlePreviousPage = useCallback(() => {
+    setPageIndex((current) => Math.max(0, current - 1));
+  }, []);
+  const handleNextPage = useCallback(() => {
+    const nextPageIndex = pageIndex + 1;
+    const nextStart = nextPageIndex * THREAD_INITIAL_PAGE_SIZE;
+    if (nextStart < threadRows.length) {
+      setPageIndex(nextPageIndex);
+      return;
+    }
+    if (canLoadMore && !isLoadingMore) {
+      setPendingPageIndex(nextPageIndex);
+      loadMore(THREAD_NEXT_PAGE_SIZE);
+    }
+  }, [canLoadMore, isLoadingMore, loadMore, pageIndex, threadRows.length]);
+
+  if (pendingPageIndex !== null && threadRows.length > pendingPageIndex * THREAD_INITIAL_PAGE_SIZE) {
+    setPageIndex(pendingPageIndex);
+    setPendingPageIndex(null);
+  }
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -350,11 +450,11 @@ function HistoryGroupSection({
           <div className="border-t border-border">
             {status === "LoadingFirstPage" ? (
               <ThreadRowsSkeleton />
-            ) : (threads as HistoryThread[]).length === 0 ? (
+            ) : threadRows.length === 0 ? (
               <p className="px-4 py-5 text-sm text-muted-foreground">No threads in this group.</p>
             ) : (
               <div className="flex flex-col">
-                {(threads as HistoryThread[]).map((thread) => (
+                {visibleThreads.map((thread) => (
                   <ThreadHistoryRow
                     key={thread._id}
                     thread={thread}
@@ -366,18 +466,15 @@ function HistoryGroupSection({
                 ))}
               </div>
             )}
-            {canLoadMore || isLoadingMore ? (
-              <div className="flex justify-center border-t border-border px-4 py-2">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  disabled={!canLoadMore || isLoadingMore}
-                  onClick={() => loadMore(THREAD_NEXT_PAGE_SIZE)}
-                >
-                  {isLoadingMore ? <Spinner size={13} /> : null}
-                  {isLoadingMore ? "Loading" : "Load more threads"}
-                </Button>
+            {canGoToPreviousPage || canGoToNextPage || isLoadingMore ? (
+              <div className="flex justify-end border-t border-border px-4 py-2">
+                <PageControls
+                  canPrevious={canGoToPreviousPage}
+                  canNext={canGoToNextPage}
+                  isLoadingNext={isLoadingMore || pendingPageIndex !== null}
+                  onPrevious={handlePreviousPage}
+                  onNext={handleNextPage}
+                />
               </div>
             ) : null}
           </div>
@@ -424,10 +521,10 @@ function ThreadHistoryRow({
           variant="ghost"
           size="sm"
           onClick={() => onRequestDelete(thread)}
-          aria-label={`Delete ${thread.title}`}
+          aria-label={`Archive ${thread.title}`}
         >
-          <TrashIcon weight="bold" />
-          Delete
+          <ArchiveIcon weight="bold" />
+          Archive
         </Button>
       </div>
       <div className="flex sm:hidden">
@@ -448,8 +545,8 @@ function ThreadHistoryRow({
                 Share
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => onRequestDelete(thread)}>
-                <TrashIcon weight="bold" />
-                Delete
+                <ArchiveIcon weight="bold" />
+                Archive
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
@@ -527,7 +624,7 @@ function SharedThreadsSection({
                 <h4 className="truncate text-sm font-medium">{share.title}</h4>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   <span className="truncate">{share.repositoryLabel}</span>
-                  <span>{formatShareExpiry(share.expiresAt)}</span>
+                  <span>{formatExpiry(share.expiresAt)}</span>
                 </div>
               </div>
               <div className="flex shrink-0 gap-2">
@@ -552,7 +649,10 @@ function SharedThreadsSection({
                 onClick={onLoadMore}
               >
                 {isLoadingMore ? <Spinner size={13} /> : null}
-                {isLoadingMore ? "Loading" : "Load more links"}
+                <ButtonStateText
+                  current={isLoadingMore ? "Loading" : "Load more links"}
+                  states={["Load more links", "Loading"]}
+                />
               </Button>
             </div>
           ) : null}
@@ -649,7 +749,6 @@ function summarizeHistory(groups: HistoryGroup[], activeShares: ActiveShare[]) {
       } else {
         summary.noRepositoryChats += group.threadCount;
       }
-      summary.sharedLinks = activeShares.length;
       return summary;
     },
     { repositoryThreads: 0, noRepositoryChats: 0, sharedLinks: activeShares.length },
@@ -668,19 +767,6 @@ function getThreadModeLabel(thread: HistoryThread, noRepository: boolean): strin
     return "Chat";
   }
   return thread.mode === "library" ? "Library Ask" : "Discuss";
-}
-
-function formatShareExpiry(expiresAt: number): string {
-  const ms = expiresAt - Date.now();
-  if (ms <= 0) {
-    return "Expired";
-  }
-  const days = Math.ceil(ms / (24 * 60 * 60 * 1000));
-  if (days >= 1) {
-    return `Expires in ${days} ${days === 1 ? "day" : "days"}`;
-  }
-  const hours = Math.ceil(ms / (60 * 60 * 1000));
-  return `Expires in ${hours} ${hours === 1 ? "hour" : "hours"}`;
 }
 
 async function copyText(text: string): Promise<boolean> {

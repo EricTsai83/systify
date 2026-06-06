@@ -2,6 +2,7 @@ import { ArrowsClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { Alert, AlertAction, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 
@@ -67,7 +68,7 @@ export function ImportStatusBanner({
             onClick={onRetry}
           >
             <ArrowsClockwiseIcon weight="bold" className={cn("size-3", isSyncing && "motion-safe:animate-spin")} />
-            {isSyncing ? "Retrying…" : "Retry"}
+            <ButtonStateText current={isSyncing ? "Retrying…" : "Retry"} states={["Retry", "Retrying…"]} />
           </Button>
         </AlertAction>
       </Alert>

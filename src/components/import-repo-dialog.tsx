@@ -15,6 +15,7 @@ import { api } from "../../convex/_generated/api";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Logo } from "@/components/logo";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -151,7 +152,7 @@ function RepoRow({
             onClick={onImport}
           >
             <ArrowsClockwiseIcon size={12} weight="bold" />
-            {isImporting ? "Syncing…" : "Sync"}
+            <ButtonStateText current={isImporting ? "Syncing…" : "Sync"} states={["Sync", "Syncing…"]} />
           </Button>
         ) : canRetryFailedSync ? (
           <Button
@@ -162,7 +163,7 @@ function RepoRow({
             onClick={onImport}
           >
             <ArrowsClockwiseIcon size={12} weight="bold" />
-            {isImporting ? "Syncing…" : "Retry sync"}
+            <ButtonStateText current={isImporting ? "Syncing…" : "Retry sync"} states={["Retry sync", "Syncing…"]} />
           </Button>
         ) : (
           <Badge variant="outline" className="min-w-30 shrink-0 justify-center gap-1 px-2.5 py-1.5 text-xs">
@@ -178,7 +179,7 @@ function RepoRow({
           disabled={isImporting}
           onClick={onImport}
         >
-          {isImporting ? "Importing…" : "Import"}
+          <ButtonStateText current={isImporting ? "Importing…" : "Import"} states={["Import", "Importing…"]} />
         </Button>
       )}
     </div>

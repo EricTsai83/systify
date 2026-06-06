@@ -4,6 +4,7 @@ import { CaretDownIcon, CheckIcon, FolderIcon, FolderPlusIcon } from "@phosphor-
 import { api } from "../../convex/_generated/api";
 import { FOLDER_NAME_MAX_LENGTH } from "../../convex/lib/artifactFolderDefaults";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -162,7 +163,7 @@ export function FolderPicker({ repositoryId, value, onChange, hint, className, d
                   onClick={() => void runCreate()}
                 >
                   <FolderPlusIcon size={13} weight="bold" />
-                  {isCreating ? "Creating…" : "Create"}
+                  <ButtonStateText current={isCreating ? "Creating…" : "Create"} states={["Create", "Creating…"]} />
                 </Button>
               </div>
               {isNameTooLong ? (

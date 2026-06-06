@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { ClockCounterClockwiseIcon, PushPinSimpleIcon, PushPinSimpleSlashIcon, TrashIcon } from "@phosphor-icons/react";
+import {
+  ArchiveIcon,
+  ClockCounterClockwiseIcon,
+  PushPinSimpleIcon,
+  PushPinSimpleSlashIcon,
+} from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,7 +27,7 @@ type ThreadSection = {
  * The searchable "all threads" surface for Library Ask, anchored as a popup
  * beneath the clock button on the thread tab strip. The strip itself is only
  * the *open set*; this popover is where the user recalls an older thread
- * (click a row to reopen it as a tab) or deletes one. Deletion is deliberately
+ * (click a row to reopen it as a tab) or archives one. Archiving is deliberately
  * kept off the tabs and lives only here, so it is always a searched-for action
  * rather than a stray click next to a close button.
  *
@@ -109,7 +114,7 @@ export function LibraryAskHistoryPopover({
           size="icon"
           className="h-7 w-7"
           aria-label="Thread history"
-          title="Thread history — search, reopen, or delete past threads"
+          title="Thread history — search, reopen, or archive past threads"
         >
           <ClockCounterClockwiseIcon size={14} weight="bold" />
         </Button>
@@ -215,12 +220,12 @@ export function LibraryAskHistoryPopover({
                               type="button"
                               variant="ghost"
                               size="icon"
-                              className="h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-                              aria-label={`Delete ${thread.title}`}
-                              title="Delete thread"
+                              className="h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                              aria-label={`Archive ${thread.title}`}
+                              title="Archive thread"
                               onClick={() => onDeleteThread(threadId)}
                             >
-                              <TrashIcon size={13} weight="bold" />
+                              <ArchiveIcon size={13} weight="bold" />
                             </Button>
                           </div>
                         </li>

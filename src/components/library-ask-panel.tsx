@@ -68,7 +68,7 @@ export function LibraryAskPanel({
 }) {
   const sendMessage = useMutation(api.chat.send.sendMessage);
   const sendMessageStartingNewThread = useMutation(api.chat.send.sendMessageStartingNewThread);
-  const deleteThread = useMutation(api.chat.threads.deleteThread);
+  const archiveThread = useMutation(api.chat.threads.archiveThread);
   const setThreadPinned = useMutation(api.chat.threads.setThreadPinned);
 
   const threads = useQuery(api.chat.threads.listThreads, { repositoryId, mode: "library" });
@@ -264,7 +264,7 @@ export function LibraryAskPanel({
     const target = pendingDeleteThreadId;
     setIsDeletingThread(true);
     try {
-      await deleteThread({ threadId: target });
+      await archiveThread({ threadId: target });
       setPendingDeleteThreadId(null);
       // Drop it from the open-tab set; if it was the active thread, advance
       // `?ask=` to the neighbour the close suggests.
@@ -273,11 +273,11 @@ export function LibraryAskPanel({
         onSelectThread(nextActive);
       }
     } catch (caught) {
-      toast.error(toUserErrorMessage(caught, "Failed to delete thread."));
+      toast.error(toUserErrorMessage(caught, "Failed to archive thread."));
     } finally {
       setIsDeletingThread(false);
     }
-  }, [closeTab, deleteThread, onSelectThread, pendingDeleteThreadId, threadId]);
+  }, [archiveThread, closeTab, onSelectThread, pendingDeleteThreadId, threadId]);
 
   const latestAssistantInFlight = useMemo(() => {
     if (!messages) return false;
@@ -502,10 +502,10 @@ export function LibraryAskPanel({
       <ConfirmDialog
         open={pendingDeleteThreadId !== null}
         onOpenChange={(open) => !open && setPendingDeleteThreadId(null)}
-        title="Delete thread"
-        description="This will permanently delete this thread and all its messages. This action cannot be undone."
-        actionLabel="Delete thread"
-        loadingLabel="Deleting…"
+        title="Archive thread"
+        description="This removes the thread from active history. You can restore or permanently delete it from Archive."
+        actionLabel="Archive thread"
+        loadingLabel="Archiving…"
         isPending={isDeletingThread}
         onConfirm={() => void handleConfirmDelete()}
       />

@@ -6,6 +6,7 @@ import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { AppSidebarLeft } from "@/components/app-sidebar";
 import { ArtifactPanel } from "@/components/artifact-panel";
@@ -603,7 +604,10 @@ export function RepositoryShell({
                 onClick={() => void handleRestoreRepo()}
               >
                 <ArrowCounterClockwiseIcon weight="bold" />
-                {isRestoringRepo ? "Restoring…" : "Restore"}
+                <ButtonStateText
+                  current={isRestoringRepo ? "Restoring…" : "Restore"}
+                  states={["Restore", "Restoring…"]}
+                />
               </Button>
             </div>
           </div>
@@ -611,7 +615,13 @@ export function RepositoryShell({
 
         {actionError ? (
           <div className="border-b border-border px-6 py-3">
-            <AppNotice title="Action failed" message={actionError} tone="error" />
+            <AppNotice
+              title="Action failed"
+              message={actionError}
+              tone="error"
+              onDismiss={() => setActionError(null)}
+              dismissLabel="Dismiss action error"
+            />
           </div>
         ) : actionNotice ? (
           <div className="border-b border-border px-6 py-3">
@@ -706,10 +716,10 @@ export function RepositoryShell({
       <ConfirmDialog
         open={threadToDelete !== null}
         onOpenChange={(open) => !open && setThreadToDelete(null)}
-        title="Delete thread"
-        description="This will permanently delete this thread and all its messages. This action cannot be undone."
-        actionLabel="Delete thread"
-        loadingLabel="Deleting…"
+        title="Archive thread"
+        description="This removes the thread from active history. You can restore or permanently delete it from Archive."
+        actionLabel="Archive thread"
+        loadingLabel="Archiving…"
         isPending={isDeletingThread}
         onConfirm={() => void handleDeleteThread()}
       />
@@ -790,7 +800,7 @@ function ImportFailedBanner({
           disabled={isSyncing}
           onClick={onRetry}
         >
-          {isSyncing ? "Retrying…" : "Retry sync"}
+          <ButtonStateText current={isSyncing ? "Retrying…" : "Retry sync"} states={["Retry sync", "Retrying…"]} />
         </Button>
       </div>
       {errorMessage ? (

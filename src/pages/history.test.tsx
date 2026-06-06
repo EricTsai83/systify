@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { HistoryPage } from "./history";
 
 const createShareMock = vi.fn();
-const deleteThreadMock = vi.fn();
+const archiveThreadMock = vi.fn();
 const revokeShareMock = vi.fn();
 const clipboardWriteTextMock = vi.fn();
 
@@ -39,7 +39,7 @@ beforeEach(() => {
     createdAt: Date.now(),
     expiresAt: Date.now() + 30 * 24 * 60 * 60 * 1000,
   });
-  deleteThreadMock.mockResolvedValue(null);
+  archiveThreadMock.mockResolvedValue(null);
   revokeShareMock.mockResolvedValue(null);
   Object.defineProperty(navigator, "clipboard", {
     configurable: true,
@@ -48,7 +48,7 @@ beforeEach(() => {
   vi.mocked(useMutation).mockImplementation((reference) => {
     const name = functionName(reference);
     if (name.endsWith("createOrGetThreadShare")) return createShareMock as unknown as ReturnType<typeof useMutation>;
-    if (name.endsWith("deleteThread")) return deleteThreadMock as unknown as ReturnType<typeof useMutation>;
+    if (name.endsWith("archiveThread")) return archiveThreadMock as unknown as ReturnType<typeof useMutation>;
     if (name.endsWith("revokeThreadShare")) return revokeShareMock as unknown as ReturnType<typeof useMutation>;
     return vi.fn() as unknown as ReturnType<typeof useMutation>;
   });
@@ -139,7 +139,7 @@ afterEach(() => {
   vi.mocked(useMutation).mockReset();
   vi.mocked(usePaginatedQuery).mockReset();
   createShareMock.mockReset();
-  deleteThreadMock.mockReset();
+  archiveThreadMock.mockReset();
   revokeShareMock.mockReset();
   clipboardWriteTextMock.mockReset();
 });
@@ -148,7 +148,7 @@ describe("HistoryPage", () => {
   test("renders archive action, repository groups, no-repository group, and no search input", () => {
     renderHistoryPage();
 
-    expect(screen.getByRole("link", { name: /open archive/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^archive$/i })).toBeInTheDocument();
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
     expect(screen.getAllByText("acme/systify").length).toBeGreaterThan(0);
     expect(screen.getByText("No repository")).toBeInTheDocument();
@@ -190,15 +190,15 @@ describe("HistoryPage", () => {
     });
   });
 
-  test("delete action confirms before calling the mutation", async () => {
+  test("archive action confirms before calling the mutation", async () => {
     renderHistoryPage();
 
-    fireEvent.click(rowButton("Discuss thread", /delete/i));
-    expect(deleteThreadMock).not.toHaveBeenCalled();
+    fireEvent.click(rowButton("Discuss thread", /archive/i));
+    expect(archiveThreadMock).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole("button", { name: /delete thread/i }));
+    fireEvent.click(screen.getByRole("button", { name: /archive thread/i }));
     await waitFor(() => {
-      expect(deleteThreadMock).toHaveBeenCalledWith({ threadId: "thread_repo_discuss" });
+      expect(archiveThreadMock).toHaveBeenCalledWith({ threadId: "thread_repo_discuss" });
     });
   });
 });

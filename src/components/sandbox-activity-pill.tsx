@@ -4,6 +4,7 @@ import { CircleIcon, CircleHalfIcon } from "@phosphor-icons/react";
 import type { RepositoryId } from "@/lib/types";
 import { api } from "../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Spinner } from "@/components/ui/spinner";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
@@ -74,7 +75,7 @@ export function SandboxActivityPill({ repositoryId }: { repositoryId: Repository
             }}
             disabled={isSubmitting}
           >
-            {isSubmitting ? "Starting…" : "Activate"}
+            <ButtonStateText current={isSubmitting ? "Starting…" : "Activate"} states={["Activate", "Starting…"]} />
           </Button>
         </div>
         {errorMessage ? <p className="px-1 text-[11px] text-destructive">{errorMessage}</p> : null}

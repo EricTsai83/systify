@@ -6,8 +6,10 @@ import type { Id } from "../../convex/_generated/dataModel";
 import { Logo } from "@/components/logo";
 import { Markdown } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { formatExpiry } from "@/lib/format-expiry";
 import { formatTimestamp } from "@/lib/format";
 import { LANDING_PATH } from "@/route-paths";
 
@@ -78,7 +80,7 @@ export function SharedThreadPage({ token }: { token: string }) {
               <span>{share.repositoryLabel}</span>
               <span className="inline-flex items-center gap-1.5">
                 <ClockIcon size={13} weight="bold" aria-hidden="true" />
-                {formatPublicExpiry(share.expiresAt)}
+                {formatExpiry(share.expiresAt)}
               </span>
             </div>
             <h1 className="text-xl font-semibold tracking-tight">{share.title}</h1>
@@ -108,7 +110,7 @@ export function SharedThreadPage({ token }: { token: string }) {
                 onClick={() => loadMore(PUBLIC_MESSAGES_NEXT_PAGE_SIZE)}
               >
                 {isLoadingMore ? <Spinner size={13} /> : null}
-                {isLoadingMore ? "Loading" : "Load more"}
+                <ButtonStateText current={isLoadingMore ? "Loading" : "Load more"} states={["Load more", "Loading"]} />
               </Button>
             </div>
           ) : null}
@@ -182,19 +184,6 @@ function PublicMessagesSkeleton() {
       ))}
     </div>
   );
-}
-
-function formatPublicExpiry(expiresAt: number): string {
-  const ms = expiresAt - Date.now();
-  if (ms <= 0) {
-    return "Expired";
-  }
-  const days = Math.ceil(ms / (24 * 60 * 60 * 1000));
-  if (days >= 1) {
-    return `Expires in ${days} ${days === 1 ? "day" : "days"}`;
-  }
-  const hours = Math.ceil(ms / (60 * 60 * 1000));
-  return `Expires in ${hours} ${hours === 1 ? "hour" : "hours"}`;
 }
 
 function formatStatus(status: PublicMessage["status"]): string {

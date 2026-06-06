@@ -6,6 +6,7 @@ import {
   ArrowCounterClockwiseIcon,
   CaretLeftIcon,
   CaretRightIcon,
+  ChatCircleText,
   ClockCounterClockwiseIcon,
   MagnifyingGlassIcon,
   TrashIcon,
@@ -16,6 +17,7 @@ import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -24,11 +26,12 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
 import { formatRelativeTime, formatTimestamp } from "@/lib/format";
-import type { RepositoryId } from "@/lib/types";
+import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
 
 const INITIAL_PAGE_SIZE = 20;
 const NEXT_PAGE_SIZE = 20;
+const THREAD_ARCHIVE_PAGE_SIZE = 10;
 
 export function ArchivePage() {
   const navigate = useNavigate();
@@ -75,6 +78,7 @@ export function ArchivePage() {
 export function ArchiveSettingsSection({ onBackToChat }: { onBackToChat?: () => void }) {
   const navigate = useNavigate();
   const [pendingPermanentDelete, setPendingPermanentDelete] = useState<Doc<"repositories"> | null>(null);
+  const [pendingThreadPermanentDelete, setPendingThreadPermanentDelete] = useState<ArchivedThread | null>(null);
   const [query, setQuery] = useState("");
   const handleBack = useCallback(
     () => (onBackToChat ? onBackToChat() : void navigate(DEFAULT_AUTHENTICATED_PATH)),
@@ -103,6 +107,7 @@ export function ArchiveSettingsSection({ onBackToChat }: { onBackToChat?: () => 
 
   return (
     <>
+      <ArchivedThreadsSection onRequestPermanentDelete={setPendingThreadPermanentDelete} />
       <ArchiveContent
         archived={archived}
         isLoadingFirstPage={isLoadingFirstPage}
@@ -117,7 +122,128 @@ export function ArchiveSettingsSection({ onBackToChat }: { onBackToChat?: () => 
         onRequestPermanentDelete={setPendingPermanentDelete}
       />
       <PermanentDeleteDialog repo={pendingPermanentDelete} onClose={() => setPendingPermanentDelete(null)} />
+      <PermanentDeleteThreadDialog
+        thread={pendingThreadPermanentDelete}
+        onClose={() => setPendingThreadPermanentDelete(null)}
+      />
     </>
+  );
+}
+
+type ArchivedThread = {
+  _id: ThreadId;
+  repositoryId?: RepositoryId;
+  title: string;
+  mode: ThreadMode;
+  archivedAt: number;
+  repository: {
+    _id: RepositoryId;
+    sourceRepoFullName: string;
+  } | null;
+};
+
+function ArchivedThreadsSection({
+  onRequestPermanentDelete,
+}: {
+  onRequestPermanentDelete: (thread: ArchivedThread) => void;
+}) {
+  const {
+    results: archivedThreads,
+    status,
+    loadMore,
+  } = usePaginatedQuery(api.chat.threads.listArchivedThreads, {}, { initialNumItems: THREAD_ARCHIVE_PAGE_SIZE });
+
+  const isLoadingFirstPage = status === "LoadingFirstPage";
+  const isLoadingMore = status === "LoadingMore";
+  const canLoadMore = status === "CanLoadMore";
+  const rows = archivedThreads as ArchivedThread[];
+
+  return (
+    <section className="mb-6 flex flex-col gap-3" aria-labelledby="archived-threads-heading">
+      <div>
+        <h2 id="archived-threads-heading" className="text-base font-semibold tracking-tight">
+          Archived Threads
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">Restore archived threads or delete them permanently.</p>
+      </div>
+      {isLoadingFirstPage ? (
+        <ArchiveListSkeleton />
+      ) : rows.length === 0 ? (
+        <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+          No archived threads.
+        </div>
+      ) : (
+        <div className="border border-border bg-card">
+          {rows.map((thread) => (
+            <ArchivedThreadRow key={thread._id} thread={thread} onRequestPermanentDelete={onRequestPermanentDelete} />
+          ))}
+          {canLoadMore || isLoadingMore ? (
+            <div className="flex justify-end border-t border-border px-3 py-2">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={!canLoadMore || isLoadingMore}
+                onClick={() => loadMore(THREAD_ARCHIVE_PAGE_SIZE)}
+              >
+                {isLoadingMore ? <Spinner size={13} /> : null}
+                <ButtonStateText current={isLoadingMore ? "Loading" : "Next"} states={["Next", "Loading"]} />
+                <CaretRightIcon weight="bold" />
+              </Button>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ArchivedThreadRow({
+  thread,
+  onRequestPermanentDelete,
+}: {
+  thread: ArchivedThread;
+  onRequestPermanentDelete: (thread: ArchivedThread) => void;
+}) {
+  const restoreThread = useMutation(api.chat.threads.restoreThread);
+  const [isRestoring, handleRestore] = useAsyncCallback(
+    useCallback(async () => {
+      try {
+        await restoreThread({ threadId: thread._id });
+        toast.success("Thread restored");
+      } catch (error) {
+        toast.error(toUserErrorMessage(error, "Failed to restore the thread."));
+      }
+    }, [restoreThread, thread._id]),
+  );
+  const modeLabel = thread.repositoryId ? (thread.mode === "library" ? "Library Ask" : "Discuss") : "Chat";
+
+  return (
+    <div className="flex flex-col gap-3 border-t border-border px-3 py-3 first:border-t-0 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="flex size-8 shrink-0 items-center justify-center border border-border bg-background text-muted-foreground">
+          <ChatCircleText size={14} weight="bold" />
+        </div>
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-semibold">{thread.title}</h3>
+          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            <span>{modeLabel}</span>
+            {thread.repository ? <span className="truncate">{thread.repository.sourceRepoFullName}</span> : null}
+            <span>Archived {formatRelativeTime(thread.archivedAt)}</span>
+          </div>
+        </div>
+      </div>
+      <div className="flex shrink-0 gap-2">
+        <Button type="button" variant="secondary" size="sm" disabled={isRestoring} onClick={() => void handleRestore()}>
+          <ArrowCounterClockwiseIcon weight="bold" />
+          <ButtonStateText current={isRestoring ? "Restoring…" : "Restore"} states={["Restore", "Restoring…"]} />
+        </Button>
+        <Button type="button" variant="destructive" size="sm" onClick={() => onRequestPermanentDelete(thread)}>
+          <TrashIcon weight="bold" />
+          Delete now
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -405,7 +531,7 @@ function ArchiveRow({
             className="flex-1 sm:flex-none"
           >
             <ArrowCounterClockwiseIcon weight="bold" />
-            {isRestoring ? "Restoring…" : "Restore"}
+            <ButtonStateText current={isRestoring ? "Restoring…" : "Restore"} states={["Restore", "Restoring…"]} />
           </Button>
           <Button
             type="button"
@@ -449,6 +575,40 @@ function PermanentDeleteDialog({ repo, onClose }: { repo: Doc<"repositories"> | 
       description={
         repo
           ? `${repo.sourceRepoFullName} will be permanently deleted along with its threads, messages, analysis artifacts, jobs, and indexed files. This cannot be undone.`
+          : ""
+      }
+      actionLabel="Delete permanently"
+      loadingLabel="Deleting…"
+      isPending={isDeleting}
+      onConfirm={() => void handleDelete()}
+    />
+  );
+}
+
+function PermanentDeleteThreadDialog({ thread, onClose }: { thread: ArchivedThread | null; onClose: () => void }) {
+  const deleteArchivedThread = useMutation(api.chat.threads.deleteArchivedThread);
+
+  const [isDeleting, handleDelete] = useAsyncCallback(
+    useCallback(async () => {
+      if (!thread) return;
+      try {
+        await deleteArchivedThread({ threadId: thread._id });
+        toast.success("Thread deleted permanently");
+        onClose();
+      } catch (error) {
+        toast.error(toUserErrorMessage(error, "Failed to delete the thread."));
+      }
+    }, [deleteArchivedThread, onClose, thread]),
+  );
+
+  return (
+    <ConfirmDialog
+      open={thread !== null}
+      onOpenChange={(open) => !open && onClose()}
+      title="Permanently delete thread?"
+      description={
+        thread
+          ? `${thread.title} will be permanently deleted along with its messages and share links. This cannot be undone.`
           : ""
       }
       actionLabel="Delete permanently"

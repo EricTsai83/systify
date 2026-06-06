@@ -298,6 +298,38 @@ describe("renameThread", () => {
   });
 });
 
+describe("archiveThread", () => {
+  test("archives a repoless chat thread and restore returns it to the active chat list", async () => {
+    const ownerTokenIdentifier = "user|archive-repoless-chat";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const { _id: threadId } = await viewer.mutation(api.chat.threads.createThread, {});
+
+    await viewer.mutation(api.chat.threads.archiveThread, { threadId });
+
+    const storedAfterArchive = await t.run((ctx) => ctx.db.get(threadId));
+    expect(typeof storedAfterArchive?.archivedAt).toBe("number");
+    expect(storedAfterArchive?.pinnedAt).toBeUndefined();
+
+    const activeAfterArchive = await viewer.query(api.chat.threads.listRepolessThreads, {});
+    expect(activeAfterArchive.map((thread) => thread._id)).not.toContain(threadId);
+
+    const archived = await viewer.query(api.chat.threads.listArchivedThreads, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    expect(archived.page.map((thread) => thread._id)).toContain(threadId);
+
+    await viewer.mutation(api.chat.threads.restoreThread, { threadId });
+
+    const restored = await t.run((ctx) => ctx.db.get(threadId));
+    expect(restored?.archivedAt).toBeUndefined();
+
+    const activeAfterRestore = await viewer.query(api.chat.threads.listRepolessThreads, {});
+    expect(activeAfterRestore.map((thread) => thread._id)).toContain(threadId);
+  });
+});
+
 describe("listRepolessThreads", () => {
   test("empty viewer returns no threads", async () => {
     const ownerTokenIdentifier = "user|list-repoless-empty";

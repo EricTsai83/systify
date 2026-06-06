@@ -118,11 +118,12 @@ export const listThreadsForHistoryGroup = query({
 
     const result = await ctx.db
       .query("threads")
-      .withIndex("by_ownerToken_repositoryId_deletionRequestedAt_lastMessageAt", (q) =>
+      .withIndex("by_owner_repo_del_arch_last", (q) =>
         q
           .eq("ownerTokenIdentifier", identity.tokenIdentifier)
           .eq("repositoryId", repositoryId)
-          .eq("deletionRequestedAt", undefined),
+          .eq("deletionRequestedAt", undefined)
+          .eq("archivedAt", undefined),
       )
       .order("desc")
       .paginate(args.paginationOpts);

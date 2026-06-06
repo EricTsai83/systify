@@ -6,7 +6,7 @@ import { toUserErrorMessage } from "@/lib/errors";
 import type { ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } from "@/lib/types";
 
 /**
- * Owns the in-flight reply lifecycle (send, cancel) plus thread teardown.
+ * Owns the in-flight reply lifecycle (send, cancel) plus thread archive.
  * Selection-aware but selection-state-agnostic: callers pass the current
  * thread / repository and the thread queued for deletion, and the hook hands
  * back navigation hooks via `onAfterCreateThread` / `onAfterDeleteThread` so
@@ -75,7 +75,7 @@ export function useChatLifecycle({
   const sendMessageMutation = useMutation(api.chat.send.sendMessage);
   const sendMessageStartingNewThreadMutation = useMutation(api.chat.send.sendMessageStartingNewThread);
   const cancelInFlightReplyMutation = useMutation(api.chat.cancel.cancelInFlightReply);
-  const deleteThreadMutation = useMutation(api.chat.threads.deleteThread);
+  const archiveThreadMutation = useMutation(api.chat.threads.archiveThread);
 
   const [isSending, handleSendMessage] = useAsyncCallback(
     useCallback(
@@ -174,17 +174,17 @@ export function useChatLifecycle({
       if (!threadToDelete) return;
       setActionError(null);
       try {
-        await deleteThreadMutation({ threadId: threadToDelete });
+        await archiveThreadMutation({ threadId: threadToDelete });
         const deletedId = threadToDelete;
         setThreadToDelete(null);
         if (selectedThreadId === deletedId) {
           onAfterDeleteThread(deletedId);
         }
       } catch (error) {
-        setActionError(toUserErrorMessage(error, "Failed to delete the thread."));
+        setActionError(toUserErrorMessage(error, "Failed to archive the thread."));
       }
     }, [
-      deleteThreadMutation,
+      archiveThreadMutation,
       onAfterDeleteThread,
       selectedThreadId,
       setActionError,

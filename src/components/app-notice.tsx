@@ -1,5 +1,6 @@
 import { WarningCircleIcon, InfoIcon, XIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +32,7 @@ export function AppNotice({
   message,
   tone = "info",
   actionLabel,
+  actionStateLabels,
   onAction,
   actionDisabled = false,
   onDismiss,
@@ -41,6 +43,7 @@ export function AppNotice({
   message: string;
   tone?: NoticeTone;
   actionLabel?: string;
+  actionStateLabels?: readonly string[];
   onAction?: () => void;
   actionDisabled?: boolean;
   /**
@@ -87,7 +90,7 @@ export function AppNotice({
               disabled={actionDisabled}
               onClick={onAction}
             >
-              {actionLabel}
+              {actionStateLabels ? <ButtonStateText current={actionLabel!} states={actionStateLabels} /> : actionLabel}
             </Button>
           ) : null}
           {hasDismiss ? (

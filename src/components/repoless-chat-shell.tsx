@@ -186,7 +186,13 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       <SidebarInset>
         {actionError ? (
           <div className="border-b border-border px-6 py-3">
-            <AppNotice title="Action failed" message={actionError} tone="error" />
+            <AppNotice
+              title="Action failed"
+              message={actionError}
+              tone="error"
+              onDismiss={() => setActionError(null)}
+              dismissLabel="Dismiss action error"
+            />
           </div>
         ) : null}
 
@@ -224,10 +230,10 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       <ConfirmDialog
         open={threadToDelete !== null}
         onOpenChange={(open) => !open && setThreadToDelete(null)}
-        title="Delete thread"
-        description="This will permanently delete this thread and all its messages. This action cannot be undone."
-        actionLabel="Delete thread"
-        loadingLabel="Deleting…"
+        title="Archive thread"
+        description="This removes the thread from active history. You can restore or permanently delete it from Archive."
+        actionLabel="Archive thread"
+        loadingLabel="Archiving…"
         isPending={isDeletingThread}
         onConfirm={() => void handleDeleteThread()}
       />

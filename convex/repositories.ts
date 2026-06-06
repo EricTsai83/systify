@@ -410,7 +410,8 @@ export const createRepositoryImport = mutation({
       throw new Error("Failed to create repository.");
     }
 
-    const defaultThread = defaultThreadId ? await ctx.db.get(defaultThreadId) : null;
+    const defaultThreadRow = defaultThreadId ? await ctx.db.get(defaultThreadId) : null;
+    const defaultThread = defaultThreadRow?.deletionRequestedAt === undefined ? defaultThreadRow : null;
     let defaultThreadMode: Doc<"threads">["mode"];
     if (!isOwnedBy(defaultThread, identity.tokenIdentifier) || defaultThread.repositoryId !== repositoryId) {
       // Matches `resolveChatModes(true).defaultMode` for any repo-attached

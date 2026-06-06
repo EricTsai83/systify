@@ -44,11 +44,12 @@ async function loadLatestVisibleThreadInGroup(
 ): Promise<Doc<"threads"> | null> {
   const candidates = await ctx.db
     .query("threads")
-    .withIndex("by_ownerToken_repositoryId_deletionRequestedAt_lastMessageAt", (q) =>
+    .withIndex("by_owner_repo_del_arch_last", (q) =>
       q
         .eq("ownerTokenIdentifier", args.ownerTokenIdentifier)
         .eq("repositoryId", args.repositoryId)
-        .eq("deletionRequestedAt", undefined),
+        .eq("deletionRequestedAt", undefined)
+        .eq("archivedAt", undefined),
     )
     .order("desc")
     .take(args.excludeThreadId ? 2 : 1);
@@ -61,7 +62,6 @@ export async function refreshHistoryGroup(
   args: {
     ownerTokenIdentifier: string;
     repositoryId: HistoryRepositoryId;
-    excludeThreadId?: Id<"threads">;
   },
 ): Promise<void> {
   const rows = await loadHistoryGroupRows(ctx, args);
@@ -75,7 +75,7 @@ export async function refreshHistoryGroup(
     return;
   }
 
-  const threadCount = group && args.excludeThreadId ? Math.max(1, group.threadCount - 1) : (group?.threadCount ?? 1);
+  const threadCount = group?.threadCount ?? 1;
   const patch = {
     ownerTokenIdentifier: args.ownerTokenIdentifier,
     groupKey: getHistoryGroupKey(args.repositoryId),
@@ -93,7 +93,7 @@ export async function refreshHistoryGroup(
 }
 
 export async function recordThreadCreatedInHistory(ctx: MutationCtx, thread: Doc<"threads">): Promise<void> {
-  if (thread.deletionRequestedAt !== undefined) {
+  if (thread.deletionRequestedAt !== undefined || thread.archivedAt !== undefined) {
     return;
   }
 
@@ -122,7 +122,7 @@ export async function recordThreadCreatedInHistory(ctx: MutationCtx, thread: Doc
 }
 
 export async function recordThreadActivityInHistory(ctx: MutationCtx, thread: Doc<"threads">): Promise<void> {
-  if (thread.deletionRequestedAt !== undefined) {
+  if (thread.deletionRequestedAt !== undefined || thread.archivedAt !== undefined) {
     return;
   }
 
