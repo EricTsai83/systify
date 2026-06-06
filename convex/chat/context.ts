@@ -6,6 +6,7 @@ import { resolveDiscussGrounding } from "../lib/chatMode";
 import { MAX_CONTEXT_MESSAGES } from "../lib/constants";
 import type { ReasoningEffort } from "../lib/llmCatalog";
 import type { LlmProvider } from "../lib/llmProvider";
+import { loadViewerCustomization, type UserCustomizationPreferences } from "../lib/userPreferences";
 import type { ExtendedChatMode } from "./prompting";
 
 export type ReplyContext = {
@@ -56,6 +57,7 @@ export type ReplyContext = {
    * model's default effort.
    */
   reasoningEffort?: ReasoningEffort;
+  customization: UserCustomizationPreferences;
   repositoryId?: Id<"repositories">;
   repositorySummary?: string;
   readmeSummary?: string;
@@ -269,6 +271,7 @@ export const getReplyContext = internalQuery({
     // somehow carries a stray `groundLibrary: true` reads back as `false`
     // here without a one-off branch.
     const { groundLibrary, groundSandbox } = resolveDiscussGrounding(effectiveMode, userMessage);
+    const customization = await loadViewerCustomization(ctx, thread.ownerTokenIdentifier);
 
     // Cross-mode filtering + empty-content filtering happen inside
     // `loadReplyContextMessages` so the helper can over-fetch a bounded
@@ -293,6 +296,7 @@ export const getReplyContext = internalQuery({
         provider: userMessage.provider,
         modelName: userMessage.modelName,
         reasoningEffort: userMessage.reasoningEffort,
+        customization,
         repositoryId: undefined,
         repositorySummary: undefined,
         readmeSummary: undefined,
@@ -373,6 +377,7 @@ export const getReplyContext = internalQuery({
       provider: userMessage.provider,
       modelName: userMessage.modelName,
       reasoningEffort: userMessage.reasoningEffort,
+      customization,
       repositoryId: repository._id,
       repositorySummary: repository.summary,
       readmeSummary: repository.readmeSummary,

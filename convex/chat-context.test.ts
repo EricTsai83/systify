@@ -10,6 +10,42 @@ import schema from "./schema";
 const modules = import.meta.glob("./**/*.ts");
 
 describe("chat reply context", () => {
+  test("loads viewer customization for the queued reply", async () => {
+    const ownerTokenIdentifier = "user|customization-context";
+    const t = convexTest(schema, modules);
+
+    const { threadId, userMessageId } = await t.run(async (ctx) => {
+      await ctx.db.insert("userPreferences", {
+        ownerTokenIdentifier,
+        traits: ["Direct", "Technical"],
+        customInstructions: "Prefer explicit failure modes.",
+        customizationUpdatedAt: Date.now(),
+      });
+      const threadId = await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Customization context",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+      const userMessageId = await ctx.db.insert("messages", {
+        ownerTokenIdentifier,
+        threadId,
+        role: "user",
+        status: "completed",
+        mode: "discuss",
+        content: "How should we design this?",
+      });
+      return { threadId, userMessageId };
+    });
+
+    const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
+
+    expect(context.customization).toEqual({
+      traits: ["Direct", "Technical"],
+      customInstructions: "Prefer explicit failure modes.",
+    });
+  });
+
   test("sandbox mode returns no chunks and no pre-loaded artifacts", async () => {
     // Sandbox mode is LLM-driven retrieval — the model runs `read_file`
     // / `list_dir` against the live sandbox via tools. Pre-loading

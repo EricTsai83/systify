@@ -227,6 +227,9 @@ export default defineSchema({
     ownerTokenIdentifier: v.string(),
     lastActiveRepositoryId: v.optional(v.id("repositories")),
     lastActiveRepositoryUpdatedAt: v.optional(v.number()),
+    traits: v.optional(v.array(v.string())),
+    customInstructions: v.optional(v.string()),
+    customizationUpdatedAt: v.optional(v.number()),
   }).index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
 
   repositories: defineTable({
