@@ -6,6 +6,7 @@ import type { Doc } from "../../convex/_generated/dataModel";
 import { FOLDER_NAME_MAX_LENGTH } from "../../convex/lib/artifactFolderDefaults";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -147,7 +148,7 @@ export function FolderOverview({ folderId, onSelectArtifact, onAfterDelete, clas
                 disabled={isSaving || !draftName.trim()}
                 onClick={() => void runSave()}
               >
-                {isSaving ? "Saving…" : "Save"}
+                <ButtonStateText current={isSaving ? "Saving…" : "Save"} states={["Save", "Saving…"]} />
               </Button>
             </div>
           </div>

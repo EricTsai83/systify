@@ -54,4 +54,16 @@ crons.interval(
   {},
 );
 
+// One bounded batch per hour in steady state, self-rescheduling when a legacy
+// backlog exists. Keeps chatHistoryGroups repaired without putting a full-table
+// scan on user-facing mutations.
+crons.interval("repair chat history groups", { hours: 1 }, internal.chat.history.repairChatHistoryGroups, {});
+
+crons.interval(
+  "repair archived thread scopes",
+  { hours: 1 },
+  internal.chat.archiveState.repairArchivedThreadScopes,
+  {},
+);
+
 export default crons;

@@ -28,6 +28,7 @@ import {
 import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-input-reasoning-picker";
 import { SandboxActivityPill } from "@/components/sandbox-activity-pill";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import type {
   ActiveMessageStream,
   ArtifactId,
@@ -91,7 +92,7 @@ type ChatPanelProps = {
    * resets between sends unless the shell chooses to remember it.
    */
   selectedReasoningEffort?: ReasoningEffort | null;
-  setSelectedReasoningEffort?: (next: ReasoningEffort) => void;
+  setSelectedReasoningEffort?: (next: ReasoningEffort | null) => void;
   threadLockedProvider?: LlmProvider | null;
   /**
    * Per-axis availability verdict from `repositoryModeEligibility.evaluate`.
@@ -422,6 +423,7 @@ export function ChatPanel({
       }
       tone="warning"
       actionLabel={isSyncing ? "Syncing…" : "Sync now"}
+      actionStateLabels={["Sync now", "Syncing…"]}
       actionDisabled={isSyncing}
       onAction={onSync}
     />
@@ -627,12 +629,7 @@ export function ChatPanel({
                   }}
                 >
                   <StopCircleIcon weight="bold" />
-                  <span className="grid">
-                    <span aria-hidden="true" className="invisible col-start-1 row-start-1">
-                      Stopping…
-                    </span>
-                    <span className="col-start-1 row-start-1">{isCancellingReply ? "Stopping…" : "Stop"}</span>
-                  </span>
+                  <ButtonStateText current={isCancellingReply ? "Stopping…" : "Stop"} states={["Stop", "Stopping…"]} />
                 </Button>
               ) : (
                 <Button
@@ -644,27 +641,10 @@ export function ChatPanel({
                   className="min-w-30"
                 >
                   <PaperPlaneTiltIcon weight="bold" />
-                  {/*
-                   * Grid-stack the label so the button width is always sized to
-                   * the longest possible state ("Sending…" / "Syncing…") and
-                   * doesn't reflow when toggling between idle/sending/syncing.
-                   * The invisible sizer reserves the max width; the visible
-                   * span is overlaid in the same grid cell.
-                   *
-                   * The button's minimum width matches the Stop button so the
-                   * streaming → idle swap is width-stable too.
-                   */}
-                  <span className="grid">
-                    <span aria-hidden="true" className="invisible col-start-1 row-start-1">
-                      Sending…
-                    </span>
-                    <span aria-hidden="true" className="invisible col-start-1 row-start-1">
-                      Syncing…
-                    </span>
-                    <span className="col-start-1 row-start-1">
-                      {isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
-                    </span>
-                  </span>
+                  <ButtonStateText
+                    current={isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
+                    states={["Send", "Sending…", "Syncing…"]}
+                  />
                 </Button>
               )}
             </PromptInputFooter>

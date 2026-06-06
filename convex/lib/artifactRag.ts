@@ -4,15 +4,12 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
 import type { ArtifactChunkSearchHit } from "../artifactChunkStore";
-import { embedViaGateway, type LlmCallContext } from "./llmGateway";
-import { costUsdToCents } from "./llmPricing";
+import { EMBEDDING_BUDGET_ESTIMATES, embedWithAccounting } from "./embeddingAccounting";
 import { logInfo, logWarn } from "./observability";
 
 const DEFAULT_RETRIEVAL_TOP_N = 8;
 const DEFAULT_RETRIEVAL_CANDIDATE_K = 20;
 const RRF_K = 60;
-const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
-const LIBRARY_RETRIEVAL_BUDGET_ESTIMATE_USD = 0.001;
 
 export interface RetrievedChunk {
   chunkId: Id<"artifactChunks">;
@@ -147,79 +144,28 @@ async function retrieveLexical(
 }
 
 async function retrieveSemantic(ctx: ActionCtx, args: RetrieveArgs, candidateK: number): Promise<RetrievalHit[]> {
-  // `ARTIFACT_EMBEDDING_MODEL` is forwarded to the gateway, which
-  // validates the value against MODEL_CATALOG (`isValidPick`). An
-  // operator who overrides the env to a non-catalogued model gets a
-  // clear gateway-side error instead of an opaque SDK 4xx.
-  const modelName = process.env.ARTIFACT_EMBEDDING_MODEL ?? DEFAULT_EMBEDDING_MODEL;
-  const callCtx: LlmCallContext = {
-    provider: "openai",
-    modelName,
+  const sourceId = `libraryRetrieval:${args.messageId ?? args.threadId ?? "unattributed"}:${stableHash(args.query)}`;
+  const { embeddings } = await embedWithAccounting(ctx, {
+    values: [args.query],
+    sourceId,
     ownerTokenIdentifier: args.ownerTokenIdentifier,
-    capability: "embedding",
+    repositoryId: args.repositoryId,
+    usageFeature: "libraryRetrieval",
     // RAG retrieval is invoked from the chat reply pipeline to ground
     // assistant answers in library artifacts. The `chat` literal keeps
     // the metric grouped with the same feature as the chat generation
-    // that triggered it; no new feature literal is warranted.
-    feature: "chat",
+    // that triggered it; no new gateway feature literal is warranted.
+    gatewayFeature: "chat",
+    estimatedCostUsd: EMBEDDING_BUDGET_ESTIMATES.libraryRetrieval,
     ...(args.threadId !== undefined ? { threadId: args.threadId } : {}),
     ...(args.messageId !== undefined ? { messageId: args.messageId } : {}),
-  };
-  const sourceId = `libraryRetrieval:${args.messageId ?? args.threadId ?? "unattributed"}:${stableHash(args.query)}`;
-  const occurredAtMs = Date.now();
-  await ctx.runMutation(internal.lib.userCost.reserveUsageBudget, {
-    sourceId,
-    ownerTokenIdentifier: args.ownerTokenIdentifier,
-    feature: "libraryRetrieval",
-    estimatedCostUsd: LIBRARY_RETRIEVAL_BUDGET_ESTIMATE_USD,
-    occurredAtMs,
   });
-  const { embeddings, costUsd, usage } = await embedViaGateway(ctx, callCtx, { values: [args.query] }).catch(
-    async (error: unknown) => {
-      await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
-        sourceId,
-        ownerTokenIdentifier: args.ownerTokenIdentifier,
-        feature: "libraryRetrieval",
-        occurredAtMs,
-      });
-      throw error;
-    },
-  );
   const [embedding] = embeddings;
   if (embedding === undefined) {
     // Defensive: `embedMany` returns one vector per input, so a missing
     // entry for a single-value batch implies an SDK contract change.
-    await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
-      sourceId,
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      feature: "libraryRetrieval",
-      occurredAtMs,
-    });
-    throw new Error("artifactRag: embedViaGateway returned zero embeddings for a one-value query");
+    throw new Error("artifactRag: embedding accounting returned zero embeddings for a one-value query");
   }
-
-  // Per-query embedding spend is small but still routes through the
-  // same per-user / per-repository daily-cap buckets as generation —
-  // otherwise a noisy RAG-heavy session could outrun the cap silently.
-  // `settleSandboxDailyCost` (and the underlying `consumeSandboxDailyCost`
-  // helper) short-circuits on `cents <= 0`, so the pricing-miss path
-  // (catalog row without a price) settles to a no-op uniformly.
-  const settleCents = costUsdToCents(costUsd);
-  if (settleCents !== undefined && settleCents > 0) {
-    await ctx.runMutation(internal.lib.rateLimit.settleSandboxDailyCost, {
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      repositoryId: args.repositoryId,
-      cents: settleCents,
-    });
-  }
-  await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
-    sourceId,
-    ownerTokenIdentifier: args.ownerTokenIdentifier,
-    feature: "libraryRetrieval",
-    occurredAtMs,
-    usd: costUsd,
-    inputTokens: usage.inputTokens,
-  });
 
   const overfetchLimit = args.artifactScope && args.artifactScope.length > 0 ? candidateK * 4 : candidateK;
   const results = await ctx.vectorSearch("artifactChunks", "by_embedding", {

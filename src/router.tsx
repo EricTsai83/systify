@@ -8,7 +8,7 @@ import {
   RouteErrorBoundary,
   RouterHydrateFallback,
 } from "@/router-layouts";
-import { AUTH_CALLBACK_ROUTE_SEGMENT, PROTECTED_ROUTE_SEGMENTS } from "@/route-paths";
+import { AUTH_CALLBACK_ROUTE_SEGMENT, PROTECTED_ROUTE_SEGMENTS, PUBLIC_ROUTE_SEGMENTS } from "@/route-paths";
 import type { ThreadId } from "@/lib/types";
 
 // Validate that a URL param looks like a valid Convex ID (non-empty string with
@@ -41,6 +41,16 @@ async function loadResourcesRoute() {
 async function loadSettingsRoute() {
   const module = await import("@/pages/settings");
   return { Component: module.SettingsPage };
+}
+
+async function loadSharedThreadRoute() {
+  const module = await import("@/pages/shared-thread");
+  return {
+    Component: function SharedThreadRoute() {
+      const params = useParams<{ token?: string }>();
+      return <module.SharedThreadPage token={params.token ?? ""} />;
+    },
+  };
 }
 
 /**
@@ -87,6 +97,7 @@ export const appRoutes: RouteObject[] = [
     children: [
       { index: true, Component: LandingRoute },
       { path: AUTH_CALLBACK_ROUTE_SEGMENT, Component: AuthCallbackRoute },
+      { path: PUBLIC_ROUTE_SEGMENTS.sharedThread, lazy: loadSharedThreadRoute },
       { Component: ProtectedLayout, children: protectedRoutes },
       { path: "*", Component: NotFoundRoute },
     ],

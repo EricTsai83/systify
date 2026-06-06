@@ -9,6 +9,7 @@ import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
 import { getRepositorySandboxStatus } from "./lib/repositorySandbox";
 import { makeRepositoryTitle, parseGitHubUrl } from "./lib/github";
 import { pickNextRepositoryColor, touchRepositoryLastAccessed } from "./lib/repositoryPalette";
+import { recordThreadCreatedInHistory } from "./chat/historyState";
 import { startedResultValidator } from "./lib/functionResultSchemas";
 import { runRepositoryCascadeDelete } from "./lib/repositoryCascade";
 import { archiveOwnedRepository, requestRepositoryDeletion, restoreOwnedRepository } from "./lib/repositoryRetirement";
@@ -276,8 +277,12 @@ export const getRepositoryDetail = query({
 
     const threads = await ctx.db
       .query("threads")
-      .withIndex("by_ownerTokenIdentifier_repositoryId_and_lastMessageAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("repositoryId", args.repositoryId),
+      .withIndex("by_owner_repo_delete_archive_lastMsg", (q) =>
+        q
+          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+          .eq("repositoryId", args.repositoryId)
+          .eq("deletionRequestedAt", undefined)
+          .eq("archivedAt", undefined),
       )
       .order("desc")
       .take(10);
@@ -406,7 +411,8 @@ export const createRepositoryImport = mutation({
       throw new Error("Failed to create repository.");
     }
 
-    const defaultThread = defaultThreadId ? await ctx.db.get(defaultThreadId) : null;
+    const defaultThreadRow = defaultThreadId ? await ctx.db.get(defaultThreadId) : null;
+    const defaultThread = defaultThreadRow?.deletionRequestedAt === undefined ? defaultThreadRow : null;
     let defaultThreadMode: Doc<"threads">["mode"];
     if (!isOwnedBy(defaultThread, identity.tokenIdentifier) || defaultThread.repositoryId !== repositoryId) {
       // Matches `resolveChatModes(true).defaultMode` for any repo-attached
@@ -420,6 +426,8 @@ export const createRepositoryImport = mutation({
         mode: defaultThreadMode,
         lastMessageAt: Date.now(),
       });
+      const defaultThreadRow = (await ctx.db.get(defaultThreadId))!;
+      await recordThreadCreatedInHistory(ctx, defaultThreadRow);
     } else {
       defaultThreadMode = defaultThread.mode;
     }

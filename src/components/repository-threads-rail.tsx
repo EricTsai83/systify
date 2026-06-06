@@ -7,12 +7,13 @@ import {
   PlusIcon,
   PushPinSimpleIcon,
   PushPinSimpleSlashIcon,
-  TrashIcon,
+  ArchiveIcon,
 } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { MAX_RENAME_TITLE_LENGTH } from "../../convex/lib/threadDefaults";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -241,7 +242,10 @@ export function RepositoryThreadsRail({
           onClick={() => void handleCreateThread()}
         >
           <PlusIcon size={13} weight="bold" />
-          {isCreatingThread ? "Creating…" : (newThreadButtonLabel ?? "New thread")}
+          <ButtonStateText
+            current={isCreatingThread ? "Creating…" : (newThreadButtonLabel ?? "New thread")}
+            states={[newThreadButtonLabel ?? "New thread", "Creating…"]}
+          />
         </Button>
       </div>
 
@@ -508,7 +512,10 @@ function ThreadItemBase({
               variant="ghost"
               size="icon"
               className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
-              onClick={() => onTogglePin(thread._id, !isPinned)}
+              onClick={(event) => {
+                event.stopPropagation();
+                onTogglePin(thread._id, !isPinned);
+              }}
               aria-label={isPinned ? "Unpin thread" : "Pin thread"}
               aria-pressed={isPinned}
               title={isPinned ? "Unpin thread" : "Pin thread"}
@@ -522,12 +529,15 @@ function ThreadItemBase({
             <Button
               variant="ghost"
               size="icon"
-              className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-destructive focus-visible:opacity-100 group-hover:opacity-100"
-              onClick={() => onDeleteThread(thread._id)}
-              aria-label="Delete thread"
-              title="Delete thread"
+              className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+              onClick={(event) => {
+                event.stopPropagation();
+                onDeleteThread(thread._id);
+              }}
+              aria-label="Archive thread"
+              title="Archive thread"
             >
-              <TrashIcon size={13} weight="bold" />
+              <ArchiveIcon size={13} weight="bold" />
             </Button>
           </div>
         </div>
@@ -551,8 +561,8 @@ function ThreadItemBase({
         </ContextMenuGroup>
         <ContextMenuSeparator />
         <ContextMenuGroup>
-          <ContextMenuItem variant="destructive" onClick={() => onDeleteThread(thread._id)}>
-            <TrashIcon weight="bold" /> Delete
+          <ContextMenuItem onClick={() => onDeleteThread(thread._id)}>
+            <ArchiveIcon weight="bold" /> Archive
           </ContextMenuItem>
         </ContextMenuGroup>
       </ContextMenuContent>

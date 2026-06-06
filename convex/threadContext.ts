@@ -3,6 +3,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalQuery, query } from "./_generated/server";
 import type { QueryCtx } from "./_generated/server";
 import { loadOwnedDoc } from "./lib/ownedDocs";
+import { isActiveThread } from "./chat/threadAccess";
 import { getRepositorySandboxStatus, type SandboxModeStatus } from "./lib/repositorySandbox";
 import { type ChatModeResolution } from "./lib/chatEligibility";
 import { evaluateThreadModeAvailability } from "./lib/modeAvailability";
@@ -101,7 +102,7 @@ export const getThreadContext = query({
   args: { threadId: v.id("threads") },
   handler: async (ctx, args) => {
     const { identity, doc: thread } = await loadOwnedDoc(ctx, args.threadId);
-    if (!thread) {
+    if (!isActiveThread(thread)) {
       return null;
     }
 
@@ -126,7 +127,7 @@ export const getThreadContextInternal = internalQuery({
     // thread owner's view of mode availability so the result is a faithful
     // representation of "what the owner would see right now".
     const thread = await loadThread(ctx, args.threadId);
-    if (!thread) {
+    if (!isActiveThread(thread)) {
       return null;
     }
     const attachedRepository = thread.repositoryId ? await ctx.db.get(thread.repositoryId) : null;

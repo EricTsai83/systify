@@ -6,6 +6,7 @@ import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { AppSidebarLeft } from "@/components/app-sidebar";
 import { ArtifactPanel } from "@/components/artifact-panel";
@@ -17,25 +18,17 @@ import { GenerateSystemDesignDialog } from "@/components/generate-system-design-
 import { StatusPanel } from "@/components/status-panel";
 import { useChatShellLifecycle } from "@/components/chat-shell-shared/use-chat-shell-lifecycle";
 import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-thread-deletion-recovery";
+import { useRepositoryLandingDecision } from "@/components/chat-shell-shared/use-repository-landing";
 import { useRepositoryPersistence } from "@/components/chat-shell-shared/use-repository-persistence";
 import { useCheckForUpdates } from "@/hooks/use-check-for-updates";
 import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
 import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useRepositoryLifecycle } from "@/hooks/use-repository-lifecycle";
-import { resolveEffectiveChatMode, useChatMode } from "@/hooks/use-service-mode";
+import { useChatMode } from "@/hooks/use-service-mode";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
-import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
+import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
-import type {
-  ArtifactId,
-  ChatMode,
-  LlmProvider,
-  ReasoningEffort,
-  RepositoryId,
-  SandboxModeStatus,
-  ThreadId,
-  ThreadMode,
-} from "@/lib/types";
+import type { ArtifactId, ChatMode, RepositoryId, SandboxModeStatus, ThreadId, ThreadMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_AUTHENTICATED_PATH,
@@ -44,7 +37,6 @@ import {
   libraryPath,
   modeAwareThreadPath,
   repositoryPath,
-  withLibraryAskParam,
 } from "@/route-paths";
 
 type RepositoryShellStatus = "initializing" | "ready";
@@ -84,26 +76,24 @@ export function RepositoryShell({
   );
 
   const { mode, availability } = useChatMode(currentRepositoryId);
-  const intendedChatMode = useMemo<ChatMode>(
-    () => resolveEffectiveChatMode({ mode, lastMode: currentRepository?.lastMode ?? null, availability }),
-    [mode, currentRepository?.lastMode, availability],
-  );
+  const landingDecision = useRepositoryLandingDecision({
+    urlRepositoryId,
+    urlThreadId,
+    currentRepositoryId,
+    currentRepository,
+    mode,
+    availability,
+    repositories,
+  });
 
   const capabilities = useThreadCapabilities(urlThreadId);
 
   const isArtifactPanelEnabled = mode === "library" || (mode === "discuss" && capabilities.attachedRepository !== null);
 
-  const ownerThreads = useQuery(
-    api.chat.threads.listThreads,
-    urlThreadId === null && currentRepositoryId !== null
-      ? { repositoryId: currentRepositoryId, mode: intendedChatMode }
-      : "skip",
-  );
-
-  const [threadToDelete, setThreadToDelete] = useState<ThreadId | null>(null);
+  const [threadToArchive, setThreadToArchive] = useState<ThreadId | null>(null);
   const [showArchiveDialog, setShowArchiveDialog] = useState(false);
   const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] = useState(false);
-  const chatMode: ChatMode = "discuss";
+  const chatMode: ChatMode = landingDecision.intendedChatMode;
 
   const [groundingByThread, setGroundingByThread] = useState<{
     threadId: ThreadId | null;
@@ -120,48 +110,13 @@ export function RepositoryShell({
     (next: boolean) => setGroundingByThread((prev) => ({ ...prev, sandbox: next })),
     [],
   );
-  // Per-thread composer model pick. Mirrors the grounding state above
-  // but resolves its default through `useDefaultModelPick` rather than
-  // an explicit `useEffect` re-seed. The hook composes the cascade:
-  //   1. user's explicit pick (`modelByThread.provider/modelName`),
-  //   2. thread default (`capabilities.defaultModelName`),
-  //   3. capability default (server query — sourced from `ROLE_MODELS`).
-  // Returning `undefined` while loading lets the picker render its
-  // placeholder for one paint instead of flashing a stale default.
-  const [modelByThread, setModelByThread] = useState<{
-    threadId: ThreadId | null;
-    provider: LlmProvider | null;
-    modelName: string | null;
-  }>({ threadId: null, provider: null, modelName: null });
-  const defaultModelPick = useDefaultModelPick({
-    capability: "discuss",
-    threadLockedProvider: capabilities.lockedProvider,
-    threadDefaultModelName: capabilities.defaultModelName,
-  });
-  const userPickedModel = modelByThread.threadId === urlThreadId ? modelByThread : null;
-  const selectedProvider =
-    userPickedModel?.provider ?? defaultModelPick?.provider ?? capabilities.lockedProvider ?? null;
-  const selectedModelName =
-    userPickedModel?.modelName ?? defaultModelPick?.modelName ?? capabilities.defaultModelName ?? null;
-  const setSelectedModel = useCallback(
-    (next: { provider: LlmProvider; modelName: string }) =>
-      setModelByThread({ threadId: urlThreadId, provider: next.provider, modelName: next.modelName }),
-    [urlThreadId],
-  );
-  // Per-message reasoning-effort override. Lives at the shell level so
-  // a thread switch resets the picker (the explicit pick stops being
-  // "this thread's override" once the thread changes). Stored as
-  // `null` when the user has not overridden anything — the gateway
-  // falls back to the catalog entry's default.
-  const [reasoningByThread, setReasoningByThread] = useState<{
-    threadId: ThreadId | null;
-    effort: ReasoningEffort | null;
-  }>({ threadId: null, effort: null });
-  const selectedReasoningEffort = reasoningByThread.threadId === urlThreadId ? reasoningByThread.effort : null;
-  const setSelectedReasoningEffort = useCallback(
-    (next: ReasoningEffort) => setReasoningByThread({ threadId: urlThreadId, effort: next }),
-    [urlThreadId],
-  );
+  const { selectedProvider, selectedModelName, setSelectedModel, selectedReasoningEffort, setSelectedReasoningEffort } =
+    useComposerModelPick({
+      threadId: urlThreadId,
+      capability: chatMode,
+      threadLockedProvider: capabilities.lockedProvider,
+      threadDefaultModelName: capabilities.defaultModelName,
+    });
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<{ title: string; message: string } | null>(null);
   useEffect(() => {
@@ -220,41 +175,9 @@ export function RepositoryShell({
     effectiveSelectedThreadId !== null ? capabilities.sandboxModeStatus : (repoDetail?.sandboxModeStatus ?? null);
 
   useEffect(() => {
-    if (urlThreadId !== null) {
-      return;
-    }
-    if (urlRepositoryId === null) {
-      return;
-    }
-    if (availability === undefined) return;
-    if (repositories === undefined) return;
-    if (ownerThreads === undefined) return;
-    if (intendedChatMode === "library") {
-      const askThreadId = ownerThreads[0]?._id;
-      const base = libraryPath(urlRepositoryId);
-      const target = askThreadId ? withLibraryAskParam(base, askThreadId) : base;
-      void navigate(target, { replace: true });
-      return;
-    }
-    const tid = ownerThreads[0]?._id;
-    if (tid) {
-      void navigate(discussPath(urlRepositoryId, tid), { replace: true });
-      return;
-    }
-    if (mode === null) {
-      void navigate(discussPath(urlRepositoryId), { replace: true });
-    }
-  }, [
-    navigate,
-    ownerThreads,
-    urlRepositoryId,
-    urlThreadId,
-    activeRepositoryId,
-    mode,
-    intendedChatMode,
-    availability,
-    repositories,
-  ]);
+    if (landingDecision.navigation === null) return;
+    void navigate(landingDecision.navigation.to, { replace: landingDecision.navigation.replace });
+  }, [landingDecision.navigation, navigate]);
 
   useEffect(() => {
     if (currentRepositoryId === null) return;
@@ -279,13 +202,10 @@ export function RepositoryShell({
 
   useCheckForUpdates(effectiveSelectedRepositoryId);
 
-  const isAboutToRedirect =
-    urlThreadId === null &&
-    urlRepositoryId !== null &&
-    (mode === null || ownerThreads === undefined || ownerThreads.length > 0);
-
   const shellStatus: RepositoryShellStatus =
-    isRepositoriesLoading || repositories === undefined || isAboutToRedirect ? "initializing" : "ready";
+    isRepositoriesLoading || repositories === undefined || landingDecision.status !== "ready"
+      ? "initializing"
+      : "ready";
 
   const isChatShellLoading =
     shellStatus === "initializing" || (effectiveSelectedThreadId !== null && capabilities.isLoading);
@@ -421,7 +341,7 @@ export function RepositoryShell({
     void navigate(discussPath(currentRepositoryId));
   }, [currentRepositoryId, navigate]);
 
-  const onAfterDeleteThread = useCallback(() => {
+  const onAfterArchiveThread = useCallback(() => {
     if (currentRepositoryId !== null) {
       if (mode === "library") {
         void navigate(libraryPath(currentRepositoryId));
@@ -442,8 +362,8 @@ export function RepositoryShell({
     handleSendMessage,
     isCancellingReply,
     handleCancelInFlightReply,
-    isDeletingThread,
-    handleDeleteThread,
+    isArchivingThread,
+    handleArchiveThread,
   } = useChatShellLifecycle({
     urlThreadId,
     repositoryId: currentRepositoryId,
@@ -455,11 +375,11 @@ export function RepositoryShell({
     selectedReasoningEffort,
     liveRepositoryIds,
     liveThreadIds,
-    threadToDelete,
+    threadToArchive,
     setActionError,
-    setThreadToDelete,
+    setThreadToArchive,
     onAfterCreateThread,
-    onAfterDeleteThread,
+    onAfterArchiveThread,
   });
 
   useEffect(() => {
@@ -558,7 +478,7 @@ export function RepositoryShell({
         onSwitchRepository={handleSwitchRepository}
         selectedThreadId={effectiveSelectedThreadId}
         onSelectThread={handleSelectThread}
-        onDeleteThread={setThreadToDelete}
+        onDeleteThread={setThreadToArchive}
         onRequestNewThread={handleRequestNewThread}
         onImported={handleImported}
         onError={setActionError}
@@ -603,7 +523,10 @@ export function RepositoryShell({
                 onClick={() => void handleRestoreRepo()}
               >
                 <ArrowCounterClockwiseIcon weight="bold" />
-                {isRestoringRepo ? "Restoring…" : "Restore"}
+                <ButtonStateText
+                  current={isRestoringRepo ? "Restoring…" : "Restore"}
+                  states={["Restore", "Restoring…"]}
+                />
               </Button>
             </div>
           </div>
@@ -611,7 +534,13 @@ export function RepositoryShell({
 
         {actionError ? (
           <div className="border-b border-border px-6 py-3">
-            <AppNotice title="Action failed" message={actionError} tone="error" />
+            <AppNotice
+              title="Action failed"
+              message={actionError}
+              tone="error"
+              onDismiss={() => setActionError(null)}
+              dismissLabel="Dismiss action error"
+            />
           </div>
         ) : actionNotice ? (
           <div className="border-b border-border px-6 py-3">
@@ -704,14 +633,14 @@ export function RepositoryShell({
       ) : null}
 
       <ConfirmDialog
-        open={threadToDelete !== null}
-        onOpenChange={(open) => !open && setThreadToDelete(null)}
-        title="Delete thread"
-        description="This will permanently delete this thread and all its messages. This action cannot be undone."
-        actionLabel="Delete thread"
-        loadingLabel="Deleting…"
-        isPending={isDeletingThread}
-        onConfirm={() => void handleDeleteThread()}
+        open={threadToArchive !== null}
+        onOpenChange={(open) => !open && setThreadToArchive(null)}
+        title="Archive thread"
+        description="This removes the thread from active history. You can restore or permanently delete it from Archive."
+        actionLabel="Archive thread"
+        loadingLabel="Archiving…"
+        isPending={isArchivingThread}
+        onConfirm={() => void handleArchiveThread()}
       />
 
       <ConfirmDialog
@@ -790,7 +719,7 @@ function ImportFailedBanner({
           disabled={isSyncing}
           onClick={onRetry}
         >
-          {isSyncing ? "Retrying…" : "Retry sync"}
+          <ButtonStateText current={isSyncing ? "Retrying…" : "Retry sync"} states={["Retry sync", "Retrying…"]} />
         </Button>
       </div>
       {errorMessage ? (

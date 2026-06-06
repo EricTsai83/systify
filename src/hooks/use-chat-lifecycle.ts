@@ -6,10 +6,10 @@ import { toUserErrorMessage } from "@/lib/errors";
 import type { ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } from "@/lib/types";
 
 /**
- * Owns the in-flight reply lifecycle (send, cancel) plus thread teardown.
+ * Owns the in-flight reply lifecycle (send, cancel) plus thread archive.
  * Selection-aware but selection-state-agnostic: callers pass the current
- * thread / repository and the thread queued for deletion, and the hook hands
- * back navigation hooks via `onAfterCreateThread` / `onAfterDeleteThread` so
+ * thread / repository and the thread queued for archive, and the hook hands
+ * back navigation hooks via `onAfterCreateThread` / `onAfterArchiveThread` so
  * the parent can update the URL once a mutation succeeds.
  *
  * Send path branches on whether a thread already exists:
@@ -21,7 +21,7 @@ import type { ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } f
 export function useChatLifecycle({
   selectedThreadId,
   repositoryId,
-  threadToDelete,
+  threadToArchive,
   chatInput,
   chatMode,
   groundLibrary,
@@ -31,13 +31,13 @@ export function useChatLifecycle({
   selectedReasoningEffort,
   clearChatInput,
   setActionError,
-  setThreadToDelete,
+  setThreadToArchive,
   onAfterCreateThread,
-  onAfterDeleteThread,
+  onAfterArchiveThread,
 }: {
   selectedThreadId: ThreadId | null;
   repositoryId: RepositoryId | null;
-  threadToDelete: ThreadId | null;
+  threadToArchive: ThreadId | null;
   chatInput: string;
   chatMode: ChatMode;
   /**
@@ -68,14 +68,14 @@ export function useChatLifecycle({
   selectedReasoningEffort?: ReasoningEffort | null;
   clearChatInput: () => void;
   setActionError: (value: string | null) => void;
-  setThreadToDelete: (value: ThreadId | null) => void;
+  setThreadToArchive: (value: ThreadId | null) => void;
   onAfterCreateThread: (threadId: ThreadId, mode: ChatMode) => void;
-  onAfterDeleteThread: (deletedThreadId: ThreadId) => void;
+  onAfterArchiveThread: (archivedThreadId: ThreadId) => void;
 }) {
   const sendMessageMutation = useMutation(api.chat.send.sendMessage);
   const sendMessageStartingNewThreadMutation = useMutation(api.chat.send.sendMessageStartingNewThread);
   const cancelInFlightReplyMutation = useMutation(api.chat.cancel.cancelInFlightReply);
-  const deleteThreadMutation = useMutation(api.chat.threads.deleteThread);
+  const archiveThreadMutation = useMutation(api.chat.threads.archiveThread);
 
   const [isSending, handleSendMessage] = useAsyncCallback(
     useCallback(
@@ -169,27 +169,27 @@ export function useChatLifecycle({
     }, [cancelInFlightReplyMutation, selectedThreadId, setActionError]),
   );
 
-  const [isDeletingThread, handleDeleteThread] = useAsyncCallback(
+  const [isArchivingThread, handleArchiveThread] = useAsyncCallback(
     useCallback(async () => {
-      if (!threadToDelete) return;
+      if (!threadToArchive) return;
       setActionError(null);
       try {
-        await deleteThreadMutation({ threadId: threadToDelete });
-        const deletedId = threadToDelete;
-        setThreadToDelete(null);
-        if (selectedThreadId === deletedId) {
-          onAfterDeleteThread(deletedId);
+        await archiveThreadMutation({ threadId: threadToArchive });
+        const archivedId = threadToArchive;
+        setThreadToArchive(null);
+        if (selectedThreadId === archivedId) {
+          onAfterArchiveThread(archivedId);
         }
       } catch (error) {
-        setActionError(toUserErrorMessage(error, "Failed to delete the thread."));
+        setActionError(toUserErrorMessage(error, "Failed to archive the thread."));
       }
     }, [
-      deleteThreadMutation,
-      onAfterDeleteThread,
+      archiveThreadMutation,
+      onAfterArchiveThread,
       selectedThreadId,
       setActionError,
-      setThreadToDelete,
-      threadToDelete,
+      setThreadToArchive,
+      threadToArchive,
     ]),
   );
 
@@ -198,7 +198,7 @@ export function useChatLifecycle({
     handleSendMessage,
     isCancellingReply,
     handleCancelInFlightReply,
-    isDeletingThread,
-    handleDeleteThread,
+    isArchivingThread,
+    handleArchiveThread,
   };
 }

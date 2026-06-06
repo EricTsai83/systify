@@ -12,10 +12,7 @@ import {
   PromptInputTextarea,
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input";
-import {
-  PromptInputModelPicker,
-  type PromptInputModelPickerValue,
-} from "@/components/ai-elements/prompt-input-model-picker";
+import { PromptInputModelPicker } from "@/components/ai-elements/prompt-input-model-picker";
 import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-input-reasoning-picker";
 import { EmptyStateHero, PromptSuggestionList } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
@@ -23,10 +20,10 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { LibraryAskThreadTabs } from "@/components/library-ask-thread-tabs";
 import { Button } from "@/components/ui/button";
 import { useLibraryAskTabs } from "@/hooks/use-library-ask-tabs";
-import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
+import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
 import { toUserErrorMessage } from "@/lib/errors";
 import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
-import type { ArtifactId, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } from "@/lib/types";
+import type { ArtifactId, RepositoryId, ThreadId } from "@/lib/types";
 import { toast } from "sonner";
 
 const LOCKED_PLACEHOLDER = `${REPOSITORY_GUIDE_COPY.generateAction} to unlock Library Ask.`;
@@ -68,7 +65,7 @@ export function LibraryAskPanel({
 }) {
   const sendMessage = useMutation(api.chat.send.sendMessage);
   const sendMessageStartingNewThread = useMutation(api.chat.send.sendMessageStartingNewThread);
-  const deleteThread = useMutation(api.chat.threads.deleteThread);
+  const archiveThread = useMutation(api.chat.threads.archiveThread);
   const setThreadPinned = useMutation(api.chat.threads.setThreadPinned);
 
   const threads = useQuery(api.chat.threads.listThreads, { repositoryId, mode: "library" });
@@ -124,30 +121,8 @@ export function LibraryAskPanel({
   const [isStarting, setIsStarting] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<ThreadId | null>(null);
-  const [isDeletingThread, setIsDeletingThread] = useState(false);
-  // Per-thread composer model pick. Mirrors `repository-shell.tsx`
-  // — but the default cascade (thread default → capability default)
-  // resolves through `useDefaultModelPick`, so the picker shows the
-  // actual Library default on first paint instead of a placeholder.
-  const [modelByThread, setModelByThread] = useState<{
-    threadId: ThreadId | null;
-    provider: LlmProvider | null;
-    modelName: string | null;
-  }>({ threadId: null, provider: null, modelName: null });
-  const [reasoningByThread, setReasoningByThread] = useState<{
-    threadId: ThreadId | null;
-    effort: ReasoningEffort | null;
-  }>({ threadId: null, effort: null });
-  const setSelectedModel = useCallback(
-    (next: PromptInputModelPickerValue) =>
-      setModelByThread({ threadId, provider: next.provider, modelName: next.modelName }),
-    [threadId],
-  );
-  const setSelectedReasoningEffort = useCallback(
-    (next: ReasoningEffort) => setReasoningByThread({ threadId, effort: next }),
-    [threadId],
-  );
+  const [pendingArchiveThreadId, setPendingArchiveThreadId] = useState<ThreadId | null>(null);
+  const [isArchivingThread, setIsArchivingThread] = useState(false);
   const submissionLockRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -200,23 +175,15 @@ export function LibraryAskPanel({
     setError(null);
   }, [threadId]);
 
-  // Compose the picker default through `useDefaultModelPick` so the
-  // trigger label shows the actual Library default on first paint —
-  // either the user's previous pick on this thread
-  // (`activeThreadProbe.defaultModelName`) or the capability default
-  // sourced from `ROLE_MODELS`. The thread-scoped `modelByThread`
-  // local state captures the user's explicit pick on top of that.
   const lockedProvider = activeThreadProbe?.lockedProvider ?? null;
   const defaultModelName = activeThreadProbe?.defaultModelName ?? null;
-  const defaultModelPick = useDefaultModelPick({
-    capability: "library",
-    threadLockedProvider: lockedProvider,
-    threadDefaultModelName: defaultModelName,
-  });
-  const userPickedModel = modelByThread.threadId === threadId ? modelByThread : null;
-  const selectedProvider = userPickedModel?.provider ?? defaultModelPick?.provider ?? lockedProvider ?? null;
-  const selectedModelName = userPickedModel?.modelName ?? defaultModelPick?.modelName ?? defaultModelName ?? null;
-  const selectedReasoningEffort = reasoningByThread.threadId === threadId ? reasoningByThread.effort : null;
+  const { selectedProvider, selectedModelName, setSelectedModel, selectedReasoningEffort, setSelectedReasoningEffort } =
+    useComposerModelPick({
+      threadId,
+      capability: "library",
+      threadLockedProvider: lockedProvider,
+      threadDefaultModelName: defaultModelName,
+    });
 
   // "+" no longer eagerly creates a thread — it transitions the panel to a
   // draft state (clears `?ask=`, focuses the composer). The thread is created
@@ -259,13 +226,13 @@ export function LibraryAskPanel({
     [setThreadPinned],
   );
 
-  const handleConfirmDelete = useCallback(async () => {
-    if (!pendingDeleteThreadId) return;
-    const target = pendingDeleteThreadId;
-    setIsDeletingThread(true);
+  const handleConfirmArchive = useCallback(async () => {
+    if (!pendingArchiveThreadId) return;
+    const target = pendingArchiveThreadId;
+    setIsArchivingThread(true);
     try {
-      await deleteThread({ threadId: target });
-      setPendingDeleteThreadId(null);
+      await archiveThread({ threadId: target });
+      setPendingArchiveThreadId(null);
       // Drop it from the open-tab set; if it was the active thread, advance
       // `?ask=` to the neighbour the close suggests.
       const nextActive = closeTab(target);
@@ -273,11 +240,11 @@ export function LibraryAskPanel({
         onSelectThread(nextActive);
       }
     } catch (caught) {
-      toast.error(toUserErrorMessage(caught, "Failed to delete thread."));
+      toast.error(toUserErrorMessage(caught, "Failed to archive thread."));
     } finally {
-      setIsDeletingThread(false);
+      setIsArchivingThread(false);
     }
-  }, [closeTab, deleteThread, onSelectThread, pendingDeleteThreadId, threadId]);
+  }, [archiveThread, closeTab, onSelectThread, pendingArchiveThreadId, threadId]);
 
   const latestAssistantInFlight = useMemo(() => {
     if (!messages) return false;
@@ -364,7 +331,7 @@ export function LibraryAskPanel({
         threads={threads}
         onSelectFromHistory={handleSelectFromHistory}
         onTogglePin={handleTogglePin}
-        onDeleteThread={setPendingDeleteThreadId}
+        onArchiveThread={setPendingArchiveThreadId}
       />
 
       {threadId ? (
@@ -500,14 +467,14 @@ export function LibraryAskPanel({
       </div>
 
       <ConfirmDialog
-        open={pendingDeleteThreadId !== null}
-        onOpenChange={(open) => !open && setPendingDeleteThreadId(null)}
-        title="Delete thread"
-        description="This will permanently delete this thread and all its messages. This action cannot be undone."
-        actionLabel="Delete thread"
-        loadingLabel="Deleting…"
-        isPending={isDeletingThread}
-        onConfirm={() => void handleConfirmDelete()}
+        open={pendingArchiveThreadId !== null}
+        onOpenChange={(open) => !open && setPendingArchiveThreadId(null)}
+        title="Archive thread"
+        description="This removes the thread from active history. You can restore or permanently delete it from Archive."
+        actionLabel="Archive thread"
+        loadingLabel="Archiving…"
+        isPending={isArchivingThread}
+        onConfirm={() => void handleConfirmArchive()}
       />
     </div>
   );

@@ -11,9 +11,9 @@ import { useChatShellLifecycle } from "@/components/chat-shell-shared/use-chat-s
 import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-thread-deletion-recovery";
 import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
-import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
+import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
-import type { ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
+import type { ChatMode, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { DEFAULT_AUTHENTICATED_PATH, modeAwareThreadPath, repolessThreadPath, repositoryPath } from "@/route-paths";
 
 /**
@@ -54,49 +54,18 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
 
   const capabilities = useThreadCapabilities(urlThreadId);
 
-  const [threadToDelete, setThreadToDelete] = useState<ThreadId | null>(null);
+  const [threadToArchive, setThreadToArchive] = useState<ThreadId | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const chatMode: ChatMode = "discuss";
 
-  // Per-thread composer model pick. Mirrors the RepositoryShell's
-  // pattern so reopening a repoless thread restores the user's last
-  // pick from `threads.defaultModelName`. The hook composes
-  //   user pick → thread default → capability default
-  // so the picker shows the actual default model on first mount
-  // rather than a placeholder.
-  const [modelByThread, setModelByThread] = useState<{
-    threadId: ThreadId | null;
-    provider: LlmProvider | null;
-    modelName: string | null;
-  }>({ threadId: null, provider: null, modelName: null });
-  const defaultModelPick = useDefaultModelPick({
-    capability: "discuss",
-    threadLockedProvider: capabilities.lockedProvider,
-    threadDefaultModelName: capabilities.defaultModelName,
-  });
-  const userPickedModel = modelByThread.threadId === urlThreadId ? modelByThread : null;
-  const selectedProvider =
-    userPickedModel?.provider ?? defaultModelPick?.provider ?? capabilities.lockedProvider ?? null;
-  const selectedModelName =
-    userPickedModel?.modelName ?? defaultModelPick?.modelName ?? capabilities.defaultModelName ?? null;
-  const setSelectedModel = useCallback(
-    (next: { provider: LlmProvider; modelName: string }) =>
-      setModelByThread({ threadId: urlThreadId, provider: next.provider, modelName: next.modelName }),
-    [urlThreadId],
-  );
-  // Per-message reasoning-effort override (see RepositoryShell for
-  // rationale — Discuss is the only mode this shell supports, so the
-  // picker mirrors that surface's affordance).
-  const [reasoningByThread, setReasoningByThread] = useState<{
-    threadId: ThreadId | null;
-    effort: ReasoningEffort | null;
-  }>({ threadId: null, effort: null });
-  const selectedReasoningEffort = reasoningByThread.threadId === urlThreadId ? reasoningByThread.effort : null;
-  const setSelectedReasoningEffort = useCallback(
-    (next: ReasoningEffort) => setReasoningByThread({ threadId: urlThreadId, effort: next }),
-    [urlThreadId],
-  );
+  const { selectedProvider, selectedModelName, setSelectedModel, selectedReasoningEffort, setSelectedReasoningEffort } =
+    useComposerModelPick({
+      threadId: urlThreadId,
+      capability: "discuss",
+      threadLockedProvider: capabilities.lockedProvider,
+      threadDefaultModelName: capabilities.defaultModelName,
+    });
 
   const recentThreadIds = useRecentThreads(urlThreadId);
   useWarmThreadSubscriptions(recentThreadIds);
@@ -108,11 +77,11 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
     [navigate],
   );
 
-  const onAfterDeleteThread = useCallback(() => {
+  const onAfterArchiveThread = useCallback(() => {
     void navigate(DEFAULT_AUTHENTICATED_PATH);
   }, [navigate]);
 
-  const { chatInput, setChatInput, isSending, handleSendMessage, isDeletingThread, handleDeleteThread } =
+  const { chatInput, setChatInput, isSending, handleSendMessage, isArchivingThread, handleArchiveThread } =
     useChatShellLifecycle({
       urlThreadId,
       repositoryId: null,
@@ -122,11 +91,11 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       selectedReasoningEffort,
       liveRepositoryIds,
       liveThreadIds,
-      threadToDelete,
+      threadToArchive,
       setActionError,
-      setThreadToDelete,
+      setThreadToArchive,
       onAfterCreateThread,
-      onAfterDeleteThread,
+      onAfterArchiveThread,
     });
 
   const onMissingThread = useCallback(() => {
@@ -177,7 +146,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
         onSwitchRepository={handleSwitchRepository}
         selectedThreadId={urlThreadId}
         onSelectThread={handleSelectThread}
-        onDeleteThread={setThreadToDelete}
+        onDeleteThread={setThreadToArchive}
         onRequestNewThread={handleRequestNewThread}
         onImported={handleImported}
         onError={setActionError}
@@ -186,7 +155,13 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       <SidebarInset>
         {actionError ? (
           <div className="border-b border-border px-6 py-3">
-            <AppNotice title="Action failed" message={actionError} tone="error" />
+            <AppNotice
+              title="Action failed"
+              message={actionError}
+              tone="error"
+              onDismiss={() => setActionError(null)}
+              dismissLabel="Dismiss action error"
+            />
           </div>
         ) : null}
 
@@ -222,14 +197,14 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       </SidebarInset>
 
       <ConfirmDialog
-        open={threadToDelete !== null}
-        onOpenChange={(open) => !open && setThreadToDelete(null)}
-        title="Delete thread"
-        description="This will permanently delete this thread and all its messages. This action cannot be undone."
-        actionLabel="Delete thread"
-        loadingLabel="Deleting…"
-        isPending={isDeletingThread}
-        onConfirm={() => void handleDeleteThread()}
+        open={threadToArchive !== null}
+        onOpenChange={(open) => !open && setThreadToArchive(null)}
+        title="Archive thread"
+        description="This removes the thread from active history. You can restore or permanently delete it from Archive."
+        actionLabel="Archive thread"
+        loadingLabel="Archiving…"
+        isPending={isArchivingThread}
+        onConfirm={() => void handleArchiveThread()}
       />
     </>
   );

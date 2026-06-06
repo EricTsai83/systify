@@ -6,6 +6,7 @@ import {
   modeAwareThreadPath,
   repolessThreadPath,
   settingsPath,
+  sharedThreadPath,
   withLibraryAskParam,
 } from "@/route-paths";
 import type { RepositoryId, ThreadId } from "@/lib/types";
@@ -45,6 +46,16 @@ describe("settingsPath", () => {
   });
 });
 
+describe("sharedThreadPath", () => {
+  test("builds the public shared thread URL", () => {
+    expect(sharedThreadPath("token_123")).toBe("/share/t/token_123");
+  });
+
+  test("encodes token path characters", () => {
+    expect(sharedThreadPath("token/123")).toBe("/share/t/token%2F123");
+  });
+});
+
 describe("isProtectedReturnTo", () => {
   test("accepts the repoless chat landing", () => {
     expect(isProtectedReturnTo("/chat")).toBe(true);
@@ -64,5 +75,9 @@ describe("isProtectedReturnTo", () => {
 
   test("accepts settings section paths", () => {
     expect(isProtectedReturnTo("/settings/customization")).toBe(true);
+  });
+
+  test("rejects public shared thread paths", () => {
+    expect(isProtectedReturnTo(sharedThreadPath("token_123"))).toBe(false);
   });
 });

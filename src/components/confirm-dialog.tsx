@@ -1,5 +1,6 @@
 import { TrashIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import {
   Dialog,
   DialogContent,
@@ -44,7 +45,7 @@ export function ConfirmDialog({
           </DialogClose>
           <Button type="button" variant="destructive" className="min-w-36" disabled={isPending} onClick={onConfirm}>
             <TrashIcon weight="bold" />
-            {isPending ? loadingLabel : actionLabel}
+            <ButtonStateText current={isPending ? loadingLabel : actionLabel} states={[actionLabel, loadingLabel]} />
           </Button>
         </DialogFooter>
       </DialogContent>

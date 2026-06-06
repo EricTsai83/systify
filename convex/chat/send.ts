@@ -26,6 +26,8 @@ import {
 } from "../lib/rateLimit";
 import { CHAT_REPLY_BUDGET_ESTIMATE_USD, reserveUserUsageBudget } from "../lib/userCost";
 import { resolveModelForReply } from "./modelSelection";
+import { recordThreadActivityInHistory, recordThreadCreatedInHistory } from "./historyState";
+import { requireActiveOwnedThread } from "./threadAccess";
 
 const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
 
@@ -166,6 +168,10 @@ async function insertChatTurn(
   // the user's last pick within the locked provider.
   threadPatch.defaultModelName = args.modelName;
   await ctx.db.patch(args.thread._id, threadPatch);
+  const updatedThread = await ctx.db.get(args.thread._id);
+  if (updatedThread) {
+    await recordThreadActivityInHistory(ctx, updatedThread);
+  }
 
   await reserveUserUsageBudget(ctx, {
     sourceId: `message:${assistantMessageId}`,
@@ -340,6 +346,7 @@ export const sendMessageStartingNewThread = mutation({
     });
 
     const thread = (await ctx.db.get(threadId))!;
+    await recordThreadCreatedInHistory(ctx, thread);
 
     let sandboxSessionId: Id<"sandboxSessions"> | undefined;
     if (groundSandbox) {
@@ -409,7 +416,7 @@ export const sendMessage = mutation({
     ctx,
     args,
   ): Promise<{ jobId: Id<"jobs">; userMessageId: Id<"messages">; assistantMessageId: Id<"messages"> }> => {
-    const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+    const { identity, doc: thread } = await requireActiveOwnedThread(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
 

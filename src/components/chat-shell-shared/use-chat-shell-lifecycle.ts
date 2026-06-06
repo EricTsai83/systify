@@ -13,7 +13,7 @@ import type { ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } f
  *     localStorage keys.
  *   - `useComposerDraft` — `localStorage`-backed composer text persisted
  *     per (repository, thread, mode).
- *   - `useChatLifecycle` — send / cancel / delete mutations.
+ *   - `useChatLifecycle` — send / cancel / archive mutations.
  */
 export function useChatShellLifecycle({
   urlThreadId,
@@ -26,11 +26,11 @@ export function useChatShellLifecycle({
   selectedReasoningEffort,
   liveRepositoryIds,
   liveThreadIds,
-  threadToDelete,
+  threadToArchive,
   setActionError,
-  setThreadToDelete,
+  setThreadToArchive,
   onAfterCreateThread,
-  onAfterDeleteThread,
+  onAfterArchiveThread,
 }: {
   urlThreadId: ThreadId | null;
   repositoryId: RepositoryId | null;
@@ -52,11 +52,11 @@ export function useChatShellLifecycle({
   selectedReasoningEffort?: ReasoningEffort | null;
   liveRepositoryIds: ReadonlySet<string> | null;
   liveThreadIds: ReadonlySet<string> | null;
-  threadToDelete: ThreadId | null;
+  threadToArchive: ThreadId | null;
   setActionError: (value: string | null) => void;
-  setThreadToDelete: (value: ThreadId | null) => void;
+  setThreadToArchive: (value: ThreadId | null) => void;
   onAfterCreateThread: (threadId: ThreadId, mode: ChatMode) => void;
-  onAfterDeleteThread: (deletedThreadId: ThreadId) => void;
+  onAfterArchiveThread: (archivedThreadId: ThreadId) => void;
 }): {
   chatInput: string;
   setChatInput: (next: string) => void;
@@ -65,8 +65,8 @@ export function useChatShellLifecycle({
   handleSendMessage: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
   isCancellingReply: boolean;
   handleCancelInFlightReply: () => Promise<void>;
-  isDeletingThread: boolean;
-  handleDeleteThread: () => Promise<void>;
+  isArchivingThread: boolean;
+  handleArchiveThread: () => Promise<void>;
 } {
   useStorageGC({ liveRepositoryIds, liveThreadIds });
   const { user, isLoading: isAuthLoading } = useAuth();
@@ -86,7 +86,7 @@ export function useChatShellLifecycle({
   const lifecycle = useChatLifecycle({
     selectedThreadId: urlThreadId,
     repositoryId,
-    threadToDelete,
+    threadToArchive,
     chatInput,
     chatMode,
     groundLibrary,
@@ -96,15 +96,20 @@ export function useChatShellLifecycle({
     selectedReasoningEffort,
     clearChatInput,
     setActionError,
-    setThreadToDelete,
+    setThreadToArchive,
     onAfterCreateThread,
-    onAfterDeleteThread,
+    onAfterArchiveThread,
   });
 
   return {
     chatInput,
     setChatInput,
     clearChatInput,
-    ...lifecycle,
+    isSending: lifecycle.isSending,
+    handleSendMessage: lifecycle.handleSendMessage,
+    isCancellingReply: lifecycle.isCancellingReply,
+    handleCancelInFlightReply: lifecycle.handleCancelInFlightReply,
+    isArchivingThread: lifecycle.isArchivingThread,
+    handleArchiveThread: lifecycle.handleArchiveThread,
   };
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useMutation, useQuery } from "convex/react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
@@ -20,7 +20,7 @@ import {
 } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { ArchiveSettingsSection } from "@/pages/archive";
+import { HistoryPage } from "@/pages/history";
 import { ResourcesSettingsSection } from "@/pages/resources";
 import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { Logo } from "@/components/logo";
@@ -50,6 +50,8 @@ import {
   CUSTOM_INSTRUCTIONS_MAX_LENGTH,
   USER_TRAIT_MAX_LENGTH,
   USER_TRAITS_MAX_COUNT,
+  areUserPreferencesEqual,
+  normalizeUserPreferences,
   type UserPreferences,
   useStatsForNerdsPreference,
   useUserPreferences,
@@ -1132,28 +1134,94 @@ function CustomizationSettingsSection({
   preferences: UserPreferences;
   setPreferences: SetUserPreferences;
 }) {
+  const [persistedStatsForNerds, setPersistedStatsForNerds] = useStatsForNerdsPreference();
+  const [draftPreferences, setDraftPreferences] = useState<UserPreferences>(() => preferences);
+  const [draftStatsForNerds, setDraftStatsForNerds] = useState(() => persistedStatsForNerds);
+  const [saveStatus, setSaveStatus] = useState<string | null>(null);
+  const previousPreferencesRef = useRef(preferences);
+  const previousStatsForNerdsRef = useRef(persistedStatsForNerds);
+
+  useEffect(() => {
+    const previousPreferences = previousPreferencesRef.current;
+    previousPreferencesRef.current = preferences;
+    setDraftPreferences((currentDraft) => {
+      if (!areUserPreferencesEqual(currentDraft, previousPreferences)) {
+        return currentDraft;
+      }
+      return areUserPreferencesEqual(currentDraft, preferences) ? currentDraft : preferences;
+    });
+  }, [preferences]);
+
+  useEffect(() => {
+    const previousStatsForNerds = previousStatsForNerdsRef.current;
+    previousStatsForNerdsRef.current = persistedStatsForNerds;
+    setDraftStatsForNerds((currentDraft) =>
+      currentDraft === previousStatsForNerds ? persistedStatsForNerds : currentDraft,
+    );
+  }, [persistedStatsForNerds]);
+
+  const setDraftUserPreferences = useCallback<SetUserPreferences>((next) => {
+    setDraftPreferences((prev) => normalizeUserPreferences(typeof next === "function" ? next(prev) : next));
+    setSaveStatus(null);
+  }, []);
+
+  const setDraftStatsForNerdsPreference = useCallback((next: boolean) => {
+    setDraftStatsForNerds(next);
+    setSaveStatus(null);
+  }, []);
+
+  const resetDraftPreferences = useCallback(() => {
+    setDraftPreferences(preferences);
+    setDraftStatsForNerds(persistedStatsForNerds);
+    setSaveStatus(null);
+  }, [persistedStatsForNerds, preferences]);
+
+  const savePreferences = useCallback(() => {
+    const normalizedPreferences = normalizeUserPreferences(draftPreferences);
+    setPreferences(normalizedPreferences);
+    setPersistedStatsForNerds(draftStatsForNerds);
+    setDraftPreferences(normalizedPreferences);
+    setSaveStatus("Saved");
+  }, [draftPreferences, draftStatsForNerds, setPersistedStatsForNerds, setPreferences]);
+
+  const isCustomizationDirty =
+    !areUserPreferencesEqual(draftPreferences, preferences) || draftStatsForNerds !== persistedStatsForNerds;
+
   return (
     <Card className="p-5">
       <div className="flex flex-col gap-5">
-        <StatsForNerdsSection />
+        <StatsForNerdsSection statsForNerds={draftStatsForNerds} setStatsForNerds={setDraftStatsForNerdsPreference} />
         <Separator />
-        <TraitsSection preferences={preferences} setPreferences={setPreferences} />
+        <TraitsSection preferences={draftPreferences} setPreferences={setDraftUserPreferences} />
         <Separator />
-        <CustomInstructionsSection preferences={preferences} setPreferences={setPreferences} />
+        <CustomInstructionsSection preferences={draftPreferences} setPreferences={setDraftUserPreferences} />
+        <div className="flex flex-col gap-3 border-t border-border pt-4 sm:flex-row sm:items-center sm:justify-between">
+          <p className="min-h-5 text-sm text-muted-foreground">
+            {isCustomizationDirty ? "Unsaved changes." : saveStatus || "Preferences saved."}
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={resetDraftPreferences}
+              disabled={!isCustomizationDirty}
+            >
+              Reset
+            </Button>
+            <Button type="button" size="sm" onClick={savePreferences} disabled={!isCustomizationDirty}>
+              <CheckCircle weight="bold" />
+              Save Preferences
+            </Button>
+          </div>
+        </div>
       </div>
     </Card>
   );
 }
 
 function HistorySettingsSection() {
-  return (
-    <section className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <h2 className="text-sm font-semibold">History</h2>
-      </div>
-      <ArchiveSettingsSection />
-    </section>
-  );
+  return <HistoryPage />;
 }
 
 function ResourcesSection() {
@@ -1519,8 +1587,13 @@ function getSafeFrom(rawFrom: string | null): string | null {
   }
 }
 
-function StatsForNerdsSection() {
-  const [statsForNerds, setStatsForNerds] = useStatsForNerdsPreference();
+function StatsForNerdsSection({
+  statsForNerds,
+  setStatsForNerds,
+}: {
+  statsForNerds: boolean;
+  setStatsForNerds: (next: boolean) => void;
+}) {
   return (
     <section className="flex flex-col gap-3">
       <div className="flex items-start justify-between gap-4">

@@ -37,7 +37,7 @@ export interface LibraryAskThreadTabsProps {
   /** History row click — the panel must `ensureOpen` the picked thread. */
   onSelectFromHistory: (thread: Doc<"threads">) => void;
   onTogglePin: (threadId: ThreadId, pinned: boolean) => void;
-  onDeleteThread: (threadId: ThreadId) => void;
+  onArchiveThread: (threadId: ThreadId) => void;
   className?: string;
 }
 
@@ -51,7 +51,7 @@ export const LibraryAskThreadTabs = memo(function LibraryAskThreadTabs({
   threads,
   onSelectFromHistory,
   onTogglePin,
-  onDeleteThread,
+  onArchiveThread,
   className,
 }: LibraryAskThreadTabsProps) {
   const prewarmThread = usePrewarmThread();
@@ -140,7 +140,7 @@ export const LibraryAskThreadTabs = memo(function LibraryAskThreadTabs({
           activeThreadId={activeThreadId}
           onSelectThread={onSelectFromHistory}
           onTogglePin={onTogglePin}
-          onDeleteThread={onDeleteThread}
+          onArchiveThread={onArchiveThread}
         />
       </div>
     </div>

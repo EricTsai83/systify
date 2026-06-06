@@ -12,6 +12,7 @@ import {
 import type { Doc } from "../../convex/_generated/dataModel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
 import { useRelativeTime, useTimeUntil } from "@/hooks/use-relative-time";
@@ -127,13 +128,18 @@ export function StatusPanel({
                   className="w-full"
                 >
                   <ArrowsClockwiseIcon weight="bold" className={cn(repositoryBusy && "motion-safe:animate-spin")} />
-                  {repositoryBusy
-                    ? "Syncing…"
-                    : hasRemoteUpdates
-                      ? "Sync updates"
-                      : repositoryFailed
-                        ? "Retry sync"
-                        : "Sync now"}
+                  <ButtonStateText
+                    current={
+                      repositoryBusy
+                        ? "Syncing…"
+                        : hasRemoteUpdates
+                          ? "Sync updates"
+                          : repositoryFailed
+                            ? "Retry sync"
+                            : "Sync now"
+                    }
+                    states={["Sync now", "Sync updates", "Retry sync", "Syncing…"]}
+                  />
                 </Button>
               }
             />
