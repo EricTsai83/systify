@@ -3,12 +3,13 @@ import { useMutation, useQuery } from "convex/react";
 import { ArrowRightIcon, SparkleIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
-import { SYSTEM_DESIGN_KIND_TITLES, type SystemDesignKind } from "../../convex/lib/systemDesign";
+import type { SystemDesignKind } from "../../convex/lib/systemDesign";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
+import { REPOSITORY_GUIDE_COPY, REPOSITORY_GUIDE_SECTION_TITLES } from "@/lib/product-copy";
 
 /**
  * Failure reason copy. `transport_rate_limit` distinguishes "provider
@@ -23,7 +24,7 @@ import { toUserErrorMessage } from "@/lib/errors";
  */
 const REASON_TEXT_ALL_LIVE_SOURCE =
   "Live access to the repository wasn't available when this ran. The next attempt will prepare it first.";
-const REASON_TEXT_ALL_EMPTY = "The model didn't produce a complete document. The next attempt may succeed.";
+const REASON_TEXT_ALL_EMPTY = "The model didn't produce a complete guide section. The next attempt may succeed.";
 const REASON_TEXT_ALL_RATE_LIMIT =
   "The provider rate-limited the run. Wait a couple of minutes and the next attempt should go through.";
 const REASON_TEXT_ALL_QUALITY =
@@ -164,11 +165,20 @@ function describeFailures(job: Doc<"jobs">): FailureDescriptor | null {
   }
 
   const titles = selections
-    .map((kind) => (kind in SYSTEM_DESIGN_KIND_TITLES ? SYSTEM_DESIGN_KIND_TITLES[kind] : "Unknown System Design"))
+    .map((kind) =>
+      kind in REPOSITORY_GUIDE_SECTION_TITLES
+        ? REPOSITORY_GUIDE_SECTION_TITLES[kind]
+        : `Unknown ${REPOSITORY_GUIDE_COPY.sectionName}`,
+    )
     .filter(Boolean);
   const title =
-    selections.length === 1 ? `Couldn't generate ${titles[0]}` : `Couldn't generate ${selections.length} documents`;
-  const buttonLabel = selections.length === 1 ? `Generate ${titles[0]}` : `Generate ${selections.length} documents`;
+    selections.length === 1
+      ? `Couldn't generate ${titles[0]}`
+      : `Couldn't generate ${selections.length} ${REPOSITORY_GUIDE_COPY.sectionNamePlural}`;
+  const buttonLabel =
+    selections.length === 1
+      ? `Generate ${titles[0]}`
+      : `Generate ${selections.length} ${REPOSITORY_GUIDE_COPY.sectionNamePlural}`;
 
   let reasonText: string;
   if (kindFailures.length === 0) {
@@ -230,7 +240,7 @@ function FailureBanner({ repositoryId, job }: { repositoryId: Id<"repositories">
         >
           <WarningCircleIcon size={14} weight="fill" className="mt-0.5 shrink-0 text-destructive" />
           <AlertDescription className="min-w-0 text-xs text-destructive">
-            {job.errorMessage ?? job.outputSummary ?? "System Design generation failed"}
+            {job.errorMessage ?? job.outputSummary ?? `${REPOSITORY_GUIDE_COPY.name} generation failed`}
           </AlertDescription>
         </Alert>
       </div>
@@ -269,8 +279,8 @@ function FailureBanner({ repositoryId, job }: { repositoryId: Id<"repositories">
           <div className="space-y-1 border-t border-destructive/20 px-4 py-2 md:px-6">
             {kindFailures.map((failure) => {
               const kindTitle =
-                failure.kind in SYSTEM_DESIGN_KIND_TITLES
-                  ? SYSTEM_DESIGN_KIND_TITLES[failure.kind as SystemDesignKind]
+                failure.kind in REPOSITORY_GUIDE_SECTION_TITLES
+                  ? REPOSITORY_GUIDE_SECTION_TITLES[failure.kind as SystemDesignKind]
                   : failure.kind;
               return (
                 <div key={failure.errorId} className="text-[10px] text-destructive/80">

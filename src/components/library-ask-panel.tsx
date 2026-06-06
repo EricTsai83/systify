@@ -25,11 +25,12 @@ import { Button } from "@/components/ui/button";
 import { useLibraryAskTabs } from "@/hooks/use-library-ask-tabs";
 import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
 import { toUserErrorMessage } from "@/lib/errors";
+import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import type { ArtifactId, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } from "@/lib/types";
 import { toast } from "sonner";
 
-const LOCKED_PLACEHOLDER = "Generate a System Design to unlock Library Ask.";
-const LOCKED_HINT = "Library Ask needs at least one artifact in this repository before you can send a question.";
+const LOCKED_PLACEHOLDER = `${REPOSITORY_GUIDE_COPY.generateAction} to unlock Library Ask.`;
+const LOCKED_HINT = "Library Ask needs at least one guide section in this repository before you can send a question.";
 
 export function LibraryAskPanel({
   repositoryId,
@@ -541,13 +542,13 @@ function NoArtifactsHint({ onGenerate }: { onGenerate?: () => void }) {
             <SparkleIcon size={20} weight="duotone" />
           </div>
         }
-        title="No artifacts to ask about yet"
-        description="Library Ask cites indexed artifacts. Generate the System Design starter set so it has something to retrieve."
+        title={REPOSITORY_GUIDE_COPY.noArtifactsTitle}
+        description={REPOSITORY_GUIDE_COPY.noArtifactsDescription}
       />
       {onGenerate ? (
         <Button type="button" size="sm" className="gap-1.5" onClick={onGenerate}>
           <SparkleIcon size={14} weight="bold" />
-          Generate System Design
+          {REPOSITORY_GUIDE_COPY.generateAction}
         </Button>
       ) : null}
     </div>

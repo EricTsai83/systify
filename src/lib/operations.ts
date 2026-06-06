@@ -1,4 +1,5 @@
 import type { Doc } from "../../convex/_generated/dataModel";
+import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import type { SandboxModeStatus } from "./types";
 
 export type OperationTone = "neutral" | "active" | "success" | "warning" | "error";
@@ -27,9 +28,9 @@ const JOB_TITLES: Record<Doc<"jobs">["kind"], string> = {
   import: "Repository sync",
   index: "Repository indexing",
   chat: "Assistant reply",
-  system_design: "System design",
+  system_design: REPOSITORY_GUIDE_COPY.name,
   cleanup: "Repository cleanup",
-  sandbox_activation: "Live source activation",
+  sandbox_activation: "Live source setup",
 };
 
 /**
@@ -180,7 +181,7 @@ export function presentRepositoryIntelligenceSurface(input: RepositoryIntelligen
   }
   return {
     title: "Knowledge ready",
-    description: "Indexed context is ready for chat and artifact generation.",
+    description: `Indexed context is ready for chat and ${REPOSITORY_GUIDE_COPY.name} generation.`,
     tone: "success",
   };
 }
@@ -202,39 +203,41 @@ export function presentSandboxSurface(input: SandboxSurfaceInput): SandboxSurfac
   const reasonCode = input.sandboxModeStatus.reasonCode;
   if (reasonCode === "available") {
     return {
-      title: "Sandbox ready",
-      description: "Sandbox-backed chat, scans, and system design can inspect the live filesystem.",
+      title: "Live source ready",
+      description: `Sandbox-grounded chat and ${REPOSITORY_GUIDE_COPY.name} generation can inspect the live filesystem.`,
       tone: "success",
       ttlExpiresAt: input.sandbox?.ttlExpiresAt,
     };
   }
   if (reasonCode === "sandbox_provisioning") {
     return {
-      title: "Sandbox starting",
+      title: "Live source starting",
       description:
-        input.sandboxModeStatus.message ?? "The live sandbox is provisioning. This usually takes under a minute.",
+        input.sandboxModeStatus.message ?? "Live source access is starting. This usually takes under a minute.",
       tone: "active",
     };
   }
   if (reasonCode === "sandbox_expired") {
     return {
-      title: "Sandbox expired",
+      title: "Live source expired",
       description:
-        input.sandboxModeStatus.message ?? "The live sandbox archived itself. Sync to provision a fresh one.",
+        input.sandboxModeStatus.message ??
+        "Live source access archived itself. Activate it to prepare a fresh session.",
       tone: "warning",
     };
   }
   if (reasonCode === "sandbox_unavailable") {
     return {
-      title: "Sandbox error",
-      description: input.sandboxModeStatus.message ?? "The sandbox failed to come up. Sync to try again.",
+      title: "Live source error",
+      description:
+        input.sandboxModeStatus.message ?? "Live source access failed to start. Try again from the chat composer.",
       tone: "error",
     };
   }
   // missing_sandbox
   return {
-    title: "Sandbox unavailable",
-    description: input.sandboxModeStatus.message ?? "Provision or refresh the sandbox to unlock live analysis.",
+    title: "Live source not ready",
+    description: input.sandboxModeStatus.message ?? "Activate live source access to unlock file-level analysis.",
     tone: "warning",
   };
 }

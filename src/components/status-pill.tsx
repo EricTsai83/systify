@@ -155,11 +155,11 @@ function derivePillState(input: {
   if (intelligenceFailed || sandboxFailed) {
     return {
       tone: "error",
-      label: intelligenceFailed ? "Sync failed" : "Sandbox error",
+      label: intelligenceFailed ? "Sync failed" : "Live source error",
       icon: "alert",
       detail: intelligenceFailed
         ? "Repository import failed. Open the panel to retry."
-        : (input.sandboxModeStatus.message ?? "Sandbox is unavailable. Open the panel for details."),
+        : (input.sandboxModeStatus.message ?? "Live source access is unavailable. Open the panel for details."),
     };
   }
 

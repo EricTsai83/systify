@@ -171,7 +171,7 @@ describe("SystemDesignStatusBanner", () => {
     setMutation(async () => undefined);
     render(<SystemDesignStatusBanner repositoryId={repositoryId} />);
     expect(screen.getByText("Couldn't generate Data Model Overview")).toBeInTheDocument();
-    expect(screen.getByText(/The model didn't produce a complete document/)).toBeInTheDocument();
+    expect(screen.getByText(/The model didn't produce a complete guide section/)).toBeInTheDocument();
   });
 
   test("maps transport_rate_limit to the rate-limit reason text", () => {
@@ -308,9 +308,9 @@ describe("SystemDesignStatusBanner", () => {
     );
     setMutation(async () => undefined);
     render(<SystemDesignStatusBanner repositoryId={repositoryId} />);
-    expect(screen.getByText("Couldn't generate 2 documents")).toBeInTheDocument();
+    expect(screen.getByText("Couldn't generate 2 guide sections")).toBeInTheDocument();
     expect(screen.getByText(/Some documents couldn't be generated/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Generate 2 documents/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Generate 2 guide sections/ })).toBeInTheDocument();
   });
 
   test("retry click invokes requestSystemDesignGeneration with the failed kinds", async () => {
@@ -350,8 +350,8 @@ describe("SystemDesignStatusBanner", () => {
     );
     setMutation(async () => undefined);
     render(<SystemDesignStatusBanner repositoryId={repositoryId} />);
-    expect(screen.getByText("Couldn't generate 2 documents")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Generate 2 documents/ })).toBeInTheDocument();
+    expect(screen.getByText("Couldn't generate 2 guide sections")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Generate 2 guide sections/ })).toBeInTheDocument();
   });
 
   test("falls back to errorMessage when no selections or kindFailures are persisted", () => {

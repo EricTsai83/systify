@@ -1,6 +1,7 @@
 import { SparkleIcon } from "@phosphor-icons/react";
 import { FolderNavigator } from "@/components/folder-navigator";
 import { Button } from "@/components/ui/button";
+import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import type { ArtifactId, ArtifactListItem, FolderId, RepositoryId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -37,7 +38,7 @@ export function LibraryTree({
   return (
     <div className={cn("flex h-full min-h-0 flex-col", className)}>
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-sm font-semibold">System Design Documents</span>
+        <span className="text-sm font-semibold">{REPOSITORY_GUIDE_COPY.name}</span>
         <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={onGenerate}>
           <SparkleIcon size={12} weight="bold" />
           Generate

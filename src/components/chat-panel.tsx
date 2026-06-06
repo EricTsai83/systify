@@ -418,7 +418,7 @@ export function ChatPanel({
       title={getSandboxStatusTitle(sandboxModeStatus.reasonCode)}
       message={
         sandboxModeStatus.message ??
-        "Sandbox mode is unavailable right now. Sync the repository to provision a fresh sandbox, or switch to a lighter mode."
+        "Live source access is unavailable right now. Sync the repository to prepare a fresh session, or turn off Sandbox grounding."
       }
       tone="warning"
       actionLabel={isSyncing ? "Syncing…" : "Sync now"}
@@ -690,17 +690,17 @@ const SEEN_THREADS_CAP = 64;
 function getSandboxStatusTitle(reasonCode: SandboxModeStatus["reasonCode"] | undefined) {
   switch (reasonCode) {
     case "sandbox_provisioning":
-      return "Sandbox still provisioning";
+      return "Live source still starting";
     case "missing_sandbox":
-      return "Sandbox not ready yet";
+      return "Live source not ready yet";
     case "sandbox_unavailable":
-      return "Sandbox no longer available";
+      return "Live source no longer available";
     case "sandbox_expired":
-      return "Sandbox expired";
+      return "Live source expired";
     default:
       // Future reason codes land here until the switch is extended. Render
       // the generic copy so the banner stays accurate rather than silently
       // mislabelling a new code as "expired".
-      return "Sandbox unavailable";
+      return "Live source unavailable";
   }
 }

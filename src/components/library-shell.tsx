@@ -3,6 +3,7 @@ import { LibraryEditor } from "@/components/library-editor";
 import { LibraryTabs } from "@/components/library-tabs";
 import { QuickOpenDialog } from "@/components/quick-open-dialog";
 import { SystemDesignStatusBanner } from "@/components/system-design-status-banner";
+import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useLibraryShortcuts } from "@/hooks/use-library-shortcuts";
 import type { LibraryTabsApi } from "@/hooks/use-library-tabs";
@@ -113,10 +114,7 @@ function LibraryEmptyState({ hasArtifacts }: { hasArtifacts: boolean }) {
       <div className="flex flex-1 items-center justify-center px-6 py-10">
         <div className="w-full max-w-md text-center">
           <h2 className="text-base font-semibold text-foreground">No documents yet</h2>
-          <p className="mt-2 text-sm text-muted-foreground">
-            This Library has no System Design documents to read. Generate them from the Ask panel on the right to get
-            started.
-          </p>
+          <p className="mt-2 text-sm text-muted-foreground">{REPOSITORY_GUIDE_COPY.emptyLibraryDescription}</p>
         </div>
       </div>
     );

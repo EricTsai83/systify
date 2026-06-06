@@ -1,6 +1,7 @@
 import { BookOpenIcon, FlaskIcon } from "@phosphor-icons/react";
 import type { RepositoryModeDisabledReasonCode } from "../../convex/lib/chatEligibility";
 import { Button } from "@/components/ui/button";
+import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import { cn } from "@/lib/utils";
 
 /**
@@ -155,7 +156,7 @@ export function GroundingToggleBar({
           onClick={() => onOpenGenerateSystemDesign?.()}
           data-testid="grounding-generate-cta"
         >
-          Generate System Design
+          {REPOSITORY_GUIDE_COPY.generateAction}
         </Button>
       ) : null}
     </div>
