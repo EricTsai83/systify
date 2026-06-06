@@ -4,7 +4,8 @@ import { nanoid } from "nanoid";
 import type { Doc, Id } from "../_generated/dataModel";
 import { mutation, query, type QueryCtx } from "../_generated/server";
 import { requireViewerIdentity } from "../lib/auth";
-import { isOwnedBy, requireOwnedDoc } from "../lib/ownedDocs";
+import { isOwnedBy } from "../lib/ownedDocs";
+import { requireActiveOwnedThread } from "./threadAccess";
 
 const THREAD_SHARE_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 const SHARE_TOKEN_LENGTH = 40;
@@ -74,12 +75,9 @@ export const createOrGetThreadShare = mutation({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+    const { identity, doc: thread } = await requireActiveOwnedThread(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
-    if (thread.deletionRequestedAt !== undefined) {
-      throw new Error("Thread not found.");
-    }
     const now = Date.now();
     const existingShares = await ctx.db
       .query("threadShares")

@@ -27,6 +27,7 @@ import {
 import { CHAT_REPLY_BUDGET_ESTIMATE_USD, reserveUserUsageBudget } from "../lib/userCost";
 import { resolveModelForReply } from "./modelSelection";
 import { recordThreadActivityInHistory, recordThreadCreatedInHistory } from "./historyState";
+import { requireActiveOwnedThread } from "./threadAccess";
 
 const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
 
@@ -415,12 +416,9 @@ export const sendMessage = mutation({
     ctx,
     args,
   ): Promise<{ jobId: Id<"jobs">; userMessageId: Id<"messages">; assistantMessageId: Id<"messages"> }> => {
-    const { identity, doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+    const { identity, doc: thread } = await requireActiveOwnedThread(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
-    if (thread.deletionRequestedAt !== undefined) {
-      throw new Error("Thread not found.");
-    }
 
     let repository: Doc<"repositories"> | null = null;
     if (thread.repositoryId) {

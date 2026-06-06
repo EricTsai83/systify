@@ -43,13 +43,13 @@ export function LibraryAskHistoryPopover({
   activeThreadId,
   onSelectThread,
   onTogglePin,
-  onDeleteThread,
+  onArchiveThread,
 }: {
   threads: Doc<"threads">[] | undefined;
   activeThreadId: ThreadId | null;
   onSelectThread: (thread: Doc<"threads">) => void;
   onTogglePin: (threadId: ThreadId, pinned: boolean) => void;
-  onDeleteThread: (threadId: ThreadId) => void;
+  onArchiveThread: (threadId: ThreadId) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -223,7 +223,7 @@ export function LibraryAskHistoryPopover({
                               className="h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
                               aria-label={`Archive ${thread.title}`}
                               title="Archive thread"
-                              onClick={() => onDeleteThread(threadId)}
+                              onClick={() => onArchiveThread(threadId)}
                             >
                               <ArchiveIcon size={13} weight="bold" />
                             </Button>

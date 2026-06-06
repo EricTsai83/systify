@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { insertTestRepository } from "../test/convex/fixtures";
 import { createTestConvex } from "../test/convex/harness";
@@ -31,7 +31,7 @@ describe("chat history groups", () => {
     vi.useRealTimers();
   });
 
-  test("groups are isolated by owner and include repository plus no-repository chats sorted by latest activity", async () => {
+  test("groups are isolated by owner and include pinned no-repository plus repository chats", async () => {
     const ownerTokenIdentifier = "user|history-groups-owner";
     const intruderTokenIdentifier = "user|history-groups-intruder";
     const { t, repositoryId } = await insertRepository(ownerTokenIdentifier, "history-groups");
@@ -59,10 +59,45 @@ describe("chat history groups", () => {
       paginationOpts: { numItems: 10, cursor: null },
     });
 
-    expect(groups.page.map((group) => group.lastThreadId)).toEqual([repositoryThread._id, noRepositoryThread._id]);
+    expect(groups.page.map((group) => group.lastThreadId)).toEqual([noRepositoryThread._id, repositoryThread._id]);
     expect(groups.page).toHaveLength(2);
-    expect(groups.page[0]?.repository?.sourceRepoFullName).toBe("acme/history-groups");
-    expect(groups.page[1]?.repositoryId).toBeUndefined();
+    expect(groups.page[0]?.repositoryId).toBeUndefined();
+    expect(groups.page[1]?.repository?.sourceRepoFullName).toBe("acme/history-groups");
+  });
+
+  test("pins no-repository chats into the first history page even when repository groups are newer", async () => {
+    const ownerTokenIdentifier = "user|history-groups-pin-no-repo";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const noRepositoryThread = await viewer.mutation(api.chat.threads.createThread, {});
+    for (let index = 0; index < 3; index += 1) {
+      vi.advanceTimersByTime(1_000);
+      const repositoryId = await insertTestRepository(t, {
+        ownerTokenIdentifier,
+        sourceUrl: `https://github.com/acme/history-pin-${index}`,
+        sourceRepoFullName: `acme/history-pin-${index}`,
+        sourceRepoName: `history-pin-${index}`,
+        visibility: "private",
+        importStatus: "completed",
+      });
+      await viewer.mutation(api.chat.threads.createThread, {
+        repositoryId,
+        mode: "discuss",
+      });
+    }
+
+    const firstPage = await viewer.query(api.chat.history.listThreadHistoryGroups, {
+      paginationOpts: { numItems: 2, cursor: null },
+    });
+    const secondPage = await viewer.query(api.chat.history.listThreadHistoryGroups, {
+      paginationOpts: { numItems: 10, cursor: firstPage.continueCursor },
+    });
+
+    expect(firstPage.page.map((group) => group.lastThreadId)).toEqual([noRepositoryThread._id, expect.any(String)]);
+    expect(firstPage.page[0]?.repositoryId).toBeUndefined();
+    expect(firstPage.page[1]?.repository?.sourceRepoFullName).toBe("acme/history-pin-2");
+    expect(secondPage.page.every((group) => group.groupKey !== "no_repository")).toBe(true);
   });
 
   test("repository and no-repository thread lists paginate independently", async () => {
@@ -129,6 +164,96 @@ describe("chat history groups", () => {
     expect(state.groups).toHaveLength(1);
     expect(state.groups[0]?.threadCount).toBe(1);
     expect(state.groups[0]?.lastThreadId).toBe(olderThread._id);
+  });
+
+  test("backfill counts legacy active threads without double-counting repaired rows", async () => {
+    const ownerTokenIdentifier = "user|history-backfill-legacy";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Legacy one",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+      vi.advanceTimersByTime(1_000);
+      await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Legacy two",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+    });
+
+    await t.mutation(internal.chat.history.backfillChatHistoryGroups, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    await t.mutation(internal.chat.history.backfillChatHistoryGroups, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+
+    const groups = await viewer.query(api.chat.history.listThreadHistoryGroups, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    const repairedRows = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("threads")
+        .withIndex("by_ownerTokenIdentifier_and_historyGroupKey_and_lastMessageAt", (q) =>
+          q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("historyGroupKey", "no_repository"),
+        )
+        .collect();
+    });
+
+    expect(groups.page[0]?.threadCount).toBe(2);
+    expect(repairedRows).toHaveLength(2);
+    expect(repairedRows.every((thread) => typeof thread.historyBackfilledAt === "number")).toBe(true);
+  });
+
+  test("repair job skips inactive legacy rows so batches can drain", async () => {
+    const ownerTokenIdentifier = "user|history-backfill-inactive";
+    const t = createTestConvex();
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Legacy archived",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+        archivedAt: Date.now(),
+      });
+    });
+
+    await t.mutation(internal.chat.history.repairChatHistoryGroups, {});
+
+    const rows = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("threads")
+        .withIndex("by_historyBackfilledAt", (q) => q.eq("historyBackfilledAt", undefined))
+        .take(10);
+    });
+    expect(rows).toHaveLength(0);
+  });
+
+  test("permanently deleting an archived thread does not remove active history twice", async () => {
+    const ownerTokenIdentifier = "user|history-delete-archived-thread";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const archivedThread = await viewer.mutation(api.chat.threads.createThread, {});
+    vi.advanceTimersByTime(1_000);
+    const activeThread = await viewer.mutation(api.chat.threads.createThread, {});
+
+    await viewer.mutation(api.chat.threads.archiveThread, { threadId: archivedThread._id });
+    await viewer.mutation(api.chat.threads.deleteArchivedThread, { threadId: archivedThread._id });
+
+    const groups = await viewer.query(api.chat.history.listThreadHistoryGroups, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    expect(groups.page).toHaveLength(1);
+    expect(groups.page[0]?.threadCount).toBe(1);
+    expect(groups.page[0]?.lastThreadId).toBe(activeThread._id);
   });
 
   test("long thread delete immediately invalidates shares and removes the history group before continuation", async () => {
@@ -228,6 +353,63 @@ describe("chat history groups", () => {
     });
     expect(shareRow?.repositoryId).toBe(secondRepositoryId);
   });
+
+  test("moving a thread continues share repository scope updates across batches", async () => {
+    const ownerTokenIdentifier = "user|history-share-move-batched";
+    const { t, repositoryId: firstRepositoryId } = await insertRepository(
+      ownerTokenIdentifier,
+      "history-share-batch-a",
+    );
+    const secondRepositoryId = await insertTestRepository(t, {
+      ownerTokenIdentifier,
+      sourceUrl: "https://github.com/acme/history-share-batch-b",
+      sourceRepoFullName: "acme/history-share-batch-b",
+      sourceRepoName: "history-share-batch-b",
+      visibility: "private",
+      importStatus: "completed",
+    });
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const thread = await viewer.mutation(api.chat.threads.createThread, {
+      repositoryId: firstRepositoryId,
+      mode: "discuss",
+    });
+
+    await t.run(async (ctx) => {
+      for (let index = 0; index < 201; index += 1) {
+        await ctx.db.insert("threadShares", {
+          ownerTokenIdentifier,
+          threadId: thread._id,
+          repositoryId: firstRepositoryId,
+          token: `share-token-${index}`,
+          tokenPrefix: `share-${index}`,
+          createdAt: Date.now(),
+          expiresAt: Date.now() + THIRTY_DAYS_MS,
+        });
+      }
+    });
+
+    await viewer.mutation(api.chat.threads.setThreadRepository, {
+      threadId: thread._id,
+      repositoryId: secondRepositoryId,
+    });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const remainingOldScope = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("threadShares")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", firstRepositoryId))
+        .take(10);
+    });
+    const updatedScope = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("threadShares")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", secondRepositoryId))
+        .take(250);
+    });
+
+    expect(remainingOldScope).toHaveLength(0);
+    expect(updatedScope).toHaveLength(201);
+  });
 });
 
 describe("thread shares", () => {
@@ -273,6 +455,23 @@ describe("thread shares", () => {
     vi.advanceTimersByTime(THIRTY_DAYS_MS + 1);
 
     expect(await t.query(api.chat.threadShares.getPublicThreadShare, { token: expiring.token })).toBeNull();
+  });
+
+  test("archived threads keep existing shares but cannot create new share links", async () => {
+    const ownerTokenIdentifier = "user|thread-share-archived";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const sharedThread = await viewer.mutation(api.chat.threads.createThread, {});
+    const share = await viewer.mutation(api.chat.threadShares.createOrGetThreadShare, { threadId: sharedThread._id });
+    const unsharedThread = await viewer.mutation(api.chat.threads.createThread, {});
+
+    await viewer.mutation(api.chat.threads.archiveThread, { threadId: sharedThread._id });
+    await viewer.mutation(api.chat.threads.archiveThread, { threadId: unsharedThread._id });
+
+    expect(await t.query(api.chat.threadShares.getPublicThreadShare, { token: share.token })).not.toBeNull();
+    await expect(
+      viewer.mutation(api.chat.threadShares.createOrGetThreadShare, { threadId: unsharedThread._id }),
+    ).rejects.toThrow(/thread not found/i);
   });
 
   test("public transcript excludes private message fields and tool rows", async () => {

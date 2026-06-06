@@ -124,8 +124,8 @@ export function LibraryAskPanel({
   const [isStarting, setIsStarting] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<ThreadId | null>(null);
-  const [isDeletingThread, setIsDeletingThread] = useState(false);
+  const [pendingArchiveThreadId, setPendingArchiveThreadId] = useState<ThreadId | null>(null);
+  const [isArchivingThread, setIsArchivingThread] = useState(false);
   // Per-thread composer model pick. Mirrors `repository-shell.tsx`
   // — but the default cascade (thread default → capability default)
   // resolves through `useDefaultModelPick`, so the picker shows the
@@ -259,13 +259,13 @@ export function LibraryAskPanel({
     [setThreadPinned],
   );
 
-  const handleConfirmDelete = useCallback(async () => {
-    if (!pendingDeleteThreadId) return;
-    const target = pendingDeleteThreadId;
-    setIsDeletingThread(true);
+  const handleConfirmArchive = useCallback(async () => {
+    if (!pendingArchiveThreadId) return;
+    const target = pendingArchiveThreadId;
+    setIsArchivingThread(true);
     try {
       await archiveThread({ threadId: target });
-      setPendingDeleteThreadId(null);
+      setPendingArchiveThreadId(null);
       // Drop it from the open-tab set; if it was the active thread, advance
       // `?ask=` to the neighbour the close suggests.
       const nextActive = closeTab(target);
@@ -275,9 +275,9 @@ export function LibraryAskPanel({
     } catch (caught) {
       toast.error(toUserErrorMessage(caught, "Failed to archive thread."));
     } finally {
-      setIsDeletingThread(false);
+      setIsArchivingThread(false);
     }
-  }, [archiveThread, closeTab, onSelectThread, pendingDeleteThreadId, threadId]);
+  }, [archiveThread, closeTab, onSelectThread, pendingArchiveThreadId, threadId]);
 
   const latestAssistantInFlight = useMemo(() => {
     if (!messages) return false;
@@ -364,7 +364,7 @@ export function LibraryAskPanel({
         threads={threads}
         onSelectFromHistory={handleSelectFromHistory}
         onTogglePin={handleTogglePin}
-        onDeleteThread={setPendingDeleteThreadId}
+        onArchiveThread={setPendingArchiveThreadId}
       />
 
       {threadId ? (
@@ -500,14 +500,14 @@ export function LibraryAskPanel({
       </div>
 
       <ConfirmDialog
-        open={pendingDeleteThreadId !== null}
-        onOpenChange={(open) => !open && setPendingDeleteThreadId(null)}
+        open={pendingArchiveThreadId !== null}
+        onOpenChange={(open) => !open && setPendingArchiveThreadId(null)}
         title="Archive thread"
         description="This removes the thread from active history. You can restore or permanently delete it from Archive."
         actionLabel="Archive thread"
         loadingLabel="Archiving…"
-        isPending={isDeletingThread}
-        onConfirm={() => void handleConfirmDelete()}
+        isPending={isArchivingThread}
+        onConfirm={() => void handleConfirmArchive()}
       />
     </div>
   );

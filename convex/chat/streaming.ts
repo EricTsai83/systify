@@ -39,6 +39,7 @@ import {
   type ToolCallTraceEntry,
 } from "./toolCallEventStore";
 import { recordThreadActivityInHistory } from "./historyState";
+import { requireActiveOwnedThread } from "./threadAccess";
 
 const STALE_CHAT_JOB_ERROR_MESSAGE =
   "This reply stopped before it could finish. Try sending your message again. If it keeps happening, choose another model or check the provider configuration.";
@@ -745,7 +746,7 @@ export const getActiveMessageStream = query({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    const { doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
+    const { doc: thread } = await requireActiveOwnedThread(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
 

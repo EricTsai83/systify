@@ -1,10 +1,14 @@
 import { paginationOptsValidator } from "convex/server";
 import { v } from "convex/values";
+import { internal } from "../_generated/api";
 import { internalMutation, query, type QueryCtx } from "../_generated/server";
 import type { Doc, Id } from "../_generated/dataModel";
 import { requireViewerIdentity } from "../lib/auth";
 import { isOwnedBy, loadOwnedDoc } from "../lib/ownedDocs";
-import { refreshHistoryGroup } from "./historyState";
+import { NO_REPOSITORY_HISTORY_GROUP_KEY, repairThreadHistoryMembership } from "./historyState";
+
+const HISTORY_REPAIR_BATCH_SIZE = 100;
+const HISTORY_GROUP_PAGE_SCAN_LIMIT = 4;
 
 type HistoryRepositorySummary = {
   _id: Id<"repositories">;
@@ -65,22 +69,81 @@ async function findActiveShareForThread(
     : null;
 }
 
+async function loadNoRepositoryHistoryGroup(
+  ctx: QueryCtx,
+  ownerTokenIdentifier: string,
+): Promise<Doc<"chatHistoryGroups"> | null> {
+  const rows = await ctx.db
+    .query("chatHistoryGroups")
+    .withIndex("by_ownerTokenIdentifier_and_groupKey", (q) =>
+      q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("groupKey", NO_REPOSITORY_HISTORY_GROUP_KEY),
+    )
+    .take(1);
+  return rows[0] ?? null;
+}
+
+async function paginateHistoryGroupsExcludingNoRepository(
+  ctx: QueryCtx,
+  args: {
+    ownerTokenIdentifier: string;
+    paginationOpts: { numItems: number; cursor: string | null };
+    maxItems: number;
+  },
+) {
+  const page: Doc<"chatHistoryGroups">[] = [];
+  let cursor = args.paginationOpts.cursor;
+  let continueCursor = cursor ?? "";
+  let isDone = false;
+  let pagesScanned = 0;
+
+  while (page.length < args.maxItems && !isDone && pagesScanned < HISTORY_GROUP_PAGE_SCAN_LIMIT) {
+    const remaining = Math.max(1, args.maxItems - page.length);
+    const result = await ctx.db
+      .query("chatHistoryGroups")
+      .withIndex("by_ownerTokenIdentifier_and_lastThreadAt", (q) =>
+        q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier),
+      )
+      .order("desc")
+      .paginate({ numItems: remaining, cursor });
+    pagesScanned += 1;
+    cursor = result.continueCursor;
+    continueCursor = result.continueCursor;
+    isDone = result.isDone;
+
+    for (const group of result.page) {
+      if (group.groupKey !== NO_REPOSITORY_HISTORY_GROUP_KEY) {
+        page.push(group);
+      }
+    }
+  }
+
+  return {
+    page,
+    continueCursor,
+    isDone,
+  };
+}
+
 export const listThreadHistoryGroups = query({
   args: {
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
-    const result = await ctx.db
-      .query("chatHistoryGroups")
-      .withIndex("by_ownerTokenIdentifier_and_lastThreadAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier),
-      )
-      .order("desc")
-      .paginate(args.paginationOpts);
+    const shouldPinNoRepositoryGroup = args.paginationOpts.cursor === null;
+    const noRepositoryGroup = shouldPinNoRepositoryGroup
+      ? await loadNoRepositoryHistoryGroup(ctx, identity.tokenIdentifier)
+      : null;
+    const repositoryGroupLimit = Math.max(1, args.paginationOpts.numItems - (noRepositoryGroup ? 1 : 0));
+    const result = await paginateHistoryGroupsExcludingNoRepository(ctx, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      paginationOpts: args.paginationOpts,
+      maxItems: repositoryGroupLimit,
+    });
+    const groups = noRepositoryGroup ? [noRepositoryGroup, ...result.page] : result.page;
 
     const page = await Promise.all(
-      result.page.map(async (group) => ({
+      groups.map(async (group) => ({
         _id: group._id,
         groupKey: group.groupKey,
         repositoryId: group.repositoryId,
@@ -118,12 +181,14 @@ export const listThreadsForHistoryGroup = query({
 
     const result = await ctx.db
       .query("threads")
-      .withIndex("by_owner_repo_del_arch_last", (q) =>
-        q
-          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
-          .eq("repositoryId", repositoryId)
-          .eq("deletionRequestedAt", undefined)
-          .eq("archivedAt", undefined),
+      .withIndex(
+        "by_ownerTokenIdentifier_and_repositoryId_and_deletionRequestedAt_and_archivedAt_and_lastMessageAt",
+        (q) =>
+          q
+            .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+            .eq("repositoryId", repositoryId)
+            .eq("deletionRequestedAt", undefined)
+            .eq("archivedAt", undefined),
       )
       .order("desc")
       .paginate(args.paginationOpts);
@@ -158,26 +223,41 @@ export const backfillChatHistoryGroups = internalMutation({
   },
   handler: async (ctx, args) => {
     const result = await ctx.db.query("threads").paginate(args.paginationOpts);
-    const seenGroupKeys = new Set<string>();
-    let groupsTouched = 0;
+    let threadsRepaired = 0;
     for (const thread of result.page) {
-      const key = `${thread.ownerTokenIdentifier}:${thread.repositoryId ?? "no_repository"}`;
-      if (seenGroupKeys.has(key)) {
-        continue;
-      }
-      seenGroupKeys.add(key);
-      groupsTouched += 1;
-      await refreshHistoryGroup(ctx, {
-        ownerTokenIdentifier: thread.ownerTokenIdentifier,
-        repositoryId: thread.repositoryId,
-      });
+      await repairThreadHistoryMembership(ctx, thread);
+      threadsRepaired += 1;
     }
 
     return {
       isDone: result.isDone,
       continueCursor: result.continueCursor,
-      groupsTouched,
+      threadsRepaired,
       threadsScanned: result.page.length,
+    };
+  },
+});
+
+export const repairChatHistoryGroups = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const threads = await ctx.db
+      .query("threads")
+      .withIndex("by_historyBackfilledAt", (q) => q.eq("historyBackfilledAt", undefined))
+      .take(HISTORY_REPAIR_BATCH_SIZE);
+
+    for (const thread of threads) {
+      await repairThreadHistoryMembership(ctx, thread);
+    }
+
+    const shouldContinue = threads.length === HISTORY_REPAIR_BATCH_SIZE;
+    if (shouldContinue) {
+      await ctx.scheduler.runAfter(0, internal.chat.history.repairChatHistoryGroups, {});
+    }
+
+    return {
+      threadsRepaired: threads.length,
+      shouldContinue,
     };
   },
 });

@@ -305,6 +305,7 @@ describe("archiveThread", () => {
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
 
     const { _id: threadId } = await viewer.mutation(api.chat.threads.createThread, {});
+    await viewer.mutation(api.chat.threads.setThreadPinned, { threadId, pinned: true });
 
     await viewer.mutation(api.chat.threads.archiveThread, { threadId });
 
@@ -327,6 +328,28 @@ describe("archiveThread", () => {
 
     const activeAfterRestore = await viewer.query(api.chat.threads.listRepolessThreads, {});
     expect(activeAfterRestore.map((thread) => thread._id)).toContain(threadId);
+  });
+
+  test("archived threads reject active chat mutations", async () => {
+    const ownerTokenIdentifier = "user|archive-reject-send";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const { _id: threadId } = await viewer.mutation(api.chat.threads.createThread, {});
+    await viewer.mutation(api.chat.threads.archiveThread, { threadId });
+
+    await expect(
+      viewer.mutation(api.chat.send.sendMessage, {
+        threadId,
+        content: "This should not append to archived history.",
+      }),
+    ).rejects.toThrow(/thread not found/i);
+    await expect(
+      viewer.mutation(api.chat.threads.renameThread, {
+        threadId,
+        title: "Archived rename",
+      }),
+    ).rejects.toThrow(/thread not found/i);
   });
 });
 

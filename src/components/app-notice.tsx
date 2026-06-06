@@ -90,7 +90,11 @@ export function AppNotice({
               disabled={actionDisabled}
               onClick={onAction}
             >
-              {actionStateLabels ? <ButtonStateText current={actionLabel!} states={actionStateLabels} /> : actionLabel}
+              {actionStateLabels && actionLabel ? (
+                <ButtonStateText current={actionLabel} states={actionStateLabels} />
+              ) : (
+                actionLabel
+              )}
             </Button>
           ) : null}
           {hasDismiss ? (

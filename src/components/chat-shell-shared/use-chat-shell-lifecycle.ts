@@ -13,7 +13,7 @@ import type { ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } f
  *     localStorage keys.
  *   - `useComposerDraft` — `localStorage`-backed composer text persisted
  *     per (repository, thread, mode).
- *   - `useChatLifecycle` — send / cancel / delete mutations.
+ *   - `useChatLifecycle` — send / cancel / archive mutations.
  */
 export function useChatShellLifecycle({
   urlThreadId,
@@ -86,7 +86,7 @@ export function useChatShellLifecycle({
   const lifecycle = useChatLifecycle({
     selectedThreadId: urlThreadId,
     repositoryId,
-    threadToDelete,
+    threadToArchive: threadToDelete,
     chatInput,
     chatMode,
     groundLibrary,
@@ -96,7 +96,7 @@ export function useChatShellLifecycle({
     selectedReasoningEffort,
     clearChatInput,
     setActionError,
-    setThreadToDelete,
+    setThreadToArchive: setThreadToDelete,
     onAfterCreateThread,
     onAfterDeleteThread,
   });
@@ -105,6 +105,11 @@ export function useChatShellLifecycle({
     chatInput,
     setChatInput,
     clearChatInput,
-    ...lifecycle,
+    isSending: lifecycle.isSending,
+    handleSendMessage: lifecycle.handleSendMessage,
+    isCancellingReply: lifecycle.isCancellingReply,
+    handleCancelInFlightReply: lifecycle.handleCancelInFlightReply,
+    isDeletingThread: lifecycle.isArchivingThread,
+    handleDeleteThread: lifecycle.handleArchiveThread,
   };
 }

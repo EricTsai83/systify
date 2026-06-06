@@ -39,8 +39,11 @@ import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { modeAwareThreadPath, repolessThreadPath, sharedThreadPath } from "@/route-paths";
 
-const GROUP_INITIAL_PAGE_SIZE = 20;
-const GROUP_NEXT_PAGE_SIZE = 20;
+const GROUP_PAGE_SIZE = 8;
+const HISTORY_GROUP_ROW_HEIGHT_PX = 72;
+const HISTORY_GROUP_ROW_GAP_PX = 8;
+const CHAT_HISTORY_PAGE_MIN_HEIGHT =
+  GROUP_PAGE_SIZE * HISTORY_GROUP_ROW_HEIGHT_PX + (GROUP_PAGE_SIZE - 1) * HISTORY_GROUP_ROW_GAP_PX;
 const THREAD_INITIAL_PAGE_SIZE = 8;
 const THREAD_NEXT_PAGE_SIZE = 12;
 const SHARE_INITIAL_PAGE_SIZE = 20;
@@ -95,13 +98,12 @@ export function HistoryPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [groupPageIndex, setGroupPageIndex] = useState(0);
-  const [pendingGroupPageIndex, setPendingGroupPageIndex] = useState<number | null>(null);
 
   const {
     results: groups,
     status: groupsStatus,
     loadMore: loadMoreGroups,
-  } = usePaginatedQuery(api.chat.history.listThreadHistoryGroups, {}, { initialNumItems: GROUP_INITIAL_PAGE_SIZE });
+  } = usePaginatedQuery(api.chat.history.listThreadHistoryGroups, {}, { initialNumItems: GROUP_PAGE_SIZE });
   const {
     results: activeShares,
     status: activeSharesStatus,
@@ -109,9 +111,11 @@ export function HistoryPage() {
   } = usePaginatedQuery(api.chat.threadShares.listActiveThreadShares, {}, { initialNumItems: SHARE_INITIAL_PAGE_SIZE });
 
   const orderedGroups = useMemo(() => orderHistoryGroups(groups as HistoryGroup[]), [groups]);
+  const displayedGroupPageIndex = getLoadedPageIndex(orderedGroups.length, groupPageIndex, GROUP_PAGE_SIZE);
   const visibleGroups = useMemo(
-    () => orderedGroups.slice(groupPageIndex * GROUP_INITIAL_PAGE_SIZE, (groupPageIndex + 1) * GROUP_INITIAL_PAGE_SIZE),
-    [groupPageIndex, orderedGroups],
+    () =>
+      orderedGroups.slice(displayedGroupPageIndex * GROUP_PAGE_SIZE, (displayedGroupPageIndex + 1) * GROUP_PAGE_SIZE),
+    [displayedGroupPageIndex, orderedGroups],
   );
   const defaultOpenGroupIds = useMemo(
     () => new Set((groups as HistoryGroup[]).slice(0, DEFAULT_OPEN_GROUP_COUNT).map((group) => group._id)),
@@ -173,44 +177,40 @@ export function HistoryPage() {
   const isLoadingGroups = groupsStatus === "LoadingFirstPage";
   const canLoadMoreGroups = groupsStatus === "CanLoadMore";
   const isLoadingMoreGroups = groupsStatus === "LoadingMore";
-  const canGoToPreviousGroupPage = groupPageIndex > 0;
+  const isPendingGroupPage = groupPageIndex > displayedGroupPageIndex && (canLoadMoreGroups || isLoadingMoreGroups);
+  const canGoToPreviousGroupPage = displayedGroupPageIndex > 0 || isPendingGroupPage;
   const canGoToNextGroupPage =
-    (groupPageIndex + 1) * GROUP_INITIAL_PAGE_SIZE < orderedGroups.length || canLoadMoreGroups;
+    (displayedGroupPageIndex + 1) * GROUP_PAGE_SIZE < orderedGroups.length || canLoadMoreGroups;
   const canLoadMoreShares = activeSharesStatus === "CanLoadMore";
   const isLoadingMoreShares = activeSharesStatus === "LoadingMore";
   const groupLoadMoreState = useStableLoadMoreState({
     canLoadMore: canGoToNextGroupPage,
-    isLoadingMore: isLoadingMoreGroups || pendingGroupPageIndex !== null,
+    isLoadingMore: isLoadingMoreGroups || isPendingGroupPage,
   });
   const markGroupLoadMoreStarted = groupLoadMoreState.markLoadMoreStarted;
   const handlePreviousGroupPage = useCallback(() => {
-    setGroupPageIndex((current) => Math.max(0, current - 1));
-  }, []);
+    setGroupPageIndex(Math.max(0, displayedGroupPageIndex - 1));
+  }, [displayedGroupPageIndex]);
   const handleNextGroupPage = useCallback(() => {
-    const nextPageIndex = groupPageIndex + 1;
-    const nextStart = nextPageIndex * GROUP_INITIAL_PAGE_SIZE;
+    const nextPageIndex = displayedGroupPageIndex + 1;
+    const nextStart = nextPageIndex * GROUP_PAGE_SIZE;
     if (nextStart < orderedGroups.length) {
       setGroupPageIndex(nextPageIndex);
       return;
     }
     if (canLoadMoreGroups && !isLoadingMoreGroups) {
       markGroupLoadMoreStarted();
-      setPendingGroupPageIndex(nextPageIndex);
-      loadMoreGroups(GROUP_NEXT_PAGE_SIZE);
+      setGroupPageIndex(nextPageIndex);
+      loadMoreGroups(GROUP_PAGE_SIZE);
     }
   }, [
     canLoadMoreGroups,
-    groupPageIndex,
+    displayedGroupPageIndex,
     isLoadingMoreGroups,
     loadMoreGroups,
     markGroupLoadMoreStarted,
     orderedGroups.length,
   ]);
-
-  if (pendingGroupPageIndex !== null && orderedGroups.length > pendingGroupPageIndex * GROUP_INITIAL_PAGE_SIZE) {
-    setGroupPageIndex(pendingGroupPageIndex);
-    setPendingGroupPageIndex(null);
-  }
 
   return (
     <>
@@ -239,45 +239,52 @@ export function HistoryPage() {
             ) : null}
           </div>
 
-          {isLoadingGroups ? (
-            <HistoryGroupSkeleton />
-          ) : orderedGroups.length === 0 ? (
-            <EmptyHistoryState />
-          ) : (
-            <div className="flex flex-col gap-2">
-              {visibleGroups.map((group) => (
-                <HistoryGroupSection
-                  key={group._id}
-                  group={group}
-                  defaultOpen={defaultOpenGroupIds.has(group._id)}
-                  onOpenThread={handleOpenThread}
-                  onShareThread={handleShareThread}
-                  onRequestDelete={setPendingDelete}
-                />
-              ))}
-              <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:justify-between">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  className="w-fit"
-                  onClick={() => setIsArchiveOpen(true)}
-                >
-                  <ArchiveIcon weight="bold" />
-                  Archive
-                </Button>
-                {canGoToPreviousGroupPage || groupLoadMoreState.shouldRender ? (
-                  <PageControls
-                    canPrevious={canGoToPreviousGroupPage}
-                    canNext={groupLoadMoreState.canLoadMore}
-                    isLoadingNext={groupLoadMoreState.isLoadingMore}
-                    onPrevious={handlePreviousGroupPage}
-                    onNext={handleNextGroupPage}
-                  />
-                ) : null}
+          <div
+            className="flex flex-col overflow-hidden border border-border bg-card"
+            style={{ minHeight: CHAT_HISTORY_PAGE_MIN_HEIGHT }}
+            role="group"
+            aria-label="Chat history pages"
+          >
+            {isLoadingGroups ? (
+              <HistoryGroupSkeleton />
+            ) : orderedGroups.length === 0 ? (
+              <EmptyHistoryState />
+            ) : (
+              <div className="flex flex-1 flex-col justify-between">
+                <div className="flex flex-col">
+                  {visibleGroups.map((group) => (
+                    <HistoryGroupSection
+                      key={group._id}
+                      group={group}
+                      defaultOpen={defaultOpenGroupIds.has(group._id)}
+                      onOpenThread={handleOpenThread}
+                      onShareThread={handleShareThread}
+                      onRequestDelete={setPendingDelete}
+                    />
+                  ))}
+                </div>
               </div>
+            )}
+            <div className="mt-auto flex flex-col gap-3 border-t border-border bg-background/40 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="w-fit"
+                onClick={() => setIsArchiveOpen(true)}
+              >
+                <ArchiveIcon weight="bold" />
+                Open Archive
+              </Button>
+              <PageControls
+                canPrevious={canGoToPreviousGroupPage}
+                canNext={groupLoadMoreState.canLoadMore}
+                isLoadingNext={groupLoadMoreState.isLoadingMore}
+                onPrevious={handlePreviousGroupPage}
+                onNext={handleNextGroupPage}
+              />
             </div>
-          )}
+          </div>
         </section>
 
         <SharedThreadsSection
@@ -368,6 +375,11 @@ function PageControls({
   );
 }
 
+function getLoadedPageIndex(itemCount: number, requestedPageIndex: number, pageSize: number): number {
+  if (itemCount === 0) return 0;
+  return Math.min(requestedPageIndex, Math.ceil(itemCount / pageSize) - 1);
+}
+
 function HistoryGroupSection({
   group,
   defaultOpen,
@@ -383,7 +395,6 @@ function HistoryGroupSection({
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [pageIndex, setPageIndex] = useState(0);
-  const [pendingPageIndex, setPendingPageIndex] = useState<number | null>(null);
   const repositoryIdArg = group.repositoryId ?? null;
   const {
     results: threads,
@@ -398,22 +409,24 @@ function HistoryGroupSection({
   const canLoadMore = status === "CanLoadMore";
   const isLoadingMore = status === "LoadingMore";
   const threadRows = threads as HistoryThread[];
+  const displayedPageIndex = getLoadedPageIndex(threadRows.length, pageIndex, THREAD_INITIAL_PAGE_SIZE);
   const visibleThreads = threadRows.slice(
-    pageIndex * THREAD_INITIAL_PAGE_SIZE,
-    (pageIndex + 1) * THREAD_INITIAL_PAGE_SIZE,
+    displayedPageIndex * THREAD_INITIAL_PAGE_SIZE,
+    (displayedPageIndex + 1) * THREAD_INITIAL_PAGE_SIZE,
   );
-  const canGoToPreviousPage = pageIndex > 0;
-  const canGoToNextPage = (pageIndex + 1) * THREAD_INITIAL_PAGE_SIZE < threadRows.length || canLoadMore;
+  const isPendingPage = pageIndex > displayedPageIndex && (canLoadMore || isLoadingMore);
+  const canGoToPreviousPage = displayedPageIndex > 0 || isPendingPage;
+  const canGoToNextPage = (displayedPageIndex + 1) * THREAD_INITIAL_PAGE_SIZE < threadRows.length || canLoadMore;
   const loadMoreState = useStableLoadMoreState({
     canLoadMore: canGoToNextPage,
-    isLoadingMore: isLoadingMore || pendingPageIndex !== null,
+    isLoadingMore: isLoadingMore || isPendingPage,
   });
   const markLoadMoreStarted = loadMoreState.markLoadMoreStarted;
   const handlePreviousPage = useCallback(() => {
-    setPageIndex((current) => Math.max(0, current - 1));
-  }, []);
+    setPageIndex(Math.max(0, displayedPageIndex - 1));
+  }, [displayedPageIndex]);
   const handleNextPage = useCallback(() => {
-    const nextPageIndex = pageIndex + 1;
+    const nextPageIndex = displayedPageIndex + 1;
     const nextStart = nextPageIndex * THREAD_INITIAL_PAGE_SIZE;
     if (nextStart < threadRows.length) {
       setPageIndex(nextPageIndex);
@@ -421,19 +434,14 @@ function HistoryGroupSection({
     }
     if (canLoadMore && !isLoadingMore) {
       markLoadMoreStarted();
-      setPendingPageIndex(nextPageIndex);
+      setPageIndex(nextPageIndex);
       loadMore(THREAD_NEXT_PAGE_SIZE);
     }
-  }, [canLoadMore, isLoadingMore, loadMore, markLoadMoreStarted, pageIndex, threadRows.length]);
-
-  if (pendingPageIndex !== null && threadRows.length > pendingPageIndex * THREAD_INITIAL_PAGE_SIZE) {
-    setPageIndex(pendingPageIndex);
-    setPendingPageIndex(null);
-  }
+  }, [canLoadMore, displayedPageIndex, isLoadingMore, loadMore, markLoadMoreStarted, threadRows.length]);
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
-      <div className="border border-border bg-card">
+      <div className="border-b border-border bg-card last:border-b-0">
         <CollapsibleTrigger asChild>
           <button
             type="button"
@@ -527,7 +535,7 @@ function ThreadHistoryRow({
         </div>
         <p className="mt-1 text-xs text-muted-foreground">Latest activity {formatRelativeTime(thread.lastMessageAt)}</p>
       </div>
-      <div className="hidden shrink-0 items-center gap-1 opacity-100 transition-opacity sm:flex sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+      <div className="hidden shrink-0 items-center gap-1 sm:flex">
         <Button type="button" variant="ghost" size="sm" onClick={() => onOpenThread(thread)}>
           <ArrowSquareOutIcon weight="bold" />
           Open

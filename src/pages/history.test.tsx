@@ -148,13 +148,33 @@ describe("HistoryPage", () => {
   test("renders archive action, repository groups, no-repository group, and no search input", () => {
     renderHistoryPage();
 
-    expect(screen.getByRole("button", { name: /^archive$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /open archive/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /previous/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /next/i })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /chat history pages/i })).toHaveStyle({ minHeight: "632px" });
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
     expect(screen.getAllByText("acme/systify").length).toBeGreaterThan(0);
     expect(screen.getByText("No repository")).toBeInTheDocument();
     expect(screen.getByText("General chats that are not attached to a repository.")).toBeInTheDocument();
     expect(screen.getByText("Library Ask")).toBeInTheDocument();
     expect(screen.getByText("Chat")).toBeInTheDocument();
+  });
+
+  test("keeps archive available when chat history is empty", () => {
+    vi.mocked(usePaginatedQuery).mockImplementation((reference) => {
+      const name = functionName(reference);
+      if (name.endsWith("listThreadHistoryGroups")) return paginated([]);
+      if (name.endsWith("listActiveThreadShares")) return paginated([]);
+      if (name.endsWith("listThreadsForHistoryGroup")) return paginated([]);
+      return paginated([]);
+    });
+
+    renderHistoryPage();
+
+    expect(screen.getByText("No chat history yet.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /open archive/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /previous/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /next/i })).toBeInTheDocument();
   });
 
   test("opens repository and no-repository threads on their canonical routes", () => {

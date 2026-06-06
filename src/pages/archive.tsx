@@ -162,7 +162,7 @@ function ArchivedThreadsSection({
   const isLoadingMore = status === "LoadingMore";
   const canLoadMore = status === "CanLoadMore";
   const loadMoreState = useStableLoadMoreState({ canLoadMore, isLoadingMore });
-  const rows = archivedThreads as ArchivedThread[];
+  const rows = archivedThreads;
 
   return (
     <section className="mb-6 flex flex-col gap-3" aria-labelledby="archived-threads-heading">

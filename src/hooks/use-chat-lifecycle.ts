@@ -8,7 +8,7 @@ import type { ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } f
 /**
  * Owns the in-flight reply lifecycle (send, cancel) plus thread archive.
  * Selection-aware but selection-state-agnostic: callers pass the current
- * thread / repository and the thread queued for deletion, and the hook hands
+ * thread / repository and the thread queued for archive, and the hook hands
  * back navigation hooks via `onAfterCreateThread` / `onAfterDeleteThread` so
  * the parent can update the URL once a mutation succeeds.
  *
@@ -21,7 +21,7 @@ import type { ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } f
 export function useChatLifecycle({
   selectedThreadId,
   repositoryId,
-  threadToDelete,
+  threadToArchive,
   chatInput,
   chatMode,
   groundLibrary,
@@ -31,13 +31,13 @@ export function useChatLifecycle({
   selectedReasoningEffort,
   clearChatInput,
   setActionError,
-  setThreadToDelete,
+  setThreadToArchive,
   onAfterCreateThread,
   onAfterDeleteThread,
 }: {
   selectedThreadId: ThreadId | null;
   repositoryId: RepositoryId | null;
-  threadToDelete: ThreadId | null;
+  threadToArchive: ThreadId | null;
   chatInput: string;
   chatMode: ChatMode;
   /**
@@ -68,7 +68,7 @@ export function useChatLifecycle({
   selectedReasoningEffort?: ReasoningEffort | null;
   clearChatInput: () => void;
   setActionError: (value: string | null) => void;
-  setThreadToDelete: (value: ThreadId | null) => void;
+  setThreadToArchive: (value: ThreadId | null) => void;
   onAfterCreateThread: (threadId: ThreadId, mode: ChatMode) => void;
   onAfterDeleteThread: (deletedThreadId: ThreadId) => void;
 }) {
@@ -169,14 +169,14 @@ export function useChatLifecycle({
     }, [cancelInFlightReplyMutation, selectedThreadId, setActionError]),
   );
 
-  const [isDeletingThread, handleDeleteThread] = useAsyncCallback(
+  const [isArchivingThread, handleArchiveThread] = useAsyncCallback(
     useCallback(async () => {
-      if (!threadToDelete) return;
+      if (!threadToArchive) return;
       setActionError(null);
       try {
-        await archiveThreadMutation({ threadId: threadToDelete });
-        const deletedId = threadToDelete;
-        setThreadToDelete(null);
+        await archiveThreadMutation({ threadId: threadToArchive });
+        const deletedId = threadToArchive;
+        setThreadToArchive(null);
         if (selectedThreadId === deletedId) {
           onAfterDeleteThread(deletedId);
         }
@@ -188,8 +188,8 @@ export function useChatLifecycle({
       onAfterDeleteThread,
       selectedThreadId,
       setActionError,
-      setThreadToDelete,
-      threadToDelete,
+      setThreadToArchive,
+      threadToArchive,
     ]),
   );
 
@@ -198,7 +198,7 @@ export function useChatLifecycle({
     handleSendMessage,
     isCancellingReply,
     handleCancelInFlightReply,
-    isDeletingThread,
-    handleDeleteThread,
+    isArchivingThread,
+    handleArchiveThread,
   };
 }
