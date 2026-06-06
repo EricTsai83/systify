@@ -19,6 +19,7 @@ import { internalMutation, internalQuery } from "../_generated/server";
 import { costUsdToCents } from "../lib/llmPricing";
 import { consumeSandboxDailyCost } from "../lib/rateLimit";
 import { isDefaultTitle } from "../lib/threadDefaults";
+import { recordUserUsageEvent } from "../lib/userCost";
 
 export interface TitleGenContext {
   thread: Doc<"threads">;
@@ -95,20 +96,37 @@ export const patchThreadTitle = internalMutation({
 export const settleTitleGenCost = internalMutation({
   args: {
     threadId: v.id("threads"),
+    userMessageId: v.id("messages"),
     costUsd: v.optional(v.number()),
     ownerTokenIdentifier: v.string(),
+    inputTokens: v.optional(v.number()),
+    outputTokens: v.optional(v.number()),
+    cachedInputTokens: v.optional(v.number()),
+    cacheWriteTokens: v.optional(v.number()),
+    reasoningTokens: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const cents = costUsdToCents(args.costUsd);
-    if (cents === undefined || cents <= 0) {
-      return;
+    if (cents !== undefined && cents > 0) {
+      const thread = await ctx.db.get(args.threadId);
+      const repositoryId = thread?.repositoryId ?? null;
+      await consumeSandboxDailyCost(ctx, {
+        ownerTokenIdentifier: args.ownerTokenIdentifier,
+        repositoryId,
+        cents,
+      });
     }
-    const thread = await ctx.db.get(args.threadId);
-    const repositoryId = thread?.repositoryId ?? null;
-    await consumeSandboxDailyCost(ctx, {
+    await recordUserUsageEvent(ctx, {
+      sourceId: `title:${args.threadId}:${args.userMessageId}`,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
-      repositoryId,
-      cents,
+      feature: "titleGeneration",
+      occurredAtMs: Date.now(),
+      usd: args.costUsd,
+      inputTokens: args.inputTokens,
+      outputTokens: args.outputTokens,
+      cachedInputTokens: args.cachedInputTokens,
+      cacheWriteTokens: args.cacheWriteTokens,
+      reasoningTokens: args.reasoningTokens,
     });
   },
 });

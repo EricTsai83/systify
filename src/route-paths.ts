@@ -62,6 +62,7 @@ export const SETTINGS_PATH = `/${PROTECTED_ROUTE_SEGMENTS.settings}` as const;
 
 export const SETTINGS_SECTION_IDS = [
   "account",
+  "usage",
   "customization",
   "history",
   "resources",

@@ -39,6 +39,10 @@ describe("settingsPath", () => {
       "/settings/history?from=%2Fr%2Frepo_1%2Fdiscuss%2Fth_1%3Ftab%3Da",
     );
   });
+
+  test("builds the usage settings section URL", () => {
+    expect(settingsPath("usage")).toBe("/settings/usage");
+  });
 });
 
 describe("isProtectedReturnTo", () => {

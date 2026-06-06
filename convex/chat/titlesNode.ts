@@ -29,6 +29,7 @@ import { isDefaultTitle } from "../lib/threadDefaults";
 import { sanitizeTitle } from "../lib/titleSanitization";
 import { logErrorWithId } from "../lib/observability";
 import { ROLE_MODELS } from "../lib/llmCatalog";
+import { isUsageBudgetExceededError } from "../lib/userCost";
 import type { TitleGenContext } from "./titles";
 
 /**
@@ -41,6 +42,7 @@ import type { TitleGenContext } from "./titles";
  */
 const TITLE_PROVIDER = ROLE_MODELS.internalTitle.provider;
 const TITLE_MODEL = ROLE_MODELS.internalTitle.modelName;
+const TITLE_GENERATION_BUDGET_ESTIMATE_USD = 0.001;
 
 /**
  * Minimum trimmed length of the user's first message before we bother
@@ -104,6 +106,27 @@ export const generateThreadTitle = internalAction({
         return;
       }
 
+      const sourceId = `title:${args.threadId}:${args.userMessageId}`;
+      const occurredAtMs = Date.now();
+      try {
+        await ctx.runMutation(internal.lib.userCost.reserveUsageBudget, {
+          sourceId,
+          ownerTokenIdentifier: titleContext.thread.ownerTokenIdentifier,
+          feature: "titleGeneration",
+          estimatedCostUsd: TITLE_GENERATION_BUDGET_ESTIMATE_USD,
+          occurredAtMs,
+        });
+      } catch (error) {
+        if (isUsageBudgetExceededError(error)) {
+          logErrorWithId("chat", "title_generation_skipped_budget", error, {
+            threadId: args.threadId,
+            userMessageId: args.userMessageId,
+          });
+          return;
+        }
+        throw error;
+      }
+
       const result = await generateViaGateway(
         ctx,
         {
@@ -119,7 +142,15 @@ export const generateThreadTitle = internalAction({
           system: TITLE_SYSTEM_PROMPT,
           prompt: buildTitlePrompt(titleContext),
         },
-      );
+      ).catch(async (error: unknown) => {
+        await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
+          sourceId,
+          ownerTokenIdentifier: titleContext.thread.ownerTokenIdentifier,
+          feature: "titleGeneration",
+          occurredAtMs,
+        });
+        throw error;
+      });
 
       // Settle against the daily cap regardless of whether the title
       // sanitizer accepts the output — the LLM spend has already
@@ -128,8 +159,14 @@ export const generateThreadTitle = internalAction({
       // needed here.
       await ctx.runMutation(internal.chat.titles.settleTitleGenCost, {
         threadId: args.threadId,
+        userMessageId: args.userMessageId,
         costUsd: result.costUsd,
         ownerTokenIdentifier: titleContext.thread.ownerTokenIdentifier,
+        inputTokens: result.usage.inputTokens,
+        outputTokens: result.usage.outputTokens,
+        cachedInputTokens: result.usage.cachedInputTokens,
+        cacheWriteTokens: result.usage.cacheWriteTokens,
+        reasoningTokens: result.usage.reasoningTokens,
       });
 
       const sanitized = sanitizeTitle(result.text);

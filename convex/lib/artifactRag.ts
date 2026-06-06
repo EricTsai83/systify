@@ -12,6 +12,7 @@ const DEFAULT_RETRIEVAL_TOP_N = 8;
 const DEFAULT_RETRIEVAL_CANDIDATE_K = 20;
 const RRF_K = 60;
 const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
+const LIBRARY_RETRIEVAL_BUDGET_ESTIMATE_USD = 0.001;
 
 export interface RetrievedChunk {
   chunkId: Id<"artifactChunks">;
@@ -164,11 +165,36 @@ async function retrieveSemantic(ctx: ActionCtx, args: RetrieveArgs, candidateK: 
     ...(args.threadId !== undefined ? { threadId: args.threadId } : {}),
     ...(args.messageId !== undefined ? { messageId: args.messageId } : {}),
   };
-  const { embeddings, costUsd } = await embedViaGateway(ctx, callCtx, { values: [args.query] });
+  const sourceId = `libraryRetrieval:${args.messageId ?? args.threadId ?? "unattributed"}:${stableHash(args.query)}`;
+  const occurredAtMs = Date.now();
+  await ctx.runMutation(internal.lib.userCost.reserveUsageBudget, {
+    sourceId,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    feature: "libraryRetrieval",
+    estimatedCostUsd: LIBRARY_RETRIEVAL_BUDGET_ESTIMATE_USD,
+    occurredAtMs,
+  });
+  const { embeddings, costUsd, usage } = await embedViaGateway(ctx, callCtx, { values: [args.query] }).catch(
+    async (error: unknown) => {
+      await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
+        sourceId,
+        ownerTokenIdentifier: args.ownerTokenIdentifier,
+        feature: "libraryRetrieval",
+        occurredAtMs,
+      });
+      throw error;
+    },
+  );
   const [embedding] = embeddings;
   if (embedding === undefined) {
     // Defensive: `embedMany` returns one vector per input, so a missing
     // entry for a single-value batch implies an SDK contract change.
+    await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
+      sourceId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      feature: "libraryRetrieval",
+      occurredAtMs,
+    });
     throw new Error("artifactRag: embedViaGateway returned zero embeddings for a one-value query");
   }
 
@@ -186,6 +212,14 @@ async function retrieveSemantic(ctx: ActionCtx, args: RetrieveArgs, candidateK: 
       cents: settleCents,
     });
   }
+  await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
+    sourceId,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    feature: "libraryRetrieval",
+    occurredAtMs,
+    usd: costUsd,
+    inputTokens: usage.inputTokens,
+  });
 
   const overfetchLimit = args.artifactScope && args.artifactScope.length > 0 ? candidateK * 4 : candidateK;
   const results = await ctx.vectorSearch("artifactChunks", "by_embedding", {
@@ -249,4 +283,13 @@ function normalizeLimit(value: number | undefined, fallback: number): number {
     return fallback;
   }
   return Math.floor(value);
+}
+
+function stableHash(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
 }

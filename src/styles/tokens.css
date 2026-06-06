@@ -25,6 +25,8 @@
  *    - `warning`     — degraded state, "ready to sync"
  *    - `highlight`   — marker / unverified-claim style
  *    - `muted`, `accent`, `card`, `popover` — surface scale
+ *      `popover` is intentionally distinct from `card` so floating
+ *      surfaces do not flatten into in-page cards.
  *  If a new semantic state is needed, add a token here first; never
  *  inline a hex code or palette name into a component.
  *
@@ -120,7 +122,7 @@
   --foreground: oklch(0.216 0 0);
   --card: oklch(0.985 0 0);
   --card-foreground: oklch(0.216 0 0);
-  --popover: oklch(0.985 0 0);
+  --popover: oklch(0.946 0.003 260);
   --popover-foreground: oklch(0.216 0 0);
 
   /* Brand & neutrals */
@@ -186,7 +188,7 @@
   --foreground: oklch(0.947 0 0);
   --card: oklch(0.259 0 0);
   --card-foreground: oklch(0.947 0 0);
-  --popover: oklch(0.259 0 0);
+  --popover: oklch(0.238 0.004 260);
   --popover-foreground: oklch(0.947 0 0);
 
   /* Brand & neutrals */

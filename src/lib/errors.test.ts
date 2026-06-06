@@ -30,4 +30,31 @@ describe("toUserErrorMessage", () => {
     expect(toUserErrorMessage(new Error("Plain error message."), "Fallback message.")).toBe("Plain error message.");
     expect(toUserErrorMessage({ data: { message: "   " } }, "Fallback message.")).toBe("Fallback message.");
   });
+
+  test("renders usage-budget errors with Settings Usage copy and reset date", () => {
+    const error = Object.assign(new Error("ConvexError"), {
+      data: {
+        code: "USER_USAGE_BUDGET_EXCEEDED",
+        message: "Backend message should not win.",
+        periodEndMs: Date.UTC(2026, 5, 15, 16, 0, 0),
+      },
+    });
+
+    const message = toUserErrorMessage(error, "Fallback message.");
+    expect(message).toContain("Usage budget reached for the current cycle.");
+    expect(message).toContain("Settings → Usage");
+    expect(message).toContain("Resets");
+  });
+
+  test("omits usage-budget reset copy for invalid reset timestamps", () => {
+    const error = Object.assign(new Error("ConvexError"), {
+      data: {
+        code: "USER_USAGE_BUDGET_EXCEEDED",
+        periodEndMs: 8.64e15 + 1,
+      },
+    });
+
+    const message = toUserErrorMessage(error, "Fallback message.");
+    expect(message).toBe("Usage budget reached for the current cycle. Review Settings → Usage.");
+  });
 });

@@ -24,6 +24,7 @@ import {
   validateMermaidBlock,
   validateRequiredSections,
 } from "./lib/systemDesignPrompts";
+import { isUsageBudgetExceededError } from "./lib/userCost";
 
 /**
  * Library System Design generator.
@@ -242,6 +243,9 @@ export const runSystemDesignGeneration = internalAction({
           await ctx.runMutation(internal.systemDesign.assertKindCostBudget, {
             ownerTokenIdentifier: args.ownerTokenIdentifier,
             repositoryId: args.repositoryId,
+            jobId: args.jobId,
+            kind,
+            startedAt,
           });
 
           const result = await generateViaGateway(
@@ -358,6 +362,7 @@ export const runSystemDesignGeneration = internalAction({
         outputCharLength: outputCharLength > 0 ? outputCharLength : undefined,
         missingSections,
         startedAt,
+        sourceId: `systemDesign:${args.jobId}:${kind}:${startedAt}`,
       });
 
       if (artifactId && runStatus !== "cached_hit") {
@@ -484,6 +489,9 @@ function classifyLlmError(
     return "live_source_unavailable";
   }
   if (error instanceof LlmRateLimitError) {
+    return "transport_rate_limit";
+  }
+  if (isUsageBudgetExceededError(error)) {
     return "transport_rate_limit";
   }
   if (error instanceof APICallError) {

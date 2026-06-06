@@ -24,6 +24,7 @@ import {
   getLeaseRetryAfterMs,
   throwOperationAlreadyInProgress,
 } from "../lib/rateLimit";
+import { CHAT_REPLY_BUDGET_ESTIMATE_USD, reserveUserUsageBudget } from "../lib/userCost";
 import { resolveModelForReply } from "./modelSelection";
 
 const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
@@ -165,6 +166,14 @@ async function insertChatTurn(
   // the user's last pick within the locked provider.
   threadPatch.defaultModelName = args.modelName;
   await ctx.db.patch(args.thread._id, threadPatch);
+
+  await reserveUserUsageBudget(ctx, {
+    sourceId: `message:${assistantMessageId}`,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    feature: "chat",
+    estimatedCostUsd: CHAT_REPLY_BUDGET_ESTIMATE_USD,
+    occurredAtMs: args.now,
+  });
 
   await ctx.scheduler.runAfter(0, internal.chat.generation.generateAssistantReply, {
     threadId: args.thread._id,

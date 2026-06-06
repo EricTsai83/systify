@@ -13,6 +13,7 @@ import {
 import { embedViaGateway } from "./lib/llmGateway";
 import { costUsdToCents } from "./lib/llmPricing";
 import { logInfo, logWarn } from "./lib/observability";
+import { isUsageBudgetExceededError } from "./lib/userCost";
 
 /**
  * Embedding model used for artifact chunk indexing. Must match a
@@ -28,6 +29,7 @@ const FAILED_INDEXING_RETRY_BACKOFF_MS = 30 * 60_000;
 const FAILED_INDEXING_RETRY_LIMIT = 50;
 const PENDING_INDEXING_BACKFILL_LIMIT = 20;
 const REINDEX_ACTION_CONCURRENCY = 5;
+const ARTIFACT_INDEXING_BATCH_BUDGET_ESTIMATE_USD = 0.01;
 
 export const reindexArtifact = internalAction({
   args: { artifactId: v.id("artifacts") },
@@ -79,6 +81,8 @@ export const reindexArtifact = internalAction({
 
     try {
       const embeddings = await embedArtifactChunks(ctx, {
+        artifactId: args.artifactId,
+        artifactVersion,
         values: chunks.map((chunk) => chunk.content),
         ownerTokenIdentifier: artifact.ownerTokenIdentifier,
         repositoryId: artifact.repositoryId,
@@ -100,17 +104,20 @@ export const reindexArtifact = internalAction({
       });
       return { indexed: true, chunks: chunks.length };
     } catch (error) {
+      const usageBudgetExceeded = isUsageBudgetExceededError(error);
       await ctx.runMutation(internal.artifactStore.markChunkingStatus, {
         artifactId: args.artifactId,
         status: "failed",
         version: artifactVersion,
+        failureReason: usageBudgetExceeded ? "usage_budget_exceeded" : "embedding_failed",
       });
       logWarn("artifactIndexing", "embedding_failed", {
         artifactId: args.artifactId,
         artifactVersion,
+        reason: usageBudgetExceeded ? "usage_budget_exceeded" : "embedding_failed",
         error: error instanceof Error ? error.message : String(error),
       });
-      return { indexed: false, reason: "embedding_failed" as const };
+      return { indexed: false, reason: usageBudgetExceeded ? "usage_budget_exceeded" : ("embedding_failed" as const) };
     }
   },
 });
@@ -176,6 +183,8 @@ async function reindexArtifactsWithConcurrency(ctx: ActionCtx, artifacts: Doc<"a
 async function embedArtifactChunks(
   ctx: ActionCtx,
   args: {
+    artifactId: Doc<"artifacts">["_id"];
+    artifactVersion: number;
     values: string[];
     ownerTokenIdentifier: string;
     repositoryId: Doc<"artifacts">["repositoryId"];
@@ -186,6 +195,16 @@ async function embedArtifactChunks(
   const embeddings: number[][] = [];
   for (let index = 0; index < args.values.length; index += batchSize) {
     const batch = args.values.slice(index, index + batchSize);
+    const sourceId = `artifactIndexing:${args.artifactId}:${args.artifactVersion}:${index}`;
+    const batchStartedAt = Date.now();
+    await ctx.runMutation(internal.lib.userCost.reserveUsageBudget, {
+      sourceId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      feature: "artifactIndexing",
+      estimatedCostUsd: ARTIFACT_INDEXING_BATCH_BUDGET_ESTIMATE_USD,
+      occurredAtMs: batchStartedAt,
+    });
+
     const result = await embedViaGateway(
       ctx,
       {
@@ -196,7 +215,15 @@ async function embedArtifactChunks(
         feature: "indexing",
       },
       { values: batch },
-    );
+    ).catch(async (error: unknown) => {
+      await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
+        sourceId,
+        ownerTokenIdentifier: args.ownerTokenIdentifier,
+        feature: "artifactIndexing",
+        occurredAtMs: batchStartedAt,
+      });
+      throw error;
+    });
     embeddings.push(...result.embeddings);
 
     // Settle the batch's spend against the daily cap. `costUsdToCents`
@@ -214,6 +241,14 @@ async function embedArtifactChunks(
         cents,
       });
     }
+    await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
+      sourceId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      feature: "artifactIndexing",
+      occurredAtMs: batchStartedAt,
+      usd: result.costUsd,
+      inputTokens: result.usage.inputTokens,
+    });
 
     logInfo("artifactIndexing", "embedding_batch_completed", {
       model: modelName,

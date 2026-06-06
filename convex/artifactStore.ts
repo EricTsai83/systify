@@ -305,6 +305,7 @@ export const markChunkingStatus = internalMutation({
     artifactId: v.id("artifacts"),
     status: v.union(v.literal("pending"), v.literal("indexed"), v.literal("failed")),
     version: v.number(),
+    failureReason: v.optional(v.union(v.literal("embedding_failed"), v.literal("usage_budget_exceeded"))),
   },
   handler: async (ctx, args) => {
     const artifact = await ctx.db.get(args.artifactId);
@@ -313,6 +314,7 @@ export const markChunkingStatus = internalMutation({
     }
     await ctx.db.patch(args.artifactId, {
       chunkingStatus: args.status,
+      chunkingFailureReason: args.status === "failed" ? args.failureReason : undefined,
       lastChunkedAt: Date.now(),
       lastChunkedVersion: args.version,
     });
