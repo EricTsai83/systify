@@ -202,7 +202,7 @@ Beyond the basics, `messages` carries a few optional fields that are only popula
 
 - `provider` / `modelName`: pinned at message insertion time so a later model picker change in the composer does not retroactively re-attribute an already-finished reply. User messages carry the pair too so the per-user cost rollup can attribute spend by the model the user chose even when the corresponding assistant reply never finalized.
 - `citationMap`: numbered `[A#] -> artifactId` entries, written for artifact-grounded replies
-- `toolCalls`: frozen tool-call trace for sandbox-grounded replies (folded from `messageToolCallEvents` at terminalization: finalize or any terminal failure/recovery path; see `chat-and-analysis-pipeline.md` for the lifecycle)
+- `toolCalls`: frozen tool-call trace for sandbox-grounded replies (folded from `messageToolCallEvents` at terminalization: finalize or any terminal failure/recovery path; see `chat/chat-and-analysis-pipeline.md` for the lifecycle)
 - `estimatedInputTokens` / `estimatedOutputTokens`: usage data from the model provider, when available
 
 All three stay unset on messages that do not need them, so older rows continue to validate without backfill.
@@ -331,4 +331,3 @@ This split allows the UI, background workflows, and analysis features to share t
 - `jobs.kind = 'index'` is currently a reserved enum value; the codebase does not insert jobs with `kind: 'index'`, and indexing still happens inside the import pipeline.
 - `artifacts.version` is currently always inserted as `1`, so artifact version management is not implemented yet.
 - Import-drift indicators need `artifacts.alignedImportCommitSha`; rows without it stay silent until a writer fills the field.
-

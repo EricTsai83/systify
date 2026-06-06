@@ -204,7 +204,7 @@ export function presentSandboxSurface(input: SandboxSurfaceInput): SandboxSurfac
   if (reasonCode === "available") {
     return {
       title: "Live source ready",
-      description: `Sandbox-grounded chat and ${REPOSITORY_GUIDE_COPY.name} generation can inspect the live filesystem.`,
+      description: `Live source chat and ${REPOSITORY_GUIDE_COPY.name} generation can inspect the live filesystem.`,
       tone: "success",
       ttlExpiresAt: input.sandbox?.ttlExpiresAt,
     };

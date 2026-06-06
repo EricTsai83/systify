@@ -9,7 +9,7 @@ It does not replace provider pricing pages. External prices change, so this
 document records the pricing model, Systify-specific cost drivers, internal
 controls, and the canonical source to check before making budget or billing
 decisions. LLM-specific token math stays in
-[`architecture/cost-tracking.md`](./architecture/cost-tracking.md) and
+[`architecture/cost-tracking.md`](../architecture/cost-tracking.md) and
 `convex/lib/llmPricing.ts`.
 
 Last verified against provider documentation: 2026-06-06.
@@ -56,7 +56,7 @@ instead of mixing provider cost with customer price.
 
 Systify currently uses WorkOS for browser-side AuthKit sign-in. The frontend
 uses `VITE_WORKOS_CLIENT_ID`; Convex validates the resulting WorkOS token as a
-custom JWT. See [`auth-and-access.md`](./auth-and-access.md) for the trust
+custom JWT. See [`auth-and-access.md`](../core/auth-and-access.md) for the trust
 boundary.
 
 Provider cost model:
@@ -77,7 +77,7 @@ Current posture:
 
 - Systify only depends on AuthKit-style user management today.
 - Do not add WorkOS enterprise features without updating this document and
-  [`auth-and-access.md`](./auth-and-access.md).
+  [`auth-and-access.md`](../core/auth-and-access.md).
 
 Official source: <https://workos.com/pricing>
 
@@ -87,7 +87,7 @@ Systify uses a GitHub App for repository authorization, repository discovery,
 repository import / sync, installation lifecycle webhooks, and freshness checks.
 The app does not use personal access tokens. See
 [`github-app-integration-system-design.md`](./github-app-integration-system-design.md)
-and [`repository-lifecycle.md`](./repository-lifecycle.md).
+and [`repository-lifecycle.md`](../repository/repository-lifecycle.md).
 
 Provider cost model:
 
@@ -160,9 +160,9 @@ Official source: <https://www.convex.dev/pricing>
 
 Daytona provides the repository sandbox used by Sandbox-grounded Discuss and
 System Design generation. Repository import never provisions a sandbox. See
-[`sandbox-mode-system-design.md`](./sandbox-mode-system-design.md),
-[`sandbox-provisioning-cleanup-system-design.md`](./sandbox-provisioning-cleanup-system-design.md),
-and [`orphan-resource-handling.md`](./orphan-resource-handling.md).
+[`sandbox-mode-system-design.md`](../sandbox/sandbox-mode-system-design.md),
+[`sandbox-provisioning-cleanup-system-design.md`](../sandbox/sandbox-provisioning-cleanup-system-design.md),
+and [`orphan-resource-handling.md`](../sandbox/orphan-resource-handling.md).
 
 Provider cost model:
 
@@ -204,8 +204,8 @@ it has code-level invariants and provider-specific token math.
 
 Read these first:
 
-- [`architecture/cost-tracking.md`](./architecture/cost-tracking.md)
-- [`architecture/llm-gateway.md`](./architecture/llm-gateway.md)
+- [`architecture/cost-tracking.md`](../architecture/cost-tracking.md)
+- [`architecture/llm-gateway.md`](../architecture/llm-gateway.md)
 - `convex/lib/llmPricing.ts`
 - `convex/lib/llmCatalog.ts`
 

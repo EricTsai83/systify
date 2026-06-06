@@ -113,7 +113,7 @@ function LibraryEmptyState({ hasArtifacts }: { hasArtifacts: boolean }) {
     return (
       <div className="flex flex-1 items-center justify-center px-6 py-10">
         <div className="w-full max-w-md text-center">
-          <h2 className="text-base font-semibold text-foreground">No documents yet</h2>
+          <h2 className="text-base font-semibold text-foreground">No Repository Guide sections yet</h2>
           <p className="mt-2 text-sm text-muted-foreground">{REPOSITORY_GUIDE_COPY.emptyLibraryDescription}</p>
         </div>
       </div>

@@ -215,7 +215,7 @@ describe("SystemDesignStatusBanner", () => {
     );
     setMutation(async () => undefined);
     render(<SystemDesignStatusBanner repositoryId={repositoryId} />);
-    expect(screen.getByText(/without the required sections/i)).toBeInTheDocument();
+    expect(screen.getByText(/without the required content/i)).toBeInTheDocument();
   });
 
   test("maps transport_other to the generic transport reason text", () => {
@@ -309,7 +309,7 @@ describe("SystemDesignStatusBanner", () => {
     setMutation(async () => undefined);
     render(<SystemDesignStatusBanner repositoryId={repositoryId} />);
     expect(screen.getByText("Couldn't generate 2 guide sections")).toBeInTheDocument();
-    expect(screen.getByText(/Some documents couldn't be generated/)).toBeInTheDocument();
+    expect(screen.getByText(/Some guide sections couldn't be generated/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Generate 2 guide sections/ })).toBeInTheDocument();
   });
 

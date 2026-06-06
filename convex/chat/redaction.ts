@@ -5,7 +5,7 @@
  * `run_shell` flows into the assistant message and is persisted in the
  * `messages` table. The sandbox is ephemeral; `messages` is durable,
  * queryable, and shareable. Sandbox deletion does *not* retroactively
- * scrub `messages`. See `docs/sandbox-mode-security-system-design.md`
+ * scrub `messages`. See `docs/sandbox/sandbox-mode-security-system-design.md`
  * for the full threat model.
  *
  * `redact()` is the single chokepoint that all tool output must pass

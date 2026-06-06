@@ -135,10 +135,10 @@ const USAGE_COPY = {
     },
   },
   sandboxWorkCap: {
-    label: "Daily Sandbox Work Cap",
+    label: "Daily Live source Work Cap",
     description:
-      "Daily spend cap for sandbox-grounded work, including Sandbox-grounded chat replies and Repository Guide generation. Resets at midnight UTC.",
-    remainingSuffix: "remaining for sandbox-grounded work today. Resets at midnight UTC.",
+      "Daily spend cap for live source-grounded work, including live source-grounded chat replies and Repository Guide generation. Resets at midnight UTC.",
+    remainingSuffix: "remaining for live source-grounded work today. Resets at midnight UTC.",
   },
 } as const;
 

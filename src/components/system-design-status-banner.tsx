@@ -28,11 +28,11 @@ const REASON_TEXT_ALL_EMPTY = "The model didn't produce a complete guide section
 const REASON_TEXT_ALL_RATE_LIMIT =
   "The provider rate-limited the run. Wait a couple of minutes and the next attempt should go through.";
 const REASON_TEXT_ALL_QUALITY =
-  "Some documents came back without the required sections. Retrying usually fixes this — open the details if it persists.";
+  "Some guide sections came back without the required content. Retrying usually fixes this — open the details if it persists.";
 const REASON_TEXT_ALL_TRANSPORT =
   "A transport error stopped the run (network / provider 5xx). The error id is in the log if you need to report it.";
 const REASON_TEXT_ALL_INFRA = "An internal error stopped the run. Engineering has been notified — retry to try again.";
-const REASON_TEXT_MIXED = "Some documents couldn't be generated. The next attempt will retry the failed ones.";
+const REASON_TEXT_MIXED = "Some guide sections couldn't be generated. The next attempt will retry the failed ones.";
 const REASON_TEXT_FALLBACK = "Something stopped the run before it finished. The next attempt will start a fresh one.";
 
 /**

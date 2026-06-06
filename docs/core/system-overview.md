@@ -189,10 +189,9 @@ flowchart TD
 
 ## Further Reading
 
-- `domain-and-data-model.md`
-- `auth-and-access.md`
-- `repository-lifecycle.md`
-- `chat-and-analysis-pipeline.md`
-- `integrations-and-operations.md`
-- `orphan-resource-handling.md`
-
+- `core/domain-and-data-model.md`
+- `core/auth-and-access.md`
+- `repository/repository-lifecycle.md`
+- `chat/chat-and-analysis-pipeline.md`
+- `integrations/integrations-and-operations.md`
+- `sandbox/orphan-resource-handling.md`

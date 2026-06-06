@@ -186,9 +186,9 @@ function derivePillState(input: {
   if (sandbox.tone === "warning") {
     return {
       tone: "warning",
-      label: "Sandbox idle",
+      label: "Live source idle",
       icon: "alert",
-      detail: input.sandboxModeStatus.message ?? "Sandbox needs a refresh before live analysis.",
+      detail: input.sandboxModeStatus.message ?? "Live source needs a refresh before live analysis.",
     };
   }
 

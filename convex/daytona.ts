@@ -115,7 +115,7 @@ export async function provisionSandbox(options: CreateSandboxOptions): Promise<S
   // immediately after the clone returns via
   // `sandbox.updateNetworkSettings({ networkBlockAll: true })`
   // (gated by `DAYTONA_POST_CLONE_BLOCK_NETWORK`, requires Tier 3+).
-  // See the Architecture section of `docs/sandbox-mode-system-design.md`.
+  // See the Architecture section of `docs/sandbox/sandbox-mode-system-design.md`.
   const sandbox = await withDaytonaRetry(
     () =>
       daytona.create({
@@ -390,7 +390,7 @@ export async function cloneRepositoryInSandbox(args: {
   // Without this overwrite, `run_shell` would let the LLM
   // `cat .git/config` and exfiltrate the token into `messages`, which
   // sandbox deletion does NOT scrub. See
-  // `docs/sandbox-mode-security-system-design.md`.
+  // `docs/sandbox/sandbox-mode-security-system-design.md`.
   //
   // Unconditional: the leak is created by the clone, not by the chat
   // layer, so this is hardening rather than feature behavior. The
@@ -431,7 +431,7 @@ export async function cloneRepositoryInSandbox(args: {
   //     Tier 1/2 orgs (where the SDK call is unavailable) and for dev
   //     deployments that accept the application-layer mitigations
   //     (system prompt, deny list, output redaction, throwaway lifecycle)
-  //     as sufficient. See `docs/sandbox-mode-security-system-design.md`
+  //     as sufficient. See `docs/sandbox/sandbox-mode-security-system-design.md`
   //     for the full posture analysis.
   if (resolvePostCloneBlockNetwork()) {
     await withDaytonaRetry(() => sandbox.updateNetworkSettings({ networkBlockAll: true }), {
@@ -727,7 +727,7 @@ export function assertSandboxProvisioningConfigured(): void {
  *     warning so operators see the degraded posture in logs.
  *
  * The fall-back posture (when this flag is `false`) is documented in
- * `docs/sandbox-mode-security-system-design.md`: the application layer
+ * `docs/sandbox/sandbox-mode-security-system-design.md`: the application layer
  * (system prompt, `COMMAND_DENY_LIST`, `redact()`, throwaway lifecycle,
  * unprivileged execution) becomes the sole defense against egress-based
  * exfiltration. That is acceptable for Tier 1/2 dev deployments only;

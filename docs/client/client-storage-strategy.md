@@ -74,7 +74,7 @@ For one-off, non-id-scoped cleanup (e.g. an old key whose schema changed), call 
 Common storage-placement mistakes — these almost always indicate a misread of the decision framework above:
 
 - **Syncing per-device layout to the DB.** Sidebar width, theme, or open/closed panel state should *not* go in the DB. Forcing convergence across a 27" external monitor and a phone produces a worse experience on both — the user's intent is "this is the right width for *this screen*," not "this is my width forever."
-- **Treating identity preferences as device-local.** "My current repository" is identity, not device. Putting it in localStorage alone causes the well-known bug where a user switches repositories on laptop A, opens laptop B, and lands somewhere stale. This is exactly why `systify.activeRepositoryId` is a DB-backed value with localStorage as a first-paint cache only (see [`repository-persistence-system-design.md`](./repository-persistence-system-design.md)).
+- **Treating identity preferences as device-local.** "My current repository" is identity, not device. Putting it in localStorage alone causes the well-known bug where a user switches repositories on laptop A, opens laptop B, and lands somewhere stale. This is exactly why `systify.activeRepositoryId` is a DB-backed value with localStorage as a first-paint cache only (see [`repository-persistence-system-design.md`](../repository/repository-persistence-system-design.md)).
 - **Skipping the validator on `readJSON`.** Returning `JSON.parse(raw) as MyType` without runtime validation makes schema drift a crash instead of a cache miss. The `readJSON` helper enforces this; do not bypass it.
 - **Adding manual try/catch around storage calls.** The utilities in `src/lib/storage.ts` already swallow private-mode and quota errors. Wrapping callsites again adds noise without changing behaviour.
 - **Forgetting orphan cleanup for id-scoped keys.** Any new `prefix.{repoId}.…` key must be reachable by `useStorageGC` or it will accumulate in users' browsers.
@@ -98,6 +98,6 @@ Storage reads in `useState` initializers (not `useEffect`) ensure the correct va
 This document is the **codebase-level** strategy for client-side storage placement. It complements:
 
 - [`client-storage-architecture.md`](./client-storage-architecture.md) — the implementation-level reference: helper API contracts, `useLocalStorageBoolean` and `useStorageGC` invariants, sessionStorage vs localStorage trade-offs, and test infrastructure. Read this when you are wiring up a new callsite or changing the helpers themselves.
-- [`repository-persistence-system-design.md`](./repository-persistence-system-design.md) — the specific two-layer (localStorage cache + DB source of truth) design for the active repository pointer, plus the orphan-cleanup contract for repository deletion.
+- [`repository-persistence-system-design.md`](../repository/repository-persistence-system-design.md) — the specific two-layer (localStorage cache + DB source of truth) design for the active repository pointer, plus the orphan-cleanup contract for repository deletion.
 
 When in doubt about a new preference, start here to classify it (device vs identity vs one-time), then consult the architecture doc for the helper API, and the repository-persistence doc if it falls in the "identity, needs first-paint cache" bucket.

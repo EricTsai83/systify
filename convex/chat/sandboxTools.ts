@@ -63,7 +63,7 @@
  *      built; matched pattern types bubble up via `redactedTypes` so the
  *      LLM (and any downstream audit reader) knows that something was
  *      filtered without learning what. See
- *      `docs/sandbox-mode-security-system-design.md` for the threat model.
+ *      `docs/sandbox/sandbox-mode-security-system-design.md` for the threat model.
  *
  *   7. **`run_shell` deny list is last-mile, not the boundary.**
  *      The primary defense against destructive operations is Daytona's
@@ -73,7 +73,7 @@
  *      based by design (no shell parsing) and accepts that a determined
  *      adversary inside the LLM could rephrase past it. The system prompt
  *      reinforces "read-only inspection only" so the LLM does not even try.
- *      See `docs/sandbox-mode-system-design.md` for what Daytona enforces
+ *      See `docs/sandbox/sandbox-mode-system-design.md` for what Daytona enforces
  *      around it.
  */
 
