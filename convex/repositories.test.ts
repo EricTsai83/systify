@@ -15,6 +15,162 @@ function createTestConvex() {
 }
 
 describe("repository detail metadata", () => {
+  test("listResourceInventory returns active owned repositories with sync and sandbox state", async () => {
+    const ownerTokenIdentifier = "user|resource-inventory";
+    const otherTokenIdentifier = "user|resource-inventory-other";
+    const t = createTestConvex();
+    const now = Date.now();
+
+    const { readyRepositoryId, syncRepositoryId, sandboxId } = await t.run(async (ctx) => {
+      const readyRepositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/ready",
+        sourceRepoFullName: "acme/ready",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "ready",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 12,
+        color: "blue",
+        lastAccessedAt: now,
+        lastImportedAt: now - 60_000,
+        lastSyncedCommitSha: "abc123",
+        latestRemoteSha: "def456",
+      });
+      const sandboxId = await ctx.db.insert("sandboxes", {
+        repositoryId: readyRepositoryId,
+        ownerTokenIdentifier,
+        provider: "daytona",
+        sourceAdapter: "git_clone",
+        remoteId: "ready-remote",
+        status: "ready",
+        workDir: "/workspace",
+        repoPath: "/workspace/ready",
+        cpuLimit: 2,
+        memoryLimitGiB: 4,
+        diskLimitGiB: 10,
+        ttlExpiresAt: now + 60 * 60_000,
+        autoStopIntervalMinutes: 30,
+        autoArchiveIntervalMinutes: 60,
+        autoDeleteIntervalMinutes: 120,
+        networkBlockAll: false,
+      });
+      await ctx.db.patch(readyRepositoryId, { latestSandboxId: sandboxId });
+
+      const syncRepositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/syncing",
+        sourceRepoFullName: "acme/syncing",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "syncing",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "running",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 4,
+        color: "emerald",
+        lastAccessedAt: now,
+        lastImportedAt: now - 120_000,
+      });
+
+      await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/archived",
+        sourceRepoFullName: "acme/archived",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "archived",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 1,
+        color: "violet",
+        lastAccessedAt: now,
+        archivedAt: now,
+      });
+
+      await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/deleting",
+        sourceRepoFullName: "acme/deleting",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "deleting",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 1,
+        color: "orange",
+        lastAccessedAt: now,
+        deletionRequestedAt: now,
+      });
+
+      await ctx.db.insert("repositories", {
+        ownerTokenIdentifier: otherTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/other",
+        sourceRepoFullName: "acme/other",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "other",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 1,
+        color: "teal",
+        lastAccessedAt: now,
+      });
+
+      return { readyRepositoryId, syncRepositoryId, sandboxId };
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const inventory = await viewer.query(api.repositories.listResourceInventory, {});
+
+    expect(inventory.map((row) => row.repositoryId)).toEqual([readyRepositoryId, syncRepositoryId]);
+    expect(inventory.map((row) => row.fullName)).toEqual(["acme/ready", "acme/syncing"]);
+
+    const ready = inventory.find((row) => row.repositoryId === readyRepositoryId);
+    expect(ready).toMatchObject({
+      importStatus: "completed",
+      hasRemoteUpdates: true,
+      sandboxModeStatus: { reasonCode: "available", message: null },
+      sandbox: { status: "ready", ttlExpiresAt: now + 60 * 60_000 },
+    });
+    expect(ready?.sandbox).not.toBeNull();
+    expect(ready?.sandbox?.status).toBe("ready");
+
+    const syncing = inventory.find((row) => row.repositoryId === syncRepositoryId);
+    expect(syncing).toMatchObject({
+      importStatus: "running",
+      hasRemoteUpdates: false,
+      sandboxModeStatus: { reasonCode: "missing_sandbox" },
+      sandbox: null,
+    });
+    expect(sandboxId).toBeTruthy();
+  });
+
   test("list queries read only active repositories even when tombstones dominate the owner", async () => {
     const ownerTokenIdentifier = "user|active-list-index";
     const t = createTestConvex();

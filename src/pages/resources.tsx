@@ -1,3 +1,4 @@
+import type React from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowsClockwiseIcon,
@@ -5,17 +6,25 @@ import {
   CaretRightIcon,
   CircleNotchIcon,
   CubeIcon,
+  DatabaseIcon,
   LightningIcon,
   StackIcon,
+  WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Logo } from "@/components/logo";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useTimeUntil, useRelativeTime } from "@/hooks/use-relative-time";
-import { presentSandboxSurface, type OperationTone } from "@/lib/operations";
+import {
+  presentRepositoryIntelligenceSurface,
+  presentSandboxSurface,
+  type OperationTone,
+  type SurfaceStatus,
+} from "@/lib/operations";
 import { cn } from "@/lib/utils";
 import { DEFAULT_AUTHENTICATED_PATH, repositoryPath } from "@/route-paths";
 
@@ -83,8 +92,8 @@ export function ResourcesSettingsSection() {
   return (
     <>
       <p className="mb-4 text-sm leading-relaxed text-muted-foreground sm:mb-5">
-        Live status for every repository you have imported. Sandboxes auto-archive after their TTL — open a repository
-        to refresh or activate one.
+        Live status for every repository you have imported. Track repository knowledge, live source access, and remote
+        updates in one place. Open a repository to sync, refresh, or activate resources.
       </p>
 
       {inventory === undefined ? (
@@ -92,13 +101,16 @@ export function ResourcesSettingsSection() {
       ) : inventory.length === 0 ? (
         <ResourceEmptyState />
       ) : (
-        <ul className="mt-4 flex flex-col gap-2.5">
-          {inventory.map((row) => (
-            <li key={row.repositoryId}>
-              <ResourceRow row={row} />
-            </li>
-          ))}
-        </ul>
+        <>
+          <ResourceSummary inventory={inventory} />
+          <ul className="mt-4 flex flex-col gap-2.5">
+            {inventory.map((row) => (
+              <li key={row.repositoryId}>
+                <ResourceRow row={row} />
+              </li>
+            ))}
+          </ul>
+        </>
       )}
     </>
   );
@@ -106,7 +118,70 @@ export function ResourcesSettingsSection() {
 
 type InventoryRow = NonNullable<ReturnType<typeof useQuery<typeof api.repositories.listResourceInventory>>>[number];
 
+function ResourceSummary({ inventory }: { inventory: InventoryRow[] }) {
+  const summary = inventory.reduce(
+    (acc, row) => {
+      const intelligence = presentRepositoryIntelligenceSurface({
+        importStatus: row.importStatus,
+        isSyncing: isRepositorySyncing(row),
+        hasRemoteUpdates: row.hasRemoteUpdates,
+      });
+      const sandbox = presentSandboxSurface({
+        sandboxModeStatus: row.sandboxModeStatus,
+        sandbox: row.sandbox,
+      });
+
+      if (intelligence.tone === "error" || sandbox.tone === "error") {
+        acc.needsAttention += 1;
+      }
+      if (isRepositorySyncing(row) || sandbox.tone === "active") {
+        acc.working += 1;
+      }
+      if (row.hasRemoteUpdates) {
+        acc.updates += 1;
+      }
+      if (intelligence.tone === "success" && sandbox.tone === "success" && !row.hasRemoteUpdates) {
+        acc.ready += 1;
+      }
+      return acc;
+    },
+    { needsAttention: 0, ready: 0, updates: 0, working: 0 },
+  );
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <ResourceSummaryBadge label="Repositories" value={inventory.length} />
+      <ResourceSummaryBadge label="Ready" value={summary.ready} tone="success" />
+      <ResourceSummaryBadge label="Working" value={summary.working} tone="active" />
+      <ResourceSummaryBadge label="Needs attention" value={summary.needsAttention} tone="error" />
+      <ResourceSummaryBadge label="Updates" value={summary.updates} tone="warning" />
+    </div>
+  );
+}
+
+function ResourceSummaryBadge({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  label: string;
+  value: number;
+  tone?: OperationTone;
+}) {
+  return (
+    <Badge variant="outline" className={cn("h-7 gap-1.5", toneTextClassName(tone))}>
+      <span className="font-mono tabular-nums">{formatCount(value)}</span>
+      <span className="font-medium">{label}</span>
+    </Badge>
+  );
+}
+
 function ResourceRow({ row }: { row: InventoryRow }) {
+  const intelligence = presentRepositoryIntelligenceSurface({
+    importStatus: row.importStatus,
+    isSyncing: isRepositorySyncing(row),
+    hasRemoteUpdates: row.hasRemoteUpdates,
+  });
   const sandbox = presentSandboxSurface({
     sandboxModeStatus: row.sandboxModeStatus,
     sandbox: row.sandbox,
@@ -121,29 +196,41 @@ function ResourceRow({ row }: { row: InventoryRow }) {
           <span
             className={cn(
               "mt-0.5 grid size-8 shrink-0 place-items-center rounded-md border border-border",
-              toneClassName(sandbox.tone),
+              toneClassName(getRowTone(intelligence, sandbox)),
             )}
+            aria-hidden="true"
           >
-            <CubeIcon size={14} weight="bold" />
+            {getRowTone(intelligence, sandbox) === "error" ? (
+              <WarningCircleIcon size={14} weight="bold" />
+            ) : (
+              <CubeIcon size={14} weight="bold" />
+            )}
           </span>
           <div className="min-w-0 flex-1">
             <h3 className="truncate text-sm font-semibold tracking-tight sm:text-base">{row.fullName}</h3>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground sm:text-[13px]">
-              <span className="font-medium text-foreground">{sandbox.title}</span>
-              <span className="mx-1.5 text-muted-foreground/60">·</span>
-              {sandbox.description}
-            </p>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground sm:text-xs">
+            <div className="mt-2 grid gap-2 md:grid-cols-2">
+              <ResourceStatus
+                label="Repository knowledge"
+                surface={intelligence}
+                icon={<DatabaseIcon size={12} weight="bold" aria-hidden="true" />}
+              />
+              <ResourceStatus
+                label="Live source"
+                surface={sandbox}
+                icon={<LightningIcon size={12} weight="bold" aria-hidden="true" />}
+              />
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground sm:text-xs">
               {sandbox.ttlExpiresAt ? <SandboxExpiry ttlExpiresAt={sandbox.ttlExpiresAt} /> : null}
               {lastSyncedLabel ? (
                 <span className="inline-flex items-center gap-1">
-                  <ArrowsClockwiseIcon size={11} weight="bold" />
+                  <ArrowsClockwiseIcon size={11} weight="bold" aria-hidden="true" />
                   Synced {lastSyncedLabel}
                 </span>
               ) : null}
               {row.hasRemoteUpdates ? (
                 <span className="inline-flex items-center gap-1 text-warning">
-                  <LightningIcon size={11} weight="bold" />
+                  <LightningIcon size={11} weight="bold" aria-hidden="true" />
                   Updates available
                 </span>
               ) : null}
@@ -157,6 +244,21 @@ function ResourceRow({ row }: { row: InventoryRow }) {
         </div>
       </div>
     </Card>
+  );
+}
+
+function ResourceStatus({ label, surface, icon }: { label: string; surface: SurfaceStatus; icon: React.ReactNode }) {
+  return (
+    <div className="min-w-0 rounded-md border border-border bg-background/40 px-3 py-2">
+      <div
+        className={cn("flex min-w-0 items-center gap-1.5 text-[11px] font-semibold", toneTextClassName(surface.tone))}
+      >
+        {icon}
+        <span className="truncate">{label}</span>
+      </div>
+      <p className="mt-1 truncate text-xs font-medium text-foreground">{surface.title}</p>
+      <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-muted-foreground">{surface.description}</p>
+    </div>
   );
 }
 
@@ -206,6 +308,46 @@ function ResourceEmptyState() {
       </Button>
     </div>
   );
+}
+
+function isRepositorySyncing(row: InventoryRow) {
+  return row.importStatus === "queued" || row.importStatus === "running";
+}
+
+function getRowTone(intelligence: SurfaceStatus, sandbox: SurfaceStatus): OperationTone {
+  if (intelligence.tone === "error" || sandbox.tone === "error") {
+    return "error";
+  }
+  if (intelligence.tone === "active" || sandbox.tone === "active") {
+    return "active";
+  }
+  if (intelligence.tone === "warning" || sandbox.tone === "warning") {
+    return "warning";
+  }
+  if (intelligence.tone === "success" && sandbox.tone === "success") {
+    return "success";
+  }
+  return "neutral";
+}
+
+function formatCount(value: number) {
+  return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
+}
+
+function toneTextClassName(tone: OperationTone) {
+  switch (tone) {
+    case "active":
+      return "text-primary";
+    case "success":
+      return "text-success";
+    case "warning":
+      return "text-warning";
+    case "error":
+      return "text-destructive";
+    case "neutral":
+    default:
+      return "text-muted-foreground";
+  }
 }
 
 function toneClassName(tone: OperationTone) {
