@@ -15,7 +15,7 @@ export function RepoStatusIndicator({ sandbox }: { sandbox: { status: string; tt
     return (
       <Badge variant="destructive" className={badgeClassName}>
         <WarningCircleIcon size={10} weight="fill" />
-        Sandbox error
+        Live source error
       </Badge>
     );
   }

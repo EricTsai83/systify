@@ -42,12 +42,12 @@ function deriveStatusLabel(repoDetail: TopBarRepoDetail): string {
     return `Sync: ${repoDetail.repository.importStatus}`;
   }
 
-  if (!repoDetail.sandbox) return "Ready (no sandbox)";
+  if (!repoDetail.sandbox) return "Ready";
 
   const sb = repoDetail.sandbox;
-  if (sb.status === "failed") return "Sandbox error";
-  if (sb.status === "archived" || Date.now() > sb.ttlExpiresAt) return "Sandbox expired";
-  if (sb.status === "provisioning") return "Sandbox starting…";
+  if (sb.status === "failed") return "Live source error";
+  if (sb.status === "archived" || Date.now() > sb.ttlExpiresAt) return "Live source expired";
+  if (sb.status === "provisioning") return "Live source starting…";
   return "Ready";
 }
 
@@ -85,7 +85,7 @@ export function RepoInfoPopover({ repoDetail, title }: { repoDetail: TopBarRepoD
             <InfoRow label="Commit" value={shortSha(repoDetail.repository.lastSyncedCommitSha)} mono />
           ) : null}
           <InfoRow
-            label="Sandbox mode"
+            label="Live source"
             value={isSandboxAvailable ? "Available" : "Unavailable"}
             highlight={isSandboxAvailable ? "positive" : "negative"}
           />

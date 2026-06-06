@@ -326,7 +326,7 @@ to keep in sync.
 not id-scoped (one key, not per-repository) and is already handled by
 the fallback effect in `useRepositoryPersistence` that promotes a
 surviving repository when the active id disappears. See
-[`repository-persistence-system-design.md`](./repository-persistence-system-design.md).
+[`repository-persistence-system-design.md`](../repository/repository-persistence-system-design.md).
 
 ## sessionStorage vs localStorage
 
@@ -407,4 +407,4 @@ the other.
 ## See also
 
 - [`client-storage-strategy.md`](./client-storage-strategy.md) — placement policy and anti-patterns.
-- [`repository-persistence-system-design.md`](./repository-persistence-system-design.md) — the specific two-layer design (localStorage cache + DB source of truth) for `systify.activeRepositoryId` and the orphan-cleanup contract for repository deletion.
+- [`repository-persistence-system-design.md`](../repository/repository-persistence-system-design.md) — the specific two-layer design (localStorage cache + DB source of truth) for `systify.activeRepositoryId` and the orphan-cleanup contract for repository deletion.

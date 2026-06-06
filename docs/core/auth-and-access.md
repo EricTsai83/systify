@@ -196,7 +196,7 @@ These values are exposed to the browser:
 
 ### Convex runtime env
 
-These values must exist only in the Convex runtime. This list intentionally matches `integrations-and-operations.md`:
+These values must exist only in the Convex runtime. This list intentionally matches `integrations/integrations-and-operations.md`:
 
 - `WORKOS_CLIENT_ID`
 - `GITHUB_APP_ID`

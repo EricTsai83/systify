@@ -83,15 +83,15 @@ describe("GenerateSystemDesignDialog", () => {
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // Default: all 8 documents selected.
-    expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 8 of 8 documents.");
+    // Default: all 8 guide sections selected.
+    expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 8 of 8 guide sections.");
 
     // Toggle two documents off.
     fireEvent.click(screen.getByRole("checkbox", { name: /README Summary/i }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Security Overview/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 6 of 8 documents.");
+      expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 6 of 8 guide sections.");
     });
   });
 
@@ -103,7 +103,7 @@ describe("GenerateSystemDesignDialog", () => {
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
     // Check that the alert is displayed
-    expect(screen.getByText(/A generation is already in progress/i)).toBeInTheDocument();
+    expect(screen.getByText(/A Repository Guide run is already in progress/i)).toBeInTheDocument();
 
     // Check that checkboxes are disabled
     const checkboxes = screen.getAllByRole("checkbox");
@@ -229,7 +229,9 @@ describe("GenerateSystemDesignDialog", () => {
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    expect(screen.getByText(/3 of 8 selected documents already exist for this commit and model/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/3 of 8 selected guide sections already exist for this commit and model/i),
+    ).toBeInTheDocument();
   });
 
   test("shows error message on submission failure", async () => {

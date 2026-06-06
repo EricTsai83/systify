@@ -227,13 +227,13 @@ Recommended setup:
 
 If you want the broader architecture, start with the system design docs in `docs/`:
 
-1. `docs/system-overview.md`
-2. `docs/domain-and-data-model.md`
-3. `docs/auth-and-access.md`
-4. `docs/repository-lifecycle.md`
-5. `docs/chat-and-analysis-pipeline.md`
-6. `docs/integrations-and-operations.md`
-7. `docs/orphan-resource-handling.md`
+1. `docs/core/system-overview.md`
+2. `docs/core/domain-and-data-model.md`
+3. `docs/core/auth-and-access.md`
+4. `docs/repository/repository-lifecycle.md`
+5. `docs/chat/chat-and-analysis-pipeline.md`
+6. `docs/integrations/integrations-and-operations.md`
+7. `docs/sandbox/orphan-resource-handling.md`
 
 The document index lives in `docs/README.md`.
 

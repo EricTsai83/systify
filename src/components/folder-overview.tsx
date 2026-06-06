@@ -14,6 +14,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
 import { formatArtifactKind } from "@/lib/operations";
+import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import type { ArtifactId, FolderId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -204,8 +205,8 @@ export function FolderOverview({ folderId, onSelectArtifact, onAfterDelete, clas
             <CardHeader className="gap-1 p-4">
               <CardTitle className="text-xs">Folder is empty</CardTitle>
               <CardDescription className="text-[11px]">
-                Generate a System Design artifact or failure-mode analysis and pick this folder in the placement
-                dropdown.
+                Generate a {REPOSITORY_GUIDE_COPY.sectionName} or failure-mode analysis and pick this folder in the
+                placement dropdown.
               </CardDescription>
             </CardHeader>
           </Card>

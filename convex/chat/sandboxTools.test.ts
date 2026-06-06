@@ -439,7 +439,7 @@ describe("output redaction integration", () => {
   test("read_file: scrubs a GitHub token from content and surfaces redactedTypes", async () => {
     // Simulates `cat .git/config` after a tokened clone — the dominant
     // near-term threat documented in
-    // `docs/sandbox-mode-security-system-design.md`.
+    // `docs/sandbox/sandbox-mode-security-system-design.md`.
     const sensitive = `[remote "origin"]\n\turl = https://x-access-token:${FAKE_INSTALLATION_TOKEN}@github.com/acme/widget.git\n`;
     const downloadFile = vi.fn<SandboxFsClient["downloadFile"]>().mockResolvedValue(TEXT_ENCODER.encode(sensitive));
     const client = makeFakeFsClient({ downloadFile });

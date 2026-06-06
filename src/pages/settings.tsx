@@ -47,6 +47,7 @@ import {
   isProtectedReturnTo,
   settingsPath,
 } from "@/route-paths";
+import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 
 type SetUserPreferences = (next: UserPreferences | ((prev: UserPreferences) => UserPreferences)) => void;
 
@@ -86,17 +87,59 @@ const USD_FORMATTER = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 4,
 });
 
-const USAGE_DESCRIPTIONS = {
-  tokens:
-    "Total LLM tokens recorded in the last 30 days, including input, output, cached input, cache writes, and reasoning tokens.",
-  events:
-    "Metered LLM usage records in the last 30 days. A chat reply or a System Design generation can add one record when usage or cost is recorded.",
-  cost: "Estimated LLM provider spend for your usage in the last 30 days. This is cost telemetry, not an invoice.",
-  chat: "LLM usage from chat replies in Discuss or Library Ask during the last 30 days.",
-  systemDesign:
-    "LLM usage from Generate System Design jobs. Each artifact kind run can add a metered record while creating or refreshing Library artifacts.",
-  sandboxBudget:
-    "Daily spend cap for sandbox-grounded work. It resets at midnight UTC and is separate from regular LLM usage totals.",
+/**
+ * Presenter boundary for `getViewerUsageSummary`.
+ *
+ * The Convex query intentionally returns compact rollup names that match
+ * `userUsageDailyRollups` / `userUsageEvents` (`events`, `costUsd`,
+ * `sandboxDailyBudget`). This copy map keeps those DB-facing names stable
+ * while giving users product-language labels.
+ */
+const USAGE_COPY = {
+  section: {
+    title: "AI Usage",
+    readyStatus: "Current",
+    loadingStatus: "Loading…",
+  },
+  metrics: {
+    llmTokens: {
+      label: "LLM Tokens",
+      description:
+        "Total LLM tokens recorded in this window, including input, output, cached input, cache writes, and reasoning tokens.",
+      detail: "total tokens",
+    },
+    usageRecords: {
+      label: "Usage Records",
+      description:
+        "Count of metered usage records in this window. A recorded chat reply or Repository Guide section adds one record.",
+      detail: "metered records",
+    },
+    estimatedCost: {
+      label: "Estimated LLM Cost",
+      description: "Estimated LLM provider spend for this window. This is cost telemetry, not an invoice.",
+      detail: "provider cost estimate",
+    },
+  },
+  features: {
+    chatReplies: {
+      label: "Chat Replies",
+      description: "LLM usage from replies in Discuss or Library Ask during this window.",
+      singularRecord: "metered reply",
+      pluralRecord: "metered replies",
+    },
+    systemDesign: {
+      label: REPOSITORY_GUIDE_COPY.name,
+      description: "LLM usage from generating Repository Guide sections for the Library.",
+      singularRecord: REPOSITORY_GUIDE_COPY.sectionName,
+      pluralRecord: REPOSITORY_GUIDE_COPY.sectionNamePlural,
+    },
+  },
+  sandboxWorkCap: {
+    label: "Daily Live source Work Cap",
+    description:
+      "Daily spend cap for live source-grounded work, including live source-grounded chat replies and Repository Guide generation. Resets at midnight UTC.",
+    remainingSuffix: "remaining for live source-grounded work today. Resets at midnight UTC.",
+  },
 } as const;
 
 export function SettingsPage() {
@@ -201,6 +244,7 @@ function AccountSettingsSection() {
     : (user?.email ?? "Signed-in user");
   const fallbackInitial = displayName.trim().charAt(0).toLocaleUpperCase() || "U";
   const usageWindowLabel = usageSummary ? `Last ${usageSummary.window.days} days` : "Last 30 days";
+  const usageStatusLabel = usageSummary ? USAGE_COPY.section.readyStatus : USAGE_COPY.section.loadingStatus;
   const sandboxBudgetPercent =
     usageSummary && usageSummary.sandboxDailyBudget.capacityUsd > 0
       ? Math.min(
@@ -289,35 +333,47 @@ function AccountSettingsSection() {
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
             <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
               <ChartLineUp weight="bold" />
-              Usage
+              {USAGE_COPY.section.title}
             </h2>
             <div className="flex items-center gap-2">
               <span className="text-sm text-muted-foreground">{usageWindowLabel}</span>
-              <Badge variant={usageSummary ? "outline" : "muted"}>{usageSummary ? "Live" : "Loading"}</Badge>
+              <Badge variant={usageSummary ? "outline" : "muted"}>{usageStatusLabel}</Badge>
             </div>
           </div>
 
           <div className="p-5">
             <div className="grid overflow-hidden border border-border bg-background sm:grid-cols-3">
               <UsageMetric
-                label="Tokens"
-                description={USAGE_DESCRIPTIONS.tokens}
-                value={usageSummary ? COMPACT_NUMBER_FORMATTER.format(usageSummary.totals.totalTokens) : "Loading"}
-                detail={usageSummary ? `${INTEGER_FORMATTER.format(usageSummary.totals.totalTokens)} total` : undefined}
+                label={USAGE_COPY.metrics.llmTokens.label}
+                description={USAGE_COPY.metrics.llmTokens.description}
+                value={
+                  usageSummary
+                    ? COMPACT_NUMBER_FORMATTER.format(usageSummary.totals.totalTokens)
+                    : USAGE_COPY.section.loadingStatus
+                }
+                detail={
+                  usageSummary
+                    ? `${INTEGER_FORMATTER.format(usageSummary.totals.totalTokens)} ${USAGE_COPY.metrics.llmTokens.detail}`
+                    : undefined
+                }
                 isLoading={!usageSummary}
               />
               <UsageMetric
-                label="Events"
-                description={USAGE_DESCRIPTIONS.events}
-                value={usageSummary ? INTEGER_FORMATTER.format(usageSummary.totals.events) : "Loading"}
-                detail="Metered LLM usage records"
+                label={USAGE_COPY.metrics.usageRecords.label}
+                description={USAGE_COPY.metrics.usageRecords.description}
+                value={
+                  usageSummary ? INTEGER_FORMATTER.format(usageSummary.totals.events) : USAGE_COPY.section.loadingStatus
+                }
+                detail={USAGE_COPY.metrics.usageRecords.detail}
                 isLoading={!usageSummary}
               />
               <UsageMetric
-                label="Cost"
-                description={USAGE_DESCRIPTIONS.cost}
-                value={usageSummary ? USD_FORMATTER.format(usageSummary.totals.costUsd) : "Loading"}
-                detail="Estimated provider spend"
+                label={USAGE_COPY.metrics.estimatedCost.label}
+                description={USAGE_COPY.metrics.estimatedCost.description}
+                value={
+                  usageSummary ? USD_FORMATTER.format(usageSummary.totals.costUsd) : USAGE_COPY.section.loadingStatus
+                }
+                detail={USAGE_COPY.metrics.estimatedCost.detail}
                 isLoading={!usageSummary}
               />
             </div>
@@ -325,24 +381,40 @@ function AccountSettingsSection() {
             <div className="mt-4 grid gap-3 md:grid-cols-2">
               <FeatureUsageLine
                 icon={<ChatCircleText weight="bold" />}
-                label="Chat"
-                description={USAGE_DESCRIPTIONS.chat}
-                value={usageSummary ? USD_FORMATTER.format(usageSummary.byFeature.chat.costUsd) : "Loading"}
+                label={USAGE_COPY.features.chatReplies.label}
+                description={USAGE_COPY.features.chatReplies.description}
+                value={
+                  usageSummary
+                    ? USD_FORMATTER.format(usageSummary.byFeature.chat.costUsd)
+                    : USAGE_COPY.section.loadingStatus
+                }
                 detail={
                   usageSummary
-                    ? formatCountLabel(usageSummary.byFeature.chat.events, "metered reply", "metered replies")
+                    ? formatCountLabel(
+                        usageSummary.byFeature.chat.events,
+                        USAGE_COPY.features.chatReplies.singularRecord,
+                        USAGE_COPY.features.chatReplies.pluralRecord,
+                      )
                     : undefined
                 }
                 isLoading={!usageSummary}
               />
               <FeatureUsageLine
                 icon={<Sparkle weight="bold" />}
-                label="System Design"
-                description={USAGE_DESCRIPTIONS.systemDesign}
-                value={usageSummary ? USD_FORMATTER.format(usageSummary.byFeature.systemDesign.costUsd) : "Loading"}
+                label={USAGE_COPY.features.systemDesign.label}
+                description={USAGE_COPY.features.systemDesign.description}
+                value={
+                  usageSummary
+                    ? USD_FORMATTER.format(usageSummary.byFeature.systemDesign.costUsd)
+                    : USAGE_COPY.section.loadingStatus
+                }
                 detail={
                   usageSummary
-                    ? formatCountLabel(usageSummary.byFeature.systemDesign.events, "artifact run", "artifact runs")
+                    ? formatCountLabel(
+                        usageSummary.byFeature.systemDesign.events,
+                        USAGE_COPY.features.systemDesign.singularRecord,
+                        USAGE_COPY.features.systemDesign.pluralRecord,
+                      )
                     : undefined
                 }
                 isLoading={!usageSummary}
@@ -354,14 +426,17 @@ function AccountSettingsSection() {
                 <div className="min-w-0">
                   <p className="flex items-center gap-2 text-sm font-semibold">
                     <Wallet weight="bold" />
-                    Daily sandbox budget
-                    <MetricInfoTooltip label="Daily sandbox budget" description={USAGE_DESCRIPTIONS.sandboxBudget} />
+                    {USAGE_COPY.sandboxWorkCap.label}
+                    <MetricInfoTooltip
+                      label={USAGE_COPY.sandboxWorkCap.label}
+                      description={USAGE_COPY.sandboxWorkCap.description}
+                    />
                   </p>
                   <div className="mt-1 min-h-10 text-sm leading-5 text-muted-foreground">
                     {usageSummary ? (
                       <p>
-                        {USD_FORMATTER.format(usageSummary.sandboxDailyBudget.remainingUsd)} remaining for
-                        sandbox-grounded work. Resets at midnight UTC.
+                        {USD_FORMATTER.format(usageSummary.sandboxDailyBudget.remainingUsd)}{" "}
+                        {USAGE_COPY.sandboxWorkCap.remainingSuffix}
                       </p>
                     ) : (
                       <div className="space-y-1.5 py-0.5" aria-hidden="true">
@@ -376,7 +451,7 @@ function AccountSettingsSection() {
                     ? `${USD_FORMATTER.format(usageSummary.sandboxDailyBudget.usedUsd)} / ${USD_FORMATTER.format(
                         usageSummary.sandboxDailyBudget.capacityUsd,
                       )}`
-                    : "Loading"}
+                    : USAGE_COPY.section.loadingStatus}
                 </p>
               </div>
               <div className="mt-4 h-2 overflow-hidden bg-muted" aria-hidden="true">

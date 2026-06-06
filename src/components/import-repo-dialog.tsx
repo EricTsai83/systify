@@ -42,7 +42,7 @@ import type { RepositoryId, ThreadId } from "@/lib/types";
 // blocked. Persisted before a full-page redirect so the dialog can auto-open
 // when the user returns. This survives the multi-redirect chain
 // (GitHub → callback → / → /chat) that otherwise drops URL search params.
-// All storage access goes through `@/lib/storage` per docs/client-storage-strategy.md.
+// All storage access goes through `@/lib/storage` per docs/client/client-storage-strategy.md.
 // ---------------------------------------------------------------------------
 const PENDING_IMPORT_KEY = "systify.github.pendingImport";
 

@@ -661,9 +661,9 @@ flowchart LR
 
 ## Related Documents
 
-- `auth-and-access.md`
-- `integrations-and-operations.md`
+- `core/auth-and-access.md`
+- `integrations/integrations-and-operations.md`
 - `github-callback-returnto-allowlist-system-design.md`
-- `repository-lifecycle.md`
+- `repository/repository-lifecycle.md`
 - `repository-remote-freshness-check-system-design.md`
 - `sandbox-mode-security-system-design.md`

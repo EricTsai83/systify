@@ -252,6 +252,6 @@ Those belong in implementation plans or operations-specific documents rather tha
 
 ## Further Reading
 
-- `repository-lifecycle.md`
-- `integrations-and-operations.md`
+- `repository/repository-lifecycle.md`
+- `integrations/integrations-and-operations.md`
 - `sandbox-provisioning-cleanup-system-design.md`

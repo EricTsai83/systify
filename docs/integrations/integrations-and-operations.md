@@ -250,7 +250,7 @@ The current system uses four layers:
 
 This layered approach exists because sandbox lifecycle crosses two systems. Neither a single request path nor a single cron run can guarantee perfect cleanup on its own.
 
-For a dedicated system-design explanation of this topic, see `orphan-resource-handling.md`.
+For a dedicated system-design explanation of this topic, see `sandbox/orphan-resource-handling.md`.
 
 ### User- and system-triggered cleanup jobs
 

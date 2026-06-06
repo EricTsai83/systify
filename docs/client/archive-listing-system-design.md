@@ -166,7 +166,7 @@ The page is intentionally not unit-tested at the React level — the value is in
 ## Out Of Scope
 
 - Archive/restore/delete mutations — covered by the existing repository lifecycle docs.
-- Repository tenant isolation as a general invariant — covered by `auth-and-access.md` and `domain-and-data-model.md`.
+- Repository tenant isolation as a general invariant — covered by `core/auth-and-access.md` and `core/domain-and-data-model.md`.
 - Global cross-user repository search — explicitly excluded; the search index is owner-scoped by filter field.
 - Archive sorting controls (e.g., "oldest first", "by name") — not currently a user-facing need; the index supports adding them without further schema change.
 - Bulk select / bulk restore / bulk delete — not implemented; would require a separate transaction-batching design given Convex mutation document limits.

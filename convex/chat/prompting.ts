@@ -92,7 +92,7 @@ const DISCUSS_LIBRARY_RULES = [
  *     system prompt is the first line of defense.
  *   - Forbids network egress at the prompt layer. Daytona's network policy
  *     is a separate enforcement layer documented in
- *     `docs/sandbox-mode-system-design.md`, but stating the rule here stops
+ *     `docs/sandbox/sandbox-mode-system-design.md`, but stating the rule here stops
  *     the LLM from attempting `curl example.com` and burning a step on a
  *     guaranteed failure.
  */
