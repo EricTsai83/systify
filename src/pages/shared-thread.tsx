@@ -11,6 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { formatExpiry } from "@/lib/format-expiry";
 import { formatTimestamp } from "@/lib/format";
+import { useStableLoadMoreState } from "@/hooks/use-stable-load-more-state";
 import { LANDING_PATH } from "@/route-paths";
 
 const PUBLIC_MESSAGES_INITIAL_PAGE_SIZE = 40;
@@ -34,6 +35,11 @@ export function SharedThreadPage({ token }: { token: string }) {
     initialNumItems: PUBLIC_MESSAGES_INITIAL_PAGE_SIZE,
   });
 
+  const isLoadingFirstPage = status === "LoadingFirstPage";
+  const canLoadMore = status === "CanLoadMore";
+  const isLoadingMore = status === "LoadingMore";
+  const loadMoreState = useStableLoadMoreState({ canLoadMore, isLoadingMore });
+
   if (!token || share === null) {
     return <SharedThreadUnavailable />;
   }
@@ -41,10 +47,6 @@ export function SharedThreadPage({ token }: { token: string }) {
   if (share === undefined) {
     return <SharedThreadLoading />;
   }
-
-  const isLoadingFirstPage = status === "LoadingFirstPage";
-  const canLoadMore = status === "CanLoadMore";
-  const isLoadingMore = status === "LoadingMore";
 
   return (
     <div className="flex h-dvh w-full flex-1 flex-col overflow-y-auto bg-background">
@@ -100,17 +102,23 @@ export function SharedThreadPage({ token }: { token: string }) {
             </div>
           )}
 
-          {canLoadMore || isLoadingMore ? (
+          {loadMoreState.shouldRender ? (
             <div className="flex justify-center">
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
-                disabled={!canLoadMore || isLoadingMore}
-                onClick={() => loadMore(PUBLIC_MESSAGES_NEXT_PAGE_SIZE)}
+                disabled={!loadMoreState.canLoadMore || loadMoreState.isLoadingMore}
+                onClick={() => {
+                  loadMoreState.markLoadMoreStarted();
+                  loadMore(PUBLIC_MESSAGES_NEXT_PAGE_SIZE);
+                }}
               >
-                {isLoadingMore ? <Spinner size={13} /> : null}
-                <ButtonStateText current={isLoadingMore ? "Loading" : "Load more"} states={["Load more", "Loading"]} />
+                {loadMoreState.isLoadingMore ? <Spinner size={13} /> : null}
+                <ButtonStateText
+                  current={loadMoreState.isLoadingMore ? "Loading" : "Load more"}
+                  states={["Load more", "Loading"]}
+                />
               </Button>
             </div>
           ) : null}

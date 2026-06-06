@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
+import { useStableLoadMoreState } from "@/hooks/use-stable-load-more-state";
 import { formatExpiry } from "@/lib/format-expiry";
 import { formatRelativeTime } from "@/lib/format";
 import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
@@ -177,6 +178,11 @@ export function HistoryPage() {
     (groupPageIndex + 1) * GROUP_INITIAL_PAGE_SIZE < orderedGroups.length || canLoadMoreGroups;
   const canLoadMoreShares = activeSharesStatus === "CanLoadMore";
   const isLoadingMoreShares = activeSharesStatus === "LoadingMore";
+  const groupLoadMoreState = useStableLoadMoreState({
+    canLoadMore: canGoToNextGroupPage,
+    isLoadingMore: isLoadingMoreGroups || pendingGroupPageIndex !== null,
+  });
+  const markGroupLoadMoreStarted = groupLoadMoreState.markLoadMoreStarted;
   const handlePreviousGroupPage = useCallback(() => {
     setGroupPageIndex((current) => Math.max(0, current - 1));
   }, []);
@@ -188,10 +194,18 @@ export function HistoryPage() {
       return;
     }
     if (canLoadMoreGroups && !isLoadingMoreGroups) {
+      markGroupLoadMoreStarted();
       setPendingGroupPageIndex(nextPageIndex);
       loadMoreGroups(GROUP_NEXT_PAGE_SIZE);
     }
-  }, [canLoadMoreGroups, groupPageIndex, isLoadingMoreGroups, loadMoreGroups, orderedGroups.length]);
+  }, [
+    canLoadMoreGroups,
+    groupPageIndex,
+    isLoadingMoreGroups,
+    loadMoreGroups,
+    markGroupLoadMoreStarted,
+    orderedGroups.length,
+  ]);
 
   if (pendingGroupPageIndex !== null && orderedGroups.length > pendingGroupPageIndex * GROUP_INITIAL_PAGE_SIZE) {
     setGroupPageIndex(pendingGroupPageIndex);
@@ -252,11 +266,11 @@ export function HistoryPage() {
                   <ArchiveIcon weight="bold" />
                   Archive
                 </Button>
-                {canGoToPreviousGroupPage || canGoToNextGroupPage || isLoadingMoreGroups ? (
+                {canGoToPreviousGroupPage || groupLoadMoreState.shouldRender ? (
                   <PageControls
                     canPrevious={canGoToPreviousGroupPage}
-                    canNext={canGoToNextGroupPage}
-                    isLoadingNext={isLoadingMoreGroups || pendingGroupPageIndex !== null}
+                    canNext={groupLoadMoreState.canLoadMore}
+                    isLoadingNext={groupLoadMoreState.isLoadingMore}
                     onPrevious={handlePreviousGroupPage}
                     onNext={handleNextGroupPage}
                   />
@@ -390,6 +404,11 @@ function HistoryGroupSection({
   );
   const canGoToPreviousPage = pageIndex > 0;
   const canGoToNextPage = (pageIndex + 1) * THREAD_INITIAL_PAGE_SIZE < threadRows.length || canLoadMore;
+  const loadMoreState = useStableLoadMoreState({
+    canLoadMore: canGoToNextPage,
+    isLoadingMore: isLoadingMore || pendingPageIndex !== null,
+  });
+  const markLoadMoreStarted = loadMoreState.markLoadMoreStarted;
   const handlePreviousPage = useCallback(() => {
     setPageIndex((current) => Math.max(0, current - 1));
   }, []);
@@ -401,10 +420,11 @@ function HistoryGroupSection({
       return;
     }
     if (canLoadMore && !isLoadingMore) {
+      markLoadMoreStarted();
       setPendingPageIndex(nextPageIndex);
       loadMore(THREAD_NEXT_PAGE_SIZE);
     }
-  }, [canLoadMore, isLoadingMore, loadMore, pageIndex, threadRows.length]);
+  }, [canLoadMore, isLoadingMore, loadMore, markLoadMoreStarted, pageIndex, threadRows.length]);
 
   if (pendingPageIndex !== null && threadRows.length > pendingPageIndex * THREAD_INITIAL_PAGE_SIZE) {
     setPageIndex(pendingPageIndex);
@@ -466,12 +486,12 @@ function HistoryGroupSection({
                 ))}
               </div>
             )}
-            {canGoToPreviousPage || canGoToNextPage || isLoadingMore ? (
+            {canGoToPreviousPage || loadMoreState.shouldRender ? (
               <div className="flex justify-end border-t border-border px-4 py-2">
                 <PageControls
                   canPrevious={canGoToPreviousPage}
-                  canNext={canGoToNextPage}
-                  isLoadingNext={isLoadingMore || pendingPageIndex !== null}
+                  canNext={loadMoreState.canLoadMore}
+                  isLoadingNext={loadMoreState.isLoadingMore}
                   onPrevious={handlePreviousPage}
                   onNext={handleNextPage}
                 />
@@ -570,6 +590,7 @@ function SharedThreadsSection({
   onLoadMore: () => void;
 }) {
   const revokeThreadShare = useMutation(api.chat.threadShares.revokeThreadShare);
+  const loadMoreState = useStableLoadMoreState({ canLoadMore, isLoadingMore });
 
   const handleCopy = useCallback(async (token: string) => {
     const publicUrl = new URL(sharedThreadPath(token), window.location.origin).toString();
@@ -639,18 +660,21 @@ function SharedThreadsSection({
               </div>
             </div>
           ))}
-          {canLoadMore || isLoadingMore ? (
+          {loadMoreState.shouldRender ? (
             <div className="flex justify-center border-t border-border px-4 py-2">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                disabled={!canLoadMore || isLoadingMore}
-                onClick={onLoadMore}
+                disabled={!loadMoreState.canLoadMore || loadMoreState.isLoadingMore}
+                onClick={() => {
+                  loadMoreState.markLoadMoreStarted();
+                  onLoadMore();
+                }}
               >
-                {isLoadingMore ? <Spinner size={13} /> : null}
+                {loadMoreState.isLoadingMore ? <Spinner size={13} /> : null}
                 <ButtonStateText
-                  current={isLoadingMore ? "Loading" : "Load more links"}
+                  current={loadMoreState.isLoadingMore ? "Loading" : "Load more links"}
                   states={["Load more links", "Loading"]}
                 />
               </Button>

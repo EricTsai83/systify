@@ -24,6 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Spinner } from "@/components/ui/spinner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { useStableLoadMoreState } from "@/hooks/use-stable-load-more-state";
 import { toUserErrorMessage } from "@/lib/errors";
 import { formatRelativeTime, formatTimestamp } from "@/lib/format";
 import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
@@ -101,6 +102,7 @@ export function ArchiveSettingsSection({ onBackToChat }: { onBackToChat?: () => 
   const isLoadingFirstPage = status === "LoadingFirstPage";
   const canLoadMore = status === "CanLoadMore";
   const isLoadingMore = status === "LoadingMore";
+  const loadMoreState = useStableLoadMoreState({ canLoadMore, isLoadingMore });
   // `usePaginatedQuery` reports an internal "LoadingPaused" state on disconnect;
   // we treat it as "settled, can't load more right now" — same UI as exhausted.
   const isExhausted = status === "Exhausted";
@@ -111,13 +113,16 @@ export function ArchiveSettingsSection({ onBackToChat }: { onBackToChat?: () => 
       <ArchiveContent
         archived={archived}
         isLoadingFirstPage={isLoadingFirstPage}
-        canLoadMore={canLoadMore}
-        isLoadingMore={isLoadingMore}
+        canLoadMore={loadMoreState.canLoadMore}
+        isLoadingMore={loadMoreState.isLoadingMore}
         isExhausted={isExhausted}
         isSearching={isSearching}
         query={query}
         onQueryChange={setQuery}
-        onLoadMore={() => loadMore(NEXT_PAGE_SIZE)}
+        onLoadMore={() => {
+          loadMoreState.markLoadMoreStarted();
+          loadMore(NEXT_PAGE_SIZE);
+        }}
         onBackToChat={handleBack}
         onRequestPermanentDelete={setPendingPermanentDelete}
       />
@@ -156,6 +161,7 @@ function ArchivedThreadsSection({
   const isLoadingFirstPage = status === "LoadingFirstPage";
   const isLoadingMore = status === "LoadingMore";
   const canLoadMore = status === "CanLoadMore";
+  const loadMoreState = useStableLoadMoreState({ canLoadMore, isLoadingMore });
   const rows = archivedThreads as ArchivedThread[];
 
   return (
@@ -177,17 +183,23 @@ function ArchivedThreadsSection({
           {rows.map((thread) => (
             <ArchivedThreadRow key={thread._id} thread={thread} onRequestPermanentDelete={onRequestPermanentDelete} />
           ))}
-          {canLoadMore || isLoadingMore ? (
+          {loadMoreState.shouldRender ? (
             <div className="flex justify-end border-t border-border px-3 py-2">
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
-                disabled={!canLoadMore || isLoadingMore}
-                onClick={() => loadMore(THREAD_ARCHIVE_PAGE_SIZE)}
+                disabled={!loadMoreState.canLoadMore || loadMoreState.isLoadingMore}
+                onClick={() => {
+                  loadMoreState.markLoadMoreStarted();
+                  loadMore(THREAD_ARCHIVE_PAGE_SIZE);
+                }}
               >
-                {isLoadingMore ? <Spinner size={13} /> : null}
-                <ButtonStateText current={isLoadingMore ? "Loading" : "Next"} states={["Next", "Loading"]} />
+                {loadMoreState.isLoadingMore ? <Spinner size={13} /> : null}
+                <ButtonStateText
+                  current={loadMoreState.isLoadingMore ? "Loading" : "Next"}
+                  states={["Next", "Loading"]}
+                />
                 <CaretRightIcon weight="bold" />
               </Button>
             </div>
