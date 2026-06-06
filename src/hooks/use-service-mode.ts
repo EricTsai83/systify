@@ -3,6 +3,7 @@ import { useLocation, useParams } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { RepositoryModeDisabledReasonCode } from "../../convex/lib/chatEligibility";
+import { resolveRepositoryLandingMode } from "@/lib/repository-landing";
 import type { ChatMode, RepositoryId } from "@/lib/types";
 
 /**
@@ -59,11 +60,7 @@ export function resolveEffectiveChatMode(args: {
     | null
     | undefined;
 }): ChatMode {
-  const { mode, lastMode, availability } = args;
-  if (mode) return mode;
-  const lastModeEnabled = lastMode ? (availability?.modes[lastMode].enabled ?? false) : false;
-  if (lastModeEnabled && lastMode) return lastMode;
-  return availability?.defaultMode ?? "discuss";
+  return resolveRepositoryLandingMode(args);
 }
 
 /**

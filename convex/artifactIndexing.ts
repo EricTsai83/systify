@@ -10,26 +10,15 @@ import {
   DEFAULT_ARTIFACT_CHUNK_HARD_TOKEN_CAP,
   DEFAULT_ARTIFACT_CHUNK_SOFT_TOKEN_CAP,
 } from "./lib/artifactChunking";
-import { embedViaGateway } from "./lib/llmGateway";
-import { costUsdToCents } from "./lib/llmPricing";
+import { EMBEDDING_BUDGET_ESTIMATES, embedWithAccounting } from "./lib/embeddingAccounting";
 import { logInfo, logWarn } from "./lib/observability";
 import { isUsageBudgetExceededError } from "./lib/userCost";
 
-/**
- * Embedding model used for artifact chunk indexing. Must match a
- * `provider: "openai"` `capability: "embedding"` entry in `MODEL_CATALOG`
- * — the gateway refuses uncatalogued picks. `text-embedding-3-small` is
- * the cheap default; operators can swap to `text-embedding-3-large` via
- * `ARTIFACT_EMBEDDING_MODEL` for higher-quality vectors at ~6.5× the
- * input rate (see `llmPricing.ts`).
- */
-const DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_EMBEDDING_BATCH_SIZE = 100;
 const FAILED_INDEXING_RETRY_BACKOFF_MS = 30 * 60_000;
 const FAILED_INDEXING_RETRY_LIMIT = 50;
 const PENDING_INDEXING_BACKFILL_LIMIT = 20;
 const REINDEX_ACTION_CONCURRENCY = 5;
-const ARTIFACT_INDEXING_BATCH_BUDGET_ESTIMATE_USD = 0.01;
 
 export const reindexArtifact = internalAction({
   args: { artifactId: v.id("artifacts") },
@@ -167,10 +156,9 @@ async function reindexArtifactsWithConcurrency(ctx: ActionCtx, artifacts: Doc<"a
 }
 
 /**
- * Embed a list of chunk texts via the LLM gateway. Routes through
- * `embedViaGateway` so the call inherits per-user RPM + concurrency
- * fairness, retry, normalized usage, and cost telemetry — and the
- * spend lands in the daily cap for the owning user / repository.
+ * Embed a list of chunk texts via the accounted embedding wrapper so
+ * the call inherits gateway fairness, retry, normalized usage, budget
+ * reservation, daily-cap settlement, and cost telemetry.
  *
  * Daily-cap settlement happens **per batch**. Settling once per
  * gateway call (rather than once per artifact) bounds the worst-case
@@ -190,72 +178,28 @@ async function embedArtifactChunks(
     repositoryId: Doc<"artifacts">["repositoryId"];
   },
 ): Promise<number[][]> {
-  const modelName = process.env.ARTIFACT_EMBEDDING_MODEL ?? DEFAULT_EMBEDDING_MODEL;
   const batchSize = readNumberEnv("ARTIFACT_EMBEDDING_BATCH_SIZE", DEFAULT_EMBEDDING_BATCH_SIZE);
   const embeddings: number[][] = [];
   for (let index = 0; index < args.values.length; index += batchSize) {
     const batch = args.values.slice(index, index + batchSize);
     const sourceId = `artifactIndexing:${args.artifactId}:${args.artifactVersion}:${index}`;
-    const batchStartedAt = Date.now();
-    await ctx.runMutation(internal.lib.userCost.reserveUsageBudget, {
+    const result = await embedWithAccounting(ctx, {
       sourceId,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
-      feature: "artifactIndexing",
-      estimatedCostUsd: ARTIFACT_INDEXING_BATCH_BUDGET_ESTIMATE_USD,
-      occurredAtMs: batchStartedAt,
-    });
-
-    const result = await embedViaGateway(
-      ctx,
-      {
-        provider: "openai",
-        modelName,
-        ownerTokenIdentifier: args.ownerTokenIdentifier,
-        capability: "embedding",
-        feature: "indexing",
-      },
-      { values: batch },
-    ).catch(async (error: unknown) => {
-      await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
-        sourceId,
-        ownerTokenIdentifier: args.ownerTokenIdentifier,
-        feature: "artifactIndexing",
-        occurredAtMs: batchStartedAt,
-      });
-      throw error;
+      repositoryId: args.repositoryId ?? null,
+      usageFeature: "artifactIndexing",
+      gatewayFeature: "indexing",
+      estimatedCostUsd: EMBEDDING_BUDGET_ESTIMATES.artifactIndexing,
+      values: batch,
     });
     embeddings.push(...result.embeddings);
 
-    // Settle the batch's spend against the daily cap. `costUsdToCents`
-    // returns `undefined` on pricing misses (model not in the table) —
-    // we skip the settlement in that case rather than guessing a
-    // number; the gateway already logged the spend via
-    // `llm_embedding_tokens_used` so the observability surface still
-    // sees the call, and the cap simply isn't decremented for an
-    // un-priced model.
-    const cents = costUsdToCents(result.costUsd);
-    if (cents !== undefined && cents > 0) {
-      await ctx.runMutation(internal.lib.rateLimit.settleSandboxDailyCost, {
-        ownerTokenIdentifier: args.ownerTokenIdentifier,
-        repositoryId: args.repositoryId ?? null,
-        cents,
-      });
-    }
-    await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
-      sourceId,
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      feature: "artifactIndexing",
-      occurredAtMs: batchStartedAt,
-      usd: result.costUsd,
-      inputTokens: result.usage.inputTokens,
-    });
-
     logInfo("artifactIndexing", "embedding_batch_completed", {
-      model: modelName,
+      model: result.modelName,
       batchSize: batch.length,
       tokens: result.usage.inputTokens,
       costUsd: result.costUsd,
-      settledCents: cents,
+      settledCents: result.settledCents,
     });
   }
   return embeddings;
