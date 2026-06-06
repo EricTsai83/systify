@@ -59,4 +59,11 @@ crons.interval(
 // scan on user-facing mutations.
 crons.interval("repair chat history groups", { hours: 1 }, internal.chat.history.repairChatHistoryGroups, {});
 
+crons.interval(
+  "repair archived thread scopes",
+  { hours: 1 },
+  internal.chat.archiveState.repairArchivedThreadScopes,
+  {},
+);
+
 export default crons;

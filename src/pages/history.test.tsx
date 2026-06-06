@@ -11,6 +11,8 @@ const createShareMock = vi.fn();
 const archiveThreadMock = vi.fn();
 const revokeShareMock = vi.fn();
 const clipboardWriteTextMock = vi.fn();
+const loadMoreGroupsMock = vi.fn();
+const loadMoreSharesMock = vi.fn();
 
 vi.mock("convex/react", () => ({
   useMutation: vi.fn(),
@@ -56,43 +58,49 @@ beforeEach(() => {
   vi.mocked(usePaginatedQuery).mockImplementation((reference, args) => {
     const name = functionName(reference);
     if (name.endsWith("listThreadHistoryGroups")) {
-      return paginated([
-        {
-          _id: "group_no_repo",
-          groupKey: "no_repository",
-          lastThreadAt: 200,
-          lastThreadId: "thread_no_repo",
-          threadCount: 1,
-          repository: null,
-        },
-        {
-          _id: "group_repo",
-          groupKey: "repository:repo_1",
-          repositoryId: "repo_1",
-          lastThreadAt: 100,
-          lastThreadId: "thread_repo_discuss",
-          threadCount: 2,
-          repository: {
-            _id: "repo_1",
-            sourceRepoFullName: "acme/systify",
-            visibility: "private",
+      return paginated(
+        [
+          {
+            _id: "group_no_repo",
+            groupKey: "no_repository",
+            lastThreadAt: 200,
+            lastThreadId: "thread_no_repo",
+            threadCount: 1,
+            repository: null,
           },
-        },
-      ]);
+          {
+            _id: "group_repo",
+            groupKey: "repository:repo_1",
+            repositoryId: "repo_1",
+            lastThreadAt: 100,
+            lastThreadId: "thread_repo_discuss",
+            threadCount: 2,
+            repository: {
+              _id: "repo_1",
+              sourceRepoFullName: "acme/systify",
+              visibility: "private",
+            },
+          },
+        ],
+        { loadMore: loadMoreGroupsMock },
+      );
     }
     if (name.endsWith("listActiveThreadShares")) {
-      return paginated([
-        {
-          _id: "share_1",
-          token: "share_token",
-          threadId: "thread_repo_discuss",
-          repositoryId: "repo_1",
-          title: "Discuss thread",
-          repositoryLabel: "acme/systify",
-          createdAt: 100,
-          expiresAt: Date.now() + 18 * 24 * 60 * 60 * 1000,
-        },
-      ]);
+      return paginated(
+        [
+          {
+            _id: "share_1",
+            token: "share_token",
+            threadId: "thread_repo_discuss",
+            repositoryId: "repo_1",
+            title: "Discuss thread",
+            repositoryLabel: "acme/systify",
+            createdAt: 100,
+            expiresAt: Date.now() + 18 * 24 * 60 * 60 * 1000,
+          },
+        ],
+        { loadMore: loadMoreSharesMock },
+      );
     }
     if (name.endsWith("listThreadsForHistoryGroup")) {
       const repositoryId =
@@ -145,6 +153,8 @@ afterEach(() => {
   archiveThreadMock.mockReset();
   revokeShareMock.mockReset();
   clipboardWriteTextMock.mockReset();
+  loadMoreGroupsMock.mockReset();
+  loadMoreSharesMock.mockReset();
 });
 
 describe("HistoryPage", () => {
@@ -154,8 +164,8 @@ describe("HistoryPage", () => {
     expect(screen.getByRole("button", { name: /open archive/i })).toBeInTheDocument();
     expect(screen.getByRole("group", { name: /chat history pages/i })).toHaveStyle({ minHeight: "632px" });
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Repository threads: 2")).toBeInTheDocument();
-    expect(screen.getByLabelText("No repository chats: 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Loaded repository threads: 2")).toBeInTheDocument();
+    expect(screen.getByLabelText("Loaded no-repository chats: 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Shared links: 1")).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: /select chat history repository/i })).toHaveTextContent("acme/systify");
     expect(screen.getAllByText("acme/systify").length).toBeGreaterThan(0);
@@ -248,6 +258,86 @@ describe("HistoryPage", () => {
     });
   });
 
+  test("archived active share renders a badge and keeps revoke enabled", () => {
+    vi.mocked(usePaginatedQuery).mockImplementation((reference) => {
+      const name = functionName(reference);
+      if (name.endsWith("listThreadHistoryGroups")) return paginated([]);
+      if (name.endsWith("listActiveThreadShares")) {
+        return paginated([
+          {
+            _id: "share_archived",
+            token: "share_archived_token",
+            threadId: "thread_archived",
+            title: "Archived shared thread",
+            repositoryLabel: "No repository",
+            createdAt: 100,
+            expiresAt: Date.now() + 18 * 24 * 60 * 60 * 1000,
+            threadArchivedAt: Date.now(),
+          },
+        ]);
+      }
+      if (name.endsWith("listThreadsForHistoryGroup")) return paginated([]);
+      return paginated([]);
+    });
+
+    renderHistoryPage();
+
+    expect(screen.getByText("Archived thread")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /revoke/i })).toBeEnabled();
+  });
+
+  test("empty visible shares with more pages renders load-more instead of empty state", () => {
+    vi.mocked(usePaginatedQuery).mockImplementation((reference) => {
+      const name = functionName(reference);
+      if (name.endsWith("listThreadHistoryGroups")) return paginated([]);
+      if (name.endsWith("listActiveThreadShares")) {
+        return paginated([], { status: "CanLoadMore", loadMore: loadMoreSharesMock });
+      }
+      if (name.endsWith("listThreadsForHistoryGroup")) return paginated([]);
+      return paginated([]);
+    });
+
+    renderHistoryPage();
+
+    expect(screen.queryByText("No active public share links.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /load more links/i }));
+    expect(loadMoreSharesMock).toHaveBeenCalledWith(20);
+  });
+
+  test("history group selector can load additional repository groups", () => {
+    vi.mocked(usePaginatedQuery).mockImplementation((reference) => {
+      const name = functionName(reference);
+      if (name.endsWith("listThreadHistoryGroups")) {
+        return paginated(
+          [
+            {
+              _id: "group_repo",
+              groupKey: "repository:repo_1",
+              repositoryId: "repo_1",
+              lastThreadAt: 100,
+              lastThreadId: "thread_repo_discuss",
+              threadCount: 2,
+              repository: {
+                _id: "repo_1",
+                sourceRepoFullName: "acme/systify",
+                visibility: "private",
+              },
+            },
+          ],
+          { status: "CanLoadMore", loadMore: loadMoreGroupsMock },
+        );
+      }
+      if (name.endsWith("listActiveThreadShares")) return paginated([]);
+      if (name.endsWith("listThreadsForHistoryGroup")) return paginated([]);
+      return paginated([]);
+    });
+
+    renderHistoryPage();
+
+    fireEvent.click(screen.getByRole("button", { name: /load more repositories/i }));
+    expect(loadMoreGroupsMock).toHaveBeenCalledWith(100);
+  });
+
   test("archive action confirms before calling the mutation", async () => {
     renderHistoryPage();
 
@@ -270,11 +360,17 @@ function renderHistoryPage() {
   );
 }
 
-function paginated(results: unknown[]): ReturnType<typeof usePaginatedQuery> {
+function paginated(
+  results: unknown[],
+  options: {
+    status?: "CanLoadMore" | "Exhausted";
+    loadMore?: ReturnType<typeof usePaginatedQuery>["loadMore"];
+  } = {},
+): ReturnType<typeof usePaginatedQuery> {
   return {
     results,
-    status: "Exhausted" as const,
-    loadMore: vi.fn(),
+    status: options.status ?? ("Exhausted" as const),
+    loadMore: options.loadMore ?? vi.fn(),
     isLoading: false as const,
   };
 }

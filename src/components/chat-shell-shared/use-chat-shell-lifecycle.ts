@@ -26,11 +26,11 @@ export function useChatShellLifecycle({
   selectedReasoningEffort,
   liveRepositoryIds,
   liveThreadIds,
-  threadToDelete,
+  threadToArchive,
   setActionError,
-  setThreadToDelete,
+  setThreadToArchive,
   onAfterCreateThread,
-  onAfterDeleteThread,
+  onAfterArchiveThread,
 }: {
   urlThreadId: ThreadId | null;
   repositoryId: RepositoryId | null;
@@ -52,11 +52,11 @@ export function useChatShellLifecycle({
   selectedReasoningEffort?: ReasoningEffort | null;
   liveRepositoryIds: ReadonlySet<string> | null;
   liveThreadIds: ReadonlySet<string> | null;
-  threadToDelete: ThreadId | null;
+  threadToArchive: ThreadId | null;
   setActionError: (value: string | null) => void;
-  setThreadToDelete: (value: ThreadId | null) => void;
+  setThreadToArchive: (value: ThreadId | null) => void;
   onAfterCreateThread: (threadId: ThreadId, mode: ChatMode) => void;
-  onAfterDeleteThread: (deletedThreadId: ThreadId) => void;
+  onAfterArchiveThread: (archivedThreadId: ThreadId) => void;
 }): {
   chatInput: string;
   setChatInput: (next: string) => void;
@@ -65,8 +65,8 @@ export function useChatShellLifecycle({
   handleSendMessage: (event: React.FormEvent<HTMLFormElement>) => Promise<void>;
   isCancellingReply: boolean;
   handleCancelInFlightReply: () => Promise<void>;
-  isDeletingThread: boolean;
-  handleDeleteThread: () => Promise<void>;
+  isArchivingThread: boolean;
+  handleArchiveThread: () => Promise<void>;
 } {
   useStorageGC({ liveRepositoryIds, liveThreadIds });
   const { user, isLoading: isAuthLoading } = useAuth();
@@ -86,7 +86,7 @@ export function useChatShellLifecycle({
   const lifecycle = useChatLifecycle({
     selectedThreadId: urlThreadId,
     repositoryId,
-    threadToArchive: threadToDelete,
+    threadToArchive,
     chatInput,
     chatMode,
     groundLibrary,
@@ -96,9 +96,9 @@ export function useChatShellLifecycle({
     selectedReasoningEffort,
     clearChatInput,
     setActionError,
-    setThreadToArchive: setThreadToDelete,
+    setThreadToArchive,
     onAfterCreateThread,
-    onAfterDeleteThread,
+    onAfterArchiveThread,
   });
 
   return {
@@ -109,7 +109,7 @@ export function useChatShellLifecycle({
     handleSendMessage: lifecycle.handleSendMessage,
     isCancellingReply: lifecycle.isCancellingReply,
     handleCancelInFlightReply: lifecycle.handleCancelInFlightReply,
-    isDeletingThread: lifecycle.isArchivingThread,
-    handleDeleteThread: lifecycle.handleArchiveThread,
+    isArchivingThread: lifecycle.isArchivingThread,
+    handleArchiveThread: lifecycle.handleArchiveThread,
   };
 }

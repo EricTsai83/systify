@@ -11,6 +11,7 @@ const THREAD_SHARE_EXPIRY_MS = 30 * 24 * 60 * 60 * 1000;
 const SHARE_TOKEN_LENGTH = 40;
 const SHARE_TOKEN_PREFIX_LENGTH = 10;
 const PUBLIC_TRANSCRIPT_MAX_SCAN_PAGES = 16;
+const THREAD_SHARE_PAGE_SCAN_LIMIT = 16;
 
 type PublicShareMetadata = {
   _id: Id<"threadShares">;
@@ -21,6 +22,7 @@ type PublicShareMetadata = {
   repositoryLabel: string;
   createdAt: number;
   expiresAt: number;
+  threadArchivedAt?: number;
 };
 
 function isActiveShare(share: Doc<"threadShares">, now: number): boolean {
@@ -52,14 +54,10 @@ async function repositoryLabelForThread(
 async function publicShareMetadata(
   ctx: QueryCtx,
   share: Doc<"threadShares">,
-  options: { includeArchivedThread: boolean },
+  options: { includeArchivedThread: boolean; includeThreadArchivedAt?: boolean },
 ): Promise<PublicShareMetadata | null> {
   const thread = await ctx.db.get(share.threadId);
-  if (
-    !isOwnedBy(thread, share.ownerTokenIdentifier) ||
-    thread.deletionRequestedAt !== undefined ||
-    (!options.includeArchivedThread && thread.archivedAt !== undefined)
-  ) {
+  if (!isOwnedBy(thread, share.ownerTokenIdentifier) || thread.deletionRequestedAt !== undefined) {
     return null;
   }
 
@@ -75,6 +73,53 @@ async function publicShareMetadata(
     }),
     createdAt: share.createdAt,
     expiresAt: share.expiresAt,
+    threadArchivedAt: options.includeThreadArchivedAt ? thread.archivedAt : undefined,
+  };
+}
+
+async function paginateVisibleThreadShares(
+  ctx: QueryCtx,
+  args: {
+    ownerTokenIdentifier: string;
+    now: number;
+    paginationOpts: { numItems: number; cursor: string | null };
+  },
+) {
+  const page: PublicShareMetadata[] = [];
+  let cursor = args.paginationOpts.cursor;
+  let continueCursor = cursor ?? "";
+  let isDone = false;
+  let pagesScanned = 0;
+
+  while (page.length < args.paginationOpts.numItems && !isDone && pagesScanned < THREAD_SHARE_PAGE_SCAN_LIMIT) {
+    const remaining = Math.max(1, args.paginationOpts.numItems - page.length);
+    const result = await ctx.db
+      .query("threadShares")
+      .withIndex("by_ownerTokenIdentifier_revokedAt_and_expiresAt", (q) =>
+        q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier).eq("revokedAt", undefined).gt("expiresAt", args.now),
+      )
+      .order("desc")
+      .paginate({ numItems: remaining, cursor });
+    pagesScanned += 1;
+    cursor = result.continueCursor;
+    continueCursor = result.continueCursor;
+    isDone = result.isDone;
+
+    for (const share of result.page) {
+      const metadata = await publicShareMetadata(ctx, share, {
+        includeArchivedThread: false,
+        includeThreadArchivedAt: true,
+      });
+      if (metadata) {
+        page.push(metadata);
+      }
+    }
+  }
+
+  return {
+    page,
+    continueCursor,
+    isDone,
   };
 }
 
@@ -153,23 +198,11 @@ export const listActiveThreadShares = query({
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
     const now = Date.now();
-    const result = await ctx.db
-      .query("threadShares")
-      .withIndex("by_ownerTokenIdentifier_revokedAt_and_expiresAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("revokedAt", undefined).gt("expiresAt", now),
-      )
-      .order("desc")
-      .paginate(args.paginationOpts);
-    const page = (
-      await Promise.all(
-        result.page.map(async (share) => await publicShareMetadata(ctx, share, { includeArchivedThread: false })),
-      )
-    ).filter((share): share is PublicShareMetadata => share !== null);
-
-    return {
-      ...result,
-      page,
-    };
+    return await paginateVisibleThreadShares(ctx, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      now,
+      paginationOpts: args.paginationOpts,
+    });
   },
 });
 

@@ -457,7 +457,7 @@ describe("thread shares", () => {
     expect(await t.query(api.chat.threadShares.getPublicThreadShare, { token: expiring.token })).toBeNull();
   });
 
-  test("archived threads keep existing shares but cannot create new share links", async () => {
+  test("archived threads keep existing shares visible to owner and public readers", async () => {
     const ownerTokenIdentifier = "user|thread-share-archived";
     const t = createTestConvex();
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
@@ -472,10 +472,61 @@ describe("thread shares", () => {
     const activeShares = await viewer.query(api.chat.threadShares.listActiveThreadShares, {
       paginationOpts: { numItems: 10, cursor: null },
     });
-    expect(activeShares.page).toEqual([]);
+    expect(activeShares.page).toMatchObject([
+      {
+        _id: share._id,
+        threadId: sharedThread._id,
+        threadArchivedAt: expect.any(Number),
+      },
+    ]);
     await expect(
       viewer.mutation(api.chat.threadShares.createOrGetThreadShare, { threadId: unsharedThread._id }),
     ).rejects.toThrow(/thread not found/i);
+  });
+
+  test("revoked archived shares disappear from owner and public access", async () => {
+    const ownerTokenIdentifier = "user|thread-share-revoked-archived";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const thread = await viewer.mutation(api.chat.threads.createThread, {});
+    const share = await viewer.mutation(api.chat.threadShares.createOrGetThreadShare, { threadId: thread._id });
+
+    await viewer.mutation(api.chat.threads.archiveThread, { threadId: thread._id });
+    await viewer.mutation(api.chat.threadShares.revokeThreadShare, { shareId: share._id });
+
+    expect(await t.query(api.chat.threadShares.getPublicThreadShare, { token: share.token })).toBeNull();
+    const activeShares = await viewer.query(api.chat.threadShares.listActiveThreadShares, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    expect(activeShares.page).toEqual([]);
+  });
+
+  test("owner share listing scans past leftover deleted-thread rows", async () => {
+    const ownerTokenIdentifier = "user|thread-share-scan-deleted";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const deletedThread = await viewer.mutation(api.chat.threads.createThread, {});
+    const visibleThread = await viewer.mutation(api.chat.threads.createThread, {});
+    const visibleShare = await viewer.mutation(api.chat.threadShares.createOrGetThreadShare, {
+      threadId: visibleThread._id,
+    });
+    await viewer.mutation(api.chat.threads.deleteThread, { threadId: deletedThread._id });
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("threadShares", {
+        ownerTokenIdentifier,
+        threadId: deletedThread._id,
+        token: "deleted-thread-leftover-token",
+        tokenPrefix: "deleted-th",
+        createdAt: Date.now(),
+        expiresAt: Date.now() + THIRTY_DAYS_MS + 1_000,
+      });
+    });
+
+    const activeShares = await viewer.query(api.chat.threadShares.listActiveThreadShares, {
+      paginationOpts: { numItems: 1, cursor: null },
+    });
+    expect(activeShares.page.map((share) => share._id)).toEqual([visibleShare._id]);
   });
 
   test("public transcript excludes private message fields and tool rows", async () => {

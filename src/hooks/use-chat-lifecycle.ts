@@ -9,7 +9,7 @@ import type { ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } f
  * Owns the in-flight reply lifecycle (send, cancel) plus thread archive.
  * Selection-aware but selection-state-agnostic: callers pass the current
  * thread / repository and the thread queued for archive, and the hook hands
- * back navigation hooks via `onAfterCreateThread` / `onAfterDeleteThread` so
+ * back navigation hooks via `onAfterCreateThread` / `onAfterArchiveThread` so
  * the parent can update the URL once a mutation succeeds.
  *
  * Send path branches on whether a thread already exists:
@@ -33,7 +33,7 @@ export function useChatLifecycle({
   setActionError,
   setThreadToArchive,
   onAfterCreateThread,
-  onAfterDeleteThread,
+  onAfterArchiveThread,
 }: {
   selectedThreadId: ThreadId | null;
   repositoryId: RepositoryId | null;
@@ -70,7 +70,7 @@ export function useChatLifecycle({
   setActionError: (value: string | null) => void;
   setThreadToArchive: (value: ThreadId | null) => void;
   onAfterCreateThread: (threadId: ThreadId, mode: ChatMode) => void;
-  onAfterDeleteThread: (deletedThreadId: ThreadId) => void;
+  onAfterArchiveThread: (archivedThreadId: ThreadId) => void;
 }) {
   const sendMessageMutation = useMutation(api.chat.send.sendMessage);
   const sendMessageStartingNewThreadMutation = useMutation(api.chat.send.sendMessageStartingNewThread);
@@ -175,17 +175,17 @@ export function useChatLifecycle({
       setActionError(null);
       try {
         await archiveThreadMutation({ threadId: threadToArchive });
-        const deletedId = threadToArchive;
+        const archivedId = threadToArchive;
         setThreadToArchive(null);
-        if (selectedThreadId === deletedId) {
-          onAfterDeleteThread(deletedId);
+        if (selectedThreadId === archivedId) {
+          onAfterArchiveThread(archivedId);
         }
       } catch (error) {
         setActionError(toUserErrorMessage(error, "Failed to archive the thread."));
       }
     }, [
       archiveThreadMutation,
-      onAfterDeleteThread,
+      onAfterArchiveThread,
       selectedThreadId,
       setActionError,
       setThreadToArchive,

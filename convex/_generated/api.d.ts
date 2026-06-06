@@ -14,6 +14,7 @@ import type * as artifactIndexing from "../artifactIndexing.js";
 import type * as artifactStore from "../artifactStore.js";
 import type * as artifactViews from "../artifactViews.js";
 import type * as artifacts from "../artifacts.js";
+import type * as chat_archiveState from "../chat/archiveState.js";
 import type * as chat_cancel from "../chat/cancel.js";
 import type * as chat_citationLint from "../chat/citationLint.js";
 import type * as chat_context from "../chat/context.js";
@@ -123,6 +124,7 @@ declare const fullApi: ApiFromModules<{
   artifactStore: typeof artifactStore;
   artifactViews: typeof artifactViews;
   artifacts: typeof artifacts;
+  "chat/archiveState": typeof chat_archiveState;
   "chat/cancel": typeof chat_cancel;
   "chat/citationLint": typeof chat_citationLint;
   "chat/context": typeof chat_context;

@@ -658,12 +658,6 @@ export default defineSchema({
     description: v.optional(v.string()),
     pinnedAt: v.optional(v.number()),
     /**
-     * User-facing archive marker. Archived threads are hidden from active
-     * history/sidebar/chat queries but keep their messages and share links
-     * until the user permanently deletes them from Archive.
-     */
-    archivedAt: v.optional(v.number()),
-    /**
      * Stable identifier for folders seeded by the System Design generator
      * (`overview`, `architecture`, `data_model`, `api`, `infrastructure`,
      * `security`, `operations`). Lets `generateSystemDesignDocs` find the
@@ -774,6 +768,21 @@ export default defineSchema({
      */
     archivedAt: v.optional(v.number()),
     /**
+     * Denormalized membership marker for `archivedThreadScopes`.
+     *
+     * Undefined means the thread is not currently counted in Archive's scope
+     * selector. Archived, non-deleting threads are patched to a scope key only
+     * after the scope row is incremented, making the repair job idempotent.
+     */
+    archiveScopeKey: v.optional(v.string()),
+    /**
+     * Repair/backfill watermark for legacy archived rows. The hourly repair
+     * job scans rows where this is undefined, updates archive scope membership
+     * as needed, and stamps this field so inactive rows do not block future
+     * batches forever.
+     */
+    archiveBackfilledAt: v.optional(v.number()),
+    /**
      * Soft-delete marker set before the heavy message / stream cascade starts.
      * User-facing thread queries exclude rows with this field so a long delete
      * cannot leave the thread or its public shares visible while continuation
@@ -868,6 +877,12 @@ export default defineSchema({
       "lastMessageAt",
     ])
     .index("by_historyBackfilledAt", ["historyBackfilledAt"])
+    .index("by_ownerTokenIdentifier_and_archiveScopeKey_and_archivedAt", [
+      "ownerTokenIdentifier",
+      "archiveScopeKey",
+      "archivedAt",
+    ])
+    .index("by_archiveBackfilledAt", ["archiveBackfilledAt"])
     .index("by_repositoryId_and_pinnedAt", ["repositoryId", "pinnedAt"])
     .index("by_repositoryId_and_mode", ["repositoryId", "mode"])
     .index("by_repositoryId_mode_and_lastMessageAt", ["repositoryId", "mode", "lastMessageAt"])
@@ -884,6 +899,18 @@ export default defineSchema({
   })
     .index("by_ownerTokenIdentifier_and_lastThreadAt", ["ownerTokenIdentifier", "lastThreadAt"])
     .index("by_ownerTokenIdentifier_and_groupKey", ["ownerTokenIdentifier", "groupKey"])
+    .index("by_repositoryId", ["repositoryId"]),
+
+  archivedThreadScopes: defineTable({
+    ownerTokenIdentifier: v.string(),
+    scopeKey: v.string(),
+    repositoryId: v.optional(v.id("repositories")),
+    lastArchivedAt: v.number(),
+    lastThreadId: v.id("threads"),
+    threadCount: v.number(),
+  })
+    .index("by_ownerTokenIdentifier_and_lastArchivedAt", ["ownerTokenIdentifier", "lastArchivedAt"])
+    .index("by_ownerTokenIdentifier_and_scopeKey", ["ownerTokenIdentifier", "scopeKey"])
     .index("by_repositoryId", ["repositoryId"]),
 
   threadShares: defineTable({

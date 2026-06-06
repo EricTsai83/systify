@@ -90,7 +90,7 @@ export function RepositoryShell({
 
   const isArtifactPanelEnabled = mode === "library" || (mode === "discuss" && capabilities.attachedRepository !== null);
 
-  const [threadToDelete, setThreadToDelete] = useState<ThreadId | null>(null);
+  const [threadToArchive, setThreadToArchive] = useState<ThreadId | null>(null);
   const [showArchiveDialog, setShowArchiveDialog] = useState(false);
   const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] = useState(false);
   const chatMode: ChatMode = "discuss";
@@ -341,7 +341,7 @@ export function RepositoryShell({
     void navigate(discussPath(currentRepositoryId));
   }, [currentRepositoryId, navigate]);
 
-  const onAfterDeleteThread = useCallback(() => {
+  const onAfterArchiveThread = useCallback(() => {
     if (currentRepositoryId !== null) {
       if (mode === "library") {
         void navigate(libraryPath(currentRepositoryId));
@@ -362,8 +362,8 @@ export function RepositoryShell({
     handleSendMessage,
     isCancellingReply,
     handleCancelInFlightReply,
-    isDeletingThread,
-    handleDeleteThread,
+    isArchivingThread,
+    handleArchiveThread,
   } = useChatShellLifecycle({
     urlThreadId,
     repositoryId: currentRepositoryId,
@@ -375,11 +375,11 @@ export function RepositoryShell({
     selectedReasoningEffort,
     liveRepositoryIds,
     liveThreadIds,
-    threadToDelete,
+    threadToArchive,
     setActionError,
-    setThreadToDelete,
+    setThreadToArchive,
     onAfterCreateThread,
-    onAfterDeleteThread,
+    onAfterArchiveThread,
   });
 
   useEffect(() => {
@@ -478,7 +478,7 @@ export function RepositoryShell({
         onSwitchRepository={handleSwitchRepository}
         selectedThreadId={effectiveSelectedThreadId}
         onSelectThread={handleSelectThread}
-        onDeleteThread={setThreadToDelete}
+        onDeleteThread={setThreadToArchive}
         onRequestNewThread={handleRequestNewThread}
         onImported={handleImported}
         onError={setActionError}
@@ -633,14 +633,14 @@ export function RepositoryShell({
       ) : null}
 
       <ConfirmDialog
-        open={threadToDelete !== null}
-        onOpenChange={(open) => !open && setThreadToDelete(null)}
+        open={threadToArchive !== null}
+        onOpenChange={(open) => !open && setThreadToArchive(null)}
         title="Archive thread"
         description="This removes the thread from active history. You can restore or permanently delete it from Archive."
         actionLabel="Archive thread"
         loadingLabel="Archiving…"
-        isPending={isDeletingThread}
-        onConfirm={() => void handleDeleteThread()}
+        isPending={isArchivingThread}
+        onConfirm={() => void handleArchiveThread()}
       />
 
       <ConfirmDialog

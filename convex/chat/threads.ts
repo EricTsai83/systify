@@ -20,6 +20,7 @@ import {
   recordThreadRemovedFromHistory,
 } from "./historyState";
 import { loadActiveOwnedThread, requireActiveOwnedThread } from "./threadAccess";
+import { recordThreadArchivedInScope, recordThreadRemovedFromArchiveScope } from "./archiveState";
 
 type ArchivedThreadRepositorySummary = {
   _id: Id<"repositories">;
@@ -636,42 +637,33 @@ export const listArchivedThreadRepositoryScopes = query({
   args: {},
   handler: async (ctx) => {
     const identity = await requireViewerIdentity(ctx);
-    const threads = await ctx.db
-      .query("threads")
-      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_archivedAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined).gt("archivedAt", 0),
+    const scopes = await ctx.db
+      .query("archivedThreadScopes")
+      .withIndex("by_ownerTokenIdentifier_and_lastArchivedAt", (q) =>
+        q.eq("ownerTokenIdentifier", identity.tokenIdentifier),
       )
       .order("desc")
-      .take(1000);
+      .collect();
 
-    const noRepositoryThread = threads.find((thread) => thread.repositoryId === undefined);
-    const repositoryIds = Array.from(
-      new Set(threads.flatMap((thread) => (thread.repositoryId ? [thread.repositoryId] : []))),
-    );
-    const repositories = await Promise.all(
-      repositoryIds.map(async (repositoryId) => await summarizeArchivedThreadRepository(ctx, repositoryId)),
+    const scopeSummaries = await Promise.all(
+      scopes.map(async (scope) => {
+        if (!scope.repositoryId) {
+          return {
+            repositoryId: null,
+            label: "No repository",
+          };
+        }
+        const repository = await summarizeArchivedThreadRepository(ctx, scope.repositoryId);
+        return repository
+          ? {
+              repositoryId: repository._id,
+              label: repository.sourceRepoFullName,
+            }
+          : null;
+      }),
     );
 
-    return [
-      ...(noRepositoryThread
-        ? [
-            {
-              repositoryId: null,
-              label: "No repository",
-            },
-          ]
-        : []),
-      ...repositories.flatMap((repository) =>
-        repository
-          ? [
-              {
-                repositoryId: repository._id,
-                label: repository.sourceRepoFullName,
-              },
-            ]
-          : [],
-      ),
-    ];
+    return scopeSummaries.filter((scope): scope is NonNullable<(typeof scopeSummaries)[number]> => scope !== null);
   },
 });
 
@@ -722,6 +714,7 @@ async function restoreArchivedThreadsForRepositoryScope(
   });
 
   for (const thread of threads) {
+    await recordThreadRemovedFromArchiveScope(ctx, thread);
     await ctx.db.patch(thread._id, { archivedAt: undefined });
     const restored = (await ctx.db.get(thread._id))!;
     await recordThreadCreatedInHistory(ctx, restored);
@@ -809,6 +802,8 @@ export const archiveThread = mutation({
     }
     await ctx.db.patch(args.threadId, { archivedAt: Date.now(), pinnedAt: undefined });
     await recordThreadRemovedFromHistory(ctx, thread);
+    const archived = (await ctx.db.get(args.threadId))!;
+    await recordThreadArchivedInScope(ctx, archived);
     return null;
   },
 });
@@ -827,6 +822,7 @@ export const restoreThread = mutation({
     if (thread.archivedAt === undefined) {
       return null;
     }
+    await recordThreadRemovedFromArchiveScope(ctx, thread);
     await ctx.db.patch(args.threadId, { archivedAt: undefined });
     const restored = (await ctx.db.get(args.threadId))!;
     await recordThreadCreatedInHistory(ctx, restored);
@@ -844,6 +840,9 @@ export const deleteArchivedThread = mutation({
     });
     if (thread.archivedAt === undefined && thread.deletionRequestedAt === undefined) {
       throw new Error("Archive the thread before permanently deleting it.");
+    }
+    if (thread.archivedAt !== undefined) {
+      await recordThreadRemovedFromArchiveScope(ctx, thread);
     }
     await deleteThreadImpl(ctx, args);
   },
@@ -894,6 +893,8 @@ async function deleteThreadImpl(ctx: MutationCtx, args: { threadId: Id<"threads"
     await ctx.db.patch(args.threadId, { deletionRequestedAt: Date.now() });
     if (thread.archivedAt === undefined) {
       await recordThreadRemovedFromHistory(ctx, thread);
+    } else {
+      await recordThreadRemovedFromArchiveScope(ctx, thread);
     }
   }
 

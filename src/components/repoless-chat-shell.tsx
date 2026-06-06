@@ -54,7 +54,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
 
   const capabilities = useThreadCapabilities(urlThreadId);
 
-  const [threadToDelete, setThreadToDelete] = useState<ThreadId | null>(null);
+  const [threadToArchive, setThreadToArchive] = useState<ThreadId | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
   const chatMode: ChatMode = "discuss";
@@ -77,11 +77,11 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
     [navigate],
   );
 
-  const onAfterDeleteThread = useCallback(() => {
+  const onAfterArchiveThread = useCallback(() => {
     void navigate(DEFAULT_AUTHENTICATED_PATH);
   }, [navigate]);
 
-  const { chatInput, setChatInput, isSending, handleSendMessage, isDeletingThread, handleDeleteThread } =
+  const { chatInput, setChatInput, isSending, handleSendMessage, isArchivingThread, handleArchiveThread } =
     useChatShellLifecycle({
       urlThreadId,
       repositoryId: null,
@@ -91,11 +91,11 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       selectedReasoningEffort,
       liveRepositoryIds,
       liveThreadIds,
-      threadToDelete,
+      threadToArchive,
       setActionError,
-      setThreadToDelete,
+      setThreadToArchive,
       onAfterCreateThread,
-      onAfterDeleteThread,
+      onAfterArchiveThread,
     });
 
   const onMissingThread = useCallback(() => {
@@ -146,7 +146,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
         onSwitchRepository={handleSwitchRepository}
         selectedThreadId={urlThreadId}
         onSelectThread={handleSelectThread}
-        onDeleteThread={setThreadToDelete}
+        onDeleteThread={setThreadToArchive}
         onRequestNewThread={handleRequestNewThread}
         onImported={handleImported}
         onError={setActionError}
@@ -197,14 +197,14 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       </SidebarInset>
 
       <ConfirmDialog
-        open={threadToDelete !== null}
-        onOpenChange={(open) => !open && setThreadToDelete(null)}
+        open={threadToArchive !== null}
+        onOpenChange={(open) => !open && setThreadToArchive(null)}
         title="Archive thread"
         description="This removes the thread from active history. You can restore or permanently delete it from Archive."
         actionLabel="Archive thread"
         loadingLabel="Archiving…"
-        isPending={isDeletingThread}
-        onConfirm={() => void handleDeleteThread()}
+        isPending={isArchivingThread}
+        onConfirm={() => void handleArchiveThread()}
       />
     </>
   );

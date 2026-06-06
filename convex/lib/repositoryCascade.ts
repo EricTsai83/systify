@@ -4,6 +4,7 @@ import type { MutationCtx } from "../_generated/server";
 import { CASCADE_BATCH_SIZE, MAX_TOOL_CALL_EVENTS_PER_MESSAGE } from "./constants";
 import { logWarn } from "./observability";
 import { clearLastActiveRepositoryIfMatches } from "./userPreferences";
+import { drainArchivedThreadScopesByRepositoryId } from "../chat/archiveState";
 import { drainHistoryGroupsByRepositoryId, drainThreadSharesByRepositoryId } from "../chat/historyState";
 
 const REPOSITORY_DELETE_RETRY_MS = 5_000;
@@ -352,6 +353,7 @@ export async function runRepositoryCascadeDelete(
   more = (await drainArtifactChunksByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainThreadSharesByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainHistoryGroupsByRepositoryId(ctx, args.repositoryId)) || more;
+  more = (await drainArchivedThreadScopesByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainArtifactsByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainArtifactFoldersByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainRepoChunksByRepositoryId(ctx, args.repositoryId)) || more;

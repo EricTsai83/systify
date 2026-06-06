@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import { describe, expect, test } from "vitest";
-import { api } from "../_generated/api";
+import { api, internal } from "../_generated/api";
 import { insertTestArtifact, insertTestRepository } from "../../test/convex/fixtures";
 import { createRateLimitedTestConvex as createTestConvex, type SystifyTestConvex } from "../../test/convex/harness";
 
@@ -312,6 +312,18 @@ describe("archiveThread", () => {
     const storedAfterArchive = await t.run((ctx) => ctx.db.get(threadId));
     expect(typeof storedAfterArchive?.archivedAt).toBe("number");
     expect(storedAfterArchive?.pinnedAt).toBeUndefined();
+    expect(storedAfterArchive?.archiveScopeKey).toBe("no_repository");
+
+    const scopeAfterArchive = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("archivedThreadScopes")
+        .withIndex("by_ownerTokenIdentifier_and_scopeKey", (q) =>
+          q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("scopeKey", "no_repository"),
+        )
+        .unique();
+    });
+    expect(scopeAfterArchive?.threadCount).toBe(1);
+    expect(scopeAfterArchive?.lastThreadId).toBe(threadId);
 
     const activeAfterArchive = await viewer.query(api.chat.threads.listRepolessThreads, {});
     expect(activeAfterArchive.map((thread) => thread._id)).not.toContain(threadId);
@@ -325,6 +337,17 @@ describe("archiveThread", () => {
 
     const restored = await t.run((ctx) => ctx.db.get(threadId));
     expect(restored?.archivedAt).toBeUndefined();
+    expect(restored?.archiveScopeKey).toBeUndefined();
+
+    const scopeAfterRestore = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("archivedThreadScopes")
+        .withIndex("by_ownerTokenIdentifier_and_scopeKey", (q) =>
+          q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("scopeKey", "no_repository"),
+        )
+        .unique();
+    });
+    expect(scopeAfterRestore).toBeNull();
 
     const activeAfterRestore = await viewer.query(api.chat.threads.listRepolessThreads, {});
     expect(activeAfterRestore.map((thread) => thread._id)).toContain(threadId);
@@ -403,8 +426,61 @@ describe("archiveThread", () => {
 
     const afterDeleteRepository = await t.run((ctx) => ctx.db.get(repositoryThread._id));
     const afterDeleteNoRepository = await t.run((ctx) => ctx.db.get(noRepositoryThread._id));
+    const remainingScopes = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("archivedThreadScopes")
+        .withIndex("by_ownerTokenIdentifier_and_lastArchivedAt", (q) =>
+          q.eq("ownerTokenIdentifier", ownerTokenIdentifier),
+        )
+        .collect();
+    });
     expect(afterDeleteRepository).not.toBeNull();
     expect(afterDeleteNoRepository).toBeNull();
+    expect(remainingScopes).toHaveLength(0);
+  });
+
+  test("repair job backfills legacy archived thread scopes without double-counting", async () => {
+    const ownerTokenIdentifier = "user|archive-scope-repair";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier, "archive-scope-repair");
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        repositoryId,
+        title: "Legacy archived repo",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+        archivedAt: Date.now(),
+      });
+      await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Legacy archived no repo",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+        archivedAt: Date.now() + 1_000,
+      });
+    });
+
+    await t.mutation(internal.chat.archiveState.repairArchivedThreadScopes, {});
+    await t.mutation(internal.chat.archiveState.repairArchivedThreadScopes, {});
+
+    const scopes = await viewer.query(api.chat.threads.listArchivedThreadRepositoryScopes, {});
+    const rows = await t.run(async (ctx) => {
+      return await ctx.db
+        .query("archivedThreadScopes")
+        .withIndex("by_ownerTokenIdentifier_and_lastArchivedAt", (q) =>
+          q.eq("ownerTokenIdentifier", ownerTokenIdentifier),
+        )
+        .collect();
+    });
+
+    expect(scopes).toEqual([
+      { repositoryId: null, label: "No repository" },
+      { repositoryId, label: "acme/archive-scope-repair" },
+    ]);
+    expect(rows.map((row) => row.threadCount).sort()).toEqual([1, 1]);
   });
 });
 

@@ -48,6 +48,7 @@ const THREAD_NEXT_PAGE_SIZE = 12;
 const SHARE_INITIAL_PAGE_SIZE = 20;
 const SHARE_NEXT_PAGE_SIZE = 20;
 const HISTORY_SELECTOR_PAGE_SIZE = 100;
+export const HISTORY_SELECTOR_NEXT_PAGE_SIZE = 100;
 const NO_REPOSITORY_SELECTOR_VALUE = "no_repository";
 
 type HistoryGroup = {
@@ -88,22 +89,23 @@ type ActiveShare = {
   repositoryLabel: string;
   createdAt: number;
   expiresAt: number;
+  threadArchivedAt?: number;
 };
 
 export function HistoryPage() {
   const navigate = useNavigate();
   const createOrGetThreadShare = useMutation(api.chat.threadShares.createOrGetThreadShare);
   const archiveThread = useMutation(api.chat.threads.archiveThread);
-  const [pendingDelete, setPendingDelete] = useState<HistoryThread | null>(null);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [pendingArchive, setPendingArchive] = useState<HistoryThread | null>(null);
+  const [isArchiving, setIsArchiving] = useState(false);
   const [isArchiveOpen, setIsArchiveOpen] = useState(false);
   const [selectedHistoryScope, setSelectedHistoryScope] = useState<string | null>(null);
 
-  const { results: groups, status: groupsStatus } = usePaginatedQuery(
-    api.chat.history.listThreadHistoryGroups,
-    {},
-    { initialNumItems: HISTORY_SELECTOR_PAGE_SIZE },
-  );
+  const {
+    results: groups,
+    status: groupsStatus,
+    loadMore: loadMoreGroups,
+  } = usePaginatedQuery(api.chat.history.listThreadHistoryGroups, {}, { initialNumItems: HISTORY_SELECTOR_PAGE_SIZE });
   const {
     results: activeShares,
     status: activeSharesStatus,
@@ -153,23 +155,25 @@ export function HistoryPage() {
     [createOrGetThreadShare],
   );
 
-  const handleConfirmDelete = useCallback(async () => {
-    if (!pendingDelete) {
+  const handleConfirmArchive = useCallback(async () => {
+    if (!pendingArchive) {
       return;
     }
-    setIsDeleting(true);
+    setIsArchiving(true);
     try {
-      await archiveThread({ threadId: pendingDelete._id });
+      await archiveThread({ threadId: pendingArchive._id });
       toast.success("Thread archived");
-      setPendingDelete(null);
+      setPendingArchive(null);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to archive thread.");
     } finally {
-      setIsDeleting(false);
+      setIsArchiving(false);
     }
-  }, [archiveThread, pendingDelete]);
+  }, [archiveThread, pendingArchive]);
 
   const isLoadingGroups = groupsStatus === "LoadingFirstPage";
+  const canLoadMoreGroups = groupsStatus === "CanLoadMore";
+  const isLoadingMoreGroups = groupsStatus === "LoadingMore";
   const canLoadMoreShares = activeSharesStatus === "CanLoadMore";
   const isLoadingMoreShares = activeSharesStatus === "LoadingMore";
 
@@ -193,11 +197,28 @@ export function HistoryPage() {
               Chat History
             </h3>
             {orderedGroups.length > 0 ? (
-              <HistoryRepositorySelector
-                groups={orderedGroups}
-                value={getHistoryScopeValue(selectedGroup ?? orderedGroups[0])}
-                onValueChange={setSelectedHistoryScope}
-              />
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <HistoryRepositorySelector
+                  groups={orderedGroups}
+                  value={getHistoryScopeValue(selectedGroup ?? orderedGroups[0])}
+                  onValueChange={setSelectedHistoryScope}
+                />
+                {canLoadMoreGroups || isLoadingMoreGroups ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    disabled={isLoadingMoreGroups}
+                    onClick={() => loadMoreGroups(HISTORY_SELECTOR_NEXT_PAGE_SIZE)}
+                  >
+                    {isLoadingMoreGroups ? <Spinner size={13} /> : null}
+                    <ButtonStateText
+                      current={isLoadingMoreGroups ? "Loading" : "Load more repositories"}
+                      states={["Load more repositories", "Loading"]}
+                    />
+                  </Button>
+                ) : null}
+              </div>
             ) : isLoadingGroups ? (
               <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
                 <Spinner size={13} />
@@ -222,7 +243,7 @@ export function HistoryPage() {
                 group={selectedGroup}
                 onOpenThread={handleOpenThread}
                 onShareThread={handleShareThread}
-                onRequestDelete={setPendingDelete}
+                onRequestArchive={setPendingArchive}
               />
             ) : (
               <EmptyHistoryState />
@@ -252,20 +273,20 @@ export function HistoryPage() {
       </section>
 
       <ConfirmDialog
-        open={pendingDelete !== null}
+        open={pendingArchive !== null}
         onOpenChange={(open) => {
-          if (!open) setPendingDelete(null);
+          if (!open) setPendingArchive(null);
         }}
         title="Archive thread?"
         description={
-          pendingDelete
-            ? `${pendingDelete.title} will be removed from active history. You can restore or permanently delete it from Archive.`
+          pendingArchive
+            ? `${pendingArchive.title} will be removed from active history. You can restore or permanently delete it from Archive.`
             : ""
         }
         actionLabel="Archive thread"
         loadingLabel="Archiving..."
-        isPending={isDeleting}
-        onConfirm={() => void handleConfirmDelete()}
+        isPending={isArchiving}
+        onConfirm={() => void handleConfirmArchive()}
       />
       <Dialog open={isArchiveOpen} onOpenChange={setIsArchiveOpen}>
         <DialogContent className="sm:max-w-4xl">
@@ -286,8 +307,8 @@ function SummaryStrip({
   summary: { repositoryThreads: number; noRepositoryChats: number; sharedLinks: number };
 }) {
   const items = [
-    { label: "Repository threads", value: summary.repositoryThreads },
-    { label: "No repository chats", value: summary.noRepositoryChats },
+    { label: "Loaded repository threads", value: summary.repositoryThreads },
+    { label: "Loaded no-repository chats", value: summary.noRepositoryChats },
     { label: "Shared links", value: summary.sharedLinks },
   ];
   return (
@@ -370,12 +391,12 @@ function HistoryThreadsForScope({
   group,
   onOpenThread,
   onShareThread,
-  onRequestDelete,
+  onRequestArchive,
 }: {
   group: HistoryGroup;
   onOpenThread: (thread: HistoryThread) => void;
   onShareThread: (thread: HistoryThread) => Promise<void>;
-  onRequestDelete: (thread: HistoryThread) => void;
+  onRequestArchive: (thread: HistoryThread) => void;
 }) {
   const [pageIndex, setPageIndex] = useState(0);
   const repositoryIdArg = group.repositoryId ?? null;
@@ -460,7 +481,7 @@ function HistoryThreadsForScope({
                 noRepository={isNoRepository}
                 onOpenThread={onOpenThread}
                 onShareThread={onShareThread}
-                onRequestDelete={onRequestDelete}
+                onRequestArchive={onRequestArchive}
               />
             ))}
           </div>
@@ -486,13 +507,13 @@ function ThreadHistoryRow({
   noRepository,
   onOpenThread,
   onShareThread,
-  onRequestDelete,
+  onRequestArchive,
 }: {
   thread: HistoryThread;
   noRepository: boolean;
   onOpenThread: (thread: HistoryThread) => void;
   onShareThread: (thread: HistoryThread) => Promise<void>;
-  onRequestDelete: (thread: HistoryThread) => void;
+  onRequestArchive: (thread: HistoryThread) => void;
 }) {
   return (
     <div className="group flex min-w-0 flex-col gap-3 border-t border-border px-3 py-3 first:border-t-0 sm:flex-row sm:items-center sm:justify-between sm:px-4">
@@ -517,7 +538,7 @@ function ThreadHistoryRow({
           type="button"
           variant="ghost"
           size="sm"
-          onClick={() => onRequestDelete(thread)}
+          onClick={() => onRequestArchive(thread)}
           aria-label={`Archive ${thread.title}`}
         >
           <ArchiveIcon weight="bold" />
@@ -541,7 +562,7 @@ function ThreadHistoryRow({
                 <ShareNetwork weight="bold" />
                 Share
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onRequestDelete(thread)}>
+              <DropdownMenuItem onSelect={() => onRequestArchive(thread)}>
                 <ArchiveIcon weight="bold" />
                 Archive
               </DropdownMenuItem>
@@ -607,7 +628,7 @@ function SharedThreadsSection({
 
       {isLoadingFirstPage ? (
         <SharedRowsSkeleton />
-      ) : activeShares.length === 0 ? (
+      ) : activeShares.length === 0 && !canLoadMore && !isLoadingMore ? (
         <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
           No active public share links.
         </div>
@@ -619,7 +640,10 @@ function SharedThreadsSection({
               className="flex flex-col gap-3 border-t border-border px-3 py-3 first:border-t-0 sm:flex-row sm:items-center sm:justify-between sm:px-4"
             >
               <div className="min-w-0">
-                <h4 className="truncate text-sm font-medium">{share.title}</h4>
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <h4 className="truncate text-sm font-medium">{share.title}</h4>
+                  {share.threadArchivedAt ? <Badge variant="muted">Archived thread</Badge> : null}
+                </div>
                 <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   <span className="truncate">{share.repositoryLabel}</span>
                   <span>{formatExpiry(share.expiresAt)}</span>
