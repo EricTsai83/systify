@@ -57,6 +57,18 @@ describe("resolveModelForReply", () => {
     expect(choice.modelName).toBe("claude-haiku-4-5");
   });
 
+  test("sandbox-tier explicit picks do not serve lower-capability library replies", () => {
+    const choice = resolveModelForReply({
+      mode: "library",
+      groundSandbox: false,
+      overrideProvider: "openai",
+      overrideModelName: "gpt-5.5",
+    });
+    expect(choice.provider).toBe("openai");
+    expect(choice.modelName).toBe("gpt-5.4-mini");
+    expect(choice.capability).toBe("library");
+  });
+
   test("half-set override (model name only, no provider) is ignored and falls through", () => {
     const choice = resolveModelForReply({
       mode: "discuss",

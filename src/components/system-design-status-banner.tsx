@@ -3,37 +3,13 @@ import { useMutation, useQuery } from "convex/react";
 import { ArrowRightIcon, SparkleIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
-import type { SystemDesignKind } from "../../convex/lib/systemDesign";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
-import { REPOSITORY_GUIDE_COPY, REPOSITORY_GUIDE_SECTION_TITLES } from "@/lib/product-copy";
-
-/**
- * Failure reason copy. `transport_rate_limit` distinguishes "provider
- * told us to slow down" from generic transport errors so users know
- * waiting (rather than fiddling with selections) is the right response.
- * `output_quality` covers the post-generation quality-gate rejects
- * (missing required sections / Mermaid block) — surfacing them is
- * useful because rerunning often succeeds once the model retries.
- * `transport_other` is the catch-all for non-rate-limit transport
- * faults (network / 5xx / SDK), and `infra` is the our-side bug bucket
- * the operator should already be aware of.
- */
-const REASON_TEXT_ALL_LIVE_SOURCE =
-  "Live access to the repository wasn't available when this ran. The next attempt will prepare it first.";
-const REASON_TEXT_ALL_EMPTY = "The model didn't produce a complete guide section. The next attempt may succeed.";
-const REASON_TEXT_ALL_RATE_LIMIT =
-  "The provider rate-limited the run. Wait a couple of minutes and the next attempt should go through.";
-const REASON_TEXT_ALL_QUALITY =
-  "Some guide sections came back without the required content. Retrying usually fixes this — open the details if it persists.";
-const REASON_TEXT_ALL_TRANSPORT =
-  "A transport error stopped the run (network / provider 5xx). The error id is in the log if you need to report it.";
-const REASON_TEXT_ALL_INFRA = "An internal error stopped the run. Engineering has been notified — retry to try again.";
-const REASON_TEXT_MIXED = "Some guide sections couldn't be generated. The next attempt will retry the failed ones.";
-const REASON_TEXT_FALLBACK = "Something stopped the run before it finished. The next attempt will start a fresh one.";
+import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
+import { describeRepositoryGuideFailure, getRepositoryGuideKindTitle } from "@/lib/repository-guide-failures";
 
 /**
  * Inline banner for System Design generation status. Subscribes to
@@ -114,95 +90,10 @@ function ActiveBanner({
   );
 }
 
-type FailureDescriptor = {
-  title: string;
-  reasonText: string;
-  buttonLabel: string;
-  selections: SystemDesignKind[];
-};
-
-/**
- * Failure reason union as it appears on `jobs.kindFailures[].reason`.
- * Mirrors the schema validator in `convex/schema.ts` (`kindFailureReason`).
- */
-type FailureReason =
-  | "live_source_unavailable"
-  | "model_empty_output"
-  | "transport_rate_limit"
-  | "transport_other"
-  | "output_quality"
-  | "infra";
-
-const REASON_TEXT_BY_KIND: Record<FailureReason, string> = {
-  live_source_unavailable: REASON_TEXT_ALL_LIVE_SOURCE,
-  model_empty_output: REASON_TEXT_ALL_EMPTY,
-  transport_rate_limit: REASON_TEXT_ALL_RATE_LIMIT,
-  output_quality: REASON_TEXT_ALL_QUALITY,
-  transport_other: REASON_TEXT_ALL_TRANSPORT,
-  infra: REASON_TEXT_ALL_INFRA,
-};
-
-function describeFailures(job: Doc<"jobs">): FailureDescriptor | null {
-  const kindFailures = (job.kindFailures ?? []) as ReadonlyArray<{
-    kind: SystemDesignKind;
-    reason?: FailureReason;
-  }>;
-
-  const persistedSelections = job.selections ?? [];
-  const failedKinds = Array.from(new Set(kindFailures.map((failure) => failure.kind)));
-
-  let selections: SystemDesignKind[] = [];
-  if (kindFailures.length > 0) {
-    // Per-kind failures during a partial run — only retry the ones that failed.
-    selections = failedKinds;
-  } else if (persistedSelections.length > 0) {
-    // Job-level failure (no per-kind rows): retry the original full request.
-    selections = persistedSelections;
-  } else {
-    // Legacy job without `selections` and no `kindFailures` — we have no
-    // safe retry target.
-    return null;
-  }
-
-  const titles = selections
-    .map((kind) =>
-      kind in REPOSITORY_GUIDE_SECTION_TITLES
-        ? REPOSITORY_GUIDE_SECTION_TITLES[kind]
-        : `Unknown ${REPOSITORY_GUIDE_COPY.sectionName}`,
-    )
-    .filter(Boolean);
-  const title =
-    selections.length === 1
-      ? `Couldn't generate ${titles[0]}`
-      : `Couldn't generate ${selections.length} ${REPOSITORY_GUIDE_COPY.sectionNamePlural}`;
-  const buttonLabel =
-    selections.length === 1
-      ? `Generate ${titles[0]}`
-      : `Generate ${selections.length} ${REPOSITORY_GUIDE_COPY.sectionNamePlural}`;
-
-  let reasonText: string;
-  if (kindFailures.length === 0) {
-    reasonText = job.errorMessage && job.errorMessage.trim() ? job.errorMessage : REASON_TEXT_FALLBACK;
-  } else {
-    const reasons = Array.from(
-      new Set<FailureReason | undefined>(kindFailures.map((failure) => failure.reason)),
-    ).filter((reason): reason is FailureReason => reason !== undefined);
-    if (reasons.length === 1) {
-      reasonText = REASON_TEXT_BY_KIND[reasons[0]] ?? REASON_TEXT_FALLBACK;
-    } else if (reasons.length === 0) {
-      reasonText = REASON_TEXT_FALLBACK;
-    } else {
-      reasonText = REASON_TEXT_MIXED;
-    }
-  }
-
-  return { title, reasonText, buttonLabel, selections };
-}
-
 function FailureBanner({ repositoryId, job }: { repositoryId: Id<"repositories">; job: Doc<"jobs"> }) {
   const requestGeneration = useMutation(api.systemDesign.requestSystemDesignGeneration);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const descriptor = describeFailures(job);
+  const descriptor = describeRepositoryGuideFailure(job);
   const kindFailures = (job.kindFailures ?? []) as ReadonlyArray<{
     kind: string;
     errorId: string;
@@ -278,10 +169,7 @@ function FailureBanner({ repositoryId, job }: { repositoryId: Id<"repositories">
           <summary className="px-4 py-1.5 text-[11px] font-medium text-destructive md:px-6">See what failed</summary>
           <div className="space-y-1 border-t border-destructive/20 px-4 py-2 md:px-6">
             {kindFailures.map((failure) => {
-              const kindTitle =
-                failure.kind in REPOSITORY_GUIDE_SECTION_TITLES
-                  ? REPOSITORY_GUIDE_SECTION_TITLES[failure.kind as SystemDesignKind]
-                  : failure.kind;
+              const kindTitle = getRepositoryGuideKindTitle(failure.kind);
               return (
                 <div key={failure.errorId} className="text-[10px] text-destructive/80">
                   <div className="font-medium">{kindTitle}</div>

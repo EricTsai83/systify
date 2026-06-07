@@ -1,5 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { buildCitationMap, buildDiscussSystemPrompt, buildSystemPrompt, buildUserPrompt } from "./chat/prompting";
+import {
+  buildCitationMap,
+  buildDiscussSystemPrompt,
+  buildHeuristicAnswer,
+  buildSystemPrompt,
+  buildUserPrompt,
+} from "./chat/prompting";
 import type { ChatMode } from "./lib/chatMode";
 import type { Id } from "./_generated/dataModel";
 import type { ReplyContext } from "./chat/context";
@@ -13,6 +19,10 @@ import { MAX_CONTEXT_ARTIFACTS } from "./lib/constants";
  */
 function makeArtifactId(suffix: string): Id<"artifacts"> {
   return `artifact_${suffix}` as unknown as Id<"artifacts">;
+}
+
+function makeArtifactChunkId(suffix: string): Id<"artifactChunks"> {
+  return `artifact_chunk_${suffix}` as unknown as Id<"artifactChunks">;
 }
 
 function makeContext(overrides: Partial<ReplyContext> & { artifacts?: ReplyContext["artifacts"] } = {}): ReplyContext {
@@ -334,6 +344,41 @@ describe("buildUserPrompt artifact numbering", () => {
     expect(prompt).toContain("## [A2] Risk hotspots");
   });
 
+  test("renders retrieved artifact chunks as the numbered evidence when present", () => {
+    const prompt = buildUserPrompt(
+      makeContext({
+        artifacts: [
+          {
+            id: makeArtifactId("whole-artifact"),
+            title: "Whole artifact fallback",
+            summary: "Fallback summary",
+            contentMarkdown: "Full artifact body that should not be rendered while chunks are present.",
+          },
+        ],
+        artifactChunks: [
+          {
+            chunkId: makeArtifactChunkId("data-model"),
+            artifactId: makeArtifactId("data-model"),
+            artifactTitle: "Data model overview",
+            artifactKind: "data_model_overview",
+            headingPath: ["Architecture", "Data Model"],
+            content: "Repositories own imports, artifacts, and chat threads.",
+            lexicalScore: 1,
+            semanticScore: 0.5,
+            rrfScore: 0.03,
+          },
+        ],
+      }),
+      "How is repository data organized?",
+      [],
+    );
+
+    expect(prompt).toContain("## [A1#architecture/data-model] Data model overview");
+    expect(prompt).toContain("Section: Architecture > Data Model");
+    expect(prompt).toContain("Repositories own imports, artifacts, and chat threads.");
+    expect(prompt).not.toContain("Full artifact body that should not be rendered while chunks are present.");
+  });
+
   test("numbering restarts at 1 per prompt and never exceeds MAX_CONTEXT_ARTIFACTS", () => {
     // Generate 1 more artifact than the prompt slice to confirm the cap
     // is enforced. Anything past the slice would be invisible to the
@@ -384,6 +429,36 @@ describe("buildCitationMap", () => {
     ]);
   });
 
+  test("uses retrieved artifact chunks for citation map entries when available", () => {
+    const artifactId = makeArtifactId("data-model");
+    const chunkId = makeArtifactChunkId("data-model");
+    const context = makeContext({
+      artifacts: [{ id: makeArtifactId("fallback"), title: "Fallback", summary: "", contentMarkdown: "" }],
+      artifactChunks: [
+        {
+          chunkId,
+          artifactId,
+          artifactTitle: "Data model overview",
+          artifactKind: "data_model_overview",
+          headingPath: ["Architecture", "Data Model"],
+          content: "Repository aggregate notes.",
+          lexicalScore: 1,
+          semanticScore: 0.5,
+          rrfScore: 0.03,
+        },
+      ],
+    });
+
+    expect(buildCitationMap(context)).toEqual([
+      {
+        index: 1,
+        artifactId,
+        chunkId,
+        headingPath: ["Architecture", "Data Model"],
+      },
+    ]);
+  });
+
   test("caps at MAX_CONTEXT_ARTIFACTS so the map and prompt stay in lockstep", () => {
     const overflow = MAX_CONTEXT_ARTIFACTS + 2;
     const context = makeContext({
@@ -411,5 +486,32 @@ describe("buildCitationMap", () => {
     // skip persisting the field on `messages.citationMap`.
     const map = buildCitationMap(makeContext({ artifacts: [] }));
     expect(map).toEqual([]);
+  });
+});
+
+describe("buildHeuristicAnswer", () => {
+  test("names retrieved artifact chunks when the no-provider fallback answers a Library-grounded reply", () => {
+    const answer = buildHeuristicAnswer(
+      makeContext({
+        artifactChunks: [
+          {
+            chunkId: makeArtifactChunkId("security"),
+            artifactId: makeArtifactId("security"),
+            artifactTitle: "Security overview",
+            artifactKind: "security_overview",
+            headingPath: ["Threat Model"],
+            content: "Tokens are scoped to the user.",
+            lexicalScore: 1,
+            semanticScore: 0,
+            rrfScore: 0.02,
+          },
+        ],
+      }),
+      "What protects tokens?",
+      [],
+    );
+
+    expect(answer).toContain("Most relevant artifact excerpts");
+    expect(answer).toContain("[A1#threat-model] Security overview (Threat Model)");
   });
 });

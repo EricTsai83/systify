@@ -1,4 +1,4 @@
-import { ConvexError, v } from "convex/values";
+import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
@@ -7,8 +7,6 @@ import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
 import { enqueueJob, findActiveJob } from "./lib/jobs";
 import {
   ensureSystemDesignFolders,
-  isSystemDesignKind,
-  SYSTEM_DESIGN_KIND_TITLES,
   SYSTEM_DESIGN_KIND_TO_FOLDER,
   systemDesignKindValidator,
   type SystemDesignKind,
@@ -31,15 +29,9 @@ import {
   getSandboxReplyEstimateCents,
   SYSTEM_DESIGN_JOB_LEASE_MS,
 } from "./lib/rateLimit";
-import {
-  isSupportedReasoningEffort,
-  isUserPickableModel,
-  listPickableModels,
-  reasoningEffortValidator,
-  ROLE_MODELS,
-  type ReasoningEffort,
-} from "./lib/llmCatalog";
+import { listPickableModels, reasoningEffortValidator, type ReasoningEffort } from "./lib/llmCatalog";
 import { llmProviderValidator, type LlmProvider } from "./lib/llmProvider";
+import { loadViewerModelPreferences } from "./lib/userPreferences";
 import { costUsdToCents } from "./lib/llmPricing";
 import {
   persistedArtifactResultValidator,
@@ -49,22 +41,14 @@ import {
 import { logInfo, logWarn } from "./lib/observability";
 import { SYSTEM_DESIGN_PROMPT_VERSIONS } from "./lib/systemDesignPrompts";
 import { SYSTEM_DESIGN_KIND_BUDGET_ESTIMATE_USD, recordUserUsageEvent, reserveUserUsageBudget } from "./lib/userCost";
-
-/**
- * Default LLM pick for System Design jobs when the caller does not
- * specify one. Sourced from `ROLE_MODELS.defaultSystemDesign` — the
- * sandbox-capable tier of the catalog because every System Design
- * kind drives sandbox tools (switching a non-tool model in here would
- * silently break the generator).
- *
- * `getJobModelChoice` falls back to these values on stale-recovery
- * paths whose persisted job rows pre-date the picker. After this
- * file's swap to `ROLE_MODELS`, a future bump of the default model
- * propagates to both the dialog and the recovery path with a single
- * edit in `llmCatalog.ts`.
- */
-const DEFAULT_SYSTEM_DESIGN_PROVIDER: LlmProvider = ROLE_MODELS.defaultSystemDesign.provider;
-const DEFAULT_SYSTEM_DESIGN_MODEL = ROLE_MODELS.defaultSystemDesign.modelName;
+import {
+  SYSTEM_DESIGN_DEFAULT_MODEL_CHOICE,
+  buildSystemDesignJobSummary,
+  normalizeSystemDesignSelections,
+  planSystemDesignGenerationRequest,
+  resolveSystemDesignCachePreviewModel,
+} from "./lib/systemDesignPlanning";
+import { systemDesignFailureReasonValidator } from "./lib/systemDesignFailures";
 
 /**
  * Loop guard for the stale-recovery auto-resume path. A System Design
@@ -112,8 +96,7 @@ export const requestSystemDesignGeneration = mutation({
     /**
      * Multi-provider LLM pick. Both args travel together — supplying
      * one without the other throws. When neither is set, the job
-     * falls back to {@link DEFAULT_SYSTEM_DESIGN_PROVIDER} /
-     * {@link DEFAULT_SYSTEM_DESIGN_MODEL}.
+     * falls back to the System Design Planning Module's default model.
      */
     provider: v.optional(llmProviderValidator),
     modelName: v.optional(v.string()),
@@ -139,40 +122,13 @@ export const requestSystemDesignGeneration = mutation({
     const { identity, repository } = await requireActiveRepositoryForViewer(ctx, {
       repositoryId: args.repositoryId,
     });
+    const modelPreferences = await loadViewerModelPreferences(ctx, identity.tokenIdentifier);
 
-    // Dedup, then defense-in-depth filter at the request boundary. The arg
-    // validator already restricts `selections` to the System Design union,
-    // so `isSystemDesignKind` is redundant for current literals — keeping it
-    // means a future kind added to the validator without an LLM prompt
-    // entry in `systemDesignNode` still cannot reach the generator.
-    const uniqueSelections = Array.from(new Set(args.selections)).filter(isSystemDesignKind);
-    if (uniqueSelections.length === 0) {
-      throw new Error("Select at least one document to generate.");
-    }
-
-    // Pick + validate the (provider, model) pair. Default to the
-    // catalog's sandbox-capable tier when the caller doesn't specify
-    // — PR-A3 wires this to the dialog's picker.
-    const provider = args.provider ?? DEFAULT_SYSTEM_DESIGN_PROVIDER;
-    const modelName = args.modelName ?? DEFAULT_SYSTEM_DESIGN_MODEL;
-    if ((args.provider === undefined) !== (args.modelName === undefined)) {
-      throw new ConvexError({
-        code: "invalid_model_pick",
-        message: "provider and modelName must be supplied together.",
-      });
-    }
-    if (!isUserPickableModel(provider, modelName, "sandbox")) {
-      throw new ConvexError({
-        code: "invalid_model_pick",
-        message: `Unsupported model selection: ${provider}:${modelName}`,
-      });
-    }
-    if (!isSupportedReasoningEffort(provider, modelName, args.reasoningEffort)) {
-      throw new ConvexError({
-        code: "unsupported_reasoning_effort",
-        message: `Unsupported reasoning effort "${args.reasoningEffort}" for ${provider}:${modelName}.`,
-      });
-    }
+    const generationPlan = planSystemDesignGenerationRequest({
+      selections: args.selections,
+      modelPreferences,
+      picker: args,
+    });
 
     const now = Date.now();
 
@@ -215,8 +171,8 @@ export const requestSystemDesignGeneration = mutation({
       sandboxId,
       costCategory: "system_design",
       triggerSource: "user",
-      outputSummary: buildJobSummary(uniqueSelections, "queued"),
-      selections: uniqueSelections,
+      outputSummary: buildSystemDesignJobSummary(generationPlan.selections, "queued"),
+      selections: generationPlan.selections,
       leaseMs: SYSTEM_DESIGN_JOB_LEASE_MS,
     });
 
@@ -224,16 +180,18 @@ export const requestSystemDesignGeneration = mutation({
     // picks up the same pair without rederiving from defaults — keeps
     // the cache key consistent across resume boundaries.
     await ctx.db.patch(jobId, {
-      provider,
-      modelName,
-      ...(args.reasoningEffort !== undefined ? { reasoningEffort: args.reasoningEffort } : {}),
+      provider: generationPlan.modelChoice.provider,
+      modelName: generationPlan.modelChoice.modelName,
+      ...(generationPlan.modelChoice.reasoningEffort !== undefined
+        ? { reasoningEffort: generationPlan.modelChoice.reasoningEffort }
+        : {}),
     });
 
     await ctx.scheduler.runAfter(0, internal.systemDesignNode.runSystemDesignGeneration, {
       jobId,
       repositoryId: repository._id,
       ownerTokenIdentifier: identity.tokenIdentifier,
-      selections: uniqueSelections,
+      selections: generationPlan.selections,
       forceRegenerate: args.forceRegenerate ?? false,
     });
 
@@ -338,7 +296,7 @@ export const markGenerationStarted = internalMutation({
     });
     if (result) {
       await ctx.db.patch(args.jobId, {
-        outputSummary: buildJobSummary(args.selections as SystemDesignKind[], "running"),
+        outputSummary: buildSystemDesignJobSummary(args.selections as SystemDesignKind[], "running"),
       });
     }
     return { started: result !== null };
@@ -381,27 +339,13 @@ export const updateGenerationProgress = internalMutation({
   },
 });
 
-/**
- * Mutation arg validator for the per-kind failure recorder. Mirrors
- * the schema's `kindFailureReason` union — keep them in sync. New
- * literals added here must also be added in `convex/schema.ts`.
- */
-const recordKindFailureReason = v.union(
-  v.literal("live_source_unavailable"),
-  v.literal("model_empty_output"),
-  v.literal("transport_rate_limit"),
-  v.literal("transport_other"),
-  v.literal("output_quality"),
-  v.literal("infra"),
-);
-
 export const recordKindFailure = internalMutation({
   args: {
     jobId: v.id("jobs"),
     kind: systemDesignKindValidator,
     errorId: v.string(),
     message: v.string(),
-    reason: v.optional(recordKindFailureReason),
+    reason: v.optional(systemDesignFailureReasonValidator),
   },
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
@@ -772,8 +716,8 @@ export const getJobModelChoice = internalQuery({
       hint: "Falling back to System Design defaults — expected for pre-PR-A2 jobs only.",
     });
     return {
-      provider: DEFAULT_SYSTEM_DESIGN_PROVIDER,
-      modelName: DEFAULT_SYSTEM_DESIGN_MODEL,
+      provider: SYSTEM_DESIGN_DEFAULT_MODEL_CHOICE.provider,
+      modelName: SYSTEM_DESIGN_DEFAULT_MODEL_CHOICE.modelName,
       reasoningEffort: undefined,
     };
   },
@@ -848,7 +792,7 @@ export const recordKindRun = internalMutation({
     totalCostUsd: v.optional(v.number()),
     durationMs: v.number(),
     status: recordKindRunStatus,
-    failureReason: v.optional(recordKindFailureReason),
+    failureReason: v.optional(systemDesignFailureReasonValidator),
     outputCharLength: v.optional(v.number()),
     missingSections: v.optional(v.array(v.string())),
     startedAt: v.number(),
@@ -1002,16 +946,8 @@ export const getCachedSelectionStatus = query({
     pendingKinds: SystemDesignKind[];
   }> => {
     const { doc: repository } = await loadOwnedDoc(ctx, args.repositoryId);
-    const selections = Array.from(new Set(args.selections)).filter(isSystemDesignKind);
-    let provider = args.provider ?? DEFAULT_SYSTEM_DESIGN_PROVIDER;
-    let modelName = args.modelName ?? DEFAULT_SYSTEM_DESIGN_MODEL;
-    if (
-      (args.provider !== undefined || args.modelName !== undefined) &&
-      !isUserPickableModel(provider, modelName, "sandbox")
-    ) {
-      provider = DEFAULT_SYSTEM_DESIGN_PROVIDER;
-      modelName = DEFAULT_SYSTEM_DESIGN_MODEL;
-    }
+    const selections = normalizeSystemDesignSelections(args.selections);
+    const { provider, modelName } = resolveSystemDesignCachePreviewModel(args);
     const commitSha = repository?.lastSyncedCommitSha;
     if (!repository || !commitSha) {
       return {
@@ -1041,15 +977,3 @@ export const getCachedSelectionStatus = query({
     return { total: selections.length, cachedKinds, pendingKinds };
   },
 });
-
-function buildJobSummary(selections: SystemDesignKind[], state: "queued" | "running"): string {
-  const titles = selections.map((kind) => SYSTEM_DESIGN_KIND_TITLES[kind]);
-  const verb = state === "queued" ? "Queued" : "Generating";
-  if (titles.length === 0) {
-    return `${verb} System Design documents`;
-  }
-  if (titles.length <= 2) {
-    return `${verb} ${titles.join(" + ")}`;
-  }
-  return `${verb} ${titles.length} System Design documents`;
-}

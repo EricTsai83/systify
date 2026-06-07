@@ -63,6 +63,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
     useComposerModelPick({
       threadId: urlThreadId,
       capability: "discuss",
+      preferenceScope: "chat",
       threadLockedProvider: capabilities.lockedProvider,
       threadDefaultModelName: capabilities.defaultModelName,
     });
@@ -180,6 +181,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
             selectedProvider={selectedProvider}
             selectedModelName={selectedModelName}
             setSelectedModel={setSelectedModel}
+            modelPreferenceScope="chat"
             selectedReasoningEffort={selectedReasoningEffort}
             setSelectedReasoningEffort={setSelectedReasoningEffort}
             threadLockedProvider={capabilities.lockedProvider}

@@ -23,7 +23,7 @@ import { useMemo } from "react";
 import { LockSimpleIcon } from "@phosphor-icons/react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
-import type { LlmProvider, ModelCatalogEntry, UserPickableCapability } from "@/lib/types";
+import type { LlmProvider, ModelPreferenceScope, PickableModelEntry, UserPickableCapability } from "@/lib/types";
 import {
   PromptInputSelect,
   PromptInputSelectContent,
@@ -32,6 +32,7 @@ import {
   PromptInputSelectValue,
 } from "@/components/ai-elements/prompt-input";
 import { SelectGroup, SelectLabel } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
@@ -66,6 +67,8 @@ export interface PromptInputModelPickerProps {
    * as Generate System Design pass `"sandbox"`.
    */
   capability?: UserPickableCapability;
+  /** Settings scope used for enabled/favorite/default filtering. */
+  preferenceScope: ModelPreferenceScope;
   /**
    * Disables the trigger entirely. Mirrors the disabled state of the
    * grounding toggles so the whole composer toolbar flips read-only
@@ -96,11 +99,14 @@ const PROVIDER_DISPLAY_NAME: Record<LlmProvider, string> = {
   anthropic: "Anthropic",
 };
 
+const MODEL_PICKER_TRIGGER_CLASS_NAME = "h-8 min-w-32 gap-1.5 px-2 text-xs";
+
 export function PromptInputModelPicker({
   value,
   onChange,
   threadLockedProvider,
   capability,
+  preferenceScope,
   disabled = false,
   className,
 }: PromptInputModelPickerProps) {
@@ -108,7 +114,10 @@ export function PromptInputModelPicker({
   // subscribe to it even when the thread is locked so the lock pill
   // and the trigger's display label can resolve correctly. The
   // catalog narrows downstream via `useMemo`.
-  const catalogEntries = useQuery(api.llmCatalog.listPickableModels, capability !== undefined ? { capability } : {});
+  const catalogEntries = useQuery(
+    api.llmCatalog.listPickableModels,
+    capability !== undefined ? { capability, preferenceScope } : { preferenceScope },
+  );
 
   // `useQuery` returns either `undefined` (loading) or the typed array
   // in production. Guard with `Array.isArray` so a misbehaving mock /
@@ -123,7 +132,7 @@ export function PromptInputModelPicker({
     return safeCatalog.filter((entry) => entry.provider === threadLockedProvider);
   }, [safeCatalog, threadLockedProvider]);
 
-  const groupedByProvider = useMemo(() => groupByProvider(visibleEntries), [visibleEntries]);
+  const pickerGroups = useMemo(() => groupForPicker(visibleEntries), [visibleEntries]);
 
   const compositeValue = value ? toCompositeKey(value) : undefined;
 
@@ -142,28 +151,42 @@ export function PromptInputModelPicker({
     if (picked) onChange(picked);
   };
 
+  if (catalogEntries === undefined) {
+    return (
+      <div className={cn("flex items-center gap-1", className)}>
+        <Skeleton
+          aria-hidden="true"
+          data-testid="prompt-input-model-picker-skeleton"
+          className={cn(MODEL_PICKER_TRIGGER_CLASS_NAME, "shrink-0 rounded-none")}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className={cn("flex items-center gap-1", className)}>
       <PromptInputSelect value={compositeValue} onValueChange={handleValueChange} disabled={disabled}>
         <PromptInputSelectTrigger
           aria-label="Pick model"
           data-testid="prompt-input-model-picker-trigger"
-          className="h-8 gap-1.5 px-2 text-xs"
+          className={MODEL_PICKER_TRIGGER_CLASS_NAME}
         >
           <PromptInputSelectValue placeholder="Pick model">{currentDisplayName}</PromptInputSelectValue>
         </PromptInputSelectTrigger>
         <PromptInputSelectContent>
-          {groupedByProvider.length === 0 ? (
+          {pickerGroups.length === 0 ? (
             // Catalog query still loading OR the lock leaves no
             // pickable entries. Either way: nothing to choose; the
             // trigger stays clickable but the menu is empty.
             <div className="px-2 py-1.5 text-xs text-muted-foreground">No models available.</div>
           ) : (
-            groupedByProvider.map((group) => (
-              <SelectGroup key={group.provider}>
+            pickerGroups.map((group) => (
+              <SelectGroup key={group.id}>
                 <SelectLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  {PROVIDER_DISPLAY_NAME[group.provider]}
-                  {threadLockedProvider === group.provider ? <ProviderLockTooltip provider={group.provider} /> : null}
+                  {group.label}
+                  {group.provider && threadLockedProvider === group.provider ? (
+                    <ProviderLockTooltip provider={group.provider} />
+                  ) : null}
                 </SelectLabel>
                 {group.entries.map((entry) => (
                   <PromptInputSelectItem
@@ -183,8 +206,10 @@ export function PromptInputModelPicker({
 }
 
 interface ProviderGroup {
-  provider: LlmProvider;
-  entries: ModelCatalogEntry[];
+  id: string;
+  label: string;
+  provider: LlmProvider | null;
+  entries: PickableModelEntry[];
 }
 
 /**
@@ -192,9 +217,17 @@ interface ProviderGroup {
  * provider in insertion order. Keeping the ordering deterministic
  * avoids reflows in the dropdown when the catalog query refetches.
  */
-function groupByProvider(entries: ReadonlyArray<ModelCatalogEntry>): ProviderGroup[] {
-  const buckets = new Map<LlmProvider, ModelCatalogEntry[]>();
-  for (const entry of entries) {
+function groupForPicker(entries: ReadonlyArray<PickableModelEntry>): ProviderGroup[] {
+  const favoriteEntries = entries.filter((entry) => entry.favorite);
+  const favoriteKeys = new Set(favoriteEntries.map((entry) => toCompositeKey(entry)));
+  const providerEntries = entries.filter((entry) => !favoriteKeys.has(toCompositeKey(entry)));
+  const groups: ProviderGroup[] =
+    favoriteEntries.length > 0
+      ? [{ id: "favorites", label: "Favorites", provider: null, entries: favoriteEntries }]
+      : [];
+
+  const buckets = new Map<LlmProvider, PickableModelEntry[]>();
+  for (const entry of providerEntries) {
     const existing = buckets.get(entry.provider);
     if (existing) {
       existing.push(entry);
@@ -202,10 +235,15 @@ function groupByProvider(entries: ReadonlyArray<ModelCatalogEntry>): ProviderGro
       buckets.set(entry.provider, [entry]);
     }
   }
-  return Array.from(buckets.entries()).map(([provider, providerEntries]) => ({
-    provider,
-    entries: providerEntries,
-  }));
+  groups.push(
+    ...Array.from(buckets.entries()).map(([provider, providerGroupEntries]) => ({
+      id: provider,
+      label: PROVIDER_DISPLAY_NAME[provider],
+      provider,
+      entries: providerGroupEntries,
+    })),
+  );
+  return groups;
 }
 
 function ProviderLockTooltip({ provider }: { provider: LlmProvider }) {

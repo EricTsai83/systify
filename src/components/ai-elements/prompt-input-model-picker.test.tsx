@@ -5,7 +5,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { useQuery } from "convex/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { PromptInputModelPicker } from "./prompt-input-model-picker";
-import type { ModelCatalogEntry } from "@/lib/types";
+import type { PickableModelEntry } from "@/lib/types";
 
 vi.mock("convex/react", () => ({
   useQuery: vi.fn(),
@@ -43,14 +43,23 @@ const catalogEntries = [
     modelName: "gpt-5-mini",
     displayName: "GPT-5 mini",
     capability: "discuss",
+    favorite: false,
+    default: false,
+    defaultSource: null,
   },
   {
     provider: "anthropic",
     modelName: "claude-sonnet-4-5",
     displayName: "Claude Sonnet 4.5",
     capability: "discuss",
+    favorite: false,
+    default: false,
+    defaultSource: null,
   },
-] satisfies Pick<ModelCatalogEntry, "provider" | "modelName" | "displayName" | "capability">[];
+] satisfies Pick<
+  PickableModelEntry,
+  "provider" | "modelName" | "displayName" | "capability" | "favorite" | "default" | "defaultSource"
+>[];
 
 afterEach(() => {
   cleanup();
@@ -58,6 +67,22 @@ afterEach(() => {
 });
 
 describe("PromptInputModelPicker", () => {
+  test("uses a trigger-sized skeleton while the model catalog loads", () => {
+    vi.mocked(useQuery).mockReturnValue(undefined);
+
+    render(
+      <PromptInputModelPicker
+        value={{ provider: "openai", modelName: "gpt-5-mini" }}
+        onChange={vi.fn()}
+        threadLockedProvider={null}
+        preferenceScope="discuss"
+      />,
+    );
+
+    expect(screen.getByTestId("prompt-input-model-picker-skeleton")).toBeInTheDocument();
+    expect(screen.queryByTestId("prompt-input-model-picker-trigger")).not.toBeInTheDocument();
+  });
+
   test("marks the locked provider label with a tooltip instead of a separate pill", () => {
     vi.mocked(useQuery).mockReturnValue(catalogEntries);
 
@@ -66,6 +91,7 @@ describe("PromptInputModelPicker", () => {
         value={{ provider: "anthropic", modelName: "claude-sonnet-4-5" }}
         onChange={vi.fn()}
         threadLockedProvider="anthropic"
+        preferenceScope="discuss"
       />,
     );
 

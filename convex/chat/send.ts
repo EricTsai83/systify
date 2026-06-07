@@ -1,22 +1,17 @@
-import { ConvexError, v } from "convex/values";
+import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { internal } from "../_generated/api";
 import type { MutationCtx } from "../_generated/server";
 import { mutation } from "../_generated/server";
-import { assertRepositoryModeEligible } from "../repositoryModeEligibility";
 import { requireViewerIdentity } from "../lib/auth";
-import { chatModeValidator, resolveDiscussGrounding, type ChatMode } from "../lib/chatMode";
+import { chatModeValidator, type ChatMode } from "../lib/chatMode";
 import { enqueueJob, findActiveJob } from "../lib/jobs";
-import {
-  isSupportedReasoningEffort,
-  isUserPickableModel,
-  reasoningEffortValidator,
-  type ReasoningEffort,
-} from "../lib/llmCatalog";
+import { reasoningEffortValidator, type ReasoningEffort } from "../lib/llmCatalog";
 import { llmProviderValidator, type LlmProvider } from "../lib/llmProvider";
 import { requireActiveRepositoryForViewer } from "../lib/repositoryAccess";
 import { requireOwnedDoc } from "../lib/ownedDocs";
 import { NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
+import { loadViewerModelPreferences } from "../lib/userPreferences";
 import {
   CHAT_JOB_LEASE_MS,
   consumeChatGlobalRateLimit,
@@ -25,9 +20,14 @@ import {
   throwOperationAlreadyInProgress,
 } from "../lib/rateLimit";
 import { CHAT_REPLY_BUDGET_ESTIMATE_USD, reserveUserUsageBudget } from "../lib/userCost";
-import { resolveModelForReply } from "./modelSelection";
 import { recordThreadActivityInHistory, recordThreadCreatedInHistory } from "./historyState";
 import { requireActiveOwnedThread } from "./threadAccess";
+import {
+  assertChatTurnModeEligible,
+  completeChatTurnPlan,
+  planChatTurnMode,
+  trimChatMessageContent,
+} from "./sendPlanning";
 
 const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
 
@@ -249,12 +249,10 @@ export const sendMessageStartingNewThread = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
+    const modelPreferences = await loadViewerModelPreferences(ctx, identity.tokenIdentifier);
     const repositoryId = args.repositoryId;
 
-    const trimmedContent = args.content.trim();
-    if (!trimmedContent) {
-      throw new Error("Message content cannot be empty.");
-    }
+    const trimmedContent = trimChatMessageContent(args.content);
 
     let repository: Doc<"repositories"> | null = null;
     if (repositoryId) {
@@ -266,8 +264,14 @@ export const sendMessageStartingNewThread = mutation({
       repository = result.repository;
     }
 
+    const modePlan = planChatTurnMode({
+      repositoryId: repositoryId ?? null,
+      mode: args.mode,
+      requestedGrounding: args,
+    });
+
     const artifactContext = args.artifactContext ?? [];
-    if (artifactContext.length > 0 && args.mode !== "library") {
+    if (artifactContext.length > 0 && modePlan.mode !== "library") {
       throw new Error("Artifact scope is only supported for Library Ask threads.");
     }
     if (artifactContext.length > 0 && !repositoryId) {
@@ -287,41 +291,13 @@ export const sendMessageStartingNewThread = mutation({
       }
     }
 
-    await assertRepositoryModeEligible(ctx, {
-      repositoryId,
-      mode: args.mode,
-      groundLibrary: args.groundLibrary === true,
-      groundSandbox: args.groundSandbox === true,
-    });
+    await assertChatTurnModeEligible(ctx, modePlan);
 
-    const groundLibrary = args.groundLibrary === true;
-    const groundSandbox = args.groundSandbox === true;
-
-    // Validate the picker pick (if both pieces present) and resolve the
-    // effective `(provider, modelName)` for this reply. A brand-new
-    // thread has no `lockedProvider` yet — the resolved pick becomes the
-    // lock once `insertChatTurn` patches the thread row below. A half-set
-    // pair is rejected up front so the resolver never has to distinguish
-    // "intentional half-pick" from "missing arg".
-    assertCompletePickerPair(args);
-    if (
-      args.provider !== undefined &&
-      args.modelName !== undefined &&
-      !isUserPickableModel(args.provider, args.modelName)
-    ) {
-      throw new ConvexError({
-        code: "unsupported_model",
-        message: `Unsupported model selection: ${args.provider}:${args.modelName}.`,
-      });
-    }
-    const resolved = resolveModelForReply({
-      mode: args.mode,
-      groundSandbox,
-      overrideProvider: args.provider,
-      overrideModelName: args.modelName,
-      overrideReasoningEffort: args.reasoningEffort,
+    const turnPlan = completeChatTurnPlan({
+      modePlan,
+      modelPreferences,
+      picker: args,
     });
-    assertSupportedReasoningEffort(resolved.provider, resolved.modelName, args.reasoningEffort);
 
     const now = Date.now();
 
@@ -334,13 +310,13 @@ export const sendMessageStartingNewThread = mutation({
       repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
       title,
-      mode: args.mode,
+      mode: turnPlan.mode,
       lastMessageAt: now,
-      ...(args.mode === "library" && artifactContext.length > 0 ? { artifactContext } : {}),
-      ...(args.mode === "discuss"
+      ...(turnPlan.mode === "library" && artifactContext.length > 0 ? { artifactContext } : {}),
+      ...(turnPlan.mode === "discuss"
         ? {
-            defaultGroundLibrary: groundLibrary,
-            defaultGroundSandbox: groundSandbox,
+            defaultGroundLibrary: turnPlan.groundLibrary,
+            defaultGroundSandbox: turnPlan.groundSandbox,
           }
         : {}),
     });
@@ -349,7 +325,7 @@ export const sendMessageStartingNewThread = mutation({
     await recordThreadCreatedInHistory(ctx, thread);
 
     let sandboxSessionId: Id<"sandboxSessions"> | undefined;
-    if (groundSandbox) {
+    if (turnPlan.groundSandbox) {
       sandboxSessionId = await ctx.runMutation(internal.sandboxSessions.ensureSandboxSessionForThread, {
         threadId,
       });
@@ -358,12 +334,12 @@ export const sendMessageStartingNewThread = mutation({
     const { jobId, userMessageId, assistantMessageId } = await insertChatTurn(ctx, {
       thread,
       repository,
-      mode: args.mode,
-      groundLibrary,
-      groundSandbox,
-      provider: resolved.provider,
-      modelName: resolved.modelName,
-      reasoningEffort: resolved.reasoningEffort,
+      mode: turnPlan.mode,
+      groundLibrary: turnPlan.groundLibrary,
+      groundSandbox: turnPlan.groundSandbox,
+      provider: turnPlan.provider,
+      modelName: turnPlan.modelName,
+      reasoningEffort: turnPlan.reasoningEffort,
       trimmedContent,
       ownerTokenIdentifier: identity.tokenIdentifier,
       now,
@@ -375,7 +351,7 @@ export const sendMessageStartingNewThread = mutation({
       jobId,
       userMessageId,
       assistantMessageId,
-      mode: args.mode,
+      mode: turnPlan.mode,
     };
   },
 });
@@ -419,6 +395,7 @@ export const sendMessage = mutation({
     const { identity, doc: thread } = await requireActiveOwnedThread(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
+    const modelPreferences = await loadViewerModelPreferences(ctx, identity.tokenIdentifier);
 
     let repository: Doc<"repositories"> | null = null;
     if (thread.repositoryId) {
@@ -430,71 +407,28 @@ export const sendMessage = mutation({
       repository = result.repository;
     }
 
-    const mode = args.mode ?? thread.mode;
-    // Library grounding makes no sense in Library Mode (it's the same
-    // thing); Sandbox grounding only applies in Discuss. The resolver
-    // coerces both to false on Library-mode turns so a stale composer
-    // toggle does not accidentally tag a Library reply with grounding
-    // metadata. Same rule used by `getReplyContext` on the read path.
-    const { groundLibrary, groundSandbox } = resolveDiscussGrounding(mode, args);
-
-    // `assertRepositoryModeEligible` covers the unsatisfiable-grounding case
-    // (`no_repository_attached`) with the same structured ConvexError it
-    // uses for the read path, so we don't need a separate plain-Error
-    // pre-check here.
-    await assertRepositoryModeEligible(ctx, {
-      repositoryId: thread.repositoryId,
-      mode,
-      groundLibrary,
-      groundSandbox,
+    const modePlan = planChatTurnMode({
+      repositoryId: thread.repositoryId ?? null,
+      mode: args.mode ?? thread.mode,
+      requestedGrounding: args,
     });
 
-    // Validate the picker pair (catalog membership + half-pair shape)
-    // BEFORE resolving so the resolver only ever sees a clean override.
-    assertCompletePickerPair(args);
-    if (
-      args.provider !== undefined &&
-      args.modelName !== undefined &&
-      !isUserPickableModel(args.provider, args.modelName)
-    ) {
-      throw new ConvexError({
-        code: "unsupported_model",
-        message: `Unsupported model selection: ${args.provider}:${args.modelName}.`,
-      });
-    }
+    // The mode eligibility Interface covers unsatisfiable grounding
+    // (`no_repository_attached`) with the same structured ConvexError used
+    // by the read path, so no separate plain-Error pre-check is needed.
+    await assertChatTurnModeEligible(ctx, modePlan);
 
-    // Resolve the effective `(provider, modelName)` pair using the
-    // override → thread default → capability default cascade. The
-    // resolved provider is what we enforce the lock against — picking a
-    // non-locked-provider model returns the failed pick verbatim so the
-    // error message is precise. The capability-default layer also gets the
-    // lock so a thread whose persisted `defaultModelName` drifted out of
-    // the catalog still falls back to its own provider's tier instead of
-    // the global openai default.
-    const resolved = resolveModelForReply({
-      mode,
-      groundSandbox,
-      overrideProvider: args.provider,
-      overrideModelName: args.modelName,
-      overrideReasoningEffort: args.reasoningEffort,
-      threadDefaultModelName: thread.defaultModelName,
-      lockedProvider: thread.lockedProvider,
-    });
-    assertSupportedReasoningEffort(resolved.provider, resolved.modelName, args.reasoningEffort);
-
-    if (thread.lockedProvider !== undefined && thread.lockedProvider !== resolved.provider) {
-      throw new ConvexError({
-        code: "thread_provider_locked",
+    const turnPlan = completeChatTurnPlan({
+      modePlan,
+      modelPreferences,
+      picker: args,
+      threadDefaults: {
+        defaultModelName: thread.defaultModelName,
         lockedProvider: thread.lockedProvider,
-        attemptedProvider: resolved.provider,
-        message: `This thread is locked to ${thread.lockedProvider}. Start a new chat to use ${resolved.provider}.`,
-      });
-    }
+      },
+    });
 
-    const trimmedContent = args.content.trim();
-    if (!trimmedContent) {
-      throw new Error("Message content cannot be empty.");
-    }
+    const trimmedContent = trimChatMessageContent(args.content);
 
     const now = Date.now();
     const activeJob = await getActiveChatJobForThread(ctx, args.threadId, now);
@@ -511,7 +445,7 @@ export const sendMessage = mutation({
     await consumeChatGlobalRateLimit(ctx);
 
     let sandboxSessionId: Id<"sandboxSessions"> | undefined;
-    if (groundSandbox) {
+    if (turnPlan.groundSandbox) {
       sandboxSessionId = await ctx.runMutation(internal.sandboxSessions.ensureSandboxSessionForThread, {
         threadId: args.threadId,
       });
@@ -520,12 +454,12 @@ export const sendMessage = mutation({
     return await insertChatTurn(ctx, {
       thread,
       repository,
-      mode,
-      groundLibrary,
-      groundSandbox,
-      provider: resolved.provider,
-      modelName: resolved.modelName,
-      reasoningEffort: resolved.reasoningEffort,
+      mode: turnPlan.mode,
+      groundLibrary: turnPlan.groundLibrary,
+      groundSandbox: turnPlan.groundSandbox,
+      provider: turnPlan.provider,
+      modelName: turnPlan.modelName,
+      reasoningEffort: turnPlan.reasoningEffort,
       trimmedContent,
       ownerTokenIdentifier: identity.tokenIdentifier,
       now,
@@ -533,34 +467,3 @@ export const sendMessage = mutation({
     });
   },
 });
-
-/**
- * Reject the half-pair case where exactly one of `provider` / `modelName`
- * was supplied. We could silently ignore the orphaned field, but doing
- * so masks a real bug at the call site — usually the composer wired up
- * one half of the picker without the other. Failing loudly here keeps
- * the contract honest at the API boundary.
- */
-function assertCompletePickerPair(args: { provider?: LlmProvider; modelName?: string }): void {
-  const hasProvider = args.provider !== undefined;
-  const hasModelName = args.modelName !== undefined;
-  if (hasProvider !== hasModelName) {
-    throw new ConvexError({
-      code: "incomplete_model_pick",
-      message: "Both provider and modelName must be supplied together, or both omitted.",
-    });
-  }
-}
-
-function assertSupportedReasoningEffort(
-  provider: LlmProvider,
-  modelName: string,
-  reasoningEffort: ReasoningEffort | undefined,
-): void {
-  if (!isSupportedReasoningEffort(provider, modelName, reasoningEffort)) {
-    throw new ConvexError({
-      code: "unsupported_reasoning_effort",
-      message: `Unsupported reasoning effort "${reasoningEffort}" for ${provider}:${modelName}.`,
-    });
-  }
-}

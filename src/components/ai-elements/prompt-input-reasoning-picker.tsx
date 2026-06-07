@@ -41,7 +41,7 @@ import {
 } from "@phosphor-icons/react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
-import type { LlmProvider, ReasoningEffort } from "@/lib/types";
+import type { LlmProvider, ModelPreferenceScope, ReasoningEffort } from "@/lib/types";
 import {
   PromptInputSelect,
   PromptInputSelectContent,
@@ -72,6 +72,8 @@ export interface PromptInputReasoningPickerProps {
   modelName: string | undefined;
   /** Same disabled semantics as the sibling model picker. */
   disabled?: boolean;
+  /** Settings scope used for model availability lookup. */
+  preferenceScope?: ModelPreferenceScope;
   /** Optional class for sizing inside the composer footer. */
   className?: string;
 }
@@ -93,13 +95,14 @@ export function PromptInputReasoningPicker({
   provider,
   modelName,
   disabled = false,
+  preferenceScope = "discuss",
   className,
 }: PromptInputReasoningPickerProps) {
   // Subscribe to the catalog so we can look up `supportsReasoning`
   // for the currently selected model. The query is shared with the
   // sibling model picker and Convex memoises duplicate subscriptions
   // — no real extra cost.
-  const catalogEntries = useQuery(api.llmCatalog.listPickableModels, {});
+  const catalogEntries = useQuery(api.llmCatalog.listPickableModels, { preferenceScope });
   const safeCatalog = useMemo(() => (Array.isArray(catalogEntries) ? catalogEntries : []), [catalogEntries]);
 
   const selectedEntry = useMemo(() => {

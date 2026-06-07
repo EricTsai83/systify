@@ -34,6 +34,7 @@ import type {
   ArtifactId,
   ChatMode,
   LlmProvider,
+  ModelPreferenceScope,
   ReasoningEffort,
   RepositoryId,
   SandboxModeStatus,
@@ -82,6 +83,7 @@ type ChatPanelProps = {
   selectedProvider?: LlmProvider | null;
   selectedModelName?: string | null;
   setSelectedModel?: (next: PromptInputModelPickerValue) => void;
+  modelPreferenceScope?: ModelPreferenceScope;
   /**
    * Per-message reasoning-effort override. The picker shows only when
    * the selected model's catalog entry supports reasoning. `null`
@@ -266,6 +268,7 @@ export function ChatPanel({
   selectedProvider = null,
   selectedModelName = null,
   setSelectedModel,
+  modelPreferenceScope = "discuss",
   selectedReasoningEffort = null,
   setSelectedReasoningEffort,
   threadLockedProvider = null,
@@ -292,6 +295,7 @@ export function ChatPanel({
   onLoadOlderMessages = NOOP_LOAD_OLDER,
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
+  const modelPickerCapability = modelPreferenceScope === "sandbox" ? "sandbox" : undefined;
   const [showStatsForNerds] = useStatsForNerdsPreference();
 
   // Owns stick-to-bottom on append, anchor preservation on prepend,
@@ -577,6 +581,8 @@ export function ChatPanel({
                     }
                     onChange={setSelectedModel}
                     threadLockedProvider={threadLockedProvider}
+                    capability={modelPickerCapability}
+                    preferenceScope={modelPreferenceScope}
                   />
                 ) : null}
                 {!isReadOnly && setSelectedReasoningEffort ? (
@@ -585,6 +591,7 @@ export function ChatPanel({
                     onChange={setSelectedReasoningEffort}
                     provider={selectedProvider ?? undefined}
                     modelName={selectedModelName ?? undefined}
+                    preferenceScope={modelPreferenceScope}
                   />
                 ) : null}
                 {showGroundingToggles && chatMode === "discuss" ? (

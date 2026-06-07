@@ -180,6 +180,7 @@ export function LibraryAskPanel({
     useComposerModelPick({
       threadId,
       capability: "library",
+      preferenceScope: "library",
       threadLockedProvider: lockedProvider,
       threadDefaultModelName: defaultModelName,
     });
@@ -442,6 +443,7 @@ export function LibraryAskPanel({
                   }
                   onChange={setSelectedModel}
                   threadLockedProvider={lockedProvider}
+                  preferenceScope="library"
                 />
               ) : null}
               {!isLocked ? (
@@ -450,6 +452,7 @@ export function LibraryAskPanel({
                   onChange={setSelectedReasoningEffort}
                   provider={selectedProvider ?? undefined}
                   modelName={selectedModelName ?? undefined}
+                  preferenceScope="library"
                 />
               ) : null}
             </PromptInputTools>

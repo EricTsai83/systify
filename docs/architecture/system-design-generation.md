@@ -192,8 +192,13 @@ on attempt N still has a shot on attempt N+1.
 
 ### Per-kind failure taxonomy
 
-`classifyLlmError` (`convex/systemDesignNode.ts:463`) translates exceptions
-into the `kindFailureReason` literal union defined in `convex/schema.ts:53`:
+`classifySystemDesignKindRunError`
+(`convex/lib/systemDesignFailureClassification.ts`) translates exceptions
+into the `SystemDesignFailureReason` literals owned by
+`convex/lib/systemDesignFailures.ts`. The same taxonomy Module exports the
+schema-safe validator used by `jobs.kindFailures[].reason` and
+`systemDesignKindRuns.failureReason`, so adding a new reason has one schema
+seam instead of separate schema / mutation copies:
 
 - `live_source_unavailable` — `SandboxPreparationError` reached the per-kind
   catch (the sandbox or repository data was missing or unreachable). Should
@@ -224,20 +229,21 @@ whole job.
 `SystemDesignStatusBanner`
 (`src/components/system-design-status-banner.tsx:50`) subscribes to
 `getLatestSystemDesignJob` and renders one of three branches. For failures it
-calls `describeFailures` which deduplicates the `kindFailures[].reason` set
-and renders the matching copy from `REASON_TEXT_BY_KIND`
-(`src/components/system-design-status-banner.tsx:135`):
+calls `describeRepositoryGuideFailure`
+(`src/lib/repository-guide-failures.ts`), which deduplicates the
+`kindFailures[].reason` set and renders the matching copy from
+`REASON_TEXT_BY_KIND`:
 
 - `transport_rate_limit` → "The provider rate-limited the run. Wait a couple
   of minutes…"
-- `output_quality` → "Some documents came back without the required sections.
+- `output_quality` → "Some guide sections came back without the required content.
   Retrying usually fixes this — open the details if it persists."
 - `transport_other` → generic transport / 5xx copy with an error-id pointer.
 - `infra` → "An internal error stopped the run. Engineering has been
   notified…"
 - `live_source_unavailable` → "Live access to the repository wasn't available
   when this ran. The next attempt will prepare it first."
-- `model_empty_output` → "The model didn't produce a complete document. The
+- `model_empty_output` → "The model didn't produce a complete guide section. The
   next attempt may succeed."
 
 When multiple reasons appear, the banner falls back to `REASON_TEXT_MIXED`.

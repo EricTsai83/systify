@@ -220,10 +220,7 @@ export function HistoryPage() {
                 ) : null}
               </div>
             ) : isLoadingGroups ? (
-              <span className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-                <Spinner size={13} />
-                Loading
-              </span>
+              <HistoryRepositorySelectorSkeleton />
             ) : null}
           </div>
 
@@ -387,6 +384,19 @@ function HistoryRepositorySelector({
         </SelectGroup>
       </SelectContent>
     </Select>
+  );
+}
+
+function HistoryRepositorySelectorSkeleton() {
+  return (
+    <div
+      className="flex h-9 w-56 max-w-[65vw] items-center justify-between border border-input bg-background px-3"
+      aria-hidden="true"
+      data-history-repository-selector-skeleton="true"
+    >
+      <Skeleton className="h-4 w-32 max-w-[calc(100%-2rem)]" />
+      <Skeleton className="size-4 shrink-0" />
+    </div>
   );
 }
 
@@ -712,30 +722,43 @@ function GroupIcon({ group }: { group: HistoryGroup }) {
 
 function HistoryGroupSkeleton() {
   return (
-    <div className="flex flex-col gap-2" aria-hidden="true">
-      {Array.from({ length: 4 }).map((_, index) => (
-        <div key={index} className="border border-border bg-card px-4 py-3">
-          <div className="flex items-center gap-3">
-            <Skeleton className="size-8 shrink-0 rounded-none" />
-            <div className="flex flex-1 flex-col gap-2">
-              <Skeleton className="h-4 w-44 max-w-full" />
-              <Skeleton className="h-3 w-28 max-w-full" />
-            </div>
+    <div className="flex flex-1 flex-col bg-card" aria-hidden="true" data-history-group-skeleton="true">
+      <div className="flex items-start justify-between gap-3 border-b border-border px-3 py-3 sm:items-center sm:px-4">
+        <div className="flex min-w-0 items-start gap-3">
+          <Skeleton className="size-8 shrink-0 rounded-none" />
+          <div className="min-w-0 flex-1">
+            <Skeleton className="h-4 w-44 max-w-full" />
           </div>
         </div>
-      ))}
+        <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-3">
+          <Skeleton className="h-3 w-16" />
+          <Skeleton className="hidden h-3 w-12 sm:block" />
+        </div>
+      </div>
+      <ThreadRowsSkeleton />
     </div>
   );
 }
 
 function ThreadRowsSkeleton() {
   return (
-    <div className="flex flex-col" aria-hidden="true">
+    <div className="flex flex-col" aria-hidden="true" data-history-thread-rows-skeleton="true">
       {Array.from({ length: 3 }).map((_, index) => (
-        <div key={index} className="border-t border-border px-4 py-3 first:border-t-0">
-          <div className="flex flex-col gap-2">
-            <Skeleton className="h-4 w-64 max-w-full" />
-            <Skeleton className="h-3 w-28" />
+        <div
+          key={index}
+          className="flex min-w-0 flex-col gap-3 border-t border-border px-3 py-3 first:border-t-0 sm:flex-row sm:items-center sm:justify-between sm:px-4"
+        >
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+              <Skeleton className="h-4 w-64 max-w-full" />
+              <Skeleton className="h-5 w-16" />
+            </div>
+            <Skeleton className="mt-1 h-3 w-36 max-w-full" />
+          </div>
+          <div className="hidden shrink-0 items-center gap-1 sm:flex">
+            <Skeleton className="h-8 w-20" data-history-button-skeleton="true" />
+            <Skeleton className="h-8 w-20" data-history-button-skeleton="true" />
+            <Skeleton className="h-8 w-24" data-history-button-skeleton="true" />
           </div>
         </div>
       ))}

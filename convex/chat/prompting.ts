@@ -5,6 +5,8 @@ import type { ReplyContext } from "./context";
 
 const MAX_CONVERSATION_HISTORY_MESSAGES = 24;
 const MAX_CONVERSATION_MESSAGE_CHARS = 1200;
+const MAX_ARTIFACT_EXCERPT_CHARS = 1400;
+const MAX_RELEVANT_CODE_EXCERPT_CHARS = 1200;
 
 /**
  * UI language for the degraded heuristic response. The chat UI is currently
@@ -69,8 +71,8 @@ const DISCUSS_UNGROUNDED = [
  * drift on the rule the citation lint / frontend resolver care about.
  */
 const ARTIFACT_CITATION_CONTRACT = [
-  "Each artifact in the prompt is numbered as `[A1]`, `[A2]`, …; cite every factual claim sourced from artifacts by appending the matching `[A#]` token immediately after the claim, so the user can trace each statement back to a specific artifact.",
-  "If the artifacts do not cover the question, say so explicitly — never fabricate file paths, line numbers, or code-level claims that are not present in an artifact, and do not invent `[A#]` tokens for artifacts that were not supplied.",
+  "Each artifact excerpt in the prompt is numbered as `[A1]`, `[A2]`, …, sometimes with a section suffix like `[A1#architecture/data-model]`; cite every factual claim sourced from artifacts by appending the exact matching `[A#]` or `[A#section-path]` token immediately after the claim, so the user can trace each statement back to a specific artifact excerpt.",
+  "If the artifacts do not cover the question, say so explicitly — never fabricate file paths, line numbers, or code-level claims that are not present in an artifact excerpt, and do not invent `[A#]` tokens for artifacts that were not supplied.",
 ].join(" ");
 
 const DISCUSS_LIBRARY_RULES = [
@@ -112,7 +114,7 @@ const DISCUSS_SANDBOX_RULES = [
 ].join(" ");
 
 const DISCUSS_COMBINED_CITATION_RULES = [
-  "When citing artifacts use `[A#]` tokens; when citing live code use `[path:line-line]` tokens. Pick the citation form that matches the actual evidence source for each claim — do not mix one form against the other source.",
+  "When citing artifacts use the supplied `[A#]` or `[A#section-path]` tokens; when citing live code use `[path:line-line]` tokens. Pick the citation form that matches the actual evidence source for each claim — do not mix one form against the other source.",
   "If a live-tool read and an artifact disagree on a fact about the current code, treat the live tool as the source of truth, explicitly call out the divergence to the user, and cite both (artifact via `[A#]`, live source via `[path:line-line]`).",
 ].join(" ");
 
@@ -189,16 +191,86 @@ export type CitationMapEntry = {
 };
 
 /**
- * Numbered artifact list that ends up in the assistant message's
- * `citationMap`. Capped at the same `MAX_CONTEXT_ARTIFACTS` slice the prompt
- * uses so frontend `[A#]` resolution and the prompt the model saw stay in
- * lockstep — anything past the slice is invisible to the model and must not
- * resolve to a citation client-side either.
+ * Numbered artifact evidence that ends up in the assistant message's
+ * `citationMap`. Retrieved chunks win over whole-artifact fallback rows
+ * because Library Ask answers should cite the exact excerpt the model saw.
+ * Capped at the same `MAX_CONTEXT_ARTIFACTS` slice the prompt uses so
+ * frontend `[A#]` resolution and the prompt stay in lockstep — anything past
+ * the slice is invisible to the model and must not resolve client-side.
  */
 export function buildCitationMap(context: ReplyContext): CitationMapEntry[] {
+  const artifactChunks = context.artifactChunks ?? [];
+  if (artifactChunks.length > 0) {
+    return artifactChunks.slice(0, MAX_CONTEXT_ARTIFACTS).map((chunk, index) => ({
+      index: index + 1,
+      artifactId: chunk.artifactId,
+      chunkId: chunk.chunkId,
+      headingPath: chunk.headingPath,
+    }));
+  }
+
   return context.artifacts
     .slice(0, MAX_CONTEXT_ARTIFACTS)
     .map((artifact, index) => ({ index: index + 1, artifactId: artifact.id }));
+}
+
+function buildHeadingSlug(headingPath: string[]): string {
+  return headingPath
+    .map((segment) =>
+      segment
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-+|-+$/g, ""),
+    )
+    .filter((segment) => segment.length > 0)
+    .join("/");
+}
+
+function formatArtifactCitationToken(index: number, headingPath: string[]): string {
+  const slug = buildHeadingSlug(headingPath);
+  return slug ? `[A${index}#${slug}]` : `[A${index}]`;
+}
+
+function formatHeadingPath(headingPath: string[]): string {
+  return headingPath.join(" > ");
+}
+
+function buildArtifactChunkEvidenceLabels(context: ReplyContext): string[] {
+  return (context.artifactChunks ?? []).slice(0, MAX_CONTEXT_ARTIFACTS).map((chunk, index) => {
+    const heading = chunk.headingPath.length > 0 ? ` (${formatHeadingPath(chunk.headingPath)})` : "";
+    return `${formatArtifactCitationToken(index + 1, chunk.headingPath)} ${chunk.artifactTitle}${heading}`;
+  });
+}
+
+function buildArtifactEvidenceSection(context: ReplyContext): string {
+  const artifactChunks = context.artifactChunks ?? [];
+  if (artifactChunks.length > 0) {
+    return artifactChunks
+      .slice(0, MAX_CONTEXT_ARTIFACTS)
+      .map((chunk, index) =>
+        [
+          `## ${formatArtifactCitationToken(index + 1, chunk.headingPath)} ${chunk.artifactTitle}`,
+          `Kind: ${chunk.artifactKind}`,
+          chunk.headingPath.length > 0 ? `Section: ${formatHeadingPath(chunk.headingPath)}` : undefined,
+          chunk.content.slice(0, MAX_ARTIFACT_EXCERPT_CHARS),
+        ]
+          .filter((line): line is string => line !== undefined)
+          .join("\n"),
+      )
+      .join("\n\n");
+  }
+
+  return context.artifacts
+    .slice(0, MAX_CONTEXT_ARTIFACTS)
+    .map(
+      (artifact, index) =>
+        `## [A${index + 1}] ${artifact.title}\n${artifact.summary}\n${artifact.contentMarkdown.slice(
+          0,
+          MAX_ARTIFACT_EXCERPT_CHARS,
+        )}`,
+    )
+    .join("\n\n");
 }
 
 export function buildUserPrompt(
@@ -215,20 +287,9 @@ export function buildUserPrompt(
       : undefined,
   ].filter((line): line is string => line !== undefined);
 
-  // Each artifact gets a `[A1]`, `[A2]`, … prefix matching the citation
-  // contract in `SYSTEM_PROMPT_LIBRARY`. Numbering is 1-based and order-stable
-  // with `buildCitationMap` (same slice, same iteration order) so the
-  // frontend can resolve each `[A#]` token in the model's reply back to a
-  // specific artifact id without re-deriving the mapping.
-  const artifactSection = context.artifacts
-    .slice(0, MAX_CONTEXT_ARTIFACTS)
-    .map(
-      (artifact, index) =>
-        `## [A${index + 1}] ${artifact.title}\n${artifact.summary}\n${artifact.contentMarkdown.slice(0, 1400)}`,
-    )
-    .join("\n\n");
+  const artifactSection = buildArtifactEvidenceSection(context);
   const chunkSection = relevantChunks
-    .map((chunk) => `### ${chunk.path}\n${chunk.summary}\n${chunk.content.slice(0, 1200)}`)
+    .map((chunk) => `### ${chunk.path}\n${chunk.summary}\n${chunk.content.slice(0, MAX_RELEVANT_CODE_EXCERPT_CHARS)}`)
     .join("\n\n");
   const historyMessages =
     context.messages.at(-1)?.role === "user" && context.messages.at(-1)?.content.trim() === question.trim()
@@ -246,6 +307,7 @@ export function buildUserPrompt(
     !!context.sourceRepoFullName ||
     !!context.repositorySummary ||
     context.artifacts.length > 0 ||
+    (context.artifactChunks ?? []).length > 0 ||
     relevantChunks.length > 0;
 
   return [
@@ -258,9 +320,7 @@ export function buildUserPrompt(
           "",
           "Artifacts:",
           artifactSection || "No artifacts were pre-selected.",
-          "",
-          "Relevant code excerpts:",
-          chunkSection || "No highly relevant chunks were pre-selected.",
+          ...(chunkSection ? ["", "Relevant code excerpts:", chunkSection] : []),
           "",
         ]
       : ["No repository is attached to this thread; answer from general architecture knowledge."]),
@@ -305,6 +365,7 @@ type HeuristicMessageBuilders = {
     question: string,
     chunks: ReadonlyArray<HeuristicChunk>,
     summaries: Partial<ReplyContext>,
+    artifactEvidenceLabels: ReadonlyArray<string>,
   ) => Array<string | undefined>;
 };
 
@@ -324,7 +385,7 @@ const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
       "",
       "Suggestion: Attach a repository from the sidebar and ask again to get grounded / deep mode responses.",
     ],
-    withRepo: (question, chunks, summaries) => [
+    withRepo: (question, chunks, summaries, artifactEvidenceLabels) => [
       "`OPENAI_API_KEY` is not configured, so I'm using indexed repository artifacts to answer.",
       "",
       `Repository: ${summaries.sourceRepoFullName ?? "(unknown)"}`,
@@ -333,9 +394,11 @@ const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
       "",
       `Your question: ${question}`,
       "",
-      chunks.length > 0
-        ? `Most relevant code references: ${chunks.map((chunk) => `\`${chunk.path}\``).join(", ")}`
-        : "Not enough code snippets were selected; consider running a system design first.",
+      artifactEvidenceLabels.length > 0
+        ? `Most relevant artifact excerpts: ${artifactEvidenceLabels.join(", ")}`
+        : chunks.length > 0
+          ? `Most relevant code references: ${chunks.map((chunk) => `\`${chunk.path}\``).join(", ")}`
+          : "Not enough code snippets were selected; consider running a system design first.",
     ],
   },
   zh: {
@@ -353,7 +416,7 @@ const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
       "",
       "建議：在側邊欄附加一個 repository 之後再提問，就能取得 grounded / deep 模式的回覆。",
     ],
-    withRepo: (question, chunks, summaries) => [
+    withRepo: (question, chunks, summaries, artifactEvidenceLabels) => [
       "目前沒有設定 `OPENAI_API_KEY`，所以我先用已索引的 repository artifact 回答。",
       "",
       `Repository: ${summaries.sourceRepoFullName ?? "(unknown)"}`,
@@ -362,9 +425,11 @@ const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
       "",
       `你的問題：${question}`,
       "",
-      chunks.length > 0
-        ? `我目前最相關的線索來自：${chunks.map((chunk) => `\`${chunk.path}\``).join(", ")}`
-        : "目前沒有足夠的程式碼片段被選中，建議先執行一次深度分析。",
+      artifactEvidenceLabels.length > 0
+        ? `我目前最相關的 artifact 線索來自：${artifactEvidenceLabels.join("、")}`
+        : chunks.length > 0
+          ? `我目前最相關的線索來自：${chunks.map((chunk) => `\`${chunk.path}\``).join(", ")}`
+          : "目前沒有足夠的程式碼片段被選中，建議先執行一次深度分析。",
     ],
   },
 };
@@ -394,7 +459,7 @@ export function buildHeuristicAnswer(
   // `string[]` and the ESLint / `noUncheckedIndexedAccess` future-toggle would
   // not trip.
   return HEURISTIC_MESSAGES[language]
-    .withRepo(question, relevantChunks, context)
+    .withRepo(question, relevantChunks, context, buildArtifactChunkEvidenceLabels(context))
     .filter((line): line is string => line !== undefined)
     .join("\n");
 }

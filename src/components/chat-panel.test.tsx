@@ -208,6 +208,41 @@ describe("ChatPanel streaming rendering", () => {
       />,
     );
 
+    const listPickableModelArgs = vi
+      .mocked(useQuery)
+      .mock.calls.filter(([query]) => queryName(query)?.endsWith("llmCatalog:listPickableModels"))
+      .map(([, args]) => args);
+
+    expect(listPickableModelArgs).toEqual([{ preferenceScope: "discuss" }]);
+  });
+
+  test("capability-filters the chat model picker for sandbox-scoped turns", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={null}
+        messages={undefined}
+        activeMessageStream={undefined}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        selectedProvider={null}
+        selectedModelName={null}
+        setSelectedModel={vi.fn()}
+        modelPreferenceScope="sandbox"
+        grounding={undefined}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={null}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
     expect(
       vi
         .mocked(useQuery)
@@ -217,7 +252,8 @@ describe("ChatPanel streaming rendering", () => {
             typeof args === "object" &&
             args !== null &&
             !Array.isArray(args) &&
-            Object.keys(args).length === 0,
+            args.preferenceScope === "sandbox" &&
+            args.capability === "sandbox",
         ),
     ).toBe(true);
   });

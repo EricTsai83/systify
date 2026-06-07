@@ -370,7 +370,10 @@ export function isUserPickableModel(
   if (!entry?.userPickable) {
     return false;
   }
-  return capability === undefined || entry.capability === capability;
+  if (capability === undefined) {
+    return true;
+  }
+  return entry.capability === capability;
 }
 
 /**
