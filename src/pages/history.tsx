@@ -289,11 +289,11 @@ export function HistoryPage() {
         onConfirm={() => void handleConfirmArchive()}
       />
       <Dialog open={isArchiveOpen} onOpenChange={setIsArchiveOpen}>
-        <DialogContent className="h-[clamp(28rem,82dvh,46rem)] w-[calc(100vw-2rem)] grid-rows-[auto_minmax(0,1fr)] overflow-hidden sm:max-w-4xl [scrollbar-gutter:stable]">
+        <DialogContent className="flex max-h-[calc(100dvh-2rem)] w-[calc(100vw-2rem)] flex-col overflow-hidden sm:max-w-4xl [scrollbar-gutter:stable]">
           <DialogHeader>
             <DialogTitle>Archived Threads</DialogTitle>
           </DialogHeader>
-          <div className="min-h-0 overflow-hidden">
+          <div className="min-h-0 overflow-y-auto pr-1 [scrollbar-gutter:stable]">
             <ArchiveSettingsSection showThreadHeading={false} onBackToChat={() => setIsArchiveOpen(false)} />
           </div>
         </DialogContent>
@@ -313,15 +313,17 @@ function SummaryStrip({
     { label: "Shared links", value: summary.sharedLinks },
   ];
   return (
-    <div className="grid gap-2 sm:grid-cols-3" aria-label="History summary">
+    <div className="flex flex-col border-y border-border sm:flex-row" aria-label="History summary">
       {items.map((item) => (
         <div
           key={item.label}
-          className="flex min-h-16 flex-col justify-center border border-border bg-card px-3 py-2"
+          className="flex min-w-0 items-baseline justify-between gap-3 border-t border-border px-0 py-2 first:border-t-0 sm:flex-1 sm:justify-start sm:border-l sm:border-t-0 sm:px-4 sm:first:border-l-0 sm:first:pl-0"
           aria-label={`${item.label}: ${item.value}`}
         >
-          <span className="font-mono text-lg font-semibold leading-6 tabular-nums text-foreground">{item.value}</span>
-          <span className="mt-1 text-xs font-medium leading-4 text-muted-foreground">{item.label}</span>
+          <span className="font-mono text-base font-semibold leading-none tabular-nums text-foreground">
+            {item.value}
+          </span>
+          <span className="truncate text-xs font-medium leading-4 text-muted-foreground">{item.label}</span>
         </div>
       ))}
     </div>

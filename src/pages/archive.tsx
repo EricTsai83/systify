@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import {
   ArchiveIcon,
   ArrowCounterClockwiseIcon,
@@ -19,19 +19,20 @@ import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Spinner } from "@/components/ui/spinner";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
-import { useStableLoadMoreState } from "@/hooks/use-stable-load-more-state";
 import { toUserErrorMessage } from "@/lib/errors";
 import { formatRelativeTime, formatTimestamp } from "@/lib/format";
 import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
 
-const INITIAL_PAGE_SIZE = 20;
-const NEXT_PAGE_SIZE = 20;
-const THREAD_ARCHIVE_PAGE_SIZE = 10;
+const REPOSITORY_ARCHIVE_PAGE_SIZE = 7;
 const NO_REPOSITORY_ARCHIVE_SCOPE_VALUE = "no_repository";
+const DEFAULT_ARCHIVE_SCOPE_LABEL = "Choose repository / workspace";
+const THREAD_ARCHIVE_LIST_HEIGHT_CLASS = "h-[45.5rem] sm:h-[29.75rem]";
+const THREAD_ARCHIVE_ROW_HEIGHT_CLASS = "h-[6.5rem] sm:h-[4.25rem]";
+const REPOSITORY_ARCHIVE_LIST_HEIGHT_CLASS = "h-[59.75rem] sm:h-[42.25rem]";
+const REPOSITORY_ARCHIVE_ROW_HEIGHT_CLASS = "h-32 sm:h-[5.5rem]";
 
 export function ArchivePage() {
   const navigate = useNavigate();
@@ -83,37 +84,50 @@ export function ArchiveSettingsSection({
 }) {
   const [pendingPermanentDelete, setPendingPermanentDelete] = useState<Doc<"repositories"> | null>(null);
   const [pendingThreadPermanentDelete, setPendingThreadPermanentDelete] = useState<ArchivedThread | null>(null);
+  const [repositoryPageIndex, setRepositoryPageIndex] = useState(0);
+  const [repositoryPageCursors, setRepositoryPageCursors] = useState<Array<string | null>>([null]);
+  const repositoryPageCursor = repositoryPageCursors[repositoryPageIndex] ?? null;
+  const archivedThreadScopes = useQuery(api.chat.threads.listArchivedThreadRepositoryScopes) as
+    | ArchivedThreadRepositoryScope[]
+    | undefined;
 
-  const {
-    results: archived,
-    status,
-    loadMore,
-  } = usePaginatedQuery(api.repositories.listArchivedRepositories, {}, { initialNumItems: INITIAL_PAGE_SIZE });
+  const repositoryPage = useQuery(api.repositories.listArchivedRepositories, {
+    paginationOpts: {
+      numItems: REPOSITORY_ARCHIVE_PAGE_SIZE,
+      cursor: repositoryPageCursor,
+    },
+  }) as ArchivedRepositoryPage | undefined;
 
-  const isLoadingFirstPage = status === "LoadingFirstPage";
-  const canLoadMore = status === "CanLoadMore";
-  const isLoadingMore = status === "LoadingMore";
-  const loadMoreState = useStableLoadMoreState({ canLoadMore, isLoadingMore });
-  // `usePaginatedQuery` reports an internal "LoadingPaused" state on disconnect;
-  // we treat it as "settled, can't load more right now" — same UI as exhausted.
-  const isExhausted = status === "Exhausted";
+  const handlePreviousRepositoryPage = useCallback(() => {
+    setRepositoryPageIndex((current) => Math.max(0, current - 1));
+  }, []);
+
+  const handleNextRepositoryPage = useCallback(() => {
+    if (!repositoryPage || repositoryPage.isDone) {
+      return;
+    }
+    const nextPageIndex = repositoryPageIndex + 1;
+    setRepositoryPageCursors((current) => {
+      const next = current.slice(0, nextPageIndex);
+      next[nextPageIndex] = repositoryPage.continueCursor;
+      return next;
+    });
+    setRepositoryPageIndex(nextPageIndex);
+  }, [repositoryPage, repositoryPageIndex]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <ArchivedThreadsSection
+        scopes={archivedThreadScopes}
         showHeading={showThreadHeading}
         onRequestPermanentDelete={setPendingThreadPermanentDelete}
       />
       <ArchiveContent
-        archived={archived}
-        isLoadingFirstPage={isLoadingFirstPage}
-        canLoadMore={loadMoreState.canLoadMore}
-        isLoadingMore={loadMoreState.isLoadingMore}
-        isExhausted={isExhausted}
-        onLoadMore={() => {
-          loadMoreState.markLoadMoreStarted();
-          loadMore(NEXT_PAGE_SIZE);
-        }}
+        page={repositoryPage}
+        pageIndex={repositoryPageIndex}
+        isLoadingSuppressed={archivedThreadScopes === undefined}
+        onPreviousPage={handlePreviousRepositoryPage}
+        onNextPage={handleNextRepositoryPage}
         onRequestPermanentDelete={setPendingPermanentDelete}
       />
       <PermanentDeleteDialog repo={pendingPermanentDelete} onClose={() => setPendingPermanentDelete(null)} />
@@ -142,42 +156,57 @@ type ArchivedThreadRepositoryScope = {
   label: string;
 };
 
+type ArchivedRepositoryPage = {
+  page: Doc<"repositories">[];
+  isDone: boolean;
+  continueCursor: string;
+};
+
+type ArchivedThreadPage = {
+  page: ArchivedThread[];
+  isDone: boolean;
+  continueCursor: string;
+};
+
 function ArchivedThreadsSection({
+  scopes,
   showHeading,
   onRequestPermanentDelete,
 }: {
+  scopes: ArchivedThreadRepositoryScope[] | undefined;
   showHeading: boolean;
   onRequestPermanentDelete: (thread: ArchivedThread) => void;
 }) {
-  const scopes = useQuery(api.chat.threads.listArchivedThreadRepositoryScopes) as
-    | ArchivedThreadRepositoryScope[]
-    | undefined;
   const restoreArchivedThreadsForRepository = useMutation(api.chat.threads.restoreArchivedThreadsForRepository);
   const deleteArchivedThreadsForRepository = useMutation(api.chat.threads.deleteArchivedThreadsForRepository);
   const [selectedScopeValue, setSelectedScopeValue] = useState<string | null>(null);
   const [pendingBulkAction, setPendingBulkAction] = useState<"restore" | "delete" | null>(null);
+  const [threadPageIndex, setThreadPageIndex] = useState(0);
+  const [threadPageCursors, setThreadPageCursors] = useState<Array<string | null>>([null]);
+  const threadPageCursor = threadPageCursors[threadPageIndex] ?? null;
 
   const selectedScope =
     scopes?.find((scope) => getArchiveScopeValue(scope) === selectedScopeValue) ?? scopes?.[0] ?? null;
   const selectedRepositoryId = selectedScope?.repositoryId ?? null;
-  const {
-    results: archivedThreads,
-    status,
-    loadMore,
-  } = usePaginatedQuery(
-    api.chat.threads.listArchivedThreads,
-    selectedScope ? { repositoryId: selectedRepositoryId } : "skip",
-    { initialNumItems: THREAD_ARCHIVE_PAGE_SIZE },
-  );
 
-  const isLoadingFirstPage = status === "LoadingFirstPage";
-  const isLoadingMore = status === "LoadingMore";
-  const canLoadMore = status === "CanLoadMore";
-  const loadMoreState = useStableLoadMoreState({ canLoadMore, isLoadingMore });
-  const rows = archivedThreads;
-  const shouldShowBulkActions = scopes === undefined || scopes.length > 0;
+  const archivedThreadPage = useQuery(
+    api.chat.threads.listArchivedThreads,
+    selectedScope
+      ? {
+          repositoryId: selectedRepositoryId,
+          paginationOpts: {
+            numItems: REPOSITORY_ARCHIVE_PAGE_SIZE,
+            cursor: threadPageCursor,
+          },
+        }
+      : "skip",
+  ) as ArchivedThreadPage | undefined;
+
+  const rows = archivedThreadPage?.page ?? [];
+  const isLoadingThreadPage = scopes !== undefined && selectedScope !== null && archivedThreadPage === undefined;
+  const shouldRenderThreadPaginationSkeleton = scopes === undefined || isLoadingThreadPage;
   const isBulkActionDisabled =
-    scopes === undefined || selectedScope === null || isLoadingFirstPage || rows.length === 0;
+    scopes === undefined || selectedScope === null || isLoadingThreadPage || rows.length === 0;
   const [isBulkMutating, handleConfirmBulkAction] = useAsyncCallback(
     useCallback(async () => {
       if (!pendingBulkAction || !selectedScope) {
@@ -204,6 +233,29 @@ function ArchivedThreadsSection({
     ]),
   );
 
+  const handleScopeChange = useCallback((value: string) => {
+    setSelectedScopeValue(value);
+    setThreadPageIndex(0);
+    setThreadPageCursors([null]);
+  }, []);
+
+  const handlePreviousThreadPage = useCallback(() => {
+    setThreadPageIndex((current) => Math.max(0, current - 1));
+  }, []);
+
+  const handleNextThreadPage = useCallback(() => {
+    if (!archivedThreadPage || archivedThreadPage.isDone) {
+      return;
+    }
+    const nextPageIndex = threadPageIndex + 1;
+    setThreadPageCursors((current) => {
+      const next = current.slice(0, nextPageIndex);
+      next[nextPageIndex] = archivedThreadPage.continueCursor;
+      return next;
+    });
+    setThreadPageIndex(nextPageIndex);
+  }, [archivedThreadPage, threadPageIndex]);
+
   return (
     <>
       <section className="flex min-h-0 flex-1 flex-col gap-3" aria-labelledby="archived-threads-heading">
@@ -218,56 +270,54 @@ function ArchivedThreadsSection({
             </span>
           )}
         </div>
-        {shouldShowBulkActions ? (
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                disabled={isBulkActionDisabled || isBulkMutating}
-                onClick={() => setPendingBulkAction("restore")}
-              >
-                <ArrowCounterClockwiseIcon weight="bold" />
-                Unarchive all
-              </Button>
-              <Button
-                type="button"
-                variant="destructive"
-                size="sm"
-                disabled={isBulkActionDisabled || isBulkMutating}
-                onClick={() => setPendingBulkAction("delete")}
-              >
-                <TrashIcon weight="bold" />
-                Permanently delete all
-              </Button>
-            </div>
-            {scopes === undefined ? (
-              <Skeleton className="h-9 w-full sm:w-64" aria-hidden="true" />
-            ) : scopes.length > 0 ? (
-              <ArchiveRepositorySelector
-                scopes={scopes}
-                value={getArchiveScopeValue(selectedScope ?? scopes[0])}
-                onValueChange={setSelectedScopeValue}
-              />
-            ) : null}
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              disabled={isBulkActionDisabled || isBulkMutating}
+              onClick={() => setPendingBulkAction("restore")}
+            >
+              <ArrowCounterClockwiseIcon weight="bold" />
+              Unarchive all
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
+              disabled={isBulkActionDisabled || isBulkMutating}
+              onClick={() => setPendingBulkAction("delete")}
+            >
+              <TrashIcon weight="bold" />
+              Permanently delete all
+            </Button>
           </div>
-        ) : null}
-        <div className="min-h-32 flex-1 overflow-y-auto [scrollbar-gutter:stable]">
-          {!scopes ? (
-            <ArchiveListSkeleton rowCount={1} />
+          {scopes && scopes.length > 0 ? (
+            <ArchiveRepositorySelector
+              scopes={scopes}
+              value={getArchiveScopeValue(selectedScope ?? scopes[0])}
+              onValueChange={handleScopeChange}
+            />
+          ) : (
+            <ArchiveRepositorySelectorPlaceholder />
+          )}
+        </div>
+        <div>
+          {scopes === undefined ? (
+            <ArchiveThreadListSkeleton />
           ) : scopes.length === 0 ? (
             <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
               No archived threads.
             </div>
-          ) : isLoadingFirstPage ? (
-            <ArchiveListSkeleton rowCount={1} />
+          ) : isLoadingThreadPage ? (
+            <ArchiveThreadListSkeleton />
           ) : rows.length === 0 ? (
             <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
               No archived threads for this repository.
             </div>
           ) : (
-            <div className="border border-border bg-card">
+            <div className={`overflow-hidden border border-border bg-card ${THREAD_ARCHIVE_LIST_HEIGHT_CLASS}`}>
               {rows.map((thread) => (
                 <ArchivedThreadRow
                   key={thread._id}
@@ -275,32 +325,21 @@ function ArchivedThreadsSection({
                   onRequestPermanentDelete={onRequestPermanentDelete}
                 />
               ))}
-              {loadMoreState.shouldRender ? (
-                <div className="flex justify-end border-t border-border px-3 py-2">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    disabled={!loadMoreState.canLoadMore || loadMoreState.isLoadingMore}
-                    onClick={() => {
-                      loadMoreState.markLoadMoreStarted();
-                      loadMore(THREAD_ARCHIVE_PAGE_SIZE);
-                    }}
-                  >
-                    <span className="inline-flex size-[13px] items-center justify-center">
-                      {loadMoreState.isLoadingMore ? <Spinner size={13} /> : null}
-                    </span>
-                    <ButtonStateText
-                      current={loadMoreState.isLoadingMore ? "Loading" : "Next"}
-                      states={["Next", "Loading"]}
-                    />
-                    <CaretRightIcon weight="bold" />
-                  </Button>
-                </div>
-              ) : null}
             </div>
           )}
         </div>
+        {shouldRenderThreadPaginationSkeleton ? (
+          <ArchivePaginationControlsSkeleton />
+        ) : archivedThreadPage && rows.length > 0 ? (
+          <ArchivePaginationControls
+            pageIndex={threadPageIndex}
+            canGoNext={!archivedThreadPage.isDone}
+            previousLabel="Previous archived threads page"
+            nextLabel="Next archived threads page"
+            onPreviousPage={handlePreviousThreadPage}
+            onNextPage={handleNextThreadPage}
+          />
+        ) : null}
       </section>
       <ConfirmDialog
         open={pendingBulkAction !== null}
@@ -349,6 +388,21 @@ function ArchiveRepositorySelector({
   );
 }
 
+function ArchiveRepositorySelectorPlaceholder() {
+  return (
+    <Select value={NO_REPOSITORY_ARCHIVE_SCOPE_VALUE}>
+      <SelectTrigger disabled aria-label="Select archive repository" className="h-9 w-full bg-background sm:w-64">
+        <span className="truncate">{DEFAULT_ARCHIVE_SCOPE_LABEL}</span>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          <SelectItem value={NO_REPOSITORY_ARCHIVE_SCOPE_VALUE}>{DEFAULT_ARCHIVE_SCOPE_LABEL}</SelectItem>
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  );
+}
+
 function getArchiveScopeValue(scope: ArchivedThreadRepositoryScope): string {
   return scope.repositoryId ?? NO_REPOSITORY_ARCHIVE_SCOPE_VALUE;
 }
@@ -374,12 +428,14 @@ function ArchivedThreadRow({
   const modeLabel = thread.repositoryId ? (thread.mode === "library" ? "Library Ask" : "Discuss") : "Chat";
 
   return (
-    <div className="flex flex-col gap-3 border-t border-border px-3 py-3 first:border-t-0 sm:flex-row sm:items-center sm:justify-between">
+    <div
+      className={`flex flex-col gap-3 overflow-hidden border-t border-border px-3 py-3 first:border-t-0 sm:flex-row sm:items-center sm:justify-between ${THREAD_ARCHIVE_ROW_HEIGHT_CLASS}`}
+    >
       <div className="flex min-w-0 items-start gap-3">
         <div className="flex size-8 shrink-0 items-center justify-center border border-border bg-background text-muted-foreground">
           <ChatCircleText size={14} weight="bold" />
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h3 className="truncate text-sm font-semibold">{thread.title}</h3>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
             <span>{modeLabel}</span>
@@ -403,33 +459,34 @@ function ArchivedThreadRow({
 }
 
 function ArchiveContent({
-  archived,
-  isLoadingFirstPage,
-  canLoadMore,
-  isLoadingMore,
-  isExhausted,
-  onLoadMore,
+  page,
+  pageIndex,
+  isLoadingSuppressed,
+  onPreviousPage,
+  onNextPage,
   onRequestPermanentDelete,
 }: {
-  archived: ReadonlyArray<Doc<"repositories">>;
-  isLoadingFirstPage: boolean;
-  canLoadMore: boolean;
-  isLoadingMore: boolean;
-  isExhausted: boolean;
-  onLoadMore: () => void;
+  page: ArchivedRepositoryPage | undefined;
+  pageIndex: number;
+  isLoadingSuppressed: boolean;
+  onPreviousPage: () => void;
+  onNextPage: () => void;
   onRequestPermanentDelete: (repo: Doc<"repositories">) => void;
 }) {
   return (
     <>
-      {isLoadingFirstPage ? (
-        <ArchiveListSkeleton rowCount={1} />
-      ) : archived.length === 0 && isExhausted ? null : (
+      {page === undefined && !isLoadingSuppressed ? (
+        <>
+          <ArchiveRepositoryListSkeleton />
+          <ArchivePaginationControlsSkeleton />
+        </>
+      ) : page === undefined ? null : page.page.length === 0 && page.isDone && pageIndex === 0 ? null : (
         <ArchiveList
-          archived={archived}
-          canLoadMore={canLoadMore}
-          isLoadingMore={isLoadingMore}
-          isExhausted={isExhausted}
-          onLoadMore={onLoadMore}
+          archived={page.page}
+          pageIndex={pageIndex}
+          canGoNext={!page.isDone}
+          onPreviousPage={onPreviousPage}
+          onNextPage={onNextPage}
           onRequestPermanentDelete={onRequestPermanentDelete}
         />
       )}
@@ -439,48 +496,22 @@ function ArchiveContent({
 
 function ArchiveList({
   archived,
-  canLoadMore,
-  isLoadingMore,
-  isExhausted,
-  onLoadMore,
+  pageIndex,
+  canGoNext,
+  onPreviousPage,
+  onNextPage,
   onRequestPermanentDelete,
 }: {
   archived: ReadonlyArray<Doc<"repositories">>;
-  canLoadMore: boolean;
-  isLoadingMore: boolean;
-  isExhausted: boolean;
-  onLoadMore: () => void;
+  pageIndex: number;
+  canGoNext: boolean;
+  onPreviousPage: () => void;
+  onNextPage: () => void;
   onRequestPermanentDelete: (repo: Doc<"repositories">) => void;
 }) {
-  const sentinelRef = useRef<HTMLDivElement | null>(null);
-  // Keep `onLoadMore` reachable from the observer callback without re-creating
-  // the observer every render — the IntersectionObserver instance is keyed
-  // only on `canLoadMore`, so a stable ref pattern avoids a teardown thrash.
-  const onLoadMoreRef = useRef(onLoadMore);
-  useEffect(() => {
-    onLoadMoreRef.current = onLoadMore;
-  }, [onLoadMore]);
-
-  useEffect(() => {
-    const sentinel = sentinelRef.current;
-    if (!sentinel || !canLoadMore) {
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries[0]?.isIntersecting) {
-          onLoadMoreRef.current();
-        }
-      },
-      { rootMargin: "320px 0px" },
-    );
-    observer.observe(sentinel);
-    return () => observer.disconnect();
-  }, [canLoadMore]);
-
   return (
     <>
-      <ul className="mt-4 flex flex-col gap-2.5">
+      <ul className={`mt-4 flex flex-col gap-2.5 overflow-hidden ${REPOSITORY_ARCHIVE_LIST_HEIGHT_CLASS}`}>
         {archived.map((repo) => (
           <li key={repo._id}>
             <ArchiveRow repo={repo} onRequestPermanentDelete={onRequestPermanentDelete} />
@@ -488,35 +519,122 @@ function ArchiveList({
         ))}
       </ul>
 
-      {/*
-        Sentinel + footer state. The sentinel sits ~320px above the visible
-        bottom so loadMore fires before the user reaches the actual end of
-        the list — keeping infinite scroll feeling continuous instead of
-        bumpy. When `canLoadMore` flips to false the observer unsubscribes
-        and the footer renders one of the terminal states below.
-      */}
-      <div ref={sentinelRef} aria-hidden="true" className="h-px" />
-
-      <div className="mt-4 flex items-center justify-center" aria-live="polite">
-        {isLoadingMore ? (
-          <div className="flex items-center gap-2 py-2 text-xs text-muted-foreground">
-            <Spinner size={14} />
-            Loading more
-          </div>
-        ) : isExhausted && archived.length > INITIAL_PAGE_SIZE ? (
-          <p className="py-2 text-xs text-muted-foreground">End of archive · {archived.length} repositories</p>
-        ) : null}
-      </div>
+      <ArchivePaginationControls
+        pageIndex={pageIndex}
+        canGoNext={canGoNext}
+        previousLabel="Previous archived repositories page"
+        nextLabel="Next archived repositories page"
+        onPreviousPage={onPreviousPage}
+        onNextPage={onNextPage}
+      />
     </>
   );
 }
 
-function ArchiveListSkeleton({ rowCount = 4 }: { rowCount?: number }) {
+function ArchivePaginationControls({
+  pageIndex,
+  canGoNext,
+  previousLabel,
+  nextLabel,
+  onPreviousPage,
+  onNextPage,
+}: {
+  pageIndex: number;
+  canGoNext: boolean;
+  previousLabel: string;
+  nextLabel: string;
+  onPreviousPage: () => void;
+  onNextPage: () => void;
+}) {
   return (
-    <ul aria-hidden="true" className="mt-4 flex flex-col gap-2.5">
+    <div className="mt-4 flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-xs text-muted-foreground">Page {pageIndex + 1}</p>
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={pageIndex === 0}
+          onClick={onPreviousPage}
+          aria-label={previousLabel}
+        >
+          <CaretLeftIcon weight="bold" />
+          Previous Page
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          disabled={!canGoNext}
+          onClick={onNextPage}
+          aria-label={nextLabel}
+        >
+          Next Page
+          <CaretRightIcon weight="bold" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ArchivePaginationControlsSkeleton() {
+  return (
+    <div
+      aria-hidden="true"
+      data-archive-pagination-skeleton="true"
+      className="mt-4 flex flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-between"
+    >
+      <Skeleton className="h-4 w-12" />
+      <div className="flex gap-2">
+        <Skeleton className="h-8 w-36" />
+        <Skeleton className="h-8 w-28" />
+      </div>
+    </div>
+  );
+}
+
+function ArchiveThreadListSkeleton({ rowCount = REPOSITORY_ARCHIVE_PAGE_SIZE }: { rowCount?: number }) {
+  return (
+    <div
+      aria-hidden="true"
+      className={`overflow-hidden border border-border bg-card ${THREAD_ARCHIVE_LIST_HEIGHT_CLASS}`}
+    >
       {Array.from({ length: rowCount }).map((_, index) => (
-        <li key={index}>
-          <Card className="p-4">
+        <div
+          key={index}
+          data-archive-skeleton-row="thread"
+          className={`flex flex-col gap-3 border-t border-border px-3 py-3 first:border-t-0 sm:flex-row sm:items-center sm:justify-between ${THREAD_ARCHIVE_ROW_HEIGHT_CLASS}`}
+        >
+          <div className="flex min-w-0 items-start gap-3">
+            <Skeleton className="size-8 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <Skeleton className="h-4 w-44 max-w-full" />
+              <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+                <Skeleton className="h-3 w-14" />
+                <Skeleton className="h-3 w-28" />
+                <Skeleton className="h-3 w-24" />
+              </div>
+            </div>
+          </div>
+          <div className="flex shrink-0 gap-2">
+            <Skeleton className="h-8 flex-1 sm:w-24 sm:flex-none" />
+            <Skeleton className="h-8 flex-1 sm:w-20 sm:flex-none" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ArchiveRepositoryListSkeleton({ rowCount = REPOSITORY_ARCHIVE_PAGE_SIZE }: { rowCount?: number }) {
+  return (
+    <ul
+      aria-hidden="true"
+      className={`mt-4 flex flex-col gap-2.5 overflow-hidden ${REPOSITORY_ARCHIVE_LIST_HEIGHT_CLASS}`}
+    >
+      {Array.from({ length: rowCount }).map((_, index) => (
+        <li key={index} data-archive-skeleton-row="repository">
+          <Card className={`overflow-hidden p-4 ${REPOSITORY_ARCHIVE_ROW_HEIGHT_CLASS}`}>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
               <div className="flex min-w-0 items-start gap-3">
                 <Skeleton className="size-8 shrink-0" />
@@ -562,7 +680,9 @@ function ArchiveRow({
   const archivedLabel = formatRelativeTime(repo.archivedAt!);
 
   return (
-    <Card className="p-4 transition-colors hover:border-foreground/25">
+    <Card
+      className={`overflow-hidden p-4 transition-colors hover:border-foreground/25 ${REPOSITORY_ARCHIVE_ROW_HEIGHT_CLASS}`}
+    >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
         <div className="flex min-w-0 items-start gap-3">
           <div className="flex size-8 shrink-0 items-center justify-center border border-border bg-background text-muted-foreground">
