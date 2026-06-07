@@ -40,6 +40,7 @@ import { getSandboxFsClient } from "../daytona";
 import { verifyAndSyncSandbox, SandboxPreparationError } from "../lib/sandboxLiveness";
 import { emitMetric, logWarn } from "../lib/observability";
 import { hasProviderApiKey } from "../lib/providerEnv";
+import { retrieveArtifactChunks } from "../lib/artifactRag";
 import type { ReplyContext } from "./context";
 import { resolveModelForReply } from "./modelSelection";
 import {
@@ -341,15 +342,20 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
       throw new Error("Queued user message not present in conversational window for this assistant reply.");
     }
     const userPrompt = queuedUserMessage.content;
-    const groundedReplyContext: ReplyContext = replyContext;
+    const groundedReplyContext = await hydrateLibraryArtifactChunks(ctx, {
+      replyContext,
+      threadId: args.threadId,
+      userMessageId: args.userMessageId,
+      query: userPrompt,
+    });
     const relevantChunks = selectRelevantChunks(groundedReplyContext.chunks, userPrompt);
 
     // Build the citation map *before* the heuristic / streaming branches so
-    // both paths persist the same `[A#] → artifactId` lookup the prompt is
-    // about to advertise to the model. Skipped (left undefined) when no
-    // artifacts were selected — `discuss` and unattached threads have an
-    // empty list, so persisting `[]` would just add noise to the message
-    // row without any frontend usefulness.
+    // both paths persist the same `[A#] -> artifact evidence` lookup the
+    // prompt is about to advertise to the model. Skipped (left undefined)
+    // when no artifact evidence was selected — ungrounded `discuss` and
+    // unattached threads have an empty list, so persisting `[]` would just
+    // add noise to the message row without any frontend usefulness.
     const citationMap = buildCitationMap(groundedReplyContext);
     const persistedCitationMap = citationMap.length > 0 ? citationMap : undefined;
 
@@ -504,4 +510,37 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
 async function buildSandboxTools(sandboxTooling: NonNullable<ReplyContext["sandboxTooling"]>): Promise<ToolSet> {
   const fsClient = await getSandboxFsClient(sandboxTooling.remoteId);
   return createSandboxTools(fsClient, sandboxTooling.repoPath);
+}
+
+async function hydrateLibraryArtifactChunks(
+  ctx: ActionCtx,
+  args: {
+    replyContext: ReplyContext;
+    threadId: Id<"threads">;
+    userMessageId: Id<"messages">;
+    query: string;
+  },
+): Promise<ReplyContext> {
+  const shouldRetrieveArtifacts = args.replyContext.mode === "library" || args.replyContext.groundLibrary === true;
+  if (!shouldRetrieveArtifacts || !args.replyContext.repositoryId) {
+    return args.replyContext;
+  }
+
+  const scopedArtifactIds = args.replyContext.artifacts.map((artifact) => artifact.id);
+  const hasExplicitArtifactScope =
+    args.replyContext.artifactContext !== undefined && args.replyContext.artifactContext.length > 0;
+  if (hasExplicitArtifactScope && scopedArtifactIds.length === 0) {
+    return { ...args.replyContext, artifactChunks: [] };
+  }
+
+  const artifactChunks = await retrieveArtifactChunks(ctx, {
+    ownerTokenIdentifier: args.replyContext.ownerTokenIdentifier,
+    repositoryId: args.replyContext.repositoryId,
+    query: args.query,
+    threadId: args.threadId,
+    messageId: args.userMessageId,
+    ...(hasExplicitArtifactScope ? { artifactScope: scopedArtifactIds } : {}),
+  });
+
+  return { ...args.replyContext, artifactChunks };
 }
