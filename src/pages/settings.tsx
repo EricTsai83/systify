@@ -12,6 +12,7 @@ import {
   ChatCircleText,
   ChartLineUp,
   CheckCircle,
+  CheckSquareIcon,
   EyeIcon,
   FilePdfIcon,
   FunnelSimpleIcon,
@@ -24,6 +25,7 @@ import {
   MagnifyingGlassIcon,
   Plus,
   SlidersHorizontal,
+  SquareIcon,
   SquaresFourIcon,
   Sparkle,
   StarIcon,
@@ -1661,13 +1663,7 @@ function ModelSettingsList({
           <div className="flex min-w-0 items-start gap-3">
             <ModelProviderMark provider={entry.provider} />
             <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h3 className="truncate text-sm font-semibold text-foreground">{entry.displayName}</h3>
-                <Badge variant="muted">{formatProviderLabel(entry.provider)}</Badge>
-                <Badge variant={entry.capability === "sandbox" ? "outline" : "muted"}>
-                  {formatCapabilityLabel(entry.capability)}
-                </Badge>
-              </div>
+              <h3 className="truncate text-sm font-semibold text-foreground">{entry.displayName}</h3>
               <p className="mt-1 text-sm text-muted-foreground">{describeModelSetting(entry)}</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <ModelFeatureBadges entry={entry} />
@@ -1679,7 +1675,7 @@ function ModelSettingsList({
           </div>
 
           <div className="flex shrink-0 items-center gap-3 self-start sm:self-center">
-            <SelectableCheckbox
+            <SelectableModelButton
               entry={entry}
               enabledCount={enabledCount}
               isSaving={isSaving}
@@ -1731,12 +1727,6 @@ function ModelSettingsGrid({
             <p className="mt-1 line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground">
               {describeModelSetting(entry)}
             </p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Badge variant="muted">{formatProviderLabel(entry.provider)}</Badge>
-              <Badge variant={entry.capability === "sandbox" ? "outline" : "muted"}>
-                {formatCapabilityLabel(entry.capability)}
-              </Badge>
-            </div>
           </div>
           <div className="mt-5 flex items-end justify-between gap-3">
             <div className="flex min-w-0 flex-col gap-2">
@@ -1745,12 +1735,11 @@ function ModelSettingsGrid({
                 {formatContextWindow(entry.contextWindow)} context
               </span>
             </div>
-            <SelectableCheckbox
+            <SelectableModelButton
               entry={entry}
               enabledCount={enabledCount}
               isSaving={isSaving}
               onToggleEnabled={onToggleEnabled}
-              compact
             />
           </div>
         </article>
@@ -1759,38 +1748,34 @@ function ModelSettingsGrid({
   );
 }
 
-function SelectableCheckbox({
+function SelectableModelButton({
   entry,
   enabledCount,
   isSaving,
-  compact = false,
   onToggleEnabled,
 }: {
   entry: ModelSettingsEntry;
   enabledCount: number;
   isSaving: boolean;
-  compact?: boolean;
   onToggleEnabled: (entry: ModelSettingsEntry, nextEnabled: boolean) => void;
 }) {
   const cannotDisableLast = entry.enabled && enabledCount <= 1;
+  const tooltip = isSaving
+    ? "Saving model preferences"
+    : cannotDisableLast
+      ? "At least one model must stay selected"
+      : entry.enabled
+        ? "Selected for use"
+        : "Select to use this model";
   return (
-    <label
-      className={cn(
-        "inline-flex min-h-8 items-center gap-2 border border-border bg-background px-2 text-xs font-semibold transition-colors",
-        isSaving || cannotDisableLast ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:bg-muted",
-        compact ? "px-2" : "px-3",
-      )}
-    >
-      <input
-        type="checkbox"
-        className="size-4 accent-primary"
-        checked={entry.enabled}
-        disabled={isSaving || cannotDisableLast}
-        aria-label={`${entry.displayName} selectable`}
-        onChange={(event) => onToggleEnabled(entry, event.target.checked)}
-      />
-      <span>{entry.enabled ? "Selectable" : "Hidden"}</span>
-    </label>
+    <ModelPreferenceActionButton
+      active={entry.enabled}
+      ariaLabel={`${entry.enabled ? "Deselect" : "Select"} ${entry.displayName} for use`}
+      disabled={isSaving || cannotDisableLast}
+      icon={entry.enabled ? <CheckSquareIcon weight="fill" /> : <SquareIcon weight="regular" />}
+      tooltip={tooltip}
+      onClick={() => onToggleEnabled(entry, !entry.enabled)}
+    />
   );
 }
 
@@ -1804,13 +1789,20 @@ function FavoriteButton({
   onToggleFavorite: (entry: ModelSettingsEntry) => void;
 }) {
   const Icon = StarIcon;
+  const tooltip = isSaving
+    ? "Saving model preferences"
+    : !entry.enabled
+      ? "Show this model before marking it favorite"
+      : entry.favorite
+        ? "Favorite model"
+        : "Mark as favorite";
   return (
     <ModelPreferenceActionButton
       active={entry.favorite}
       ariaLabel={`${entry.favorite ? "Remove" : "Add"} ${entry.displayName} favorite`}
       disabled={isSaving || !entry.enabled}
       icon={<Icon weight={entry.favorite ? "fill" : "regular"} />}
-      tooltip={entry.favorite ? "Favorite model" : "Mark as favorite"}
+      tooltip={tooltip}
       onClick={() => onToggleFavorite(entry)}
     />
   );
@@ -1826,13 +1818,20 @@ function DefaultModelButton({
   onSetDefault: (entry: ModelSettingsEntry) => void;
 }) {
   const Icon = CheckCircle;
+  const tooltip = isSaving
+    ? "Saving model preferences"
+    : !entry.enabled
+      ? "Show this model before setting it as default"
+      : entry.default
+        ? formatDefaultModelTooltip(entry.defaultSource)
+        : "Set as default";
   return (
     <ModelPreferenceActionButton
       active={entry.default}
       ariaLabel={`Use ${entry.displayName} as default`}
       disabled={isSaving || !entry.enabled}
       icon={<Icon weight={entry.default ? "fill" : "regular"} />}
-      tooltip={entry.default ? formatDefaultModelTooltip(entry.defaultSource) : "Set as default"}
+      tooltip={tooltip}
       onClick={() => {
         if (!entry.default) {
           onSetDefault(entry);
@@ -1866,9 +1865,19 @@ function ModelPreferenceActionButton({
           size="icon-xs"
           aria-pressed={active}
           aria-label={ariaLabel}
-          disabled={disabled}
-          className={cn(active ? "bg-muted text-primary hover:bg-muted hover:text-primary" : "text-muted-foreground")}
-          onClick={onClick}
+          aria-disabled={disabled}
+          className={cn(
+            active ? "bg-muted text-primary hover:bg-muted hover:text-primary" : "text-muted-foreground",
+            disabled &&
+              (active
+                ? "cursor-default opacity-60 active:scale-100 hover:bg-muted hover:text-primary"
+                : "cursor-default opacity-50 active:scale-100 hover:bg-transparent hover:text-muted-foreground"),
+          )}
+          onClick={() => {
+            if (!disabled) {
+              onClick();
+            }
+          }}
         >
           {icon}
         </Button>
@@ -1890,7 +1899,7 @@ function ModelProviderMark({
     size === "lg" ? "size-11" : "size-9",
   );
   return (
-    <span className={className} aria-hidden="true">
+    <span className={className} role="img" aria-label={formatProviderLabel(provider)}>
       {provider === "openai" ? (
         <OpenAIIcon className={size === "lg" ? "size-6" : "size-5"} />
       ) : (
@@ -1936,15 +1945,14 @@ function ModelsSettingsSkeleton({ viewMode }: { viewMode: ModelSettingsViewMode 
             <div>
               <div className="flex items-start justify-between gap-3">
                 <Skeleton className="size-11 shrink-0" />
-                <Skeleton className="size-8 shrink-0" />
+                <div className="flex items-center gap-1">
+                  <Skeleton className="size-6 shrink-0" />
+                  <Skeleton className="size-6 shrink-0" />
+                </div>
               </div>
               <Skeleton className="mt-4 h-6 w-36 max-w-full" />
               <Skeleton className="mt-2 h-4 w-full" />
               <Skeleton className="mt-1.5 h-4 w-4/5" />
-              <div className="mt-3 flex gap-2">
-                <Skeleton className="h-5 w-16" />
-                <Skeleton className="h-5 w-20" />
-              </div>
             </div>
             <div className="mt-5 flex items-end justify-between gap-3">
               <div className="flex min-w-0 flex-1 flex-col gap-2">
@@ -1955,7 +1963,7 @@ function ModelsSettingsSkeleton({ viewMode }: { viewMode: ModelSettingsViewMode 
                 </div>
                 <Skeleton className="h-3 w-20" />
               </div>
-              <Skeleton className="h-8 w-24 shrink-0" />
+              <Skeleton className="size-6 shrink-0" />
             </div>
           </div>
         ))}
@@ -1975,8 +1983,6 @@ function ModelsSettingsSkeleton({ viewMode }: { viewMode: ModelSettingsViewMode 
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <Skeleton className="h-5 w-32" />
-                <Skeleton className="h-5 w-16" />
-                <Skeleton className="h-5 w-20" />
               </div>
               <Skeleton className="mt-2 h-4 w-full max-w-md" />
               <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -1987,8 +1993,9 @@ function ModelsSettingsSkeleton({ viewMode }: { viewMode: ModelSettingsViewMode 
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-3 self-start sm:self-center">
-            <Skeleton className="h-8 w-28 shrink-0" />
-            <Skeleton className="size-8 shrink-0" />
+            <Skeleton className="size-6 shrink-0" />
+            <Skeleton className="size-6 shrink-0" />
+            <Skeleton className="size-6 shrink-0" />
           </div>
         </div>
       ))}
