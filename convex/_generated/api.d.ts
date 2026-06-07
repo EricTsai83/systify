@@ -30,6 +30,7 @@ import type * as chat_replyStreamController from "../chat/replyStreamController.
 import type * as chat_sandboxToolCallLog from "../chat/sandboxToolCallLog.js";
 import type * as chat_sandboxTools from "../chat/sandboxTools.js";
 import type * as chat_send from "../chat/send.js";
+import type * as chat_sendPlanning from "../chat/sendPlanning.js";
 import type * as chat_streamStore from "../chat/streamStore.js";
 import type * as chat_streaming from "../chat/streaming.js";
 import type * as chat_threadAccess from "../chat/threadAccess.js";
@@ -94,6 +95,7 @@ import type * as lib_returnTo from "../lib/returnTo.js";
 import type * as lib_sandboxLiveness from "../lib/sandboxLiveness.js";
 import type * as lib_sandboxNames from "../lib/sandboxNames.js";
 import type * as lib_systemDesign from "../lib/systemDesign.js";
+import type * as lib_systemDesignPlanning from "../lib/systemDesignPlanning.js";
 import type * as lib_systemDesignPrompts from "../lib/systemDesignPrompts.js";
 import type * as lib_threadDefaults from "../lib/threadDefaults.js";
 import type * as lib_titleSanitization from "../lib/titleSanitization.js";
@@ -145,6 +147,7 @@ declare const fullApi: ApiFromModules<{
   "chat/sandboxToolCallLog": typeof chat_sandboxToolCallLog;
   "chat/sandboxTools": typeof chat_sandboxTools;
   "chat/send": typeof chat_send;
+  "chat/sendPlanning": typeof chat_sendPlanning;
   "chat/streamStore": typeof chat_streamStore;
   "chat/streaming": typeof chat_streaming;
   "chat/threadAccess": typeof chat_threadAccess;
@@ -209,6 +212,7 @@ declare const fullApi: ApiFromModules<{
   "lib/sandboxLiveness": typeof lib_sandboxLiveness;
   "lib/sandboxNames": typeof lib_sandboxNames;
   "lib/systemDesign": typeof lib_systemDesign;
+  "lib/systemDesignPlanning": typeof lib_systemDesignPlanning;
   "lib/systemDesignPrompts": typeof lib_systemDesignPrompts;
   "lib/threadDefaults": typeof lib_threadDefaults;
   "lib/titleSanitization": typeof lib_titleSanitization;
