@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { v, type GenericValidator } from "convex/values";
 
 /**
  * Structured failure categories for per-kind System Design failures.
@@ -19,14 +19,13 @@ export const SYSTEM_DESIGN_FAILURE_REASONS = [
 
 export type SystemDesignFailureReason = (typeof SYSTEM_DESIGN_FAILURE_REASONS)[number];
 
-export const systemDesignFailureReasonValidator = v.union(
-  v.literal(SYSTEM_DESIGN_FAILURE_REASONS[0]),
-  v.literal(SYSTEM_DESIGN_FAILURE_REASONS[1]),
-  v.literal(SYSTEM_DESIGN_FAILURE_REASONS[2]),
-  v.literal(SYSTEM_DESIGN_FAILURE_REASONS[3]),
-  v.literal(SYSTEM_DESIGN_FAILURE_REASONS[4]),
-  v.literal(SYSTEM_DESIGN_FAILURE_REASONS[5]),
-);
+const systemDesignFailureReasonLiterals = SYSTEM_DESIGN_FAILURE_REASONS.map((reason) => v.literal(reason)) as [
+  GenericValidator,
+  GenericValidator,
+  ...GenericValidator[],
+];
+
+export const systemDesignFailureReasonValidator = v.union(...systemDesignFailureReasonLiterals);
 
 export function isSystemDesignFailureReason(value: string): value is SystemDesignFailureReason {
   return (SYSTEM_DESIGN_FAILURE_REASONS as readonly string[]).includes(value);

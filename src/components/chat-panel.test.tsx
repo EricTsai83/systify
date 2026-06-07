@@ -208,19 +208,12 @@ describe("ChatPanel streaming rendering", () => {
       />,
     );
 
-    expect(
-      vi
-        .mocked(useQuery)
-        .mock.calls.some(
-          ([query, args]) =>
-            queryName(query)?.endsWith("llmCatalog:listPickableModels") &&
-            typeof args === "object" &&
-            args !== null &&
-            !Array.isArray(args) &&
-            args.preferenceScope === "discuss" &&
-            !("capability" in args),
-        ),
-    ).toBe(true);
+    const listPickableModelArgs = vi
+      .mocked(useQuery)
+      .mock.calls.filter(([query]) => queryName(query)?.endsWith("llmCatalog:listPickableModels"))
+      .map(([, args]) => args);
+
+    expect(listPickableModelArgs).toEqual([{ preferenceScope: "discuss" }]);
   });
 
   test("capability-filters the chat model picker for sandbox-scoped turns", () => {

@@ -117,7 +117,7 @@ export function completeChatTurnPlan(args: {
     modelChoice.modelName,
     args.picker.reasoningEffort,
   );
-  assertThreadProviderLock(args.threadDefaults?.lockedProvider, resolved.provider);
+  assertThreadProviderLock(args.threadDefaults?.lockedProvider, modelChoice.provider);
 
   return {
     ...args.modePlan,

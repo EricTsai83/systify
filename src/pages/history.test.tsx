@@ -208,7 +208,7 @@ describe("HistoryPage", () => {
     expect(groupSkeleton).not.toBeNull();
     expect(rowSkeleton).not.toBeNull();
     expect(historyCard.contains(groupSkeleton)).toBe(true);
-    expect(groupSkeleton?.querySelectorAll(".h-8.w-20, .h-8.w-24")).toHaveLength(9);
+    expect(groupSkeleton?.querySelectorAll('[data-history-button-skeleton="true"]')).toHaveLength(9);
   });
 
   test("opens repository threads on their canonical routes", () => {

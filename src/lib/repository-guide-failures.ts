@@ -101,7 +101,7 @@ function describeFailureReason(
 }
 
 function isRepositoryGuideKind(kind: string): kind is RepositoryGuideKind {
-  return kind in REPOSITORY_GUIDE_SECTION_TITLES;
+  return Object.prototype.hasOwnProperty.call(REPOSITORY_GUIDE_SECTION_TITLES, kind);
 }
 
 function uniqueKinds(kinds: readonly RepositoryGuideKind[]): RepositoryGuideKind[] {

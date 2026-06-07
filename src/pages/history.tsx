@@ -756,9 +756,9 @@ function ThreadRowsSkeleton() {
             <Skeleton className="mt-1 h-3 w-36 max-w-full" />
           </div>
           <div className="hidden shrink-0 items-center gap-1 sm:flex">
-            <Skeleton className="h-8 w-20" />
-            <Skeleton className="h-8 w-20" />
-            <Skeleton className="h-8 w-24" />
+            <Skeleton className="h-8 w-20" data-history-button-skeleton="true" />
+            <Skeleton className="h-8 w-20" data-history-button-skeleton="true" />
+            <Skeleton className="h-8 w-24" data-history-button-skeleton="true" />
           </div>
         </div>
       ))}

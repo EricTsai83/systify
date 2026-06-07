@@ -373,10 +373,7 @@ export function isUserPickableModel(
   if (capability === undefined) {
     return true;
   }
-  if (capability === "sandbox") {
-    return entry.capability === "sandbox";
-  }
-  return true;
+  return entry.capability === capability;
 }
 
 /**

@@ -1,6 +1,10 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { getCatalogEntry, listPickableModels as listCatalogPickableModels } from "./llmCatalog";
+import {
+  getCatalogEntry,
+  listPickableModels as listCatalogPickableModels,
+  type UserPickableCapability,
+} from "./llmCatalog";
 import type { LlmProvider } from "./llmProvider";
 
 export const USER_TRAITS_MAX_COUNT = 16;
@@ -145,6 +149,16 @@ function normalizeModelRefs(refs: readonly ModelPreferenceRef[] | undefined): Mo
     out.push(normalized);
   }
   return out;
+}
+
+function capabilityForModelPreferenceScope(scope: ModelPreferenceScope): UserPickableCapability {
+  if (scope === "sandbox") {
+    return "sandbox";
+  }
+  if (scope === "library") {
+    return "library";
+  }
+  return "discuss";
 }
 
 export function normalizeModelPreferences(
@@ -362,31 +376,39 @@ export async function upsertViewerModelPreferences(
     defaultModel?: ModelPreferenceRef | null;
   },
 ) {
-  const enabledModels = normalizeModelRefs(args.enabledModels);
+  const scopeCatalog = listCatalogPickableModels().filter(
+    (entry) => entry.capability === capabilityForModelPreferenceScope(args.scope),
+  );
+  const scopeCatalogKeys = new Set(scopeCatalog.map(modelPreferenceKey));
+  const enabledModels = normalizeModelRefs(args.enabledModels).filter((ref) =>
+    scopeCatalogKeys.has(modelPreferenceKey(ref)),
+  );
   const enabledKeys = new Set(enabledModels.map(modelPreferenceKey));
   if (enabledKeys.size === 0) {
     throw new Error("At least one model must remain selectable.");
   }
 
-  const disabledModels = listCatalogPickableModels()
+  const disabledModels = scopeCatalog
     .filter((entry) => !enabledKeys.has(modelPreferenceKey(entry)))
     .map(modelRefFromCatalogEntry);
 
   const favoriteModels = normalizeModelRefs(args.favoriteModels).filter((ref) =>
     enabledKeys.has(modelPreferenceKey(ref)),
   );
-  const defaultModel = normalizeModelRefs(args.defaultModel ? [args.defaultModel] : []).filter((ref) =>
-    enabledKeys.has(modelPreferenceKey(ref)),
-  )[0];
   const existing = await findUserPreferences(ctx, args.ownerTokenIdentifier);
   const current = normalizeModelPreferences(existing);
+  const hasDefaultModelArg = "defaultModel" in args;
+  const normalizedDefault = normalizeModelRefs(
+    hasDefaultModelArg && args.defaultModel ? [args.defaultModel] : [],
+  ).filter((ref) => enabledKeys.has(modelPreferenceKey(ref)))[0];
+  const defaultModel = hasDefaultModelArg ? (normalizedDefault ?? null) : current.scopes[args.scope].defaultModel;
   const next = normalizeModelPreferences({
     scopedModelPreferences: {
       ...current.scopes,
       [args.scope]: {
         disabledModels,
         favoriteModels,
-        ...(defaultModel !== undefined ? { defaultModel } : {}),
+        defaultModel,
       },
     },
   });
