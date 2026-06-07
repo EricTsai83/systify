@@ -93,10 +93,11 @@ async function paginateVisibleThreadShares(
 
   while (page.length < args.paginationOpts.numItems && !isDone && pagesScanned < THREAD_SHARE_PAGE_SCAN_LIMIT) {
     const remaining = Math.max(1, args.paginationOpts.numItems - page.length);
+    let reachedExpiredShares = false;
     const result = await ctx.db
       .query("threadShares")
       .withIndex("by_ownerTokenIdentifier_revokedAt_and_expiresAt", (q) =>
-        q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier).eq("revokedAt", undefined).gt("expiresAt", args.now),
+        q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier).eq("revokedAt", undefined),
       )
       .order("desc")
       .paginate({ numItems: remaining, cursor });
@@ -106,6 +107,10 @@ async function paginateVisibleThreadShares(
     isDone = result.isDone;
 
     for (const share of result.page) {
+      if (share.expiresAt <= args.now) {
+        reachedExpiredShares = true;
+        break;
+      }
       const metadata = await publicShareMetadata(ctx, share, {
         includeArchivedThread: false,
         includeThreadArchivedAt: true,
@@ -113,6 +118,9 @@ async function paginateVisibleThreadShares(
       if (metadata) {
         page.push(metadata);
       }
+    }
+    if (reachedExpiredShares) {
+      isDone = true;
     }
   }
 
