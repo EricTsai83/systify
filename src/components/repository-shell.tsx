@@ -206,13 +206,14 @@ export function RepositoryShell({
     accessLoadingReason ??
     (isViewerFeatureEnabled(viewerAccess, "syncRepository") ? undefined : DEMO_MODE_COPY.syncDisabled);
   const checkForUpdatesEnabled = isViewerFeatureEnabled(viewerAccess, "checkForUpdates");
-  const generateSystemDesignDisabledReason =
-    accessLoadingReason ??
-    (isViewerFeatureEnabled(viewerAccess, "generateSystemDesign")
-      ? isViewerFeatureEnabled(viewerAccess, "sandboxGrounding")
-        ? undefined
-        : DEMO_MODE_COPY.sandboxDisabled
-      : DEMO_MODE_COPY.generateDisabled);
+  let generateSystemDesignDisabledReason = accessLoadingReason;
+  if (!generateSystemDesignDisabledReason) {
+    if (!isViewerFeatureEnabled(viewerAccess, "generateSystemDesign")) {
+      generateSystemDesignDisabledReason = DEMO_MODE_COPY.generateDisabled;
+    } else if (!isViewerFeatureEnabled(viewerAccess, "sandboxGrounding")) {
+      generateSystemDesignDisabledReason = DEMO_MODE_COPY.sandboxDisabled;
+    }
+  }
   const sandboxGroundingDisabledReason =
     accessLoadingReason ??
     (isViewerFeatureEnabled(viewerAccess, "sandboxGrounding") ? undefined : DEMO_MODE_COPY.sandboxDisabled);

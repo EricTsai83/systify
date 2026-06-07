@@ -22,6 +22,7 @@ async function seedRepoWithSandbox(
   return await t.run(async (ctx) => {
     await ctx.db.insert("userAccessProfiles", {
       ownerTokenIdentifier,
+      email: `${ownerTokenIdentifier}@example.com`,
       plan: "internal",
       billingStatus: "none",
       createdAt: Date.now(),

@@ -545,6 +545,7 @@ describe("usage budget integration gates", () => {
     await t.run(async (ctx) => {
       await ctx.db.insert("userAccessProfiles", {
         ownerTokenIdentifier,
+        email: "usage-budget-chat-send@example.com",
         plan: "internal",
         billingStatus: "none",
         createdAt: Date.now(),

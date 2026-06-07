@@ -41,6 +41,7 @@ export function isDemoMode(viewerAccess: ViewerAccess | undefined): boolean {
     return true;
   }
 
+  // isDemoMode is feature-driven for paid/trial plans: COST_FEATURE_NAMES must all be enabled on viewerAccess.features.
   return COST_FEATURE_NAMES.some((feature) => viewerAccess.features?.[feature]?.enabled !== true);
 }
 

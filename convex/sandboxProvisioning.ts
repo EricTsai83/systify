@@ -2,7 +2,6 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import { DEFAULT_AUTO_ARCHIVE_MINUTES, DEFAULT_AUTO_DELETE_MINUTES, DEFAULT_AUTO_STOP_MINUTES } from "./lib/constants";
-import { assertFeatureAccess } from "./lib/entitlements";
 import { isOwnedBy } from "./lib/ownedDocs";
 import { isActiveRepository } from "./lib/repositoryAccess";
 
@@ -63,7 +62,6 @@ export const reserveOnDemandSandboxRow = internalMutation({
     if (repository.deletionRequestedAt || repository.archivedAt) {
       throw new Error("Repository is no longer active.");
     }
-    await assertFeatureAccess(ctx, args.ownerTokenIdentifier, "sandboxGrounding");
 
     if (repository.latestSandboxId) {
       const existing = await ctx.db.get(repository.latestSandboxId);

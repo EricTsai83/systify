@@ -49,11 +49,15 @@ function createTestConvex() {
   return t;
 }
 
-async function seedInternalAccessProfile(t: ReturnType<typeof createTestConvex>, ownerTokenIdentifier: string) {
+async function seedInternalAccessProfile(
+  t: ReturnType<typeof createTestConvex>,
+  ownerTokenIdentifier: string,
+  overrides?: { email?: string },
+) {
   await t.run(async (ctx) => {
     await ctx.db.insert("userAccessProfiles", {
       ownerTokenIdentifier,
-      email: `${ownerTokenIdentifier}@example.com`,
+      email: overrides?.email ?? `${ownerTokenIdentifier}@example.com`,
       plan: "internal",
       billingStatus: "none",
       createdAt: Date.now(),
@@ -573,15 +577,9 @@ describe("GitHub installation selection", () => {
     const ownerTokenIdentifier = "user|sync";
     const t = createTestConvex();
 
+    await seedInternalAccessProfile(t, ownerTokenIdentifier, { email: "sync@example.com" });
+
     const repositoryId = await t.run(async (ctx) => {
-      await ctx.db.insert("userAccessProfiles", {
-        ownerTokenIdentifier,
-        email: "sync@example.com",
-        plan: "internal",
-        billingStatus: "none",
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      });
       await ctx.db.insert("githubInstallations", deletedInstallation(ownerTokenIdentifier, 301));
       await ctx.db.insert("githubInstallations", activeInstallation(ownerTokenIdentifier, 302));
 

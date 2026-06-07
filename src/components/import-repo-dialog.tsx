@@ -464,6 +464,7 @@ export function ImportRepoDialog({
   useEffect(() => {
     const trimmed = publicInput.trim();
     if (importDisabledReason) {
+      latestSearchRef.current++;
       setSearchResults(null);
       setSearchError(null);
       setIsSearching(false);
