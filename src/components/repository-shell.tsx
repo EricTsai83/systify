@@ -28,7 +28,16 @@ import { useChatMode } from "@/hooks/use-service-mode";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
-import type { ArtifactId, ChatMode, RepositoryId, SandboxModeStatus, ThreadId, ThreadMode } from "@/lib/types";
+import type {
+  ArtifactId,
+  ChatMode,
+  ModelPreferenceScope,
+  RepositoryId,
+  SandboxModeStatus,
+  ThreadId,
+  ThreadMode,
+  UserPickableCapability,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_AUTHENTICATED_PATH,
@@ -107,6 +116,8 @@ export function RepositoryShell({
   }>({ threadId: urlThreadId, library: false, sandbox: false });
   const groundLibrary = groundingByThread.library;
   const groundSandbox = groundingByThread.sandbox;
+  const modelCapability: UserPickableCapability = groundSandbox ? "sandbox" : chatMode;
+  const modelPreferenceScope: ModelPreferenceScope = groundSandbox ? "sandbox" : chatMode;
   const setGroundLibrary = useCallback(
     (next: boolean) => setGroundingByThread((prev) => ({ ...prev, library: next })),
     [],
@@ -118,8 +129,8 @@ export function RepositoryShell({
   const { selectedProvider, selectedModelName, setSelectedModel, selectedReasoningEffort, setSelectedReasoningEffort } =
     useComposerModelPick({
       threadId: urlThreadId,
-      capability: chatMode,
-      preferenceScope: chatMode,
+      capability: modelCapability,
+      preferenceScope: modelPreferenceScope,
       threadLockedProvider: capabilities.lockedProvider,
       threadDefaultModelName: capabilities.defaultModelName,
     });
@@ -452,7 +463,7 @@ export function RepositoryShell({
       selectedProvider={selectedProvider}
       selectedModelName={selectedModelName}
       setSelectedModel={setSelectedModel}
-      modelPreferenceScope={chatMode}
+      modelPreferenceScope={modelPreferenceScope}
       selectedReasoningEffort={selectedReasoningEffort}
       setSelectedReasoningEffort={setSelectedReasoningEffort}
       threadLockedProvider={capabilities.lockedProvider}

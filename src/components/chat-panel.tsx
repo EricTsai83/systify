@@ -295,6 +295,7 @@ export function ChatPanel({
   onLoadOlderMessages = NOOP_LOAD_OLDER,
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
+  const modelPickerCapability = modelPreferenceScope === "sandbox" ? "sandbox" : undefined;
   const [showStatsForNerds] = useStatsForNerdsPreference();
 
   // Owns stick-to-bottom on append, anchor preservation on prepend,
@@ -580,6 +581,7 @@ export function ChatPanel({
                     }
                     onChange={setSelectedModel}
                     threadLockedProvider={threadLockedProvider}
+                    capability={modelPickerCapability}
                     preferenceScope={modelPreferenceScope}
                   />
                 ) : null}

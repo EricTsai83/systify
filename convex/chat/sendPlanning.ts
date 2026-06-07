@@ -3,14 +3,21 @@ import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import { assertRepositoryModeEligible } from "../repositoryModeEligibility";
 import { resolveDiscussGrounding, type ChatMode } from "../lib/chatMode";
-import { isSupportedReasoningEffort, isUserPickableModel, type ReasoningEffort } from "../lib/llmCatalog";
+import {
+  isSupportedReasoningEffort,
+  isUserPickableModel,
+  listPickableModels,
+  type ReasoningEffort,
+  type UserPickableCapability,
+} from "../lib/llmCatalog";
 import type { LlmProvider } from "../lib/llmProvider";
 import {
+  applyModelPreferences,
   isModelEnabledInPreferences,
   type ModelPreferenceScope,
   type UserModelPreferences,
 } from "../lib/userPreferences";
-import { resolveModelForReply } from "./modelSelection";
+import { pickCapability, resolveModelForReply } from "./modelSelection";
 
 export type ChatTurnModePlan = {
   repositoryId: Id<"repositories"> | null;
@@ -84,6 +91,7 @@ export function completeChatTurnPlan(args: {
     picker: args.picker,
     modelPreferences: args.modelPreferences,
     modelPreferenceScope: args.modePlan.modelPreferenceScope,
+    capability: pickCapability(args.modePlan),
   });
 
   const resolved = resolveModelForReply({
@@ -95,14 +103,27 @@ export function completeChatTurnPlan(args: {
     threadDefaultModelName: args.threadDefaults?.defaultModelName,
     lockedProvider: args.threadDefaults?.lockedProvider,
   });
-  assertSupportedReasoningEffortForResolvedPick(resolved.provider, resolved.modelName, args.picker.reasoningEffort);
+  const modelChoice = ensureResolvedModelEnabled({
+    provider: resolved.provider,
+    modelName: resolved.modelName,
+    reasoningEffort: resolved.reasoningEffort,
+    capability: resolved.capability,
+    modelPreferences: args.modelPreferences,
+    modelPreferenceScope: args.modePlan.modelPreferenceScope,
+    lockedProvider: args.threadDefaults?.lockedProvider,
+  });
+  assertSupportedReasoningEffortForResolvedPick(
+    modelChoice.provider,
+    modelChoice.modelName,
+    args.picker.reasoningEffort,
+  );
   assertThreadProviderLock(args.threadDefaults?.lockedProvider, resolved.provider);
 
   return {
     ...args.modePlan,
-    provider: resolved.provider,
-    modelName: resolved.modelName,
-    ...(resolved.reasoningEffort !== undefined ? { reasoningEffort: resolved.reasoningEffort } : {}),
+    provider: modelChoice.provider,
+    modelName: modelChoice.modelName,
+    ...(modelChoice.reasoningEffort !== undefined ? { reasoningEffort: modelChoice.reasoningEffort } : {}),
   };
 }
 
@@ -142,12 +163,13 @@ function assertPickerModelEnabled(args: {
   picker: ModelPickerInput;
   modelPreferences: UserModelPreferences;
   modelPreferenceScope: ModelPreferenceScope;
+  capability: UserPickableCapability;
 }): void {
   if (args.picker.provider === undefined || args.picker.modelName === undefined) {
     return;
   }
   if (
-    !isUserPickableModel(args.picker.provider, args.picker.modelName) ||
+    !isUserPickableModel(args.picker.provider, args.picker.modelName, args.capability) ||
     !isModelEnabledInPreferences(
       args.modelPreferences,
       { provider: args.picker.provider, modelName: args.picker.modelName },
@@ -172,6 +194,56 @@ function assertSupportedReasoningEffortForResolvedPick(
       message: `Unsupported reasoning effort "${reasoningEffort}" for ${provider}:${modelName}.`,
     });
   }
+}
+
+function ensureResolvedModelEnabled(args: {
+  provider: LlmProvider;
+  modelName: string;
+  reasoningEffort: ReasoningEffort | undefined;
+  capability: UserPickableCapability;
+  modelPreferences: UserModelPreferences;
+  modelPreferenceScope: ModelPreferenceScope;
+  lockedProvider: LlmProvider | undefined;
+}): {
+  provider: LlmProvider;
+  modelName: string;
+  reasoningEffort: ReasoningEffort | undefined;
+} {
+  if (
+    isModelEnabledInPreferences(
+      args.modelPreferences,
+      { provider: args.provider, modelName: args.modelName },
+      args.modelPreferenceScope,
+    )
+  ) {
+    return {
+      provider: args.provider,
+      modelName: args.modelName,
+      reasoningEffort: args.reasoningEffort,
+    };
+  }
+
+  const fallback = applyModelPreferences(
+    listPickableModels({
+      capability: args.capability,
+      ...(args.lockedProvider !== undefined ? { provider: args.lockedProvider } : {}),
+    }),
+    args.modelPreferences,
+    args.modelPreferenceScope,
+  )[0];
+
+  if (!fallback) {
+    throw new ConvexError({
+      code: "unsupported_model",
+      message: "No enabled model is available for this chat surface.",
+    });
+  }
+
+  return {
+    provider: fallback.provider,
+    modelName: fallback.modelName,
+    reasoningEffort: fallback.reasoningEffort,
+  };
 }
 
 function assertThreadProviderLock(lockedProvider: LlmProvider | undefined, resolvedProvider: LlmProvider): void {

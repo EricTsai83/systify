@@ -121,6 +121,51 @@ describe("completeChatTurnPlan", () => {
     });
   });
 
+  test("falls back to the first enabled model when the capability default is disabled", () => {
+    const modePlan = planChatTurnMode({ repositoryId, mode: "discuss" });
+    const modelPreferences = normalizeModelPreferences({
+      scopedModelPreferences: {
+        discuss: {
+          disabledModels: [{ provider: "openai", modelName: "gpt-5.4-mini" }],
+        },
+      },
+    });
+
+    const plan = completeChatTurnPlan({
+      modePlan,
+      modelPreferences,
+      picker: {},
+    });
+
+    expect(plan).toMatchObject({
+      provider: "anthropic",
+      modelName: "claude-haiku-4-5",
+    });
+    expect(plan.reasoningEffort).toBeUndefined();
+  });
+
+  test("does not cross the thread provider lock when falling back from a disabled default", () => {
+    const modePlan = planChatTurnMode({ repositoryId, mode: "discuss" });
+    const modelPreferences = normalizeModelPreferences({
+      scopedModelPreferences: {
+        discuss: {
+          disabledModels: [{ provider: "openai", modelName: "gpt-5.4-mini" }],
+        },
+      },
+    });
+
+    expectConvexErrorCode(
+      () =>
+        completeChatTurnPlan({
+          modePlan,
+          modelPreferences,
+          picker: {},
+          threadDefaults: { lockedProvider: "openai" },
+        }),
+      "unsupported_model",
+    );
+  });
+
   test("rejects half-set picker pairs", () => {
     const modePlan = planChatTurnMode({ repositoryId, mode: "discuss" });
 
@@ -150,6 +195,24 @@ describe("completeChatTurnPlan", () => {
         completeChatTurnPlan({
           modePlan,
           modelPreferences,
+          picker: { provider: "openai", modelName: "gpt-5.4-mini" },
+        }),
+      "unsupported_model",
+    );
+  });
+
+  test("rejects picker models outside the resolved capability tier", () => {
+    const modePlan = planChatTurnMode({
+      repositoryId,
+      mode: "discuss",
+      requestedGrounding: { groundSandbox: true },
+    });
+
+    expectConvexErrorCode(
+      () =>
+        completeChatTurnPlan({
+          modePlan,
+          modelPreferences: emptyModelPreferences,
           picker: { provider: "openai", modelName: "gpt-5.4-mini" },
         }),
       "unsupported_model",

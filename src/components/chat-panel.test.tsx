@@ -223,6 +223,48 @@ describe("ChatPanel streaming rendering", () => {
     ).toBe(true);
   });
 
+  test("capability-filters the chat model picker for sandbox-scoped turns", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={null}
+        messages={undefined}
+        activeMessageStream={undefined}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        selectedProvider={null}
+        selectedModelName={null}
+        setSelectedModel={vi.fn()}
+        modelPreferenceScope="sandbox"
+        grounding={undefined}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={null}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(
+      vi
+        .mocked(useQuery)
+        .mock.calls.some(
+          ([query, args]) =>
+            queryName(query)?.endsWith("llmCatalog:listPickableModels") &&
+            typeof args === "object" &&
+            args !== null &&
+            !Array.isArray(args) &&
+            args.preferenceScope === "sandbox" &&
+            args.capability === "sandbox",
+        ),
+    ).toBe(true);
+  });
+
   test("ChatContainer owns message and active-stream subscriptions for the selected thread", () => {
     // Paginated message subscription. The server returns pages in
     // newest-first order; `ChatContainer` reverses the flattened result

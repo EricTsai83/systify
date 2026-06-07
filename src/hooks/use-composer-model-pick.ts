@@ -61,6 +61,7 @@ export function useComposerModelPick(args: {
   const [modelByThread, setModelByThread] = useState<Record<string, ThreadScopedModelPick>>({});
   const [reasoningByThread, setReasoningByThread] = useState<Record<string, ThreadScopedReasoningPick>>({});
   const threadKey = args.threadId ?? "__new_thread__";
+  const modelScopeKey = `${threadKey}:${args.capability}:${args.preferenceScope}`;
 
   const defaultModelPick = useDefaultModelPick({
     capability: args.capability,
@@ -73,12 +74,12 @@ export function useComposerModelPick(args: {
     () =>
       resolveComposerModelPick({
         threadId: args.threadId,
-        explicitPick: modelByThread[threadKey] ?? null,
+        explicitPick: modelByThread[modelScopeKey] ?? null,
         defaultModelPick,
         threadLockedProvider,
         threadDefaultModelName,
       }),
-    [args.threadId, defaultModelPick, modelByThread, threadDefaultModelName, threadKey, threadLockedProvider],
+    [args.threadId, defaultModelPick, modelByThread, modelScopeKey, threadDefaultModelName, threadLockedProvider],
   );
 
   const selectedModel = useMemo<ComposerModelPickValue | null>(
@@ -90,21 +91,21 @@ export function useComposerModelPick(args: {
     (next: ComposerModelPickValue) => {
       setModelByThread((prev) => ({
         ...prev,
-        [threadKey]: { threadId: args.threadId, provider: next.provider, modelName: next.modelName },
+        [modelScopeKey]: { threadId: args.threadId, provider: next.provider, modelName: next.modelName },
       }));
     },
-    [args.threadId, threadKey],
+    [args.threadId, modelScopeKey],
   );
 
-  const selectedReasoningEffort = reasoningByThread[threadKey]?.effort ?? null;
+  const selectedReasoningEffort = reasoningByThread[modelScopeKey]?.effort ?? null;
   const setSelectedReasoningEffort = useCallback(
     (next: ReasoningEffort | null) => {
       setReasoningByThread((prev) => ({
         ...prev,
-        [threadKey]: { threadId: args.threadId, effort: next },
+        [modelScopeKey]: { threadId: args.threadId, effort: next },
       }));
     },
-    [args.threadId, threadKey],
+    [args.threadId, modelScopeKey],
   );
 
   return {
