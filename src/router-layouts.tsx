@@ -133,22 +133,17 @@ export function ProtectedLayout() {
 
 function DemoModeBanner() {
   return (
-    <div className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-foreground" role="status">
-      <div className="mx-auto flex w-full max-w-7xl justify-center">
-        <div className="flex max-w-4xl items-start justify-center gap-2 text-center sm:items-center">
-          <WarningCircleIcon
-            size={18}
-            weight="fill"
-            className="mt-0.5 shrink-0 text-warning sm:mt-0"
-            aria-hidden="true"
-          />
-          <div className="min-w-0 text-xs leading-5 sm:flex sm:flex-wrap sm:items-baseline sm:justify-center sm:gap-x-2">
-            <span className="font-semibold text-foreground">Demo Mode</span>
-            <span>
-              Cost-incurring features are disabled, including messages, repository import and sync, live source
-              sessions, Repository Guide generation, premium models, and high reasoning.
-            </span>
+    <div className="shrink-0 border-b border-warning/35 bg-warning/15 px-3 py-2 text-foreground" role="status">
+      <div className="mx-auto flex w-full max-w-7xl items-center">
+        <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-center sm:gap-3">
+          <div className="inline-flex w-fit shrink-0 items-center gap-2 border border-warning/40 bg-warning/15 px-2 py-1 text-[11px] font-bold uppercase leading-none tracking-normal">
+            <WarningCircleIcon size={14} weight="fill" className="shrink-0 text-warning" aria-hidden="true" />
+            <span>Demo Mode</span>
           </div>
+          <p className="min-w-0 text-xs font-medium leading-5 text-muted-foreground sm:text-center">
+            Cost-incurring features are disabled, including messages, repository import and sync, live source sessions,
+            Repository Guide generation, premium models, and high reasoning.
+          </p>
         </div>
       </div>
     </div>
