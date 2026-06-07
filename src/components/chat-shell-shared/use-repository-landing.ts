@@ -18,6 +18,7 @@ export function useRepositoryLandingDecision({
   mode,
   availability,
   repositories,
+  suppressThreadAutoOpen,
 }: {
   urlRepositoryId: RepositoryId | null;
   urlThreadId: ThreadId | null;
@@ -26,6 +27,7 @@ export function useRepositoryLandingDecision({
   mode: ChatMode | null;
   availability: RepositoryLandingAvailability | null | undefined;
   repositories: Doc<"repositories">[] | undefined;
+  suppressThreadAutoOpen?: boolean;
 }): RepositoryLandingDecision {
   const lastMode = currentRepository?.lastMode ?? null;
   const intendedChatMode = useMemo(
@@ -35,7 +37,7 @@ export function useRepositoryLandingDecision({
 
   const ownerThreads = useQuery(
     api.chat.threads.listThreads,
-    urlThreadId === null && currentRepositoryId !== null
+    urlThreadId === null && currentRepositoryId !== null && !suppressThreadAutoOpen
       ? { repositoryId: currentRepositoryId, mode: intendedChatMode }
       : "skip",
   );
@@ -50,7 +52,17 @@ export function useRepositoryLandingDecision({
         availability,
         repositoriesLoaded: repositories !== undefined,
         ownerThreads,
+        suppressThreadAutoOpen,
       }),
-    [availability, intendedChatMode, mode, ownerThreads, repositories, urlRepositoryId, urlThreadId],
+    [
+      availability,
+      intendedChatMode,
+      mode,
+      ownerThreads,
+      repositories,
+      suppressThreadAutoOpen,
+      urlRepositoryId,
+      urlThreadId,
+    ],
   );
 }

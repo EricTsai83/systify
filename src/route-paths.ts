@@ -26,6 +26,7 @@ export const PUBLIC_ROUTE_SEGMENTS = {
  *   /r/:repositoryId                   — repository landing, redirects
  *                                        into that repository's most recent
  *                                        thread (or empty state).
+ *   /r/:repositoryId/discuss/new       — explicit lazy-create draft surface.
  *   /archive                           — archived repos listing.
  *
  * Every repository is its own top-level scope. Threads without a
@@ -46,13 +47,17 @@ export const PROTECTED_ROUTE_SEGMENTS = {
   /**
    * Top-level service modes:
    *
-   *   - `discuss/:threadId?` — free-form chat with per-message grounding
-   *     toggles (Library / Sandbox) the composer surfaces above the input.
+   *   - `discuss` / `discuss/:threadId` — free-form chat with per-message
+   *     grounding toggles (Library / Sandbox) the composer surfaces above
+   *     the input.
+   *   - `discuss/new` — a client-side draft route; the backend thread is
+   *     still created lazily on first send.
    *   - `library` / `library/a/:artifactId` — read-mostly artifact reader.
    *     The artifact owns the path; the active Library Ask thread travels
    *     as a `?ask=:threadId` query param.
    */
   repositoryDiscuss: "r/:repositoryId/discuss",
+  repositoryDiscussNew: "r/:repositoryId/discuss/new",
   repositoryDiscussThread: "r/:repositoryId/discuss/:threadId",
   repositoryLibrary: "r/:repositoryId/library",
   repositoryLibraryArtifact: "r/:repositoryId/library/a/:artifactId",
@@ -90,6 +95,7 @@ export function settingsPath(section: SettingsSectionId = DEFAULT_SETTINGS_SECTI
 }
 
 export const DEFAULT_AUTHENTICATED_PATH = `/${PROTECTED_ROUTE_SEGMENTS.chat}` as const;
+export const NEW_DISCUSS_THREAD_SEGMENT = "new";
 
 /**
  * Build a `/r/:repositoryId` URL. Centralised so the URL shape lives in
@@ -138,6 +144,10 @@ export function modeAwareThreadPath(repositoryId: RepositoryId, threadId: Thread
  */
 export function discussPath(repositoryId: RepositoryId, threadId?: ThreadId): string {
   return threadId ? `/r/${repositoryId}/discuss/${threadId}` : `/r/${repositoryId}/discuss`;
+}
+
+export function newDiscussPath(repositoryId: RepositoryId): string {
+  return `/r/${repositoryId}/discuss/${NEW_DISCUSS_THREAD_SEGMENT}`;
 }
 
 /**

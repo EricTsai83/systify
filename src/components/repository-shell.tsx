@@ -36,6 +36,7 @@ import {
   libraryArtifactPath,
   libraryPath,
   modeAwareThreadPath,
+  newDiscussPath,
   repositoryPath,
 } from "@/route-paths";
 
@@ -47,11 +48,14 @@ const MOBILE_DRAWER_HEIGHT_CLASS = "h-[95dvh] data-[vaul-drawer-direction=bottom
 export function RepositoryShell({
   urlRepositoryId,
   urlThreadId,
+  isNewThreadRoute = false,
 }: {
   urlRepositoryId: RepositoryId | null;
   urlThreadId: ThreadId | null;
+  isNewThreadRoute?: boolean;
 }) {
   const navigate = useNavigate();
+  const suppressThreadAutoOpen = urlThreadId === null && isNewThreadRoute;
 
   const {
     repositories,
@@ -84,6 +88,7 @@ export function RepositoryShell({
     mode,
     availability,
     repositories,
+    suppressThreadAutoOpen,
   });
 
   const capabilities = useThreadCapabilities(urlThreadId);
@@ -338,7 +343,7 @@ export function RepositoryShell({
 
   const handleRequestNewThread = useCallback(() => {
     if (currentRepositoryId === null) return;
-    void navigate(discussPath(currentRepositoryId));
+    void navigate(newDiscussPath(currentRepositoryId));
   }, [currentRepositoryId, navigate]);
 
   const onAfterArchiveThread = useCallback(() => {

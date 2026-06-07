@@ -72,14 +72,12 @@ const protectedRoutes: RouteObject[] = [
   // `/chat` and `/chat/:threadId` mount the repoless chat shell. The bare
   // `/chat` is the post-login landing and the empty-state surface; the
   // `/chat/:threadId` variant renders an existing repoless thread.
-  { path: PROTECTED_ROUTE_SEGMENTS.chat, lazy: loadRepolessChatRoute },
-  { path: PROTECTED_ROUTE_SEGMENTS.repolessChat, lazy: loadRepolessChatRoute },
+  { path: `${PROTECTED_ROUTE_SEGMENTS.chat}/:threadId?`, lazy: loadRepolessChatRoute },
   // `/r/:repositoryId` is the repository landing target. Redirects into
   // that repository's most recent thread (or empty state).
   { path: PROTECTED_ROUTE_SEGMENTS.repository, lazy: loadDiscussRoute },
   // Top-level service modes live under their own path prefixes.
-  { path: PROTECTED_ROUTE_SEGMENTS.repositoryDiscuss, lazy: loadDiscussRoute },
-  { path: PROTECTED_ROUTE_SEGMENTS.repositoryDiscussThread, lazy: loadDiscussRoute },
+  { path: `${PROTECTED_ROUTE_SEGMENTS.repositoryDiscuss}/:threadId?`, lazy: loadDiscussRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.repositoryLibrary, lazy: loadLibraryRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.repositoryLibraryArtifact, lazy: loadLibraryRoute },
   { path: PROTECTED_ROUTE_SEGMENTS.archive, lazy: loadArchiveRoute },

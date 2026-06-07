@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { AnimatePresence, motion, useReducedMotion, type Transition } from "motion/react";
 import {
   GlobeIcon,
   LockIcon,
@@ -39,6 +40,31 @@ import { cn } from "@/lib/utils";
  * of the shared `mode: "library"` persistence.
  */
 type ThreadModeFilter = ChatMode;
+
+/**
+ * Thread-row enter / exit motion.
+ *
+ * The row animates its own `height` from 0 → auto on enter (and back on
+ * exit), so a freshly created thread physically *opens* into the list and
+ * pushes the rows below it down through real layout reflow. This is what
+ * reads as a smooth slide-in. The earlier approach animated only opacity +
+ * a few px of `y` and leaned on `layout="position"` to slide the
+ * siblings; in practice that reads as a plain fade (the new row never
+ * visibly travels) and the sibling reflow only animates when motion's
+ * layout projection actually fires. Driving the height directly makes the
+ * insert unconditionally smooth and removes the dependency on layout
+ * projection.
+ *
+ * `height` uses a critically-damped spring (ζ ≈ 0.98) so it decelerates
+ * with a natural, physical feel but never overshoots — an overshoot would
+ * momentarily open a gap taller than the row's content. `opacity` is a
+ * short ease-out fade so the row's text reads in as it opens rather than
+ * blinking in first.
+ */
+const THREAD_ROW_MOTION: Transition = {
+  height: { type: "spring", stiffness: 300, damping: 34 },
+  opacity: { duration: 0.2, ease: "easeOut" },
+};
 
 /**
  * Inline rename state machine shared between the repo-bound and repoless
@@ -191,10 +217,6 @@ export function RepositoryThreadsRail({
           onSelectThread(created._id, created.mode);
           return;
         }
-        if (onRequestNewThread) {
-          onRequestNewThread();
-          return;
-        }
         const created = await createThreadMutation({
           repositoryId: repositoryId ?? undefined,
           mode: threadMode,
@@ -208,13 +230,20 @@ export function RepositoryThreadsRail({
       createThreadMutation,
       newThreadVariant,
       onError,
-      onRequestNewThread,
       onSelectThread,
       requireRepositoryForCreate,
       threadMode,
       repositoryId,
     ]),
   );
+
+  const handleNewThreadClick = useCallback(() => {
+    if (onRequestNewThread && newThreadVariant !== "libraryAsk") {
+      onRequestNewThread();
+      return;
+    }
+    void handleCreateThread();
+  }, [handleCreateThread, newThreadVariant, onRequestNewThread]);
 
   const handleTogglePin = useCallback(
     (threadId: ThreadId, pinned: boolean) => {
@@ -233,13 +262,13 @@ export function RepositoryThreadsRail({
           type="button"
           variant="default"
           size="sm"
-          className={cn("h-8 w-full justify-start gap-1.5 text-xs", compact && "h-8")}
+          className={cn("h-8 w-full justify-start gap-1.5 text-xs active:scale-100", compact && "h-8")}
           disabled={
             (requireRepositoryForCreate && !repositoryId) ||
             (newThreadVariant === "libraryAsk" && !repositoryId) ||
             isCreatingThread
           }
-          onClick={() => void handleCreateThread()}
+          onClick={handleNewThreadClick}
         >
           <PlusIcon size={13} weight="bold" />
           <ButtonStateText
@@ -349,19 +378,27 @@ function ThreadsSection({
                 >
                   No conversations yet. Start one above.
                 </p>
-              ) : (
-                <ThreadsList
-                  threads={otherThreads}
-                  repositoriesById={repositoriesById}
-                  selectedThreadId={selectedThreadId}
-                  onSelectThread={onSelectThread}
-                  onPrewarmThread={prewarmThread}
-                  onDeleteThread={onDeleteThread}
-                  onTogglePin={onTogglePin}
-                  compact={compact}
-                  onError={onError}
-                />
-              )}
+              ) : null}
+              {/*
+               * Rendered even while `otherThreads` is empty so the list's
+               * `AnimatePresence` stays mounted. The first thread created from
+               * the `/discuss/new` draft is then an item added to an
+               * already-mounted presence and animates in normally; gating the
+               * whole `ThreadsList` behind `length > 0` would mount the
+               * presence *with* that first row already present, and
+               * `initial={false}` would pop it in with no entrance animation.
+               */}
+              <ThreadsList
+                threads={otherThreads}
+                repositoriesById={repositoriesById}
+                selectedThreadId={selectedThreadId}
+                onSelectThread={onSelectThread}
+                onPrewarmThread={prewarmThread}
+                onDeleteThread={onDeleteThread}
+                onTogglePin={onTogglePin}
+                compact={compact}
+                onError={onError}
+              />
             </div>
           )}
         </>
@@ -391,31 +428,60 @@ const ThreadsList = memo(function ThreadsList({
   compact?: boolean;
   onError: (message: string | null) => void;
 }) {
+  const shouldReduceMotion = useReducedMotion();
+
   return (
-    <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-300 ease-out">
-      {threads.map((thread) => {
-        const isSelected = selectedThreadId === thread._id;
-        const isPinned = Boolean(thread.pinnedAt);
-        const repository = thread.repositoryId ? repositoriesById.get(thread.repositoryId) : undefined;
-        return (
-          <ThreadItem
-            key={thread._id}
-            thread={thread}
-            isSelected={isSelected}
-            isPinned={isPinned}
-            repository={repository}
-            onSelectThread={onSelectThread}
-            onPrewarmThread={onPrewarmThread}
-            onDeleteThread={onDeleteThread}
-            onTogglePin={onTogglePin}
-            compact={compact}
-            onError={onError}
-          />
-        );
-      })}
+    <div className="flex flex-col">
+      <AnimatePresence initial={false}>
+        {threads.map((thread) => {
+          const isSelected = selectedThreadId === thread._id;
+          const isPinned = Boolean(thread.pinnedAt);
+          const repository = thread.repositoryId ? repositoriesById.get(thread.repositoryId) : undefined;
+          return (
+            <ThreadRowMotion key={thread._id} shouldReduceMotion={shouldReduceMotion}>
+              <ThreadItem
+                thread={thread}
+                isSelected={isSelected}
+                isPinned={isPinned}
+                repository={repository}
+                onSelectThread={onSelectThread}
+                onPrewarmThread={onPrewarmThread}
+                onDeleteThread={onDeleteThread}
+                onTogglePin={onTogglePin}
+                compact={compact}
+                onError={onError}
+              />
+            </ThreadRowMotion>
+          );
+        })}
+      </AnimatePresence>
     </div>
   );
 });
+
+function ThreadRowMotion({
+  children,
+  shouldReduceMotion,
+}: {
+  children: React.ReactNode;
+  shouldReduceMotion: boolean | null;
+}) {
+  const reduceMotion = shouldReduceMotion === true;
+  return (
+    <motion.div
+      // `height: auto` enter/exit needs the box clipped while it grows, or
+      // the row's content spills past the animating height. Reduced-motion
+      // skips the whole animation, so it needs no clip.
+      initial={reduceMotion ? false : { opacity: 0, height: 0 }}
+      animate={reduceMotion ? undefined : { opacity: 1, height: "auto" }}
+      exit={reduceMotion ? undefined : { opacity: 0, height: 0 }}
+      transition={THREAD_ROW_MOTION}
+      style={reduceMotion ? undefined : { overflow: "hidden" }}
+    >
+      {children}
+    </motion.div>
+  );
+}
 
 interface ThreadItemBaseProps {
   thread: Doc<"threads">;
@@ -678,6 +744,7 @@ export function RepolessChatsRail({
   const threads = useQuery(api.chat.threads.listRepolessThreads, {});
   const prewarmThread = usePrewarmThread();
   const setThreadPinnedMutation = useMutation(api.chat.threads.setThreadPinned);
+  const shouldReduceMotion = useReducedMotion();
 
   const handleTogglePin = useCallback(
     (threadId: ThreadId, pinned: boolean) => {
@@ -699,7 +766,7 @@ export function RepolessChatsRail({
           type="button"
           variant="default"
           size="sm"
-          className="h-8 w-full justify-start gap-1.5 text-xs"
+          className="h-8 w-full justify-start gap-1.5 text-xs active:scale-100"
           disabled={!onRequestNewThread}
           aria-disabled={!onRequestNewThread}
           onClick={onRequestNewThread}
@@ -717,20 +784,23 @@ export function RepolessChatsRail({
                 <div className="flex items-center gap-1 px-1 pb-1">
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Pinned</p>
                 </div>
-                <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-300 ease-out">
-                  {pinnedThreads.map((thread) => (
-                    <RepolessThreadItem
-                      key={thread._id}
-                      thread={thread}
-                      isSelected={selectedThreadId === thread._id}
-                      isPinned
-                      onSelectThread={onSelectThread}
-                      onPrewarmThread={prewarmThread}
-                      onDeleteThread={onDeleteThread}
-                      onTogglePin={handleTogglePin}
-                      onError={onError}
-                    />
-                  ))}
+                <div className="flex flex-col">
+                  <AnimatePresence initial={false}>
+                    {pinnedThreads.map((thread) => (
+                      <ThreadRowMotion key={thread._id} shouldReduceMotion={shouldReduceMotion}>
+                        <RepolessThreadItem
+                          thread={thread}
+                          isSelected={selectedThreadId === thread._id}
+                          isPinned
+                          onSelectThread={onSelectThread}
+                          onPrewarmThread={prewarmThread}
+                          onDeleteThread={onDeleteThread}
+                          onTogglePin={handleTogglePin}
+                          onError={onError}
+                        />
+                      </ThreadRowMotion>
+                    ))}
+                  </AnimatePresence>
                 </div>
               </div>
             )}
@@ -741,23 +811,28 @@ export function RepolessChatsRail({
                 </div>
                 {otherThreads.length === 0 ? (
                   <p className="px-1 text-xs text-muted-foreground">No conversations yet. Start one above.</p>
-                ) : (
-                  <div className="flex flex-col animate-in fade-in slide-in-from-top-1 duration-300 ease-out">
+                ) : null}
+                {/* Presence stays mounted while empty so the first chat enters
+                    through AnimatePresence rather than popping in (see the
+                    repo-bound ThreadsSection for the full rationale). */}
+                <div className="flex flex-col">
+                  <AnimatePresence initial={false}>
                     {otherThreads.map((thread) => (
-                      <RepolessThreadItem
-                        key={thread._id}
-                        thread={thread}
-                        isSelected={selectedThreadId === thread._id}
-                        isPinned={false}
-                        onSelectThread={onSelectThread}
-                        onPrewarmThread={prewarmThread}
-                        onDeleteThread={onDeleteThread}
-                        onTogglePin={handleTogglePin}
-                        onError={onError}
-                      />
+                      <ThreadRowMotion key={thread._id} shouldReduceMotion={shouldReduceMotion}>
+                        <RepolessThreadItem
+                          thread={thread}
+                          isSelected={selectedThreadId === thread._id}
+                          isPinned={false}
+                          onSelectThread={onSelectThread}
+                          onPrewarmThread={prewarmThread}
+                          onDeleteThread={onDeleteThread}
+                          onTogglePin={handleTogglePin}
+                          onError={onError}
+                        />
+                      </ThreadRowMotion>
                     ))}
-                  </div>
-                )}
+                  </AnimatePresence>
+                </div>
               </div>
             )}
           </div>

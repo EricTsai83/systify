@@ -4,6 +4,7 @@ import {
   isProtectedReturnTo,
   libraryPath,
   modeAwareThreadPath,
+  newDiscussPath,
   repolessThreadPath,
   settingsPath,
   sharedThreadPath,
@@ -27,6 +28,12 @@ describe("modeAwareThreadPath", () => {
 describe("repolessThreadPath", () => {
   test("builds the canonical `/chat/:threadId` URL", () => {
     expect(repolessThreadPath(TID)).toBe(`/chat/${TID}`);
+  });
+});
+
+describe("newDiscussPath", () => {
+  test("builds the explicit lazy-create Discuss route", () => {
+    expect(newDiscussPath(RID)).toBe(`/r/${RID}/discuss/new`);
   });
 });
 
@@ -67,6 +74,10 @@ describe("isProtectedReturnTo", () => {
 
   test("accepts the canonical repository landing", () => {
     expect(isProtectedReturnTo(`/r/${RID}`)).toBe(true);
+  });
+
+  test("accepts the explicit repository Discuss draft route", () => {
+    expect(isProtectedReturnTo(newDiscussPath(RID))).toBe(true);
   });
 
   test("rejects unknown paths", () => {
