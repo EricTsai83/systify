@@ -4,6 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
 import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
 import { requireOwnedDoc } from "./lib/ownedDocs";
+import { assertFeatureAccess } from "./lib/entitlements";
 
 const DEFAULT_IDLE_AUTO_PAUSE_MINUTES = 10;
 
@@ -37,6 +38,7 @@ export const startSandboxSession = mutation({
       notFoundMessage: "Repository not found.",
       archivedMessage: "This repository is archived. Restore it to start a sandbox session.",
     });
+    await assertFeatureAccess(ctx, identity, "sandboxGrounding");
 
     const existing = await findReusableSession(ctx, args.repositoryId);
     if (existing) {
@@ -142,6 +144,7 @@ export const ensureSandboxSessionForThread = internalMutation({
     if (!thread || !thread.repositoryId) {
       throw new Error("Sandbox-grounded thread must be repository scoped.");
     }
+    await assertFeatureAccess(ctx, thread.ownerTokenIdentifier, "sandboxGrounding");
     const reusable = thread.sandboxSessionId
       ? await ctx.db.get(thread.sandboxSessionId)
       : await findReusableSession(ctx, thread.repositoryId);

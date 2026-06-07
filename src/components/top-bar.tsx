@@ -77,6 +77,7 @@ export function TopBar({
   onThreadMovedToRepository,
   isDesktopLayout,
   onSync,
+  syncDisabledReason,
   onViewArtifact,
   showSystemStatus,
 }: {
@@ -96,6 +97,7 @@ export function TopBar({
   onThreadMovedToRepository: (repositoryId: RepositoryId | null, mode: ThreadMode | null) => void;
   isDesktopLayout: boolean;
   onSync: () => void;
+  syncDisabledReason?: string;
   onViewArtifact: (artifactId: ArtifactId) => void;
   /**
    * Whether the system-status chrome (StatusPill + sandbox badge next to the
@@ -207,6 +209,7 @@ export function TopBar({
                   hasRemoteUpdates={repoDetail.hasRemoteUpdates}
                   isSyncing={isSyncing}
                   onSync={onSync}
+                  syncDisabledReason={syncDisabledReason}
                   onViewArtifact={onViewArtifact}
                   onClose={() => onSetStatusPanelOpen(false)}
                 />

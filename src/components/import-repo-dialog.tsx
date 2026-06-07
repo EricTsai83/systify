@@ -106,12 +106,14 @@ function RepoRow({
   isImporting,
   onImport,
   importSummary,
+  disabledReason,
 }: {
   repo: RepoInfo;
   isAuthorized: boolean;
   isImporting: boolean;
   onImport: () => void;
   importSummary?: ImportSummary;
+  disabledReason?: string;
 }) {
   const ownerInitial = (repo.fullName.split("/")[0] ?? "?")[0].toUpperCase();
   const hasCompletedImport = importSummary?.importStatus === "completed" || importSummary?.lastImportedAt !== undefined;
@@ -148,7 +150,8 @@ function RepoRow({
             variant="outline"
             size="sm"
             className="min-w-30 shrink-0 justify-center gap-1 text-xs"
-            disabled={isImporting}
+            disabled={isImporting || disabledReason !== undefined}
+            title={disabledReason}
             onClick={onImport}
           >
             <ArrowsClockwiseIcon size={12} weight="bold" />
@@ -159,7 +162,8 @@ function RepoRow({
             variant="outline"
             size="sm"
             className="min-w-30 shrink-0 justify-center gap-1 text-xs"
-            disabled={isImporting}
+            disabled={isImporting || disabledReason !== undefined}
+            title={disabledReason}
             onClick={onImport}
           >
             <ArrowsClockwiseIcon size={12} weight="bold" />
@@ -176,7 +180,8 @@ function RepoRow({
           variant="outline"
           size="sm"
           className="min-w-30 shrink-0 justify-center text-xs"
-          disabled={isImporting}
+          disabled={isImporting || disabledReason !== undefined}
+          title={disabledReason}
           onClick={onImport}
         >
           <ButtonStateText current={isImporting ? "Importing…" : "Import"} states={["Import", "Importing…"]} />
@@ -195,6 +200,7 @@ export function ImportRepoDialog({
   trigger,
   open: openProp,
   onOpenChange: onOpenChangeProp,
+  importDisabledReason,
 }: {
   /**
    * Fires once the backend has accepted the import and queued the workflow.
@@ -219,6 +225,7 @@ export function ImportRepoDialog({
    */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  importDisabledReason?: string;
 }) {
   const createRepositoryImport = useMutation(api.repositories.createRepositoryImport);
   const disconnectGitHub = useMutation(api.github.disconnectGitHub);
@@ -365,6 +372,10 @@ export function ImportRepoDialog({
 
   const [isConnectingGitHub, handleConnectGitHub] = useAsyncCallback(async () => {
     setConnectError(null);
+    if (importDisabledReason) {
+      setConnectError(importDisabledReason);
+      return;
+    }
     try {
       const redirectUrl = await initiateGitHubInstall({
         returnTo: window.location.href,
@@ -408,6 +419,7 @@ export function ImportRepoDialog({
 
   // Fetch authorized repos
   const fetchAuthorizedRepos = useCallback(async () => {
+    if (importDisabledReason) return;
     setIsLoadingAuthorized(true);
     setAuthorizedError(null);
     try {
@@ -422,7 +434,7 @@ export function ImportRepoDialog({
     } finally {
       setIsLoadingAuthorized(false);
     }
-  }, [listRepos]);
+  }, [importDisabledReason, listRepos]);
 
   // Fetch authorized repos when the dialog is open and the connection becomes
   // available. This covers the race condition where the dialog opens before
@@ -451,6 +463,12 @@ export function ImportRepoDialog({
   // Debounced search effect
   useEffect(() => {
     const trimmed = publicInput.trim();
+    if (importDisabledReason) {
+      setSearchResults(null);
+      setSearchError(null);
+      setIsSearching(false);
+      return;
+    }
 
     if (isUrlMode || trimmed.length < 2) {
       // Increment requestId to invalidate any pending search requests
@@ -486,7 +504,7 @@ export function ImportRepoDialog({
     }, 500);
 
     return () => clearTimeout(timer);
-  }, [publicInput, isUrlMode, searchReposAction]);
+  }, [importDisabledReason, publicInput, isUrlMode, searchReposAction]);
 
   // Check if the URL-mode repo is authorized
   const urlRepoAuthorized = useMemo(() => {
@@ -532,6 +550,10 @@ export function ImportRepoDialog({
   // Import by URL
   async function handleImportByUrl(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (importDisabledReason) {
+      setImportError(importDisabledReason);
+      return;
+    }
     setImportError(null);
     setImportStage("verifying");
     try {
@@ -563,6 +585,10 @@ export function ImportRepoDialog({
 
   // Import from list (search result or authorized repo)
   async function handleImportFromList(repo: RepoInfo) {
+    if (importDisabledReason) {
+      setImportError(importDisabledReason);
+      return;
+    }
     setImportingRepo(repo.fullName);
     setImportError(null);
     try {
@@ -589,7 +615,13 @@ export function ImportRepoDialog({
         <DialogTrigger asChild>{trigger}</DialogTrigger>
       ) : openProp !== undefined ? null : (
         <DialogTrigger asChild>
-          <Button variant="secondary" size="icon" aria-label="Add repository" title="Add repository">
+          <Button
+            variant="secondary"
+            size="icon"
+            aria-label="Add repository"
+            title={importDisabledReason ?? "Add repository"}
+            disabled={importDisabledReason !== undefined}
+          >
             <PlusIcon weight="bold" />
           </Button>
         </DialogTrigger>
@@ -734,7 +766,8 @@ export function ImportRepoDialog({
                     type="button"
                     variant="default"
                     className="gap-2 px-8 shadow-md shadow-primary/20"
-                    disabled={isConnectingGitHub}
+                    disabled={isConnectingGitHub || importDisabledReason !== undefined}
+                    title={importDisabledReason}
                     onClick={() => void handleConnectGitHub()}
                   >
                     {isConnectingGitHub ? (
@@ -768,6 +801,7 @@ export function ImportRepoDialog({
               <Input
                 ref={inputRef}
                 value={publicInput}
+                disabled={importDisabledReason !== undefined}
                 onChange={(e) => {
                   setPublicInput(e.target.value);
                   setImportError(null);
@@ -810,7 +844,8 @@ export function ImportRepoDialog({
                     type="submit"
                     variant="default"
                     className="min-w-36"
-                    disabled={importStage !== "idle" || !publicInput.trim()}
+                    disabled={importDisabledReason !== undefined || importStage !== "idle" || !publicInput.trim()}
+                    title={importDisabledReason}
                   >
                     {importStage === "verifying"
                       ? "Checking access…"
@@ -868,6 +903,7 @@ export function ImportRepoDialog({
                             isImporting={importingRepo === repo.fullName}
                             onImport={() => void handleImportFromList(repo)}
                             importSummary={importedSummaries?.[repo.fullName]}
+                            disabledReason={importDisabledReason}
                           />
                         ))}
 
@@ -900,6 +936,7 @@ export function ImportRepoDialog({
                                   isImporting={importingRepo === repo.fullName}
                                   onImport={() => void handleImportFromList(repo)}
                                   importSummary={importedSummaries?.[repo.fullName]}
+                                  disabledReason={importDisabledReason}
                                 />
                               ))}
                             </>

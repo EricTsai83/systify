@@ -5,6 +5,7 @@ import { action, internalAction, type ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { createAppJwt, getInstallationAccessToken } from "./lib/githubAppAuthNode";
 import { requireViewerIdentity } from "./lib/auth";
+import { assertFeatureAccess } from "./lib/entitlements";
 import { repoAccessCheckResultValidator, type RepoAccessCheckResult } from "./lib/functionResultSchemas";
 import { parseGitHubUrl } from "./lib/github";
 import { normalizeReturnToUrl } from "./lib/returnTo";
@@ -251,6 +252,7 @@ export const initiateGitHubInstall = action({
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
+    await assertFeatureAccess(ctx, identity, "repoImport");
 
     const slug = process.env.GITHUB_APP_SLUG;
     if (!slug) {
@@ -356,6 +358,7 @@ export const verifyRepoAccess = action({
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
+    await assertFeatureAccess(ctx, identity, "repoImport");
     const parsed = parseGitHubUrl(args.url);
 
     await ctx.runMutation(internal.lib.rateLimit.consumeGitHubRepoAccessCheck, {
@@ -449,6 +452,7 @@ export const listInstallationRepos = action({
   args: {},
   handler: async (ctx) => {
     const identity = await requireViewerIdentity(ctx);
+    await assertFeatureAccess(ctx, identity, "repoImport");
 
     await ctx.runMutation(internal.lib.rateLimit.consumeGitHubRepoList, {
       ownerTokenIdentifier: identity.tokenIdentifier,
@@ -544,6 +548,7 @@ export const searchGitHubRepos = action({
   args: { query: v.string() },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
+    await assertFeatureAccess(ctx, identity, "repoImport");
     const query = args.query.trim();
     if (query.length < 2) {
       return { repos: [], totalCount: 0 };

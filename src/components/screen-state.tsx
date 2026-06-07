@@ -11,7 +11,7 @@ export function ScreenState({
   isLoading?: boolean;
 }) {
   return (
-    <div className="flex min-h-dvh w-full items-center justify-center px-6">
+    <div className="flex min-h-full w-full flex-1 items-center justify-center px-6">
       <Card className="w-full max-w-md p-8 text-center shadow-sm">
         <div className="mx-auto mb-5 flex justify-center">
           <Logo size={56} hero={isLoading} />

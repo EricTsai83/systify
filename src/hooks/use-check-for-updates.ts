@@ -13,21 +13,22 @@ import type { Id } from "../../convex/_generated/dataModel";
  * The action is throttled server-side (skips if checked < 60 s ago) so
  * rapid tab-switching or repo-switching won't spam the GitHub API.
  */
-export function useCheckForUpdates(repositoryId: Id<"repositories"> | null) {
+export function useCheckForUpdates(repositoryId: Id<"repositories"> | null, enabled = true) {
   const checkForUpdates = useAction(api.githubCheck.checkForUpdates);
-  const repoIdRef = useRef(repositoryId);
+  const repoIdRef = useRef(enabled ? repositoryId : null);
 
   useEffect(() => {
-    repoIdRef.current = repositoryId;
-  }, [repositoryId]);
+    repoIdRef.current = enabled ? repositoryId : null;
+  }, [enabled, repositoryId]);
 
   // Fire on repo switch
   useEffect(() => {
+    if (!enabled) return;
     if (!repositoryId) return;
     checkForUpdates({ repositoryId }).catch(() => {
       // Silently ignore — non-critical background check
     });
-  }, [repositoryId, checkForUpdates]);
+  }, [enabled, repositoryId, checkForUpdates]);
 
   // Fire on visibility change (tab re-focus)
   useEffect(() => {

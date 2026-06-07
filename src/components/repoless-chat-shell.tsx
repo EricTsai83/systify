@@ -13,7 +13,9 @@ import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
+import { isViewerFeatureEnabled, useViewerAccess } from "@/hooks/use-viewer-access";
 import type { ChatMode, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
+import { DEMO_MODE_COPY } from "@/lib/demo-content";
 import { DEFAULT_AUTHENTICATED_PATH, modeAwareThreadPath, repolessThreadPath, repositoryPath } from "@/route-paths";
 
 /**
@@ -25,6 +27,7 @@ import { DEFAULT_AUTHENTICATED_PATH, modeAwareThreadPath, repolessThreadPath, re
  */
 export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | null }) {
   const navigate = useNavigate();
+  const viewerAccess = useViewerAccess();
   const repositories = useQuery(api.repositoryPreferences.listRepositoriesForSwitcher);
   // Live id sets for the localStorage GC sweep that runs inside the
   // shared chat-shell lifecycle bundle. The GC sweep needs the *complete*
@@ -138,6 +141,19 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
   );
 
   const isChatShellLoading = urlThreadId !== null && capabilities.isLoading;
+  const accessLoadingReason = viewerAccess === undefined ? "Loading access…" : undefined;
+  const chatSendDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "chatSend") ? undefined : DEMO_MODE_COPY.lockedMessage);
+  const importDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "repoImport") ? undefined : DEMO_MODE_COPY.importDisabled);
+  const premiumModelsDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "premiumModels") ? undefined : DEMO_MODE_COPY.premiumModelsDisabled);
+  const highReasoningDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "highReasoning") ? undefined : DEMO_MODE_COPY.highReasoningDisabled);
 
   return (
     <>
@@ -151,6 +167,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
         onRequestNewThread={handleRequestNewThread}
         onImported={handleImported}
         onError={setActionError}
+        importDisabledReason={importDisabledReason}
       />
 
       <SidebarInset>
@@ -181,14 +198,17 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
             selectedProvider={selectedProvider}
             selectedModelName={selectedModelName}
             setSelectedModel={setSelectedModel}
+            premiumModelsDisabledReason={premiumModelsDisabledReason}
             modelPreferenceScope="chat"
             selectedReasoningEffort={selectedReasoningEffort}
             setSelectedReasoningEffort={setSelectedReasoningEffort}
+            highReasoningDisabledReason={highReasoningDisabledReason}
             threadLockedProvider={capabilities.lockedProvider}
             grounding={undefined}
             showGroundingToggles={false}
             isSending={isSending}
             onSendMessage={handleSendMessage}
+            sendDisabledReason={chatSendDisabledReason}
             sandboxModeStatus={null}
             isSyncing={false}
             onSync={() => {}}

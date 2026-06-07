@@ -83,6 +83,7 @@ type ChatPanelProps = {
   selectedProvider?: LlmProvider | null;
   selectedModelName?: string | null;
   setSelectedModel?: (next: PromptInputModelPickerValue) => void;
+  premiumModelsDisabledReason?: string;
   modelPreferenceScope?: ModelPreferenceScope;
   /**
    * Per-message reasoning-effort override. The picker shows only when
@@ -95,6 +96,7 @@ type ChatPanelProps = {
    */
   selectedReasoningEffort?: ReasoningEffort | null;
   setSelectedReasoningEffort?: (next: ReasoningEffort | null) => void;
+  highReasoningDisabledReason?: string;
   threadLockedProvider?: LlmProvider | null;
   /**
    * Per-axis availability verdict from `repositoryModeEligibility.evaluate`.
@@ -117,8 +119,10 @@ type ChatPanelProps = {
   showGroundingToggles?: boolean;
   /** Fires when the user clicks the Library "Generate System Design" CTA. */
   onOpenGenerateSystemDesign?: () => void;
+  generateSystemDesignDisabledReason?: string;
   isSending: boolean;
   onSendMessage: (e: FormEvent<HTMLFormElement>) => Promise<void>;
+  sendDisabledReason?: string;
   /**
    * Fires when the user clicks Stop on the in-flight reply. The
    * shell wires this to the `chat.cancel.cancelInFlightReply` mutation. The
@@ -140,6 +144,7 @@ type ChatPanelProps = {
   sandboxModeStatus: SandboxModeStatus | null;
   isSyncing: boolean;
   onSync: () => void;
+  sandboxGroundingDisabledReason?: string;
   isArtifactPanelOpen?: boolean;
   onToggleArtifactPanel?: () => void;
   showArtifactToggle?: boolean;
@@ -268,20 +273,25 @@ export function ChatPanel({
   selectedProvider = null,
   selectedModelName = null,
   setSelectedModel,
+  premiumModelsDisabledReason,
   modelPreferenceScope = "discuss",
   selectedReasoningEffort = null,
   setSelectedReasoningEffort,
+  highReasoningDisabledReason,
   threadLockedProvider = null,
   grounding,
   showGroundingToggles = chatMode === "discuss",
   onOpenGenerateSystemDesign,
+  generateSystemDesignDisabledReason,
   isSending,
   onSendMessage,
+  sendDisabledReason,
   onCancelInFlightReply,
   isCancellingReply = false,
   sandboxModeStatus,
   isSyncing,
   onSync,
+  sandboxGroundingDisabledReason,
   isArtifactPanelOpen = false,
   onToggleArtifactPanel,
   showArtifactToggle = false,
@@ -408,7 +418,31 @@ export function ChatPanel({
   // `available` would let an optimistically-flipped toggle round-trip into a
   // backend reject.
   const isSendBlocked =
-    isReadOnly || isSending || isSyncing || !chatInput.trim() || (groundSandbox && !sandboxModeAvailable) || canCancel;
+    isReadOnly ||
+    sendDisabledReason !== undefined ||
+    isSending ||
+    isSyncing ||
+    !chatInput.trim() ||
+    (groundSandbox && !sandboxModeAvailable) ||
+    canCancel;
+
+  const effectiveGrounding = useMemo(() => {
+    if (!sandboxGroundingDisabledReason) {
+      return grounding;
+    }
+    return {
+      library: grounding?.library ?? {
+        enabled: false,
+        code: "loading" as const,
+        message: "Loading grounding availability…",
+      },
+      sandbox: {
+        enabled: false as const,
+        code: "feature_not_included" as const,
+        message: sandboxGroundingDisabledReason,
+      },
+    };
+  }, [grounding, sandboxGroundingDisabledReason]);
 
   const shouldShowSandboxWarning =
     !isChatLoading && groundSandbox && sandboxModeStatus !== null && !sandboxModeAvailable;
@@ -583,6 +617,9 @@ export function ChatPanel({
                     threadLockedProvider={threadLockedProvider}
                     capability={modelPickerCapability}
                     preferenceScope={modelPreferenceScope}
+                    getDisabledReason={(entry) =>
+                      premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
+                    }
                   />
                 ) : null}
                 {!isReadOnly && setSelectedReasoningEffort ? (
@@ -592,6 +629,8 @@ export function ChatPanel({
                     provider={selectedProvider ?? undefined}
                     modelName={selectedModelName ?? undefined}
                     preferenceScope={modelPreferenceScope}
+                    disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
+                    disabledReasoningEffortMessage={highReasoningDisabledReason}
                   />
                 ) : null}
                 {showGroundingToggles && chatMode === "discuss" ? (
@@ -600,9 +639,10 @@ export function ChatPanel({
                     groundSandbox={groundSandbox}
                     setGroundLibrary={setGroundLibrary}
                     setGroundSandbox={setGroundSandbox}
-                    grounding={grounding}
-                    onActivateSandbox={() => void activateSandbox()}
+                    grounding={effectiveGrounding}
+                    onActivateSandbox={sandboxGroundingDisabledReason ? undefined : () => void activateSandbox()}
                     onOpenGenerateSystemDesign={onOpenGenerateSystemDesign}
+                    generateDisabledReason={generateSystemDesignDisabledReason}
                   />
                 ) : null}
               </PromptInputTools>
@@ -644,6 +684,7 @@ export function ChatPanel({
                   variant="default"
                   size="sm"
                   disabled={isSendBlocked}
+                  title={sendDisabledReason}
                   data-testid="chat-panel-send-button"
                   className="min-w-30"
                 >

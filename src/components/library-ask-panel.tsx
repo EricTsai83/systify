@@ -37,6 +37,10 @@ export function LibraryAskPanel({
   onSelectArtifact,
   onSelectThread,
   onGenerate,
+  askDisabledReason,
+  generateDisabledReason,
+  premiumModelsDisabledReason,
+  highReasoningDisabledReason,
 }: {
   repositoryId: RepositoryId;
   threadId: ThreadId | null;
@@ -62,6 +66,10 @@ export function LibraryAskPanel({
    * without leaving the Ask panel.
    */
   onGenerate?: () => void;
+  askDisabledReason?: string;
+  generateDisabledReason?: string;
+  premiumModelsDisabledReason?: string;
+  highReasoningDisabledReason?: string;
 }) {
   const sendMessage = useMutation(api.chat.send.sendMessage);
   const sendMessageStartingNewThread = useMutation(api.chat.send.sendMessageStartingNewThread);
@@ -255,6 +263,7 @@ export function LibraryAskPanel({
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (submissionLockRef.current) return;
+    if (askDisabledReason) return;
     const content = input.trim();
     if (!content || latestAssistantInFlight) return;
     submissionLockRef.current = true;
@@ -316,6 +325,13 @@ export function LibraryAskPanel({
   };
 
   const isLocked = !hasArtifacts;
+  const composerDisabledReason = askDisabledReason ?? (isLocked ? LOCKED_HINT : null);
+  const composerHintId = isLocked && threadId ? "library-ask-locked-hint" : undefined;
+  const composerPlaceholder = isLocked
+    ? LOCKED_PLACEHOLDER
+    : activeArtifactId
+      ? "Question about the open artifact..."
+      : "Question about this library...";
 
   return (
     // Plain container, not a landmark: this panel renders inside the app
@@ -349,7 +365,7 @@ export function LibraryAskPanel({
           <ConversationScrollButton />
         </Conversation>
       ) : isLocked ? (
-        <NoArtifactsHint onGenerate={onGenerate} />
+        <NoArtifactsHint onGenerate={onGenerate} generateDisabledReason={generateDisabledReason} />
       ) : (
         <div className="flex min-h-0 flex-1 animate-in flex-col gap-5 px-4 py-6 fade-in duration-300">
           <div className="flex flex-1 items-center justify-center">
@@ -391,6 +407,8 @@ export function LibraryAskPanel({
           {onGenerate ? (
             <button
               type="button"
+              disabled={generateDisabledReason !== undefined}
+              title={generateDisabledReason}
               onClick={onGenerate}
               className="shrink-0 font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
@@ -412,16 +430,10 @@ export function LibraryAskPanel({
             name="message"
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder={
-              isLocked
-                ? LOCKED_PLACEHOLDER
-                : activeArtifactId
-                  ? "Question about the open artifact..."
-                  : "Question about this library..."
-            }
+            placeholder={composerPlaceholder}
             className="min-h-24 text-sm"
-            disabled={isSending || latestAssistantInFlight || isLocked}
-            aria-describedby={isLocked && threadId ? "library-ask-locked-hint" : undefined}
+            disabled={isSending || latestAssistantInFlight || composerDisabledReason !== null}
+            aria-describedby={composerHintId}
           />
           <PromptInputFooter>
             <PromptInputTools>
@@ -444,6 +456,9 @@ export function LibraryAskPanel({
                   onChange={setSelectedModel}
                   threadLockedProvider={lockedProvider}
                   preferenceScope="library"
+                  getDisabledReason={(entry) =>
+                    premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
+                  }
                 />
               ) : null}
               {!isLocked ? (
@@ -453,13 +468,16 @@ export function LibraryAskPanel({
                   provider={selectedProvider ?? undefined}
                   modelName={selectedModelName ?? undefined}
                   preferenceScope="library"
+                  disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
+                  disabledReasoningEffortMessage={highReasoningDisabledReason}
                 />
               ) : null}
             </PromptInputTools>
             <Button
               type="submit"
               size="sm"
-              disabled={!input.trim() || isSending || latestAssistantInFlight || isLocked}
+              disabled={!input.trim() || isSending || latestAssistantInFlight || composerDisabledReason !== null}
+              title={askDisabledReason}
             >
               <PaperPlaneTiltIcon size={14} weight="fill" />
               {isSending || isStarting ? "Asking..." : "Ask"}
@@ -502,7 +520,13 @@ const LIBRARY_SUGGESTIONS = [
  * below the description text, instead of stranded at the bottom of the
  * tall sidebar column.
  */
-function NoArtifactsHint({ onGenerate }: { onGenerate?: () => void }) {
+function NoArtifactsHint({
+  onGenerate,
+  generateDisabledReason,
+}: {
+  onGenerate?: () => void;
+  generateDisabledReason?: string;
+}) {
   return (
     <div className="flex min-h-0 flex-1 animate-in flex-col items-center justify-center gap-4 px-4 py-6 fade-in duration-300">
       <EmptyStateHero
@@ -515,7 +539,14 @@ function NoArtifactsHint({ onGenerate }: { onGenerate?: () => void }) {
         description={REPOSITORY_GUIDE_COPY.noArtifactsDescription}
       />
       {onGenerate ? (
-        <Button type="button" size="sm" className="gap-1.5" onClick={onGenerate}>
+        <Button
+          type="button"
+          size="sm"
+          className="gap-1.5"
+          disabled={generateDisabledReason !== undefined}
+          title={generateDisabledReason}
+          onClick={onGenerate}
+        >
           <SparkleIcon size={14} weight="bold" />
           {REPOSITORY_GUIDE_COPY.generateAction}
         </Button>

@@ -542,6 +542,16 @@ describe("usage budget integration gates", () => {
     const t = createTestConvex();
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
 
+    await t.run(async (ctx) => {
+      await ctx.db.insert("userAccessProfiles", {
+        ownerTokenIdentifier,
+        plan: "internal",
+        billingStatus: "none",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
+    });
+
     await viewer.mutation(api.lib.userCost.updateViewerUsageProfile, {
       cycleAnchorDay: 1,
       timeZone: "UTC",

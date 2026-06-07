@@ -29,6 +29,7 @@ export const RepositorySelector = memo(function RepositorySelector({
   onSwitchRepository,
   onSelectNoRepository,
   onImported,
+  importDisabledReason,
 }: {
   repositories: Doc<"repositories">[] | undefined;
   activeRepositoryId: RepositoryId | null;
@@ -37,6 +38,7 @@ export const RepositorySelector = memo(function RepositorySelector({
   // navigates the user back to the repoless `/chat` surface.
   onSelectNoRepository?: () => void;
   onImported: OnImportedCallback;
+  importDisabledReason?: string;
 }) {
   const activeRepository = repositories?.find((repo) => repo._id === activeRepositoryId);
   const isRepoless = activeRepositoryId === null;
@@ -124,18 +126,29 @@ export const RepositorySelector = memo(function RepositorySelector({
           <ComboboxSeparator />
           <button
             type="button"
+            disabled={importDisabledReason !== undefined}
+            title={importDisabledReason}
             onClick={() => {
+              if (importDisabledReason) return;
               setPopoverOpen(false);
               setImportDialogOpen(true);
             }}
-            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors hover:bg-accent/60"
+            className={cn(
+              "flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors",
+              importDisabledReason ? "cursor-not-allowed text-muted-foreground/70" : "hover:bg-accent/60",
+            )}
           >
             <GitBranchIcon size={16} weight="bold" className="shrink-0" />
             <span>Import repository</span>
           </button>
         </ComboboxContent>
       </Combobox>
-      <ImportRepoDialog onImported={onImported} open={isImportDialogOpen} onOpenChange={setImportDialogOpen} />
+      <ImportRepoDialog
+        onImported={onImported}
+        open={isImportDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        importDisabledReason={importDisabledReason}
+      />
     </>
   );
 });

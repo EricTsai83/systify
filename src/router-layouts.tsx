@@ -9,10 +9,12 @@ import {
   useRouteError,
   useSearchParams,
 } from "react-router-dom";
+import { WarningCircleIcon } from "@phosphor-icons/react";
 import { AppNotice } from "@/components/app-notice";
 import { ScreenState } from "@/components/screen-state";
 import { Button } from "@/components/ui/button";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { isDemoMode, useViewerAccess } from "@/hooks/use-viewer-access";
 import { hasWorkOSSessionHint } from "@/lib/auth-session-hint";
 import { readString, removeKey, writeString } from "@/lib/storage";
 import { useConvexAuthStatus } from "@/providers/convex-provider-with-auth-kit";
@@ -81,6 +83,7 @@ export function ProtectedLayout() {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const location = useLocation();
   const attemptedPath = `${location.pathname}${location.search}${location.hash}`;
+  const viewerAccess = useViewerAccess({ enabled: !isLoading && isAuthenticated });
 
   // Persist the attempted protected path so AuthCallbackRoute can return the
   // user there after sign-in. Two reasons this lives in a committed effect
@@ -115,11 +118,40 @@ export function ProtectedLayout() {
   // destination page. Hoisting it lets the pathname effect inside the
   // provider observe the route change and close the Sheet cleanly.
   return (
-    <Suspense fallback={<RouteLoadingScreen description="Loading your chat." />}>
-      <SidebarProvider>
-        <Outlet />
-      </SidebarProvider>
-    </Suspense>
+    <SidebarProvider>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        {isDemoMode(viewerAccess) ? <DemoModeBanner /> : null}
+        <Suspense fallback={<RouteLoadingScreen description="Loading your chat." />}>
+          <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+            <Outlet />
+          </div>
+        </Suspense>
+      </div>
+    </SidebarProvider>
+  );
+}
+
+function DemoModeBanner() {
+  return (
+    <div className="shrink-0 border-b border-warning/40 bg-warning/10 px-4 py-2 text-foreground" role="status">
+      <div className="mx-auto flex w-full max-w-7xl justify-center">
+        <div className="flex max-w-4xl items-start justify-center gap-2 text-center sm:items-center">
+          <WarningCircleIcon
+            size={18}
+            weight="fill"
+            className="mt-0.5 shrink-0 text-warning sm:mt-0"
+            aria-hidden="true"
+          />
+          <div className="min-w-0 text-xs leading-5 sm:flex sm:flex-wrap sm:items-baseline sm:justify-center sm:gap-x-2">
+            <span className="font-semibold text-foreground">Demo Mode</span>
+            <span>
+              Cost-incurring features are disabled, including messages, repository import and sync, live source
+              sessions, Repository Guide generation, premium models, and high reasoning.
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 

@@ -11,6 +11,7 @@ import {
   DEFAULT_ARTIFACT_CHUNK_SOFT_TOKEN_CAP,
 } from "./lib/artifactChunking";
 import { EMBEDDING_BUDGET_ESTIMATES, embedWithAccounting } from "./lib/embeddingAccounting";
+import { assertFeatureAccess } from "./lib/entitlements";
 import { logInfo, logWarn } from "./lib/observability";
 import { isUsageBudgetExceededError } from "./lib/userCost";
 
@@ -29,6 +30,7 @@ export const reindexArtifact = internalAction({
     if (!artifact || !artifact.repositoryId) {
       return { indexed: false, reason: "missing_artifact_or_repository" as const };
     }
+    await assertFeatureAccess(ctx, artifact.ownerTokenIdentifier, "artifactIndexing");
 
     const artifactVersion = artifact.version;
     const chunks = chunkArtifactMarkdown(artifact.contentMarkdown, {

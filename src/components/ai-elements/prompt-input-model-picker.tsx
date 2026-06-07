@@ -75,6 +75,8 @@ export interface PromptInputModelPickerProps {
    * together (e.g. an archived repository).
    */
   disabled?: boolean;
+  /** Returns a disabled reason for entries that should be visible but locked by access policy. */
+  getDisabledReason?: (entry: PickableModelEntry) => string | null;
   /** Optional class for sizing inside the composer footer. */
   className?: string;
 }
@@ -108,6 +110,7 @@ export function PromptInputModelPicker({
   capability,
   preferenceScope,
   disabled = false,
+  getDisabledReason,
   className,
 }: PromptInputModelPickerProps) {
   // `listPickableModels` is a tiny query (~10 entries); we always
@@ -188,14 +191,19 @@ export function PromptInputModelPicker({
                     <ProviderLockTooltip provider={group.provider} />
                   ) : null}
                 </SelectLabel>
-                {group.entries.map((entry) => (
-                  <PromptInputSelectItem
-                    key={toCompositeKey({ provider: entry.provider, modelName: entry.modelName })}
-                    value={toCompositeKey({ provider: entry.provider, modelName: entry.modelName })}
-                  >
-                    {entry.displayName}
-                  </PromptInputSelectItem>
-                ))}
+                {group.entries.map((entry) => {
+                  const disabledReason = getDisabledReason?.(entry) ?? null;
+                  return (
+                    <PromptInputSelectItem
+                      key={toCompositeKey({ provider: entry.provider, modelName: entry.modelName })}
+                      value={toCompositeKey({ provider: entry.provider, modelName: entry.modelName })}
+                      disabled={disabledReason !== null}
+                      title={disabledReason ?? undefined}
+                    >
+                      {entry.displayName}
+                    </PromptInputSelectItem>
+                  );
+                })}
               </SelectGroup>
             ))
           )}

@@ -4,6 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { mutation, query, internalQuery, internalMutation, type MutationCtx } from "./_generated/server";
 import { getDefaultThreadMode } from "./lib/chatMode";
+import { assertFeatureAccess } from "./lib/entitlements";
 import { requireViewerIdentity } from "./lib/auth";
 import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
 import { getRepositorySandboxStatus } from "./lib/repositorySandbox";
@@ -323,6 +324,7 @@ export const createRepositoryImport = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
+    await assertFeatureAccess(ctx, identity, "repoImport");
     const parsed = parseGitHubUrl(args.url);
 
     // Check if user has GitHub connected via GitHub App installation
@@ -462,6 +464,7 @@ export const syncRepository = mutation({
     const { identity, repository } = await requireActiveRepositoryForViewer(ctx, {
       repositoryId: args.repositoryId,
     });
+    await assertFeatureAccess(ctx, identity, "syncRepository");
 
     // Check if user has an active GitHub installation
     const installation = await ctx.db
@@ -630,6 +633,7 @@ export const requestSandboxActivation = mutation({
     const { identity, repository } = await requireActiveRepositoryForViewer(ctx, {
       repositoryId: args.repositoryId,
     });
+    await assertFeatureAccess(ctx, identity, "sandboxGrounding");
 
     const now = Date.now();
     const existing = await findActiveSandboxActivationJob(ctx, { repositoryId: repository._id, now });

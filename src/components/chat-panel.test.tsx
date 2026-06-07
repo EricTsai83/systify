@@ -935,6 +935,38 @@ describe("ChatPanel cancel-in-flight reply", () => {
     expect(screen.queryByTestId("chat-panel-stop-button")).not.toBeInTheDocument();
   });
 
+  test("keeps send-disabled copy out of the composer hint row", () => {
+    const disabledReason = "This send path is disabled.";
+
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput="hello"
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sendDisabledReason={disabledReason}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const sendButton = screen.getByTestId("chat-panel-send-button");
+    expect(sendButton).toBeDisabled();
+    expect(sendButton).toHaveAttribute("title", disabledReason);
+    expect(screen.queryByText(disabledReason)).not.toBeInTheDocument();
+  });
+
   test("renders Stop in place of Send while the latest assistant message is streaming", () => {
     render(
       <ChatPanel

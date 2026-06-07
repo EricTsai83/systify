@@ -69,6 +69,7 @@ import type * as lib_daytonaRetry from "../lib/daytonaRetry.js";
 import type * as lib_daytonaWebhookVerification from "../lib/daytonaWebhookVerification.js";
 import type * as lib_embeddingAccounting from "../lib/embeddingAccounting.js";
 import type * as lib_embeddingAccountingMutations from "../lib/embeddingAccountingMutations.js";
+import type * as lib_entitlements from "../lib/entitlements.js";
 import type * as lib_functionResultSchemas from "../lib/functionResultSchemas.js";
 import type * as lib_github from "../lib/github.js";
 import type * as lib_githubAppAuthNode from "../lib/githubAppAuthNode.js";
@@ -119,6 +120,7 @@ import type * as systemDesignKindRun from "../systemDesignKindRun.js";
 import type * as systemDesignNode from "../systemDesignNode.js";
 import type * as threadContext from "../threadContext.js";
 import type * as userPreferences from "../userPreferences.js";
+import type * as viewerAccess from "../viewerAccess.js";
 
 import type {
   ApiFromModules,
@@ -188,6 +190,7 @@ declare const fullApi: ApiFromModules<{
   "lib/daytonaWebhookVerification": typeof lib_daytonaWebhookVerification;
   "lib/embeddingAccounting": typeof lib_embeddingAccounting;
   "lib/embeddingAccountingMutations": typeof lib_embeddingAccountingMutations;
+  "lib/entitlements": typeof lib_entitlements;
   "lib/functionResultSchemas": typeof lib_functionResultSchemas;
   "lib/github": typeof lib_github;
   "lib/githubAppAuthNode": typeof lib_githubAppAuthNode;
@@ -238,6 +241,7 @@ declare const fullApi: ApiFromModules<{
   systemDesignNode: typeof systemDesignNode;
   threadContext: typeof threadContext;
   userPreferences: typeof userPreferences;
+  viewerAccess: typeof viewerAccess;
 }>;
 
 /**
