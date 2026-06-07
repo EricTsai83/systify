@@ -114,7 +114,11 @@ describe("user preferences customization", () => {
     const preferences = await viewer.query(api.userPreferences.getViewerModelPreferences, {});
     expect(preferences.scopes.chat.favoriteModels).toEqual([{ provider: "openai", modelName: "gpt-5.4-mini" }]);
     expect(preferences.scopes.chat.defaultModel).toEqual({ provider: "openai", modelName: "gpt-5.4-mini" });
-    expect(preferences.scopes.chat.disabledModels).toEqual([{ provider: "anthropic", modelName: "claude-haiku-4-5" }]);
+    expect(preferences.scopes.chat.disabledModels).toEqual([
+      { provider: "openai", modelName: "gpt-5.5" },
+      { provider: "anthropic", modelName: "claude-opus-4-8" },
+      { provider: "anthropic", modelName: "claude-haiku-4-5" },
+    ]);
 
     const pickerModels = await viewer.query(api.llmCatalog.listPickableModels, {
       capability: "discuss",
@@ -134,14 +138,14 @@ describe("user preferences customization", () => {
     });
   });
 
-  test("rejects scope updates without any compatible enabled models", async () => {
+  test("rejects scope updates without any user-pickable enabled models", async () => {
     const t = createTestConvex();
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
 
     await expect(
       viewer.mutation(api.userPreferences.updateViewerModelPreferences, {
         scope: "chat",
-        enabledModels: [{ provider: "openai", modelName: "gpt-5.5" }],
+        enabledModels: [{ provider: "openai", modelName: "gpt-5.4-nano" }],
         favoriteModels: [],
       }),
     ).rejects.toThrow(/At least one model must remain selectable/);
@@ -173,24 +177,24 @@ describe("user preferences customization", () => {
     });
   });
 
-  test("updates Library model settings against the shared discuss-tier catalog", async () => {
+  test("updates Library model settings against the full user-pickable catalog", async () => {
     const t = createTestConvex();
     const viewer = t.withIdentity({ tokenIdentifier: OWNER });
 
     await viewer.mutation(api.userPreferences.updateViewerModelPreferences, {
       scope: "library",
-      enabledModels: [{ provider: "openai", modelName: "gpt-5.4-mini" }],
+      enabledModels: [{ provider: "openai", modelName: "gpt-5.5" }],
       favoriteModels: [],
-      defaultModel: { provider: "openai", modelName: "gpt-5.4-mini" },
+      defaultModel: { provider: "openai", modelName: "gpt-5.5" },
     });
 
     const settingsRows = await viewer.query(api.llmCatalog.listModelSettings, { scope: "library" });
-    expect(settingsRows.map((entry) => entry.capability)).toEqual(["discuss", "discuss"]);
-    expect(settingsRows.find((entry) => entry.modelName === "gpt-5.4-mini")).toMatchObject({
+    expect(settingsRows.map((entry) => entry.capability)).toEqual(["sandbox", "discuss", "sandbox", "discuss"]);
+    expect(settingsRows.find((entry) => entry.modelName === "gpt-5.5")).toMatchObject({
       enabled: true,
       default: true,
     });
-    expect(settingsRows.find((entry) => entry.modelName === "claude-haiku-4-5")).toMatchObject({
+    expect(settingsRows.find((entry) => entry.modelName === "gpt-5.4-mini")).toMatchObject({
       enabled: false,
     });
   });

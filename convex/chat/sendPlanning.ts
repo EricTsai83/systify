@@ -8,7 +8,6 @@ import {
   isUserPickableModel,
   listPickableModels,
   type ReasoningEffort,
-  type UserPickableCapability,
 } from "../lib/llmCatalog";
 import type { LlmProvider } from "../lib/llmProvider";
 import {
@@ -17,7 +16,7 @@ import {
   type ModelPreferenceScope,
   type UserModelPreferences,
 } from "../lib/userPreferences";
-import { pickCapability, resolveModelForReply } from "./modelSelection";
+import { resolveModelForReply } from "./modelSelection";
 
 export type ChatTurnModePlan = {
   repositoryId: Id<"repositories"> | null;
@@ -91,7 +90,6 @@ export function completeChatTurnPlan(args: {
     picker: args.picker,
     modelPreferences: args.modelPreferences,
     modelPreferenceScope: args.modePlan.modelPreferenceScope,
-    capability: pickCapability(args.modePlan),
   });
 
   const resolved = resolveModelForReply({
@@ -107,7 +105,6 @@ export function completeChatTurnPlan(args: {
     provider: resolved.provider,
     modelName: resolved.modelName,
     reasoningEffort: resolved.reasoningEffort,
-    capability: resolved.capability,
     modelPreferences: args.modelPreferences,
     modelPreferenceScope: args.modePlan.modelPreferenceScope,
     lockedProvider: args.threadDefaults?.lockedProvider,
@@ -163,13 +160,12 @@ function assertPickerModelEnabled(args: {
   picker: ModelPickerInput;
   modelPreferences: UserModelPreferences;
   modelPreferenceScope: ModelPreferenceScope;
-  capability: UserPickableCapability;
 }): void {
   if (args.picker.provider === undefined || args.picker.modelName === undefined) {
     return;
   }
   if (
-    !isUserPickableModel(args.picker.provider, args.picker.modelName, args.capability) ||
+    !isUserPickableModel(args.picker.provider, args.picker.modelName) ||
     !isModelEnabledInPreferences(
       args.modelPreferences,
       { provider: args.picker.provider, modelName: args.picker.modelName },
@@ -200,7 +196,6 @@ function ensureResolvedModelEnabled(args: {
   provider: LlmProvider;
   modelName: string;
   reasoningEffort: ReasoningEffort | undefined;
-  capability: UserPickableCapability;
   modelPreferences: UserModelPreferences;
   modelPreferenceScope: ModelPreferenceScope;
   lockedProvider: LlmProvider | undefined;
@@ -225,7 +220,6 @@ function ensureResolvedModelEnabled(args: {
 
   const fallback = applyModelPreferences(
     listPickableModels({
-      capability: args.capability,
       ...(args.lockedProvider !== undefined ? { provider: args.lockedProvider } : {}),
     }),
     args.modelPreferences,

@@ -121,7 +121,7 @@ describe("completeChatTurnPlan", () => {
     });
   });
 
-  test("falls back to the first enabled model when the capability default is disabled", () => {
+  test("falls back to the first enabled scope model when the capability default is disabled", () => {
     const modePlan = planChatTurnMode({ repositoryId, mode: "discuss" });
     const modelPreferences = normalizeModelPreferences({
       scopedModelPreferences: {
@@ -138,13 +138,13 @@ describe("completeChatTurnPlan", () => {
     });
 
     expect(plan).toMatchObject({
-      provider: "anthropic",
-      modelName: "claude-haiku-4-5",
+      provider: "openai",
+      modelName: "gpt-5.5",
     });
-    expect(plan.reasoningEffort).toBeUndefined();
+    expect(plan.reasoningEffort).toBe("medium");
   });
 
-  test("does not cross the thread provider lock when falling back from a disabled default", () => {
+  test("respects the thread provider lock when falling back from a disabled default", () => {
     const modePlan = planChatTurnMode({ repositoryId, mode: "discuss" });
     const modelPreferences = normalizeModelPreferences({
       scopedModelPreferences: {
@@ -154,16 +154,17 @@ describe("completeChatTurnPlan", () => {
       },
     });
 
-    expectConvexErrorCode(
-      () =>
-        completeChatTurnPlan({
-          modePlan,
-          modelPreferences,
-          picker: {},
-          threadDefaults: { lockedProvider: "openai" },
-        }),
-      "unsupported_model",
-    );
+    const plan = completeChatTurnPlan({
+      modePlan,
+      modelPreferences,
+      picker: {},
+      threadDefaults: { lockedProvider: "openai" },
+    });
+
+    expect(plan).toMatchObject({
+      provider: "openai",
+      modelName: "gpt-5.5",
+    });
   });
 
   test("rejects half-set picker pairs", () => {
@@ -201,22 +202,23 @@ describe("completeChatTurnPlan", () => {
     );
   });
 
-  test("rejects picker models outside the resolved capability tier", () => {
+  test("accepts any enabled user-pickable model for the resolved preference scope", () => {
     const modePlan = planChatTurnMode({
       repositoryId,
-      mode: "discuss",
-      requestedGrounding: { groundSandbox: true },
+      mode: "library",
     });
 
-    expectConvexErrorCode(
-      () =>
-        completeChatTurnPlan({
-          modePlan,
-          modelPreferences: emptyModelPreferences,
-          picker: { provider: "openai", modelName: "gpt-5.4-mini" },
-        }),
-      "unsupported_model",
-    );
+    const plan = completeChatTurnPlan({
+      modePlan,
+      modelPreferences: emptyModelPreferences,
+      picker: { provider: "openai", modelName: "gpt-5.5" },
+    });
+
+    expect(plan).toMatchObject({
+      mode: "library",
+      provider: "openai",
+      modelName: "gpt-5.5",
+    });
   });
 
   test("rejects picks outside the thread provider lock", () => {
