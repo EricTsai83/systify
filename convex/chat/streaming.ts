@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { type MutationCtx, internalMutation, internalQuery, query } from "../_generated/server";
-import { loadOwnedDoc, requireOwnedDoc } from "../lib/ownedDocs";
+import { loadOwnedDoc } from "../lib/ownedDocs";
 import { CHAT_JOB_LEASE_MS, consumeSandboxDailyCost } from "../lib/rateLimit";
 import { jobCancellationStatusValidator, startedResultValidator } from "../lib/functionResultSchemas";
 import { costUsdToCents } from "../lib/llmPricing";
@@ -39,7 +39,7 @@ import {
   type ToolCallTraceEntry,
 } from "./toolCallEventStore";
 import { recordThreadActivityInHistory } from "./historyState";
-import { requireActiveOwnedThread } from "./threadAccess";
+import { loadActiveOwnedThread } from "./threadAccess";
 
 const STALE_CHAT_JOB_ERROR_MESSAGE =
   "This reply stopped before it could finish. Try sending your message again. If it keeps happening, choose another model or check the provider configuration.";
@@ -746,14 +746,16 @@ export const getActiveMessageStream = query({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    const { doc: thread } = await requireActiveOwnedThread(ctx, args.threadId, {
-      notFoundMessage: "Thread not found.",
-    });
+    const { doc: thread } = await loadActiveOwnedThread(ctx, args.threadId);
+    if (!thread) {
+      return null;
+    }
 
     if (thread.repositoryId) {
-      await requireOwnedDoc(ctx, thread.repositoryId, {
-        notFoundMessage: "Thread not found.",
-      });
+      const { doc: repository } = await loadOwnedDoc(ctx, thread.repositoryId);
+      if (!repository) {
+        return null;
+      }
     }
 
     const stream = await getMessageStreamByThread(ctx, args.threadId);

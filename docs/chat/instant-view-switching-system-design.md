@@ -209,7 +209,7 @@ Convex does not expose a `keepPreviousData` flag on `useQuery`. Implementing one
 | Scenario | Behavior |
 | -------- | -------- |
 | Thread is edited by another tab while in the MRU set | Update streams in over the live subscription; visible immediately if the user is on that thread, visible on switch if not. |
-| Thread is deleted on the server | Subscription returns an empty / null result; UI handles this via the existing `RepositoryMissingState` and thread-list reconciliation. |
+| Thread is deleted on the server | Long-lived message subscriptions stay non-throwing: `listMessagesPaginated` returns an empty completed page and `getActiveMessageStream` returns `null`. Active Discuss routes recover through `useThreadDeletionRecovery`; Library Ask validates `?ask=` with `getThreadSummary` and clears stale thread state before attaching message subscriptions. |
 | Convex client loses its WebSocket | Subscriptions reconnect automatically; the MRU set is unchanged. On reconnect, all MRU subscriptions are re-established in parallel. |
 | User opens many threads quickly (faster than MRU window can update) | State updates batch under React 18; the MRU array converges to the latest user-observed order. |
 | `prewarmQuery` is deferred or skipped by Convex | The user pays a one-time loading state on click. The MRU layer still covers revisits. |

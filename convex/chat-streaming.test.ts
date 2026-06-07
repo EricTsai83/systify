@@ -55,6 +55,21 @@ describe("chat streaming lifecycle", () => {
     });
   });
 
+  test("getActiveMessageStream returns null for a stale thread subscription", async () => {
+    const ownerTokenIdentifier = "user|active-stream-stale-thread";
+    const t = convexTest(schema, modules);
+    const { threadId } = await createStreamingFixture(t, ownerTokenIdentifier, "active-stream-stale-thread");
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(threadId, { deletionRequestedAt: Date.now() });
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const activeStream = await viewer.query(api.chat.streaming.getActiveMessageStream, { threadId });
+
+    expect(activeStream).toBeNull();
+  });
+
   test("appendAssistantStreamChunk refreshes the job lease once half the lease window has elapsed", async () => {
     const ownerTokenIdentifier = "user|stream-lease-refresh";
     const t = convexTest(schema, modules);

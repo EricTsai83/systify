@@ -176,8 +176,9 @@ export const listRepolessThreads = query({
  * paints the most recent page without any prepend, and "load older"
  * calls extend the rendered list at the top.
  *
- * Any unauthorized read throws "Thread not found." so a stale `threadId`
- * routes to the same error boundary path as other thread queries.
+ * Stale or unauthorized thread ids return an empty completed page rather
+ * than throwing, since this query is used by long-lived subscriptions that
+ * can outlive a delete/archive transition.
  */
 export const listMessagesPaginated = query({
   args: {
@@ -185,14 +186,16 @@ export const listMessagesPaginated = query({
     paginationOpts: paginationOptsValidator,
   },
   handler: async (ctx, args) => {
-    const { doc: thread } = await requireActiveOwnedThread(ctx, args.threadId, {
-      notFoundMessage: "Thread not found.",
-    });
+    const { doc: thread } = await loadActiveOwnedThread(ctx, args.threadId);
+    if (!thread) {
+      return { page: [], isDone: true, continueCursor: "" };
+    }
 
     if (thread.repositoryId) {
-      await requireOwnedDoc(ctx, thread.repositoryId, {
-        notFoundMessage: "Thread not found.",
-      });
+      const { doc: repository } = await loadOwnedDoc(ctx, thread.repositoryId);
+      if (!repository) {
+        return { page: [], isDone: true, continueCursor: "" };
+      }
     }
 
     return await ctx.db
@@ -231,13 +234,12 @@ export const listAllOwnerThreadIds = query({
 });
 
 /**
- * Lightweight thread-existence probe. Unlike {@link listMessagesPaginated}
- * (which throws "Thread not found." so a broken thread surfaces as an
- * error boundary), this returns `null` when the thread is missing or
- * owned by another viewer. The Library page uses it to validate the
- * `?ask=:threadId` URL param — a stale bookmark or a since-deleted thread
- * is cleared gracefully instead of crashing the page. Mirrors the
- * artifact-id guard pattern (`artifacts.getById`).
+ * Lightweight thread-existence probe. Returns `null` when the thread is
+ * missing, archived, deleted, or owned by another viewer so callers can clear
+ * stale route state before attaching message subscriptions. The Library page
+ * uses it to validate the `?ask=:threadId` URL param; a stale bookmark or a
+ * since-deleted thread degrades gracefully instead of crashing the page.
+ * Mirrors the artifact-id guard pattern (`artifacts.getById`).
  */
 export const getThreadSummary = query({
   args: {

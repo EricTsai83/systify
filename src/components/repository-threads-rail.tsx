@@ -184,9 +184,10 @@ export function RepositoryThreadsRail({
   /** Library Ask always needs a concrete repository; Discuss sidebar historically allowed creating from a null pointer. */
   requireRepositoryForCreate?: boolean;
   /**
-   * When supplied, clicking "New Thread" on the default rail variant navigates
-   * to the repository's mode URL (no thread id) instead of pre-creating an
-   * orphan thread.
+   * When supplied, clicking "New thread" on the default rail variant navigates
+   * to the shell's draft surface instead of pre-creating a backend thread.
+   * Repository Discuss uses `/r/:repositoryId/discuss/new`; Library Ask still
+   * creates its thread through the Ask panel flow.
    */
   onRequestNewThread?: () => void;
 }) {

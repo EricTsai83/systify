@@ -68,6 +68,24 @@ describe("chat history ordering", () => {
     expect([...collected].reverse()).toEqual(contents);
   });
 
+  test("listMessagesPaginated returns an empty page for a stale thread subscription", async () => {
+    const ownerTokenIdentifier = "user|chat-history-stale-thread";
+    const t = convexTest(schema, modules);
+    const { threadId } = await seedThreadWithMessages(t, ownerTokenIdentifier, 3);
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(threadId, { deletionRequestedAt: Date.now() });
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const result = await viewer.query(api.chat.threads.listMessagesPaginated, {
+      threadId,
+      paginationOpts: CHAT_MESSAGES_FIRST_PAGE_ARGS,
+    });
+
+    expect(result).toEqual({ page: [], isDone: true, continueCursor: "" });
+  });
+
   test("getReplyContext trims old messages and preserves the latest conversation", async () => {
     const ownerTokenIdentifier = "user|chat-history-context";
     const t = convexTest(schema, modules);
