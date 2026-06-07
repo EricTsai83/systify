@@ -14,7 +14,7 @@ const repolessShellMock = vi.hoisted(() => ({
   lastThreadId: null as ThreadId | null,
 }));
 const viewerAccessMock = vi.hoisted(() => ({
-  value: undefined as { plan: "free" | "internal" } | undefined,
+  value: undefined as { ownerTokenIdentifier: string; plan: "free" | "internal" } | undefined,
 }));
 
 vi.mock("@workos-inc/authkit-react", async () => {
@@ -205,7 +205,7 @@ describe("App auth token failures", () => {
   });
 
   test("shows a protected-route banner when the viewer is in demo mode", async () => {
-    viewerAccessMock.value = { plan: "free" };
+    viewerAccessMock.value = { ownerTokenIdentifier: "user|demo", plan: "free" };
 
     function useAuth() {
       return {
@@ -220,6 +220,38 @@ describe("App auth token failures", () => {
     expect(await screen.findByText("chat page")).toBeInTheDocument();
     expect(screen.getByText("Demo Mode")).toBeInTheDocument();
     expect(screen.getByText(/Cost-incurring features are disabled/)).toBeInTheDocument();
+  });
+
+  test("does not flash the demo banner while protected-route access is loading", async () => {
+    function useAuth() {
+      return {
+        isLoading: false,
+        user: { id: "user_1" },
+        getAccessToken: getAccessTokenMock,
+      };
+    }
+
+    renderWithAuth(useAuth, ["/chat"]);
+
+    expect(await screen.findByText("chat page")).toBeInTheDocument();
+    expect(screen.queryByText("Demo Mode")).not.toBeInTheDocument();
+  });
+
+  test("does not show the demo banner for internal access", async () => {
+    viewerAccessMock.value = { ownerTokenIdentifier: "user|internal", plan: "internal" };
+
+    function useAuth() {
+      return {
+        isLoading: false,
+        user: { id: "user_1" },
+        getAccessToken: getAccessTokenMock,
+      };
+    }
+
+    renderWithAuth(useAuth, ["/chat"]);
+
+    expect(await screen.findByText("chat page")).toBeInTheDocument();
+    expect(screen.queryByText("Demo Mode")).not.toBeInTheDocument();
   });
 
   test("shows the auth loading screen instead of HomePage on / when a WorkOS session cookie is present", async () => {

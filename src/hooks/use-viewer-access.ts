@@ -31,12 +31,32 @@ export function useViewerAccess(options: { enabled?: boolean } = {}) {
 }
 
 export function isDemoMode(viewerAccess: ViewerAccess | undefined): boolean {
-  return (
-    viewerAccess?.plan === "free" ||
-    (viewerAccess?.features?.demoMode.enabled === true && viewerAccess.features.chatSend.enabled !== true)
-  );
+  if (viewerAccess === undefined) {
+    return false;
+  }
+  if (viewerAccess.plan === "internal") {
+    return false;
+  }
+  if (viewerAccess.plan === "free") {
+    return true;
+  }
+
+  return COST_FEATURE_NAMES.some((feature) => viewerAccess.features?.[feature]?.enabled !== true);
 }
 
 export function isViewerFeatureEnabled(viewerAccess: ViewerAccess | undefined, feature: ViewerFeatureName): boolean {
   return viewerAccess?.features[feature]?.enabled === true;
 }
+
+const COST_FEATURE_NAMES = [
+  "repoImport",
+  "syncRepository",
+  "checkForUpdates",
+  "chatSend",
+  "libraryAsk",
+  "generateSystemDesign",
+  "sandboxGrounding",
+  "artifactIndexing",
+  "premiumModels",
+  "highReasoning",
+] as const satisfies readonly ViewerFeatureName[];

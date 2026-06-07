@@ -85,7 +85,7 @@ describe("viewerAccess.getSelf", () => {
     expect(access.features.generateSystemDesign.enabled).toBe(true);
   });
 
-  test("preserves pre-entitlement owners with existing data as internal access", async () => {
+  test("treats pre-entitlement owners with existing data as free until manually upgraded", async () => {
     const t = createTestConvex();
     const ownerTokenIdentifier = "user|viewer-existing-owner";
     await seedRepository(t, ownerTokenIdentifier);
@@ -100,11 +100,11 @@ describe("viewerAccess.getSelf", () => {
     expect(access).toMatchObject({
       ownerTokenIdentifier,
       email: "existing@example.com",
-      plan: "internal",
+      plan: "free",
       billingStatus: "none",
     });
-    expect(access.features.chatSend.enabled).toBe(true);
-    expect(access.features.repoImport.enabled).toBe(true);
+    expect(access.features.chatSend.enabled).toBe(false);
+    expect(access.features.repoImport.enabled).toBe(false);
   });
 });
 
@@ -136,7 +136,7 @@ describe("viewerAccess.ensureSelf", () => {
     });
   });
 
-  test("creates a durable internal profile for existing pre-entitlement owners", async () => {
+  test("creates a durable free profile for existing pre-entitlement owners", async () => {
     const t = createTestConvex();
     const ownerTokenIdentifier = "user|viewer-ensure-existing";
     await seedRepository(t, ownerTokenIdentifier);
@@ -148,7 +148,7 @@ describe("viewerAccess.ensureSelf", () => {
       })
       .mutation(api.viewerAccess.ensureSelf, {});
 
-    expect(access.plan).toBe("internal");
+    expect(access.plan).toBe("free");
     const profiles = await t.run(async (ctx) =>
       ctx.db
         .query("userAccessProfiles")
@@ -159,7 +159,7 @@ describe("viewerAccess.ensureSelf", () => {
     expect(profiles[0]).toMatchObject({
       ownerTokenIdentifier,
       email: "existing-owner@example.com",
-      plan: "internal",
+      plan: "free",
       billingStatus: "none",
     });
   });

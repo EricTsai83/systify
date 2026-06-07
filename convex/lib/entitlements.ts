@@ -51,8 +51,6 @@ type DbEntitlementCtx = QueryCtx | MutationCtx;
 
 const FEATURE_NOT_INCLUDED_MESSAGE = "This feature is not available on your current plan.";
 const ACCESS_PROFILE_SCAN_LIMIT = 20;
-const INTERNAL_ACCESS_TOKEN_IDENTIFIERS_ENV = "SYSTIFY_INTERNAL_ACCESS_TOKEN_IDENTIFIERS";
-const INTERNAL_ACCESS_EMAILS_ENV = "SYSTIFY_INTERNAL_ACCESS_EMAILS";
 
 export async function getViewerAccess(ctx: EntitlementCtx, identity: IdentityLike): Promise<ViewerAccess> {
   return await getViewerAccessForOwnerTokenIdentifier(ctx, {
@@ -81,7 +79,7 @@ export async function getViewerAccessByOwnerTokenIdentifier(
 ): Promise<ViewerAccess> {
   const profiles = await listAccessProfiles(ctx, args.ownerTokenIdentifier);
   const profile = selectCanonicalProfile(profiles);
-  const plan = profile?.plan ?? (await resolveMissingProfilePlan(ctx, args));
+  const plan = profile?.plan ?? resolveMissingProfilePlan();
   const billingStatus = profile?.billingStatus ?? "none";
 
   const access = {
@@ -105,7 +103,7 @@ export async function ensureViewerAccessProfile(ctx: MutationCtx, identity: Iden
   const now = Date.now();
 
   if (!canonical) {
-    const plan = await resolveMissingProfilePlan(ctx, { ownerTokenIdentifier, email });
+    const plan = resolveMissingProfilePlan();
     await ctx.db.insert("userAccessProfiles", {
       ownerTokenIdentifier,
       ...(email ? { email } : {}),
@@ -233,86 +231,8 @@ function selectCanonicalProfile(profiles: ReadonlyArray<Doc<"userAccessProfiles"
   });
 }
 
-async function resolveMissingProfilePlan(
-  ctx: DbEntitlementCtx,
-  args: { ownerTokenIdentifier: string; email?: string | null },
-): Promise<AccessPlan> {
-  if (isInternalAccessAllowlisted(args)) {
-    return "internal";
-  }
-  if (await hasExistingOwnerData(ctx, args.ownerTokenIdentifier)) {
-    return "internal";
-  }
+function resolveMissingProfilePlan(): AccessPlan {
   return "free";
-}
-
-function isInternalAccessAllowlisted(args: { ownerTokenIdentifier: string; email?: string | null }): boolean {
-  const tokenIdentifiers = readEnvList(INTERNAL_ACCESS_TOKEN_IDENTIFIERS_ENV);
-  if (tokenIdentifiers.has(args.ownerTokenIdentifier)) {
-    return true;
-  }
-
-  const email = args.email?.trim().toLowerCase();
-  if (!email) {
-    return false;
-  }
-  return readEnvList(INTERNAL_ACCESS_EMAILS_ENV).has(email);
-}
-
-function readEnvList(name: string): Set<string> {
-  const raw = process.env[name];
-  if (!raw) {
-    return new Set();
-  }
-  return new Set(
-    raw
-      .split(/[,\s]+/u)
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0)
-      .map((value) => (name === INTERNAL_ACCESS_EMAILS_ENV ? value.toLowerCase() : value)),
-  );
-}
-
-async function hasExistingOwnerData(ctx: DbEntitlementCtx, ownerTokenIdentifier: string): Promise<boolean> {
-  const repository = await ctx.db
-    .query("repositories")
-    .withIndex("by_ownerTokenIdentifier", (q) => q.eq("ownerTokenIdentifier", ownerTokenIdentifier))
-    .first();
-  if (repository) {
-    return true;
-  }
-
-  const thread = await ctx.db
-    .query("threads")
-    .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_archivedAt", (q) =>
-      q.eq("ownerTokenIdentifier", ownerTokenIdentifier),
-    )
-    .first();
-  if (thread) {
-    return true;
-  }
-
-  const installation = await ctx.db
-    .query("githubInstallations")
-    .withIndex("by_ownerTokenIdentifier", (q) => q.eq("ownerTokenIdentifier", ownerTokenIdentifier))
-    .first();
-  if (installation) {
-    return true;
-  }
-
-  const preferences = await ctx.db
-    .query("userPreferences")
-    .withIndex("by_ownerTokenIdentifier", (q) => q.eq("ownerTokenIdentifier", ownerTokenIdentifier))
-    .first();
-  if (preferences) {
-    return true;
-  }
-
-  const job = await ctx.db
-    .query("jobs")
-    .withIndex("by_ownerTokenIdentifier", (q) => q.eq("ownerTokenIdentifier", ownerTokenIdentifier))
-    .first();
-  return job !== null;
 }
 
 function accessFromProfile(access: Omit<ViewerAccess, "features">): ViewerAccess {
