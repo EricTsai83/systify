@@ -4,6 +4,7 @@ import { chatModeValidator } from "./lib/chatMode";
 import { llmProviderValidator } from "./lib/llmProvider";
 import { ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS, reasoningEffortValidator } from "./lib/llmCatalog";
 import { systemDesignKindValidator } from "./lib/systemDesign";
+import { systemDesignFailureReasonValidator } from "./lib/systemDesignFailures";
 
 const repositoryStatus = v.union(
   v.literal("idle"),
@@ -28,36 +29,6 @@ const jobKind = v.union(
   v.literal("chat"),
   v.literal("cleanup"),
   v.literal("sandbox_activation"),
-);
-
-/**
- * Structured failure categorisation for per-kind System Design failures.
- * Drives banner copy in `system-design-status-banner.tsx` without
- * regex-matching the raw `message`. Optional so rows without a reason
- * category fall through to the `transport_other` branch in the UI.
- *
- * Failure taxonomy:
- *   - `live_source_unavailable` — the live tree (sandbox / repo files) the
- *      kind needs to read was missing or unreachable.
- *   - `model_empty_output` — the LLM returned no usable text.
- *   - `transport_rate_limit` — provider 429 or gateway RPM / concurrency
- *      acquire that the retry layer exhausted.
- *   - `transport_other` — transport-level error (network / 5xx / SDK)
- *      that isn't a rate limit. This is the catch-all for
- *      provider-layer faults.
- *   - `output_quality` — LLM produced text, but quality-gates rejected it
- *      (missing required sections, missing Mermaid block, …).
- *   - `infra` — Convex-level / our-side bug surfaced into the kind loop
- *      (mutation error, action crash, schema validation, …). Engineering
- *      alerted.
- */
-const kindFailureReason = v.union(
-  v.literal("live_source_unavailable"),
-  v.literal("model_empty_output"),
-  v.literal("transport_rate_limit"),
-  v.literal("transport_other"),
-  v.literal("output_quality"),
-  v.literal("infra"),
 );
 
 /**
@@ -385,7 +356,7 @@ export default defineSchema({
           kind: systemDesignKindValidator,
           errorId: v.string(),
           message: v.string(),
-          reason: v.optional(kindFailureReason),
+          reason: v.optional(systemDesignFailureReasonValidator),
         }),
       ),
     ),
@@ -1522,7 +1493,7 @@ export default defineSchema({
     totalCostUsd: v.optional(v.number()),
     durationMs: v.number(),
     status: kindRunStatus,
-    failureReason: v.optional(kindFailureReason),
+    failureReason: v.optional(systemDesignFailureReasonValidator),
     outputCharLength: v.optional(v.number()),
     /**
      * Section names the quality gate flagged as missing. Empty / unset

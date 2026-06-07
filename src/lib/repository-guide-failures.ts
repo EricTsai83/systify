@@ -1,13 +1,8 @@
 import { REPOSITORY_GUIDE_COPY } from "./product-copy";
 import { REPOSITORY_GUIDE_SECTION_TITLES, type RepositoryGuideKind } from "./repository-guide-catalog";
+import type { SystemDesignFailureReason } from "../../convex/lib/systemDesignFailures";
 
-export type RepositoryGuideFailureReason =
-  | "live_source_unavailable"
-  | "model_empty_output"
-  | "transport_rate_limit"
-  | "transport_other"
-  | "output_quality"
-  | "infra";
+export type RepositoryGuideFailureReason = SystemDesignFailureReason;
 
 export type RepositoryGuideFailureDescriptor = {
   title: string;

@@ -95,6 +95,8 @@ import type * as lib_returnTo from "../lib/returnTo.js";
 import type * as lib_sandboxLiveness from "../lib/sandboxLiveness.js";
 import type * as lib_sandboxNames from "../lib/sandboxNames.js";
 import type * as lib_systemDesign from "../lib/systemDesign.js";
+import type * as lib_systemDesignFailureClassification from "../lib/systemDesignFailureClassification.js";
+import type * as lib_systemDesignFailures from "../lib/systemDesignFailures.js";
 import type * as lib_systemDesignPlanning from "../lib/systemDesignPlanning.js";
 import type * as lib_systemDesignPrompts from "../lib/systemDesignPrompts.js";
 import type * as lib_threadDefaults from "../lib/threadDefaults.js";
@@ -212,6 +214,8 @@ declare const fullApi: ApiFromModules<{
   "lib/sandboxLiveness": typeof lib_sandboxLiveness;
   "lib/sandboxNames": typeof lib_sandboxNames;
   "lib/systemDesign": typeof lib_systemDesign;
+  "lib/systemDesignFailureClassification": typeof lib_systemDesignFailureClassification;
+  "lib/systemDesignFailures": typeof lib_systemDesignFailures;
   "lib/systemDesignPlanning": typeof lib_systemDesignPlanning;
   "lib/systemDesignPrompts": typeof lib_systemDesignPrompts;
   "lib/threadDefaults": typeof lib_threadDefaults;

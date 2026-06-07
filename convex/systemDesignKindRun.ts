@@ -10,28 +10,29 @@
  * settlement, and per-kind metrics.
  */
 
-import { APICallError, stepCountIs } from "ai";
+import { stepCountIs } from "ai";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 import { createSandboxTools } from "./chat/sandboxTools";
 import { getSandboxFsClient } from "./daytona";
-import { generateViaGateway, LlmRateLimitError } from "./lib/llmGateway";
+import { generateViaGateway } from "./lib/llmGateway";
 import type { LlmProvider, NormalizedUsage } from "./lib/llmProvider";
 import { emitMetric, logErrorWithId, logWarn } from "./lib/observability";
-import { SandboxPreparationError, type EnsureSandboxReadyResult } from "./lib/sandboxLiveness";
+import type { EnsureSandboxReadyResult } from "./lib/sandboxLiveness";
 import { SYSTEM_DESIGN_KIND_TITLES, type SystemDesignKind } from "./lib/systemDesign";
+import { classifySystemDesignKindRunError } from "./lib/systemDesignFailureClassification";
+import type { SystemDesignFailureReason } from "./lib/systemDesignFailures";
 import {
   budgetSuffix,
   getKindRunConfig,
   validateMermaidBlock,
   validateRequiredSections,
 } from "./lib/systemDesignPrompts";
-import { isUsageBudgetExceededError } from "./lib/userCost";
 import type { ReasoningEffort } from "./lib/llmCatalog";
 
 type KindRunStatus = Doc<"systemDesignKindRuns">["status"];
-type KindFailureReason = NonNullable<Doc<"systemDesignKindRuns">["failureReason"]>;
+type KindFailureReason = SystemDesignFailureReason;
 
 interface SystemDesignKindRunModelChoice {
   provider: LlmProvider;
@@ -328,33 +329,6 @@ function emitKindRunMetrics(args: {
       details: { jobId: args.jobId },
     });
   }
-}
-
-/**
- * Map an LLM call exception into one of the structured
- * `kindFailureReason` literals.
- */
-function classifySystemDesignKindRunError(error: unknown): KindFailureReason {
-  if (error instanceof SandboxPreparationError) {
-    return "live_source_unavailable";
-  }
-  if (error instanceof LlmRateLimitError) {
-    return "transport_rate_limit";
-  }
-  if (isUsageBudgetExceededError(error)) {
-    return "transport_rate_limit";
-  }
-  if (error instanceof APICallError) {
-    if (error.statusCode === 429) {
-      return "transport_rate_limit";
-    }
-    return "transport_other";
-  }
-  const message = error instanceof Error ? error.message : String(error);
-  if (/empty document/i.test(message)) {
-    return "model_empty_output";
-  }
-  return "infra";
 }
 
 /**

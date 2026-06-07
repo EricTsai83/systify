@@ -262,10 +262,9 @@ export const runEval = internalAction({
 });
 
 /**
- * Eval-side error classifier. Mirrors `classifyLlmError` in
- * `convex/systemDesignNode.ts` but lives separate so eval can keep
- * its taxonomy stable when production tweaks classifications for
- * banner copy.
+ * Eval-side error classifier. Mirrors the production failure taxonomy but
+ * lives separate so eval can keep its classification behavior stable when
+ * production tweaks classifications for banner copy.
  */
 function classifyEvalError(error: unknown): string {
   if (error instanceof SandboxPreparationError) return "live_source_unavailable";

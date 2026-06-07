@@ -48,6 +48,7 @@ import {
   planSystemDesignGenerationRequest,
   resolveSystemDesignCachePreviewModel,
 } from "./lib/systemDesignPlanning";
+import { systemDesignFailureReasonValidator } from "./lib/systemDesignFailures";
 
 /**
  * Loop guard for the stale-recovery auto-resume path. A System Design
@@ -338,27 +339,13 @@ export const updateGenerationProgress = internalMutation({
   },
 });
 
-/**
- * Mutation arg validator for the per-kind failure recorder. Mirrors
- * the schema's `kindFailureReason` union — keep them in sync. New
- * literals added here must also be added in `convex/schema.ts`.
- */
-const recordKindFailureReason = v.union(
-  v.literal("live_source_unavailable"),
-  v.literal("model_empty_output"),
-  v.literal("transport_rate_limit"),
-  v.literal("transport_other"),
-  v.literal("output_quality"),
-  v.literal("infra"),
-);
-
 export const recordKindFailure = internalMutation({
   args: {
     jobId: v.id("jobs"),
     kind: systemDesignKindValidator,
     errorId: v.string(),
     message: v.string(),
-    reason: v.optional(recordKindFailureReason),
+    reason: v.optional(systemDesignFailureReasonValidator),
   },
   handler: async (ctx, args) => {
     const job = await ctx.db.get(args.jobId);
@@ -805,7 +792,7 @@ export const recordKindRun = internalMutation({
     totalCostUsd: v.optional(v.number()),
     durationMs: v.number(),
     status: recordKindRunStatus,
-    failureReason: v.optional(recordKindFailureReason),
+    failureReason: v.optional(systemDesignFailureReasonValidator),
     outputCharLength: v.optional(v.number()),
     missingSections: v.optional(v.array(v.string())),
     startedAt: v.number(),
