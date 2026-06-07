@@ -40,6 +40,7 @@
 
 import type { ChatMode } from "../lib/chatMode";
 import {
+  catalogCapabilityForPickableSurface,
   getCatalogEntry,
   isSupportedReasoningEffort,
   isUserPickableModel,
@@ -47,6 +48,7 @@ import {
   ROLE_MODELS,
   type ModelCapability,
   type ReasoningEffort,
+  type UserPickableModelCatalogEntry,
   type UserPickableCapability,
 } from "../lib/llmCatalog";
 import type { LlmProvider } from "../lib/llmProvider";
@@ -59,12 +61,12 @@ export type { ModelCapability, ReasoningEffort, UserPickableCapability };
 /**
  * Resolved pick handed to {@link generateViaGateway} / {@link streamViaGateway}.
  * Carries the picked `(provider, modelName)` pair alongside its catalog-
- * derived `reasoningEffort` and the `capability` tier we routed against so
- * the gateway can wire `providerOptions` without re-deriving either.
+ * derived `reasoningEffort` and the resolved model's catalog `capability`
+ * tier so the gateway can wire `providerOptions` without re-deriving either.
  *
- * `capability` is the user-facing tier (`sandbox` / `library` / `discuss`)
- * — embedding picks are dispatched separately via `embedViaGateway` and
- * never flow through this type.
+ * `capability` is a user-facing generation tier (`sandbox` / `library` /
+ * `discuss`) — embedding picks are dispatched separately via
+ * `embedViaGateway` and never flow through this type.
  */
 export type ModelChoice = {
   provider: LlmProvider;
@@ -115,9 +117,10 @@ export function pickCapability(args: { mode: ChatMode; groundSandbox: boolean })
  * Returns `undefined` if the model name doesn't appear in the catalog —
  * the caller falls through to the capability default in that case.
  */
-function findCatalogEntryByModelName(modelName: string, capability: UserPickableCapability) {
+function findUserPickableCatalogEntryByModelName(modelName: string): UserPickableModelCatalogEntry | undefined {
   return MODEL_CATALOG.find(
-    (entry) => entry.modelName === modelName && isUserPickableModel(entry.provider, entry.modelName, capability),
+    (entry): entry is UserPickableModelCatalogEntry =>
+      entry.modelName === modelName && isUserPickableModel(entry.provider, entry.modelName),
   );
 }
 
@@ -166,6 +169,7 @@ export function resolveModelForReply(args: {
   lockedProvider?: LlmProvider;
 }): ModelChoice {
   const capability = pickCapability(args);
+  const catalogCapability = catalogCapabilityForPickableSurface(capability);
 
   // Per-message override of reasoning effort. Applied at every layer
   // exit so the user's per-send intent survives whichever
@@ -189,12 +193,12 @@ export function resolveModelForReply(args: {
   // to the default rather than reaching the gateway with an unknown pair.
   if (args.overrideProvider !== undefined && args.overrideModelName !== undefined) {
     const entry = getCatalogEntry(args.overrideProvider, args.overrideModelName);
-    if (entry && isUserPickableModel(entry.provider, entry.modelName, capability)) {
+    if (entry && isUserPickableModel(entry.provider, entry.modelName) && entry.capability !== "embedding") {
       return {
         provider: entry.provider,
         modelName: entry.modelName,
         reasoningEffort: applyReasoningOverride(entry),
-        capability,
+        capability: entry.capability,
       };
     }
   }
@@ -202,13 +206,13 @@ export function resolveModelForReply(args: {
   // 2. Thread default. Looked up by model name alone — provider is
   // inferred from the catalog so we don't have to persist it redundantly.
   if (args.threadDefaultModelName !== undefined) {
-    const entry = findCatalogEntryByModelName(args.threadDefaultModelName, capability);
+    const entry = findUserPickableCatalogEntryByModelName(args.threadDefaultModelName);
     if (entry) {
       return {
         provider: entry.provider,
         modelName: entry.modelName,
         reasoningEffort: applyReasoningOverride(entry),
-        capability,
+        capability: entry.capability,
       };
     }
   }
@@ -222,15 +226,15 @@ export function resolveModelForReply(args: {
     const lockedFallback = MODEL_CATALOG.find(
       (entry) =>
         entry.provider === args.lockedProvider &&
-        entry.capability === capability &&
-        isUserPickableModel(entry.provider, entry.modelName, capability),
+        entry.capability === catalogCapability &&
+        isUserPickableModel(entry.provider, entry.modelName, catalogCapability),
     );
     if (lockedFallback) {
       return {
         provider: lockedFallback.provider,
         modelName: lockedFallback.modelName,
         reasoningEffort: applyReasoningOverride(lockedFallback),
-        capability,
+        capability: catalogCapability,
       };
     }
   }
@@ -239,6 +243,6 @@ export function resolveModelForReply(args: {
     provider: fallback.provider,
     modelName: fallback.modelName,
     reasoningEffort: fallbackEntry !== undefined ? applyReasoningOverride(fallbackEntry) : undefined,
-    capability,
+    capability: catalogCapability,
   };
 }

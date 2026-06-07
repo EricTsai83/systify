@@ -149,6 +149,7 @@ describe("isUserPickableModel", () => {
 
   test("enforces an optional capability filter", () => {
     expect(isUserPickableModel("openai", "gpt-5.4-mini", "discuss")).toBe(true);
+    expect(isUserPickableModel("openai", "gpt-5.4-mini", "library")).toBe(true);
     expect(isUserPickableModel("openai", "gpt-5.4-mini", "sandbox")).toBe(false);
     expect(isUserPickableModel("openai", "gpt-5.5", "discuss")).toBe(false);
     expect(isUserPickableModel("openai", "gpt-5.5", "library")).toBe(false);
@@ -183,6 +184,12 @@ describe("listPickableModels", () => {
     const sandboxTier = listPickableModels({ capability: "sandbox" });
     expect(sandboxTier.length).toBeGreaterThan(0);
     expect(sandboxTier.every((e) => e.capability === "sandbox")).toBe(true);
+  });
+
+  test("library surfaces use discuss-tier pickable models", () => {
+    const libraryTier = listPickableModels({ capability: "library" });
+    expect(libraryTier.length).toBeGreaterThan(0);
+    expect(libraryTier.every((e) => e.capability === "discuss")).toBe(true);
   });
 
   test("provider + capability compose", () => {

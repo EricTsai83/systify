@@ -145,7 +145,7 @@ export const listModelSettings = query({
     const preferences = await getOptionalViewerModelPreferences(ctx);
     const scoped = getModelPreferencesForScope(preferences, scope);
     const favoriteKeys = new Set(scoped.favoriteModels.map(modelPreferenceKey));
-    const catalogEntries = listPickableModelsFromCatalog(settingsCatalogFilterForScope(scope));
+    const catalogEntries = listPickableModelsFromCatalog();
     const defaultResolution = effectiveDefaultResolution(preferences, scope, catalogEntries);
     return catalogEntries.map((entry) => ({
       ...entry,
@@ -247,13 +247,4 @@ function effectiveDefaultResolution(
 
   const firstEnabled = applyModelPreferences(catalogEntries, preferences, scope)[0];
   return firstEnabled ? { key: modelPreferenceKey(firstEnabled), source: "system" } : null;
-}
-
-function settingsCatalogFilterForScope(
-  scope: ModelPreferenceScope,
-): { capability?: UserPickableCapability } | undefined {
-  if (scope === "sandbox") {
-    return { capability: "sandbox" };
-  }
-  return undefined;
 }

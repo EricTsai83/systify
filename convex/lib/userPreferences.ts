@@ -1,10 +1,6 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import {
-  getCatalogEntry,
-  listPickableModels as listCatalogPickableModels,
-  type UserPickableCapability,
-} from "./llmCatalog";
+import { getCatalogEntry, listPickableModels as listCatalogPickableModels } from "./llmCatalog";
 import type { LlmProvider } from "./llmProvider";
 
 export const USER_TRAITS_MAX_COUNT = 16;
@@ -149,16 +145,6 @@ function normalizeModelRefs(refs: readonly ModelPreferenceRef[] | undefined): Mo
     out.push(normalized);
   }
   return out;
-}
-
-function capabilityForModelPreferenceScope(scope: ModelPreferenceScope): UserPickableCapability {
-  if (scope === "sandbox") {
-    return "sandbox";
-  }
-  if (scope === "library") {
-    return "library";
-  }
-  return "discuss";
 }
 
 export function normalizeModelPreferences(
@@ -376,9 +362,7 @@ export async function upsertViewerModelPreferences(
     defaultModel?: ModelPreferenceRef | null;
   },
 ) {
-  const scopeCatalog = listCatalogPickableModels().filter(
-    (entry) => entry.capability === capabilityForModelPreferenceScope(args.scope),
-  );
+  const scopeCatalog = listCatalogPickableModels();
   const scopeCatalogKeys = new Set(scopeCatalog.map(modelPreferenceKey));
   const enabledModels = normalizeModelRefs(args.enabledModels).filter((ref) =>
     scopeCatalogKeys.has(modelPreferenceKey(ref)),

@@ -37,8 +37,8 @@ export function useDefaultModelPick(args: {
    * `threads.lockedProvider`. When the thread is locked, the capability
    * default's provider may not match — in that case the hook prefers the
    * locked-provider capability default by reading
-   * `listPickableModels({ provider, capability })` and returning the first
-   * matching entry.
+   * `listPickableModels({ provider, preferenceScope })` and returning the
+   * first selectable entry for that provider.
    */
   threadLockedProvider?: LlmProvider | null;
   /**
@@ -62,7 +62,7 @@ export function useDefaultModelPick(args: {
   const lockedProviderEntries = useQuery(
     api.llmCatalog.listPickableModels,
     lockedProviderNeedsLookup
-      ? { provider: args.threadLockedProvider!, capability: args.capability, preferenceScope: args.preferenceScope }
+      ? { provider: args.threadLockedProvider!, preferenceScope: args.preferenceScope }
       : "skip",
   );
   // Looked up purely so the hook can verify a persisted thread
