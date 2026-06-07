@@ -251,4 +251,35 @@ describe("free plan backend access gates", () => {
     expect(state.artifact?.chunkingStatus).toBeUndefined();
     expect(state.chunks).toHaveLength(0);
   });
+
+  test("marks retry artifact indexing failures as non-retryable when the feature is blocked", async () => {
+    const ownerTokenIdentifier = "user|free-artifact-indexing-retry";
+    const t = createTestConvex();
+    const repositoryId = await seedRepository(t, ownerTokenIdentifier);
+    const artifactId = await seedArtifact(t, ownerTokenIdentifier, repositoryId);
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(artifactId, {
+        chunkingStatus: "failed",
+        chunkingFailureReason: "embedding_failed",
+        lastChunkedAt: 0,
+        lastChunkedVersion: 1,
+      });
+    });
+
+    const result = await t.action(internal.artifactIndexing.retryFailedArtifactIndexing, {});
+
+    const state = await t.run(async (ctx) => {
+      const artifact = await ctx.db.get(artifactId);
+      const chunks = await ctx.db
+        .query("artifactChunks")
+        .withIndex("by_artifactId_and_chunkIndex", (q) => q.eq("artifactId", artifactId))
+        .take(1);
+      return { artifact, chunks };
+    });
+    expect(result.scheduled).toBe(1);
+    expect(state.artifact?.chunkingStatus).toBe("failed");
+    expect(state.artifact?.chunkingFailureReason).toBe("feature_not_included");
+    expect(state.chunks).toHaveLength(0);
+  });
 });

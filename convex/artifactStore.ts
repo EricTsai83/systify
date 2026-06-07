@@ -305,7 +305,9 @@ export const markChunkingStatus = internalMutation({
     artifactId: v.id("artifacts"),
     status: v.union(v.literal("pending"), v.literal("indexed"), v.literal("failed")),
     version: v.number(),
-    failureReason: v.optional(v.union(v.literal("embedding_failed"), v.literal("usage_budget_exceeded"))),
+    failureReason: v.optional(
+      v.union(v.literal("embedding_failed"), v.literal("usage_budget_exceeded"), v.literal("feature_not_included")),
+    ),
   },
   handler: async (ctx, args) => {
     const artifact = await ctx.db.get(args.artifactId);
@@ -366,7 +368,12 @@ export const listFailedArtifactsForReindex = internalQuery({
       .withIndex("by_chunkingStatus", (q) => q.eq("chunkingStatus", "failed"))
       .take(overfetchLimit);
     return rows
-      .filter((artifact) => (artifact.lastChunkedAt ?? 0) < args.cutoff && artifact.repositoryId)
+      .filter(
+        (artifact) =>
+          (artifact.lastChunkedAt ?? 0) < args.cutoff &&
+          artifact.repositoryId &&
+          artifact.chunkingFailureReason !== "feature_not_included",
+      )
       .slice(0, limit);
   },
 });

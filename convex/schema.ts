@@ -68,7 +68,11 @@ const usageRollupFeature = v.union(
 
 const usageBudgetReservationStatus = v.union(v.literal("reserved"), v.literal("settled"), v.literal("released"));
 
-const artifactChunkingFailureReason = v.union(v.literal("embedding_failed"), v.literal("usage_budget_exceeded"));
+const artifactChunkingFailureReason = v.union(
+  v.literal("embedding_failed"),
+  v.literal("usage_budget_exceeded"),
+  v.literal("feature_not_included"),
+);
 
 const jobStatus = v.union(
   v.literal("queued"),
@@ -506,9 +510,8 @@ export default defineSchema({
      *   - `indexed`  — `artifactChunks` rows match the current
      *                  `lastChunkedVersion`; embeddings may still be
      *                  partial when an embed fallback is in effect.
-     *   - `failed`   — embedding pipeline exhausted retries; the
-     *                  `retryFailedArtifactIndexing` cron will pick the
-     *                  row up again.
+     *   - `failed`   — retryable pipeline failure unless
+     *                  `chunkingFailureReason` is `feature_not_included`.
      */
     chunkingStatus: v.optional(v.union(v.literal("pending"), v.literal("indexed"), v.literal("failed"))),
     chunkingFailureReason: v.optional(artifactChunkingFailureReason),

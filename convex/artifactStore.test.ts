@@ -447,6 +447,42 @@ describe("ArtifactStore — filters", () => {
     expect(diagrams.map((artifact) => artifact.kind)).toEqual(["architecture_diagram"]);
     expect(reviews.map((artifact) => artifact.kind)).toEqual(["design_review"]);
   });
+
+  test("listFailedArtifactsForReindex skips feature-not-included failures", async () => {
+    const t = createTestConvex();
+    const repositoryId = await seedRepository(t);
+    const retryableId = await seedArtifact(t, {
+      repositoryId,
+      title: "retryable",
+    });
+    const entitlementDeniedId = await seedArtifact(t, {
+      repositoryId,
+      title: "entitlement denied",
+    });
+    const now = Date.now();
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(retryableId, {
+        chunkingStatus: "failed",
+        chunkingFailureReason: "embedding_failed",
+        lastChunkedAt: now - 60_000,
+        lastChunkedVersion: 1,
+      });
+      await ctx.db.patch(entitlementDeniedId, {
+        chunkingStatus: "failed",
+        chunkingFailureReason: "feature_not_included",
+        lastChunkedAt: now - 60_000,
+        lastChunkedVersion: 1,
+      });
+    });
+
+    const result = await t.query(internal.artifactStore.listFailedArtifactsForReindex, {
+      cutoff: now,
+      limit: 10,
+    });
+
+    expect(result.map((artifact) => artifact._id)).toEqual([retryableId]);
+  });
 });
 
 describe("ArtifactStore — ordering", () => {

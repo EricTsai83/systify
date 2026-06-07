@@ -127,6 +127,19 @@ vi.mock("@/components/ui/tooltip", () => ({
 
 const threadId = "thread_1" as ThreadId;
 const assistantMessageId = "message_1" as MessageId;
+const sandboxCatalogEntry = {
+  provider: "openai",
+  modelName: "gpt-5.5",
+  displayName: "GPT-5.5",
+  capability: "sandbox",
+  supportsReasoning: true,
+  supportsTools: true,
+  contextWindow: 200_000,
+  userPickable: true,
+  favorite: false,
+  default: false,
+  defaultSource: null,
+};
 
 const queryName = (query: unknown) => {
   try {
@@ -211,9 +224,56 @@ describe("ChatPanel streaming rendering", () => {
     const listPickableModelArgs = vi
       .mocked(useQuery)
       .mock.calls.filter(([query]) => queryName(query)?.endsWith("llmCatalog:listPickableModels"))
-      .map(([, args]) => args);
+      .map(([, args]) => args)
+      .filter((args) => args !== "skip");
 
     expect(listPickableModelArgs).toEqual([{ preferenceScope: "discuss" }]);
+  });
+
+  test("disables send when the selected model is locked by premium model access", () => {
+    vi.mocked(useQuery).mockImplementation((...callArgs) => {
+      const [query, args] = callArgs;
+      if (args === "skip") {
+        return undefined;
+      }
+      if (queryName(query)?.endsWith("llmCatalog:listPickableModels")) {
+        return [sandboxCatalogEntry];
+      }
+      return [];
+    });
+    const onSendMessage = vi.fn();
+
+    render(
+      <ChatPanel
+        selectedThreadId={null}
+        messages={undefined}
+        activeMessageStream={undefined}
+        isChatLoading={false}
+        chatInput="Explain this repo"
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        selectedProvider="openai"
+        selectedModelName="gpt-5.5"
+        setSelectedModel={vi.fn()}
+        premiumModelsDisabledReason="Premium models are not available."
+        grounding={undefined}
+        isSending={false}
+        onSendMessage={onSendMessage}
+        sandboxModeStatus={null}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const sendButton = screen.getByTestId("chat-panel-send-button");
+    expect(sendButton).toBeDisabled();
+    expect(sendButton).toHaveAttribute("title", "Premium models are not available.");
+    fireEvent.click(sendButton);
+    expect(onSendMessage).not.toHaveBeenCalled();
   });
 
   test("capability-filters the chat model picker for sandbox-scoped turns", () => {

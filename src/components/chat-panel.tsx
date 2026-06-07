@@ -5,6 +5,7 @@ import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { findInFlightAssistantMessage, useConversationThread } from "@/hooks/use-conversation-thread";
+import { useModelAccessDisabledReason } from "@/hooks/use-model-access-disabled-reason";
 import { useStatsForNerdsPreference } from "@/hooks/use-user-preferences";
 import { toUserErrorMessage } from "@/lib/errors";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
@@ -328,6 +329,16 @@ export function ChatPanel({
   );
 
   const sandboxModeAvailable = sandboxModeStatus?.reasonCode === "available";
+  const selectedModelPick =
+    selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null;
+  const modelAccessDisabledReason = useModelAccessDisabledReason({
+    modelPick: selectedModelPick,
+    reasoningEffort: selectedReasoningEffort,
+    preferenceScope: modelPreferenceScope,
+    premiumModelsDisabledReason,
+    highReasoningDisabledReason,
+  });
+  const effectiveSendDisabledReason = sendDisabledReason ?? modelAccessDisabledReason ?? undefined;
 
   // Lazy-provision entry point. Wired here (not in `SandboxActivityPill`)
   // so the GroundingToggleBar can fire activation directly when the user
@@ -365,7 +376,7 @@ export function ChatPanel({
   // backend reject.
   const isSendBlocked =
     isReadOnly ||
-    sendDisabledReason !== undefined ||
+    effectiveSendDisabledReason !== undefined ||
     isSending ||
     isSyncing ||
     !chatInput.trim() ||
@@ -630,7 +641,7 @@ export function ChatPanel({
                   variant="default"
                   size="sm"
                   disabled={isSendBlocked}
-                  title={sendDisabledReason}
+                  title={effectiveSendDisabledReason}
                   data-testid="chat-panel-send-button"
                   className="min-w-30"
                 >

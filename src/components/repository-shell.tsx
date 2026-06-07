@@ -616,6 +616,7 @@ export function RepositoryShell({
           <ImportFailedBanner
             errorMessage={repoDetail.latestFailedImportError}
             isSyncing={isSyncing || isRepositorySyncing}
+            syncDisabledReason={syncDisabledReason}
             onRetry={() => void handleSync()}
           />
         ) : null}
@@ -763,12 +764,15 @@ function RepositoryMissingState({ onBack }: { onBack: () => void }) {
 function ImportFailedBanner({
   errorMessage,
   isSyncing,
+  syncDisabledReason,
   onRetry,
 }: {
   errorMessage: string | null;
   isSyncing: boolean;
+  syncDisabledReason?: string;
   onRetry: () => void;
 }) {
+  const retryDisabled = isSyncing || syncDisabledReason !== undefined;
   return (
     <div className="flex shrink-0 flex-col border-b border-destructive/40 bg-destructive/5 px-6 py-3 text-destructive">
       <div role="alert" aria-live="assertive" aria-atomic="true" className="flex items-start gap-2">
@@ -784,7 +788,8 @@ function ImportFailedBanner({
           variant="outline"
           size="sm"
           className="gap-1.5 text-xs"
-          disabled={isSyncing}
+          disabled={retryDisabled}
+          title={syncDisabledReason}
           onClick={onRetry}
         >
           <ButtonStateText current={isSyncing ? "Retrying…" : "Retry sync"} states={["Retry sync", "Retrying…"]} />

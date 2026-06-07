@@ -20,6 +20,7 @@ import {
 import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-input-reasoning-picker";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
+import { useModelAccessDisabledReason } from "@/hooks/use-model-access-disabled-reason";
 import { toUserErrorMessage } from "@/lib/errors";
 import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import { REPOSITORY_GUIDE_SECTIONS, type RepositoryGuideKind } from "@/lib/repository-guide-catalog";
@@ -83,6 +84,14 @@ export function GenerateSystemDesignDialog({
           modelName: modelPick.modelName,
         },
   );
+  const modelAccessDisabledReason = useModelAccessDisabledReason({
+    modelPick,
+    reasoningEffort,
+    preferenceScope: "sandbox",
+    premiumModelsDisabledReason,
+    highReasoningDisabledReason,
+  });
+  const submitDisabledReason = disabledReason ?? modelAccessDisabledReason ?? undefined;
 
   const toggle = (kind: RepositoryGuideKind) => {
     setSelected((prev) => {
@@ -95,8 +104,8 @@ export function GenerateSystemDesignDialog({
 
   const [isSubmitting, runSubmit] = useAsyncCallback(async () => {
     setError(null);
-    if (disabledReason) {
-      setError(disabledReason);
+    if (submitDisabledReason) {
+      setError(submitDisabledReason);
       return;
     }
     const selections = Array.from(selected);
@@ -281,8 +290,8 @@ export function GenerateSystemDesignDialog({
               type="button"
               size="sm"
               onClick={() => void runSubmit()}
-              disabled={disabledReason !== undefined || isSubmitting || jobInProgress || selected.size === 0}
-              title={disabledReason}
+              disabled={submitDisabledReason !== undefined || isSubmitting || jobInProgress || selected.size === 0}
+              title={submitDisabledReason}
             >
               {isSubmitting ? (
                 <>

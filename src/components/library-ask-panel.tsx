@@ -22,6 +22,7 @@ import { useLibraryAskTabs } from "@/hooks/use-library-ask-tabs";
 import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
 import { useChatLifecycle } from "@/hooks/use-chat-lifecycle";
 import { useConversationThread } from "@/hooks/use-conversation-thread";
+import { useModelAccessDisabledReason } from "@/hooks/use-model-access-disabled-reason";
 import { toUserErrorMessage } from "@/lib/errors";
 import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import type { ArtifactId, RepositoryId, ThreadId } from "@/lib/types";
@@ -260,7 +261,16 @@ export function LibraryAskPanel({
   }, [archiveThread, closeTab, onSelectThread, pendingArchiveThreadId, threadId]);
 
   const isLocked = !hasArtifacts;
-  const composerDisabledReason = askDisabledReason ?? (isLocked ? LOCKED_HINT : null);
+  const selectedModelPick =
+    selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null;
+  const modelAccessDisabledReason = useModelAccessDisabledReason({
+    modelPick: selectedModelPick,
+    reasoningEffort: selectedReasoningEffort,
+    preferenceScope: "library",
+    premiumModelsDisabledReason,
+    highReasoningDisabledReason,
+  });
+  const composerDisabledReason = askDisabledReason ?? (isLocked ? LOCKED_HINT : modelAccessDisabledReason);
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       if (composerDisabledReason !== null || latestAssistantInFlight) {
@@ -422,7 +432,7 @@ export function LibraryAskPanel({
               type="submit"
               size="sm"
               disabled={!input.trim() || isSending || latestAssistantInFlight || composerDisabledReason !== null}
-              title={askDisabledReason}
+              title={composerDisabledReason ?? undefined}
             >
               <PaperPlaneTiltIcon size={14} weight="fill" />
               {isSending ? "Asking..." : "Ask"}
