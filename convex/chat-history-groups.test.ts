@@ -455,6 +455,10 @@ describe("thread shares", () => {
     vi.advanceTimersByTime(THIRTY_DAYS_MS + 1);
 
     expect(await t.query(api.chat.threadShares.getPublicThreadShare, { token: expiring.token })).toBeNull();
+    const activeShares = await viewer.query(api.chat.threadShares.listActiveThreadShares, {
+      paginationOpts: { numItems: 10, cursor: null },
+    });
+    expect(activeShares.page).toEqual([]);
   });
 
   test("archived threads keep existing shares visible to owner and public readers", async () => {
@@ -499,6 +503,32 @@ describe("thread shares", () => {
       paginationOpts: { numItems: 10, cursor: null },
     });
     expect(activeShares.page).toEqual([]);
+  });
+
+  test("owner share listing cursor remains valid across time changes", async () => {
+    const ownerTokenIdentifier = "user|thread-share-cursor-time";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const olderThread = await viewer.mutation(api.chat.threads.createThread, {});
+    const olderShare = await viewer.mutation(api.chat.threadShares.createOrGetThreadShare, {
+      threadId: olderThread._id,
+    });
+    vi.advanceTimersByTime(1_000);
+    const newerThread = await viewer.mutation(api.chat.threads.createThread, {});
+    const newerShare = await viewer.mutation(api.chat.threadShares.createOrGetThreadShare, {
+      threadId: newerThread._id,
+    });
+
+    const firstPage = await viewer.query(api.chat.threadShares.listActiveThreadShares, {
+      paginationOpts: { numItems: 1, cursor: null },
+    });
+    vi.advanceTimersByTime(1_000);
+    const secondPage = await viewer.query(api.chat.threadShares.listActiveThreadShares, {
+      paginationOpts: { numItems: 1, cursor: firstPage.continueCursor },
+    });
+
+    expect(firstPage.page.map((share) => share._id)).toEqual([newerShare._id]);
+    expect(secondPage.page.map((share) => share._id)).toEqual([olderShare._id]);
   });
 
   test("owner share listing scans past leftover deleted-thread rows", async () => {
