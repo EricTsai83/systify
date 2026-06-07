@@ -1,4 +1,4 @@
-import type { SystemDesignKind } from "../../convex/lib/systemDesign";
+export { REPOSITORY_GUIDE_SECTION_TITLES } from "./repository-guide-catalog";
 
 /**
  * User-facing vocabulary for the internal `system_design` capability.
@@ -19,14 +19,3 @@ export const REPOSITORY_GUIDE_COPY = {
   noArtifactsDescription:
     "Library Ask cites indexed guide sections. Generate the Repository Guide so it has something to retrieve.",
 } as const;
-
-export const REPOSITORY_GUIDE_SECTION_TITLES = {
-  readme_summary: "README Summary",
-  architecture_overview: "Architecture Overview",
-  architecture_diagram: "Architecture Diagram",
-  data_model_overview: "Data Model Overview",
-  api_surface_overview: "API Surface Overview",
-  deployment_overview: "Deployment Overview",
-  security_overview: "Security Overview",
-  operations_overview: "Operations Overview",
-} as const satisfies Record<SystemDesignKind, string>;

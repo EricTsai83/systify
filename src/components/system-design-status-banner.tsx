@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
-import { REPOSITORY_GUIDE_COPY, REPOSITORY_GUIDE_SECTION_TITLES } from "@/lib/product-copy";
+import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
+import { REPOSITORY_GUIDE_SECTION_TITLES } from "@/lib/repository-guide-catalog";
 
 /**
  * Failure reason copy. `transport_rate_limit` distinguishes "provider

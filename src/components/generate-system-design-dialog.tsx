@@ -22,73 +22,8 @@ import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
 import { toUserErrorMessage } from "@/lib/errors";
 import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
+import { REPOSITORY_GUIDE_SECTIONS, type RepositoryGuideKind } from "@/lib/repository-guide-catalog";
 import type { ReasoningEffort, RepositoryId } from "@/lib/types";
-
-/**
- * The checklist the Generate System Design dialog renders. Order and labels
- * are deliberately hardcoded here so the dialog matches the publication
- * narrative even if the backend catalog grows additional kinds — new kinds
- * will appear as an "unrendered" warning instead of silently changing the UI
- * vocabulary. Every kind is LLM-backed: the generator opens a sandbox and
- * inspects live source, so there is no free / paid split. Order mirrors the
- * seeded System Design folder tree.
- */
-const CATALOG: ReadonlyArray<{
-  kind:
-    | "readme_summary"
-    | "architecture_overview"
-    | "architecture_diagram"
-    | "data_model_overview"
-    | "api_surface_overview"
-    | "deployment_overview"
-    | "security_overview"
-    | "operations_overview";
-  title: string;
-  description: string;
-}> = [
-  {
-    kind: "readme_summary",
-    title: "README Summary",
-    description: "Purpose, services, audience, and key operations distilled from the README.",
-  },
-  {
-    kind: "architecture_overview",
-    title: "Architecture Overview",
-    description: "Components, responsibilities, data and control flow, and key boundaries.",
-  },
-  {
-    kind: "architecture_diagram",
-    title: "Architecture Diagram",
-    description: "Mermaid graph of components, flows, and boundaries — with legend and reading guide.",
-  },
-  {
-    kind: "data_model_overview",
-    title: "Data Model Overview",
-    description: "Persistent stores, entities, relationships, invariants.",
-  },
-  {
-    kind: "api_surface_overview",
-    title: "API Surface Overview",
-    description: "Externally-visible endpoints, auth, request/response shapes.",
-  },
-  {
-    kind: "deployment_overview",
-    title: "Deployment Overview",
-    description: "Runtime targets, build pipeline, infra dependencies.",
-  },
-  {
-    kind: "security_overview",
-    title: "Security Overview",
-    description: "Auth, authorisation, input validation, sensitive data.",
-  },
-  {
-    kind: "operations_overview",
-    title: "Operations Overview",
-    description: "Logging, metrics, tracing, alerting, run-books.",
-  },
-];
-
-type Kind = (typeof CATALOG)[number]["kind"];
 
 export function GenerateSystemDesignDialog({
   open,
@@ -104,7 +39,9 @@ export function GenerateSystemDesignDialog({
 
   // Every document is worth generating, so the publication defaults to the
   // full set — the user unticks what they don't want rather than opting in.
-  const [selected, setSelected] = useState<Set<Kind>>(() => new Set(CATALOG.map((item) => item.kind)));
+  const [selected, setSelected] = useState<Set<RepositoryGuideKind>>(
+    () => new Set(REPOSITORY_GUIDE_SECTIONS.map((item) => item.kind)),
+  );
   // Default model resolves through the same cascade the dialog used
   // to hardcode: capability default sourced from `ROLE_MODELS` on the
   // server. `useDefaultModelPick` returns `undefined` while loading
@@ -141,7 +78,7 @@ export function GenerateSystemDesignDialog({
         },
   );
 
-  const toggle = (kind: Kind) => {
+  const toggle = (kind: RepositoryGuideKind) => {
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(kind)) next.delete(kind);
@@ -238,7 +175,7 @@ export function GenerateSystemDesignDialog({
         ) : null}
 
         <ul className="flex max-h-[60vh] flex-col gap-1 overflow-y-auto py-1">
-          {CATALOG.map((item) => {
+          {REPOSITORY_GUIDE_SECTIONS.map((item) => {
             const checked = selected.has(item.kind);
             return (
               <li key={item.kind}>
@@ -306,7 +243,8 @@ export function GenerateSystemDesignDialog({
 
         <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div className="text-[11px] text-muted-foreground">
-            Selected: <strong>{selected.size}</strong> of {CATALOG.length} {REPOSITORY_GUIDE_COPY.sectionNamePlural}.
+            Selected: <strong>{selected.size}</strong> of {REPOSITORY_GUIDE_SECTIONS.length}{" "}
+            {REPOSITORY_GUIDE_COPY.sectionNamePlural}.
           </div>
           <div className="flex gap-2">
             <Button
