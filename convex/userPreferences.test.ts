@@ -172,4 +172,26 @@ describe("user preferences customization", () => {
       modelName: "claude-opus-4-8",
     });
   });
+
+  test("updates Library model settings against the shared discuss-tier catalog", async () => {
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+
+    await viewer.mutation(api.userPreferences.updateViewerModelPreferences, {
+      scope: "library",
+      enabledModels: [{ provider: "openai", modelName: "gpt-5.4-mini" }],
+      favoriteModels: [],
+      defaultModel: { provider: "openai", modelName: "gpt-5.4-mini" },
+    });
+
+    const settingsRows = await viewer.query(api.llmCatalog.listModelSettings, { scope: "library" });
+    expect(settingsRows.map((entry) => entry.capability)).toEqual(["discuss", "discuss"]);
+    expect(settingsRows.find((entry) => entry.modelName === "gpt-5.4-mini")).toMatchObject({
+      enabled: true,
+      default: true,
+    });
+    expect(settingsRows.find((entry) => entry.modelName === "claude-haiku-4-5")).toMatchObject({
+      enabled: false,
+    });
+  });
 });

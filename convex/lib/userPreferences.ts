@@ -1,6 +1,7 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 import {
+  catalogCapabilityForPickableSurface,
   getCatalogEntry,
   listPickableModels as listCatalogPickableModels,
   type UserPickableCapability,
@@ -152,13 +153,7 @@ function normalizeModelRefs(refs: readonly ModelPreferenceRef[] | undefined): Mo
 }
 
 function capabilityForModelPreferenceScope(scope: ModelPreferenceScope): UserPickableCapability {
-  if (scope === "sandbox") {
-    return "sandbox";
-  }
-  if (scope === "library") {
-    return "library";
-  }
-  return "discuss";
+  return catalogCapabilityForPickableSurface(scope);
 }
 
 export function normalizeModelPreferences(

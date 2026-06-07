@@ -26,6 +26,7 @@
 import { v } from "convex/values";
 import { query, type QueryCtx } from "./_generated/server";
 import {
+  catalogCapabilityForPickableSurface,
   isUserPickableModel,
   listPickableModels as listPickableModelsFromCatalog,
   ROLE_MODELS,
@@ -252,8 +253,5 @@ function effectiveDefaultResolution(
 function settingsCatalogFilterForScope(
   scope: ModelPreferenceScope,
 ): { capability?: UserPickableCapability } | undefined {
-  if (scope === "sandbox") {
-    return { capability: "sandbox" };
-  }
-  return undefined;
+  return { capability: catalogCapabilityForPickableSurface(scope) };
 }

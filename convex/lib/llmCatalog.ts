@@ -187,6 +187,20 @@ export type UserPickableModelCatalogEntry = ModelCatalogEntry & {
   userPickable: true;
 };
 
+export type PickableModelSurface = UserPickableCapability | "chat";
+
+/**
+ * Map user-facing model surfaces to the catalog tier that can serve them.
+ * Library replies are text-only, so they share the discuss-tier model pool
+ * while still carrying `"library"` as the chat mode / preference scope.
+ */
+export function catalogCapabilityForPickableSurface(surface: PickableModelSurface): UserPickableCapability {
+  if (surface === "sandbox") {
+    return "sandbox";
+  }
+  return "discuss";
+}
+
 export const MODEL_CATALOG: readonly ModelCatalogEntry[] = [
   // === OpenAI === GPT-5 family.
   //
@@ -336,10 +350,12 @@ export function listPickableModels(opts?: {
   provider?: LlmProvider;
   capability?: UserPickableCapability;
 }): ModelCatalogEntry[] {
+  const catalogCapability =
+    opts?.capability === undefined ? undefined : catalogCapabilityForPickableSurface(opts.capability);
   return MODEL_CATALOG.filter((entry) => {
     if (!entry.userPickable) return false;
     if (opts?.provider !== undefined && entry.provider !== opts.provider) return false;
-    if (opts?.capability !== undefined && entry.capability !== opts.capability) return false;
+    if (catalogCapability !== undefined && entry.capability !== catalogCapability) return false;
     return true;
   });
 }
@@ -373,7 +389,7 @@ export function isUserPickableModel(
   if (capability === undefined) {
     return true;
   }
-  return entry.capability === capability;
+  return entry.capability === catalogCapabilityForPickableSurface(capability);
 }
 
 /**
