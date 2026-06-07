@@ -18,6 +18,11 @@ import { requireActiveRepositoryForViewer } from "../lib/repositoryAccess";
 import { requireOwnedDoc } from "../lib/ownedDocs";
 import { NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
 import {
+  isModelEnabledInPreferences,
+  loadViewerModelPreferences,
+  type ModelPreferenceScope,
+} from "../lib/userPreferences";
+import {
   CHAT_JOB_LEASE_MS,
   consumeChatGlobalRateLimit,
   consumeChatRateLimit,
@@ -30,6 +35,20 @@ import { recordThreadActivityInHistory, recordThreadCreatedInHistory } from "./h
 import { requireActiveOwnedThread } from "./threadAccess";
 
 const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
+
+function pickModelPreferenceScope(args: {
+  repositoryId: Id<"repositories"> | null;
+  mode: ChatMode;
+  groundSandbox: boolean;
+}): ModelPreferenceScope {
+  if (args.groundSandbox) {
+    return "sandbox";
+  }
+  if (args.repositoryId === null && args.mode === "discuss") {
+    return "chat";
+  }
+  return args.mode;
+}
 
 async function getActiveChatJobForThread(ctx: MutationCtx, threadId: Id<"threads">, now: number) {
   return await findActiveJob(ctx, {
@@ -249,6 +268,7 @@ export const sendMessageStartingNewThread = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
+    const modelPreferences = await loadViewerModelPreferences(ctx, identity.tokenIdentifier);
     const repositoryId = args.repositoryId;
 
     const trimmedContent = args.content.trim();
@@ -296,6 +316,11 @@ export const sendMessageStartingNewThread = mutation({
 
     const groundLibrary = args.groundLibrary === true;
     const groundSandbox = args.groundSandbox === true;
+    const modelPreferenceScope = pickModelPreferenceScope({
+      repositoryId: repositoryId ?? null,
+      mode: args.mode,
+      groundSandbox,
+    });
 
     // Validate the picker pick (if both pieces present) and resolve the
     // effective `(provider, modelName)` for this reply. A brand-new
@@ -307,7 +332,12 @@ export const sendMessageStartingNewThread = mutation({
     if (
       args.provider !== undefined &&
       args.modelName !== undefined &&
-      !isUserPickableModel(args.provider, args.modelName)
+      (!isUserPickableModel(args.provider, args.modelName) ||
+        !isModelEnabledInPreferences(
+          modelPreferences,
+          { provider: args.provider, modelName: args.modelName },
+          modelPreferenceScope,
+        ))
     ) {
       throw new ConvexError({
         code: "unsupported_model",
@@ -419,6 +449,7 @@ export const sendMessage = mutation({
     const { identity, doc: thread } = await requireActiveOwnedThread(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
+    const modelPreferences = await loadViewerModelPreferences(ctx, identity.tokenIdentifier);
 
     let repository: Doc<"repositories"> | null = null;
     if (thread.repositoryId) {
@@ -437,6 +468,11 @@ export const sendMessage = mutation({
     // toggle does not accidentally tag a Library reply with grounding
     // metadata. Same rule used by `getReplyContext` on the read path.
     const { groundLibrary, groundSandbox } = resolveDiscussGrounding(mode, args);
+    const modelPreferenceScope = pickModelPreferenceScope({
+      repositoryId: thread.repositoryId ?? null,
+      mode,
+      groundSandbox,
+    });
 
     // `assertRepositoryModeEligible` covers the unsatisfiable-grounding case
     // (`no_repository_attached`) with the same structured ConvexError it
@@ -455,7 +491,12 @@ export const sendMessage = mutation({
     if (
       args.provider !== undefined &&
       args.modelName !== undefined &&
-      !isUserPickableModel(args.provider, args.modelName)
+      (!isUserPickableModel(args.provider, args.modelName) ||
+        !isModelEnabledInPreferences(
+          modelPreferences,
+          { provider: args.provider, modelName: args.modelName },
+          modelPreferenceScope,
+        ))
     ) {
       throw new ConvexError({
         code: "unsupported_model",

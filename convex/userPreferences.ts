@@ -1,13 +1,28 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireViewerIdentity } from "./lib/auth";
+import { llmProviderValidator } from "./lib/llmProvider";
 import {
   CUSTOM_INSTRUCTIONS_MAX_LENGTH,
   USER_TRAIT_MAX_LENGTH,
   USER_TRAITS_MAX_COUNT,
+  loadViewerModelPreferences,
   loadViewerPreferences,
   upsertViewerCustomization,
+  upsertViewerModelPreferences,
 } from "./lib/userPreferences";
+
+const MODEL_PREFERENCE_REF_MAX_COUNT = 100;
+const modelPreferenceRefValidator = v.object({
+  provider: llmProviderValidator,
+  modelName: v.string(),
+});
+const modelPreferenceScopeValidator = v.union(
+  v.literal("chat"),
+  v.literal("discuss"),
+  v.literal("library"),
+  v.literal("sandbox"),
+);
 
 /**
  * Public read API for the viewer's per-user preferences. Today this only
@@ -26,6 +41,14 @@ export const getViewerPreferences = query({
   handler: async (ctx) => {
     const identity = await requireViewerIdentity(ctx);
     return await loadViewerPreferences(ctx, identity.tokenIdentifier);
+  },
+});
+
+export const getViewerModelPreferences = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = await requireViewerIdentity(ctx);
+    return await loadViewerModelPreferences(ctx, identity.tokenIdentifier);
   },
 });
 
@@ -54,6 +77,32 @@ export const updateViewerCustomization = mutation({
         traits: args.traits,
         customInstructions: args.customInstructions,
       },
+    });
+  },
+});
+
+export const updateViewerModelPreferences = mutation({
+  args: {
+    scope: modelPreferenceScopeValidator,
+    enabledModels: v.array(modelPreferenceRefValidator),
+    favoriteModels: v.array(modelPreferenceRefValidator),
+    defaultModel: v.optional(v.union(modelPreferenceRefValidator, v.null())),
+  },
+  handler: async (ctx, args) => {
+    if (args.enabledModels.length > MODEL_PREFERENCE_REF_MAX_COUNT) {
+      throw new Error(`Too many enabled model preferences. Keep at most ${MODEL_PREFERENCE_REF_MAX_COUNT}.`);
+    }
+    if (args.favoriteModels.length > MODEL_PREFERENCE_REF_MAX_COUNT) {
+      throw new Error(`Too many favorite model preferences. Keep at most ${MODEL_PREFERENCE_REF_MAX_COUNT}.`);
+    }
+
+    const identity = await requireViewerIdentity(ctx);
+    await upsertViewerModelPreferences(ctx, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      scope: args.scope,
+      enabledModels: args.enabledModels,
+      favoriteModels: args.favoriteModels,
+      defaultModel: args.defaultModel,
     });
   },
 });

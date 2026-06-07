@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { useDefaultModelPick, type DefaultModelPick } from "@/hooks/use-default-model-pick";
-import type { LlmProvider, ReasoningEffort, ThreadId, UserPickableCapability } from "@/lib/types";
+import type { LlmProvider, ModelPreferenceScope, ReasoningEffort, ThreadId, UserPickableCapability } from "@/lib/types";
 
 export interface ComposerModelPickValue {
   provider: LlmProvider;
@@ -45,6 +45,7 @@ export function resolveComposerModelPick(args: {
 export function useComposerModelPick(args: {
   threadId: ThreadId | null;
   capability: UserPickableCapability;
+  preferenceScope: ModelPreferenceScope;
   threadLockedProvider?: LlmProvider | null;
   threadDefaultModelName?: string | null;
 }): {
@@ -63,6 +64,7 @@ export function useComposerModelPick(args: {
 
   const defaultModelPick = useDefaultModelPick({
     capability: args.capability,
+    preferenceScope: args.preferenceScope,
     threadLockedProvider,
     threadDefaultModelName,
   });

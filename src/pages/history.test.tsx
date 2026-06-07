@@ -188,6 +188,29 @@ describe("HistoryPage", () => {
     expect(screen.getByRole("button", { name: /open archive/i })).toBeInTheDocument();
   });
 
+  test("history loading skeleton occupies the chat history card layout", () => {
+    vi.mocked(usePaginatedQuery).mockImplementation((reference) => {
+      const name = functionName(reference);
+      if (name.endsWith("listThreadHistoryGroups")) return loadingFirstPagePaginated();
+      if (name.endsWith("listActiveThreadShares")) return paginated([]);
+      if (name.endsWith("listThreadsForHistoryGroup")) return paginated([]);
+      return paginated([]);
+    });
+
+    const { container } = renderHistoryPage();
+    const historyCard = screen.getByRole("group", { name: /chat history pages/i });
+    const selectorSkeleton = container.querySelector("[data-history-repository-selector-skeleton='true']");
+    const groupSkeleton = container.querySelector("[data-history-group-skeleton='true']");
+    const rowSkeleton = container.querySelector("[data-history-thread-rows-skeleton='true']");
+
+    expect(screen.queryByText("Loading")).not.toBeInTheDocument();
+    expect(selectorSkeleton).not.toBeNull();
+    expect(groupSkeleton).not.toBeNull();
+    expect(rowSkeleton).not.toBeNull();
+    expect(historyCard.contains(groupSkeleton)).toBe(true);
+    expect(groupSkeleton?.querySelectorAll(".h-8.w-20, .h-8.w-24")).toHaveLength(9);
+  });
+
   test("opens repository threads on their canonical routes", () => {
     renderHistoryPage();
 
@@ -373,6 +396,15 @@ function paginated(
     loadMore: options.loadMore ?? vi.fn(),
     isLoading: false as const,
   };
+}
+
+function loadingFirstPagePaginated(): ReturnType<typeof usePaginatedQuery> {
+  return {
+    results: [],
+    status: "LoadingFirstPage",
+    loadMore: vi.fn(),
+    isLoading: true,
+  } as unknown as ReturnType<typeof usePaginatedQuery>;
 }
 
 function rowForText(text: string): HTMLElement {

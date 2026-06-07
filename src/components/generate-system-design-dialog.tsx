@@ -110,7 +110,7 @@ export function GenerateSystemDesignDialog({
   // server. `useDefaultModelPick` returns `undefined` while loading
   // so the picker shows its placeholder for one paint instead of
   // flashing a stale default.
-  const defaultPick = useDefaultModelPick({ capability: "sandbox" });
+  const defaultPick = useDefaultModelPick({ capability: "sandbox", preferenceScope: "sandbox" });
   const [userPick, setUserPick] = useState<PromptInputModelPickerValue | null>(null);
   const modelPick: PromptInputModelPickerValue | null = userPick ?? defaultPick ?? null;
   const setModelPick = (next: PromptInputModelPickerValue) => setUserPick(next);
@@ -214,6 +214,7 @@ export function GenerateSystemDesignDialog({
               value={modelPick}
               onChange={setModelPick}
               capability="sandbox"
+              preferenceScope="sandbox"
               disabled={isSubmitting || jobInProgress}
             />
             <PromptInputReasoningPicker
@@ -221,6 +222,7 @@ export function GenerateSystemDesignDialog({
               onChange={setReasoningEffort}
               provider={modelPick?.provider}
               modelName={modelPick?.modelName}
+              preferenceScope="sandbox"
               disabled={isSubmitting || jobInProgress}
             />
           </div>

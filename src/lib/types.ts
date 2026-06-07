@@ -7,6 +7,7 @@ import type {
   UserPickableCapability,
 } from "../../convex/lib/llmCatalog";
 import type { LlmProvider } from "../../convex/lib/llmProvider";
+import type { ModelPreferenceScope } from "../../convex/lib/userPreferences";
 
 export type RepositoryId = Id<"repositories">;
 export type ThreadId = Id<"threads">;
@@ -75,7 +76,20 @@ export type { ChatMode };
  * from the backend modules so frontend imports do not have to reach into
  * `convex/lib/*` directly.
  */
-export type { LlmProvider, ModelCapability, ModelCatalogEntry, ReasoningEffort, UserPickableCapability };
+export type {
+  LlmProvider,
+  ModelCapability,
+  ModelCatalogEntry,
+  ModelPreferenceScope,
+  ReasoningEffort,
+  UserPickableCapability,
+};
+
+export type PickableModelEntry = ModelCatalogEntry & {
+  favorite: boolean;
+  default: boolean;
+  defaultSource: "custom" | "system" | null;
+};
 
 export type ActiveMessageStream = {
   assistantMessageId: MessageId;

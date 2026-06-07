@@ -217,7 +217,8 @@ describe("ChatPanel streaming rendering", () => {
             typeof args === "object" &&
             args !== null &&
             !Array.isArray(args) &&
-            Object.keys(args).length === 0,
+            args.preferenceScope === "discuss" &&
+            !("capability" in args),
         ),
     ).toBe(true);
   });

@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import type { LlmProvider, UserPickableCapability } from "@/lib/types";
+import type { LlmProvider, ModelPreferenceScope, UserPickableCapability } from "@/lib/types";
 
 export interface DefaultModelPick {
   provider: LlmProvider;
@@ -32,6 +32,7 @@ export interface DefaultModelPick {
  */
 export function useDefaultModelPick(args: {
   capability: UserPickableCapability;
+  preferenceScope: ModelPreferenceScope;
   /**
    * `threads.lockedProvider`. When the thread is locked, the capability
    * default's provider may not match — in that case the hook prefers the
@@ -46,7 +47,10 @@ export function useDefaultModelPick(args: {
    */
   threadDefaultModelName?: string | null;
 }): DefaultModelPick | undefined {
-  const capabilityDefault = useQuery(api.llmCatalog.getDefaultModelPick, { capability: args.capability });
+  const capabilityDefault = useQuery(api.llmCatalog.getDefaultModelPick, {
+    capability: args.capability,
+    preferenceScope: args.preferenceScope,
+  });
   // Provider filter applied only when the thread is locked to a provider
   // whose capability default differs from the global pick. Saves a query
   // roundtrip for the common unlocked / matching case.
@@ -57,7 +61,9 @@ export function useDefaultModelPick(args: {
     capabilityDefault.provider !== args.threadLockedProvider;
   const lockedProviderEntries = useQuery(
     api.llmCatalog.listPickableModels,
-    lockedProviderNeedsLookup ? { provider: args.threadLockedProvider!, capability: args.capability } : "skip",
+    lockedProviderNeedsLookup
+      ? { provider: args.threadLockedProvider!, capability: args.capability, preferenceScope: args.preferenceScope }
+      : "skip",
   );
   // Looked up purely so the hook can verify a persisted thread
   // default model still exists in the catalog before returning it.
@@ -66,7 +72,9 @@ export function useDefaultModelPick(args: {
   // gateway would reject.
   const catalogForThreadDefault = useQuery(
     api.llmCatalog.listPickableModels,
-    args.threadDefaultModelName !== null && args.threadDefaultModelName !== undefined ? {} : "skip",
+    args.threadDefaultModelName !== null && args.threadDefaultModelName !== undefined
+      ? { preferenceScope: args.preferenceScope }
+      : "skip",
   );
 
   return useMemo<DefaultModelPick | undefined>(() => {

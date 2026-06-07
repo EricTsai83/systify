@@ -95,4 +95,71 @@ describe("user preferences customization", () => {
     });
     expect(preferences?.customizationUpdatedAt).toEqual(expect.any(Number));
   });
+
+  test("updates viewer model preferences and filters pickable catalog entries", async () => {
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+
+    await viewer.mutation(api.userPreferences.updateViewerModelPreferences, {
+      scope: "chat",
+      enabledModels: [{ provider: "openai", modelName: "gpt-5.4-mini" }],
+      favoriteModels: [
+        { provider: "openai", modelName: "gpt-5.4-mini" },
+        { provider: "openai", modelName: "gpt-5.4-mini" },
+        { provider: "anthropic", modelName: "claude-haiku-4-5" },
+      ],
+      defaultModel: { provider: "openai", modelName: "gpt-5.4-mini" },
+    });
+
+    const preferences = await viewer.query(api.userPreferences.getViewerModelPreferences, {});
+    expect(preferences.scopes.chat.favoriteModels).toEqual([{ provider: "openai", modelName: "gpt-5.4-mini" }]);
+    expect(preferences.scopes.chat.defaultModel).toEqual({ provider: "openai", modelName: "gpt-5.4-mini" });
+    expect(preferences.scopes.chat.disabledModels).toEqual(
+      expect.arrayContaining([
+        { provider: "openai", modelName: "gpt-5.5" },
+        { provider: "anthropic", modelName: "claude-opus-4-8" },
+        { provider: "anthropic", modelName: "claude-haiku-4-5" },
+      ]),
+    );
+
+    const pickerModels = await viewer.query(api.llmCatalog.listPickableModels, { preferenceScope: "chat" });
+    expect(pickerModels.map((entry) => `${entry.provider}:${entry.modelName}`)).toEqual(["openai:gpt-5.4-mini"]);
+
+    const settingsRows = await viewer.query(api.llmCatalog.listModelSettings, { scope: "chat" });
+    expect(settingsRows.find((entry) => entry.modelName === "gpt-5.4-mini")).toMatchObject({
+      enabled: true,
+      favorite: true,
+      default: true,
+    });
+    expect(settingsRows.find((entry) => entry.modelName === "gpt-5.5")).toMatchObject({
+      enabled: false,
+      favorite: false,
+    });
+  });
+
+  test("uses the first enabled sandbox model when the default sandbox model is disabled", async () => {
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+
+    await viewer.mutation(api.userPreferences.updateViewerModelPreferences, {
+      scope: "sandbox",
+      enabledModels: [{ provider: "anthropic", modelName: "claude-opus-4-8" }],
+      favoriteModels: [],
+    });
+
+    await expect(
+      viewer.mutation(api.userPreferences.updateViewerModelPreferences, {
+        scope: "sandbox",
+        enabledModels: [],
+        favoriteModels: [],
+      }),
+    ).rejects.toThrow(/At least one model must remain selectable/);
+
+    await expect(
+      viewer.query(api.llmCatalog.getDefaultModelPick, { capability: "sandbox", preferenceScope: "sandbox" }),
+    ).resolves.toEqual({
+      provider: "anthropic",
+      modelName: "claude-opus-4-8",
+    });
+  });
 });

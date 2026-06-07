@@ -217,6 +217,17 @@ const repositoryColor = v.union(
   v.literal("teal"),
 );
 
+const modelPreferenceRef = v.object({
+  provider: llmProviderValidator,
+  modelName: v.string(),
+});
+
+const scopedModelPreference = v.object({
+  disabledModels: v.optional(v.array(modelPreferenceRef)),
+  favoriteModels: v.optional(v.array(modelPreferenceRef)),
+  defaultModel: v.optional(v.union(modelPreferenceRef, v.null())),
+});
+
 export default defineSchema({
   /**
    * Per-viewer key-value preferences. `lastActiveRepositoryId` is the
@@ -230,6 +241,17 @@ export default defineSchema({
     traits: v.optional(v.array(v.string())),
     customInstructions: v.optional(v.string()),
     customizationUpdatedAt: v.optional(v.number()),
+    disabledModels: v.optional(v.array(modelPreferenceRef)),
+    favoriteModels: v.optional(v.array(modelPreferenceRef)),
+    scopedModelPreferences: v.optional(
+      v.object({
+        chat: v.optional(scopedModelPreference),
+        discuss: v.optional(scopedModelPreference),
+        library: v.optional(scopedModelPreference),
+        sandbox: v.optional(scopedModelPreference),
+      }),
+    ),
+    modelPreferencesUpdatedAt: v.optional(v.number()),
   }).index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"]),
 
   repositories: defineTable({

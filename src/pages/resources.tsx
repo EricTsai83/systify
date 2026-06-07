@@ -118,6 +118,8 @@ export function ResourcesSettingsSection() {
 
 type InventoryRow = NonNullable<ReturnType<typeof useQuery<typeof api.repositories.listResourceInventory>>>[number];
 
+const RESOURCE_SUMMARY_SKELETON_LABELS = ["Repositories", "Ready", "Working", "Needs attention", "Updates"] as const;
+
 function ResourceSummary({ inventory }: { inventory: InventoryRow[] }) {
   const summary = inventory.reduce(
     (acc, row) => {
@@ -170,9 +172,27 @@ function ResourceSummaryBadge({
 }) {
   return (
     <Badge variant="outline" className={cn("h-7 gap-1.5", toneTextClassName(tone))}>
-      <span className="font-mono tabular-nums">{formatCount(value)}</span>
+      <span className="min-w-[2ch] text-right font-mono tabular-nums">{formatCount(value)}</span>
       <span className="font-medium">{label}</span>
     </Badge>
+  );
+}
+
+function ResourceSummarySkeleton() {
+  return (
+    <div aria-hidden="true" data-resource-summary-skeleton="true" className="flex min-h-7 flex-wrap gap-2">
+      {RESOURCE_SUMMARY_SKELETON_LABELS.map((label) => (
+        <Badge
+          key={label}
+          variant="outline"
+          data-resource-summary-skeleton-badge="true"
+          className="h-7 gap-1.5 border-transparent bg-muted/70 text-transparent"
+        >
+          <span className="min-w-[2ch] text-right font-mono tabular-nums">00</span>
+          <span className="font-medium">{label}</span>
+        </Badge>
+      ))}
+    </div>
   );
 }
 
@@ -220,7 +240,7 @@ function ResourceRow({ row }: { row: InventoryRow }) {
                 icon={<LightningIcon size={12} weight="bold" aria-hidden="true" />}
               />
             </div>
-            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground sm:text-xs">
+            <div className="mt-2 flex min-h-4 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-muted-foreground sm:text-xs">
               {sandbox.ttlExpiresAt ? <SandboxExpiry ttlExpiresAt={sandbox.ttlExpiresAt} /> : null}
               {lastSyncedLabel ? (
                 <span className="inline-flex items-center gap-1">
@@ -238,7 +258,7 @@ function ResourceRow({ row }: { row: InventoryRow }) {
           </div>
         </div>
         <div className="flex flex-row gap-2 sm:shrink-0">
-          <Button asChild type="button" variant="secondary" size="sm" className="flex-1 sm:flex-none">
+          <Button asChild type="button" variant="secondary" size="sm" className="flex-1 sm:w-32 sm:flex-none">
             <Link to={targetPath}>Open repository</Link>
           </Button>
         </div>
@@ -257,7 +277,7 @@ function ResourceStatus({ label, surface, icon }: { label: string; surface: Surf
         <span className="truncate">{label}</span>
       </div>
       <p className="mt-1 truncate text-xs font-medium text-foreground">{surface.title}</p>
-      <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-muted-foreground">{surface.description}</p>
+      <p className="mt-0.5 line-clamp-2 min-h-8 text-[11px] leading-4 text-muted-foreground">{surface.description}</p>
     </div>
   );
 }
@@ -270,25 +290,62 @@ function SandboxExpiry({ ttlExpiresAt }: { ttlExpiresAt: number }) {
 
 function ResourceListSkeleton() {
   return (
-    <ul aria-hidden="true" className="mt-4 flex flex-col gap-2.5">
-      {Array.from({ length: 3 }).map((_, index) => (
-        <li key={index}>
-          <Card className="p-4">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-              <div className="flex min-w-0 items-start gap-3">
-                <Skeleton className="size-8 shrink-0" />
-                <div className="flex min-w-0 flex-1 flex-col gap-2">
-                  <Skeleton className="h-4 w-40" />
-                  <Skeleton className="h-3 w-64" />
-                  <Skeleton className="h-3 w-32" />
+    <>
+      <ResourceSummarySkeleton />
+      <ul aria-hidden="true" data-resource-skeleton-list="true" className="mt-4 flex flex-col gap-2.5">
+        {Array.from({ length: 3 }).map((_, index) => (
+          <li key={index} data-resource-skeleton-row="true">
+            <Card className="p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+                <div className="flex min-w-0 items-start gap-3">
+                  <Skeleton className="mt-0.5 size-8 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <Skeleton className="h-5 w-40 max-w-full sm:h-6" />
+                    <div className="mt-2 grid gap-2 md:grid-cols-2">
+                      <ResourceStatusSkeleton labelWidthClassName="w-28" titleWidthClassName="w-32" />
+                      <ResourceStatusSkeleton labelWidthClassName="w-20" titleWidthClassName="w-36" />
+                    </div>
+                    <div className="mt-2 flex min-h-4 flex-wrap items-center gap-x-3 gap-y-1">
+                      <Skeleton className="h-3 w-28" />
+                      <Skeleton className="h-3 w-24" />
+                    </div>
+                  </div>
+                </div>
+                <div className="flex flex-row gap-2 sm:shrink-0">
+                  <Skeleton className="h-8 flex-1 sm:w-32 sm:flex-none" />
                 </div>
               </div>
-              <Skeleton className="h-8 w-full sm:w-32" />
-            </div>
-          </Card>
-        </li>
-      ))}
-    </ul>
+            </Card>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
+function ResourceStatusSkeleton({
+  labelWidthClassName,
+  titleWidthClassName,
+}: {
+  labelWidthClassName: string;
+  titleWidthClassName: string;
+}) {
+  return (
+    <div
+      aria-hidden="true"
+      data-resource-status-skeleton="true"
+      className="min-w-0 rounded-md border border-border bg-background/40 px-3 py-2"
+    >
+      <div className="flex min-w-0 items-center gap-1.5">
+        <Skeleton className="size-3 shrink-0 rounded-sm" />
+        <Skeleton className={cn("h-3 max-w-full", labelWidthClassName)} />
+      </div>
+      <Skeleton className={cn("mt-1 h-4 max-w-full", titleWidthClassName)} />
+      <div className="mt-0.5 grid min-h-8 content-start gap-1">
+        <Skeleton className="h-3 w-full" />
+        <Skeleton className="h-3 w-4/5" />
+      </div>
+    </div>
   );
 }
 

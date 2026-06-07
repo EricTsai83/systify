@@ -3,19 +3,32 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useMutation, useQuery } from "convex/react";
 import { Link, Navigate, useParams, useSearchParams } from "react-router-dom";
 import {
+  BrainIcon,
   CaretLeftIcon,
+  CaretDownIcon,
   CaretRightIcon,
   CaretUpDownIcon,
+  CheckIcon,
   ChatCircleText,
   ChartLineUp,
   CheckCircle,
+  EyeIcon,
+  FilePdfIcon,
+  FunnelSimpleIcon,
   Gear,
   GithubLogo,
+  ImageSquareIcon,
   Info,
+  LightningIcon,
+  ListBulletsIcon,
+  MagnifyingGlassIcon,
   Plus,
   SlidersHorizontal,
+  SquaresFourIcon,
   Sparkle,
+  StarIcon,
   Wallet,
+  WrenchIcon,
   X,
 } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
@@ -24,6 +37,7 @@ import { HistoryPage } from "@/pages/history";
 import { ResourcesSettingsSection } from "@/pages/resources";
 import { useGitHubConnection } from "@/hooks/use-github-connection";
 import { Logo } from "@/components/logo";
+import { AnthropicIcon, OpenAIIcon } from "@/components/icons";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,12 +53,14 @@ import {
   ComboboxTrigger,
 } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useComboboxAnchor } from "@/components/ui/use-combobox-anchor";
 import {
   CUSTOM_INSTRUCTIONS_MAX_LENGTH,
@@ -57,6 +73,7 @@ import {
   useUserPreferences,
 } from "@/hooks/use-user-preferences";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { useLocalStorageEnum } from "@/hooks/use-persisted-state";
 import {
   DEFAULT_AUTHENTICATED_PATH,
   DEFAULT_SETTINGS_SECTION,
@@ -156,12 +173,90 @@ const TIME_ZONE_SEARCH_ALIASES: Record<string, string> = {
 };
 
 type ViewerUsageDashboard = NonNullable<ReturnType<typeof useQuery<typeof api.lib.userCost.getViewerUsageDashboard>>>;
+type ModelSettingsEntries = NonNullable<ReturnType<typeof useQuery<typeof api.llmCatalog.listModelSettings>>>;
+type ModelSettingsEntry = ModelSettingsEntries[number];
+type ModelPreferenceRef = Pick<ModelSettingsEntry, "provider" | "modelName">;
+type ModelPreferenceScope = "chat" | "discuss" | "library" | "sandbox";
 
 type TimeZoneOption = {
   value: string;
   label: string;
   detail: string;
   searchText: string;
+};
+
+const MODEL_SETTINGS_VIEW_STORAGE_KEY = "systify.settings.models.viewMode";
+const MODEL_SETTINGS_SCOPE_STORAGE_KEY = "systify.settings.models.scope";
+const MODEL_SETTINGS_VIEW_MODES = ["list", "grid"] as const;
+type ModelSettingsViewMode = (typeof MODEL_SETTINGS_VIEW_MODES)[number];
+const MODEL_SETTINGS_SCOPES = ["chat", "discuss", "library", "sandbox"] as const;
+const MODEL_SETTINGS_SKELETON_ITEM_COUNT = 4;
+
+const MODEL_SETTINGS_SCOPE_COPY: Record<ModelPreferenceScope, { label: string; description: string }> = {
+  chat: {
+    label: "Chat",
+    description: "Standalone chats without a repository.",
+  },
+  discuss: {
+    label: "Discuss",
+    description: "Repository Q&A and grounded discussion.",
+  },
+  library: {
+    label: "Library",
+    description: "Artifact reader and Ask panel.",
+  },
+  sandbox: {
+    label: "Sandbox",
+    description: "Sandbox-grounded work and System Design generation.",
+  },
+};
+
+const MODEL_FEATURE_IDS = ["fast", "vision", "reasoning", "effort", "tools", "image", "pdf"] as const;
+type ModelFeatureId = (typeof MODEL_FEATURE_IDS)[number];
+
+const MODEL_FEATURE_COPY: Record<
+  ModelFeatureId,
+  {
+    label: string;
+    description: string;
+    icon: React.ComponentType<{ "weight"?: "regular" | "bold" | "fill"; "aria-hidden"?: boolean }>;
+  }
+> = {
+  fast: {
+    label: "Fast",
+    description: "Small or low-latency tier.",
+    icon: LightningIcon,
+  },
+  vision: {
+    label: "Vision",
+    description: "Image inputs are not catalogued yet.",
+    icon: EyeIcon,
+  },
+  reasoning: {
+    label: "Reasoning",
+    description: "Supports extended reasoning.",
+    icon: BrainIcon,
+  },
+  effort: {
+    label: "Effort Control",
+    description: "Supports per-message reasoning effort.",
+    icon: SlidersHorizontal,
+  },
+  tools: {
+    label: "Tool Calling",
+    description: "Can call repository and sandbox tools.",
+    icon: WrenchIcon,
+  },
+  image: {
+    label: "Image Generation",
+    description: "Image generation is not catalogued yet.",
+    icon: ImageSquareIcon,
+  },
+  pdf: {
+    label: "PDF Comprehension",
+    description: "PDF comprehension is not catalogued yet.",
+    icon: FilePdfIcon,
+  },
 };
 
 /**
@@ -294,7 +389,7 @@ export function SettingsPage() {
           ) : null}
           {activeSection === "history" ? <HistorySettingsSection /> : null}
           {activeSection === "resources" ? <ResourcesSection /> : null}
-          {activeSection === "models" ? <PlaceholderSettingsSection title="Models" /> : null}
+          {activeSection === "models" ? <ModelsSettingsSection /> : null}
           {activeSection === "api-keys" ? <PlaceholderSettingsSection title="API Keys" /> : null}
           {activeSection === "attachments" ? <PlaceholderSettingsSection title="Attachments" /> : null}
           {activeSection === "shortcuts" ? <PlaceholderSettingsSection title="Shortcuts" /> : null}
@@ -1200,6 +1295,872 @@ function ResourcesSection() {
       <ResourcesSettingsSection />
     </section>
   );
+}
+
+function ModelsSettingsSection() {
+  const [activeScope, setActiveScope] = useLocalStorageEnum(
+    MODEL_SETTINGS_SCOPE_STORAGE_KEY,
+    MODEL_SETTINGS_SCOPES,
+    "chat",
+  );
+  const modelSettings = useQuery(api.llmCatalog.listModelSettings, { scope: activeScope });
+  const updateModelPreferences = useMutation(api.userPreferences.updateViewerModelPreferences);
+  const [viewMode, setViewMode] = useLocalStorageEnum(
+    MODEL_SETTINGS_VIEW_STORAGE_KEY,
+    MODEL_SETTINGS_VIEW_MODES,
+    "list",
+  );
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeFilters, setActiveFilters] = useState<ModelFeatureId[]>([]);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  const entries = useMemo(() => modelSettings ?? [], [modelSettings]);
+  const enabledCount = entries.filter((entry) => entry.enabled).length;
+  const favoriteCount = entries.filter((entry) => entry.favorite).length;
+  const defaultModel = entries.find((entry) => entry.default) ?? null;
+  const featureCounts = useMemo(() => getModelFeatureCounts(entries), [entries]);
+  const visibleEntries = useMemo(
+    () => filterModelSettings(entries, searchQuery, activeFilters),
+    [activeFilters, entries, searchQuery],
+  );
+
+  const [isSaving, persistModelEntries] = useAsyncCallback(async (nextEntries: ModelSettingsEntry[]) => {
+    setSaveError(null);
+    const nextDefault = nextEntries.find((entry) => entry.enabled && entry.default);
+    await updateModelPreferences({
+      scope: activeScope,
+      enabledModels: nextEntries.filter((entry) => entry.enabled).map(toModelPreferenceRef),
+      favoriteModels: nextEntries.filter((entry) => entry.enabled && entry.favorite).map(toModelPreferenceRef),
+      defaultModel: nextDefault ? toModelPreferenceRef(nextDefault) : null,
+    });
+  });
+
+  const commitModelEntries = useCallback(
+    (nextEntries: ModelSettingsEntry[]) => {
+      void persistModelEntries(nextEntries).catch((error) => {
+        setSaveError(toUserErrorMessage(error, "Failed to save model preferences."));
+      });
+    },
+    [persistModelEntries],
+  );
+
+  const handleToggleEnabled = useCallback(
+    (entry: ModelSettingsEntry, nextEnabled: boolean) => {
+      if (!modelSettings) {
+        return;
+      }
+      if (!nextEnabled && enabledCount <= 1) {
+        setSaveError("At least one model must remain selectable.");
+        return;
+      }
+      const key = modelPreferenceKey(entry);
+      commitModelEntries(
+        ensureModelSettingsDefault(
+          modelSettings.map((candidate) =>
+            modelPreferenceKey(candidate) === key
+              ? {
+                  ...candidate,
+                  enabled: nextEnabled,
+                  favorite: nextEnabled ? candidate.favorite : false,
+                  default: nextEnabled ? candidate.default : false,
+                }
+              : candidate,
+          ),
+        ),
+      );
+    },
+    [commitModelEntries, enabledCount, modelSettings],
+  );
+
+  const handleToggleFavorite = useCallback(
+    (entry: ModelSettingsEntry) => {
+      if (!modelSettings || !entry.enabled) {
+        return;
+      }
+      const key = modelPreferenceKey(entry);
+      commitModelEntries(
+        modelSettings.map((candidate) =>
+          modelPreferenceKey(candidate) === key ? { ...candidate, favorite: !candidate.favorite } : candidate,
+        ),
+      );
+    },
+    [commitModelEntries, modelSettings],
+  );
+
+  const handleSetDefault = useCallback(
+    (entry: ModelSettingsEntry) => {
+      if (!modelSettings || !entry.enabled) {
+        return;
+      }
+      const key = modelPreferenceKey(entry);
+      commitModelEntries(
+        modelSettings.map((candidate) => ({
+          ...candidate,
+          default: modelPreferenceKey(candidate) === key,
+        })),
+      );
+    },
+    [commitModelEntries, modelSettings],
+  );
+
+  const toggleFilter = useCallback((filterId: ModelFeatureId) => {
+    setActiveFilters((prev) =>
+      prev.includes(filterId) ? prev.filter((candidate) => candidate !== filterId) : [...prev, filterId],
+    );
+  }, []);
+
+  return (
+    <TooltipProvider delayDuration={150}>
+      <section className="flex flex-col gap-4">
+        <Card className="overflow-hidden p-0">
+          <div className="border-b border-border px-5 py-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <h2 className="text-2xl font-semibold tracking-tight">Models</h2>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+                  Tune selectable, favorite, and default models separately for each chat surface.
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">{enabledCount} selectable</Badge>
+                <Badge variant={favoriteCount > 0 ? "accent" : "muted"}>{favoriteCount} favorite</Badge>
+                <Badge variant={defaultModel ? "outline" : "muted"}>
+                  {defaultModel
+                    ? `${defaultModel.displayName} ${formatDefaultSourceLabel(defaultModel.defaultSource)}`
+                    : "No default"}
+                </Badge>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-b border-border bg-muted/10 px-4 py-3">
+            <div className="mb-3 flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+              <ToggleGroup
+                type="single"
+                value={activeScope}
+                onValueChange={(value) => {
+                  if (isModelPreferenceScope(value)) {
+                    setActiveScope(value);
+                  }
+                }}
+                variant="outline"
+                size="sm"
+                aria-label="Model settings scope"
+                className="w-fit border border-border bg-background"
+              >
+                {MODEL_SETTINGS_SCOPES.map((scope) => (
+                  <ToggleGroupItem
+                    key={scope}
+                    value={scope}
+                    aria-label={`${MODEL_SETTINGS_SCOPE_COPY[scope].label} models`}
+                  >
+                    {MODEL_SETTINGS_SCOPE_COPY[scope].label}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+              <p className="text-sm text-muted-foreground">{MODEL_SETTINGS_SCOPE_COPY[activeScope].description}</p>
+            </div>
+
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+              <div className="relative min-w-0 flex-1">
+                <MagnifyingGlassIcon
+                  weight="bold"
+                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <Input
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search models..."
+                  className="h-9 pl-9"
+                  aria-label="Search models"
+                />
+              </div>
+
+              <div className="flex shrink-0 items-center gap-2">
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" size="sm" className="min-w-28 justify-between">
+                      <span className="flex items-center gap-2">
+                        <FunnelSimpleIcon weight="bold" />
+                        Filter
+                        {activeFilters.length > 0 ? <Badge variant="accent">{activeFilters.length}</Badge> : null}
+                      </span>
+                      <CaretDownIcon weight="bold" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-80 p-2">
+                    <div className="flex items-center justify-between gap-3 px-2 py-1.5">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Special features
+                      </p>
+                      {activeFilters.length > 0 ? (
+                        <Button type="button" variant="ghost" size="xs" onClick={() => setActiveFilters([])}>
+                          Clear
+                        </Button>
+                      ) : null}
+                    </div>
+                    <div className="mt-1 flex flex-col gap-1">
+                      {MODEL_FEATURE_IDS.map((featureId) => (
+                        <ModelFilterOption
+                          key={featureId}
+                          featureId={featureId}
+                          count={featureCounts[featureId]}
+                          active={activeFilters.includes(featureId)}
+                          onToggle={toggleFilter}
+                        />
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+
+                <ToggleGroup
+                  type="single"
+                  value={viewMode}
+                  onValueChange={(value) => {
+                    if (value === "list" || value === "grid") {
+                      setViewMode(value);
+                    }
+                  }}
+                  variant="outline"
+                  size="sm"
+                  aria-label="Model display"
+                  className="border border-border bg-background"
+                >
+                  <ToggleGroupItem value="list" aria-label="List view">
+                    <ListBulletsIcon weight="bold" />
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="grid" aria-label="Grid view">
+                    <SquaresFourIcon weight="bold" />
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </div>
+            </div>
+
+            {activeFilters.length > 0 ? (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {activeFilters.map((featureId) => (
+                  <button
+                    key={featureId}
+                    type="button"
+                    className="inline-flex items-center gap-1.5 border border-border bg-background px-2 py-1 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    onClick={() => toggleFilter(featureId)}
+                  >
+                    {MODEL_FEATURE_COPY[featureId].label}
+                    <X size={12} weight="bold" aria-hidden="true" />
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+
+          {saveError ? (
+            <div className="border-b border-border px-5 py-3 text-sm text-destructive">{saveError}</div>
+          ) : null}
+
+          {modelSettings === undefined ? (
+            <ModelsSettingsSkeleton viewMode={viewMode} />
+          ) : visibleEntries.length === 0 ? (
+            <div className="px-5 py-12 text-center">
+              <p className="text-sm font-semibold">No models match the current view.</p>
+              <p className="mt-1 text-sm text-muted-foreground">Try clearing search or removing a feature filter.</p>
+            </div>
+          ) : viewMode === "list" ? (
+            <ModelSettingsList
+              entries={visibleEntries}
+              enabledCount={enabledCount}
+              isSaving={isSaving}
+              onToggleEnabled={handleToggleEnabled}
+              onToggleFavorite={handleToggleFavorite}
+              onSetDefault={handleSetDefault}
+            />
+          ) : (
+            <ModelSettingsGrid
+              entries={visibleEntries}
+              enabledCount={enabledCount}
+              isSaving={isSaving}
+              onToggleEnabled={handleToggleEnabled}
+              onToggleFavorite={handleToggleFavorite}
+              onSetDefault={handleSetDefault}
+            />
+          )}
+        </Card>
+      </section>
+    </TooltipProvider>
+  );
+}
+
+function ModelFilterOption({
+  featureId,
+  count,
+  active,
+  onToggle,
+}: {
+  featureId: ModelFeatureId;
+  count: number;
+  active: boolean;
+  onToggle: (featureId: ModelFeatureId) => void;
+}) {
+  const copy = MODEL_FEATURE_COPY[featureId];
+  const Icon = copy.icon;
+  const disabled = count === 0;
+
+  return (
+    <button
+      type="button"
+      className={cn(
+        "flex min-h-11 items-center gap-3 px-2 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        active ? "bg-muted text-foreground" : "text-foreground hover:bg-muted/60",
+        disabled ? "cursor-not-allowed opacity-45 hover:bg-transparent" : null,
+      )}
+      aria-pressed={active}
+      disabled={disabled}
+      onClick={() => onToggle(featureId)}
+    >
+      <span className="flex size-7 shrink-0 items-center justify-center border border-border bg-background text-muted-foreground">
+        <Icon weight="bold" aria-hidden={true} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate font-medium">{copy.label}</span>
+        <span className="block truncate text-xs text-muted-foreground">{copy.description}</span>
+      </span>
+      <span className="flex shrink-0 items-center gap-2">
+        <Badge variant={count > 0 ? "outline" : "muted"}>{count}</Badge>
+        {active ? <CheckIcon weight="bold" className="text-primary" aria-hidden="true" /> : null}
+      </span>
+    </button>
+  );
+}
+
+function ModelSettingsList({
+  entries,
+  enabledCount,
+  isSaving,
+  onToggleEnabled,
+  onToggleFavorite,
+  onSetDefault,
+}: {
+  entries: ModelSettingsEntry[];
+  enabledCount: number;
+  isSaving: boolean;
+  onToggleEnabled: (entry: ModelSettingsEntry, nextEnabled: boolean) => void;
+  onToggleFavorite: (entry: ModelSettingsEntry) => void;
+  onSetDefault: (entry: ModelSettingsEntry) => void;
+}) {
+  return (
+    <div className="divide-y divide-border">
+      {entries.map((entry) => (
+        <div
+          key={modelPreferenceKey(entry)}
+          className={cn(
+            "flex min-h-24 flex-col gap-3 px-5 py-4 transition-colors sm:flex-row sm:items-center sm:justify-between",
+            entry.enabled ? "bg-card" : "bg-muted/20 text-muted-foreground",
+          )}
+        >
+          <div className="flex min-w-0 items-start gap-3">
+            <ModelProviderMark provider={entry.provider} />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h3 className="truncate text-sm font-semibold text-foreground">{entry.displayName}</h3>
+                <Badge variant="muted">{formatProviderLabel(entry.provider)}</Badge>
+                <Badge variant={entry.capability === "sandbox" ? "outline" : "muted"}>
+                  {formatCapabilityLabel(entry.capability)}
+                </Badge>
+              </div>
+              <p className="mt-1 text-sm text-muted-foreground">{describeModelSetting(entry)}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <ModelFeatureBadges entry={entry} />
+                <span className="text-xs text-muted-foreground">
+                  {formatContextWindow(entry.contextWindow)} context
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex shrink-0 items-center gap-3 self-start sm:self-center">
+            <SelectableCheckbox
+              entry={entry}
+              enabledCount={enabledCount}
+              isSaving={isSaving}
+              onToggleEnabled={onToggleEnabled}
+            />
+            <FavoriteButton entry={entry} isSaving={isSaving} onToggleFavorite={onToggleFavorite} />
+            <DefaultModelButton entry={entry} isSaving={isSaving} onSetDefault={onSetDefault} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ModelSettingsGrid({
+  entries,
+  enabledCount,
+  isSaving,
+  onToggleEnabled,
+  onToggleFavorite,
+  onSetDefault,
+}: {
+  entries: ModelSettingsEntry[];
+  enabledCount: number;
+  isSaving: boolean;
+  onToggleEnabled: (entry: ModelSettingsEntry, nextEnabled: boolean) => void;
+  onToggleFavorite: (entry: ModelSettingsEntry) => void;
+  onSetDefault: (entry: ModelSettingsEntry) => void;
+}) {
+  return (
+    <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
+      {entries.map((entry) => (
+        <article
+          key={modelPreferenceKey(entry)}
+          className={cn(
+            "flex min-h-52 flex-col justify-between border border-border bg-background p-4 transition-colors",
+            entry.enabled ? "hover:border-foreground/30" : "bg-muted/20 text-muted-foreground",
+          )}
+        >
+          <div className="min-w-0">
+            <div className="flex items-start justify-between gap-3">
+              <ModelProviderMark provider={entry.provider} size="lg" />
+              <div className="flex items-center gap-1">
+                <FavoriteButton entry={entry} isSaving={isSaving} onToggleFavorite={onToggleFavorite} />
+                <DefaultModelButton entry={entry} isSaving={isSaving} onSetDefault={onSetDefault} />
+              </div>
+            </div>
+            <h3 className="mt-4 text-lg font-semibold leading-6 text-foreground">{entry.displayName}</h3>
+            <p className="mt-1 line-clamp-2 min-h-10 text-sm leading-5 text-muted-foreground">
+              {describeModelSetting(entry)}
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Badge variant="muted">{formatProviderLabel(entry.provider)}</Badge>
+              <Badge variant={entry.capability === "sandbox" ? "outline" : "muted"}>
+                {formatCapabilityLabel(entry.capability)}
+              </Badge>
+            </div>
+          </div>
+          <div className="mt-5 flex items-end justify-between gap-3">
+            <div className="flex min-w-0 flex-col gap-2">
+              <ModelFeatureBadges entry={entry} compact />
+              <span className="truncate text-xs text-muted-foreground">
+                {formatContextWindow(entry.contextWindow)} context
+              </span>
+            </div>
+            <SelectableCheckbox
+              entry={entry}
+              enabledCount={enabledCount}
+              isSaving={isSaving}
+              onToggleEnabled={onToggleEnabled}
+              compact
+            />
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function SelectableCheckbox({
+  entry,
+  enabledCount,
+  isSaving,
+  compact = false,
+  onToggleEnabled,
+}: {
+  entry: ModelSettingsEntry;
+  enabledCount: number;
+  isSaving: boolean;
+  compact?: boolean;
+  onToggleEnabled: (entry: ModelSettingsEntry, nextEnabled: boolean) => void;
+}) {
+  const cannotDisableLast = entry.enabled && enabledCount <= 1;
+  return (
+    <label
+      className={cn(
+        "inline-flex min-h-8 items-center gap-2 border border-border bg-background px-2 text-xs font-semibold transition-colors",
+        isSaving || cannotDisableLast ? "cursor-not-allowed opacity-70" : "cursor-pointer hover:bg-muted",
+        compact ? "px-2" : "px-3",
+      )}
+    >
+      <input
+        type="checkbox"
+        className="size-4 accent-primary"
+        checked={entry.enabled}
+        disabled={isSaving || cannotDisableLast}
+        aria-label={`${entry.displayName} selectable`}
+        onChange={(event) => onToggleEnabled(entry, event.target.checked)}
+      />
+      <span>{entry.enabled ? "Selectable" : "Hidden"}</span>
+    </label>
+  );
+}
+
+function FavoriteButton({
+  entry,
+  isSaving,
+  onToggleFavorite,
+}: {
+  entry: ModelSettingsEntry;
+  isSaving: boolean;
+  onToggleFavorite: (entry: ModelSettingsEntry) => void;
+}) {
+  const Icon = StarIcon;
+  return (
+    <ModelPreferenceActionButton
+      active={entry.favorite}
+      ariaLabel={`${entry.favorite ? "Remove" : "Add"} ${entry.displayName} favorite`}
+      disabled={isSaving || !entry.enabled}
+      icon={<Icon weight={entry.favorite ? "fill" : "regular"} />}
+      tooltip={entry.favorite ? "Favorite model" : "Mark as favorite"}
+      onClick={() => onToggleFavorite(entry)}
+    />
+  );
+}
+
+function DefaultModelButton({
+  entry,
+  isSaving,
+  onSetDefault,
+}: {
+  entry: ModelSettingsEntry;
+  isSaving: boolean;
+  onSetDefault: (entry: ModelSettingsEntry) => void;
+}) {
+  const Icon = CheckCircle;
+  return (
+    <ModelPreferenceActionButton
+      active={entry.default}
+      ariaLabel={`Use ${entry.displayName} as default`}
+      disabled={isSaving || !entry.enabled}
+      icon={<Icon weight={entry.default ? "fill" : "regular"} />}
+      tooltip={entry.default ? formatDefaultModelTooltip(entry.defaultSource) : "Set as default"}
+      onClick={() => {
+        if (!entry.default) {
+          onSetDefault(entry);
+        }
+      }}
+    />
+  );
+}
+
+function ModelPreferenceActionButton({
+  active,
+  ariaLabel,
+  disabled,
+  icon,
+  tooltip,
+  onClick,
+}: {
+  active: boolean;
+  ariaLabel: string;
+  disabled: boolean;
+  icon: React.ReactNode;
+  tooltip: string;
+  onClick: () => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-pressed={active}
+          aria-label={ariaLabel}
+          disabled={disabled}
+          className={cn(active ? "bg-muted text-primary hover:bg-muted hover:text-primary" : "text-muted-foreground")}
+          onClick={onClick}
+        >
+          {icon}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="top">{tooltip}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ModelProviderMark({
+  provider,
+  size = "default",
+}: {
+  provider: ModelSettingsEntry["provider"];
+  size?: "default" | "lg";
+}) {
+  const className = cn(
+    "flex shrink-0 items-center justify-center border border-border bg-muted/30 text-foreground",
+    size === "lg" ? "size-11" : "size-9",
+  );
+  return (
+    <span className={className} aria-hidden="true">
+      {provider === "openai" ? (
+        <OpenAIIcon className={size === "lg" ? "size-6" : "size-5"} />
+      ) : (
+        <AnthropicIcon className={size === "lg" ? "size-6" : "size-5"} />
+      )}
+    </span>
+  );
+}
+
+function ModelFeatureBadges({ entry, compact = false }: { entry: ModelSettingsEntry; compact?: boolean }) {
+  const featureIds = getModelFeatureIds(entry);
+  if (featureIds.length === 0) {
+    return null;
+  }
+
+  return (
+    <span className="flex flex-wrap gap-1.5">
+      {featureIds.map((featureId) => {
+        const Icon = MODEL_FEATURE_COPY[featureId].icon;
+        return (
+          <span
+            key={featureId}
+            className={cn(
+              "inline-flex items-center gap-1 border border-border bg-muted/30 font-medium text-muted-foreground",
+              compact ? "px-1.5 py-1 text-[10px]" : "px-2 py-1 text-xs",
+            )}
+          >
+            <Icon weight="bold" aria-hidden={true} />
+            {compact ? null : MODEL_FEATURE_COPY[featureId].label}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
+function ModelsSettingsSkeleton({ viewMode }: { viewMode: ModelSettingsViewMode }) {
+  if (viewMode === "grid") {
+    return (
+      <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
+        {Array.from({ length: MODEL_SETTINGS_SKELETON_ITEM_COUNT }, (_, index) => (
+          <div key={index} className="flex min-h-52 flex-col justify-between border border-border bg-background p-4">
+            <div>
+              <div className="flex items-start justify-between gap-3">
+                <Skeleton className="size-11 shrink-0" />
+                <Skeleton className="size-8 shrink-0" />
+              </div>
+              <Skeleton className="mt-4 h-6 w-36 max-w-full" />
+              <Skeleton className="mt-2 h-4 w-full" />
+              <Skeleton className="mt-1.5 h-4 w-4/5" />
+              <div className="mt-3 flex gap-2">
+                <Skeleton className="h-5 w-16" />
+                <Skeleton className="h-5 w-20" />
+              </div>
+            </div>
+            <div className="mt-5 flex items-end justify-between gap-3">
+              <div className="flex min-w-0 flex-1 flex-col gap-2">
+                <div className="flex gap-1.5">
+                  <Skeleton className="h-6 w-7" />
+                  <Skeleton className="h-6 w-7" />
+                  <Skeleton className="h-6 w-7" />
+                </div>
+                <Skeleton className="h-3 w-20" />
+              </div>
+              <Skeleton className="h-8 w-24 shrink-0" />
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="divide-y divide-border">
+      {Array.from({ length: MODEL_SETTINGS_SKELETON_ITEM_COUNT }, (_, index) => (
+        <div
+          key={index}
+          className="flex min-h-24 flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="flex min-w-0 items-start gap-3">
+            <Skeleton className="size-9 shrink-0" />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <Skeleton className="h-5 w-32" />
+                <Skeleton className="h-5 w-16" />
+                <Skeleton className="h-5 w-20" />
+              </div>
+              <Skeleton className="mt-2 h-4 w-full max-w-md" />
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Skeleton className="h-7 w-24" />
+                <Skeleton className="h-7 w-28" />
+                <Skeleton className="h-3 w-20" />
+              </div>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-3 self-start sm:self-center">
+            <Skeleton className="h-8 w-28 shrink-0" />
+            <Skeleton className="size-8 shrink-0" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function toModelPreferenceRef(entry: ModelPreferenceRef): ModelPreferenceRef {
+  return {
+    provider: entry.provider,
+    modelName: entry.modelName,
+  };
+}
+
+function modelPreferenceKey(entry: ModelPreferenceRef): string {
+  return `${entry.provider}:${entry.modelName}`;
+}
+
+function isModelPreferenceScope(value: string): value is ModelPreferenceScope {
+  return (MODEL_SETTINGS_SCOPES as readonly string[]).includes(value);
+}
+
+function getModelFeatureCounts(entries: readonly ModelSettingsEntry[]): Record<ModelFeatureId, number> {
+  const counts: Record<ModelFeatureId, number> = {
+    fast: 0,
+    vision: 0,
+    reasoning: 0,
+    effort: 0,
+    tools: 0,
+    image: 0,
+    pdf: 0,
+  };
+  for (const entry of entries) {
+    for (const featureId of getModelFeatureIds(entry)) {
+      counts[featureId] += 1;
+    }
+  }
+  return counts;
+}
+
+function filterModelSettings(
+  entries: readonly ModelSettingsEntry[],
+  searchQuery: string,
+  activeFilters: readonly ModelFeatureId[],
+): ModelSettingsEntry[] {
+  const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
+
+  return entries
+    .map((entry, index) => ({ entry, index }))
+    .filter(({ entry }) => {
+      if (normalizedSearch) {
+        const searchText = [
+          entry.displayName,
+          entry.modelName,
+          entry.provider,
+          entry.capability,
+          formatProviderLabel(entry.provider),
+          formatCapabilityLabel(entry.capability),
+        ]
+          .join(" ")
+          .toLocaleLowerCase();
+        if (!searchText.includes(normalizedSearch)) {
+          return false;
+        }
+      }
+
+      if (activeFilters.length > 0) {
+        const features = new Set(getModelFeatureIds(entry));
+        return activeFilters.every((featureId) => features.has(featureId));
+      }
+
+      return true;
+    })
+    .sort((a, b) => getModelSettingsPriority(a.entry) - getModelSettingsPriority(b.entry) || a.index - b.index)
+    .map(({ entry }) => entry);
+}
+
+function getModelSettingsPriority(entry: ModelSettingsEntry): number {
+  if (entry.default) {
+    return 0;
+  }
+  if (entry.favorite) {
+    return 1;
+  }
+  return 2;
+}
+
+function ensureModelSettingsDefault(entries: ModelSettingsEntry[]): ModelSettingsEntry[] {
+  if (entries.some((entry) => entry.enabled && entry.default)) {
+    return entries;
+  }
+  const firstEnabledKey = entries.find((entry) => entry.enabled);
+  if (!firstEnabledKey) {
+    return entries;
+  }
+  const key = modelPreferenceKey(firstEnabledKey);
+  return entries.map((entry) => ({
+    ...entry,
+    default: modelPreferenceKey(entry) === key,
+  }));
+}
+
+function getModelFeatureIds(entry: ModelSettingsEntry): ModelFeatureId[] {
+  const features: ModelFeatureId[] = [];
+  if (isFastModel(entry)) {
+    features.push("fast");
+  }
+  if (entry.supportsReasoning) {
+    features.push("reasoning");
+  }
+  if ((entry.supportedReasoningEfforts?.length ?? 0) > 1) {
+    features.push("effort");
+  }
+  if (entry.supportsTools) {
+    features.push("tools");
+  }
+  return features;
+}
+
+function isFastModel(entry: ModelSettingsEntry): boolean {
+  const name = `${entry.displayName} ${entry.modelName}`.toLocaleLowerCase();
+  return (
+    name.includes("mini") ||
+    name.includes("haiku") ||
+    (entry.capability === "discuss" && entry.contextWindow <= 400_000)
+  );
+}
+
+function describeModelSetting(entry: ModelSettingsEntry): string {
+  if (entry.capability === "sandbox") {
+    return "Heavier repository work with tool access and long-context reasoning.";
+  }
+  if (entry.capability === "library") {
+    return "Library-grounded answers tuned for artifact reading.";
+  }
+  return "General discussion model for everyday repository questions.";
+}
+
+function formatProviderLabel(provider: ModelSettingsEntry["provider"]): string {
+  switch (provider) {
+    case "openai":
+      return "OpenAI";
+    case "anthropic":
+      return "Anthropic";
+  }
+}
+
+function formatCapabilityLabel(capability: ModelSettingsEntry["capability"]): string {
+  switch (capability) {
+    case "sandbox":
+      return "Sandbox";
+    case "library":
+      return "Library";
+    case "discuss":
+      return "Discuss";
+    case "embedding":
+      return "Embedding";
+  }
+}
+
+function formatDefaultSourceLabel(source: ModelSettingsEntry["defaultSource"]): string {
+  return source === "custom" ? "custom default" : "system default";
+}
+
+function formatDefaultModelTooltip(source: ModelSettingsEntry["defaultSource"]): string {
+  return source === "custom" ? "Custom default model" : "System default model";
+}
+
+function formatContextWindow(tokens: number): string {
+  if (tokens >= 1_000_000) {
+    return `${(tokens / 1_000_000).toLocaleString("en-US", { maximumFractionDigits: 1 })}M`;
+  }
+  return `${Math.round(tokens / 1_000).toLocaleString("en-US")}K`;
 }
 
 function PlaceholderSettingsSection({ title }: { title: string }) {

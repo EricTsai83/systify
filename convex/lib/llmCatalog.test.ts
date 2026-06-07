@@ -150,6 +150,8 @@ describe("isUserPickableModel", () => {
   test("enforces an optional capability filter", () => {
     expect(isUserPickableModel("openai", "gpt-5.4-mini", "discuss")).toBe(true);
     expect(isUserPickableModel("openai", "gpt-5.4-mini", "sandbox")).toBe(false);
+    expect(isUserPickableModel("openai", "gpt-5.5", "discuss")).toBe(true);
+    expect(isUserPickableModel("openai", "gpt-5.5", "library")).toBe(true);
   });
 });
 

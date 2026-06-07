@@ -40,6 +40,7 @@ import {
   type ReasoningEffort,
 } from "./lib/llmCatalog";
 import { llmProviderValidator, type LlmProvider } from "./lib/llmProvider";
+import { applyModelPreferences, isModelEnabledInPreferences, loadViewerModelPreferences } from "./lib/userPreferences";
 import { costUsdToCents } from "./lib/llmPricing";
 import {
   persistedArtifactResultValidator,
@@ -139,6 +140,7 @@ export const requestSystemDesignGeneration = mutation({
     const { identity, repository } = await requireActiveRepositoryForViewer(ctx, {
       repositoryId: args.repositoryId,
     });
+    const modelPreferences = await loadViewerModelPreferences(ctx, identity.tokenIdentifier);
 
     // Dedup, then defense-in-depth filter at the request boundary. The arg
     // validator already restricts `selections` to the System Design union,
@@ -153,15 +155,32 @@ export const requestSystemDesignGeneration = mutation({
     // Pick + validate the (provider, model) pair. Default to the
     // catalog's sandbox-capable tier when the caller doesn't specify
     // — PR-A3 wires this to the dialog's picker.
-    const provider = args.provider ?? DEFAULT_SYSTEM_DESIGN_PROVIDER;
-    const modelName = args.modelName ?? DEFAULT_SYSTEM_DESIGN_MODEL;
+    let provider = args.provider ?? DEFAULT_SYSTEM_DESIGN_PROVIDER;
+    let modelName = args.modelName ?? DEFAULT_SYSTEM_DESIGN_MODEL;
     if ((args.provider === undefined) !== (args.modelName === undefined)) {
       throw new ConvexError({
         code: "invalid_model_pick",
         message: "provider and modelName must be supplied together.",
       });
     }
-    if (!isUserPickableModel(provider, modelName, "sandbox")) {
+    if (
+      args.provider === undefined &&
+      !isModelEnabledInPreferences(modelPreferences, { provider, modelName }, "sandbox")
+    ) {
+      const firstEnabledSandbox = applyModelPreferences(
+        listPickableModels({ capability: "sandbox" }),
+        modelPreferences,
+        "sandbox",
+      )[0];
+      if (firstEnabledSandbox) {
+        provider = firstEnabledSandbox.provider;
+        modelName = firstEnabledSandbox.modelName;
+      }
+    }
+    if (
+      !isUserPickableModel(provider, modelName, "sandbox") ||
+      !isModelEnabledInPreferences(modelPreferences, { provider, modelName }, "sandbox")
+    ) {
       throw new ConvexError({
         code: "invalid_model_pick",
         message: `Unsupported model selection: ${provider}:${modelName}`,

@@ -119,6 +119,7 @@ export function RepositoryShell({
     useComposerModelPick({
       threadId: urlThreadId,
       capability: chatMode,
+      preferenceScope: chatMode,
       threadLockedProvider: capabilities.lockedProvider,
       threadDefaultModelName: capabilities.defaultModelName,
     });
@@ -451,6 +452,7 @@ export function RepositoryShell({
       selectedProvider={selectedProvider}
       selectedModelName={selectedModelName}
       setSelectedModel={setSelectedModel}
+      modelPreferenceScope={chatMode}
       selectedReasoningEffort={selectedReasoningEffort}
       setSelectedReasoningEffort={setSelectedReasoningEffort}
       threadLockedProvider={capabilities.lockedProvider}
