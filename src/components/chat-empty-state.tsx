@@ -184,7 +184,14 @@ export function PromptSuggestionList({
  */
 export function EmptyChatHint() {
   return (
-    <div className="flex flex-1 animate-in items-center justify-center fade-in duration-300 ease-out">
+    // No opacity-fade entrance. The hint swaps in atomically when the
+    // user leaves a populated thread for the lazy-create draft
+    // (`/discuss/new`); an `animate-in fade-in` would paint a frame of
+    // bare `bg-background` (owl at opacity 0) right after the message
+    // list is removed, which reads as a background flash on an
+    // otherwise-instant swap. The owl's own idle animation carries the
+    // life here.
+    <div className="flex flex-1 items-center justify-center">
       <EmptyStateHero
         visual={<OwlAsciiArt />}
         title="Start a design conversation"
@@ -202,7 +209,9 @@ export function EmptyChatHint() {
  */
 export function EmptyNoRepoHint() {
   return (
-    <div className="flex flex-1 animate-in items-center justify-center fade-in duration-300 ease-out">
+    // See EmptyChatHint: no opacity-fade entrance, so swapping in from a
+    // populated thread doesn't flash a frame of bare background.
+    <div className="flex flex-1 items-center justify-center">
       <EmptyStateHero
         visual={<OwlAsciiArt />}
         title="Start a design conversation"

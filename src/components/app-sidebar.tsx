@@ -31,9 +31,9 @@ type AppSidebarLeftProps = {
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
   onDeleteThread: (id: ThreadId) => void;
   /**
-   * Forwarded to {@link RepositoryThreadsRail.onRequestNewThread} — when
-   * supplied, the "New Thread" button navigates to the repository mode URL
-   * (no thread id) instead of pre-creating an orphan thread.
+   * Lets the active shell own "New thread" navigation. Repository Discuss
+   * sends users to its explicit draft route; repoless chat returns to
+   * `/chat`. In both cases the backend thread is still created on first send.
    */
   onRequestNewThread?: () => void;
   /**

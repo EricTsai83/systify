@@ -48,6 +48,22 @@ describe("PromptInputReasoningPicker", () => {
     expect(screen.getByTestId("prompt-input-reasoning-picker-trigger")).toHaveTextContent("Low");
   });
 
+  test("uses distinct trigger icons for low and medium efforts", () => {
+    const { unmount } = render(
+      <PromptInputReasoningPicker value="low" onChange={vi.fn()} provider="openai" modelName="gpt-5.5" />,
+    );
+    const lowIcon = screen.getByTestId("prompt-input-reasoning-picker-trigger").querySelector("svg")?.innerHTML;
+
+    unmount();
+
+    render(<PromptInputReasoningPicker value="medium" onChange={vi.fn()} provider="openai" modelName="gpt-5.5" />);
+    const mediumIcon = screen.getByTestId("prompt-input-reasoning-picker-trigger").querySelector("svg")?.innerHTML;
+
+    expect(lowIcon).toBeTruthy();
+    expect(mediumIcon).toBeTruthy();
+    expect(lowIcon).not.toEqual(mediumIcon);
+  });
+
   test("falls back and notifies when a stale override is not supported by the selected model", async () => {
     const onChange = vi.fn();
     render(<PromptInputReasoningPicker value="none" onChange={onChange} provider="openai" modelName="gpt-5.5" />);

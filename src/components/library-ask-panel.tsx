@@ -73,10 +73,9 @@ export function LibraryAskPanel({
   // below can be gated and never throw the route into its error boundary)
   // and supplies the tab title when the thread has aged out of `listThreads`.
   const activeThreadProbe = useQuery(api.chat.threads.getThreadSummary, threadId ? { threadId } : "skip");
-  // `listMessagesPaginated` / `getActiveMessageStream` THROW for a missing or
-  // unauthorized thread. Only subscribe once the probe has confirmed the
-  // thread exists; a stale `?ask=` bookmark then degrades to the empty
-  // state instead of tearing down the Library route.
+  // Only subscribe once the probe has confirmed the thread exists. A stale
+  // `?ask=` bookmark then degrades to the empty state instead of holding
+  // message subscriptions for a missing thread.
   const confirmedThreadId = threadId && activeThreadProbe ? threadId : null;
   const {
     results: paginatedMessages,

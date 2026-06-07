@@ -18,14 +18,20 @@ When a repository is attached, `library` becomes the default mode; otherwise `di
 ```mermaid
 flowchart TD
   Repository["/r/:repositoryId"]
-  Discuss["/r/:repositoryId/discuss/:threadId?"]
+  DiscussLanding["/r/:repositoryId/discuss"]
+  DiscussDraft["/r/:repositoryId/discuss/new"]
+  DiscussThread["/r/:repositoryId/discuss/:threadId"]
   Library["/r/:repositoryId/library"]
   LibraryArtifact["/r/:repositoryId/library/a/:artifactId"]
 
-  Repository --> Discuss
+  Repository --> DiscussLanding
+  DiscussLanding --> DiscussDraft
+  DiscussLanding --> DiscussThread
   Repository --> Library
   Library --> LibraryArtifact
 ```
+
+`/r/:repositoryId/discuss/new` is an explicit client-side Discuss draft route. The shell treats it as "no selected thread" while suppressing the normal most-recent-thread auto-open, so clicking **New thread** does not create an empty backend row. The first send calls `sendMessageStartingNewThread`; once the mutation returns, navigation `replace`s the draft URL with the canonical `/r/:repositoryId/discuss/:threadId`.
 
 `library/a/:artifactId` is the only long-form artifact reader — the artifact owns the path, and chat citations, quick-open, tabs, and folder navigation all converge on it. The active Library Ask thread is secondary view-state, carried as an optional `?ask=:threadId` query param rather than its own route. Sandbox-grounded Discuss replies render inside the standard Discuss URL — Sandbox grounding is a per-message flag on Discuss, not a separate surface.
 
@@ -34,7 +40,7 @@ flowchart TD
 The Library page does not reuse the global chat shell. It mounts two separate sidebar components side-by-side around the document column:
 
 - **`AppSidebarLeft`** (`src/components/app-sidebar.tsx:55`) — the shared repository sidebar. It branches internally on `effectiveChatMode`: in **Library** mode it renders `LibraryTree` (the artifact folder navigator); in **Discuss** mode it renders `RepositoryThreadsRail` (the vertical thread list). One component, two mode-specific content slots, scoped by `listThreads({ mode })` so a Library Ask thread can never leak into the Discuss rail.
-- **`AppSidebarRight`** (`src/components/app-sidebar.tsx:181`) — the Library-mode-only right sidebar that carries `LibraryAskPanel`. The panel is a complete chat surface: an IDE-style thread tab strip on top (`LibraryAskThreadTabs`) — one tab per *open* thread, not the full list — over the conversation and the input. The `+` button starts a thread; the clock button opens `LibraryAskHistoryPopover` as a popup beneath itself. Because the panel lives in the resizable sidebar, it gets its own stored width and a roomier default than the slim Discuss thread rail.
+- **`AppSidebarRight`** (`src/components/app-sidebar.tsx:181`) — the Library-mode-only right sidebar that carries `LibraryAskPanel`. The panel is a complete chat surface: an IDE-style thread tab strip on top (`LibraryAskThreadTabs`) — one tab per *open* thread, not the full list — over the conversation and the input. The `+` button opens a draft Ask state; the backend thread is created only when the user sends the first question. The clock button opens `LibraryAskHistoryPopover` as a popup beneath itself. Because the panel lives in the resizable sidebar, it gets its own stored width and a roomier default than the slim Discuss thread rail.
 
 The Library page (`src/pages/library.tsx:193, 227`) mounts both sidebars side-by-side around the document column, so the folder tree, the editor, and the Ask panel are three peer surfaces of the same page.
 

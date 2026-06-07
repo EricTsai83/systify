@@ -30,7 +30,15 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AtomIcon, BrainIcon, BracketsCurlyIcon, GaugeIcon, LightningIcon, type Icon } from "@phosphor-icons/react";
+import {
+  AtomIcon,
+  BrainIcon,
+  BracketsCurlyIcon,
+  CircuitryIcon,
+  GaugeIcon,
+  LightningIcon,
+  type Icon,
+} from "@phosphor-icons/react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { LlmProvider, ReasoningEffort } from "@/lib/types";
@@ -73,7 +81,7 @@ const EFFORTS: readonly ReasoningEffort[] = ["none", "minimal", "low", "medium",
 const EFFORT_META: Record<ReasoningEffort, { label: string; Icon: Icon }> = {
   none: { label: "Instant", Icon: LightningIcon },
   minimal: { label: "Minimal", Icon: GaugeIcon },
-  low: { label: "Low", Icon: BracketsCurlyIcon },
+  low: { label: "Low", Icon: CircuitryIcon },
   medium: { label: "Medium", Icon: BracketsCurlyIcon },
   high: { label: "High", Icon: BrainIcon },
   xhigh: { label: "XHigh", Icon: AtomIcon },

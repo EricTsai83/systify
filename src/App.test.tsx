@@ -1,13 +1,18 @@
 // @vitest-environment jsdom
 
 import type React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import type { ThreadId } from "@/lib/types";
 import { App } from "./App";
 import { createAppMemoryRouter } from "./router";
 import { AUTH_RETURN_TO_KEY } from "./router-layouts";
 
 const getAccessTokenMock = vi.fn<() => Promise<string | null>>();
+const repolessShellMock = vi.hoisted(() => ({
+  mountCount: 0,
+  lastThreadId: null as ThreadId | null,
+}));
 
 vi.mock("@workos-inc/authkit-react", async () => {
   const React = await import("react");
@@ -40,9 +45,20 @@ vi.mock("@/pages/home", () => ({
   HomePage: () => <div>home page</div>,
 }));
 
-vi.mock("@/components/repoless-chat-shell", () => ({
-  RepolessChatShell: () => <div>chat page</div>,
-}));
+vi.mock("@/components/repoless-chat-shell", async () => {
+  const React = await import("react");
+
+  return {
+    RepolessChatShell: ({ urlThreadId }: { urlThreadId: ThreadId | null }) => {
+      repolessShellMock.lastThreadId = urlThreadId;
+      React.useEffect(() => {
+        repolessShellMock.mountCount += 1;
+      }, []);
+
+      return <div>chat page</div>;
+    },
+  };
+});
 
 vi.mock("@/pages/discuss", () => ({
   DiscussPage: () => <div>chat page</div>,
@@ -105,6 +121,8 @@ describe("App auth token failures", () => {
       }
     }
     getAccessTokenMock.mockReset();
+    repolessShellMock.mountCount = 0;
+    repolessShellMock.lastThreadId = null;
     vi.restoreAllMocks();
   });
 
@@ -154,6 +172,30 @@ describe("App auth token failures", () => {
     renderWithAuth(useAuth, ["/"]);
 
     expect(await screen.findByText("chat page")).toBeInTheDocument();
+  });
+
+  test("keeps the repoless chat shell mounted when clearing the thread id", async () => {
+    function useAuth() {
+      return {
+        isLoading: false,
+        user: { id: "user_1" },
+        getAccessToken: getAccessTokenMock,
+      };
+    }
+
+    const router = renderWithAuth(useAuth, ["/chat/thread_1"]);
+
+    expect(await screen.findByText("chat page")).toBeInTheDocument();
+    expect(repolessShellMock.mountCount).toBe(1);
+    expect(repolessShellMock.lastThreadId).toBe("thread_1");
+
+    await act(async () => {
+      await router.navigate("/chat");
+    });
+
+    expect(router.state.location.pathname).toBe("/chat");
+    expect(repolessShellMock.lastThreadId).toBeNull();
+    expect(repolessShellMock.mountCount).toBe(1);
   });
 
   test("shows the auth loading screen instead of HomePage on / when a WorkOS session cookie is present", async () => {

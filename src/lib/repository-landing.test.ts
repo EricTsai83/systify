@@ -84,6 +84,44 @@ describe("resolveRepositoryLandingDecision", () => {
     });
   });
 
+  test("new-thread intent keeps Discuss on the empty route even when owner threads exist", () => {
+    expect(
+      resolveRepositoryLandingDecision({
+        urlRepositoryId: repo("repo1"),
+        urlThreadId: null,
+        intendedChatMode: "discuss",
+        mode: "discuss",
+        availability: availability(),
+        repositoriesLoaded: true,
+        ownerThreads: [{ _id: thread("tid1") }],
+        suppressThreadAutoOpen: true,
+      }),
+    ).toEqual({
+      status: "ready",
+      intendedChatMode: "discuss",
+      navigation: null,
+    });
+  });
+
+  test("new-thread intent does not wait for owner thread loading", () => {
+    expect(
+      resolveRepositoryLandingDecision({
+        urlRepositoryId: repo("repo1"),
+        urlThreadId: null,
+        intendedChatMode: "discuss",
+        mode: "discuss",
+        availability: undefined,
+        repositoriesLoaded: false,
+        ownerThreads: undefined,
+        suppressThreadAutoOpen: true,
+      }),
+    ).toEqual({
+      status: "ready",
+      intendedChatMode: "discuss",
+      navigation: null,
+    });
+  });
+
   test("bare repository URL repairs to Discuss when there is no owner thread", () => {
     expect(
       resolveRepositoryLandingDecision({

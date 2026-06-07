@@ -51,8 +51,13 @@ export function resolveRepositoryLandingDecision(args: {
   availability: RepositoryLandingAvailability | null | undefined;
   repositoriesLoaded: boolean;
   ownerThreads: readonly RepositoryLandingThreadSummary[] | undefined;
+  suppressThreadAutoOpen?: boolean;
 }): RepositoryLandingDecision {
   if (args.urlRepositoryId === null || args.urlThreadId !== null) {
+    return { status: "ready", intendedChatMode: args.intendedChatMode, navigation: null };
+  }
+
+  if (args.suppressThreadAutoOpen && args.intendedChatMode === "discuss") {
     return { status: "ready", intendedChatMode: args.intendedChatMode, navigation: null };
   }
 

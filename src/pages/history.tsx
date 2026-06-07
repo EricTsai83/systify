@@ -184,7 +184,7 @@ export function HistoryPage() {
           <div className="flex min-w-0 flex-col gap-1.5">
             <h2 className="text-xl font-semibold tracking-tight">History</h2>
             <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
-              Review past conversations, manage shared threads, and open archived repositories.
+              Browse active conversations, shared links, and archived threads.
             </p>
           </div>
         </div>
@@ -317,7 +317,7 @@ function SummaryStrip({
       {items.map((item) => (
         <div
           key={item.label}
-          className="flex min-w-0 items-baseline justify-between gap-3 border-t border-border px-0 py-2 first:border-t-0 sm:flex-1 sm:justify-start sm:border-l sm:border-t-0 sm:px-4 sm:first:border-l-0 sm:first:pl-0"
+          className="flex min-w-0 items-baseline justify-between gap-3 border-t border-border px-4 py-2 first:border-t-0 sm:flex-1 sm:justify-start sm:border-l sm:border-t-0 sm:first:border-l-0"
           aria-label={`${item.label}: ${item.value}`}
         >
           <span className="font-mono text-base font-semibold leading-none tabular-nums text-foreground">

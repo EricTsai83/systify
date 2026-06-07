@@ -65,7 +65,7 @@ The route table lives in `src/router.tsx`, where `appRoutes` is turned into the 
 
 - `/` through `AppLayout`
 - the landing experience through `LandingRoute`
-- all authenticated surfaces through `ProtectedLayout` — `/chat`, `/chat/:threadId`, `/r/:repositoryId` (with `discuss` and `library` variants), `/archive`, and `/resources` (see `src/router.tsx`)
+- all authenticated surfaces through `ProtectedLayout` — `/chat`, `/chat/:threadId`, `/r/:repositoryId` (with `discuss`, the explicit `/discuss/new` draft route, and `library` variants), `/archive`, and `/resources` (see `src/router.tsx`)
 - lazy loading for the chat page via `loadRepolessChatRoute` (`src/router.tsx:19, 59-60`)
 
 Layout composition and route-guard behavior now live in `src/router-layouts.tsx`, which centralizes `AppLayout`, `LandingRoute`, and `ProtectedLayout`.
