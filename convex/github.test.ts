@@ -49,6 +49,23 @@ function createTestConvex() {
   return t;
 }
 
+async function seedInternalAccessProfile(
+  t: ReturnType<typeof createTestConvex>,
+  ownerTokenIdentifier: string,
+  overrides?: { email?: string },
+) {
+  await t.run(async (ctx) => {
+    await ctx.db.insert("userAccessProfiles", {
+      ownerTokenIdentifier,
+      email: overrides?.email ?? `${ownerTokenIdentifier}@example.com`,
+      plan: "internal",
+      billingStatus: "none",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  });
+}
+
 function activeInstallation(ownerTokenIdentifier: string, installationId: number) {
   return {
     ownerTokenIdentifier,
@@ -560,6 +577,8 @@ describe("GitHub installation selection", () => {
     const ownerTokenIdentifier = "user|sync";
     const t = createTestConvex();
 
+    await seedInternalAccessProfile(t, ownerTokenIdentifier, { email: "sync@example.com" });
+
     const repositoryId = await t.run(async (ctx) => {
       await ctx.db.insert("githubInstallations", deletedInstallation(ownerTokenIdentifier, 301));
       await ctx.db.insert("githubInstallations", activeInstallation(ownerTokenIdentifier, 302));
@@ -799,6 +818,7 @@ describe("GitHub installation selection", () => {
     process.env[RETURN_TO_ALLOWLIST_ENV] = "https://app.systify.dev";
     const t = createTestConvex();
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    await seedInternalAccessProfile(t, ownerTokenIdentifier);
 
     const installUrl = await viewer.action(api.githubAppNode.initiateGitHubInstall, {
       returnTo: "https://app.systify.dev/settings/integrations?tab=github#close-this-tab",

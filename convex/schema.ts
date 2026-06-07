@@ -68,7 +68,11 @@ const usageRollupFeature = v.union(
 
 const usageBudgetReservationStatus = v.union(v.literal("reserved"), v.literal("settled"), v.literal("released"));
 
-const artifactChunkingFailureReason = v.union(v.literal("embedding_failed"), v.literal("usage_budget_exceeded"));
+const artifactChunkingFailureReason = v.union(
+  v.literal("embedding_failed"),
+  v.literal("usage_budget_exceeded"),
+  v.literal("feature_not_included"),
+);
 
 const jobStatus = v.union(
   v.literal("queued"),
@@ -200,6 +204,17 @@ const scopedModelPreference = v.object({
 });
 
 export default defineSchema({
+  userAccessProfiles: defineTable({
+    ownerTokenIdentifier: v.string(),
+    email: v.optional(v.string()),
+    plan: v.union(v.literal("internal"), v.literal("free"), v.literal("trial"), v.literal("pro")),
+    billingStatus: v.union(v.literal("none"), v.literal("active"), v.literal("past_due"), v.literal("canceled")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_ownerTokenIdentifier", ["ownerTokenIdentifier"])
+    .index("by_email", ["email"]),
+
   /**
    * Per-viewer key-value preferences. `lastActiveRepositoryId` is the
    * canonical "current repository" pointer for a viewer; the frontend keeps
@@ -495,9 +510,8 @@ export default defineSchema({
      *   - `indexed`  — `artifactChunks` rows match the current
      *                  `lastChunkedVersion`; embeddings may still be
      *                  partial when an embed fallback is in effect.
-     *   - `failed`   — embedding pipeline exhausted retries; the
-     *                  `retryFailedArtifactIndexing` cron will pick the
-     *                  row up again.
+     *   - `failed`   — retryable pipeline failure unless
+     *                  `chunkingFailureReason` is `feature_not_included`.
      */
     chunkingStatus: v.optional(v.union(v.literal("pending"), v.literal("indexed"), v.literal("failed"))),
     chunkingFailureReason: v.optional(artifactChunkingFailureReason),

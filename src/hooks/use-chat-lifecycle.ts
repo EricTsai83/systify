@@ -1,9 +1,9 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
-import type { ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } from "@/lib/types";
+import type { ArtifactId, ChatMode, LlmProvider, ReasoningEffort, RepositoryId, ThreadId } from "@/lib/types";
 
 /**
  * Owns the in-flight reply lifecycle (send, cancel) plus thread archive.
@@ -29,6 +29,8 @@ export function useChatLifecycle({
   selectedProvider,
   selectedModelName,
   selectedReasoningEffort,
+  newThreadTitle,
+  newThreadArtifactContext,
   clearChatInput,
   setActionError,
   setThreadToArchive,
@@ -66,6 +68,13 @@ export function useChatLifecycle({
    * models so a stale value from a prior pick cannot leak through.
    */
   selectedReasoningEffort?: ReasoningEffort | null;
+  /**
+   * Optional metadata for the lazy first-send path. Existing-thread sends
+   * never forward these fields; Library Ask uses them to give the newly
+   * created tab a stable title and optional artifact scope.
+   */
+  newThreadTitle?: string;
+  newThreadArtifactContext?: ArtifactId[];
   clearChatInput: () => void;
   setActionError: (value: string | null) => void;
   setThreadToArchive: (value: ThreadId | null) => void;
@@ -76,13 +85,16 @@ export function useChatLifecycle({
   const sendMessageStartingNewThreadMutation = useMutation(api.chat.send.sendMessageStartingNewThread);
   const cancelInFlightReplyMutation = useMutation(api.chat.cancel.cancelInFlightReply);
   const archiveThreadMutation = useMutation(api.chat.threads.archiveThread);
+  const sendLockRef = useRef(false);
 
   const [isSending, handleSendMessage] = useAsyncCallback(
     useCallback(
       async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
+        if (sendLockRef.current) return;
         const trimmed = chatInput.trim();
         if (!trimmed) return;
+        sendLockRef.current = true;
         setActionError(null);
         const groundingArgs =
           chatMode === "discuss"
@@ -120,6 +132,11 @@ export function useChatLifecycle({
             clearChatInput();
             return;
           }
+          const titleArgs = newThreadTitle !== undefined ? { title: newThreadTitle } : {};
+          const artifactContextArgs =
+            chatMode === "library" && newThreadArtifactContext && newThreadArtifactContext.length > 0
+              ? { artifactContext: newThreadArtifactContext }
+              : {};
           // Lazy first send. Repoless threads (no `repositoryId`) are
           // legal — the backend creates the thread with `repositoryId:
           // undefined` and the repoless shell navigates to the matching
@@ -128,6 +145,8 @@ export function useChatLifecycle({
             ...(repositoryId ? { repositoryId } : {}),
             content: chatInput,
             mode: chatMode,
+            ...titleArgs,
+            ...artifactContextArgs,
             ...groundingArgs,
             ...modelArgs,
             ...reasoningArgs,
@@ -136,6 +155,8 @@ export function useChatLifecycle({
           onAfterCreateThread(result.threadId, result.mode);
         } catch (error) {
           setActionError(toUserErrorMessage(error, "Failed to send the message."));
+        } finally {
+          sendLockRef.current = false;
         }
       },
       [
@@ -146,6 +167,8 @@ export function useChatLifecycle({
         selectedProvider,
         selectedModelName,
         selectedReasoningEffort,
+        newThreadTitle,
+        newThreadArtifactContext,
         clearChatInput,
         onAfterCreateThread,
         selectedThreadId,

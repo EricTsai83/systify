@@ -273,6 +273,14 @@ describe("repository detail metadata", () => {
     const lastImportedAt = Date.now() - 60_000;
 
     const repositoryId = await t.run(async (ctx) => {
+      await ctx.db.insert("userAccessProfiles", {
+        ownerTokenIdentifier,
+        email: "sync-pointer@example.com",
+        plan: "internal",
+        billingStatus: "none",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
       await ctx.db.insert("githubInstallations", {
         ownerTokenIdentifier,
         installationId: 123,
@@ -460,6 +468,14 @@ describe("repository import guards", () => {
     const t = createTestConvex();
 
     await t.run(async (ctx) => {
+      await ctx.db.insert("userAccessProfiles", {
+        ownerTokenIdentifier,
+        email: "duplicate-import@example.com",
+        plan: "internal",
+        billingStatus: "none",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      });
       await ctx.db.insert("githubInstallations", {
         ownerTokenIdentifier,
         installationId: 456,
@@ -502,6 +518,14 @@ describe("repository import guards", () => {
 
 async function seedGithubInstallation(t: ReturnType<typeof createTestConvex>, ownerTokenIdentifier: string) {
   await t.run(async (ctx) => {
+    await ctx.db.insert("userAccessProfiles", {
+      ownerTokenIdentifier,
+      email: `${ownerTokenIdentifier}@example.com`,
+      plan: "internal",
+      billingStatus: "none",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
     await ctx.db.insert("githubInstallations", {
       ownerTokenIdentifier,
       installationId: 123,

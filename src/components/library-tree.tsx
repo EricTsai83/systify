@@ -22,6 +22,7 @@ export function LibraryTree({
   onSelectFolder,
   selectedFolderId,
   onGenerate,
+  generateDisabledReason,
   isUnseen,
   className,
 }: {
@@ -32,6 +33,7 @@ export function LibraryTree({
   onSelectFolder?: (folderId: FolderId | null) => void;
   selectedFolderId?: FolderId | null;
   onGenerate: () => void;
+  generateDisabledReason?: string;
   isUnseen?: (artifact: ArtifactListItem) => boolean;
   className?: string;
 }) {
@@ -39,7 +41,15 @@ export function LibraryTree({
     <div className={cn("flex h-full min-h-0 flex-col", className)}>
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <span className="text-sm font-semibold">{REPOSITORY_GUIDE_COPY.name}</span>
-        <Button type="button" variant="outline" size="sm" className="gap-1.5" onClick={onGenerate}>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="gap-1.5"
+          disabled={generateDisabledReason !== undefined}
+          title={generateDisabledReason}
+          onClick={onGenerate}
+        >
           <SparkleIcon size={12} weight="bold" />
           Generate
         </Button>

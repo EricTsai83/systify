@@ -40,6 +40,19 @@ afterEach(() => {
 });
 
 const repositoryId = "repo_1" as RepositoryId;
+const sandboxCatalogEntry = {
+  provider: "openai",
+  modelName: "gpt-5.5",
+  displayName: "GPT-5.5",
+  capability: "sandbox",
+  supportsReasoning: true,
+  supportsTools: true,
+  contextWindow: 200_000,
+  userPickable: true,
+  favorite: false,
+  default: false,
+  defaultSource: null,
+};
 
 describe("GenerateSystemDesignDialog", () => {
   test("checks every document by default", () => {
@@ -186,6 +199,36 @@ describe("GenerateSystemDesignDialog", () => {
     });
   });
 
+  test("disables submit when the selected model is locked by premium model access", () => {
+    const requestGeneration = vi.fn();
+    useMutationMock.mockReturnValue(requestGeneration);
+    useQueryMock.mockImplementation((query: unknown) => {
+      const name = queryName(query);
+      if (name.endsWith("getDefaultModelPick")) {
+        return { provider: "openai", modelName: "gpt-5.5" };
+      }
+      if (name.endsWith("listPickableModels")) {
+        return [sandboxCatalogEntry];
+      }
+      return null;
+    });
+
+    render(
+      <GenerateSystemDesignDialog
+        open={true}
+        onOpenChange={vi.fn()}
+        repositoryId={repositoryId}
+        premiumModelsDisabledReason="Premium models are not available."
+      />,
+    );
+
+    const generateBtn = screen.getByRole("button", { name: /Generate selected/i });
+    expect(generateBtn).toBeDisabled();
+    expect(generateBtn).toHaveAttribute("title", "Premium models are not available.");
+    fireEvent.click(generateBtn);
+    expect(requestGeneration).not.toHaveBeenCalled();
+  });
+
   test("renders the cache hint when getCachedSelectionStatus reports cached kinds", () => {
     // Three queries fire here — `getActiveSystemDesignJob` (no job),
     // `getCachedSelectionStatus`, and the picker's `listPickableModels`.
@@ -209,14 +252,7 @@ describe("GenerateSystemDesignDialog", () => {
       if (name.endsWith("listPickableModels")) {
         return [
           {
-            provider: "openai",
-            modelName: "gpt-5.5",
-            displayName: "GPT-5.5",
-            capability: "sandbox",
-            supportsReasoning: true,
-            supportsTools: true,
-            contextWindow: 200_000,
-            userPickable: true,
+            ...sandboxCatalogEntry,
           },
         ];
       }

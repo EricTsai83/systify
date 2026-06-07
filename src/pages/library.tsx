@@ -9,6 +9,7 @@ import { ScreenState } from "@/components/screen-state";
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
+import { isViewerFeatureEnabled, useViewerAccess } from "@/hooks/use-viewer-access";
 import {
   DEFAULT_AUTHENTICATED_PATH,
   libraryPath,
@@ -19,6 +20,7 @@ import {
 import type { ArtifactId, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { writeString } from "@/lib/storage";
 import { applyTouchRepositoryOptimistic } from "@/lib/repository-mutations";
+import { DEMO_MODE_COPY } from "@/lib/demo-content";
 import { toast } from "sonner";
 
 const ACTIVE_REPOSITORY_STORAGE_KEY = "systify.activeRepositoryId";
@@ -64,6 +66,7 @@ function LibraryRepository({
 }) {
   const navigate = useNavigate();
   const [, setSearchParams] = useSearchParams();
+  const viewerAccess = useViewerAccess();
 
   const repositories = useQuery(api.repositoryPreferences.listRepositoriesForSwitcher);
   const ownerRepositoryIds = useQuery(api.repositoryPreferences.listAllOwnerRepositoryIds, {});
@@ -108,6 +111,26 @@ function LibraryRepository({
 
   const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false);
   const openGenerateDialog = useCallback(() => setIsGenerateDialogOpen(true), []);
+  const accessLoadingReason = viewerAccess === undefined ? "Loading access…" : undefined;
+  const importDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "repoImport") ? undefined : DEMO_MODE_COPY.importDisabled);
+  const libraryAskDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "libraryAsk") ? undefined : DEMO_MODE_COPY.libraryAskDisabled);
+  const generateSystemDesignDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "generateSystemDesign")
+      ? isViewerFeatureEnabled(viewerAccess, "sandboxGrounding")
+        ? undefined
+        : DEMO_MODE_COPY.sandboxDisabled
+      : DEMO_MODE_COPY.generateDisabled);
+  const premiumModelsDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "premiumModels") ? undefined : DEMO_MODE_COPY.premiumModelsDisabled);
+  const highReasoningDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "highReasoning") ? undefined : DEMO_MODE_COPY.highReasoningDisabled);
 
   const handleSwitchRepository = useCallback(
     (id: RepositoryId) => {
@@ -199,11 +222,13 @@ function LibraryRepository({
         onDeleteThread={() => {}}
         onImported={handleImported}
         onError={handleRailError}
+        importDisabledReason={importDisabledReason}
         libraryRepositoryId={repositoryId}
         libraryArtifacts={allArtifacts}
         libraryActiveArtifactId={tabs.activeArtifactId}
         onSelectLibraryArtifact={tabs.openTab}
         onGenerate={openGenerateDialog}
+        generateDisabledReason={generateSystemDesignDisabledReason}
         isUnseen={isUnseen}
       />
       <SidebarInset>
@@ -232,11 +257,18 @@ function LibraryRepository({
         onSelectArtifact={tabs.openTab}
         onSelectAskThread={handleSelectLibraryThread}
         onGenerate={openGenerateDialog}
+        askDisabledReason={libraryAskDisabledReason}
+        generateDisabledReason={generateSystemDesignDisabledReason}
+        premiumModelsDisabledReason={premiumModelsDisabledReason}
+        highReasoningDisabledReason={highReasoningDisabledReason}
       />
       <GenerateSystemDesignDialog
         open={isGenerateDialogOpen}
         onOpenChange={setIsGenerateDialogOpen}
         repositoryId={repositoryId}
+        disabledReason={generateSystemDesignDisabledReason}
+        premiumModelsDisabledReason={premiumModelsDisabledReason}
+        highReasoningDisabledReason={highReasoningDisabledReason}
       />
     </>
   );

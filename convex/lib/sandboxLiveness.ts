@@ -12,6 +12,7 @@ import {
   startSandbox,
   type LiveSandboxProbe,
 } from "../daytona";
+import { assertFeatureAccess } from "./entitlements";
 import { getInstallationAccessToken } from "./githubAppAuthNode";
 import { logErrorWithId, logInfo, logWarn } from "./observability";
 
@@ -134,6 +135,8 @@ export async function ensureSandboxReady(
   },
   onStage?: (stage: SandboxPreparationStage) => void | Promise<void>,
 ): Promise<EnsureSandboxReadyResult> {
+  await assertFeatureAccess(ctx, args.ownerTokenIdentifier, "sandboxGrounding");
+
   const snapshot = await ctx.runQuery(internal.repositories.getRepositorySandboxForPreparation, {
     repositoryId: args.repositoryId,
     ownerTokenIdentifier: args.ownerTokenIdentifier,

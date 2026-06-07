@@ -3,6 +3,7 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
 import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
+import { assertFeatureAccess, requiresHighReasoningAccess, requiresPremiumModelAccess } from "./lib/entitlements";
 import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
 import { enqueueJob, findActiveJob } from "./lib/jobs";
 import {
@@ -123,12 +124,20 @@ export const requestSystemDesignGeneration = mutation({
       repositoryId: args.repositoryId,
     });
     const modelPreferences = await loadViewerModelPreferences(ctx, identity.tokenIdentifier);
+    await assertFeatureAccess(ctx, identity, "generateSystemDesign");
+    await assertFeatureAccess(ctx, identity, "sandboxGrounding");
 
     const generationPlan = planSystemDesignGenerationRequest({
       selections: args.selections,
       modelPreferences,
       picker: args,
     });
+    if (requiresPremiumModelAccess(generationPlan.modelChoice.provider, generationPlan.modelChoice.modelName)) {
+      await assertFeatureAccess(ctx, identity, "premiumModels");
+    }
+    if (requiresHighReasoningAccess(generationPlan.modelChoice.reasoningEffort)) {
+      await assertFeatureAccess(ctx, identity, "highReasoning");
+    }
 
     const now = Date.now();
 

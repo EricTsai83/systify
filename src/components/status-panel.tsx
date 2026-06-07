@@ -38,6 +38,7 @@ type StatusPanelProps = {
   hasRemoteUpdates: boolean;
   isSyncing: boolean;
   onSync: () => void;
+  syncDisabledReason?: string;
   /**
    * Opens the artifact panel and scrolls/highlights the given artifact card.
    * Closes this status panel as part of mutual exclusion (see the shell
@@ -71,6 +72,7 @@ export function StatusPanel({
   hasRemoteUpdates,
   isSyncing,
   onSync,
+  syncDisabledReason,
   onViewArtifact,
   onClose,
   className,
@@ -92,6 +94,7 @@ export function StatusPanel({
 
   const repositoryBusy = isSyncing || repository.importStatus === "queued" || repository.importStatus === "running";
   const repositoryFailed = repository.importStatus === "failed";
+  const syncDisabled = repositoryBusy || syncDisabledReason !== undefined;
 
   return (
     <div className={cn("flex h-full min-h-0 w-full flex-col bg-card", className)}>
@@ -123,7 +126,8 @@ export function StatusPanel({
                   type="button"
                   size="sm"
                   variant={hasRemoteUpdates || repositoryFailed ? "default" : "outline"}
-                  disabled={repositoryBusy}
+                  disabled={syncDisabled}
+                  title={syncDisabledReason}
                   onClick={onSync}
                   className="w-full"
                 >
@@ -157,6 +161,7 @@ export function StatusPanel({
             artifacts={artifacts}
             onViewArtifact={onViewArtifact}
             onRetrySync={onSync}
+            syncDisabledReason={syncDisabledReason}
             repositoryFailed={repositoryFailed}
           />
         </div>
@@ -209,12 +214,14 @@ function ActivitySection({
   artifacts,
   onViewArtifact,
   onRetrySync,
+  syncDisabledReason,
   repositoryFailed,
 }: {
   jobs: Doc<"jobs">[];
   artifacts: Doc<"artifacts">[];
   onViewArtifact: (artifactId: ArtifactId) => void;
   onRetrySync: () => void;
+  syncDisabledReason?: string;
   repositoryFailed: boolean;
 }) {
   const visibleJobs = useMemo(() => {
@@ -263,6 +270,7 @@ function ActivitySection({
             artifact={artifactByJobId.get(job._id)}
             onViewArtifact={onViewArtifact}
             onRetrySync={job.kind === "import" && job.status === "failed" && repositoryFailed ? onRetrySync : undefined}
+            syncDisabledReason={syncDisabledReason}
           />
         ))}
       </ol>
@@ -275,11 +283,13 @@ const ActivityRow = memo(function ActivityRow({
   artifact,
   onViewArtifact,
   onRetrySync,
+  syncDisabledReason,
 }: {
   job: Doc<"jobs">;
   artifact: Doc<"artifacts"> | undefined;
   onViewArtifact: (artifactId: ArtifactId) => void;
   onRetrySync?: () => void;
+  syncDisabledReason?: string;
 }) {
   const operation = presentOperation(job);
   // Prefer `completedAt` for terminal rows so the user sees when the work
@@ -335,6 +345,8 @@ const ActivityRow = memo(function ActivityRow({
             variant="link"
             size="xs"
             className="mt-1 h-auto px-0 text-[10px] text-destructive"
+            disabled={syncDisabledReason !== undefined}
+            title={syncDisabledReason}
             onClick={onRetrySync}
           >
             <ArrowsClockwiseIcon size={10} weight="bold" />

@@ -16,11 +16,11 @@ import type { ArtifactId, MessageId, ThreadId } from "@/lib/types";
 // surfaces no entries, which is the correct behavior for the existing
 // fixtures that don't supply `toolCalls`.
 //
-// `usePaginatedQuery` is mocked separately because `ChatContainer` now
-// subscribes to `listMessagesPaginated` through that hook rather than
-// `useQuery`. The default return shape mirrors a settled "no more pages"
-// state with no messages, which suits the trivial render paths most
-// `ChatPanel`-only tests take.
+// `usePaginatedQuery` is mocked separately because `ChatContainer` reaches
+// `listMessagesPaginated` through the shared conversation-thread hook. The
+// default return shape mirrors a settled "no more pages" state with no
+// messages, which suits the trivial render paths most `ChatPanel`-only
+// tests take.
 vi.mock("convex/react", () => ({
   useMutation: vi.fn(() => vi.fn()),
   useQuery: vi.fn(() => []),
@@ -127,6 +127,19 @@ vi.mock("@/components/ui/tooltip", () => ({
 
 const threadId = "thread_1" as ThreadId;
 const assistantMessageId = "message_1" as MessageId;
+const sandboxCatalogEntry = {
+  provider: "openai",
+  modelName: "gpt-5.5",
+  displayName: "GPT-5.5",
+  capability: "sandbox",
+  supportsReasoning: true,
+  supportsTools: true,
+  contextWindow: 200_000,
+  userPickable: true,
+  favorite: false,
+  default: false,
+  defaultSource: null,
+};
 
 const queryName = (query: unknown) => {
   try {
@@ -211,9 +224,56 @@ describe("ChatPanel streaming rendering", () => {
     const listPickableModelArgs = vi
       .mocked(useQuery)
       .mock.calls.filter(([query]) => queryName(query)?.endsWith("llmCatalog:listPickableModels"))
-      .map(([, args]) => args);
+      .map(([, args]) => args)
+      .filter((args) => args !== "skip");
 
     expect(listPickableModelArgs).toEqual([{ preferenceScope: "discuss" }]);
+  });
+
+  test("disables send when the selected model is locked by premium model access", () => {
+    vi.mocked(useQuery).mockImplementation((...callArgs) => {
+      const [query, args] = callArgs;
+      if (args === "skip") {
+        return undefined;
+      }
+      if (queryName(query)?.endsWith("llmCatalog:listPickableModels")) {
+        return [sandboxCatalogEntry];
+      }
+      return [];
+    });
+    const onSendMessage = vi.fn();
+
+    render(
+      <ChatPanel
+        selectedThreadId={null}
+        messages={undefined}
+        activeMessageStream={undefined}
+        isChatLoading={false}
+        chatInput="Explain this repo"
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        selectedProvider="openai"
+        selectedModelName="gpt-5.5"
+        setSelectedModel={vi.fn()}
+        premiumModelsDisabledReason="Premium models are not available."
+        grounding={undefined}
+        isSending={false}
+        onSendMessage={onSendMessage}
+        sandboxModeStatus={null}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const sendButton = screen.getByTestId("chat-panel-send-button");
+    expect(sendButton).toBeDisabled();
+    expect(sendButton).toHaveAttribute("title", "Premium models are not available.");
+    fireEvent.click(sendButton);
+    expect(onSendMessage).not.toHaveBeenCalled();
   });
 
   test("capability-filters the chat model picker for sandbox-scoped turns", () => {
@@ -258,7 +318,7 @@ describe("ChatPanel streaming rendering", () => {
     ).toBe(true);
   });
 
-  test("ChatContainer owns message and active-stream subscriptions for the selected thread", () => {
+  test("ChatContainer wires shared message and active-stream subscriptions for the selected thread", () => {
     // Paginated message subscription. The server returns pages in
     // newest-first order; `ChatContainer` reverses the flattened result
     // set to ascending creation-time order before rendering. A
@@ -329,7 +389,7 @@ describe("ChatPanel streaming rendering", () => {
     // Paginated message subscription is keyed on `{ threadId, paginationOpts }`.
     // The active-stream subscription is the one that goes through plain
     // `useQuery({ threadId })`; assert on that to confirm the container
-    // is wiring both subscriptions through the correct hooks.
+    // still exposes both subscriptions from the shared conversation hook.
     expect(vi.mocked(usePaginatedQuery)).toHaveBeenCalledWith(
       expect.anything(),
       { threadId },
@@ -933,6 +993,38 @@ describe("ChatPanel cancel-in-flight reply", () => {
 
     expect(screen.getByTestId("chat-panel-send-button")).toBeInTheDocument();
     expect(screen.queryByTestId("chat-panel-stop-button")).not.toBeInTheDocument();
+  });
+
+  test("keeps send-disabled copy out of the composer hint row", () => {
+    const disabledReason = "This send path is disabled.";
+
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput="hello"
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sendDisabledReason={disabledReason}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const sendButton = screen.getByTestId("chat-panel-send-button");
+    expect(sendButton).toBeDisabled();
+    expect(sendButton).toHaveAttribute("title", disabledReason);
+    expect(screen.queryByText(disabledReason)).not.toBeInTheDocument();
   });
 
   test("renders Stop in place of Send while the latest assistant message is streaming", () => {

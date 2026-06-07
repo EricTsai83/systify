@@ -76,6 +76,7 @@ import {
 } from "@/hooks/use-user-preferences";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useLocalStorageEnum } from "@/hooks/use-persisted-state";
+import { useViewerAccess } from "@/hooks/use-viewer-access";
 import {
   DEFAULT_AUTHENTICATED_PATH,
   DEFAULT_SETTINGS_SECTION,
@@ -348,7 +349,7 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="flex h-dvh w-full flex-1 flex-col overflow-y-auto bg-background">
+    <div className="flex h-full w-full flex-1 flex-col overflow-y-auto bg-background">
       <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur supports-backdrop-filter:bg-background/80">
         <div className="mx-auto flex h-14 w-full max-w-5xl items-center gap-3 px-4 sm:px-6">
           <Link
@@ -437,11 +438,12 @@ function SettingsSectionNav({ activeSection, from }: { activeSection: SettingsSe
 
 function AccountSettingsSection() {
   const { user, isLoading: isAuthLoading } = useAuth();
+  const viewerAccess = useViewerAccess();
   const githubConnection = useGitHubConnection();
   const disconnectGitHub = useMutation(api.github.disconnectGitHub);
   const [isDisconnectDialogOpen, setIsDisconnectDialogOpen] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
-  const isAccountLoading = isAuthLoading || githubConnection.isLoading;
+  const isAccountLoading = isAuthLoading || githubConnection.isLoading || viewerAccess === undefined;
 
   const displayName = user?.firstName
     ? `${user.firstName}${user.lastName ? ` ${user.lastName}` : ""}`
@@ -552,6 +554,33 @@ function AccountSettingsSection() {
                   </div>
                 ) : null}
                 {disconnectError ? <p className="text-sm text-destructive sm:basis-full">{disconnectError}</p> : null}
+              </>
+            )}
+          </div>
+
+          <div className="flex min-h-[88px] flex-col gap-3 border-t border-border px-5 py-3 text-sm sm:min-h-14 sm:flex-row sm:items-center sm:justify-between">
+            {isAccountLoading || viewerAccess === undefined ? (
+              <>
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Skeleton className="h-4 w-44" aria-hidden="true" />
+                  <Skeleton className="h-4 w-72 max-w-full" aria-hidden="true" />
+                </div>
+                <Skeleton className="h-6 w-24" aria-hidden="true" />
+              </>
+            ) : (
+              <>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-foreground">Access plan</p>
+                  <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                    {viewerAccess.ownerTokenIdentifier}
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Badge variant={viewerAccess.plan === "internal" ? "outline" : "muted"}>
+                    {formatAccessPlan(viewerAccess.plan)}
+                  </Badge>
+                  <Badge variant="muted">{formatBillingStatus(viewerAccess.billingStatus)}</Badge>
+                </div>
               </>
             )}
           </div>
@@ -2494,6 +2523,32 @@ function formatGitHubConnection(connection: ReturnType<typeof useGitHubConnectio
     return `${connection.accountLogin} connected`;
   }
   return "Not connected";
+}
+
+function formatAccessPlan(plan: "internal" | "free" | "trial" | "pro") {
+  switch (plan) {
+    case "internal":
+      return "Internal";
+    case "trial":
+      return "Trial";
+    case "pro":
+      return "Pro";
+    case "free":
+      return "Free demo";
+  }
+}
+
+function formatBillingStatus(status: "none" | "active" | "past_due" | "canceled") {
+  switch (status) {
+    case "active":
+      return "Active";
+    case "past_due":
+      return "Past due";
+    case "canceled":
+      return "Canceled";
+    case "none":
+      return "No billing";
+  }
 }
 
 function parseSettingsSection(section: string | undefined): SettingsSectionId | null {

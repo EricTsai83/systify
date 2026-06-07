@@ -72,6 +72,9 @@ export interface PromptInputReasoningPickerProps {
   modelName: string | undefined;
   /** Same disabled semantics as the sibling model picker. */
   disabled?: boolean;
+  /** Efforts that stay visible in the menu but cannot be selected by the current access policy. */
+  disabledReasoningEfforts?: ReadonlyArray<ReasoningEffort>;
+  disabledReasoningEffortMessage?: string;
   /** Settings scope used for model availability lookup. */
   preferenceScope?: ModelPreferenceScope;
   /** Optional class for sizing inside the composer footer. */
@@ -95,6 +98,8 @@ export function PromptInputReasoningPicker({
   provider,
   modelName,
   disabled = false,
+  disabledReasoningEfforts = [],
+  disabledReasoningEffortMessage,
   preferenceScope = "discuss",
   className,
 }: PromptInputReasoningPickerProps) {
@@ -152,6 +157,7 @@ export function PromptInputReasoningPicker({
   }
 
   const selectableEfforts = supportedEfforts.length > 0 ? supportedEfforts : EFFORTS;
+  const disabledEffortSet = new Set(disabledReasoningEfforts);
   const effectiveValue = value !== null && supportedEfforts.includes(value) ? value : fallbackEffort;
   const currentMeta = EFFORT_META[effectiveValue];
 
@@ -200,10 +206,13 @@ export function PromptInputReasoningPicker({
         <PromptInputSelectContent className="min-w-36 border-border bg-popover p-1 text-popover-foreground shadow-lg">
           {selectableEfforts.map((effort) => {
             const meta = EFFORT_META[effort];
+            const effortDisabled = disabledEffortSet.has(effort);
             return (
               <PromptInputSelectItem
                 key={effort}
                 value={effort}
+                disabled={effortDisabled}
+                title={effortDisabled ? disabledReasoningEffortMessage : undefined}
                 className={cn(
                   "h-8 px-2 py-0 text-sm text-popover-foreground",
                   "focus:bg-accent focus:text-accent-foreground data-highlighted:bg-accent",

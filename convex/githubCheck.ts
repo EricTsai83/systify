@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { action, internalMutation, internalQuery } from "./_generated/server";
+import { assertFeatureAccess } from "./lib/entitlements";
 import { consumeGitHubRemoteUpdateRateLimit } from "./lib/rateLimit";
 
 // ---------------------------------------------------------------------------
@@ -21,6 +22,7 @@ export const checkForUpdates = action({
   handler: async (ctx, args) => {
     const identity = await ctx.auth.getUserIdentity();
     if (!identity) throw new Error("Not authenticated.");
+    await assertFeatureAccess(ctx, identity, "checkForUpdates");
 
     const repo: RepoForCheck | null = await ctx.runMutation(internal.githubCheck.reserveRemoteUpdateCheck, {
       repositoryId: args.repositoryId,

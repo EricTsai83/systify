@@ -20,6 +20,15 @@ async function seedRepoWithSandbox(
   sandboxStatus: "provisioning" | "ready" | "stopped" | "archived" | "failed" | "none",
 ) {
   return await t.run(async (ctx) => {
+    await ctx.db.insert("userAccessProfiles", {
+      ownerTokenIdentifier,
+      email: `${ownerTokenIdentifier}@example.com`,
+      plan: "internal",
+      billingStatus: "none",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
     const repositoryId = await ctx.db.insert("repositories", {
       ownerTokenIdentifier,
       sourceHost: "github",

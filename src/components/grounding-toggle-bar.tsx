@@ -20,7 +20,7 @@ export type GroundingAxisLike =
   | { readonly enabled: true }
   | {
       readonly enabled: false;
-      readonly code: RepositoryModeDisabledReasonCode | "loading";
+      readonly code: RepositoryModeDisabledReasonCode | "feature_not_included" | "loading";
       readonly message: string;
       readonly isActivatable?: boolean;
     };
@@ -56,6 +56,7 @@ export interface GroundingToggleBarProps {
    * generate-system-design dialog.
    */
   onOpenGenerateSystemDesign?: () => void;
+  generateDisabledReason?: string;
   /** Hides the whole bar when true (e.g. on Library Mode where it does not apply). */
   hidden?: boolean;
   className?: string;
@@ -83,6 +84,7 @@ export function GroundingToggleBar({
   grounding,
   onActivateSandbox,
   onOpenGenerateSystemDesign,
+  generateDisabledReason,
   hidden = false,
   className,
 }: GroundingToggleBarProps) {
@@ -153,6 +155,8 @@ export function GroundingToggleBar({
           variant="link"
           size="sm"
           className="h-7 px-2 text-xs"
+          disabled={generateDisabledReason !== undefined}
+          title={generateDisabledReason}
           onClick={() => onOpenGenerateSystemDesign?.()}
           data-testid="grounding-generate-cta"
         >

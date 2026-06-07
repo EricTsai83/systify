@@ -13,6 +13,9 @@ const repolessShellMock = vi.hoisted(() => ({
   mountCount: 0,
   lastThreadId: null as ThreadId | null,
 }));
+const viewerAccessMock = vi.hoisted(() => ({
+  value: undefined as { ownerTokenIdentifier: string; plan: "free" | "internal" } | undefined,
+}));
 
 vi.mock("@workos-inc/authkit-react", async () => {
   const React = await import("react");
@@ -104,6 +107,8 @@ vi.mock("convex/react", async () => {
     },
     ConvexReactClient: class {},
     useConvexAuth: () => React.useContext(AuthContext),
+    useMutation: () => async () => undefined,
+    useQuery: () => viewerAccessMock.value,
   };
 });
 
@@ -123,6 +128,7 @@ describe("App auth token failures", () => {
     getAccessTokenMock.mockReset();
     repolessShellMock.mountCount = 0;
     repolessShellMock.lastThreadId = null;
+    viewerAccessMock.value = undefined;
     vi.restoreAllMocks();
   });
 
@@ -196,6 +202,56 @@ describe("App auth token failures", () => {
     expect(router.state.location.pathname).toBe("/chat");
     expect(repolessShellMock.lastThreadId).toBeNull();
     expect(repolessShellMock.mountCount).toBe(1);
+  });
+
+  test("shows a protected-route banner when the viewer is in demo mode", async () => {
+    viewerAccessMock.value = { ownerTokenIdentifier: "user|demo", plan: "free" };
+
+    function useAuth() {
+      return {
+        isLoading: false,
+        user: { id: "user_1" },
+        getAccessToken: getAccessTokenMock,
+      };
+    }
+
+    renderWithAuth(useAuth, ["/chat"]);
+
+    expect(await screen.findByText("chat page")).toBeInTheDocument();
+    expect(screen.getByText("Demo Mode")).toBeInTheDocument();
+    expect(screen.getByText(/Cost-incurring features are disabled/)).toBeInTheDocument();
+  });
+
+  test("does not flash the demo banner while protected-route access is loading", async () => {
+    function useAuth() {
+      return {
+        isLoading: false,
+        user: { id: "user_1" },
+        getAccessToken: getAccessTokenMock,
+      };
+    }
+
+    renderWithAuth(useAuth, ["/chat"]);
+
+    expect(await screen.findByText("chat page")).toBeInTheDocument();
+    expect(screen.queryByText("Demo Mode")).not.toBeInTheDocument();
+  });
+
+  test("does not show the demo banner for internal access", async () => {
+    viewerAccessMock.value = { ownerTokenIdentifier: "user|internal", plan: "internal" };
+
+    function useAuth() {
+      return {
+        isLoading: false,
+        user: { id: "user_1" },
+        getAccessToken: getAccessTokenMock,
+      };
+    }
+
+    renderWithAuth(useAuth, ["/chat"]);
+
+    expect(await screen.findByText("chat page")).toBeInTheDocument();
+    expect(screen.queryByText("Demo Mode")).not.toBeInTheDocument();
   });
 
   test("shows the auth loading screen instead of HomePage on / when a WorkOS session cookie is present", async () => {

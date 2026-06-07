@@ -20,6 +20,7 @@ import {
 import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-input-reasoning-picker";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
+import { useModelAccessDisabledReason } from "@/hooks/use-model-access-disabled-reason";
 import { toUserErrorMessage } from "@/lib/errors";
 import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import { REPOSITORY_GUIDE_SECTIONS, type RepositoryGuideKind } from "@/lib/repository-guide-catalog";
@@ -29,10 +30,16 @@ export function GenerateSystemDesignDialog({
   open,
   onOpenChange,
   repositoryId,
+  disabledReason,
+  premiumModelsDisabledReason,
+  highReasoningDisabledReason,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   repositoryId: RepositoryId;
+  disabledReason?: string;
+  premiumModelsDisabledReason?: string;
+  highReasoningDisabledReason?: string;
 }) {
   const activeJob = useQuery(api.systemDesign.getActiveSystemDesignJob, { repositoryId });
   const requestGeneration = useMutation(api.systemDesign.requestSystemDesignGeneration);
@@ -77,6 +84,14 @@ export function GenerateSystemDesignDialog({
           modelName: modelPick.modelName,
         },
   );
+  const modelAccessDisabledReason = useModelAccessDisabledReason({
+    modelPick,
+    reasoningEffort,
+    preferenceScope: "sandbox",
+    premiumModelsDisabledReason,
+    highReasoningDisabledReason,
+  });
+  const submitDisabledReason = disabledReason ?? modelAccessDisabledReason ?? undefined;
 
   const toggle = (kind: RepositoryGuideKind) => {
     setSelected((prev) => {
@@ -89,6 +104,10 @@ export function GenerateSystemDesignDialog({
 
   const [isSubmitting, runSubmit] = useAsyncCallback(async () => {
     setError(null);
+    if (submitDisabledReason) {
+      setError(submitDisabledReason);
+      return;
+    }
     const selections = Array.from(selected);
     if (selections.length === 0) {
       setError(`Select at least one ${REPOSITORY_GUIDE_COPY.sectionName} to generate.`);
@@ -153,6 +172,9 @@ export function GenerateSystemDesignDialog({
               capability="sandbox"
               preferenceScope="sandbox"
               disabled={isSubmitting || jobInProgress}
+              getDisabledReason={(entry) =>
+                premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
+              }
             />
             <PromptInputReasoningPicker
               value={reasoningEffort}
@@ -161,6 +183,8 @@ export function GenerateSystemDesignDialog({
               modelName={modelPick?.modelName}
               preferenceScope="sandbox"
               disabled={isSubmitting || jobInProgress}
+              disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
+              disabledReasoningEffortMessage={highReasoningDisabledReason}
             />
           </div>
         </div>
@@ -171,6 +195,12 @@ export function GenerateSystemDesignDialog({
               A Repository Guide run is already in progress. Close this dialog and watch the folder navigator — new
               guide sections will appear as they complete.
             </AlertDescription>
+          </Alert>
+        ) : null}
+
+        {disabledReason ? (
+          <Alert>
+            <AlertDescription className="text-[12px]">{disabledReason}</AlertDescription>
           </Alert>
         ) : null}
 
@@ -260,7 +290,8 @@ export function GenerateSystemDesignDialog({
               type="button"
               size="sm"
               onClick={() => void runSubmit()}
-              disabled={isSubmitting || jobInProgress || selected.size === 0}
+              disabled={submitDisabledReason !== undefined || isSubmitting || jobInProgress || selected.size === 0}
+              title={submitDisabledReason}
             >
               {isSubmitting ? (
                 <>

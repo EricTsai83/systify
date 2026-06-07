@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { BookOpenIcon, PaperPlaneTiltIcon, SparkleIcon } from "@phosphor-icons/react";
-import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
-import { CHAT_MESSAGES_PAGE_SIZE } from "../../convex/lib/constants";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { useChatScroll } from "@/components/ai-elements/use-chat-scroll";
 import {
@@ -21,6 +20,9 @@ import { LibraryAskThreadTabs } from "@/components/library-ask-thread-tabs";
 import { Button } from "@/components/ui/button";
 import { useLibraryAskTabs } from "@/hooks/use-library-ask-tabs";
 import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
+import { useChatLifecycle } from "@/hooks/use-chat-lifecycle";
+import { useConversationThread } from "@/hooks/use-conversation-thread";
+import { useModelAccessDisabledReason } from "@/hooks/use-model-access-disabled-reason";
 import { toUserErrorMessage } from "@/lib/errors";
 import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import type { ArtifactId, RepositoryId, ThreadId } from "@/lib/types";
@@ -37,6 +39,10 @@ export function LibraryAskPanel({
   onSelectArtifact,
   onSelectThread,
   onGenerate,
+  askDisabledReason,
+  generateDisabledReason,
+  premiumModelsDisabledReason,
+  highReasoningDisabledReason,
 }: {
   repositoryId: RepositoryId;
   threadId: ThreadId | null;
@@ -62,9 +68,11 @@ export function LibraryAskPanel({
    * without leaving the Ask panel.
    */
   onGenerate?: () => void;
+  askDisabledReason?: string;
+  generateDisabledReason?: string;
+  premiumModelsDisabledReason?: string;
+  highReasoningDisabledReason?: string;
 }) {
-  const sendMessage = useMutation(api.chat.send.sendMessage);
-  const sendMessageStartingNewThread = useMutation(api.chat.send.sendMessageStartingNewThread);
   const archiveThread = useMutation(api.chat.threads.archiveThread);
   const setThreadPinned = useMutation(api.chat.threads.setThreadPinned);
 
@@ -77,31 +85,8 @@ export function LibraryAskPanel({
   // `?ask=` bookmark then degrades to the empty state instead of holding
   // message subscriptions for a missing thread.
   const confirmedThreadId = threadId && activeThreadProbe ? threadId : null;
-  const {
-    results: paginatedMessages,
-    status: messagesStatus,
-    loadMore: loadOlderMessages,
-  } = usePaginatedQuery(
-    api.chat.threads.listMessagesPaginated,
-    confirmedThreadId ? { threadId: confirmedThreadId } : "skip",
-    { initialNumItems: CHAT_MESSAGES_PAGE_SIZE },
-  );
-  // Same ordering contract as the Discuss panel: server pages arrive
-  // newest-first; flatten + reverse so all downstream consumers see
-  // ascending creation-time order.
-  const messages = useMemo<Doc<"messages">[] | undefined>(() => {
-    if (confirmedThreadId === null) return undefined;
-    if (messagesStatus === "LoadingFirstPage") return undefined;
-    return [...paginatedMessages].reverse();
-  }, [confirmedThreadId, messagesStatus, paginatedMessages]);
-  const canLoadOlderMessages = messagesStatus === "CanLoadMore";
-  const handleLoadOlderMessages = useCallback(() => {
-    loadOlderMessages(CHAT_MESSAGES_PAGE_SIZE);
-  }, [loadOlderMessages]);
-  const activeMessageStream = useQuery(
-    api.chat.streaming.getActiveMessageStream,
-    confirmedThreadId ? { threadId: confirmedThreadId } : "skip",
-  );
+  const { messages, activeMessageStream, canLoadOlderMessages, handleLoadOlderMessages, latestAssistantInFlight } =
+    useConversationThread({ threadId: confirmedThreadId });
 
   // Owns stick-to-bottom, anchor preservation on prepend, sentinel
   // observer for load-older, threadId-keyed reset, and prefers-
@@ -117,12 +102,9 @@ export function LibraryAskPanel({
   const { openThreads, ensureOpen, closeTab } = useLibraryAskTabs(repositoryId);
 
   const [input, setInput] = useState("");
-  const [isStarting, setIsStarting] = useState(false);
-  const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingArchiveThreadId, setPendingArchiveThreadId] = useState<ThreadId | null>(null);
   const [isArchivingThread, setIsArchivingThread] = useState(false);
-  const submissionLockRef = useRef(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const handlePickSuggestion = useCallback((suggestion: string) => {
@@ -185,6 +167,38 @@ export function LibraryAskPanel({
       threadDefaultModelName: defaultModelName,
     });
 
+  const lifecycleThreadId = threadId && activeThreadProbe === undefined ? threadId : confirmedThreadId;
+  const newThreadArtifactContext = useMemo(
+    () => (activeArtifactId ? [activeArtifactId] : undefined),
+    [activeArtifactId],
+  );
+  const clearInput = useCallback(() => setInput(""), []);
+  const handleAfterCreateThread = useCallback(
+    (id: ThreadId) => {
+      ensureOpen({ id, title: "Library Ask" });
+      onSelectThread(id);
+    },
+    [ensureOpen, onSelectThread],
+  );
+  const handleAfterLifecycleArchive = useCallback(() => {}, []);
+  const { isSending, handleSendMessage: handleLifecycleSendMessage } = useChatLifecycle({
+    selectedThreadId: lifecycleThreadId,
+    repositoryId,
+    threadToArchive: pendingArchiveThreadId,
+    chatInput: input,
+    chatMode: "library",
+    selectedProvider,
+    selectedModelName,
+    selectedReasoningEffort,
+    newThreadTitle: "Library Ask",
+    newThreadArtifactContext,
+    clearChatInput: clearInput,
+    setActionError: setError,
+    setThreadToArchive: setPendingArchiveThreadId,
+    onAfterCreateThread: handleAfterCreateThread,
+    onAfterArchiveThread: handleAfterLifecycleArchive,
+  });
+
   // "+" no longer eagerly creates a thread — it transitions the panel to a
   // draft state (clears `?ask=`, focuses the composer). The thread is created
   // by `handleSubmit` only when the user sends their first message, so a
@@ -246,76 +260,33 @@ export function LibraryAskPanel({
     }
   }, [archiveThread, closeTab, onSelectThread, pendingArchiveThreadId, threadId]);
 
-  const latestAssistantInFlight = useMemo(() => {
-    if (!messages) return false;
-    const latestAssistant = [...messages].reverse().find((message) => message.role === "assistant");
-    return latestAssistant?.status === "pending" || latestAssistant?.status === "streaming";
-  }, [messages]);
-
-  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (submissionLockRef.current) return;
-    const content = input.trim();
-    if (!content || latestAssistantInFlight) return;
-    submissionLockRef.current = true;
-    setError(null);
-    setIsStarting(!threadId);
-    setIsSending(true);
-    try {
-      // Forward the picked pair only when BOTH halves are present.
-      // The mutation rejects half-pairs with `incomplete_model_pick`;
-      // dropping them here keeps an unmounted / loading picker from
-      // firing a doomed send. With both unset the backend falls
-      // through to the library capability default.
-      const modelArgs =
-        selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : {};
-      const reasoningArgs = selectedReasoningEffort !== null ? { reasoningEffort: selectedReasoningEffort } : {};
-      // Create the thread (if needed) and persist the user message BEFORE
-      // telling the parent to flip `?ask=`. Switching the active thread no
-      // longer remounts this panel (the thread is a query param on the same
-      // route), so this is not a remount-safety requirement anymore — but
-      // the ordering still matters: flipping `?ask=` re-keys the paginated
-      // message query to the new thread, and we want that query to resolve
-      // with the freshly persisted user + pending-assistant pair on its
-      // first read.
-      let targetThreadId = threadId;
-      let createdNew = false;
-      if (!targetThreadId) {
-        const created = await sendMessageStartingNewThread({
-          repositoryId,
-          content,
-          mode: "library",
-          artifactContext: activeArtifactId ? [activeArtifactId] : undefined,
-          title: "Library Ask",
-          ...modelArgs,
-          ...reasoningArgs,
-        });
-        targetThreadId = created.threadId;
-        createdNew = true;
-      } else {
-        await sendMessage({
-          threadId: targetThreadId,
-          content,
-          mode: "library",
-          ...modelArgs,
-          ...reasoningArgs,
-        });
-      }
-      setInput("");
-      if (createdNew) {
-        ensureOpen({ id: targetThreadId, title: "Library Ask" });
-        onSelectThread(targetThreadId);
-      }
-    } catch (caught) {
-      setError(toUserErrorMessage(caught, "Failed to ask Library."));
-    } finally {
-      submissionLockRef.current = false;
-      setIsSending(false);
-      setIsStarting(false);
-    }
-  };
-
   const isLocked = !hasArtifacts;
+  const selectedModelPick =
+    selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null;
+  const modelAccessDisabledReason = useModelAccessDisabledReason({
+    modelPick: selectedModelPick,
+    reasoningEffort: selectedReasoningEffort,
+    preferenceScope: "library",
+    premiumModelsDisabledReason,
+    highReasoningDisabledReason,
+  });
+  const composerDisabledReason = askDisabledReason ?? (isLocked ? LOCKED_HINT : modelAccessDisabledReason);
+  const handleSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      if (composerDisabledReason !== null || latestAssistantInFlight) {
+        event.preventDefault();
+        return;
+      }
+      await handleLifecycleSendMessage(event);
+    },
+    [composerDisabledReason, handleLifecycleSendMessage, latestAssistantInFlight],
+  );
+  const composerHintId = isLocked && threadId ? "library-ask-locked-hint" : undefined;
+  const composerPlaceholder = isLocked
+    ? LOCKED_PLACEHOLDER
+    : activeArtifactId
+      ? "Question about the open artifact..."
+      : "Question about this library...";
 
   return (
     // Plain container, not a landmark: this panel renders inside the app
@@ -349,7 +320,7 @@ export function LibraryAskPanel({
           <ConversationScrollButton />
         </Conversation>
       ) : isLocked ? (
-        <NoArtifactsHint onGenerate={onGenerate} />
+        <NoArtifactsHint onGenerate={onGenerate} generateDisabledReason={generateDisabledReason} />
       ) : (
         <div className="flex min-h-0 flex-1 animate-in flex-col gap-5 px-4 py-6 fade-in duration-300">
           <div className="flex flex-1 items-center justify-center">
@@ -391,6 +362,8 @@ export function LibraryAskPanel({
           {onGenerate ? (
             <button
               type="button"
+              disabled={generateDisabledReason !== undefined}
+              title={generateDisabledReason}
               onClick={onGenerate}
               className="shrink-0 font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             >
@@ -412,16 +385,10 @@ export function LibraryAskPanel({
             name="message"
             value={input}
             onChange={(event) => setInput(event.target.value)}
-            placeholder={
-              isLocked
-                ? LOCKED_PLACEHOLDER
-                : activeArtifactId
-                  ? "Question about the open artifact..."
-                  : "Question about this library..."
-            }
+            placeholder={composerPlaceholder}
             className="min-h-24 text-sm"
-            disabled={isSending || latestAssistantInFlight || isLocked}
-            aria-describedby={isLocked && threadId ? "library-ask-locked-hint" : undefined}
+            disabled={isSending || latestAssistantInFlight || composerDisabledReason !== null}
+            aria-describedby={composerHintId}
           />
           <PromptInputFooter>
             <PromptInputTools>
@@ -444,6 +411,9 @@ export function LibraryAskPanel({
                   onChange={setSelectedModel}
                   threadLockedProvider={lockedProvider}
                   preferenceScope="library"
+                  getDisabledReason={(entry) =>
+                    premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
+                  }
                 />
               ) : null}
               {!isLocked ? (
@@ -453,16 +423,19 @@ export function LibraryAskPanel({
                   provider={selectedProvider ?? undefined}
                   modelName={selectedModelName ?? undefined}
                   preferenceScope="library"
+                  disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
+                  disabledReasoningEffortMessage={highReasoningDisabledReason}
                 />
               ) : null}
             </PromptInputTools>
             <Button
               type="submit"
               size="sm"
-              disabled={!input.trim() || isSending || latestAssistantInFlight || isLocked}
+              disabled={!input.trim() || isSending || latestAssistantInFlight || composerDisabledReason !== null}
+              title={composerDisabledReason ?? undefined}
             >
               <PaperPlaneTiltIcon size={14} weight="fill" />
-              {isSending || isStarting ? "Asking..." : "Ask"}
+              {isSending ? "Asking..." : "Ask"}
             </Button>
           </PromptInputFooter>
         </PromptInput>
@@ -502,7 +475,13 @@ const LIBRARY_SUGGESTIONS = [
  * below the description text, instead of stranded at the bottom of the
  * tall sidebar column.
  */
-function NoArtifactsHint({ onGenerate }: { onGenerate?: () => void }) {
+function NoArtifactsHint({
+  onGenerate,
+  generateDisabledReason,
+}: {
+  onGenerate?: () => void;
+  generateDisabledReason?: string;
+}) {
   return (
     <div className="flex min-h-0 flex-1 animate-in flex-col items-center justify-center gap-4 px-4 py-6 fade-in duration-300">
       <EmptyStateHero
@@ -515,7 +494,14 @@ function NoArtifactsHint({ onGenerate }: { onGenerate?: () => void }) {
         description={REPOSITORY_GUIDE_COPY.noArtifactsDescription}
       />
       {onGenerate ? (
-        <Button type="button" size="sm" className="gap-1.5" onClick={onGenerate}>
+        <Button
+          type="button"
+          size="sm"
+          className="gap-1.5"
+          disabled={generateDisabledReason !== undefined}
+          title={generateDisabledReason}
+          onClick={onGenerate}
+        >
           <SparkleIcon size={14} weight="bold" />
           {REPOSITORY_GUIDE_COPY.generateAction}
         </Button>

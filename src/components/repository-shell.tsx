@@ -28,6 +28,7 @@ import { useChatMode } from "@/hooks/use-service-mode";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
+import { isViewerFeatureEnabled, useViewerAccess } from "@/hooks/use-viewer-access";
 import type {
   ArtifactId,
   ChatMode,
@@ -38,6 +39,7 @@ import type {
   ThreadMode,
   UserPickableCapability,
 } from "@/lib/types";
+import { DEMO_MODE_COPY } from "@/lib/demo-content";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_AUTHENTICATED_PATH,
@@ -64,6 +66,7 @@ export function RepositoryShell({
   isNewThreadRoute?: boolean;
 }) {
   const navigate = useNavigate();
+  const viewerAccess = useViewerAccess();
   const suppressThreadAutoOpen = urlThreadId === null && isNewThreadRoute;
 
   const {
@@ -190,6 +193,36 @@ export function RepositoryShell({
     (repoDetail?.repository.importStatus === "queued" || repoDetail?.repository.importStatus === "running");
   const effectiveSandboxModeStatus: SandboxModeStatus | null =
     effectiveSelectedThreadId !== null ? capabilities.sandboxModeStatus : (repoDetail?.sandboxModeStatus ?? null);
+  const accessLoadingReason = viewerAccess === undefined ? "Loading access…" : undefined;
+  const chatSendDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, chatMode === "library" ? "libraryAsk" : "chatSend")
+      ? undefined
+      : DEMO_MODE_COPY.lockedMessage);
+  const importDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "repoImport") ? undefined : DEMO_MODE_COPY.importDisabled);
+  const syncDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "syncRepository") ? undefined : DEMO_MODE_COPY.syncDisabled);
+  const checkForUpdatesEnabled = isViewerFeatureEnabled(viewerAccess, "checkForUpdates");
+  let generateSystemDesignDisabledReason = accessLoadingReason;
+  if (!generateSystemDesignDisabledReason) {
+    if (!isViewerFeatureEnabled(viewerAccess, "generateSystemDesign")) {
+      generateSystemDesignDisabledReason = DEMO_MODE_COPY.generateDisabled;
+    } else if (!isViewerFeatureEnabled(viewerAccess, "sandboxGrounding")) {
+      generateSystemDesignDisabledReason = DEMO_MODE_COPY.sandboxDisabled;
+    }
+  }
+  const sandboxGroundingDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "sandboxGrounding") ? undefined : DEMO_MODE_COPY.sandboxDisabled);
+  const premiumModelsDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "premiumModels") ? undefined : DEMO_MODE_COPY.premiumModelsDisabled);
+  const highReasoningDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "highReasoning") ? undefined : DEMO_MODE_COPY.highReasoningDisabled);
 
   useEffect(() => {
     if (landingDecision.navigation === null) return;
@@ -217,7 +250,7 @@ export function RepositoryShell({
     onMissingThread,
   });
 
-  useCheckForUpdates(effectiveSelectedRepositoryId);
+  useCheckForUpdates(effectiveSelectedRepositoryId, checkForUpdatesEnabled);
 
   const shellStatus: RepositoryShellStatus =
     isRepositoriesLoading || repositories === undefined || landingDecision.status !== "ready"
@@ -422,6 +455,12 @@ export function RepositoryShell({
       setGroundSandbox(false);
     }
   }, [groundingState, groundSandbox, setGroundSandbox]);
+  useEffect(() => {
+    if (sandboxGroundingDisabledReason && groundSandbox) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setGroundSandbox(false);
+    }
+  }, [groundSandbox, sandboxGroundingDisabledReason, setGroundSandbox]);
 
   const {
     isSyncing,
@@ -437,6 +476,7 @@ export function RepositoryShell({
     setActionError,
     setShowArchiveDialog,
     setShowPermanentDeleteDialog,
+    syncDisabledReason,
     onAfterArchiveRepo: () => {
       void navigate(DEFAULT_AUTHENTICATED_PATH);
     },
@@ -463,20 +503,25 @@ export function RepositoryShell({
       selectedProvider={selectedProvider}
       selectedModelName={selectedModelName}
       setSelectedModel={setSelectedModel}
+      premiumModelsDisabledReason={premiumModelsDisabledReason}
       modelPreferenceScope={modelPreferenceScope}
       selectedReasoningEffort={selectedReasoningEffort}
       setSelectedReasoningEffort={setSelectedReasoningEffort}
+      highReasoningDisabledReason={highReasoningDisabledReason}
       threadLockedProvider={capabilities.lockedProvider}
       grounding={availability?.grounding}
       showGroundingToggles
       onOpenGenerateSystemDesign={() => setIsGenerateDialogOpen(true)}
+      generateSystemDesignDisabledReason={generateSystemDesignDisabledReason}
       isSending={isSending}
       onSendMessage={handleSendMessage}
+      sendDisabledReason={chatSendDisabledReason}
       onCancelInFlightReply={handleCancelInFlightReply}
       isCancellingReply={isCancellingReply}
       sandboxModeStatus={effectiveSandboxModeStatus}
       isSyncing={isSyncing || isRepositorySyncing}
       onSync={() => void handleSync()}
+      sandboxGroundingDisabledReason={sandboxGroundingDisabledReason}
       isArtifactPanelOpen={isDesktopLayout ? isArtifactPanelOpen : isArtifactSheetOpen}
       onToggleArtifactPanel={handleToggleArtifactPanel}
       showArtifactToggle={isArtifactPanelEnabled}
@@ -500,6 +545,7 @@ export function RepositoryShell({
         onRequestNewThread={handleRequestNewThread}
         onImported={handleImported}
         onError={setActionError}
+        importDisabledReason={importDisabledReason}
       />
 
       <SidebarInset>
@@ -517,6 +563,7 @@ export function RepositoryShell({
           onThreadMovedToRepository={handleThreadMovedToRepository}
           isDesktopLayout={isDesktopLayout}
           onSync={() => void handleSync()}
+          syncDisabledReason={syncDisabledReason}
           onViewArtifact={handleSelectArtifact}
           showSystemStatus={isArtifactPanelEnabled}
         />
@@ -570,6 +617,7 @@ export function RepositoryShell({
           <ImportFailedBanner
             errorMessage={repoDetail.latestFailedImportError}
             isSyncing={isSyncing || isRepositorySyncing}
+            syncDisabledReason={syncDisabledReason}
             onRetry={() => void handleSync()}
           />
         ) : null}
@@ -642,6 +690,7 @@ export function RepositoryShell({
                 hasRemoteUpdates={repoDetail.hasRemoteUpdates}
                 isSyncing={isSyncing || isRepositorySyncing}
                 onSync={() => void handleSync()}
+                syncDisabledReason={syncDisabledReason}
                 onViewArtifact={handleSelectArtifact}
                 onClose={() => setIsStatusOpen(false)}
               />
@@ -688,6 +737,9 @@ export function RepositoryShell({
           open={isGenerateDialogOpen}
           onOpenChange={setIsGenerateDialogOpen}
           repositoryId={effectiveSelectedRepositoryId}
+          disabledReason={generateSystemDesignDisabledReason}
+          premiumModelsDisabledReason={premiumModelsDisabledReason}
+          highReasoningDisabledReason={highReasoningDisabledReason}
         />
       ) : null}
     </>
@@ -713,12 +765,15 @@ function RepositoryMissingState({ onBack }: { onBack: () => void }) {
 function ImportFailedBanner({
   errorMessage,
   isSyncing,
+  syncDisabledReason,
   onRetry,
 }: {
   errorMessage: string | null;
   isSyncing: boolean;
+  syncDisabledReason?: string;
   onRetry: () => void;
 }) {
+  const retryDisabled = isSyncing || syncDisabledReason !== undefined;
   return (
     <div className="flex shrink-0 flex-col border-b border-destructive/40 bg-destructive/5 px-6 py-3 text-destructive">
       <div role="alert" aria-live="assertive" aria-atomic="true" className="flex items-start gap-2">
@@ -734,7 +789,8 @@ function ImportFailedBanner({
           variant="outline"
           size="sm"
           className="gap-1.5 text-xs"
-          disabled={isSyncing}
+          disabled={retryDisabled}
+          title={syncDisabledReason}
           onClick={onRetry}
         >
           <ButtonStateText current={isSyncing ? "Retrying…" : "Retry sync"} states={["Retry sync", "Retrying…"]} />

@@ -20,6 +20,7 @@ export function useRepositoryLifecycle({
   setActionError,
   setShowArchiveDialog,
   setShowPermanentDeleteDialog,
+  syncDisabledReason,
   onAfterArchiveRepo,
   onAfterRestoreRepo,
   onAfterPermanentDeleteRepo,
@@ -28,6 +29,7 @@ export function useRepositoryLifecycle({
   setActionError: (value: string | null) => void;
   setShowArchiveDialog: (value: boolean) => void;
   setShowPermanentDeleteDialog: (value: boolean) => void;
+  syncDisabledReason?: string;
   onAfterArchiveRepo: () => void;
   onAfterRestoreRepo: () => void;
   onAfterPermanentDeleteRepo: () => void;
@@ -41,13 +43,17 @@ export function useRepositoryLifecycle({
   const [isSyncing, handleSync] = useAsyncCallback(
     useCallback(async () => {
       if (!selectedRepositoryId) return;
+      if (syncDisabledReason) {
+        setActionError(syncDisabledReason);
+        return;
+      }
       setActionError(null);
       try {
         await syncRepositoryMutation({ repositoryId: selectedRepositoryId });
       } catch (error) {
         setActionError(toUserErrorMessage(error, "Failed to sync the repository."));
       }
-    }, [selectedRepositoryId, setActionError, syncRepositoryMutation]),
+    }, [selectedRepositoryId, setActionError, syncDisabledReason, syncRepositoryMutation]),
   );
 
   const [isArchivingRepo, handleArchiveRepo] = useAsyncCallback(

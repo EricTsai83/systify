@@ -5,6 +5,7 @@ import type { MutationCtx } from "../_generated/server";
 import { mutation } from "../_generated/server";
 import { requireViewerIdentity } from "../lib/auth";
 import { chatModeValidator, type ChatMode } from "../lib/chatMode";
+import { assertFeatureAccess, requiresHighReasoningAccess, requiresPremiumModelAccess } from "../lib/entitlements";
 import { enqueueJob, findActiveJob } from "../lib/jobs";
 import { reasoningEffortValidator, type ReasoningEffort } from "../lib/llmCatalog";
 import { llmProviderValidator, type LlmProvider } from "../lib/llmProvider";
@@ -30,6 +31,29 @@ import {
 } from "./sendPlanning";
 
 const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
+
+async function assertChatTurnFeatureAccess(
+  ctx: MutationCtx,
+  identity: { tokenIdentifier: string; email?: string | null },
+  turnPlan: {
+    mode: ChatMode;
+    groundSandbox: boolean;
+    provider: LlmProvider;
+    modelName: string;
+    reasoningEffort?: ReasoningEffort;
+  },
+) {
+  await assertFeatureAccess(ctx, identity, turnPlan.mode === "library" ? "libraryAsk" : "chatSend");
+  if (turnPlan.groundSandbox) {
+    await assertFeatureAccess(ctx, identity, "sandboxGrounding");
+  }
+  if (requiresPremiumModelAccess(turnPlan.provider, turnPlan.modelName)) {
+    await assertFeatureAccess(ctx, identity, "premiumModels");
+  }
+  if (requiresHighReasoningAccess(turnPlan.reasoningEffort)) {
+    await assertFeatureAccess(ctx, identity, "highReasoning");
+  }
+}
 
 async function getActiveChatJobForThread(ctx: MutationCtx, threadId: Id<"threads">, now: number) {
   return await findActiveJob(ctx, {
@@ -298,6 +322,7 @@ export const sendMessageStartingNewThread = mutation({
       modelPreferences,
       picker: args,
     });
+    await assertChatTurnFeatureAccess(ctx, identity, turnPlan);
 
     const now = Date.now();
 
@@ -427,6 +452,7 @@ export const sendMessage = mutation({
         lockedProvider: thread.lockedProvider,
       },
     });
+    await assertChatTurnFeatureAccess(ctx, identity, turnPlan);
 
     const trimmedContent = trimChatMessageContent(args.content);
 

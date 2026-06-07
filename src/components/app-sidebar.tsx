@@ -46,6 +46,8 @@ type AppSidebarLeftProps = {
   libraryActiveArtifactId?: ArtifactId | null;
   onSelectLibraryArtifact?: (id: ArtifactId) => void;
   onGenerate?: () => void;
+  importDisabledReason?: string;
+  generateDisabledReason?: string;
   isUnseen?: (artifact: ArtifactListItem) => boolean;
 };
 
@@ -68,6 +70,8 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
     libraryActiveArtifactId,
     onSelectLibraryArtifact,
     onGenerate,
+    importDisabledReason,
+    generateDisabledReason,
     isUnseen,
   } = props;
   const navigate = useNavigate();
@@ -110,6 +114,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
             selectedArtifactId={libraryActiveArtifactId ?? null}
             onSelectArtifact={onSelectLibraryArtifact}
             onGenerate={onGenerate}
+            generateDisabledReason={generateDisabledReason}
             isUnseen={isUnseen}
             className="min-h-0 flex-1"
           />
@@ -148,6 +153,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
             onSwitchRepository={onSwitchRepository}
             onSelectNoRepository={() => void navigate(DEFAULT_AUTHENTICATED_PATH)}
             onImported={onImported}
+            importDisabledReason={importDisabledReason}
           />
         </div>
       </SidebarFooter>
@@ -173,6 +179,10 @@ type AppSidebarRightProps = {
    * so the Ask panel and the editor empty state share one dialog instance.
    */
   onGenerate?: () => void;
+  askDisabledReason?: string;
+  generateDisabledReason?: string;
+  premiumModelsDisabledReason?: string;
+  highReasoningDisabledReason?: string;
 };
 
 /**
@@ -186,6 +196,10 @@ export function AppSidebarRight({
   onSelectArtifact,
   onSelectAskThread,
   onGenerate,
+  askDisabledReason,
+  generateDisabledReason,
+  premiumModelsDisabledReason,
+  highReasoningDisabledReason,
 }: AppSidebarRightProps) {
   return (
     <Sidebar
@@ -203,6 +217,10 @@ export function AppSidebarRight({
           onSelectArtifact={onSelectArtifact}
           onSelectThread={onSelectAskThread}
           onGenerate={onGenerate}
+          askDisabledReason={askDisabledReason}
+          generateDisabledReason={generateDisabledReason}
+          premiumModelsDisabledReason={premiumModelsDisabledReason}
+          highReasoningDisabledReason={highReasoningDisabledReason}
         />
       </div>
     </Sidebar>

@@ -1,6 +1,6 @@
 "use node";
 
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
@@ -11,6 +11,7 @@ import {
   DEFAULT_ARTIFACT_CHUNK_SOFT_TOKEN_CAP,
 } from "./lib/artifactChunking";
 import { EMBEDDING_BUDGET_ESTIMATES, embedWithAccounting } from "./lib/embeddingAccounting";
+import { assertFeatureAccess } from "./lib/entitlements";
 import { logInfo, logWarn } from "./lib/observability";
 import { isUsageBudgetExceededError } from "./lib/userCost";
 
@@ -29,6 +30,7 @@ export const reindexArtifact = internalAction({
     if (!artifact || !artifact.repositoryId) {
       return { indexed: false, reason: "missing_artifact_or_repository" as const };
     }
+    await assertFeatureAccess(ctx, artifact.ownerTokenIdentifier, "artifactIndexing");
 
     const artifactVersion = artifact.version;
     const chunks = chunkArtifactMarkdown(artifact.contentMarkdown, {
@@ -144,14 +146,70 @@ async function reindexArtifactsWithConcurrency(ctx: ActionCtx, artifacts: Doc<"a
     const results = await Promise.allSettled(
       batch.map((artifact) => ctx.runAction(internal.artifactIndexing.reindexArtifact, { artifactId: artifact._id })),
     );
-    results.forEach((result, resultIndex) => {
+    for (const [resultIndex, result] of results.entries()) {
       if (result.status === "rejected") {
+        const artifact = batch[resultIndex];
+        if (artifact && isFeatureNotIncludedError(result.reason)) {
+          await ctx.runMutation(internal.artifactStore.markChunkingStatus, {
+            artifactId: artifact._id,
+            status: "failed",
+            version: artifact.version,
+            failureReason: "feature_not_included",
+          });
+          logInfo("artifactIndexing", "artifact_reindex_skipped_feature_not_included", {
+            artifactId: artifact._id,
+          });
+          continue;
+        }
         logWarn("artifactIndexing", "artifact_reindex_action_failed", {
-          artifactId: batch[resultIndex]?._id,
+          artifactId: artifact?._id,
           error: result.reason instanceof Error ? result.reason.message : String(result.reason),
         });
       }
-    });
+    }
+  }
+}
+
+function isFeatureNotIncludedError(error: unknown): boolean {
+  if (error instanceof ConvexError && isFeatureNotIncludedData(error.data)) {
+    return true;
+  }
+  if (typeof error === "object" && error !== null && "data" in error) {
+    const data = (error as { data?: unknown }).data;
+    if (isFeatureNotIncludedData(data)) {
+      return true;
+    }
+    if (stringifyUnknownValue(data).includes("FEATURE_NOT_INCLUDED")) {
+      return true;
+    }
+  }
+  return stringifyUnknownError(error).includes("FEATURE_NOT_INCLUDED");
+}
+
+function isFeatureNotIncludedData(data: unknown): boolean {
+  return (
+    typeof data === "object" &&
+    data !== null &&
+    "code" in data &&
+    (data as { code?: unknown }).code === "FEATURE_NOT_INCLUDED"
+  );
+}
+
+function stringifyUnknownError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return stringifyUnknownValue(error);
+}
+
+function stringifyUnknownValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
   }
 }
 

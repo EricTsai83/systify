@@ -6,6 +6,7 @@ import type { ActionCtx } from "../_generated/server";
 import { embedViaGateway, type LlmCallContext, type LlmEmbedResult } from "./llmGateway";
 import { costUsdToCents } from "./llmPricing";
 import type { LlmProvider } from "./llmProvider";
+import { assertFeatureAccess } from "./entitlements";
 import { logWarn } from "./observability";
 import {
   ARTIFACT_INDEXING_BATCH_BUDGET_ESTIMATE_USD,
@@ -67,6 +68,9 @@ export async function embedWithAccounting(
   const provider = args.provider ?? DEFAULT_ARTIFACT_EMBEDDING_PROVIDER;
   const modelName = args.modelName ?? resolveArtifactEmbeddingModel();
   const occurredAtMs = args.occurredAtMs ?? Date.now();
+  if (args.usageFeature === "artifactIndexing") {
+    await assertFeatureAccess(ctx, args.ownerTokenIdentifier, "artifactIndexing");
+  }
 
   await ctx.runMutation(internal.lib.userCost.reserveUsageBudget, {
     sourceId: args.sourceId,
