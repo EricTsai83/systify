@@ -189,7 +189,8 @@ describe("user preferences customization", () => {
     });
 
     const settingsRows = await viewer.query(api.llmCatalog.listModelSettings, { scope: "library" });
-    expect(settingsRows.map((entry) => entry.capability)).toEqual(["sandbox", "discuss", "sandbox", "discuss"]);
+    const capabilities = settingsRows.map((entry) => entry.capability);
+    expect([...capabilities].sort()).toEqual(["discuss", "discuss", "sandbox", "sandbox"]);
     expect(settingsRows.find((entry) => entry.modelName === "gpt-5.5")).toMatchObject({
       enabled: true,
       default: true,

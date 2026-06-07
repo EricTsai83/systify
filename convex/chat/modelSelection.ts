@@ -40,6 +40,7 @@
 
 import type { ChatMode } from "../lib/chatMode";
 import {
+  catalogCapabilityForPickableSurface,
   getCatalogEntry,
   isSupportedReasoningEffort,
   isUserPickableModel,
@@ -168,6 +169,7 @@ export function resolveModelForReply(args: {
   lockedProvider?: LlmProvider;
 }): ModelChoice {
   const capability = pickCapability(args);
+  const catalogCapability = catalogCapabilityForPickableSurface(capability);
 
   // Per-message override of reasoning effort. Applied at every layer
   // exit so the user's per-send intent survives whichever
@@ -224,15 +226,15 @@ export function resolveModelForReply(args: {
     const lockedFallback = MODEL_CATALOG.find(
       (entry) =>
         entry.provider === args.lockedProvider &&
-        entry.capability === capability &&
-        isUserPickableModel(entry.provider, entry.modelName, capability),
+        entry.capability === catalogCapability &&
+        isUserPickableModel(entry.provider, entry.modelName, catalogCapability),
     );
     if (lockedFallback) {
       return {
         provider: lockedFallback.provider,
         modelName: lockedFallback.modelName,
         reasoningEffort: applyReasoningOverride(lockedFallback),
-        capability,
+        capability: catalogCapability,
       };
     }
   }
@@ -241,6 +243,6 @@ export function resolveModelForReply(args: {
     provider: fallback.provider,
     modelName: fallback.modelName,
     reasoningEffort: fallbackEntry !== undefined ? applyReasoningOverride(fallbackEntry) : undefined,
-    capability,
+    capability: catalogCapability,
   };
 }

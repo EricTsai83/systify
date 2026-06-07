@@ -69,6 +69,18 @@ describe("resolveModelForReply", () => {
     expect(choice.capability).toBe("sandbox");
   });
 
+  test("library mode honors lockedProvider over overrideProvider fallback", () => {
+    const choice = resolveModelForReply({
+      mode: "library",
+      groundSandbox: false,
+      lockedProvider: "openai",
+      overrideProvider: "anthropic",
+      overrideModelName: "unknown-override-model",
+    });
+    expect(choice.provider).toBe("openai");
+    expect(choice.capability).toBe("discuss");
+  });
+
   test("half-set override (model name only, no provider) is ignored and falls through", () => {
     const choice = resolveModelForReply({
       mode: "discuss",
