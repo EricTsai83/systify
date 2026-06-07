@@ -16,11 +16,11 @@ import type { ArtifactId, MessageId, ThreadId } from "@/lib/types";
 // surfaces no entries, which is the correct behavior for the existing
 // fixtures that don't supply `toolCalls`.
 //
-// `usePaginatedQuery` is mocked separately because `ChatContainer` now
-// subscribes to `listMessagesPaginated` through that hook rather than
-// `useQuery`. The default return shape mirrors a settled "no more pages"
-// state with no messages, which suits the trivial render paths most
-// `ChatPanel`-only tests take.
+// `usePaginatedQuery` is mocked separately because `ChatContainer` reaches
+// `listMessagesPaginated` through the shared conversation-thread hook. The
+// default return shape mirrors a settled "no more pages" state with no
+// messages, which suits the trivial render paths most `ChatPanel`-only
+// tests take.
 vi.mock("convex/react", () => ({
   useMutation: vi.fn(() => vi.fn()),
   useQuery: vi.fn(() => []),
@@ -258,7 +258,7 @@ describe("ChatPanel streaming rendering", () => {
     ).toBe(true);
   });
 
-  test("ChatContainer owns message and active-stream subscriptions for the selected thread", () => {
+  test("ChatContainer wires shared message and active-stream subscriptions for the selected thread", () => {
     // Paginated message subscription. The server returns pages in
     // newest-first order; `ChatContainer` reverses the flattened result
     // set to ascending creation-time order before rendering. A
@@ -329,7 +329,7 @@ describe("ChatPanel streaming rendering", () => {
     // Paginated message subscription is keyed on `{ threadId, paginationOpts }`.
     // The active-stream subscription is the one that goes through plain
     // `useQuery({ threadId })`; assert on that to confirm the container
-    // is wiring both subscriptions through the correct hooks.
+    // still exposes both subscriptions from the shared conversation hook.
     expect(vi.mocked(usePaginatedQuery)).toHaveBeenCalledWith(
       expect.anything(),
       { threadId },

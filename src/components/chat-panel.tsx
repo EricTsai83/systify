@@ -1,10 +1,10 @@
 import { useCallback, useMemo, useState, type AnimationEvent, type FormEvent } from "react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
-import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
-import { CHAT_MESSAGES_PAGE_SIZE } from "../../convex/lib/constants";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { findInFlightAssistantMessage, useConversationThread } from "@/hooks/use-conversation-thread";
 import { useStatsForNerdsPreference } from "@/hooks/use-user-preferences";
 import { toUserErrorMessage } from "@/lib/errors";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
@@ -204,44 +204,16 @@ type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream
 };
 
 export function ChatContainer({ selectedThreadId, isShellLoading, ...panelProps }: ChatContainerProps) {
-  // `usePaginatedQuery`'s `results` is the concatenation of every fetched
-  // page in arrival order — that is, newest page first, then progressively
-  // older pages as the user scrolls up. Reversing the flat array yields
-  // ascending creation-time order without paying per-page reversal cost.
   const {
-    results: paginatedResults,
-    status: paginationStatus,
-    loadMore,
-  } = usePaginatedQuery(
-    api.chat.threads.listMessagesPaginated,
-    selectedThreadId ? { threadId: selectedThreadId } : "skip",
-    { initialNumItems: CHAT_MESSAGES_PAGE_SIZE },
-  );
-  const messages = useMemo(() => {
-    if (selectedThreadId === null) {
-      return undefined;
-    }
-    if (paginationStatus === "LoadingFirstPage") {
-      return undefined;
-    }
-    // `paginatedResults` from convex is plain Doc<"messages"> rows in the
-    // server's paginate order (newest first). Reverse once so all
-    // downstream consumers (rendering, `inFlightAssistantMessage`,
-    // `hasMessages`) see ascending-by-creation-time order — the same
-    // shape the prior, unpaginated query exposed.
-    return [...paginatedResults].reverse();
-  }, [paginatedResults, paginationStatus, selectedThreadId]);
-  const activeMessageStream = useQuery(
-    api.chat.streaming.getActiveMessageStream,
-    selectedThreadId ? { threadId: selectedThreadId } : "skip",
-  );
-
-  const isChatLoading = isShellLoading || (selectedThreadId !== null && messages === undefined);
-
-  const canLoadOlderMessages = paginationStatus === "CanLoadMore";
-  const handleLoadOlderMessages = useCallback(() => {
-    loadMore(CHAT_MESSAGES_PAGE_SIZE);
-  }, [loadMore]);
+    messages,
+    activeMessageStream,
+    isLoading: isChatLoading,
+    canLoadOlderMessages,
+    handleLoadOlderMessages,
+  } = useConversationThread({
+    threadId: selectedThreadId,
+    isShellLoading,
+  });
 
   return (
     <ChatPanel
@@ -377,33 +349,7 @@ export function ChatPanel({
     }
   });
 
-  /**
-   * Derive "is the most recent assistant reply still in flight?"
-   * from the (already-subscribed) message list rather than threading another
-   * boolean prop down. We check the *last* assistant message so a brand-new
-   * thread (no messages) shows Send and a thread whose last reply finished
-   * shows Send too; only the in-flight assistant flips the button to Stop.
-   *
-   * Why we accept `pending` as well as `streaming`: there is a brief window
-   * after `sendMessage` schedules the action but before
-   * `markAssistantReplyRunning` fires where the assistant message status is
-   * still `pending`. Cancelling in that window is valid — the action will
-   * see `wasCancelled` on its first poll and skip straight to the
-   * cancel finalize variant — and showing Send during that window would be
-   * a UX hole the user could click into another send mid-pending.
-   */
-  const inFlightAssistantMessage = useMemo(() => {
-    if (!messages) {
-      return null;
-    }
-    for (let i = messages.length - 1; i >= 0; i -= 1) {
-      const message = messages[i];
-      if (message.role === "assistant") {
-        return message.status === "streaming" || message.status === "pending" ? message : null;
-      }
-    }
-    return null;
-  }, [messages]);
+  const inFlightAssistantMessage = useMemo(() => findInFlightAssistantMessage(messages), [messages]);
 
   const canCancel = inFlightAssistantMessage !== null && typeof onCancelInFlightReply === "function";
 
