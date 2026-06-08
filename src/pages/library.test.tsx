@@ -50,4 +50,19 @@ describe("LibraryLiveSourceBadge", () => {
       ),
     ).toHaveTextContent("Live source inactive");
   });
+
+  test("shows live source starting while a local wake request is pending", () => {
+    render(
+      <LibraryLiveSourceBadge
+        status={{
+          kind: "idle",
+          activeJob: null,
+          sandbox: null,
+        }}
+        isActivationPending
+      />,
+    );
+
+    expect(screen.getByLabelText("Live source wake request was sent")).toHaveTextContent("Live source starting");
+  });
 });

@@ -13,6 +13,7 @@ vi.mock("convex/react", () => ({
 
 afterEach(() => {
   cleanup();
+  window.sessionStorage.clear();
   vi.mocked(useMutation).mockReset();
   vi.mocked(useQuery).mockReset();
 });

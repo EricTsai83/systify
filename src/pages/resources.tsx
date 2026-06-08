@@ -22,6 +22,7 @@ import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { clearSandboxActivationRequest, markSandboxActivationRequested } from "@/hooks/use-sandbox-activation-signal";
 import { useTimeUntil, useRelativeTime } from "@/hooks/use-relative-time";
 import {
   presentRepositoryIntelligenceSurface,
@@ -218,9 +219,11 @@ function ResourceRow({ row }: { row: InventoryRow }) {
   const sandboxAction = getSandboxAction(row);
   const [isActivatingSandbox, activateSandbox] = useAsyncCallback(async () => {
     setActivationError(null);
+    markSandboxActivationRequested(row.repositoryId);
     try {
       await requestSandboxActivation({ repositoryId: row.repositoryId });
     } catch (error) {
+      clearSandboxActivationRequest(row.repositoryId);
       setActivationError(toUserErrorMessage(error, "Couldn't activate the sandbox. Try again."));
     }
   });
