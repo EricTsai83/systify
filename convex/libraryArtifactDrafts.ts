@@ -1,8 +1,8 @@
 import { ConvexError, v } from "convex/values";
-import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { createArtifactInMutation } from "./artifactStore";
+import { internal } from "./_generated/api";
+import { createArtifactWrite, updateArtifactWrite } from "./lib/artifactWrites";
 import { llmProviderValidator, type LlmProvider } from "./lib/llmProvider";
 import { requireViewerIdentity } from "./lib/auth";
 import { assertFeatureAccess, requiresHighReasoningAccess, requiresPremiumModelAccess } from "./lib/entitlements";
@@ -16,19 +16,18 @@ import {
   updateRunningJobProgress,
 } from "./lib/jobs";
 import {
-  assertSandboxDailyCostBudget,
   consumeDaytonaGlobalRateLimit,
-  consumeSandboxDailyCost,
   consumeSystemDesignRateLimit,
-  getSandboxReplyEstimateCents,
   SYSTEM_DESIGN_JOB_LEASE_MS,
 } from "./lib/rateLimit";
 import { reasoningEffortValidator, type ReasoningEffort } from "./lib/llmCatalog";
 import { loadViewerModelPreferences } from "./lib/userPreferences";
 import { resolveSystemDesignRequestModelChoice, SYSTEM_DESIGN_DEFAULT_MODEL_CHOICE } from "./lib/systemDesignPlanning";
-import { costUsdToCents } from "./lib/llmPricing";
-import { SYSTEM_DESIGN_KIND_BUDGET_ESTIMATE_USD, recordUserUsageEvent, reserveUserUsageBudget } from "./lib/userCost";
 import { startedResultValidator } from "./lib/functionResultSchemas";
+import {
+  reserveSandboxLibraryGenerationBudget,
+  settleSandboxLibraryGenerationUsage,
+} from "./lib/sandboxLibraryGenerationAccounting";
 
 export const ARTIFACT_DRAFT_PROMPT_VERSION = 1;
 
@@ -139,7 +138,7 @@ export const applyDraft = mutation({
 
     const now = Date.now();
     if (draft.operation === "create") {
-      const artifactId = await createArtifactInMutation(ctx, {
+      const artifactId = await createArtifactWrite(ctx, {
         repositoryId: draft.repositoryId,
         threadId: draft.threadId,
         ownerTokenIdentifier: draft.ownerTokenIdentifier,
@@ -176,7 +175,7 @@ export const applyDraft = mutation({
       });
     }
 
-    const result = await ctx.runMutation(internal.artifactStore.updateArtifact, {
+    const result = await updateArtifactWrite(ctx, {
       artifactId: target._id,
       title: draft.title,
       summary: draft.summary,
@@ -447,16 +446,10 @@ export const assertDraftCostBudget = internalMutation({
     startedAt: v.number(),
   },
   handler: async (ctx, args): Promise<void> => {
-    await assertSandboxDailyCostBudget(ctx, {
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      repositoryId: args.repositoryId,
-      estimateCents: getSandboxReplyEstimateCents(),
-    });
-    await reserveUserUsageBudget(ctx, {
+    await reserveSandboxLibraryGenerationBudget(ctx, {
       sourceId: `artifactDraft:${args.jobId}:${args.startedAt}`,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
-      feature: "systemDesign",
-      estimatedCostUsd: SYSTEM_DESIGN_KIND_BUDGET_ESTIMATE_USD,
+      repositoryId: args.repositoryId,
       occurredAtMs: args.startedAt,
     });
   },
@@ -506,26 +499,20 @@ export const markDraftReady = internalMutation({
       updatedAt: now,
       errorMessage: undefined,
     });
-    await recordUserUsageEvent(ctx, {
+    await settleSandboxLibraryGenerationUsage(ctx, {
       sourceId: args.sourceId,
       ownerTokenIdentifier: draft.ownerTokenIdentifier,
-      feature: "systemDesign",
+      repositoryId: draft.repositoryId,
       occurredAtMs: now,
-      usd: args.totalCostUsd,
-      inputTokens: args.inputTokens,
-      outputTokens: args.outputTokens,
-      cachedInputTokens: args.cachedInputTokens,
-      cacheWriteTokens: args.cacheWriteTokens,
-      reasoningTokens: args.reasoningTokens,
+      totalCostUsd: args.totalCostUsd,
+      usage: {
+        inputTokens: args.inputTokens,
+        outputTokens: args.outputTokens,
+        cachedInputTokens: args.cachedInputTokens,
+        cacheWriteTokens: args.cacheWriteTokens,
+        reasoningTokens: args.reasoningTokens,
+      },
     });
-    const settleCents = costUsdToCents(args.totalCostUsd);
-    if (settleCents !== undefined && settleCents > 0) {
-      await consumeSandboxDailyCost(ctx, {
-        ownerTokenIdentifier: draft.ownerTokenIdentifier,
-        repositoryId: draft.repositoryId,
-        cents: settleCents,
-      });
-    }
     await ctx.db.patch(args.jobId, {
       sandboxId: args.sandboxId,
       estimatedInputTokens: args.inputTokens,

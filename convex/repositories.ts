@@ -26,6 +26,7 @@ import {
   runStaleJobRecovery,
 } from "./lib/jobs";
 import { startRepositoryImportFromUrl, startRepositorySyncImport } from "./lib/repositoryImportWorkflow";
+import { resolveSandboxActivityLifecycleStatus } from "./lib/liveSourceLifecycle";
 
 const FILE_COUNT_DISPLAY_LIMIT = 400;
 const REPOSITORY_DETAIL_IMPORT_ARTIFACT_LIMIT = 10;
@@ -636,17 +637,16 @@ export const getSandboxActivityStatus = query({
     const activeJob = await findActiveSandboxBackedJob(ctx, { repositoryId: args.repositoryId, now });
     const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
 
-    if (activeJob || sandbox?.status === "provisioning") {
-      return { kind: "preparing", activeJob, sandbox };
-    }
-    if (sandbox && sandbox.status === "ready" && sandbox.remoteId && sandbox.repoPath && sandbox.ttlExpiresAt > now) {
-      const remainingMs = sandbox.ttlExpiresAt - now;
-      return {
-        kind: remainingMs < SANDBOX_EXPIRING_SOON_MS ? "expiring_soon" : "ready",
-        activeJob: null,
-        sandbox,
-      };
-    }
-    return { kind: "idle", activeJob: null, sandbox };
+    const kind = resolveSandboxActivityLifecycleStatus({
+      activeJob,
+      sandbox,
+      now,
+      expiringSoonMs: SANDBOX_EXPIRING_SOON_MS,
+    });
+    return {
+      kind,
+      activeJob: kind === "preparing" ? activeJob : null,
+      sandbox,
+    };
   },
 });

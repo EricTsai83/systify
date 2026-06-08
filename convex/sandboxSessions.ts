@@ -6,6 +6,7 @@ import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
 import { requireOwnedDoc } from "./lib/ownedDocs";
 import { assertFeatureAccess } from "./lib/entitlements";
 import { DEFAULT_AUTO_STOP_MINUTES } from "./lib/constants";
+import { resolveSandboxSessionStartStateForRepository } from "./lib/liveSourceLifecycle";
 
 async function findReusableSession(
   ctx: MutationCtx,
@@ -46,12 +47,17 @@ export const startSandboxSession = mutation({
       return existing._id;
     }
 
+    const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
+    const startState = resolveSandboxSessionStartStateForRepository({
+      latestSandboxId: repository.latestSandboxId,
+      sandbox,
+    });
     const now = Date.now();
     return await ctx.db.insert("sandboxSessions", {
       ownerTokenIdentifier: identity.tokenIdentifier,
       repositoryId: args.repositoryId,
-      sandboxId: repository.latestSandboxId,
-      status: repository.latestSandboxId ? "active" : "starting",
+      sandboxId: startState.sandboxId,
+      status: startState.status,
       startedAt: now,
       lastActivityAt: now,
       lastResumedAt: now,
@@ -163,12 +169,17 @@ export const ensureSandboxSessionForThread = internalMutation({
     if (!repository) {
       throw new Error("Repository not found.");
     }
+    const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
+    const startState = resolveSandboxSessionStartStateForRepository({
+      latestSandboxId: repository.latestSandboxId,
+      sandbox,
+    });
     const now = Date.now();
     const sessionId = await ctx.db.insert("sandboxSessions", {
       ownerTokenIdentifier: thread.ownerTokenIdentifier,
       repositoryId: thread.repositoryId,
-      sandboxId: repository.latestSandboxId,
-      status: repository.latestSandboxId ? "active" : "starting",
+      sandboxId: startState.sandboxId,
+      status: startState.status,
       startedAt: now,
       lastActivityAt: now,
       lastResumedAt: now,

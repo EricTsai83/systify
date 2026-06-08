@@ -648,7 +648,7 @@ export default defineSchema({
    *   - At most one row exists per `(owner, artifact)`; `markViewed`
    *     upserts via `by_ownerTokenIdentifier_and_artifactId`.
    *   - `by_artifactId` powers cascade cleanup when an artifact is
-   *     deleted (see `deleteArtifactInternal`).
+   *     deleted (see `deleteArtifactWrite`).
    */
   artifactViews: defineTable({
     ownerTokenIdentifier: v.string(),

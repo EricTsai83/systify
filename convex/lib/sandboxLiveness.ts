@@ -14,6 +14,11 @@ import {
 } from "../daytona";
 import { assertFeatureAccess } from "./entitlements";
 import { getInstallationAccessToken } from "./githubAppAuthNode";
+import {
+  getReadyLiveSourceHandle,
+  LIVE_SOURCE_UNAVAILABLE_MESSAGE,
+  resolveLiveSourceReadinessDecision,
+} from "./liveSourceLifecycle";
 import { logErrorWithId, logInfo, logWarn } from "./observability";
 
 /**
@@ -96,15 +101,6 @@ const PROVISIONING_POLL_INTERVAL_MS = 2_000;
 const PROVISIONING_POLL_TIMEOUT_MS = 120_000;
 
 /**
- * Shared user-facing copy for transient liveness failures. Exported so
- * the `probeLiveSandbox` verdict in `daytona.ts` can stay aligned —
- * archive / destroyed / not-found paths all surface the same phrasing,
- * so future copy edits only need one touch point.
- */
-export const LIVE_SOURCE_UNAVAILABLE_MESSAGE =
-  "Live access to the repository wasn't available. The next attempt will prepare it first.";
-
-/**
  * Single-source-of-truth orchestrator for "make the sandbox usable for
  * this repository, right now, regardless of its current state". Callers
  * are expected to use this in front of any LLM call or tool invocation
@@ -149,11 +145,16 @@ export async function ensureSandboxReady(
   }
   const { repository, sandbox } = snapshot;
 
-  if (sandbox && sandbox.status === "provisioning") {
-    return await pollUntilReady(ctx, sandbox._id, onStage);
+  const readiness = resolveLiveSourceReadinessDecision(sandbox);
+  if (readiness.kind === "ready") {
+    return readiness.handle;
+  }
+  if (readiness.kind === "poll_existing") {
+    return await pollUntilReady(ctx, readiness.sandboxId, onStage);
   }
 
-  if (sandbox && sandbox.remoteId && (sandbox.status === "ready" || sandbox.status === "stopped")) {
+  if (readiness.kind === "probe_existing") {
+    const sandbox = readiness.sandbox;
     await safeStage(onStage, "probing");
     let probe;
     try {
@@ -175,8 +176,9 @@ export async function ensureSandboxReady(
       remoteState: probe.remoteState,
     });
 
-    if (probe.ok && probe.remoteState === "started" && sandbox.repoPath) {
-      return { sandboxId: sandbox._id, remoteId: sandbox.remoteId, repoPath: sandbox.repoPath };
+    const readyHandle = getReadyLiveSourceHandle(sandbox);
+    if (probe.ok && probe.remoteState === "started" && readyHandle) {
+      return readyHandle;
     }
 
     if (probe.remoteState === "stopped" && sandbox.repoPath) {
@@ -205,10 +207,11 @@ export async function ensureSandboxReady(
       });
       return { sandboxId: sandbox._id, remoteId: sandbox.remoteId, repoPath: sandbox.repoPath };
     }
-    // probe says archived / destroyed / error / unknown — fall through to provision new.
+    // Probe says archived / destroyed / error / unknown — fall through to provision new.
   }
 
-  return await provisionAndClone(ctx, { repository, previousSandbox: sandbox }, onStage);
+  const previousSandbox = readiness.kind === "provision_new" ? readiness.previousSandbox : sandbox;
+  return await provisionAndClone(ctx, { repository, previousSandbox }, onStage);
 }
 
 async function safeStage(
@@ -244,8 +247,9 @@ async function pollUntilReady(
         userFacingMessage: LIVE_SOURCE_UNAVAILABLE_MESSAGE,
       });
     }
-    if (sandbox.status === "ready" && sandbox.remoteId && sandbox.repoPath) {
-      return { sandboxId: sandbox._id, remoteId: sandbox.remoteId, repoPath: sandbox.repoPath };
+    const readyHandle = getReadyLiveSourceHandle(sandbox);
+    if (readyHandle) {
+      return readyHandle;
     }
     if (sandbox.status === "failed" || sandbox.status === "archived") {
       throw new SandboxPreparationError({
@@ -327,8 +331,9 @@ async function provisionAndClone(
         userFacingMessage: LIVE_SOURCE_UNAVAILABLE_MESSAGE,
       });
     }
-    if (sandbox.status === "ready" && sandbox.remoteId && sandbox.repoPath) {
-      return { sandboxId: sandbox._id, remoteId: sandbox.remoteId, repoPath: sandbox.repoPath };
+    const readyHandle = getReadyLiveSourceHandle(sandbox);
+    if (readyHandle) {
+      return readyHandle;
     }
     if (sandbox.status === "provisioning") {
       return await pollUntilReady(ctx, sandboxId, onStage);

@@ -3,15 +3,15 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalAction } from "./_generated/server";
-import { getCatalogEntry, isSupportedReasoningEffort } from "./lib/llmCatalog";
 import type { LlmProvider } from "./lib/llmProvider";
-import {
-  ensureSandboxReady,
-  type EnsureSandboxReadyResult,
-  SandboxPreparationError,
-  type SandboxPreparationStage,
-} from "./lib/sandboxLiveness";
 import { logInfo } from "./lib/observability";
+import {
+  prepareSandboxLibraryGeneration,
+  resolveSandboxLibraryGenerationModelChoice,
+  SYSTEM_DESIGN_SANDBOX_STAGE_LABELS,
+  type SandboxLibraryGenerationModelChoice,
+} from "./lib/sandboxLibraryGeneration";
+import { SandboxPreparationError, type EnsureSandboxReadyResult } from "./lib/sandboxLiveness";
 import { isSystemDesignKind, systemDesignKindValidator } from "./lib/systemDesign";
 import { runSystemDesignKind } from "./systemDesignKindRun";
 
@@ -110,14 +110,12 @@ export const runSystemDesignGeneration = internalAction({
     const modelChoice = await ctx.runQuery(internal.systemDesign.getJobModelChoice, {
       jobId: args.jobId,
     });
-    const catalogEntry = getCatalogEntry(modelChoice.provider, modelChoice.modelName);
-    const reasoningEffort = isSupportedReasoningEffort(
-      modelChoice.provider,
-      modelChoice.modelName,
-      modelChoice.reasoningEffort,
-    )
-      ? (modelChoice.reasoningEffort ?? catalogEntry?.reasoningEffort)
-      : catalogEntry?.reasoningEffort;
+    const resolvedModelChoice = resolveSandboxLibraryGenerationModelChoice({
+      provider: modelChoice.provider,
+      modelName: modelChoice.modelName,
+      reasoningEffort: modelChoice.reasoningEffort,
+      missingSelectionMessage: "System Design job is missing its model selection.",
+    });
 
     // Every kind reads live source through the sandbox, so the run always
     // needs a ready sandbox. `ensureSandboxReady` probes / wakes / provisions
@@ -127,30 +125,20 @@ export const runSystemDesignGeneration = internalAction({
     // `EnsureSandboxReadyResult` already carries the post-clone `remoteId`
     // and `repoPath`, so the per-kind LLM passes consume `prepared`
     // directly without a redundant DB re-fetch.
-    const stageLabel: Record<SandboxPreparationStage, string> = {
-      probing: "Preparing environment for your request…",
-      waking: "Waking up the repository sandbox…",
-      provisioning: "Setting up the repository sandbox…",
-      cloning: "Cloning repository…",
-      polling: "Preparing environment for your request…",
-    };
     let prepared: EnsureSandboxReadyResult;
     try {
-      prepared = await ensureSandboxReady(
-        ctx,
-        {
-          repositoryId: args.repositoryId,
-          ownerTokenIdentifier: args.ownerTokenIdentifier,
-        },
-        async (stage) => {
+      prepared = await prepareSandboxLibraryGeneration(ctx, {
+        repositoryId: args.repositoryId,
+        ownerTokenIdentifier: args.ownerTokenIdentifier,
+        onStage: async (stage) => {
           await ctx.runMutation(internal.systemDesign.updateGenerationProgress, {
             jobId: args.jobId,
             completedCount: 0,
             totalCount,
-            stage: stageLabel[stage] ?? "Preparing environment for your request…",
+            stage: SYSTEM_DESIGN_SANDBOX_STAGE_LABELS[stage],
           });
         },
-      );
+      });
     } catch (error) {
       if (error instanceof SandboxPreparationError) {
         await ctx.runMutation(internal.systemDesign.failGeneration, {
@@ -190,8 +178,7 @@ export const runSystemDesignGeneration = internalAction({
         kind,
         repository: context.repository,
         prepared,
-        modelChoice,
-        reasoningEffort,
+        modelChoice: resolvedModelChoice,
         commitSha,
         forceRegenerate,
       });
@@ -220,8 +207,8 @@ export const runSystemDesignGeneration = internalAction({
     logInfo("systemDesign", "generation_complete", {
       jobId: args.jobId,
       repositoryId: args.repositoryId,
-      provider: modelChoice.provider,
-      modelName: modelChoice.modelName,
+      provider: resolvedModelChoice.provider,
+      modelName: resolvedModelChoice.modelName,
       succeeded,
       failed,
       total: totalCount,
@@ -234,4 +221,4 @@ export const runSystemDesignGeneration = internalAction({
  * to discriminate kindRun statuses without re-deriving the union from
  * the schema document.
  */
-export type { LlmProvider };
+export type { LlmProvider, SandboxLibraryGenerationModelChoice };

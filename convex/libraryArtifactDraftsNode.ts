@@ -6,18 +6,18 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
-import { createSandboxTools } from "./chat/sandboxTools";
-import { getSandboxFsClient } from "./daytona";
-import type { LlmProvider, NormalizedUsage } from "./lib/llmProvider";
-import { getCatalogEntry, isSupportedReasoningEffort, type ReasoningEffort } from "./lib/llmCatalog";
 import { generateObjectViaGateway, generateViaGateway } from "./lib/llmGateway";
 import { logErrorWithId, logInfo } from "./lib/observability";
 import {
-  ensureSandboxReady,
-  SandboxPreparationError,
+  ARTIFACT_DRAFT_SANDBOX_STAGE_LABELS,
+  combineSandboxLibraryGenerationCost,
+  combineSandboxLibraryGenerationUsage,
+  createSandboxLibraryGenerationTools,
+  prepareSandboxLibraryGeneration,
+  resolveSandboxLibraryGenerationModelChoice,
   type EnsureSandboxReadyResult,
-  type SandboxPreparationStage,
-} from "./lib/sandboxLiveness";
+} from "./lib/sandboxLibraryGeneration";
+import { SandboxPreparationError } from "./lib/sandboxLiveness";
 import { ARTIFACT_DRAFT_PROMPT_VERSION } from "./libraryArtifactDrafts";
 
 const ARTIFACT_DRAFT_STEP_BUDGET = 12;
@@ -60,29 +60,19 @@ export const runArtifactDraft = internalAction({
         return;
       }
 
-      const stageLabel: Record<SandboxPreparationStage, string> = {
-        probing: "Preparing code access…",
-        waking: "Preparing code access…",
-        provisioning: "Preparing code access…",
-        cloning: "Reading codebase…",
-        polling: "Preparing code access…",
-      };
       let prepared: EnsureSandboxReadyResult;
       try {
-        prepared = await ensureSandboxReady(
-          ctx,
-          {
-            repositoryId: args.repositoryId,
-            ownerTokenIdentifier: args.ownerTokenIdentifier,
-          },
-          async (stage) => {
+        prepared = await prepareSandboxLibraryGeneration(ctx, {
+          repositoryId: args.repositoryId,
+          ownerTokenIdentifier: args.ownerTokenIdentifier,
+          onStage: async (stage) => {
             await ctx.runMutation(internal.libraryArtifactDrafts.updateDraftProgress, {
               jobId: args.jobId,
-              stage: stageLabel[stage] ?? "Preparing code access…",
+              stage: ARTIFACT_DRAFT_SANDBOX_STAGE_LABELS[stage],
               progress: stage === "cloning" ? 0.25 : 0.15,
             });
           },
-        );
+        });
       } catch (error) {
         const message =
           error instanceof SandboxPreparationError
@@ -105,10 +95,11 @@ export const runArtifactDraft = internalAction({
         throw error;
       }
 
-      const modelChoice = resolveDraftModelChoice({
+      const modelChoice = resolveSandboxLibraryGenerationModelChoice({
         provider: context.draft.generatedByProvider,
         modelName: context.draft.generatedByModel,
         reasoningEffort: context.draft.reasoningEffort,
+        missingSelectionMessage: "Artifact draft job is missing its model selection.",
       });
       const startedAt = Date.now();
       await ctx.runMutation(internal.libraryArtifactDrafts.assertDraftCostBudget, {
@@ -138,7 +129,7 @@ export const runArtifactDraft = internalAction({
         {
           system: buildSystemPrompt(context.draft.operation),
           prompt: buildUserPrompt(context, prepared),
-          tools: createSandboxTools(await getSandboxFsClient(prepared.remoteId), prepared.repoPath),
+          tools: await createSandboxLibraryGenerationTools(prepared),
           stopWhen: stepCountIs(ARTIFACT_DRAFT_STEP_BUDGET),
           prepareStep: ({ stepNumber }) => {
             if (stepNumber === 0) {
@@ -183,11 +174,8 @@ export const runArtifactDraft = internalAction({
           reasoningEffort: modelChoice.reasoningEffort,
         },
       );
-      const usage = combineUsage(draftResult.usage, result.usage);
-      const totalCostUsd =
-        draftResult.costUsd === undefined && result.costUsd === undefined
-          ? undefined
-          : (draftResult.costUsd ?? 0) + (result.costUsd ?? 0);
+      const usage = combineSandboxLibraryGenerationUsage(draftResult.usage, result.usage);
+      const totalCostUsd = combineSandboxLibraryGenerationCost(draftResult.costUsd, result.costUsd);
 
       const output = result.object;
       await ctx.runMutation(internal.libraryArtifactDrafts.markDraftReady, {
@@ -238,39 +226,6 @@ function toCodeAccessUserMessage(message: string) {
   return message
     .replaceAll("Live source", "Repository code access")
     .replaceAll("live source", "repository code access");
-}
-
-function combineUsage(first: NormalizedUsage, second: NormalizedUsage): NormalizedUsage {
-  return {
-    inputTokens: sumOptional(first.inputTokens, second.inputTokens),
-    outputTokens: sumOptional(first.outputTokens, second.outputTokens),
-    cachedInputTokens: sumOptional(first.cachedInputTokens, second.cachedInputTokens),
-    cacheWriteTokens: sumOptional(first.cacheWriteTokens, second.cacheWriteTokens),
-    reasoningTokens: sumOptional(first.reasoningTokens, second.reasoningTokens),
-  };
-}
-
-function sumOptional(first: number | undefined, second: number | undefined) {
-  return first === undefined && second === undefined ? undefined : (first ?? 0) + (second ?? 0);
-}
-
-function resolveDraftModelChoice(args: {
-  provider: LlmProvider | undefined;
-  modelName: string | undefined;
-  reasoningEffort: ReasoningEffort | undefined;
-}): { provider: LlmProvider; modelName: string; reasoningEffort: ReasoningEffort | undefined } {
-  if (!args.provider || !args.modelName) {
-    throw new Error("Artifact draft job is missing its model selection.");
-  }
-  const catalogEntry = getCatalogEntry(args.provider, args.modelName);
-  const reasoningEffort = isSupportedReasoningEffort(args.provider, args.modelName, args.reasoningEffort)
-    ? (args.reasoningEffort ?? catalogEntry?.reasoningEffort)
-    : catalogEntry?.reasoningEffort;
-  return {
-    provider: args.provider,
-    modelName: args.modelName,
-    reasoningEffort,
-  };
 }
 
 function buildSystemPrompt(operation: "create" | "update") {

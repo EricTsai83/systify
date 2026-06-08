@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation, type MutationCtx } from "./_generated/server";
 import { DEFAULT_AUTO_ARCHIVE_MINUTES, DEFAULT_AUTO_DELETE_MINUTES, DEFAULT_AUTO_STOP_MINUTES } from "./lib/constants";
+import { shouldReuseReservedLiveSource } from "./lib/liveSourceLifecycle";
 import { isOwnedBy } from "./lib/ownedDocs";
 import { isActiveRepository } from "./lib/repositoryAccess";
 
@@ -66,7 +67,7 @@ export const reserveOnDemandSandboxRow = internalMutation({
 
     if (repository.latestSandboxId && repository.latestSandboxId !== args.replaceSandboxId) {
       const existing = await ctx.db.get(repository.latestSandboxId);
-      if (existing && (existing.status === "provisioning" || existing.status === "ready")) {
+      if (existing && shouldReuseReservedLiveSource(existing)) {
         return { sandboxId: existing._id, alreadyExisted: true };
       }
     }
