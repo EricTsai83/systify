@@ -11,6 +11,8 @@
 import type * as artifactChunkStore from "../artifactChunkStore.js";
 import type * as artifactFolders from "../artifactFolders.js";
 import type * as artifactIndexing from "../artifactIndexing.js";
+import type * as artifactMermaidRepair from "../artifactMermaidRepair.js";
+import type * as artifactMermaidRepairNode from "../artifactMermaidRepairNode.js";
 import type * as artifactStore from "../artifactStore.js";
 import type * as artifactViews from "../artifactViews.js";
 import type * as artifacts from "../artifacts.js";
@@ -81,6 +83,7 @@ import type * as lib_llmCatalog from "../lib/llmCatalog.js";
 import type * as lib_llmGateway from "../lib/llmGateway.js";
 import type * as lib_llmPricing from "../lib/llmPricing.js";
 import type * as lib_llmProvider from "../lib/llmProvider.js";
+import type * as lib_mermaidMarkdown from "../lib/mermaidMarkdown.js";
 import type * as lib_modeAvailability from "../lib/modeAvailability.js";
 import type * as lib_observability from "../lib/observability.js";
 import type * as lib_ownedDocs from "../lib/ownedDocs.js";
@@ -134,6 +137,8 @@ declare const fullApi: ApiFromModules<{
   artifactChunkStore: typeof artifactChunkStore;
   artifactFolders: typeof artifactFolders;
   artifactIndexing: typeof artifactIndexing;
+  artifactMermaidRepair: typeof artifactMermaidRepair;
+  artifactMermaidRepairNode: typeof artifactMermaidRepairNode;
   artifactStore: typeof artifactStore;
   artifactViews: typeof artifactViews;
   artifacts: typeof artifacts;
@@ -204,6 +209,7 @@ declare const fullApi: ApiFromModules<{
   "lib/llmGateway": typeof lib_llmGateway;
   "lib/llmPricing": typeof lib_llmPricing;
   "lib/llmProvider": typeof lib_llmProvider;
+  "lib/mermaidMarkdown": typeof lib_mermaidMarkdown;
   "lib/modeAvailability": typeof lib_modeAvailability;
   "lib/observability": typeof lib_observability;
   "lib/ownedDocs": typeof lib_ownedDocs;
