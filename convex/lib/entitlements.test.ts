@@ -53,7 +53,10 @@ describe("entitlements", () => {
     });
     expect(access.features.demoMode.enabled).toBe(true);
     expect(access.features.chatSend.enabled).toBe(false);
-    expect(access.features.repoImport.enabled).toBe(false);
+    expect(access.features.repoImport.enabled).toBe(true);
+    expect(access.features.syncRepository.enabled).toBe(true);
+    expect(access.features.checkForUpdates.enabled).toBe(true);
+    expect(access.features.artifactIndexing.enabled).toBe(false);
   });
 
   test("internal profile enables every feature", async () => {

@@ -104,7 +104,8 @@ describe("viewerAccess.getSelf", () => {
       billingStatus: "none",
     });
     expect(access.features.chatSend.enabled).toBe(false);
-    expect(access.features.repoImport.enabled).toBe(false);
+    expect(access.features.repoImport.enabled).toBe(true);
+    expect(access.features.syncRepository.enabled).toBe(true);
   });
 });
 

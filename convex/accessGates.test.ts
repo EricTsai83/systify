@@ -28,6 +28,20 @@ async function seedAccessProfile(t: ReturnType<typeof createTestConvex>, ownerTo
   });
 }
 
+async function seedGitHubInstallation(t: ReturnType<typeof createTestConvex>, ownerTokenIdentifier: string) {
+  await t.run(async (ctx) => {
+    await ctx.db.insert("githubInstallations", {
+      ownerTokenIdentifier,
+      installationId: 123,
+      accountLogin: "acme",
+      accountType: "User",
+      status: "active",
+      repositorySelection: "all",
+      connectedAt: Date.now(),
+    });
+  });
+}
+
 async function seedRepository(t: ReturnType<typeof createTestConvex>, ownerTokenIdentifier: string) {
   await seedAccessProfile(t, ownerTokenIdentifier);
   return await t.run(async (ctx) => {
@@ -73,6 +87,14 @@ async function seedArtifact(
 
 async function expectFeatureBlocked(operation: Promise<unknown>) {
   await expect(operation).rejects.toThrow(/FEATURE_NOT_INCLUDED/);
+}
+
+async function expectNotFeatureBlocked(operation: Promise<unknown>) {
+  try {
+    await operation;
+  } catch (error) {
+    expect(String(error)).not.toMatch(/FEATURE_NOT_INCLUDED/);
+  }
 }
 
 describe("free plan backend access gates", () => {
@@ -140,18 +162,17 @@ describe("free plan backend access gates", () => {
     expect(jobs).toHaveLength(0);
   });
 
-  test("blocks repository import and sync before queueing import work", async () => {
+  test("allows repository import and sync to queue import work", async () => {
     const ownerTokenIdentifier = "user|free-import-sync";
     const t = createTestConvex();
     const repositoryId = await seedRepository(t, ownerTokenIdentifier);
+    await seedGitHubInstallation(t, ownerTokenIdentifier);
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
 
-    await expectFeatureBlocked(
-      viewer.mutation(api.repositories.createRepositoryImport, {
-        url: "https://github.com/acme/new-repo",
-      }),
-    );
-    await expectFeatureBlocked(viewer.mutation(api.repositories.syncRepository, { repositoryId }));
+    await viewer.mutation(api.repositories.createRepositoryImport, {
+      url: "https://github.com/acme/new-repo",
+    });
+    await viewer.mutation(api.repositories.syncRepository, { repositoryId });
 
     const rows = await t.run(async (ctx) => {
       const jobs = (await ctx.db.query("jobs").collect()).filter(
@@ -164,52 +185,68 @@ describe("free plan backend access gates", () => {
       );
       return { jobs, importedRepositories };
     });
-    expect(rows.jobs).toHaveLength(0);
-    expect(rows.importedRepositories).toHaveLength(0);
+    expect(rows.jobs).toHaveLength(2);
+    expect(rows.importedRepositories).toHaveLength(1);
   });
 
-  test("blocks GitHub import helper actions before OAuth state or GitHub fetch work", async () => {
+  test("allows GitHub import helper actions through the entitlement gate", async () => {
     const ownerTokenIdentifier = "user|free-github-import-helpers";
     const t = createTestConvex();
     await seedAccessProfile(t, ownerTokenIdentifier);
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
+    vi.stubEnv("GITHUB_APP_SLUG", "systify-test");
+    vi.stubEnv("GITHUB_APP_CLIENT_ID", "client-id");
+    vi.stubEnv("GITHUB_APP_CLIENT_SECRET", "client-secret");
+    vi.stubEnv("ALLOWED_RETURN_TO_ORIGINS", "https://systify.example");
 
-    await expectFeatureBlocked(
-      viewer.action(api.githubAppNode.initiateGitHubInstall, {
-        returnTo: "https://systify.example/chat",
-      }),
-    );
-    await expectFeatureBlocked(viewer.action(api.githubAppNode.listInstallationRepos, {}));
-    await expectFeatureBlocked(viewer.action(api.githubAppNode.searchGitHubRepos, { query: "acme" }));
-    await expectFeatureBlocked(
+    const installUrl = await viewer.action(api.githubAppNode.initiateGitHubInstall, {
+      returnTo: "https://systify.example/chat",
+    });
+    await expect(viewer.action(api.githubAppNode.listInstallationRepos, {})).resolves.toMatchObject({
+      repos: [],
+      totalCount: 0,
+      hasMore: false,
+    });
+    await expect(viewer.action(api.githubAppNode.searchGitHubRepos, { query: "acme" })).resolves.toMatchObject({
+      repos: [],
+      totalCount: 0,
+    });
+    await expectNotFeatureBlocked(
       viewer.action(api.githubAppNode.verifyRepoAccess, {
         url: "https://github.com/acme/private-repo",
       }),
     );
 
     const oauthStates = await t.run(async (ctx) => await ctx.db.query("githubOAuthStates").take(1));
-    expect(oauthStates).toHaveLength(0);
+    expect(installUrl).toContain("https://github.com/apps/systify-test/installations/new?state=");
+    expect(oauthStates).toHaveLength(1);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  test("blocks update checks before GitHub fetch or lastChecked patch", async () => {
+  test("allows update checks through the entitlement gate", async () => {
     const ownerTokenIdentifier = "user|free-check-updates";
     const t = createTestConvex();
     const repositoryId = await seedRepository(t, ownerTokenIdentifier);
-    const fetchMock = vi.fn();
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ object: { sha: "remote-sha" } }),
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
-    await expectFeatureBlocked(
+    await expect(
       t.withIdentity({ tokenIdentifier: ownerTokenIdentifier }).action(api.githubCheck.checkForUpdates, {
         repositoryId,
       }),
-    );
+    ).resolves.toBeNull();
 
     const repository = await t.run(async (ctx) => await ctx.db.get(repositoryId));
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(repository?.lastCheckedForUpdatesAt).toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(repository?.lastCheckedForUpdatesAt).toBeGreaterThan(0);
+    expect(repository?.latestRemoteSha).toBe("remote-sha");
   });
 
   test("blocks sandbox session start before creating a session", async () => {
