@@ -5,7 +5,7 @@ import { describe, expect, test } from "vitest";
 import { LibraryLiveSourceBadge } from "./library";
 
 describe("LibraryLiveSourceBadge", () => {
-  test("shows live source active when sandbox activity is ready", () => {
+  test("shows code access active when sandbox activity is ready", () => {
     render(
       <LibraryLiveSourceBadge
         status={{
@@ -16,10 +16,10 @@ describe("LibraryLiveSourceBadge", () => {
       />,
     );
 
-    expect(screen.getByLabelText("Live source is active")).toHaveTextContent("Live source active");
+    expect(screen.getByLabelText("Repository code access is active")).toHaveTextContent("Code access active");
   });
 
-  test("shows live source preparing while setup is in flight", () => {
+  test("shows code access starting while setup is in flight", () => {
     render(
       <LibraryLiveSourceBadge
         status={{
@@ -30,10 +30,10 @@ describe("LibraryLiveSourceBadge", () => {
       />,
     );
 
-    expect(screen.getByLabelText("Live source is being prepared")).toHaveTextContent("Live source preparing");
+    expect(screen.getByLabelText("Repository code access is starting")).toHaveTextContent("Code access starting");
   });
 
-  test("shows live source inactive for idle status", () => {
+  test("shows code access idle for idle status", () => {
     render(
       <LibraryLiveSourceBadge
         status={{
@@ -45,9 +45,7 @@ describe("LibraryLiveSourceBadge", () => {
     );
 
     expect(
-      screen.getByLabelText(
-        "Live source is inactive. Enable Sandbox grounding from Discuss when you need live code state.",
-      ),
-    ).toHaveTextContent("Live source inactive");
+      screen.getByLabelText("Repository code access starts when a task needs current repository files."),
+    ).toHaveTextContent("Code access idle");
   });
 });

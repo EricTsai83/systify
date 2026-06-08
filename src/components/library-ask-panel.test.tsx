@@ -6,7 +6,7 @@ import { getFunctionName } from "convex/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { LibraryAskPanel } from "./library-ask-panel";
-import type { ArtifactId, RepositoryId } from "@/lib/types";
+import type { ArtifactId, RepositoryId, ThreadId } from "@/lib/types";
 
 const mocks = vi.hoisted(() => ({
   useMutation: vi.fn(),
@@ -220,6 +220,7 @@ vi.mock("sonner", () => ({
 }));
 
 const repositoryId = "repo_1" as RepositoryId;
+const threadId = "thread_1" as ThreadId;
 const activeArtifactId = "artifact_1" as ArtifactId;
 
 type DraftEntry = {
@@ -289,7 +290,7 @@ function makeDraft(overrides: Partial<Doc<"artifactDrafts">> = {}): Doc<"artifac
     prompt: "Draft a runbook.",
     title: "Operations runbook",
     summary: "How to run the system.",
-    contentMarkdown: "# Operations\n\nUse Live source.",
+    contentMarkdown: "# Operations\n\nUse repository code.",
     generatedByProvider: "openai",
     generatedByModel: "gpt-5.5",
     promptVersion: 1,
@@ -371,20 +372,49 @@ describe("LibraryAskPanel artifact drafts", () => {
 
     expect(screen.getByTestId("artifact-draft-confirm-card")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Create artifact" })).toBeInTheDocument();
-    expect(screen.getByText(/Live source is active/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Draft with live source/i })).toBeDisabled();
+    expect(
+      screen.getByText("Repository code is ready. The draft will treat the codebase as the source of truth."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Add a title for the new artifact.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Draft artifact/i })).toBeDisabled();
     expect(mocks.requestDraft).not.toHaveBeenCalled();
   });
 
+  test("allows updating the open artifact without custom instructions", async () => {
+    renderPanel({ activeArtifactId });
+
+    fireEvent.click(screen.getByRole("button", { name: /Update open artifact/i }));
+
+    expect(screen.getByTestId("artifact-draft-confirm-card")).toBeInTheDocument();
+    expect(screen.getByText("Instructions (optional)")).toBeInTheDocument();
+    expect(screen.getByText(/codebase source of truth/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Draft update/i }));
+
+    await waitFor(() => {
+      expect(mocks.requestDraft).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repositoryId,
+          operation: "update",
+          targetArtifactId: activeArtifactId,
+          prompt: "Refresh this artifact using the codebase as the source of truth.",
+          provider: "openai",
+          modelName: "gpt-5.5",
+        }),
+      );
+    });
+  });
+
   test("renders an active draft job card with progress", () => {
-    queryState.recentDrafts = [
+    queryState.threadSummary = { title: "Library Ask", lockedProvider: undefined, defaultModelName: undefined };
+    queryState.threadDrafts = [
       {
         draft: makeDraft({ status: "running", title: "Updated operations", operation: "update" }),
         job: makeJob({ stage: "Reading codebase…", progress: 0.42 }),
       },
     ];
 
-    renderPanel();
+    renderPanel({ threadId });
 
     expect(screen.getByTestId("artifact-draft-card")).toBeInTheDocument();
     expect(screen.getByText("Artifact update draft")).toBeInTheDocument();
@@ -392,16 +422,56 @@ describe("LibraryAskPanel artifact drafts", () => {
     expect(screen.getByText("42%")).toBeInTheDocument();
   });
 
+  test("does not show stale repository failed drafts on a new thread surface", () => {
+    queryState.recentDrafts = [
+      {
+        draft: makeDraft({
+          _id: "draft_thread_scoped" as Id<"artifactDrafts">,
+          jobId: "job_thread_scoped" as Id<"jobs">,
+          threadId: threadId as Id<"threads">,
+          status: "failed",
+          operation: "update",
+          title: "Thread architecture overview",
+          errorMessage: "Artifact draft failed. Regenerate to try again.",
+          createdAt: Date.now() + 1_000,
+          updatedAt: Date.now() + 1_000,
+        }),
+        job: makeJob({
+          _id: "job_thread_scoped" as Id<"jobs">,
+          status: "failed",
+          errorMessage: "Artifact draft failed.",
+        }),
+      },
+      {
+        draft: makeDraft({
+          status: "failed",
+          operation: "update",
+          title: "Architecture overview",
+          errorMessage: "Artifact draft failed. Regenerate to try again.",
+          createdAt: 1,
+          updatedAt: 1,
+        }),
+        job: makeJob({ status: "failed", errorMessage: "Artifact draft failed." }),
+      },
+    ];
+
+    renderPanel();
+
+    expect(screen.queryByTestId("artifact-draft-card")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Ask the Library" })).toBeInTheDocument();
+  });
+
   test("ready draft Apply and Discard buttons call draft mutations", async () => {
     const onSelectArtifact = vi.fn();
-    queryState.recentDrafts = [
+    queryState.threadSummary = { title: "Library Ask", lockedProvider: undefined, defaultModelName: undefined };
+    queryState.threadDrafts = [
       {
         draft: makeDraft({ status: "ready", operation: "create" }),
         job: makeJob({ status: "completed", stage: "Ready to review", progress: 1 }),
       },
     ];
 
-    renderPanel({ onSelectArtifact });
+    renderPanel({ threadId, onSelectArtifact });
 
     fireEvent.click(screen.getByRole("button", { name: /^Apply$/i }));
 

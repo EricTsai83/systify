@@ -48,7 +48,7 @@ export function LibraryArtifactDraftConfirmCard({
   intent,
   activeArtifactTitle,
   disabledReason,
-  liveSourceLabel,
+  repositoryCodeLabel,
   modelPick,
   onModelPickChange,
   reasoningEffort,
@@ -64,7 +64,7 @@ export function LibraryArtifactDraftConfirmCard({
   intent: LibraryArtifactDraftIntent;
   activeArtifactTitle?: string;
   disabledReason?: string;
-  liveSourceLabel: string;
+  repositoryCodeLabel: string;
   modelPick: PromptInputModelPickerValue | null;
   onModelPickChange: (pick: PromptInputModelPickerValue) => void;
   reasoningEffort: ReasoningEffort | null;
@@ -78,12 +78,19 @@ export function LibraryArtifactDraftConfirmCard({
 }) {
   const isCreate = intent.operation === "create";
   const missingTitle = isCreate && intent.title.trim().length === 0;
-  const missingPrompt = intent.prompt.trim().length === 0;
+  const missingPrompt = isCreate && intent.prompt.trim().length === 0;
+  const submitLabel = isCreate ? "Draft artifact" : "Draft update";
   const submitDisabledReason =
     disabledReason ??
     (modelPick ? undefined : "Loading models…") ??
     (missingTitle ? "Add a title for the new artifact." : undefined) ??
     (missingPrompt ? "Describe what to draft." : undefined);
+  const helperText =
+    submitDisabledReason ??
+    (isCreate
+      ? "The draft is only saved after you review and apply it."
+      : "Leave instructions blank to refresh this artifact from the codebase source of truth.");
+  const helperTone = disabledReason ? "text-destructive" : "text-muted-foreground";
 
   return (
     <div className="border border-border bg-card px-3 py-3 shadow-sm" data-testid="artifact-draft-confirm-card">
@@ -97,10 +104,10 @@ export function LibraryArtifactDraftConfirmCard({
               {isCreate ? "Create artifact" : "Update open artifact"}
             </h3>
             <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              Live source
+              Uses codebase
             </span>
           </div>
-          <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{liveSourceLabel}</p>
+          <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{repositoryCodeLabel}</p>
         </div>
       </div>
 
@@ -134,11 +141,13 @@ export function LibraryArtifactDraftConfirmCard({
         )}
 
         <label className="flex flex-col gap-1 text-[11px] font-medium text-muted-foreground">
-          Instructions
+          {isCreate ? "Instructions" : "Instructions (optional)"}
           <Textarea
             value={intent.prompt}
             onChange={(event) => onChange({ ...intent, prompt: event.target.value })}
-            placeholder={isCreate ? "What should this new artifact cover?" : "What should change in the open artifact?"}
+            placeholder={
+              isCreate ? "What should this new artifact cover?" : "Optional focus, constraints, or sections to update"
+            }
             className="min-h-24 resize-none text-[12px]"
             disabled={isSubmitting}
           />
@@ -170,11 +179,9 @@ export function LibraryArtifactDraftConfirmCard({
           </div>
         </div>
 
-        {disabledReason ? (
-          <p className="text-[11px] leading-4 text-destructive" role="alert">
-            {disabledReason}
-          </p>
-        ) : null}
+        <p className={cn("text-[11px] leading-4", helperTone)} role={disabledReason ? "alert" : undefined}>
+          {helperText}
+        </p>
 
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" size="sm" variant="ghost" onClick={onCancel} disabled={isSubmitting}>
@@ -189,10 +196,7 @@ export function LibraryArtifactDraftConfirmCard({
             title={submitDisabledReason}
           >
             <SparkleIcon size={13} weight="bold" />
-            <ButtonStateText
-              current={isSubmitting ? "Drafting…" : "Draft with live source"}
-              states={["Draft with live source", "Drafting…"]}
-            />
+            <ButtonStateText current={isSubmitting ? "Drafting…" : submitLabel} states={[submitLabel, "Drafting…"]} />
           </Button>
         </div>
       </div>
@@ -203,9 +207,11 @@ export function LibraryArtifactDraftConfirmCard({
 export function LibraryArtifactDraftCard({
   entry,
   onApplied,
+  onRegenerated,
 }: {
   entry: LibraryArtifactDraftEntry;
   onApplied: (artifactId: ArtifactId) => void;
+  onRegenerated?: (draftId: Doc<"artifactDrafts">["_id"]) => void;
 }) {
   const applyDraft = useMutation(api.libraryArtifactDrafts.applyDraft);
   const discardDraft = useMutation(api.libraryArtifactDrafts.discardDraft);
@@ -235,7 +241,8 @@ export function LibraryArtifactDraftCard({
 
   const [isRegenerating, runRegenerate] = useAsyncCallback(async () => {
     try {
-      await regenerateDraft({ draftId: entry.draft._id });
+      const result = await regenerateDraft({ draftId: entry.draft._id });
+      onRegenerated?.(result.draftId);
     } catch (error) {
       toast.error(toUserErrorMessage(error, "Failed to regenerate draft."));
     }
@@ -267,7 +274,7 @@ export function LibraryArtifactDraftCard({
       {isActive ? (
         <div className="mt-3 space-y-2">
           <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-            <span className="truncate">{entry.job?.stage ?? "Preparing live source…"}</span>
+            <span className="truncate">{entry.job?.stage ?? "Preparing code access…"}</span>
             <span className="shrink-0 tabular-nums">{progress}%</span>
           </div>
           <Progress value={progress} />

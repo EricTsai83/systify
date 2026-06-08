@@ -31,6 +31,20 @@ function makeAssistantMessage(overrides: Partial<Doc<"messages">> = {}): Doc<"me
 }
 
 describe("MessageBubble", () => {
+  test("does not render a Library badge for Library-mode assistant replies", () => {
+    render(
+      <MessageBubble
+        message={makeAssistantMessage({
+          mode: "library",
+        })}
+        activeMessageStream={null}
+      />,
+    );
+
+    expect(screen.getByText("Reply content")).toBeInTheDocument();
+    expect(screen.queryByTestId("message-grounding-badge")).not.toBeInTheDocument();
+  });
+
   test("renders an error-only failed reply as a system alert without duplicating the message", () => {
     const errorMessage =
       "This reply stopped before it could finish. Try sending your message again. If it keeps happening, choose another model or check the provider configuration.";

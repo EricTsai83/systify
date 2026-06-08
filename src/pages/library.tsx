@@ -305,8 +305,8 @@ export function LibraryLiveSourceBadge({ status }: { status: LibrarySandboxActiv
 function getLibraryLiveSourcePresentation(status: LibrarySandboxActivityStatus | undefined) {
   if (status === undefined) {
     return {
-      label: "Live source",
-      title: "Live source status is loading",
+      label: "Code access",
+      title: "Repository code access status is loading",
       icon: CircleIcon,
       className: "border-border bg-card text-muted-foreground",
       iconClassName: "animate-pulse text-muted-foreground",
@@ -315,9 +315,11 @@ function getLibraryLiveSourcePresentation(status: LibrarySandboxActivityStatus |
 
   if (status.kind === "ready" || status.kind === "expiring_soon") {
     return {
-      label: "Live source active",
+      label: "Code access active",
       title:
-        status.kind === "expiring_soon" ? "Live source is active and will auto-archive soon" : "Live source is active",
+        status.kind === "expiring_soon"
+          ? "Repository code access is active and will auto-archive soon"
+          : "Repository code access is active",
       icon: LightningIcon,
       className: "border-success/35 bg-success/10 text-success",
       iconClassName: "text-success",
@@ -326,8 +328,8 @@ function getLibraryLiveSourcePresentation(status: LibrarySandboxActivityStatus |
 
   if (status.kind === "preparing") {
     return {
-      label: "Live source preparing",
-      title: "Live source is being prepared",
+      label: "Code access starting",
+      title: "Repository code access is starting",
       icon: CircleIcon,
       className: "border-primary/35 bg-primary/10 text-primary",
       iconClassName: "animate-pulse text-primary",
@@ -335,8 +337,8 @@ function getLibraryLiveSourcePresentation(status: LibrarySandboxActivityStatus |
   }
 
   return {
-    label: "Live source inactive",
-    title: "Live source is inactive. Enable Sandbox grounding from Discuss when you need live code state.",
+    label: "Code access idle",
+    title: "Repository code access starts when a task needs current repository files.",
     icon: WarningCircleIcon,
     className: "border-border bg-card text-muted-foreground",
     iconClassName: "text-muted-foreground",

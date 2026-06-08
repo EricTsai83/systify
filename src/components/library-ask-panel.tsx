@@ -39,6 +39,7 @@ import { toast } from "sonner";
 
 const LOCKED_PLACEHOLDER = `${REPOSITORY_GUIDE_COPY.generateAction} to unlock Library Ask.`;
 const LOCKED_HINT = "Library Ask needs at least one guide section in this repository before you can send a question.";
+const DEFAULT_UPDATE_DRAFT_PROMPT = "Refresh this artifact using the codebase as the source of truth.";
 
 export function LibraryAskPanel({
   repositoryId,
@@ -105,11 +106,32 @@ export function LibraryAskPanel({
     api.libraryArtifactDrafts.listByThread,
     confirmedThreadId ? { threadId: confirmedThreadId } : "skip",
   );
-  const recentDrafts = useQuery(
-    api.libraryArtifactDrafts.listRecentByRepository,
-    confirmedThreadId ? "skip" : { repositoryId },
-  );
-  const draftEntries: LibraryArtifactDraftEntry[] = threadDrafts ?? recentDrafts ?? [];
+  const recentDrafts = useQuery(api.libraryArtifactDrafts.listRecentByRepository, threadId ? "skip" : { repositoryId });
+  const [repositoryDraftSessionStartedAt, setRepositoryDraftSessionStartedAt] = useState(() => Date.now());
+  const [visibleRepositoryDraftIds, setVisibleRepositoryDraftIds] = useState<Doc<"artifactDrafts">["_id"][]>([]);
+  const draftEntries = useMemo<LibraryArtifactDraftEntry[]>(() => {
+    if (threadId) {
+      return confirmedThreadId ? (threadDrafts ?? []) : [];
+    }
+    if (!recentDrafts) {
+      return [];
+    }
+    return recentDrafts.filter((entry) => {
+      if (entry.draft.threadId !== undefined) {
+        return false;
+      }
+      return (
+        entry.draft.createdAt >= repositoryDraftSessionStartedAt || visibleRepositoryDraftIds.includes(entry.draft._id)
+      );
+    });
+  }, [
+    confirmedThreadId,
+    recentDrafts,
+    repositoryDraftSessionStartedAt,
+    threadDrafts,
+    threadId,
+    visibleRepositoryDraftIds,
+  ]);
 
   // Owns stick-to-bottom, anchor preservation on prepend, sentinel
   // observer for load-older, threadId-keyed reset, and prefers-
@@ -182,6 +204,8 @@ export function LibraryAskPanel({
     setInput("");
     setError(null);
     setDraftIntent(null);
+    setRepositoryDraftSessionStartedAt(Date.now());
+    setVisibleRepositoryDraftIds([]);
   }, [threadId]);
 
   const lockedProvider = activeThreadProbe?.lockedProvider ?? null;
@@ -234,6 +258,9 @@ export function LibraryAskPanel({
   const handleCreateThread = useCallback(() => {
     setError(null);
     setInput("");
+    setDraftIntent(null);
+    setRepositoryDraftSessionStartedAt(Date.now());
+    setVisibleRepositoryDraftIds([]);
     onSelectThread(null);
     textareaRef.current?.focus();
   }, [onSelectThread]);
@@ -325,7 +352,7 @@ export function LibraryAskPanel({
     : activeArtifactId
       ? "Question about the open artifact..."
       : "Question about this library...";
-  const liveSourceLabel = getLiveSourceDraftLabel(liveSourceStatus);
+  const repositoryCodeLabel = getRepositoryCodeDraftLabel(liveSourceStatus);
   const openCreateDraft = useCallback(() => {
     setError(null);
     setDraftIntent({
@@ -360,16 +387,19 @@ export function LibraryAskPanel({
       setError("Add a title for the new artifact.");
       return;
     }
-    if (draftIntent.prompt.trim().length === 0) {
+    const prompt = draftIntent.prompt.trim();
+    if (draftIntent.operation === "create" && prompt.length === 0) {
       setError("Describe what to draft.");
       return;
     }
+    const requestPrompt =
+      draftIntent.operation === "update" && prompt.length === 0 ? DEFAULT_UPDATE_DRAFT_PROMPT : prompt;
     try {
-      await requestDraft({
+      const result = await requestDraft({
         repositoryId,
         threadId: confirmedThreadId ?? undefined,
         operation: draftIntent.operation,
-        prompt: draftIntent.prompt,
+        prompt: requestPrompt,
         title: draftIntent.operation === "create" ? draftIntent.title : undefined,
         folderId: draftIntent.operation === "create" ? (draftIntent.folderId ?? undefined) : undefined,
         targetArtifactId: draftIntent.operation === "update" ? (activeArtifactId ?? undefined) : undefined,
@@ -377,17 +407,31 @@ export function LibraryAskPanel({
         modelName: draftModelPick.modelName,
         ...(draftReasoningEffort !== null ? { reasoningEffort: draftReasoningEffort } : {}),
       });
+      if (!confirmedThreadId) {
+        setVisibleRepositoryDraftIds((current) =>
+          current.includes(result.draftId) ? current : [...current, result.draftId],
+        );
+      }
       setDraftIntent(null);
     } catch (caught) {
       setError(toUserErrorMessage(caught, "Failed to start artifact draft."));
     }
   });
 
+  const handleRepositoryDraftRegenerated = useCallback((draftId: Doc<"artifactDrafts">["_id"]) => {
+    setVisibleRepositoryDraftIds((current) => (current.includes(draftId) ? current : [...current, draftId]));
+  }, []);
+
   const draftCards =
     draftEntries.length > 0 ? (
       <div className="space-y-3" data-testid="artifact-draft-list">
         {draftEntries.map((entry) => (
-          <LibraryArtifactDraftCard key={entry.draft._id} entry={entry} onApplied={onSelectArtifact} />
+          <LibraryArtifactDraftCard
+            key={entry.draft._id}
+            entry={entry}
+            onApplied={onSelectArtifact}
+            onRegenerated={handleRepositoryDraftRegenerated}
+          />
         ))}
       </div>
     ) : null;
@@ -443,7 +487,7 @@ export function LibraryAskPanel({
               description={
                 activeArtifactId
                   ? "Answers cite this artifact and other indexed chunks."
-                  : "Answers cite retrieved artifact chunks. Artifact drafts use Live source and wait for Apply."
+                  : "Answers cite retrieved artifact chunks. Artifact drafts use the codebase as the source of truth and wait for Apply."
               }
             />
           </div>
@@ -462,7 +506,7 @@ export function LibraryAskPanel({
             intent={draftIntent}
             activeArtifactTitle={activeArtifact?.title}
             disabledReason={documentActionDisabledReason}
-            liveSourceLabel={liveSourceLabel}
+            repositoryCodeLabel={repositoryCodeLabel}
             modelPick={draftModelPick}
             onModelPickChange={setDraftUserPick}
             reasoningEffort={draftReasoningEffort}
@@ -667,15 +711,15 @@ function NoArtifactsHint({
   );
 }
 
-function getLiveSourceDraftLabel(status: { kind: "idle" | "preparing" | "ready" | "expiring_soon" } | undefined) {
+function getRepositoryCodeDraftLabel(status: { kind: "idle" | "preparing" | "ready" | "expiring_soon" } | undefined) {
   if (status === undefined) {
-    return "Live source status is loading. Drafting will verify access before generation starts.";
+    return "Repository code status is loading. The draft will verify access before it starts.";
   }
   if (status.kind === "ready" || status.kind === "expiring_soon") {
-    return "Live source is active. The draft will still verify the repository before writing a proposal.";
+    return "Repository code is ready. The draft will treat the codebase as the source of truth.";
   }
   if (status.kind === "preparing") {
-    return "Live source is starting. The draft job will continue once it is ready.";
+    return "Repository code access is starting. The draft will continue once it is ready.";
   }
-  return "Live source will be prepared before drafting. Nothing changes until you apply the proposal.";
+  return "The draft will prepare repository code access first, then use the codebase as the source of truth.";
 }

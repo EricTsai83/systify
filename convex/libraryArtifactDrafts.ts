@@ -225,6 +225,9 @@ export const regenerateDraft = mutation({
   args: { draftId: v.id("artifactDrafts") },
   handler: async (ctx, args): Promise<{ draftId: Id<"artifactDrafts">; jobId: Id<"jobs"> }> => {
     const { identity, doc: draft } = await requireOwnedDoc(ctx, args.draftId, { notFoundMessage: "Draft not found." });
+    if (draft.status !== "ready" && draft.status !== "failed") {
+      throw new ConvexError({ code: "DRAFT_NOT_REGENERABLE", message: "This draft cannot be regenerated." });
+    }
     await requireActiveRepositoryForViewer(ctx, { repositoryId: draft.repositoryId });
     await assertFeatureAccess(ctx, identity, "libraryAsk");
     await assertFeatureAccess(ctx, identity, "generateSystemDesign");
@@ -251,7 +254,7 @@ export const regenerateDraft = mutation({
     await consumeSystemDesignRateLimit(ctx, identity.tokenIdentifier);
     await consumeDaytonaGlobalRateLimit(ctx);
 
-    return await enqueueArtifactDraft(ctx, {
+    const replacement = await enqueueArtifactDraft(ctx, {
       ownerTokenIdentifier: identity.tokenIdentifier,
       repositoryId: draft.repositoryId,
       threadId: draft.threadId,
@@ -265,6 +268,13 @@ export const regenerateDraft = mutation({
       modelName,
       reasoningEffort: draft.reasoningEffort,
     });
+    const now = Date.now();
+    await ctx.db.patch(draft._id, {
+      status: "discarded",
+      discardedAt: now,
+      updatedAt: now,
+    });
+    return replacement;
   },
 });
 
@@ -381,7 +391,7 @@ export const markDraftRunning = internalMutation({
     const running = await markQueuedJobRunning(ctx, {
       jobId: args.jobId,
       expectedKind: "artifact_draft",
-      stage: "Preparing live source…",
+      stage: "Preparing code access…",
       progress: 0.05,
       startedAt: now,
       leaseExpiresAt: now + SYSTEM_DESIGN_JOB_LEASE_MS,
@@ -647,7 +657,7 @@ async function enqueueArtifactDraft(
     ownerTokenIdentifier: args.ownerTokenIdentifier,
     costCategory: "system_design",
     triggerSource: "user",
-    stage: "Preparing live source…",
+    stage: "Preparing code access…",
     outputSummary: "Queued artifact draft.",
     leaseMs: SYSTEM_DESIGN_JOB_LEASE_MS,
   });

@@ -343,6 +343,7 @@ export async function generateViaGateway(
           prompt: args.prompt,
           ...(args.tools ? { tools: args.tools } : {}),
           ...(args.stopWhen ? { stopWhen: args.stopWhen } : {}),
+          ...(args.prepareStep ? { prepareStep: args.prepareStep } : {}),
           providerOptions: buildProviderOptions(callCtx.provider, callCtx.modelName, args),
           // Wrapper owns retries — see `withLlmRetry` contract.
           maxRetries: 0,
@@ -418,6 +419,7 @@ export async function generateObjectViaGateway<TSchema extends z.ZodType>(
           }),
           ...(args.tools ? { tools: args.tools } : {}),
           ...(args.stopWhen ? { stopWhen: args.stopWhen } : {}),
+          ...(args.prepareStep ? { prepareStep: args.prepareStep } : {}),
           providerOptions: buildProviderOptions(callCtx.provider, callCtx.modelName, args),
           // Wrapper owns retries — see `withLlmRetry` contract.
           maxRetries: 0,

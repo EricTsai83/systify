@@ -3,6 +3,7 @@
 import { describe, expect, test, vi, beforeEach } from "vitest";
 import { internal } from "./_generated/api";
 import { createRateLimitedTestConvex } from "../test/convex/harness";
+import { insertTestArtifact } from "../test/convex/fixtures";
 
 const mocks = vi.hoisted(() => {
   class MockSandboxPreparationError extends Error {
@@ -22,6 +23,7 @@ const mocks = vi.hoisted(() => {
     MockSandboxPreparationError,
     getSandboxFsClient: vi.fn(),
     createSandboxTools: vi.fn(),
+    generateViaGateway: vi.fn(),
     generateObjectViaGateway: vi.fn(),
   };
 });
@@ -40,6 +42,7 @@ vi.mock("./chat/sandboxTools", () => ({
 }));
 
 vi.mock("./lib/llmGateway", () => ({
+  generateViaGateway: mocks.generateViaGateway,
   generateObjectViaGateway: mocks.generateObjectViaGateway,
 }));
 
@@ -128,14 +131,21 @@ beforeEach(() => {
   mocks.ensureSandboxReady.mockReset();
   mocks.getSandboxFsClient.mockReset().mockResolvedValue({ readFile: vi.fn() });
   mocks.createSandboxTools.mockReset().mockReturnValue({});
+  mocks.generateViaGateway.mockReset().mockResolvedValue({
+    text: "# Generated runbook\n\nPrepared from the codebase.",
+    usage: { inputTokens: 100, outputTokens: 200, cachedInputTokens: 30, reasoningTokens: 40 },
+    costUsd: 0.2,
+    steps: [],
+    rawResponseId: "response_draft",
+  });
   mocks.generateObjectViaGateway.mockReset().mockResolvedValue({
     object: {
       title: "Generated runbook",
-      summary: "Live-source-backed operations notes.",
-      contentMarkdown: "# Generated runbook\n\nPrepared from Live source.",
+      summary: "Codebase-backed operations notes.",
+      contentMarkdown: "# Generated runbook\n\nPrepared from the codebase.",
       changeSummary: "Created a new artifact.",
     },
-    usage: { inputTokens: 12, outputTokens: 34 },
+    usage: { inputTokens: 12, outputTokens: 34, cachedInputTokens: 3, cacheWriteTokens: 5 },
     costUsd: 0.01,
     steps: [],
     rawResponseId: "response_1",
@@ -174,7 +184,31 @@ describe("runArtifactDraft", () => {
       expect.any(Function),
     );
     expect(mocks.getSandboxFsClient).toHaveBeenCalledWith("remote-ready");
+    expect(mocks.generateViaGateway).toHaveBeenCalled();
     expect(mocks.generateObjectViaGateway).toHaveBeenCalled();
+    const draftArgs = mocks.generateViaGateway.mock.calls[0]?.[2];
+    expect(draftArgs?.tools).toEqual({});
+    expect(draftArgs?.prepareStep({ stepNumber: 10 })?.system).toContain(
+      "prioritize producing the schema-valid object",
+    );
+    const gatewayArgs = mocks.generateObjectViaGateway.mock.calls[0]?.[2];
+    expect(
+      gatewayArgs?.schema.safeParse({
+        title: "Generated runbook",
+        summary: "Codebase-backed operations notes.",
+        contentMarkdown: "# Generated runbook",
+        changeSummary: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      gatewayArgs?.schema.safeParse({
+        title: "Generated runbook",
+        summary: "Codebase-backed operations notes.",
+        contentMarkdown: "# Generated runbook",
+      }).success,
+    ).toBe(false);
+    expect(gatewayArgs?.tools).toBeUndefined();
+    expect(gatewayArgs?.prompt).toContain("# Generated runbook");
     expect(state.draft?.status).toBe("ready");
     expect(state.draft?.title).toBe("Generated runbook");
     expect(state.draft?.sandboxId).toBe(sandboxId);
@@ -183,7 +217,60 @@ describe("runArtifactDraft", () => {
     expect(state.job?.stage).toBe("Ready to review");
   });
 
-  test("fails the draft when live source preparation fails", async () => {
+  test("treats the codebase as the source of truth when updating an existing artifact", async () => {
+    const t = createRateLimitedTestConvex();
+    const { repositoryId, sandboxId, jobId, draftId } = await seedDraftRun(t);
+    const targetArtifactId = await insertTestArtifact(t, {
+      ownerTokenIdentifier: OWNER,
+      repositoryId,
+      title: "Architecture overview",
+      summary: "Old architecture summary.",
+      contentMarkdown: "# Architecture overview\n\nOld statement that must be verified.",
+      version: 3,
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(draftId, {
+        operation: "update",
+        prompt: "Refresh the architecture overview.",
+        title: "Architecture overview",
+        targetArtifactId,
+        targetArtifactVersion: 3,
+      });
+    });
+    mocks.ensureSandboxReady.mockResolvedValue({
+      sandboxId,
+      remoteId: "remote-ready",
+      repoPath: "/workspace/repo",
+    });
+
+    await t.action(internal.libraryArtifactDraftsNode.runArtifactDraft, {
+      draftId,
+      jobId,
+      repositoryId,
+      ownerTokenIdentifier: OWNER,
+    });
+
+    const draftArgs = mocks.generateViaGateway.mock.calls[0]?.[2];
+    expect(draftArgs).toMatchObject({
+      system: expect.stringContaining("The repository codebase is the single source of truth"),
+      prompt: expect.stringContaining("Target artifact to revise"),
+    });
+    expect(draftArgs).toMatchObject({
+      system: expect.stringContaining("Existing Library artifacts are not factual sources"),
+      prompt: expect.stringContaining("verify every factual claim against the repository code"),
+    });
+    expect(draftArgs).toMatchObject({
+      system: expect.stringContaining("the codebase wins"),
+      prompt: expect.stringContaining("Old statement that must be verified."),
+    });
+    const gatewayArgs = mocks.generateObjectViaGateway.mock.calls[0]?.[2];
+    expect(gatewayArgs).toMatchObject({
+      system: expect.stringContaining("You convert a codebase-grounded artifact draft"),
+      schemaDescription: "A codebase-grounded Library artifact draft for human review before applying.",
+    });
+  });
+
+  test("fails the draft when repository code access preparation fails", async () => {
     const t = createRateLimitedTestConvex();
     const { repositoryId, jobId, draftId } = await seedDraftRun(t);
     mocks.ensureSandboxReady.mockRejectedValue(
@@ -202,8 +289,9 @@ describe("runArtifactDraft", () => {
       job: await ctx.db.get(jobId),
     }));
     expect(state.draft?.status).toBe("failed");
-    expect(state.draft?.errorMessage).toBe("Live source was not available.");
+    expect(state.draft?.errorMessage).toBe("Repository code access was not available.");
     expect(state.job?.status).toBe("failed");
+    expect(mocks.generateViaGateway).not.toHaveBeenCalled();
     expect(mocks.generateObjectViaGateway).not.toHaveBeenCalled();
   });
 });

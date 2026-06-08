@@ -87,8 +87,8 @@ async function seedReadyDraft(
       folderId: args.folderId,
       title: args.operation === "create" ? "Custom runbook" : "Updated architecture",
       summary: "Updated summary",
-      contentMarkdown: "# Updated\n\nLive source backed content.",
-      changeSummary: "Refreshed from live source.",
+      contentMarkdown: "# Updated\n\nCodebase-backed content.",
+      changeSummary: "Refreshed from the codebase.",
       alignedImportCommitSha: "abc123",
       generatedByProvider: "openai",
       generatedByModel: "gpt-5.5",
@@ -248,7 +248,7 @@ describe("libraryArtifactDrafts", () => {
       }));
       expect(result.artifactId).toBe(artifactId);
       expect(state.artifact?.title).toBe("Updated architecture");
-      expect(state.artifact?.contentMarkdown).toContain("Live source backed content");
+      expect(state.artifact?.contentMarkdown).toContain("Codebase-backed content");
       expect(state.artifact?.version).toBe(2);
       expect(state.artifact?.lastVerifiedAt).toEqual(expect.any(Number));
       expect(state.artifact?.chunkingStatus).toBe("pending");
@@ -309,6 +309,33 @@ describe("libraryArtifactDrafts", () => {
     const entries = await viewer.query(api.libraryArtifactDrafts.listRecentByRepository, { repositoryId });
 
     expect(entries.map((entry) => entry.draft.status)).toEqual(["failed", "ready", "running", "queued"]);
+  });
+
+  test("regenerate discards the replaced draft after enqueueing a retry", async () => {
+    await withPausedConvexScheduler(async () => {
+      const t = createRateLimitedTestConvex();
+      await seedAccessProfile(t);
+      const repositoryId = await seedRepository(t);
+      const { draftId } = await seedReadyDraft(t, {
+        repositoryId,
+        operation: "create",
+        status: "failed",
+      });
+      const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+
+      const result = await viewer.mutation(api.libraryArtifactDrafts.regenerateDraft, { draftId });
+
+      const state = await t.run(async (ctx) => ({
+        originalDraft: await ctx.db.get(draftId),
+        replacementDraft: await ctx.db.get(result.draftId),
+        replacementJob: await ctx.db.get(result.jobId),
+      }));
+      expect(state.originalDraft?.status).toBe("discarded");
+      expect(state.originalDraft?.discardedAt).toEqual(expect.any(Number));
+      expect(state.replacementDraft?.status).toBe("queued");
+      expect(state.replacementDraft?.operation).toBe("create");
+      expect(state.replacementJob?.status).toBe("queued");
+    });
   });
 
   test("request draft fails when entitlements are missing", async () => {
