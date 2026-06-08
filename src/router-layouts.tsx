@@ -9,7 +9,7 @@ import {
   useRouteError,
   useSearchParams,
 } from "react-router-dom";
-import { WarningCircleIcon } from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, HouseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { AppNotice } from "@/components/app-notice";
 import { ScreenState } from "@/components/screen-state";
 import { Button } from "@/components/ui/button";
@@ -247,6 +247,7 @@ export function RouteErrorBoundary() {
       <ScreenState
         title={`Request failed (${error.status})`}
         description={error.statusText || "Something unexpected happened while loading this page."}
+        actions={<RouteErrorActions />}
       />
     );
   }
@@ -255,7 +256,25 @@ export function RouteErrorBoundary() {
     <ScreenState
       title="Something went wrong"
       description="Please refresh this page. If the issue continues, return home and try again."
+      actions={<RouteErrorActions />}
     />
+  );
+}
+
+function RouteErrorActions() {
+  return (
+    <>
+      <Button onClick={() => window.location.reload()}>
+        <ArrowsClockwiseIcon data-icon="inline-start" weight="bold" />
+        Refresh page
+      </Button>
+      <Button asChild variant="secondary">
+        <Link to={LANDING_PATH}>
+          <HouseIcon data-icon="inline-start" weight="bold" />
+          Back to home
+        </Link>
+      </Button>
+    </>
   );
 }
 

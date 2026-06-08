@@ -225,6 +225,7 @@ export const listAutoPauseCandidates = internalQuery({
     const rows = await ctx.db
       .query("sandboxSessions")
       .withIndex("by_status_and_lastActivityAt", (q) => q.eq("status", "active"))
+      .order("asc")
       .take(Math.max(1, Math.floor(args.limit)));
     return rows.filter((session) => session.lastActivityAt < args.now - session.idleAutoPauseMinutes * 60_000);
   },

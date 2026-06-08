@@ -8,6 +8,16 @@ import { stopSandbox } from "./daytona";
 import { logInfo, logWarn } from "./lib/observability";
 
 const AUTO_PAUSE_BATCH_SIZE = 50;
+const AUTO_PAUSE_CANDIDATE_QUERY_MAX_ATTEMPTS = 3;
+const AUTO_PAUSE_CANDIDATE_QUERY_RETRY_DELAYS_MS = [250, 1_000] as const;
+
+function stringifyError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export const stopRemoteSandboxForSession = internalAction({
   args: { sessionId: v.id("sandboxSessions") },
@@ -35,7 +45,7 @@ export const stopRemoteSandboxForSession = internalAction({
       logWarn("sandboxSessions", "remote_sandbox_stop_failed", {
         sessionId: args.sessionId,
         sandboxId: session.sandboxId,
-        error: error instanceof Error ? error.message : String(error),
+        error: stringifyError(error),
       });
       return { stopped: false, reason: "daytona_error" };
     }
@@ -46,15 +56,27 @@ export const autoPauseIdleSandboxSessions = internalAction({
   args: {},
   handler: async (ctx): Promise<{ paused: number; skipped?: boolean }> => {
     const now = Date.now();
-    let sessions: Doc<"sandboxSessions">[];
-    try {
-      sessions = await ctx.runQuery(internal.sandboxSessions.listAutoPauseCandidates, {
-        now,
-        limit: AUTO_PAUSE_BATCH_SIZE,
-      });
-    } catch (error) {
+    let sessions: Doc<"sandboxSessions">[] | null = null;
+    let lastCandidateQueryError: unknown;
+    for (let attempt = 1; attempt <= AUTO_PAUSE_CANDIDATE_QUERY_MAX_ATTEMPTS; attempt++) {
+      try {
+        sessions = await ctx.runQuery(internal.sandboxSessions.listAutoPauseCandidates, {
+          now,
+          limit: AUTO_PAUSE_BATCH_SIZE,
+        });
+        lastCandidateQueryError = undefined;
+        break;
+      } catch (error) {
+        lastCandidateQueryError = error;
+        if (attempt < AUTO_PAUSE_CANDIDATE_QUERY_MAX_ATTEMPTS) {
+          await sleep(AUTO_PAUSE_CANDIDATE_QUERY_RETRY_DELAYS_MS[attempt - 1] ?? 1_000);
+        }
+      }
+    }
+    if (lastCandidateQueryError || !sessions) {
       logWarn("sandboxSessions", "auto_pause_candidate_query_failed", {
-        error: error instanceof Error ? error.message : String(error),
+        attempts: AUTO_PAUSE_CANDIDATE_QUERY_MAX_ATTEMPTS,
+        error: stringifyError(lastCandidateQueryError),
       });
       return { paused: 0, skipped: true };
     }
@@ -73,7 +95,7 @@ export const autoPauseIdleSandboxSessions = internalAction({
       } catch (error) {
         logWarn("sandboxSessions", "auto_pause_session_failed", {
           sessionId: session._id,
-          error: error instanceof Error ? error.message : String(error),
+          error: stringifyError(error),
         });
       }
     }
