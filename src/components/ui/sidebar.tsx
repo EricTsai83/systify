@@ -291,9 +291,10 @@ export function Sidebar({
         <SheetContent
           side={sheetSide}
           className={cn(
-            "w-[min(18rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] bg-background p-0 data-[state=closed]:duration-200 data-[state=open]:duration-200",
+            "top-[var(--systify-demo-banner-height,0px)] h-[calc(100dvh-var(--systify-demo-banner-height,0px))] w-[min(18rem,calc(100vw-1rem))] max-w-[calc(100vw-1rem)] bg-background p-0 data-[state=closed]:duration-200 data-[state=open]:duration-200",
             className,
           )}
+          overlayClassName="top-[var(--systify-demo-banner-height,0px)]"
           hideClose
         >
           <SheetTitle className="sr-only">Navigation</SheetTitle>

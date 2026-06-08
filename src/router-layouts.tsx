@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, forwardRef, useEffect, useRef, useState, type RefObject } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import {
@@ -23,6 +23,7 @@ import { AUTH_CALLBACK_PATH, DEFAULT_AUTHENTICATED_PATH, LANDING_PATH, isProtect
 import { HomePage } from "@/pages/home";
 
 const MAX_CALLBACK_ERROR_DESCRIPTION_LENGTH = 240;
+const DEMO_BANNER_HEIGHT_CSS_VAR = "--systify-demo-banner-height";
 
 /**
  * sessionStorage key used to remember the protected URL an unauthenticated
@@ -86,6 +87,9 @@ export function ProtectedLayout() {
   const location = useLocation();
   const attemptedPath = `${location.pathname}${location.search}${location.hash}`;
   const viewerAccess = useViewerAccess({ enabled: !isLoading && isAuthenticated });
+  const isDemo = isDemoMode(viewerAccess);
+  const demoBannerRef = useRef<HTMLDivElement | null>(null);
+  useDemoBannerViewportOffset(isDemo, demoBannerRef);
 
   // Persist the attempted protected path so AuthCallbackRoute can return the
   // user there after sign-in. Two reasons this lives in a committed effect
@@ -122,7 +126,7 @@ export function ProtectedLayout() {
   return (
     <SidebarProvider>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        {isDemoMode(viewerAccess) ? <DemoModeBanner /> : null}
+        {isDemo ? <DemoModeBanner ref={demoBannerRef} /> : null}
         <Suspense fallback={<RouteLoadingScreen description="Loading your chat." />}>
           <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
             <Outlet />
@@ -133,9 +137,48 @@ export function ProtectedLayout() {
   );
 }
 
-function DemoModeBanner() {
+function useDemoBannerViewportOffset(isActive: boolean, bannerRef: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const root = document.documentElement;
+    if (!isActive) {
+      root.style.removeProperty(DEMO_BANNER_HEIGHT_CSS_VAR);
+      return;
+    }
+
+    const syncBannerHeight = () => {
+      const height = bannerRef.current?.getBoundingClientRect().height ?? 0;
+      root.style.setProperty(DEMO_BANNER_HEIGHT_CSS_VAR, `${Math.ceil(height)}px`);
+    };
+
+    syncBannerHeight();
+
+    const banner = bannerRef.current;
+    if (typeof ResizeObserver !== "undefined" && banner) {
+      const observer = new ResizeObserver(syncBannerHeight);
+      observer.observe(banner);
+      window.addEventListener("resize", syncBannerHeight);
+      return () => {
+        observer.disconnect();
+        window.removeEventListener("resize", syncBannerHeight);
+        root.style.removeProperty(DEMO_BANNER_HEIGHT_CSS_VAR);
+      };
+    }
+
+    window.addEventListener("resize", syncBannerHeight);
+    return () => {
+      window.removeEventListener("resize", syncBannerHeight);
+      root.style.removeProperty(DEMO_BANNER_HEIGHT_CSS_VAR);
+    };
+  }, [isActive, bannerRef]);
+}
+
+const DemoModeBanner = forwardRef<HTMLDivElement>(function DemoModeBanner(_, ref) {
   return (
-    <div className="shrink-0 border-b border-warning/35 bg-warning/15 px-3 py-2 text-foreground" role="status">
+    <div
+      ref={ref}
+      className="shrink-0 border-b border-warning/35 bg-warning/15 px-3 py-2 text-foreground"
+      role="status"
+    >
       <div className="mx-auto flex w-full max-w-7xl items-center">
         <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:justify-center sm:gap-3">
           <div className="inline-flex w-fit shrink-0 items-center gap-2 border border-warning/40 bg-warning/15 px-2 py-1 text-[11px] font-bold uppercase leading-none tracking-normal">
@@ -150,7 +193,7 @@ function DemoModeBanner() {
       </div>
     </div>
   );
-}
+});
 
 export function AuthCallbackRoute() {
   const { isAuthenticated, isLoading } = useConvexAuth();

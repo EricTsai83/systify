@@ -59,9 +59,6 @@ export function isViewerFeatureEnabled(viewerAccess: ViewerAccess | undefined, f
 }
 
 const COST_FEATURE_NAMES = [
-  "repoImport",
-  "syncRepository",
-  "checkForUpdates",
   "chatSend",
   "libraryAsk",
   "generateSystemDesign",
