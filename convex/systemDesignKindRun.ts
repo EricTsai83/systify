@@ -241,6 +241,7 @@ export async function runSystemDesignKind(
       status: runStatus,
       error: telemetryError instanceof Error ? telemetryError.message : String(telemetryError),
     });
+    throw telemetryError;
   }
 
   emitKindRunMetrics({

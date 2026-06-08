@@ -524,6 +524,67 @@ describe("repository import guards", () => {
     expect(state.threads.map((thread) => thread._id)).toEqual([threadId]);
   });
 
+  test("archived repeated imports replace an archived default thread", async () => {
+    const ownerTokenIdentifier = "user|repeat-archived-default-thread";
+    const t = createTestConvex();
+    await seedGithubInstallation(t, ownerTokenIdentifier);
+    const now = Date.now();
+
+    const { repositoryId, archivedThreadId } = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/archived-default-thread",
+        sourceRepoFullName: "acme/archived-default-thread",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "archived-default-thread",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 1,
+        color: "blue",
+        lastAccessedAt: now - 10_000,
+        archivedAt: now - 1_000,
+      });
+      const archivedThreadId = await ctx.db.insert("threads", {
+        repositoryId,
+        ownerTokenIdentifier,
+        title: "Archived default chat",
+        mode: "library",
+        lastMessageAt: now - 5_000,
+        archivedAt: now - 500,
+      });
+      await ctx.db.patch(repositoryId, { defaultThreadId: archivedThreadId });
+
+      return { repositoryId, archivedThreadId };
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const result = await viewer.mutation(api.repositories.createRepositoryImport, {
+      url: "https://github.com/acme/archived-default-thread",
+    });
+
+    const state = await t.run(async (ctx) => {
+      const repository = await ctx.db.get(repositoryId);
+      const archivedThread = await ctx.db.get(archivedThreadId);
+      const replacementThread = await ctx.db.get(result.defaultThreadId);
+      return { repository, archivedThread, replacementThread };
+    });
+
+    expect(result.repositoryId).toBe(repositoryId);
+    expect(result.defaultThreadId).not.toBe(archivedThreadId);
+    expect(result.defaultThreadMode).toBe("library");
+    expect(state.repository?.archivedAt).toBeUndefined();
+    expect(state.repository?.defaultThreadId).toBe(result.defaultThreadId);
+    expect(state.archivedThread?.archivedAt).toBe(now - 500);
+    expect(state.replacementThread?.archivedAt).toBeUndefined();
+    expect(state.replacementThread?.repositoryId).toBe(repositoryId);
+  });
+
   test("createRepositoryImport rejects duplicate imports while one is already running", async () => {
     const ownerTokenIdentifier = "user|duplicate-import";
     const t = createTestConvex();

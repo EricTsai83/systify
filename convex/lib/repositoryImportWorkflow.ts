@@ -234,7 +234,14 @@ async function ensureRepositoryDefaultThread(
   defaultThreadMode: Doc<"threads">["mode"];
 }> {
   const defaultThreadRow = args.repository.defaultThreadId ? await ctx.db.get(args.repository.defaultThreadId) : null;
-  const defaultThread = defaultThreadRow?.deletionRequestedAt === undefined ? defaultThreadRow : null;
+  let defaultThread: Doc<"threads"> | null = null;
+  if (
+    defaultThreadRow &&
+    defaultThreadRow.deletionRequestedAt === undefined &&
+    defaultThreadRow.archivedAt === undefined
+  ) {
+    defaultThread = defaultThreadRow;
+  }
 
   if (isOwnedBy(defaultThread, args.ownerTokenIdentifier) && defaultThread.repositoryId === args.repository._id) {
     return {
