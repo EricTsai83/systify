@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type React from "react";
 import { Link } from "react-router-dom";
 import {
@@ -8,16 +9,19 @@ import {
   CubeIcon,
   DatabaseIcon,
   LightningIcon,
+  PlayIcon,
   StackIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Logo } from "@/components/logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useTimeUntil, useRelativeTime } from "@/hooks/use-relative-time";
 import {
   presentRepositoryIntelligenceSurface,
@@ -25,6 +29,7 @@ import {
   type OperationTone,
   type SurfaceStatus,
 } from "@/lib/operations";
+import { toUserErrorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { DEFAULT_AUTHENTICATED_PATH, repositoryPath } from "@/route-paths";
 
@@ -35,9 +40,9 @@ import { DEFAULT_AUTHENTICATED_PATH, repositoryPath } from "@/route-paths";
  * who is in Discuss mode (where the pill is intentionally hidden) still
  * has a single place to answer "what is my system doing right now".
  *
- * Read-only by design. Activate / stop / sync affordances stay on the
- * per-repository TopBar where the user already has the repository
- * context — Resources is a navigation surface, not a control plane.
+ * Repository-centric resource control plane. It keeps the actions scoped to
+ * one repository at a time: open the repo for sync/history work, and activate
+ * Live source when the sandbox is stopped, missing, expired, or failed.
  */
 export function ResourcesPage() {
   return (
@@ -197,6 +202,8 @@ function ResourceSummarySkeleton() {
 }
 
 function ResourceRow({ row }: { row: InventoryRow }) {
+  const requestSandboxActivation = useMutation(api.repositories.requestSandboxActivation);
+  const [activationError, setActivationError] = useState<string | null>(null);
   const intelligence = presentRepositoryIntelligenceSurface({
     importStatus: row.importStatus,
     isSyncing: isRepositorySyncing(row),
@@ -208,6 +215,15 @@ function ResourceRow({ row }: { row: InventoryRow }) {
   });
   const lastSyncedLabel = useRelativeTime(row.lastImportedAt);
   const targetPath = repositoryPath(row.repositoryId);
+  const sandboxAction = getSandboxAction(row);
+  const [isActivatingSandbox, activateSandbox] = useAsyncCallback(async () => {
+    setActivationError(null);
+    try {
+      await requestSandboxActivation({ repositoryId: row.repositoryId });
+    } catch (error) {
+      setActivationError(toUserErrorMessage(error, "Couldn't activate the sandbox. Try again."));
+    }
+  });
 
   return (
     <Card className="p-4 transition-colors hover:border-foreground/25">
@@ -241,6 +257,7 @@ function ResourceRow({ row }: { row: InventoryRow }) {
               />
             </div>
             <div className="mt-2 flex min-h-4 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-muted-foreground sm:text-xs">
+              <SandboxPolicy sandbox={row.sandbox} />
               {sandbox.ttlExpiresAt ? <SandboxExpiry ttlExpiresAt={sandbox.ttlExpiresAt} /> : null}
               {lastSyncedLabel ? (
                 <span className="inline-flex items-center gap-1">
@@ -255,15 +272,50 @@ function ResourceRow({ row }: { row: InventoryRow }) {
                 </span>
               ) : null}
             </div>
+            {activationError ? (
+              <p className="mt-2 text-[11px] leading-4 text-destructive" role="alert">
+                {activationError}
+              </p>
+            ) : null}
           </div>
         </div>
-        <div className="flex flex-row gap-2 sm:shrink-0">
+        <div className="flex flex-row flex-wrap gap-2 sm:shrink-0 sm:justify-end">
+          {sandboxAction ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="flex-1 sm:w-32 sm:flex-none"
+              onClick={() => {
+                void activateSandbox();
+              }}
+              disabled={isActivatingSandbox}
+            >
+              <PlayIcon weight="bold" />
+              <ButtonStateText
+                current={isActivatingSandbox ? "Starting…" : sandboxAction.label}
+                states={[sandboxAction.label, "Starting…"]}
+              />
+            </Button>
+          ) : null}
           <Button asChild type="button" variant="secondary" size="sm" className="flex-1 sm:w-32 sm:flex-none">
             <Link to={targetPath}>Open repository</Link>
           </Button>
         </div>
       </div>
     </Card>
+  );
+}
+
+function SandboxPolicy({ sandbox }: { sandbox: InventoryRow["sandbox"] }) {
+  if (!sandbox?.autoStopIntervalMinutes) {
+    return null;
+  }
+  return (
+    <span className="inline-flex items-center gap-1">
+      <LightningIcon size={11} weight="bold" aria-hidden="true" />
+      Auto-stops after {formatMinutes(sandbox.autoStopIntervalMinutes)} idle
+    </span>
   );
 }
 
@@ -367,6 +419,19 @@ function ResourceEmptyState() {
   );
 }
 
+function getSandboxAction(row: InventoryRow): { label: string } | null {
+  if (row.sandboxModeStatus.reasonCode === "available" || row.sandboxModeStatus.reasonCode === "sandbox_provisioning") {
+    return null;
+  }
+  if (row.sandboxModeStatus.reasonCode === "sandbox_unavailable") {
+    return { label: "Retry sandbox" };
+  }
+  if (row.sandboxModeStatus.reasonCode === "sandbox_expired") {
+    return { label: "Wake sandbox" };
+  }
+  return { label: "Activate" };
+}
+
 function isRepositorySyncing(row: InventoryRow) {
   return row.importStatus === "queued" || row.importStatus === "running";
 }
@@ -389,6 +454,10 @@ function getRowTone(intelligence: SurfaceStatus, sandbox: SurfaceStatus): Operat
 
 function formatCount(value: number) {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
+}
+
+function formatMinutes(value: number) {
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value)} min`;
 }
 
 function toneTextClassName(tone: OperationTone) {

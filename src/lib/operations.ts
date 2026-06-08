@@ -188,7 +188,7 @@ export function presentRepositoryIntelligenceSurface(input: RepositoryIntelligen
 
 export type SandboxSurfaceInput = {
   sandboxModeStatus: SandboxModeStatus;
-  sandbox: { status: string; ttlExpiresAt: number } | null;
+  sandbox: { status: string; ttlExpiresAt: number; autoStopIntervalMinutes?: number } | null;
 };
 
 /**

@@ -47,7 +47,7 @@ export const STREAM_FLUSH_THRESHOLD = 240;
 export const MESSAGE_STREAM_COMPACT_CHUNK_THRESHOLD = 8;
 
 /** Default minutes before a sandbox auto-stops (Daytona). */
-export const DEFAULT_AUTO_STOP_MINUTES = 10;
+export const DEFAULT_AUTO_STOP_MINUTES = 15;
 
 /** Default minutes before a sandbox is auto-archived (Daytona). */
 export const DEFAULT_AUTO_ARCHIVE_MINUTES = 60 * 24;

@@ -132,7 +132,14 @@ export const listResourceInventory = query({
           lastImportedAt: repo.lastImportedAt,
           hasRemoteUpdates: hasRemoteUpdates(repo),
           sandboxModeStatus,
-          sandbox: sandbox ? { status: sandbox.status, ttlExpiresAt: sandbox.ttlExpiresAt } : null,
+          sandbox: sandbox
+            ? {
+                status: sandbox.status,
+                ttlExpiresAt: sandbox.ttlExpiresAt,
+                autoStopIntervalMinutes: sandbox.autoStopIntervalMinutes,
+                autoArchiveIntervalMinutes: sandbox.autoArchiveIntervalMinutes,
+              }
+            : null,
         };
       }),
     );

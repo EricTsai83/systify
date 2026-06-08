@@ -1,60 +1,67 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
-const { getMock, MockDaytonaError, MockDaytonaValidationError, MockDaytonaNotFoundError, MockDaytonaRateLimitError } =
-  vi.hoisted(() => {
-    // Constructor mirrors the real `@daytona/sdk` `DaytonaError` signature
-    // `(message, statusCode, headers, errorCode)` so tests can simulate the
-    // structured error fields the SDK populates on a 4xx response. Subclassing
-    // here ensures `instanceof DaytonaError` works in production code paths.
-    class HoistedMockDaytonaError extends Error {
-      constructor(
-        message: string,
-        readonly statusCode?: number,
-        readonly headers?: Record<string, string>,
-        readonly errorCode?: string,
-      ) {
-        super(message);
-        this.name = "DaytonaError";
-      }
+const {
+  createMock,
+  getMock,
+  MockDaytonaError,
+  MockDaytonaValidationError,
+  MockDaytonaNotFoundError,
+  MockDaytonaRateLimitError,
+} = vi.hoisted(() => {
+  // Constructor mirrors the real `@daytona/sdk` `DaytonaError` signature
+  // `(message, statusCode, headers, errorCode)` so tests can simulate the
+  // structured error fields the SDK populates on a 4xx response. Subclassing
+  // here ensures `instanceof DaytonaError` works in production code paths.
+  class HoistedMockDaytonaError extends Error {
+    constructor(
+      message: string,
+      readonly statusCode?: number,
+      readonly headers?: Record<string, string>,
+      readonly errorCode?: string,
+    ) {
+      super(message);
+      this.name = "DaytonaError";
     }
+  }
 
-    class HoistedMockDaytonaValidationError extends HoistedMockDaytonaError {
-      constructor(message: string, statusCode?: number, headers?: Record<string, string>, errorCode?: string) {
-        super(message, statusCode, headers, errorCode);
-        this.name = "DaytonaValidationError";
-      }
+  class HoistedMockDaytonaValidationError extends HoistedMockDaytonaError {
+    constructor(message: string, statusCode?: number, headers?: Record<string, string>, errorCode?: string) {
+      super(message, statusCode, headers, errorCode);
+      this.name = "DaytonaValidationError";
     }
+  }
 
-    class HoistedMockDaytonaNotFoundError extends Error {
-      constructor(message = "Not found") {
-        super(message);
-        this.name = "DaytonaNotFoundError";
-      }
+  class HoistedMockDaytonaNotFoundError extends Error {
+    constructor(message = "Not found") {
+      super(message);
+      this.name = "DaytonaNotFoundError";
     }
+  }
 
-    // Sibling of `HoistedMockDaytonaError`, NOT a child. The retry helper
-    // does `instanceof DaytonaRateLimitError` to classify retriable errors;
-    // if we made this a subclass of the base mock, every plain
-    // `MockDaytonaError` the existing tests throw would also satisfy the
-    // check and trigger 5 retries × backoff each, blowing the 5s test
-    // timeout. Disjoint hierarchies keep the legacy tests immune to the
-    // wrapper while still letting any test that wants a rate-limit
-    // scenario instantiate this class directly.
-    class HoistedMockDaytonaRateLimitError extends Error {
-      constructor(message = "Rate limited") {
-        super(message);
-        this.name = "DaytonaRateLimitError";
-      }
+  // Sibling of `HoistedMockDaytonaError`, NOT a child. The retry helper
+  // does `instanceof DaytonaRateLimitError` to classify retriable errors;
+  // if we made this a subclass of the base mock, every plain
+  // `MockDaytonaError` the existing tests throw would also satisfy the
+  // check and trigger 5 retries × backoff each, blowing the 5s test
+  // timeout. Disjoint hierarchies keep the legacy tests immune to the
+  // wrapper while still letting any test that wants a rate-limit
+  // scenario instantiate this class directly.
+  class HoistedMockDaytonaRateLimitError extends Error {
+    constructor(message = "Rate limited") {
+      super(message);
+      this.name = "DaytonaRateLimitError";
     }
+  }
 
-    return {
-      getMock: vi.fn(),
-      MockDaytonaError: HoistedMockDaytonaError,
-      MockDaytonaValidationError: HoistedMockDaytonaValidationError,
-      MockDaytonaNotFoundError: HoistedMockDaytonaNotFoundError,
-      MockDaytonaRateLimitError: HoistedMockDaytonaRateLimitError,
-    };
-  });
+  return {
+    createMock: vi.fn(),
+    getMock: vi.fn(),
+    MockDaytonaError: HoistedMockDaytonaError,
+    MockDaytonaValidationError: HoistedMockDaytonaValidationError,
+    MockDaytonaNotFoundError: HoistedMockDaytonaNotFoundError,
+    MockDaytonaRateLimitError: HoistedMockDaytonaRateLimitError,
+  };
+});
 
 vi.mock("@daytona/sdk", () => ({
   CodeLanguage: {
@@ -62,6 +69,10 @@ vi.mock("@daytona/sdk", () => ({
   },
   Daytona: class MockDaytona {
     constructor(_options: unknown) {}
+
+    create(options: unknown) {
+      return createMock(options);
+    }
 
     get(remoteId: string) {
       return getMock(remoteId);
@@ -95,11 +106,13 @@ import {
   getRemoteSandboxDetails,
   getSandboxState,
   probeLiveSandbox,
+  provisionSandbox,
 } from "./daytona";
 
 describe("daytona state normalization", () => {
   beforeEach(() => {
     process.env.DAYTONA_API_KEY = "test-api-key";
+    createMock.mockReset();
     getMock.mockReset();
   });
 
@@ -231,6 +244,74 @@ describe("daytona state normalization", () => {
       labels: { app: "systify" },
       state: "error",
     });
+  });
+});
+
+describe("provisionSandbox", () => {
+  beforeEach(() => {
+    process.env.DAYTONA_API_KEY = "test-api-key";
+    createMock.mockReset();
+    getMock.mockReset();
+  });
+
+  afterEach(() => {
+    delete process.env.DAYTONA_API_KEY;
+    delete process.env.DAYTONA_AUTO_STOP_MINUTES;
+  });
+
+  test("uses the code default 15 minute Daytona auto-stop interval when env is unset", async () => {
+    getMock.mockRejectedValue(new MockDaytonaNotFoundError());
+    createMock.mockResolvedValue({
+      id: "remote-created",
+      autoStopInterval: 15,
+      autoArchiveInterval: 1440,
+      autoDeleteInterval: 1440,
+      networkBlockAll: false,
+      getWorkDir: vi.fn().mockResolvedValue("workspace"),
+    });
+
+    const result = await provisionSandbox({
+      repositoryKey: "acme-widget",
+      repositoryId: "repo-1",
+      sandboxId: "sandbox-1",
+      accessMode: "private",
+      sourceAdapter: "git_clone",
+    });
+
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        autoStopInterval: 15,
+      }),
+    );
+    expect(result.autoStopIntervalMinutes).toBe(15);
+  });
+
+  test("honors DAYTONA_AUTO_STOP_MINUTES as the deployment-level default", async () => {
+    process.env.DAYTONA_AUTO_STOP_MINUTES = "60";
+    getMock.mockRejectedValue(new MockDaytonaNotFoundError());
+    createMock.mockResolvedValue({
+      id: "remote-created",
+      autoStopInterval: 60,
+      autoArchiveInterval: 1440,
+      autoDeleteInterval: 1440,
+      networkBlockAll: false,
+      getWorkDir: vi.fn().mockResolvedValue("workspace"),
+    });
+
+    const result = await provisionSandbox({
+      repositoryKey: "acme-widget",
+      repositoryId: "repo-1",
+      sandboxId: "sandbox-1",
+      accessMode: "private",
+      sourceAdapter: "git_clone",
+    });
+
+    expect(createMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        autoStopInterval: 60,
+      }),
+    );
+    expect(result.autoStopIntervalMinutes).toBe(60);
   });
 });
 

@@ -5,14 +5,7 @@ import { internalMutation, internalQuery, mutation, query, type MutationCtx } fr
 import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
 import { requireOwnedDoc } from "./lib/ownedDocs";
 import { assertFeatureAccess } from "./lib/entitlements";
-
-const DEFAULT_IDLE_AUTO_PAUSE_MINUTES = 10;
-
-function getIdleAutoPauseMinutes(): number {
-  const raw = process.env.SANDBOX_SESSION_IDLE_AUTO_PAUSE_MINUTES;
-  const parsed = raw ? Number(raw) : DEFAULT_IDLE_AUTO_PAUSE_MINUTES;
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_IDLE_AUTO_PAUSE_MINUTES;
-}
+import { DEFAULT_AUTO_STOP_MINUTES } from "./lib/constants";
 
 async function findReusableSession(
   ctx: MutationCtx,
@@ -62,7 +55,7 @@ export const startSandboxSession = mutation({
       startedAt: now,
       lastActivityAt: now,
       lastResumedAt: now,
-      idleAutoPauseMinutes: getIdleAutoPauseMinutes(),
+      idleAutoPauseMinutes: DEFAULT_AUTO_STOP_MINUTES,
       spentCents: 0,
     });
   },
@@ -179,7 +172,7 @@ export const ensureSandboxSessionForThread = internalMutation({
       startedAt: now,
       lastActivityAt: now,
       lastResumedAt: now,
-      idleAutoPauseMinutes: getIdleAutoPauseMinutes(),
+      idleAutoPauseMinutes: DEFAULT_AUTO_STOP_MINUTES,
       spentCents: 0,
     });
     await ctx.db.patch(thread._id, { sandboxSessionId: sessionId });
@@ -217,34 +210,4 @@ export const getSessionInternal = internalQuery({
 export const getSandboxInternal = internalQuery({
   args: { sandboxId: v.id("sandboxes") },
   handler: async (ctx, args) => await ctx.db.get(args.sandboxId),
-});
-
-export const listAutoPauseCandidates = internalQuery({
-  args: { now: v.number(), limit: v.number() },
-  handler: async (ctx, args) => {
-    const rows = await ctx.db
-      .query("sandboxSessions")
-      .withIndex("by_status_and_lastActivityAt", (q) => q.eq("status", "active"))
-      .order("asc")
-      .take(Math.max(1, Math.floor(args.limit)));
-    return rows.filter((session) => session.lastActivityAt < args.now - session.idleAutoPauseMinutes * 60_000);
-  },
-});
-
-export const markSessionPausedByIdle = internalMutation({
-  args: { sessionId: v.id("sandboxSessions"), now: v.number() },
-  handler: async (ctx, args) => {
-    const session = await ctx.db.get(args.sessionId);
-    if (!session || session.status !== "active") {
-      return { paused: false };
-    }
-    if (session.lastActivityAt >= args.now - session.idleAutoPauseMinutes * 60_000) {
-      return { paused: false };
-    }
-    await ctx.db.patch(args.sessionId, {
-      status: "paused",
-      pausedAt: args.now,
-    });
-    return { paused: true };
-  },
 });

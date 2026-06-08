@@ -1625,20 +1625,20 @@ export default defineSchema({
    * at any time, shared across every Discuss thread for that repository whose
    * user has enabled the Sandbox grounding toggle. Session lifecycle:
    *
-   *   `starting` → `active` → `paused` (idle auto-pause) → `active`
-   *                                  ↘                        ↗
-   *                                   `stopped` (user) / `ended` (cleanup)
+   *   `starting` → `active` → `paused` (user) → `active`
+   *                         ↘
+   *                          `stopped` (user) / `ended` (cleanup)
    *
    * Cost transparency lives entirely on this row — `spentCents` is the
-   * per-session running total. `idleAutoPauseMinutes` drives the cron in
-   * `convex/crons.ts` so the value is observable in the dashboard rather
-   * than hidden in env-var-only config.
+   * per-session running total. `idleAutoPauseMinutes` is a snapshot of the
+   * sandbox idle policy used when the session was created; Daytona owns the
+   * actual idle auto-stop.
    *
    * Indexes:
    *   - `by_repositoryId_and_status` answers "is there an active / paused
    *     session for this repository right now?" in O(1).
-   *   - `by_status_and_lastActivityAt` powers the auto-pause cron — find
-   *     all `active` sessions with `lastActivityAt < now - 10m`.
+   *   - `by_status_and_lastActivityAt` supports future repair and reporting
+   *     queries over active session recency.
    *   - `by_ownerTokenIdentifier_and_startedAt` is for the daily cost
    *     rollup over a viewer's sessions.
    */
