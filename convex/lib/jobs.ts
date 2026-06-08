@@ -65,8 +65,8 @@ async function patchJobIfCurrent(
  *
  *   - `import` / `sandbox_activation` / `cleanup` — `repositoryId` required,
  *     `threadId` forbidden.
- *   - `system_design` — `repositoryId` required; `threadId` is optional (allowed by
- *     {@link assertEnqueueScope} but not required or used by handlers).
+ *   - `system_design` / `artifact_draft` — `repositoryId` required; `threadId` is
+ *     optional (allowed by {@link assertEnqueueScope} but not required).
  *   - `chat` — `threadId` required; `repositoryId` is denormalized from the
  *     thread when the thread is repository-attached.
  *   - `index` — currently unused; left permissive for future use.
@@ -113,8 +113,9 @@ function assertEnqueueScope(args: EnqueueJobArgs): void {
       }
       return;
     case "system_design":
+    case "artifact_draft":
       if (!args.repositoryId) {
-        throw new Error(`Job kind "system_design" requires a repositoryId.`);
+        throw new Error(`Job kind "${args.kind}" requires a repositoryId.`);
       }
       return;
     case "chat":

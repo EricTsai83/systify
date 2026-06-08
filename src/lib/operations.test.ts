@@ -34,7 +34,7 @@ function makeStatus(overrides: Partial<SandboxModeStatus> = {}): SandboxModeStat
 
 describe("isUserRelevantActiveJob / isUserRelevantJob", () => {
   test("admits user-initiated kinds in active states", () => {
-    for (const kind of ["import", "index", "chat", "system_design"] as const) {
+    for (const kind of ["import", "index", "chat", "system_design", "artifact_draft"] as const) {
       expect(isUserRelevantActiveJob(makeJob({ kind, status: "queued" }))).toBe(true);
       expect(isUserRelevantActiveJob(makeJob({ kind, status: "running" }))).toBe(true);
     }

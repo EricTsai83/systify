@@ -166,8 +166,8 @@ function FreshnessStatus({
       return (
         <span className="text-[11px] text-red-600 dark:text-red-500">
           {verifiedAge
-            ? `Verified ${verifiedAge} · Stale — re-verify with sandbox grounding`
-            : "Stale — re-verify with sandbox grounding"}
+            ? `Verified ${verifiedAge} · Stale — re-verify with Live source`
+            : "Stale — re-verify with Live source"}
         </span>
       );
     case "unverified":

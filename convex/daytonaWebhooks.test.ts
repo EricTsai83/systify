@@ -143,6 +143,128 @@ describe("daytona webhook processing", () => {
     expect(state.observation?.lastObservedState).toBe("stopped");
   });
 
+  test("processEvent does not advance provisioning sandboxes before clone completes", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await seedRepository(t, "user|provisioning-webhook");
+    const now = Date.now();
+
+    const ids = await t.run(async (ctx) => {
+      const sandboxId = await ctx.db.insert("sandboxes", {
+        repositoryId,
+        ownerTokenIdentifier: "user|provisioning-webhook",
+        provider: "daytona",
+        sourceAdapter: "git_clone",
+        remoteId: "remote-provisioning",
+        status: "provisioning",
+        workDir: "/workspace",
+        repoPath: "/workspace/repo",
+        cpuLimit: 2,
+        memoryLimitGiB: 4,
+        diskLimitGiB: 10,
+        ttlExpiresAt: now + 60_000,
+        autoStopIntervalMinutes: 10,
+        autoArchiveIntervalMinutes: 60,
+        autoDeleteIntervalMinutes: 120,
+        networkBlockAll: false,
+      });
+      const eventId = await ctx.db.insert("daytonaWebhookEvents", {
+        dedupeKey: "sandbox.state.updated:remote-provisioning",
+        eventType: "sandbox.state.updated",
+        remoteId: "remote-provisioning",
+        organizationId: "org-1",
+        eventTimestamp: now,
+        normalizedState: "started",
+        payloadJson: '{"event":"sandbox.state.updated"}',
+        status: "received",
+        attemptCount: 0,
+        nextAttemptAt: now,
+        receivedAt: now,
+        retentionExpiresAt: now + 1_000,
+      });
+      return { sandboxId, eventId };
+    });
+
+    const result = await t.mutation(internal.daytonaWebhooks.processEvent, {
+      eventId: ids.eventId,
+    });
+
+    expect(result.kind).toBe("processed_known");
+
+    const state = await t.run(async (ctx) => ({
+      sandbox: await ctx.db.get(ids.sandboxId),
+      observation: await ctx.db
+        .query("sandboxRemoteObservations")
+        .withIndex("by_remoteId", (q) => q.eq("remoteId", "remote-provisioning"))
+        .unique(),
+    }));
+
+    expect(state.sandbox?.status).toBe("provisioning");
+    expect(state.observation?.discoveryStatus).toBe("known");
+    expect(state.observation?.lastObservedState).toBe("started");
+  });
+
+  test("processEvent does not resurrect failed sandboxes from late started events", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await seedRepository(t, "user|failed-webhook");
+    const now = Date.now();
+
+    const ids = await t.run(async (ctx) => {
+      const sandboxId = await ctx.db.insert("sandboxes", {
+        repositoryId,
+        ownerTokenIdentifier: "user|failed-webhook",
+        provider: "daytona",
+        sourceAdapter: "git_clone",
+        remoteId: "remote-failed",
+        status: "failed",
+        workDir: "/workspace",
+        repoPath: "/workspace/repo",
+        cpuLimit: 2,
+        memoryLimitGiB: 4,
+        diskLimitGiB: 10,
+        ttlExpiresAt: now + 60_000,
+        autoStopIntervalMinutes: 10,
+        autoArchiveIntervalMinutes: 60,
+        autoDeleteIntervalMinutes: 120,
+        networkBlockAll: false,
+        lastErrorMessage: "Provisioning failed before clone completed.",
+      });
+      const eventId = await ctx.db.insert("daytonaWebhookEvents", {
+        dedupeKey: "sandbox.state.updated:remote-failed",
+        eventType: "sandbox.state.updated",
+        remoteId: "remote-failed",
+        organizationId: "org-1",
+        eventTimestamp: now,
+        normalizedState: "started",
+        payloadJson: '{"event":"sandbox.state.updated"}',
+        status: "received",
+        attemptCount: 0,
+        nextAttemptAt: now,
+        receivedAt: now,
+        retentionExpiresAt: now + 1_000,
+      });
+      return { sandboxId, eventId };
+    });
+
+    const result = await t.mutation(internal.daytonaWebhooks.processEvent, {
+      eventId: ids.eventId,
+    });
+
+    expect(result.kind).toBe("processed_known");
+
+    const state = await t.run(async (ctx) => ({
+      sandbox: await ctx.db.get(ids.sandboxId),
+      observation: await ctx.db
+        .query("sandboxRemoteObservations")
+        .withIndex("by_remoteId", (q) => q.eq("remoteId", "remote-failed"))
+        .unique(),
+    }));
+
+    expect(state.sandbox?.status).toBe("failed");
+    expect(state.sandbox?.lastErrorMessage).toBe("Provisioning failed before clone completed.");
+    expect(state.observation?.discoveryStatus).toBe("known");
+    expect(state.observation?.lastObservedState).toBe("started");
+  });
+
   test("processEvent ignores stale out-of-order events", async () => {
     const t = convexTest(schema, modules);
     const repositoryId = await seedRepository(t, "user|stale-event");

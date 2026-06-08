@@ -86,7 +86,12 @@ export type ExpiredSandbox = Infer<typeof expiredSandboxValidator>;
 
 export const staleInteractiveJobValidator = v.object({
   jobId: v.id("jobs"),
-  kind: v.union(v.literal("chat"), v.literal("system_design"), v.literal("sandbox_activation")),
+  kind: v.union(
+    v.literal("chat"),
+    v.literal("system_design"),
+    v.literal("sandbox_activation"),
+    v.literal("artifact_draft"),
+  ),
 });
 export const staleInteractiveJobsValidator = v.array(staleInteractiveJobValidator);
 export type StaleInteractiveJob = Infer<typeof staleInteractiveJobValidator>;

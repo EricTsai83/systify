@@ -410,7 +410,7 @@ async function listStaleJobsByStatusAndKind(
   ctx: Pick<QueryCtx, "db">,
   args: {
     status: "queued" | "running";
-    kind: "chat" | "system_design" | "sandbox_activation" | "import";
+    kind: "chat" | "system_design" | "sandbox_activation" | "artifact_draft" | "import";
     now: number;
   },
 ) {
@@ -432,9 +432,11 @@ export const listStaleInteractiveJobs = internalQuery({
         listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "chat", now }),
         listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "system_design", now }),
         listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "sandbox_activation", now }),
+        listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "artifact_draft", now }),
         listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "chat", now }),
         listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "system_design", now }),
         listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "sandbox_activation", now }),
+        listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "artifact_draft", now }),
       ])
     )
       .flat()
@@ -448,7 +450,12 @@ export const listStaleInteractiveJobs = internalQuery({
       .slice(0, STALE_INTERACTIVE_JOBS_TOTAL_LIMIT);
 
     return jobs.map((job) => {
-      if (job.kind !== "chat" && job.kind !== "system_design" && job.kind !== "sandbox_activation") {
+      if (
+        job.kind !== "chat" &&
+        job.kind !== "system_design" &&
+        job.kind !== "sandbox_activation" &&
+        job.kind !== "artifact_draft"
+      ) {
         throw new Error(`Unexpected stale interactive job kind: ${job.kind}`);
       }
       return {

@@ -38,6 +38,7 @@ import { openai } from "@ai-sdk/openai";
 import {
   type EmbeddingModel,
   type GenerateTextResult,
+  Output,
   type StepResult,
   type StopCondition,
   type StreamTextResult,
@@ -47,6 +48,7 @@ import {
   generateText,
   streamText,
 } from "ai";
+import type { z } from "zod";
 
 /**
  * Provider-options JSON shape forwarded into `generateText` /
@@ -135,6 +137,20 @@ export interface LlmGenerateArgs {
  */
 export interface LlmGenerateResult {
   text: string;
+  steps: StepResult<ToolSet>[];
+  usage: NormalizedUsage;
+  costUsd: number | undefined;
+  rawResponseId?: string;
+}
+
+export interface LlmGenerateObjectArgs<TSchema extends z.ZodType> extends LlmGenerateArgs {
+  schema: TSchema;
+  schemaName?: string;
+  schemaDescription?: string;
+}
+
+export interface LlmGenerateObjectResult<TObject> {
+  object: TObject;
   steps: StepResult<ToolSet>[];
   usage: NormalizedUsage;
   costUsd: number | undefined;
@@ -366,6 +382,79 @@ export async function generateViaGateway(
   } finally {
     // MUST run on every exit path — including `withLlmRetry`
     // exhaustion — otherwise the slot leaks for up to HOUR.
+    await releaseConcurrencyBestEffort(ctx, callCtx);
+  }
+}
+
+/**
+ * Structured generation through the same gateway path as text generation.
+ *
+ * AI SDK v6's standalone `generateObject` call does not accept tools, but
+ * `generateText` does while also supporting `Output.object(...)`. This wrapper
+ * keeps the product contract intact for sandbox-backed structured outputs:
+ * the model can inspect live source via tools, and the final response is
+ * schema-validated before the caller sees it.
+ */
+export async function generateObjectViaGateway<TSchema extends z.ZodType>(
+  ctx: ActionCtx,
+  callCtx: LlmCallContext,
+  args: LlmGenerateObjectArgs<TSchema>,
+): Promise<LlmGenerateObjectResult<z.output<TSchema>>> {
+  const entry = assertCatalogPick(callCtx);
+  assertGenerationCapability(callCtx, entry, "generateViaGateway");
+  await acquireRpmOrThrow(ctx, callCtx);
+  await acquireConcurrencyOrThrow(ctx, callCtx);
+  try {
+    const result = await withLlmRetry(
+      () =>
+        generateText({
+          model: getSdkModel(callCtx.provider, callCtx.modelName),
+          system: args.system,
+          prompt: args.prompt,
+          output: Output.object({
+            schema: args.schema,
+            ...(args.schemaName ? { name: args.schemaName } : {}),
+            ...(args.schemaDescription ? { description: args.schemaDescription } : {}),
+          }),
+          ...(args.tools ? { tools: args.tools } : {}),
+          ...(args.stopWhen ? { stopWhen: args.stopWhen } : {}),
+          providerOptions: buildProviderOptions(callCtx.provider, callCtx.modelName, args),
+          // Wrapper owns retries — see `withLlmRetry` contract.
+          maxRetries: 0,
+        }),
+      {
+        operation: `${callCtx.feature}.generateObject`,
+        provider: callCtx.provider,
+        modelName: callCtx.modelName,
+        resourceId: callCtx.jobId ?? callCtx.messageId ?? callCtx.threadId,
+      },
+    );
+    const usage = normalizeGenerateUsage(callCtx.provider, result);
+    const costUsd = estimateCostUsd(callCtx.provider, callCtx.modelName, usage);
+    emitMetric("llm_tokens_used", {
+      value: (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0),
+      tags: {
+        provider: callCtx.provider,
+        model: callCtx.modelName,
+        feature: callCtx.feature,
+      },
+      details: {
+        ownerTokenIdentifier: callCtx.ownerTokenIdentifier,
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        cachedInputTokens: usage.cachedInputTokens,
+        cacheWriteTokens: usage.cacheWriteTokens,
+        reasoningTokens: usage.reasoningTokens,
+      },
+    });
+    return {
+      object: result.output as z.output<TSchema>,
+      steps: result.steps,
+      usage,
+      costUsd,
+      rawResponseId: result.response.id,
+    };
+  } finally {
     await releaseConcurrencyBestEffort(ctx, callCtx);
   }
 }
@@ -762,7 +851,10 @@ function buildProviderOptions(
  * provider-specific `providerMetadata` fields and produces a
  * uniform `NormalizedUsage`.
  */
-function normalizeGenerateUsage(provider: LlmProvider, result: GenerateTextResult<ToolSet, never>): NormalizedUsage {
+function normalizeGenerateUsage(
+  provider: LlmProvider,
+  result: Pick<GenerateTextResult<ToolSet, never>, "totalUsage" | "providerMetadata">,
+): NormalizedUsage {
   return normalizeUsage(provider, result.totalUsage, result.providerMetadata);
 }
 

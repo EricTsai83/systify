@@ -214,21 +214,27 @@ export const processEvent = internalMutation({
       }
 
       const sandboxPatch: Partial<Doc<"sandboxes">> = {};
-      if (event.normalizedState === "stopped" && sandbox.status !== "archived") {
-        sandboxPatch.status = "stopped";
-        sandboxPatch.lastUsedAt = now;
-      } else if (event.normalizedState === "started" && sandbox.status !== "archived") {
-        sandboxPatch.status = "ready";
-        sandboxPatch.lastUsedAt = now;
-      } else if (
-        (event.normalizedState === "archived" || event.normalizedState === "destroyed") &&
-        sandbox.status !== "archived"
-      ) {
-        sandboxPatch.status = "archived";
-        sandboxPatch.lastUsedAt = now;
-      } else if (event.normalizedState === "error" && sandbox.status !== "archived") {
-        sandboxPatch.status = "failed";
-        sandboxPatch.lastErrorMessage = "Daytona reported a sandbox error via webhook.";
+      if (sandbox.status !== "provisioning" && sandbox.status !== "failed") {
+        // During on-demand provisioning, the action owns the transition to
+        // ready after clone succeeds. Daytona can emit `started` before the
+        // repo tree exists; failed rows should likewise require an explicit
+        // retry instead of being resurrected by a late state event.
+        if (event.normalizedState === "stopped" && sandbox.status !== "archived") {
+          sandboxPatch.status = "stopped";
+          sandboxPatch.lastUsedAt = now;
+        } else if (event.normalizedState === "started" && sandbox.status !== "archived") {
+          sandboxPatch.status = "ready";
+          sandboxPatch.lastUsedAt = now;
+        } else if (
+          (event.normalizedState === "archived" || event.normalizedState === "destroyed") &&
+          sandbox.status !== "archived"
+        ) {
+          sandboxPatch.status = "archived";
+          sandboxPatch.lastUsedAt = now;
+        } else if (event.normalizedState === "error" && sandbox.status !== "archived") {
+          sandboxPatch.status = "failed";
+          sandboxPatch.lastErrorMessage = "Daytona reported a sandbox error via webhook.";
+        }
       }
 
       if (Object.keys(sandboxPatch).length > 0) {

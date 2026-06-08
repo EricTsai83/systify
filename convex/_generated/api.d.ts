@@ -105,6 +105,8 @@ import type * as lib_titleSanitization from "../lib/titleSanitization.js";
 import type * as lib_userCost from "../lib/userCost.js";
 import type * as lib_userPreferences from "../lib/userPreferences.js";
 import type * as lib_withLlmRetry from "../lib/withLlmRetry.js";
+import type * as libraryArtifactDrafts from "../libraryArtifactDrafts.js";
+import type * as libraryArtifactDraftsNode from "../libraryArtifactDraftsNode.js";
 import type * as llmCatalog from "../llmCatalog.js";
 import type * as ops from "../ops.js";
 import type * as opsNode from "../opsNode.js";
@@ -226,6 +228,8 @@ declare const fullApi: ApiFromModules<{
   "lib/userCost": typeof lib_userCost;
   "lib/userPreferences": typeof lib_userPreferences;
   "lib/withLlmRetry": typeof lib_withLlmRetry;
+  libraryArtifactDrafts: typeof libraryArtifactDrafts;
+  libraryArtifactDraftsNode: typeof libraryArtifactDraftsNode;
   llmCatalog: typeof llmCatalog;
   ops: typeof ops;
   opsNode: typeof opsNode;

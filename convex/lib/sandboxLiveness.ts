@@ -316,6 +316,7 @@ async function provisionAndClone(
     repositoryId: repository._id,
     ownerTokenIdentifier: repository.ownerTokenIdentifier,
     sourceAdapter: "git_clone",
+    replaceSandboxId: previousSandbox?._id,
   });
 
   if (alreadyExisted) {

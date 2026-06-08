@@ -111,11 +111,24 @@ async function getArtifactInternal(ctx: QueryCtx, artifactId: Id<"artifacts">): 
 async function updateArtifactInternal(
   ctx: MutationCtx,
   artifactId: Id<"artifacts">,
-  updates: { title?: string; summary?: string; contentMarkdown?: string },
-): Promise<void> {
+  updates: {
+    title?: string;
+    summary?: string;
+    contentMarkdown?: string;
+    expectedVersion?: number;
+    lastVerifiedAt?: number;
+    alignedImportCommitSha?: string;
+    generatedByProvider?: LlmProvider;
+    generatedByModel?: string;
+    promptVersion?: number;
+  },
+): Promise<{ updated: boolean; reason?: "version_mismatch" }> {
   const artifact = await ctx.db.get(artifactId);
   if (!artifact) {
     throw new Error("Artifact not found");
+  }
+  if (updates.expectedVersion !== undefined && artifact.version !== updates.expectedVersion) {
+    return { updated: false, reason: "version_mismatch" };
   }
 
   // Convex `patch` treats explicit `undefined` as "set field to undefined",
@@ -128,6 +141,11 @@ async function updateArtifactInternal(
     version?: number;
     chunkingStatus?: "pending";
     updatedAt?: number;
+    lastVerifiedAt?: number;
+    alignedImportCommitSha?: string;
+    generatedByProvider?: LlmProvider;
+    generatedByModel?: string;
+    promptVersion?: number;
   } = {};
   let changed = false;
   if (updates.title !== undefined) {
@@ -145,9 +163,31 @@ async function updateArtifactInternal(
     }
     changed = true;
   }
+  if (updates.lastVerifiedAt !== undefined) {
+    patch.lastVerifiedAt = updates.lastVerifiedAt;
+    changed = true;
+  }
+  if (updates.alignedImportCommitSha !== undefined) {
+    patch.alignedImportCommitSha = updates.alignedImportCommitSha;
+    changed = true;
+  }
+  if (updates.generatedByProvider !== undefined) {
+    patch.generatedByProvider = updates.generatedByProvider;
+    changed = true;
+  }
+  if (updates.generatedByModel !== undefined) {
+    patch.generatedByModel = updates.generatedByModel;
+    changed = true;
+  }
+  if (updates.promptVersion !== undefined) {
+    patch.promptVersion = updates.promptVersion;
+    changed = true;
+  }
 
   if (changed) {
-    patch.version = artifact.version + 1;
+    if (updates.title !== undefined || updates.summary !== undefined || updates.contentMarkdown !== undefined) {
+      patch.version = artifact.version + 1;
+    }
     patch.updatedAt = Date.now();
     await ctx.db.patch(artifactId, patch);
     if (artifact.repositoryId && updates.contentMarkdown !== undefined) {
@@ -156,6 +196,7 @@ async function updateArtifactInternal(
       });
     }
   }
+  return { updated: changed };
 }
 
 export async function deleteArtifactInternal(ctx: MutationCtx, artifactId: Id<"artifacts">): Promise<void> {
@@ -254,6 +295,7 @@ const artifactKindValidator = v.union(
   v.literal("deployment_overview"),
   v.literal("security_overview"),
   v.literal("operations_overview"),
+  v.literal("custom_document"),
 );
 
 export const createArtifact = internalMutation({
@@ -286,12 +328,24 @@ export const updateArtifact = internalMutation({
     title: v.optional(v.string()),
     summary: v.optional(v.string()),
     contentMarkdown: v.optional(v.string()),
+    expectedVersion: v.optional(v.number()),
+    lastVerifiedAt: v.optional(v.number()),
+    alignedImportCommitSha: v.optional(v.string()),
+    generatedByProvider: v.optional(llmProviderValidator),
+    generatedByModel: v.optional(v.string()),
+    promptVersion: v.optional(v.number()),
   },
   handler: (ctx, args) =>
     updateArtifactInternal(ctx, args.artifactId, {
       title: args.title,
       summary: args.summary,
       contentMarkdown: args.contentMarkdown,
+      expectedVersion: args.expectedVersion,
+      lastVerifiedAt: args.lastVerifiedAt,
+      alignedImportCommitSha: args.alignedImportCommitSha,
+      generatedByProvider: args.generatedByProvider,
+      generatedByModel: args.generatedByModel,
+      promptVersion: args.promptVersion,
     }),
 });
 

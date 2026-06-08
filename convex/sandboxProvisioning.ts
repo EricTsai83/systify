@@ -50,6 +50,7 @@ export const reserveOnDemandSandboxRow = internalMutation({
     repositoryId: v.id("repositories"),
     ownerTokenIdentifier: v.string(),
     sourceAdapter: v.union(v.literal("git_clone"), v.literal("source_service")),
+    replaceSandboxId: v.optional(v.id("sandboxes")),
   },
   handler: async (ctx, args): Promise<{ sandboxId: Id<"sandboxes">; alreadyExisted: boolean }> => {
     const repository = await ctx.db.get(args.repositoryId);
@@ -63,7 +64,7 @@ export const reserveOnDemandSandboxRow = internalMutation({
       throw new Error("Repository is no longer active.");
     }
 
-    if (repository.latestSandboxId) {
+    if (repository.latestSandboxId && repository.latestSandboxId !== args.replaceSandboxId) {
       const existing = await ctx.db.get(repository.latestSandboxId);
       if (existing && (existing.status === "provisioning" || existing.status === "ready")) {
         return { sandboxId: existing._id, alreadyExisted: true };

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { BookOpenIcon, PaperPlaneTiltIcon, SparkleIcon } from "@phosphor-icons/react";
+import { BookOpenIcon, FilePlusIcon, GitDiffIcon, PaperPlaneTiltIcon, SparkleIcon } from "@phosphor-icons/react";
 import { useMutation, useQuery } from "convex/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
@@ -16,16 +16,25 @@ import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-inpu
 import { EmptyStateHero, PromptSuggestionList } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import {
+  LibraryArtifactDraftCard,
+  LibraryArtifactDraftConfirmCard,
+  type LibraryArtifactDraftEntry,
+  type LibraryArtifactDraftIntent,
+} from "@/components/library-artifact-draft-card";
 import { LibraryAskThreadTabs } from "@/components/library-ask-thread-tabs";
+import { type PromptInputModelPickerValue } from "@/components/ai-elements/prompt-input-model-picker";
 import { Button } from "@/components/ui/button";
 import { useLibraryAskTabs } from "@/hooks/use-library-ask-tabs";
 import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
 import { useChatLifecycle } from "@/hooks/use-chat-lifecycle";
 import { useConversationThread } from "@/hooks/use-conversation-thread";
+import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
 import { useModelAccessDisabledReason } from "@/hooks/use-model-access-disabled-reason";
 import { toUserErrorMessage } from "@/lib/errors";
 import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
-import type { ArtifactId, RepositoryId, ThreadId } from "@/lib/types";
+import type { ArtifactId, ReasoningEffort, RepositoryId, ThreadId } from "@/lib/types";
 import { toast } from "sonner";
 
 const LOCKED_PLACEHOLDER = `${REPOSITORY_GUIDE_COPY.generateAction} to unlock Library Ask.`;
@@ -41,6 +50,8 @@ export function LibraryAskPanel({
   onGenerate,
   askDisabledReason,
   generateDisabledReason,
+  artifactDraftDisabledReason,
+  liveSourceStatus,
   premiumModelsDisabledReason,
   highReasoningDisabledReason,
 }: {
@@ -70,11 +81,14 @@ export function LibraryAskPanel({
   onGenerate?: () => void;
   askDisabledReason?: string;
   generateDisabledReason?: string;
+  artifactDraftDisabledReason?: string;
+  liveSourceStatus?: { kind: "idle" | "activating" | "ready" | "expiring_soon" };
   premiumModelsDisabledReason?: string;
   highReasoningDisabledReason?: string;
 }) {
   const archiveThread = useMutation(api.chat.threads.archiveThread);
   const setThreadPinned = useMutation(api.chat.threads.setThreadPinned);
+  const requestDraft = useMutation(api.libraryArtifactDrafts.requestDraft);
 
   const threads = useQuery(api.chat.threads.listThreads, { repositoryId, mode: "library" });
   // Dual-purpose: confirms the active thread exists (so the message queries
@@ -87,6 +101,15 @@ export function LibraryAskPanel({
   const confirmedThreadId = threadId && activeThreadProbe ? threadId : null;
   const { messages, activeMessageStream, canLoadOlderMessages, handleLoadOlderMessages, latestAssistantInFlight } =
     useConversationThread({ threadId: confirmedThreadId });
+  const threadDrafts = useQuery(
+    api.libraryArtifactDrafts.listByThread,
+    confirmedThreadId ? { threadId: confirmedThreadId } : "skip",
+  );
+  const recentDrafts = useQuery(
+    api.libraryArtifactDrafts.listRecentByRepository,
+    confirmedThreadId ? "skip" : { repositoryId },
+  );
+  const draftEntries: LibraryArtifactDraftEntry[] = threadDrafts ?? recentDrafts ?? [];
 
   // Owns stick-to-bottom, anchor preservation on prepend, sentinel
   // observer for load-older, threadId-keyed reset, and prefers-
@@ -105,7 +128,11 @@ export function LibraryAskPanel({
   const [error, setError] = useState<string | null>(null);
   const [pendingArchiveThreadId, setPendingArchiveThreadId] = useState<ThreadId | null>(null);
   const [isArchivingThread, setIsArchivingThread] = useState(false);
+  const [draftIntent, setDraftIntent] = useState<LibraryArtifactDraftIntent | null>(null);
+  const [draftUserPick, setDraftUserPick] = useState<PromptInputModelPickerValue | null>(null);
+  const [draftReasoningEffort, setDraftReasoningEffort] = useState<ReasoningEffort | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const activeArtifact = useQuery(api.artifacts.getById, activeArtifactId ? { artifactId: activeArtifactId } : "skip");
 
   const handlePickSuggestion = useCallback((suggestion: string) => {
     setInput(suggestion);
@@ -154,6 +181,7 @@ export function LibraryAskPanel({
   useEffect(() => {
     setInput("");
     setError(null);
+    setDraftIntent(null);
   }, [threadId]);
 
   const lockedProvider = activeThreadProbe?.lockedProvider ?? null;
@@ -263,17 +291,27 @@ export function LibraryAskPanel({
   const isLocked = !hasArtifacts;
   const selectedModelPick =
     selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null;
-  const modelAccessDisabledReason = useModelAccessDisabledReason({
+  const askModelAccessDisabledReason = useModelAccessDisabledReason({
     modelPick: selectedModelPick,
     reasoningEffort: selectedReasoningEffort,
     preferenceScope: "library",
     premiumModelsDisabledReason,
     highReasoningDisabledReason,
   });
-  const composerDisabledReason = askDisabledReason ?? (isLocked ? LOCKED_HINT : modelAccessDisabledReason);
+  const draftDefaultPick = useDefaultModelPick({ capability: "sandbox", preferenceScope: "sandbox" });
+  const draftModelPick = draftUserPick ?? draftDefaultPick ?? null;
+  const draftModelAccessDisabledReason = useModelAccessDisabledReason({
+    modelPick: draftModelPick,
+    reasoningEffort: draftReasoningEffort,
+    preferenceScope: "sandbox",
+    premiumModelsDisabledReason,
+    highReasoningDisabledReason,
+  });
+  const documentActionDisabledReason = artifactDraftDisabledReason ?? draftModelAccessDisabledReason ?? undefined;
+  const composerDisabledReason = askDisabledReason ?? (isLocked ? LOCKED_HINT : askModelAccessDisabledReason);
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
-      if (composerDisabledReason !== null || latestAssistantInFlight) {
+      if (composerDisabledReason != null || latestAssistantInFlight) {
         event.preventDefault();
         return;
       }
@@ -287,6 +325,72 @@ export function LibraryAskPanel({
     : activeArtifactId
       ? "Question about the open artifact..."
       : "Question about this library...";
+  const liveSourceLabel = getLiveSourceDraftLabel(liveSourceStatus);
+  const openCreateDraft = useCallback(() => {
+    setError(null);
+    setDraftIntent({
+      operation: "create",
+      title: "",
+      folderId: null,
+      prompt: input.trim(),
+    });
+  }, [input]);
+  const openUpdateDraft = useCallback(() => {
+    if (!activeArtifactId) return;
+    setError(null);
+    setDraftIntent({
+      operation: "update",
+      title: activeArtifact?.title ?? "",
+      folderId: null,
+      prompt: input.trim(),
+    });
+  }, [activeArtifact?.title, activeArtifactId, input]);
+
+  const [isRequestingDraft, runRequestDraft] = useAsyncCallback(async () => {
+    if (!draftIntent) return;
+    if (documentActionDisabledReason) {
+      setError(documentActionDisabledReason);
+      return;
+    }
+    if (!draftModelPick) {
+      setError("Loading models — try again in a moment.");
+      return;
+    }
+    if (draftIntent.operation === "create" && draftIntent.title.trim().length === 0) {
+      setError("Add a title for the new artifact.");
+      return;
+    }
+    if (draftIntent.prompt.trim().length === 0) {
+      setError("Describe what to draft.");
+      return;
+    }
+    try {
+      await requestDraft({
+        repositoryId,
+        threadId: confirmedThreadId ?? undefined,
+        operation: draftIntent.operation,
+        prompt: draftIntent.prompt,
+        title: draftIntent.operation === "create" ? draftIntent.title : undefined,
+        folderId: draftIntent.operation === "create" ? (draftIntent.folderId ?? undefined) : undefined,
+        targetArtifactId: draftIntent.operation === "update" ? (activeArtifactId ?? undefined) : undefined,
+        provider: draftModelPick.provider,
+        modelName: draftModelPick.modelName,
+        ...(draftReasoningEffort !== null ? { reasoningEffort: draftReasoningEffort } : {}),
+      });
+      setDraftIntent(null);
+    } catch (caught) {
+      setError(toUserErrorMessage(caught, "Failed to start artifact draft."));
+    }
+  });
+
+  const draftCards =
+    draftEntries.length > 0 ? (
+      <div className="space-y-3" data-testid="artifact-draft-list">
+        {draftEntries.map((entry) => (
+          <LibraryArtifactDraftCard key={entry.draft._id} entry={entry} onApplied={onSelectArtifact} />
+        ))}
+      </div>
+    ) : null;
 
   return (
     // Plain container, not a landmark: this panel renders inside the app
@@ -316,13 +420,18 @@ export function LibraryAskPanel({
                 onSelectArtifact={onSelectArtifact}
               />
             ))}
+            {draftCards}
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
       ) : isLocked ? (
-        <NoArtifactsHint onGenerate={onGenerate} generateDisabledReason={generateDisabledReason} />
+        <div className="flex min-h-0 flex-1 animate-in flex-col gap-5 px-4 py-6 fade-in duration-300">
+          {draftCards}
+          <NoArtifactsHint onGenerate={onGenerate} generateDisabledReason={generateDisabledReason} />
+        </div>
       ) : (
         <div className="flex min-h-0 flex-1 animate-in flex-col gap-5 px-4 py-6 fade-in duration-300">
+          {draftCards}
           <div className="flex flex-1 items-center justify-center">
             <EmptyStateHero
               visual={
@@ -334,7 +443,7 @@ export function LibraryAskPanel({
               description={
                 activeArtifactId
                   ? "Answers cite this artifact and other indexed chunks."
-                  : "Answers cite retrieved artifact chunks. For live code state, enable Sandbox grounding in Discuss."
+                  : "Answers cite retrieved artifact chunks. Artifact drafts use Live source and wait for Apply."
               }
             />
           </div>
@@ -345,6 +454,28 @@ export function LibraryAskPanel({
           />
         </div>
       )}
+
+      {draftIntent ? (
+        <div className="border-t border-border bg-muted/20 p-3">
+          <LibraryArtifactDraftConfirmCard
+            repositoryId={repositoryId}
+            intent={draftIntent}
+            activeArtifactTitle={activeArtifact?.title}
+            disabledReason={documentActionDisabledReason}
+            liveSourceLabel={liveSourceLabel}
+            modelPick={draftModelPick}
+            onModelPickChange={setDraftUserPick}
+            reasoningEffort={draftReasoningEffort}
+            onReasoningEffortChange={setDraftReasoningEffort}
+            premiumModelsDisabledReason={premiumModelsDisabledReason}
+            highReasoningDisabledReason={highReasoningDisabledReason}
+            onChange={setDraftIntent}
+            onCancel={() => setDraftIntent(null)}
+            onSubmit={() => void runRequestDraft()}
+            isSubmitting={isRequestingDraft}
+          />
+        </div>
+      ) : null}
 
       {/*
        * Inline lock notice. Surfaces above the composer whenever the
@@ -387,11 +518,37 @@ export function LibraryAskPanel({
             onChange={(event) => setInput(event.target.value)}
             placeholder={composerPlaceholder}
             className="min-h-24 text-sm"
-            disabled={isSending || latestAssistantInFlight || composerDisabledReason !== null}
+            disabled={isSending || latestAssistantInFlight || composerDisabledReason != null}
             aria-describedby={composerHintId}
           />
           <PromptInputFooter>
             <PromptInputTools>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 px-2 text-[11px]"
+                onClick={openCreateDraft}
+                disabled={documentActionDisabledReason !== undefined}
+                title={documentActionDisabledReason}
+              >
+                <FilePlusIcon size={13} weight="bold" />
+                Create artifact
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 px-2 text-[11px]"
+                onClick={openUpdateDraft}
+                disabled={documentActionDisabledReason !== undefined || activeArtifactId === null}
+                title={
+                  activeArtifactId === null ? "Open an artifact to draft an update." : documentActionDisabledReason
+                }
+              >
+                <GitDiffIcon size={13} weight="bold" />
+                Update open artifact
+              </Button>
               {/*
                * Library Ask model picker. Hidden while the composer
                * is locked (no artifacts) — the user can't send
@@ -431,7 +588,7 @@ export function LibraryAskPanel({
             <Button
               type="submit"
               size="sm"
-              disabled={!input.trim() || isSending || latestAssistantInFlight || composerDisabledReason !== null}
+              disabled={!input.trim() || isSending || latestAssistantInFlight || composerDisabledReason != null}
               title={composerDisabledReason ?? undefined}
             >
               <PaperPlaneTiltIcon size={14} weight="fill" />
@@ -508,4 +665,17 @@ function NoArtifactsHint({
       ) : null}
     </div>
   );
+}
+
+function getLiveSourceDraftLabel(status: { kind: "idle" | "activating" | "ready" | "expiring_soon" } | undefined) {
+  if (status === undefined) {
+    return "Live source status is loading. Drafting will verify access before generation starts.";
+  }
+  if (status.kind === "ready" || status.kind === "expiring_soon") {
+    return "Live source is active. The draft will still verify the repository before writing a proposal.";
+  }
+  if (status.kind === "activating") {
+    return "Live source is starting. The draft job will continue once it is ready.";
+  }
+  return "Live source will be prepared before drafting. Nothing changes until you apply the proposal.";
 }

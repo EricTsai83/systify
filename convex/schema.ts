@@ -26,6 +26,7 @@ const jobKind = v.union(
   v.literal("import"),
   v.literal("index"),
   v.literal("system_design"),
+  v.literal("artifact_draft"),
   v.literal("chat"),
   v.literal("cleanup"),
   v.literal("sandbox_activation"),
@@ -143,6 +144,7 @@ const artifactKind = v.union(
   v.literal("deployment_overview"),
   v.literal("security_overview"),
   v.literal("operations_overview"),
+  v.literal("custom_document"),
 );
 
 /**
@@ -585,6 +587,51 @@ export default defineSchema({
     .index("by_jobId", ["jobId"])
     .index("by_jobId_and_kind", ["jobId", "kind"])
     .index("by_chunkingStatus", ["chunkingStatus"]),
+
+  artifactDrafts: defineTable({
+    ownerTokenIdentifier: v.string(),
+    repositoryId: v.id("repositories"),
+    threadId: v.optional(v.id("threads")),
+    jobId: v.id("jobs"),
+
+    operation: v.union(v.literal("create"), v.literal("update")),
+    status: v.union(
+      v.literal("queued"),
+      v.literal("running"),
+      v.literal("ready"),
+      v.literal("applied"),
+      v.literal("discarded"),
+      v.literal("failed"),
+    ),
+
+    prompt: v.string(),
+    targetArtifactId: v.optional(v.id("artifacts")),
+    targetArtifactVersion: v.optional(v.number()),
+
+    folderId: v.optional(v.id("artifactFolders")),
+    title: v.string(),
+    summary: v.string(),
+    contentMarkdown: v.string(),
+    changeSummary: v.optional(v.string()),
+
+    sandboxId: v.optional(v.id("sandboxes")),
+    alignedImportCommitSha: v.optional(v.string()),
+    generatedByProvider: v.optional(llmProviderValidator),
+    generatedByModel: v.optional(v.string()),
+    reasoningEffort: v.optional(reasoningEffortValidator),
+    promptVersion: v.number(),
+
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    generatedAt: v.optional(v.number()),
+    appliedAt: v.optional(v.number()),
+    discardedAt: v.optional(v.number()),
+    errorMessage: v.optional(v.string()),
+  })
+    .index("by_repositoryId_and_status", ["repositoryId", "status"])
+    .index("by_threadId", ["threadId"])
+    .index("by_jobId", ["jobId"])
+    .index("by_targetArtifactId", ["targetArtifactId"]),
 
   /**
    * Per-viewer "I have seen this artifact" timestamps. Drives the Library

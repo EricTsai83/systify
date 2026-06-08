@@ -163,6 +163,13 @@ export const reconcileStaleInteractiveJobs = internalAction({
         continue;
       }
 
+      if (job.kind === "artifact_draft") {
+        await ctx.runMutation(internal.libraryArtifactDrafts.recoverStaleArtifactDraftJob, {
+          jobId: job.jobId,
+        });
+        continue;
+      }
+
       await ctx.runMutation(internal.systemDesign.recoverStaleSystemDesignJob, {
         jobId: job.jobId,
       });

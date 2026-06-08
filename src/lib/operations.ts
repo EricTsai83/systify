@@ -29,6 +29,7 @@ const JOB_TITLES: Record<Doc<"jobs">["kind"], string> = {
   index: "Repository indexing",
   chat: "Assistant reply",
   system_design: REPOSITORY_GUIDE_COPY.name,
+  artifact_draft: "Artifact draft",
   cleanup: "Repository cleanup",
   sandbox_activation: "Live source setup",
 };
@@ -87,6 +88,7 @@ const USER_RELEVANT_JOB_KINDS: ReadonlySet<Doc<"jobs">["kind"]> = new Set([
   "index",
   "chat",
   "system_design",
+  "artifact_draft",
   "sandbox_activation",
 ]);
 
@@ -115,6 +117,7 @@ export function isUserRelevantJob(job: Doc<"jobs">) {
 export function formatArtifactKind(kind: Doc<"artifacts">["kind"]) {
   const labels: Partial<Record<Doc<"artifacts">["kind"], string>> = {
     architecture_diagram: "Architecture diagram",
+    custom_document: "Custom document",
   };
   return labels[kind] ?? humanizeToken(kind);
 }
@@ -204,7 +207,7 @@ export function presentSandboxSurface(input: SandboxSurfaceInput): SandboxSurfac
   if (reasonCode === "available") {
     return {
       title: "Live source ready",
-      description: `Live source chat and ${REPOSITORY_GUIDE_COPY.name} generation can inspect the live filesystem.`,
+      description: `Live source chat, artifact drafts, and ${REPOSITORY_GUIDE_COPY.name} generation can inspect the live filesystem.`,
       tone: "success",
       ttlExpiresAt: input.sandbox?.ttlExpiresAt,
     };

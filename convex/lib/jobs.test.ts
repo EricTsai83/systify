@@ -190,6 +190,39 @@ describe("enqueueJob per-kind invariants", () => {
     ).rejects.toThrow(/requires a repositoryId/);
   });
 
+  test("artifact_draft without repositoryId throws", async () => {
+    const t = createTestConvex();
+    await seedRepositoryAndThread(t);
+
+    await expect(
+      t.run(async (ctx) =>
+        enqueueJob(ctx, {
+          kind: "artifact_draft",
+          ownerTokenIdentifier: BASE_OWNER,
+          costCategory: "system_design",
+          triggerSource: "user",
+        }),
+      ),
+    ).rejects.toThrow(/requires a repositoryId/);
+  });
+
+  test("artifact_draft allows an optional threadId with repository scope", async () => {
+    const t = createTestConvex();
+    const { repositoryId, threadId } = await seedRepositoryAndThread(t);
+
+    const { job } = await callEnqueue(t, {
+      kind: "artifact_draft",
+      repositoryId,
+      threadId,
+      ownerTokenIdentifier: BASE_OWNER,
+      costCategory: "system_design",
+      triggerSource: "user",
+    });
+
+    expect(job?.repositoryId).toBe(repositoryId);
+    expect(job?.threadId).toBe(threadId);
+  });
+
   test("cleanup with threadId throws (repository-only kinds reject thread scope)", async () => {
     const t = createTestConvex();
     const { repositoryId, threadId } = await seedRepositoryAndThread(t);

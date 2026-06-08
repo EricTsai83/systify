@@ -147,6 +147,7 @@ function LibraryRepository({
   const highReasoningDisabledReason =
     accessLoadingReason ??
     (isViewerFeatureEnabled(viewerAccess, "highReasoning") ? undefined : DEMO_MODE_COPY.highReasoningDisabled);
+  const artifactDraftDisabledReason = libraryAskDisabledReason ?? generateSystemDesignDisabledReason;
 
   const handleSwitchRepository = useCallback(
     (id: RepositoryId) => {
@@ -275,6 +276,8 @@ function LibraryRepository({
         onGenerate={openGenerateDialog}
         askDisabledReason={libraryAskDisabledReason}
         generateDisabledReason={generateSystemDesignDisabledReason}
+        artifactDraftDisabledReason={artifactDraftDisabledReason}
+        liveSourceStatus={sandboxActivityStatus}
         premiumModelsDisabledReason={premiumModelsDisabledReason}
         highReasoningDisabledReason={highReasoningDisabledReason}
       />
