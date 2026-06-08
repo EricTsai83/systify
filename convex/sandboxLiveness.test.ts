@@ -172,6 +172,46 @@ describe("ensureSandboxReady (via runSandboxActivation)", () => {
     expect(provisionSandboxMock).not.toHaveBeenCalled();
   });
 
+  test("reuses stopped local row when probe says remote is already started", async () => {
+    const t = convexTest(schema, modules);
+    const ownerTokenIdentifier = "user|stopped-remote-started";
+    const { repositoryId, sandboxId } = await seedRepoAndSandbox(t, ownerTokenIdentifier, {
+      sandbox: { status: "stopped", remoteId: "rid-stopped-started" },
+    });
+    probeLiveSandboxMock.mockResolvedValue({ ok: true, remoteState: "started" });
+
+    const jobId = await t.run(async (ctx) =>
+      ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "sandbox_activation",
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+        costCategory: "ops",
+        triggerSource: "user",
+        leaseExpiresAt: Date.now() + 5 * 60_000,
+      }),
+    );
+
+    await t.action(internal.sandboxActivationNode.runSandboxActivation, {
+      jobId,
+      repositoryId,
+      ownerTokenIdentifier,
+    });
+
+    const state = await t.run(async (ctx) => ({
+      job: await ctx.db.get(jobId),
+      sandbox: sandboxId ? await ctx.db.get(sandboxId) : null,
+    }));
+    expect(state.job?.status).toBe("completed");
+    expect(state.job?.sandboxId).toBe(sandboxId);
+    expect(state.sandbox?.status).toBe("ready");
+    expect(probeLiveSandboxMock).toHaveBeenCalledWith("rid-stopped-started");
+    expect(startSandboxMock).not.toHaveBeenCalled();
+    expect(provisionSandboxMock).not.toHaveBeenCalled();
+  });
+
   test("wakes a stopped sandbox via startSandbox", async () => {
     const t = convexTest(schema, modules);
     const ownerTokenIdentifier = "user|stopped-wake";

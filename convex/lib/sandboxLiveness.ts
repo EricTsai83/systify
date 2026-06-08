@@ -176,9 +176,12 @@ export async function ensureSandboxReady(
       remoteState: probe.remoteState,
     });
 
-    const readyHandle = getReadyLiveSourceHandle(sandbox);
-    if (probe.ok && probe.remoteState === "started" && readyHandle) {
-      return readyHandle;
+    if (probe.ok && probe.remoteState === "started" && sandbox.repoPath) {
+      return {
+        sandboxId: sandbox._id,
+        remoteId: sandbox.remoteId,
+        repoPath: sandbox.repoPath,
+      };
     }
 
     if (probe.remoteState === "stopped" && sandbox.repoPath) {
