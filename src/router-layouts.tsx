@@ -143,8 +143,8 @@ function DemoModeBanner() {
             <span>Demo Mode</span>
           </div>
           <p className="min-w-0 text-xs font-medium leading-5 text-muted-foreground sm:text-center">
-            Cost-incurring features are disabled, including messages, repository import and sync, live source sessions,
-            Repository Guide generation, premium models, and high reasoning.
+            Cost-incurring features are disabled, including messages, live source sessions, Repository Guide generation,
+            premium models, high reasoning, and embedding-backed indexing.
           </p>
         </div>
       </div>

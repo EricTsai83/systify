@@ -51,6 +51,7 @@ type DbEntitlementCtx = QueryCtx | MutationCtx;
 
 const FEATURE_NOT_INCLUDED_MESSAGE = "This feature is not available on your current plan.";
 const ACCESS_PROFILE_SCAN_LIMIT = 20;
+const COST_FREE_REPOSITORY_FEATURES = new Set<Feature>(["demoMode", "repoImport", "syncRepository", "checkForUpdates"]);
 
 export async function getViewerAccess(ctx: EntitlementCtx, identity: IdentityLike): Promise<ViewerAccess> {
   return await getViewerAccessForOwnerTokenIdentifier(ctx, {
@@ -200,9 +201,11 @@ function isFeatureEnabled(access: Pick<ViewerAccess, "plan" | "billingStatus">, 
   }
 
   // Trial and paid plan limits require real usage budgets / billing webhooks
-  // before variable-cost operations can be safely enabled. Until then, only
-  // the zero-cost demo surface is available outside the internal plan.
-  return feature === "demoMode";
+  // before variable-cost operations can be safely enabled. GitHub-backed
+  // repository import/sync does not provision a sandbox or call LLM providers,
+  // so keep it available while chat, sandbox, generation, and embeddings stay
+  // gated.
+  return COST_FREE_REPOSITORY_FEATURES.has(feature);
 }
 
 function hasDb(ctx: EntitlementCtx): ctx is DbEntitlementCtx {
