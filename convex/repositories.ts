@@ -2,7 +2,7 @@ import { v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
-import { mutation, query, internalQuery, internalMutation, type MutationCtx } from "./_generated/server";
+import { mutation, query, internalQuery, internalMutation, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { getDefaultThreadMode } from "./lib/chatMode";
 import { assertFeatureAccess } from "./lib/entitlements";
 import { requireViewerIdentity } from "./lib/auth";
@@ -623,12 +623,52 @@ async function findActiveSandboxActivationJob(
   });
 }
 
+async function findActiveSandboxBackedJob(
+  ctx: QueryCtx,
+  args: { repositoryId: Id<"repositories">; now: number },
+): Promise<Doc<"jobs"> | null> {
+  const jobCandidates = await Promise.all([
+    findActiveJob(ctx, {
+      kind: "chat",
+      scope: { type: "repository", id: args.repositoryId },
+      now: args.now,
+      predicate: (job) => job.costCategory === "system_design",
+      limit: 5,
+    }),
+    findActiveJob(ctx, {
+      kind: "system_design",
+      scope: { type: "repository", id: args.repositoryId },
+      now: args.now,
+    }),
+    findActiveJob(ctx, {
+      kind: "artifact_draft",
+      scope: { type: "repository", id: args.repositoryId },
+      now: args.now,
+    }),
+    findActiveJob(ctx, {
+      kind: "sandbox_activation",
+      scope: { type: "repository", id: args.repositoryId },
+      now: args.now,
+    }),
+  ]);
+
+  return (
+    jobCandidates
+      .filter((job): job is Doc<"jobs"> => job !== null)
+      .sort((left, right) => {
+        if (left.status !== right.status) {
+          return left.status === "running" ? -1 : 1;
+        }
+        return right._creationTime - left._creationTime;
+      })[0] ?? null
+  );
+}
+
 /**
- * Explicit chat-side request to wake or provision the repository's
- * sandbox. The mutation is deliberately separate from the chat send
- * flow so the user keeps control over when sandbox compute is charged
- * — `chat.sendMessage` no longer auto-provisions silently in sandbox
- * mode (Phase D goal).
+ * Compatibility/debug request to wake or provision the repository's
+ * sandbox. Main user flows call `ensureSandboxReady` lazily from the
+ * task action (chat, artifact draft, System Design); this mutation is
+ * retained so internal tools and older clients do not break.
  *
  * Dedup is per-repository: an in-flight `sandbox_activation` job
  * short-circuits to its existing id so a double-click never queues two
@@ -759,9 +799,10 @@ export const recoverStaleSandboxActivationJob = internalMutation({
  * Lightweight status read for the chat sandbox-mode status pill. Returns
  * one of:
  *
- *   - `idle`           — no sandbox, or sandbox in stopped/archived/failed.
- *                        UI shows "Live source inactive" + Activate button.
- *   - `activating`     — an in-flight `sandbox_activation` job exists.
+ *   - `idle`           — no ready/provisioning sandbox and no active
+ *                        sandbox-backed job. UI shows passive prepare-on-send.
+ *   - `preparing`      — an active sandbox-backed job exists, or the latest
+ *                        sandbox row is provisioning.
  *                        UI shows progress.
  *   - `ready`          — sandbox is ready and not expiring soon.
  *   - `expiring_soon`  — sandbox is ready but TTL is < 5 min away.
@@ -772,7 +813,7 @@ export const getSandboxActivityStatus = query({
     ctx,
     args,
   ): Promise<{
-    kind: "idle" | "activating" | "ready" | "expiring_soon";
+    kind: "idle" | "preparing" | "ready" | "expiring_soon";
     activeJob: Doc<"jobs"> | null;
     sandbox: Doc<"sandboxes"> | null;
   }> => {
@@ -782,15 +823,11 @@ export const getSandboxActivityStatus = query({
     }
 
     const now = Date.now();
-    const activeJob = await findActiveJob(ctx, {
-      kind: "sandbox_activation",
-      scope: { type: "repository", id: args.repositoryId },
-      now,
-    });
+    const activeJob = await findActiveSandboxBackedJob(ctx, { repositoryId: args.repositoryId, now });
     const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
 
-    if (activeJob) {
-      return { kind: "activating", activeJob, sandbox };
+    if (activeJob || sandbox?.status === "provisioning") {
+      return { kind: "preparing", activeJob, sandbox };
     }
     if (sandbox && sandbox.status === "ready" && sandbox.remoteId && sandbox.repoPath && sandbox.ttlExpiresAt > now) {
       const remainingMs = sandbox.ttlExpiresAt - now;

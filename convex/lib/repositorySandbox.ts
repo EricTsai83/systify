@@ -21,8 +21,7 @@ function classifySandbox(sandbox: Doc<"sandboxes"> | null, now = Date.now()): Sa
     return {
       available: false,
       reasonCode: "missing_sandbox",
-      message:
-        "A live sandbox is unavailable because no sandbox is ready for this repository yet. Sync the repository to provision one.",
+      message: "Live source will be prepared when a task needs it.",
     };
   }
 
@@ -30,8 +29,7 @@ function classifySandbox(sandbox: Doc<"sandboxes"> | null, now = Date.now()): Sa
     return {
       available: false,
       reasonCode: "sandbox_unavailable",
-      message:
-        "A live sandbox is unavailable because the sandbox failed. Sync the repository to provision a fresh sandbox.",
+      message: "Live source will be prepared when a task needs it.",
     };
   }
 
@@ -39,8 +37,7 @@ function classifySandbox(sandbox: Doc<"sandboxes"> | null, now = Date.now()): Sa
     return {
       available: false,
       reasonCode: "sandbox_provisioning",
-      message:
-        "A live sandbox is unavailable because the sandbox is still provisioning. Wait for the import to finish or sync the repository again.",
+      message: "Live source is preparing. You can keep Sandbox grounding selected.",
     };
   }
 
@@ -52,8 +49,7 @@ function classifySandbox(sandbox: Doc<"sandboxes"> | null, now = Date.now()): Sa
     return {
       available: false,
       reasonCode: "sandbox_expired",
-      message:
-        "A live sandbox is unavailable because the sandbox expired. Sync the repository to provision a fresh sandbox.",
+      message: "Live source will be prepared when a task needs it.",
     };
   }
 
@@ -61,8 +57,7 @@ function classifySandbox(sandbox: Doc<"sandboxes"> | null, now = Date.now()): Sa
     return {
       available: false,
       reasonCode: "sandbox_provisioning",
-      message:
-        "A live sandbox is unavailable because the sandbox is still provisioning. Wait for the import to finish or sync the repository again.",
+      message: "Live source is preparing. You can keep Sandbox grounding selected.",
     };
   }
 

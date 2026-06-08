@@ -115,8 +115,7 @@ describe("useThreadCapabilities — bridging behavior", () => {
       sandboxStatus: null,
       sandboxModeStatus: {
         reasonCode: "missing_sandbox",
-        message:
-          "A live sandbox is unavailable because no sandbox is ready for this repository yet. Sync the repository to provision one.",
+        message: "Live source will be prepared when a task needs it.",
       },
       chatModes: {
         // "No sandbox" hint travels via grounding / sandboxIsActivatable
@@ -141,9 +140,8 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.modes.discuss.enabled).toBe(true);
     expect(result.current.modes.library.enabled).toBe(true);
     expect(result.current.defaultMode).toBe("library");
-    // The missing-sandbox case is the headline activation surface — the
-    // disabled Sandbox option should still accept a click and enqueue a
-    // lazy provision.
+    // The missing-sandbox case is selectable — the next live-source task
+    // prepares the environment lazily.
     expect(result.current.sandboxIsActivatable).toBe(true);
   });
 
@@ -191,8 +189,7 @@ describe("useThreadCapabilities — bridging behavior", () => {
       sandboxStatus: "provisioning",
       sandboxModeStatus: {
         reasonCode: "sandbox_provisioning",
-        message:
-          "A live sandbox is unavailable because the sandbox is still provisioning. Wait for the import to finish or sync the repository again.",
+        message: "Live source is preparing. You can keep Sandbox grounding selected.",
       },
       chatModes: {
         modes: {
@@ -201,16 +198,15 @@ describe("useThreadCapabilities — bridging behavior", () => {
         },
         defaultMode: "library",
       },
-      sandboxIsActivatable: false,
+      sandboxIsActivatable: true,
     });
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
 
     expect(result.current.sandboxStatus).toBe("provisioning");
-    // A second activation click during provisioning would just dedupe;
-    // the UI surfaces that more cleanly by leaving the option in its
-    // disabled state until the in-flight job finishes.
-    expect(result.current.sandboxIsActivatable).toBe(false);
+    // Provisioning is recoverable/selectable: the user can keep the
+    // desired Sandbox grounding state while preparation continues.
+    expect(result.current.sandboxIsActivatable).toBe(true);
   });
 
   test("thread with a stopped sandbox: forwards schema status verbatim and flags activation", () => {
@@ -227,8 +223,7 @@ describe("useThreadCapabilities — bridging behavior", () => {
       sandboxStatus: "stopped",
       sandboxModeStatus: {
         reasonCode: "sandbox_expired",
-        message:
-          "A live sandbox is unavailable because the sandbox expired. Sync the repository to provision a fresh sandbox.",
+        message: "Live source will be prepared when a task needs it.",
       },
       chatModes: {
         modes: {
@@ -243,8 +238,8 @@ describe("useThreadCapabilities — bridging behavior", () => {
     const { result } = renderHook(() => useThreadCapabilities(threadId));
 
     expect(result.current.sandboxStatus).toBe("stopped");
-    // Expired sandboxes are re-activatable — same activation path as
-    // the missing-sandbox case provisions a fresh one.
+    // Expired sandboxes are selectable — the next live-source task
+    // prepares a fresh environment.
     expect(result.current.sandboxIsActivatable).toBe(true);
   });
 

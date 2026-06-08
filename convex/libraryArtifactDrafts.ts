@@ -33,6 +33,9 @@ import { startedResultValidator } from "./lib/functionResultSchemas";
 export const ARTIFACT_DRAFT_PROMPT_VERSION = 1;
 
 const ARTIFACT_DRAFT_LIST_LIMIT = 20;
+const RECENT_REPOSITORY_DRAFT_STATUSES = ["queued", "running", "ready", "failed"] satisfies ReadonlyArray<
+  Doc<"artifactDrafts">["status"]
+>;
 const STALE_ARTIFACT_DRAFT_JOB_ERROR_MESSAGE =
   "Artifact draft stalled and was automatically marked as failed. Regenerate to try again.";
 const VERSION_MISMATCH_MESSAGE = "This artifact changed since the draft was generated. Regenerate before applying.";
@@ -288,17 +291,9 @@ export const listRecentByRepository = query({
     if (!repository) {
       return [];
     }
-    const statuses: Doc<"artifactDrafts">["status"][] = [
-      "queued",
-      "running",
-      "ready",
-      "failed",
-      "applied",
-      "discarded",
-    ];
     const drafts = (
       await Promise.all(
-        statuses.map((status) =>
+        RECENT_REPOSITORY_DRAFT_STATUSES.map((status) =>
           ctx.db
             .query("artifactDrafts")
             .withIndex("by_repositoryId_and_status", (q) =>

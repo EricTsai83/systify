@@ -11,7 +11,6 @@ import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
-import { clearSandboxActivationRequest, useSandboxActivationSignal } from "@/hooks/use-sandbox-activation-signal";
 import { isViewerFeatureEnabled, useViewerAccess } from "@/hooks/use-viewer-access";
 import {
   DEFAULT_AUTHENTICATED_PATH,
@@ -104,7 +103,6 @@ function LibraryRepository({
 
   const allArtifacts = useQuery(api.artifacts.listMetadataByRepositoryWithFreshness, { repositoryId });
   const sandboxActivityStatus = useQuery(api.repositories.getSandboxActivityStatus, { repositoryId });
-  const isSandboxActivationPending = useSandboxActivationSignal(repositoryId);
   const { isUnseen, markViewed } = useArtifactViewState(repositoryId);
 
   const hasArtifacts = (allArtifacts?.length ?? 0) > 0;
@@ -114,16 +112,6 @@ function LibraryRepository({
       markViewed(tabs.activeArtifactId);
     }
   }, [tabs.activeArtifactId, markViewed]);
-
-  useEffect(() => {
-    if (
-      sandboxActivityStatus?.kind === "activating" ||
-      sandboxActivityStatus?.kind === "ready" ||
-      sandboxActivityStatus?.kind === "expiring_soon"
-    ) {
-      clearSandboxActivationRequest(repositoryId);
-    }
-  }, [repositoryId, sandboxActivityStatus?.kind]);
 
   const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false);
   const openGenerateDialog = useCallback(() => setIsGenerateDialogOpen(true), []);
@@ -254,7 +242,7 @@ function LibraryRepository({
           <h1 className="min-w-0 truncate text-sm font-semibold tracking-tight text-foreground md:text-base">
             {currentRepository?.sourceRepoFullName ?? "Library"}
           </h1>
-          <LibraryLiveSourceBadge status={sandboxActivityStatus} isActivationPending={isSandboxActivationPending} />
+          <LibraryLiveSourceBadge status={sandboxActivityStatus} />
           <SidebarTrigger side="right" className="ml-auto" />
         </header>
         <div className="flex min-h-0 min-w-0 flex-1">
@@ -297,14 +285,8 @@ type LibrarySandboxActivityStatus = NonNullable<
   ReturnType<typeof useQuery<typeof api.repositories.getSandboxActivityStatus>>
 >;
 
-export function LibraryLiveSourceBadge({
-  status,
-  isActivationPending = false,
-}: {
-  status: LibrarySandboxActivityStatus | undefined;
-  isActivationPending?: boolean;
-}) {
-  const presentation = getLibraryLiveSourcePresentation(status, isActivationPending);
+export function LibraryLiveSourceBadge({ status }: { status: LibrarySandboxActivityStatus | undefined }) {
+  const presentation = getLibraryLiveSourcePresentation(status);
   const Icon = presentation.icon;
 
   return (
@@ -320,20 +302,7 @@ export function LibraryLiveSourceBadge({
   );
 }
 
-function getLibraryLiveSourcePresentation(
-  status: LibrarySandboxActivityStatus | undefined,
-  isActivationPending: boolean,
-) {
-  if (isActivationPending && status?.kind !== "ready" && status?.kind !== "expiring_soon") {
-    return {
-      label: "Live source starting",
-      title: "Live source wake request was sent",
-      icon: CircleIcon,
-      className: "border-primary/35 bg-primary/10 text-primary",
-      iconClassName: "animate-pulse text-primary",
-    };
-  }
-
+function getLibraryLiveSourcePresentation(status: LibrarySandboxActivityStatus | undefined) {
   if (status === undefined) {
     return {
       label: "Live source",
@@ -355,9 +324,9 @@ function getLibraryLiveSourcePresentation(
     };
   }
 
-  if (status.kind === "activating") {
+  if (status.kind === "preparing") {
     return {
-      label: "Live source starting",
+      label: "Live source preparing",
       title: "Live source is being prepared",
       icon: CircleIcon,
       className: "border-primary/35 bg-primary/10 text-primary",

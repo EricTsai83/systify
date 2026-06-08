@@ -19,18 +19,18 @@ describe("LibraryLiveSourceBadge", () => {
     expect(screen.getByLabelText("Live source is active")).toHaveTextContent("Live source active");
   });
 
-  test("shows live source starting while activation is in flight", () => {
+  test("shows live source preparing while setup is in flight", () => {
     render(
       <LibraryLiveSourceBadge
         status={{
-          kind: "activating",
+          kind: "preparing",
           activeJob: null,
           sandbox: null,
         }}
       />,
     );
 
-    expect(screen.getByLabelText("Live source is being prepared")).toHaveTextContent("Live source starting");
+    expect(screen.getByLabelText("Live source is being prepared")).toHaveTextContent("Live source preparing");
   });
 
   test("shows live source inactive for idle status", () => {
@@ -49,20 +49,5 @@ describe("LibraryLiveSourceBadge", () => {
         "Live source is inactive. Enable Sandbox grounding from Discuss when you need live code state.",
       ),
     ).toHaveTextContent("Live source inactive");
-  });
-
-  test("shows live source starting while a local wake request is pending", () => {
-    render(
-      <LibraryLiveSourceBadge
-        status={{
-          kind: "idle",
-          activeJob: null,
-          sandbox: null,
-        }}
-        isActivationPending
-      />,
-    );
-
-    expect(screen.getByLabelText("Live source wake request was sent")).toHaveTextContent("Live source starting");
   });
 });

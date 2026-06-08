@@ -15,8 +15,11 @@ import { NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
 import { loadViewerModelPreferences } from "../lib/userPreferences";
 import {
   CHAT_JOB_LEASE_MS,
+  assertSandboxDailyCostBudget,
   consumeChatGlobalRateLimit,
   consumeChatRateLimit,
+  consumeDaytonaGlobalRateLimit,
+  getSandboxReplyEstimateCents,
   getLeaseRetryAfterMs,
   throwOperationAlreadyInProgress,
 } from "../lib/rateLimit";
@@ -326,8 +329,18 @@ export const sendMessageStartingNewThread = mutation({
 
     const now = Date.now();
 
+    if (turnPlan.groundSandbox) {
+      await assertSandboxDailyCostBudget(ctx, {
+        ownerTokenIdentifier: identity.tokenIdentifier,
+        repositoryId: turnPlan.repositoryId,
+        estimateCents: getSandboxReplyEstimateCents(),
+      });
+    }
     await consumeChatRateLimit(ctx, identity.tokenIdentifier);
     await consumeChatGlobalRateLimit(ctx);
+    if (turnPlan.groundSandbox) {
+      await consumeDaytonaGlobalRateLimit(ctx);
+    }
 
     const title = args.title ?? NEW_THREAD_DEFAULT_TITLE;
 
@@ -467,8 +480,18 @@ export const sendMessage = mutation({
       );
     }
 
+    if (turnPlan.groundSandbox) {
+      await assertSandboxDailyCostBudget(ctx, {
+        ownerTokenIdentifier: identity.tokenIdentifier,
+        repositoryId: turnPlan.repositoryId,
+        estimateCents: getSandboxReplyEstimateCents(),
+      });
+    }
     await consumeChatRateLimit(ctx, identity.tokenIdentifier);
     await consumeChatGlobalRateLimit(ctx);
+    if (turnPlan.groundSandbox) {
+      await consumeDaytonaGlobalRateLimit(ctx);
+    }
 
     let sandboxSessionId: Id<"sandboxSessions"> | undefined;
     if (turnPlan.groundSandbox) {

@@ -82,7 +82,7 @@ export function LibraryAskPanel({
   askDisabledReason?: string;
   generateDisabledReason?: string;
   artifactDraftDisabledReason?: string;
-  liveSourceStatus?: { kind: "idle" | "activating" | "ready" | "expiring_soon" };
+  liveSourceStatus?: { kind: "idle" | "preparing" | "ready" | "expiring_soon" };
   premiumModelsDisabledReason?: string;
   highReasoningDisabledReason?: string;
 }) {
@@ -667,14 +667,14 @@ function NoArtifactsHint({
   );
 }
 
-function getLiveSourceDraftLabel(status: { kind: "idle" | "activating" | "ready" | "expiring_soon" } | undefined) {
+function getLiveSourceDraftLabel(status: { kind: "idle" | "preparing" | "ready" | "expiring_soon" } | undefined) {
   if (status === undefined) {
     return "Live source status is loading. Drafting will verify access before generation starts.";
   }
   if (status.kind === "ready" || status.kind === "expiring_soon") {
     return "Live source is active. The draft will still verify the repository before writing a proposal.";
   }
-  if (status.kind === "activating") {
+  if (status.kind === "preparing") {
     return "Live source is starting. The draft job will continue once it is ready.";
   }
   return "Live source will be prepared before drafting. Nothing changes until you apply the proposal.";

@@ -40,17 +40,14 @@ export interface ThreadContext {
    */
   sandboxCostBudgets: ThreadContextSandboxCostBudgets | null;
   /**
-   * True when clicking the (otherwise-disabled) Sandbox grounding
-   * toggle should trigger a lazy sandbox provision via
-   * `repositories.requestSandboxActivation`. The Sandbox grounding
-   * axis stays disabled until activation completes; this flag is the
-   * UI's signal that the disabled toggle is actionable (vs permanently
-   * locked out by cost cap / no repo / already provisioning).
+   * True when the Sandbox grounding axis is currently unavailable only
+   * because live source must be prepared lazily. The composer may keep
+   * or set Sandbox grounding in this state; the next live-source task
+   * calls `ensureSandboxReady`.
    *
    * Activatable iff: a repository is attached, the cost-cap gate is
-   * open, and the sandbox lifecycle is in one of the "needs provision
-   * or re-provision" states (`none` / `expired` / `failed`). Already-
-   * provisioning sandboxes return false to avoid double-queueing.
+   * open, and the sandbox lifecycle is in a recoverable liveness state
+   * (`none` / `provisioning` / `expired` / `failed`).
    */
   sandboxIsActivatable: boolean;
 }

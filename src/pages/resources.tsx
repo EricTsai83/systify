@@ -9,12 +9,13 @@ import {
   CubeIcon,
   DatabaseIcon,
   LightningIcon,
-  PlayIcon,
   StackIcon,
+  StopCircleIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Logo } from "@/components/logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,7 +23,6 @@ import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
-import { clearSandboxActivationRequest, markSandboxActivationRequested } from "@/hooks/use-sandbox-activation-signal";
 import { useTimeUntil, useRelativeTime } from "@/hooks/use-relative-time";
 import {
   presentRepositoryIntelligenceSurface,
@@ -42,8 +42,9 @@ import { DEFAULT_AUTHENTICATED_PATH, repositoryPath } from "@/route-paths";
  * has a single place to answer "what is my system doing right now".
  *
  * Repository-centric resource control plane. It keeps the actions scoped to
- * one repository at a time: open the repo for sync/history work, and activate
- * Live source when the sandbox is stopped, missing, expired, or failed.
+ * one repository at a time: open the repo for sync/history work, and stop the
+ * current Live source environment when one exists. The next live-source task
+ * prepares a fresh environment automatically.
  */
 export function ResourcesPage() {
   return (
@@ -99,7 +100,8 @@ export function ResourcesSettingsSection() {
     <>
       <p className="mb-4 text-sm leading-relaxed text-muted-foreground sm:mb-5">
         Live status for every repository you have imported. Track repository knowledge, live source access, and remote
-        updates in one place. Open a repository to sync, refresh, or activate resources.
+        updates in one place. Open a repository to sync or refresh knowledge, and stop live source environments you no
+        longer need.
       </p>
 
       {inventory === undefined ? (
@@ -203,8 +205,9 @@ function ResourceSummarySkeleton() {
 }
 
 function ResourceRow({ row }: { row: InventoryRow }) {
-  const requestSandboxActivation = useMutation(api.repositories.requestSandboxActivation);
-  const [activationError, setActivationError] = useState<string | null>(null);
+  const requestSandboxCleanup = useMutation(api.ops.requestSandboxCleanup);
+  const [cleanupError, setCleanupError] = useState<string | null>(null);
+  const [isStopDialogOpen, setIsStopDialogOpen] = useState(false);
   const intelligence = presentRepositoryIntelligenceSurface({
     importStatus: row.importStatus,
     isSyncing: isRepositorySyncing(row),
@@ -216,15 +219,15 @@ function ResourceRow({ row }: { row: InventoryRow }) {
   });
   const lastSyncedLabel = useRelativeTime(row.lastImportedAt);
   const targetPath = repositoryPath(row.repositoryId);
-  const sandboxAction = getSandboxAction(row);
-  const [isActivatingSandbox, activateSandbox] = useAsyncCallback(async () => {
-    setActivationError(null);
-    markSandboxActivationRequested(row.repositoryId);
+  const sandboxAction = getSandboxCleanupAction(row);
+  const [isStoppingSandbox, stopSandbox] = useAsyncCallback(async () => {
+    setCleanupError(null);
     try {
-      await requestSandboxActivation({ repositoryId: row.repositoryId });
+      await requestSandboxCleanup({ repositoryId: row.repositoryId });
+      setIsStopDialogOpen(false);
     } catch (error) {
-      clearSandboxActivationRequest(row.repositoryId);
-      setActivationError(toUserErrorMessage(error, "Couldn't activate the sandbox. Try again."));
+      setIsStopDialogOpen(false);
+      setCleanupError(toUserErrorMessage(error, "Couldn't stop live source. Try again."));
     }
   });
 
@@ -275,9 +278,9 @@ function ResourceRow({ row }: { row: InventoryRow }) {
                 </span>
               ) : null}
             </div>
-            {activationError ? (
+            {cleanupError ? (
               <p className="mt-2 text-[11px] leading-4 text-destructive" role="alert">
-                {activationError}
+                {cleanupError}
               </p>
             ) : null}
           </div>
@@ -289,15 +292,13 @@ function ResourceRow({ row }: { row: InventoryRow }) {
               variant="outline"
               size="sm"
               className="flex-1 sm:w-32 sm:flex-none"
-              onClick={() => {
-                void activateSandbox();
-              }}
-              disabled={isActivatingSandbox}
+              onClick={() => setIsStopDialogOpen(true)}
+              disabled={isStoppingSandbox}
             >
-              <PlayIcon weight="bold" />
+              <StopCircleIcon weight="bold" />
               <ButtonStateText
-                current={isActivatingSandbox ? "Starting…" : sandboxAction.label}
-                states={[sandboxAction.label, "Starting…"]}
+                current={isStoppingSandbox ? "Stopping…" : sandboxAction.label}
+                states={[sandboxAction.label, "Stopping…"]}
               />
             </Button>
           ) : null}
@@ -306,6 +307,18 @@ function ResourceRow({ row }: { row: InventoryRow }) {
           </Button>
         </div>
       </div>
+      <ConfirmDialog
+        open={isStopDialogOpen}
+        onOpenChange={setIsStopDialogOpen}
+        title="Stop live source?"
+        description="This closes the current live source environment. The next live-source task will prepare a fresh one."
+        actionLabel={sandboxAction?.label ?? "Stop live source"}
+        loadingLabel="Stopping…"
+        isPending={isStoppingSandbox}
+        onConfirm={() => {
+          void stopSandbox();
+        }}
+      />
     </Card>
   );
 }
@@ -422,17 +435,14 @@ function ResourceEmptyState() {
   );
 }
 
-function getSandboxAction(row: InventoryRow): { label: string } | null {
-  if (row.sandboxModeStatus.reasonCode === "available" || row.sandboxModeStatus.reasonCode === "sandbox_provisioning") {
+function getSandboxCleanupAction(row: InventoryRow): { label: string } | null {
+  if (!row.sandbox || row.sandbox.status === "archived") {
     return null;
   }
-  if (row.sandboxModeStatus.reasonCode === "sandbox_unavailable") {
-    return { label: "Retry sandbox" };
+  if (row.sandbox.status === "provisioning") {
+    return { label: "Cancel setup" };
   }
-  if (row.sandboxModeStatus.reasonCode === "sandbox_expired") {
-    return { label: "Wake sandbox" };
-  }
-  return { label: "Activate" };
+  return { label: "Stop live source" };
 }
 
 function isRepositorySyncing(row: InventoryRow) {

@@ -1,13 +1,9 @@
 import { useCallback, useMemo, useState, type AnimationEvent, type FormEvent } from "react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
-import { useMutation } from "convex/react";
-import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
-import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { findInFlightAssistantMessage, useConversationThread } from "@/hooks/use-conversation-thread";
 import { useModelAccessDisabledReason } from "@/hooks/use-model-access-disabled-reason";
 import { useStatsForNerdsPreference } from "@/hooks/use-user-preferences";
-import { toUserErrorMessage } from "@/lib/errors";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { useChatScroll } from "@/components/ai-elements/use-chat-scroll";
 import {
@@ -16,7 +12,6 @@ import {
   PromptInputTextarea,
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input";
-import { AppNotice } from "@/components/app-notice";
 import { EmptyChatHint, EmptyNoRepoHint } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
 import { MODE_EXAMPLES } from "@/components/chat-modes";
@@ -169,9 +164,8 @@ type ChatPanelProps = {
   readOnlyHint?: string;
   /**
    * Repository attached to the current thread, if any. Used to mount
-   * the `SandboxActivityPill` in sandbox-tooled modes so the user can
-   * explicitly activate the live source before sending. Optional so
-   * pre-repo and unit-test render paths can omit it.
+   * the passive `SandboxActivityPill` in sandbox-tooled modes. Optional
+   * so pre-repo and unit-test render paths can omit it.
    */
   attachedRepositoryId?: RepositoryId;
   /**
@@ -261,9 +255,7 @@ export function ChatPanel({
   sendDisabledReason,
   onCancelInFlightReply,
   isCancellingReply = false,
-  sandboxModeStatus,
   isSyncing,
-  onSync,
   sandboxGroundingDisabledReason,
   isArtifactPanelOpen = false,
   onToggleArtifactPanel,
@@ -273,7 +265,6 @@ export function ChatPanel({
   isReadOnly = false,
   readOnlyHint,
   attachedRepositoryId,
-  repositoryId,
   canLoadOlderMessages = false,
   onLoadOlderMessages = NOOP_LOAD_OLDER,
 }: ChatPanelProps) {
@@ -328,7 +319,6 @@ export function ChatPanel({
     [selectedThreadId],
   );
 
-  const sandboxModeAvailable = sandboxModeStatus?.reasonCode === "available";
   const selectedModelPick =
     selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null;
   const modelAccessDisabledReason = useModelAccessDisabledReason({
@@ -340,26 +330,6 @@ export function ChatPanel({
   });
   const effectiveSendDisabledReason = sendDisabledReason ?? modelAccessDisabledReason ?? undefined;
 
-  // Lazy-provision entry point. Wired here (not in `SandboxActivityPill`)
-  // so the GroundingToggleBar can fire activation directly when the user
-  // clicks the otherwise-disabled Sandbox toggle in its activatable
-  // sub-state — the pill is only mounted once `groundSandbox === true`,
-  // so it can't be the sole trigger. `requestSandboxActivation` is
-  // idempotent (returns the in-flight job if one exists) so a duplicate
-  // click during activation is safe.
-  const requestSandboxActivation = useMutation(api.repositories.requestSandboxActivation);
-  const [activationError, setActivationError] = useState<string | null>(null);
-  const [, activateSandbox] = useAsyncCallback(async () => {
-    const repoId = attachedRepositoryId ?? repositoryId;
-    if (!repoId) return;
-    setActivationError(null);
-    try {
-      await requestSandboxActivation({ repositoryId: repoId });
-    } catch (err) {
-      setActivationError(toUserErrorMessage(err, "Couldn't start the sandbox. Try again."));
-    }
-  });
-
   const inFlightAssistantMessage = useMemo(() => findInFlightAssistantMessage(messages), [messages]);
 
   const canCancel = inFlightAssistantMessage !== null && typeof onCancelInFlightReply === "function";
@@ -370,18 +340,8 @@ export function ChatPanel({
   // the shared gate, pressing Enter while the Stop button is rendered (Stop is
   // `type="button"`, so the textarea's submit-disabled probe finds no submit
   // button and lets the submit through) would fire `onSendMessage` mid-flight.
-  // The `groundSandbox && !sandboxModeAvailable` clause is here because
-  // sandbox grounding needs a ready live source; sending before lifecycle is
-  // `available` would let an optimistically-flipped toggle round-trip into a
-  // backend reject.
   const isSendBlocked =
-    isReadOnly ||
-    effectiveSendDisabledReason !== undefined ||
-    isSending ||
-    isSyncing ||
-    !chatInput.trim() ||
-    (groundSandbox && !sandboxModeAvailable) ||
-    canCancel;
+    isReadOnly || effectiveSendDisabledReason !== undefined || isSending || isSyncing || !chatInput.trim() || canCancel;
 
   const effectiveGrounding = useMemo(() => {
     if (!sandboxGroundingDisabledReason) {
@@ -401,28 +361,9 @@ export function ChatPanel({
     };
   }, [grounding, sandboxGroundingDisabledReason]);
 
-  const shouldShowSandboxWarning =
-    !isChatLoading && groundSandbox && sandboxModeStatus !== null && !sandboxModeAvailable;
   const shouldShowEmptyState = !isChatLoading && !hasMessages;
   const shouldShowSandboxPill = groundSandbox && attachedRepositoryId !== undefined;
 
-  // Hoisted so the empty-state branch (no ScrollArea) and the messages
-  // branch (inside ScrollArea) can both render the warning above their
-  // content without duplicating the AppNotice props.
-  const sandboxWarning = shouldShowSandboxWarning ? (
-    <AppNotice
-      title={getSandboxStatusTitle(sandboxModeStatus.reasonCode)}
-      message={
-        sandboxModeStatus.message ??
-        "Live source access is unavailable right now. Sync the repository to prepare a fresh session, or turn off Sandbox grounding."
-      }
-      tone="warning"
-      actionLabel={isSyncing ? "Syncing…" : "Sync now"}
-      actionStateLabels={["Sync now", "Syncing…"]}
-      actionDisabled={isSyncing}
-      onAction={onSync}
-    />
-  ) : null;
   const sandboxPill =
     shouldShowSandboxPill && attachedRepositoryId ? <SandboxActivityPill repositoryId={attachedRepositoryId} /> : null;
 
@@ -440,7 +381,6 @@ export function ChatPanel({
         // reach the centered Card.
         <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 flex-col gap-3 px-6 py-6">
           {sandboxPill}
-          {sandboxWarning}
           {hasAttachedRepository ? <EmptyChatHint /> : <EmptyNoRepoHint />}
           {/*
            * Example prompts for the active mode. Renders at the bottom
@@ -472,7 +412,6 @@ export function ChatPanel({
             showLoadOlderSentinel={canLoadOlderMessages}
           >
             {sandboxPill}
-            {sandboxWarning}
             {messages && (
               <div
                 className={
@@ -512,10 +451,9 @@ export function ChatPanel({
          * controlled here so the parent's already-persisted draft logic
          * (mode switches, thread switches) is untouched.
          *
-         * `readonly-hint` and `activationError` live OUTSIDE the
-         * PromptInput because InputGroup expects only textarea + addons
-         * as children; arbitrary `<p>` siblings would break its CSS-only
-         * layout selectors.
+         * `readonly-hint` lives OUTSIDE the PromptInput because InputGroup
+         * expects only textarea + addons as children; arbitrary `<p>`
+         * siblings would break its CSS-only layout selectors.
          */}
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-6 py-3">
           <PromptInput
@@ -597,7 +535,6 @@ export function ChatPanel({
                     setGroundLibrary={setGroundLibrary}
                     setGroundSandbox={setGroundSandbox}
                     grounding={effectiveGrounding}
-                    onActivateSandbox={sandboxGroundingDisabledReason ? undefined : () => void activateSandbox()}
                     onOpenGenerateSystemDesign={onOpenGenerateSystemDesign}
                     generateDisabledReason={generateSystemDesignDisabledReason}
                   />
@@ -659,11 +596,6 @@ export function ChatPanel({
               {readOnlyHint}
             </p>
           ) : null}
-          {activationError ? (
-            <p className="text-[11px] text-destructive" role="alert" data-testid="sandbox-activation-error">
-              {activationError}
-            </p>
-          ) : null}
         </div>
       </div>
     </div>
@@ -671,21 +603,3 @@ export function ChatPanel({
 }
 
 const SEEN_THREADS_CAP = 64;
-
-function getSandboxStatusTitle(reasonCode: SandboxModeStatus["reasonCode"] | undefined) {
-  switch (reasonCode) {
-    case "sandbox_provisioning":
-      return "Live source still starting";
-    case "missing_sandbox":
-      return "Live source not ready yet";
-    case "sandbox_unavailable":
-      return "Live source no longer available";
-    case "sandbox_expired":
-      return "Live source expired";
-    default:
-      // Future reason codes land here until the switch is extended. Render
-      // the generic copy so the banner stays accurate rather than silently
-      // mislabelling a new code as "expired".
-      return "Live source unavailable";
-  }
-}

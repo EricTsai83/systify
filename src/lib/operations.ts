@@ -223,9 +223,7 @@ export function presentSandboxSurface(input: SandboxSurfaceInput): SandboxSurfac
   if (reasonCode === "sandbox_expired") {
     return {
       title: "Live source expired",
-      description:
-        input.sandboxModeStatus.message ??
-        "Live source access archived itself. Activate it to prepare a fresh session.",
+      description: input.sandboxModeStatus.message ?? "Live source will be prepared when a task needs it.",
       tone: "warning",
     };
   }
@@ -240,7 +238,7 @@ export function presentSandboxSurface(input: SandboxSurfaceInput): SandboxSurfac
   // missing_sandbox
   return {
     title: "Live source not ready",
-    description: input.sandboxModeStatus.message ?? "Activate live source access to unlock file-level analysis.",
+    description: input.sandboxModeStatus.message ?? "Live source will be prepared when a task needs it.",
     tone: "warning",
   };
 }

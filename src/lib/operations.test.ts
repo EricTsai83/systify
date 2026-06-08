@@ -138,7 +138,7 @@ describe("presentSandboxSurface", () => {
         sandboxModeStatus: makeStatus({ reasonCode: "missing_sandbox" }),
         sandbox: null,
       }).description,
-    ).toMatch(/Activate live source access/);
+    ).toBe("Live source will be prepared when a task needs it.");
   });
 
   test("prefers backend-supplied message when present", () => {

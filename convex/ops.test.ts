@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { createTestConvex, type SystifyTestConvex } from "../test/convex/harness";
 import { drainConvexScheduler, withPausedConvexScheduler } from "../test/convex/scheduler";
@@ -67,6 +67,89 @@ async function seedPlaceholderCleanupSandbox(
     return { repositoryId, sandboxId };
   });
 }
+
+async function seedLatestSandboxForCleanup(
+  t: SystifyTestConvex,
+  args: {
+    ownerTokenIdentifier: string;
+    status: "ready" | "stopped" | "provisioning" | "failed";
+  },
+): Promise<{ repositoryId: Id<"repositories">; sandboxId: Id<"sandboxes"> }> {
+  return await t.run(async (ctx) => {
+    const repositoryId = await ctx.db.insert("repositories", {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      sourceHost: "github",
+      sourceUrl: `https://github.com/acme/cleanup-${args.status}`,
+      sourceRepoFullName: `acme/cleanup-${args.status}`,
+      sourceRepoOwner: "acme",
+      sourceRepoName: `cleanup-${args.status}`,
+      defaultBranch: "main",
+      visibility: "private",
+      accessMode: "private",
+      importStatus: "completed",
+      detectedLanguages: [],
+      packageManagers: [],
+      entrypoints: [],
+      fileCount: 0,
+      color: "blue",
+      lastAccessedAt: Date.now(),
+    });
+
+    const sandboxId = await ctx.db.insert("sandboxes", {
+      repositoryId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      provider: "daytona",
+      sourceAdapter: "git_clone",
+      remoteId: `remote-cleanup-${args.status}`,
+      status: args.status,
+      workDir: "/workspace",
+      repoPath: "/workspace/repo",
+      cpuLimit: 2,
+      memoryLimitGiB: 4,
+      diskLimitGiB: 10,
+      ttlExpiresAt: Date.now() + 60_000,
+      autoStopIntervalMinutes: 10,
+      autoArchiveIntervalMinutes: 60,
+      autoDeleteIntervalMinutes: 120,
+      networkBlockAll: false,
+    });
+    await ctx.db.patch(repositoryId, { latestSandboxId: sandboxId });
+
+    return { repositoryId, sandboxId };
+  });
+}
+
+describe("requestSandboxCleanup", () => {
+  test.each(["ready", "stopped", "provisioning", "failed"] as const)(
+    "queues cleanup for latest %s sandbox",
+    async (status) => {
+      const ownerTokenIdentifier = `user|cleanup-${status}`;
+      const t = createTestConvex();
+      const { repositoryId, sandboxId } = await seedLatestSandboxForCleanup(t, { ownerTokenIdentifier, status });
+      const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+      const result = await viewer.mutation(api.ops.requestSandboxCleanup, { repositoryId });
+
+      const job = await t.run(async (ctx) => await ctx.db.get(result.jobId));
+      expect(job?.kind).toBe("cleanup");
+      expect(job?.sandboxId).toBe(sandboxId);
+      expect(job?.repositoryId).toBe(repositoryId);
+      expect(job?.triggerSource).toBe("user");
+    },
+  );
+
+  test("dedupes cleanup for the latest sandbox", async () => {
+    const ownerTokenIdentifier = "user|cleanup-dedup";
+    const t = createTestConvex();
+    const { repositoryId } = await seedLatestSandboxForCleanup(t, { ownerTokenIdentifier, status: "ready" });
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const first = await viewer.mutation(api.ops.requestSandboxCleanup, { repositoryId });
+    const second = await viewer.mutation(api.ops.requestSandboxCleanup, { repositoryId });
+
+    expect(second.jobId).toBe(first.jobId);
+  });
+});
 
 describe("expired sandbox sweep", () => {
   beforeEach(() => {

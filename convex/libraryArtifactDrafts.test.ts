@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   insertTestArtifact,
   insertTestArtifactFolder,
@@ -68,6 +68,8 @@ async function seedReadyDraft(
     targetArtifactId?: Id<"artifacts">;
     targetArtifactVersion?: number;
     folderId?: Id<"artifactFolders">;
+    status?: Doc<"artifactDrafts">["status"];
+    updatedAt?: number;
   },
 ) {
   const jobId = await seedJob(t, args.repositoryId);
@@ -78,7 +80,7 @@ async function seedReadyDraft(
       repositoryId: args.repositoryId,
       jobId,
       operation: args.operation,
-      status: "ready",
+      status: args.status ?? "ready",
       prompt: "Draft a useful artifact.",
       targetArtifactId: args.targetArtifactId,
       targetArtifactVersion: args.targetArtifactVersion,
@@ -92,7 +94,7 @@ async function seedReadyDraft(
       generatedByModel: "gpt-5.5",
       promptVersion: 1,
       createdAt: now,
-      updatedAt: now,
+      updatedAt: args.updatedAt ?? now,
       generatedAt: now,
     }),
   );
@@ -283,6 +285,30 @@ describe("libraryArtifactDrafts", () => {
     expect(state.artifact?.contentMarkdown).toBe("# Original");
     expect(state.artifact?.version).toBe(1);
     expect(state.draft?.status).toBe("discarded");
+  });
+
+  test("recent repository drafts omit applied and discarded drafts", async () => {
+    const t = createRateLimitedTestConvex();
+    await seedAccessProfile(t);
+    const repositoryId = await seedRepository(t);
+    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+    const baseUpdatedAt = Date.now();
+    const statuses = ["queued", "running", "ready", "failed", "applied", "discarded"] satisfies ReadonlyArray<
+      Doc<"artifactDrafts">["status"]
+    >;
+
+    for (const [index, status] of statuses.entries()) {
+      await seedReadyDraft(t, {
+        repositoryId,
+        operation: "create",
+        status,
+        updatedAt: baseUpdatedAt + index,
+      });
+    }
+
+    const entries = await viewer.query(api.libraryArtifactDrafts.listRecentByRepository, { repositoryId });
+
+    expect(entries.map((entry) => entry.draft.status)).toEqual(["failed", "ready", "running", "queued"]);
   });
 
   test("request draft fails when entitlements are missing", async () => {

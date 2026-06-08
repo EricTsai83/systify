@@ -20,6 +20,7 @@ import {
   isJobStaleAndRecoverable,
   markQueuedJobRunning,
   refreshRunningJobLease,
+  updateRunningJobProgress,
 } from "../lib/jobs";
 import { lintCitations, type UnverifiedClaimRange } from "./citationLint";
 import {
@@ -864,6 +865,29 @@ export const markAssistantReplyRunning = internalMutation({
       status: "streaming",
     });
     return { started: true as const };
+  },
+});
+
+export const updateAssistantReplyProgress = internalMutation({
+  args: {
+    jobId: v.id("jobs"),
+    stage: v.string(),
+    progress: v.number(),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const leaseExpiresAt = Date.now() + CHAT_JOB_LEASE_MS;
+    await updateRunningJobProgress(ctx, {
+      jobId: args.jobId,
+      expectedKind: "chat",
+      stage: args.stage,
+      progress: args.progress,
+    });
+    await refreshRunningJobLease(ctx, {
+      jobId: args.jobId,
+      expectedKind: "chat",
+      leaseExpiresAt,
+    });
+    return null;
   },
 });
 

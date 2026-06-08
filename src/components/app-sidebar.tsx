@@ -182,7 +182,7 @@ type AppSidebarRightProps = {
   askDisabledReason?: string;
   generateDisabledReason?: string;
   artifactDraftDisabledReason?: string;
-  liveSourceStatus?: { kind: "idle" | "activating" | "ready" | "expiring_soon" };
+  liveSourceStatus?: { kind: "idle" | "preparing" | "ready" | "expiring_soon" };
   premiumModelsDisabledReason?: string;
   highReasoningDisabledReason?: string;
 };
