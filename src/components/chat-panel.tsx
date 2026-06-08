@@ -416,22 +416,24 @@ export function ChatPanel({
               <div
                 className={
                   skipEntrance
-                    ? "flex flex-col gap-3"
-                    : "flex flex-col gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out"
+                    ? "flex flex-col gap-0"
+                    : "flex flex-col gap-0 animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out"
                 }
                 onAnimationEnd={skipEntrance ? undefined : markCurrentThreadSeen}
               >
-                {messages.map((message) => {
+                {messages.map((message, index) => {
                   const messageStream =
                     activeMessageStream?.assistantMessageId === message._id ? activeMessageStream : null;
+                  const previousMessage = index > 0 ? messages[index - 1] : undefined;
                   return (
-                    <MessageBubble
-                      key={message._id}
-                      message={message}
-                      activeMessageStream={messageStream}
-                      onSelectArtifact={onSelectArtifact}
-                      showStatsForNerds={showStatsForNerds}
-                    />
+                    <div key={message._id} className={messageSpacingClassName(previousMessage, message)}>
+                      <MessageBubble
+                        message={message}
+                        activeMessageStream={messageStream}
+                        onSelectArtifact={onSelectArtifact}
+                        showStatsForNerds={showStatsForNerds}
+                      />
+                    </div>
                   );
                 })}
               </div>
@@ -600,6 +602,18 @@ export function ChatPanel({
       </div>
     </div>
   );
+}
+
+function messageSpacingClassName(
+  previousMessage: Doc<"messages"> | undefined,
+  message: Doc<"messages">,
+): string | undefined {
+  if (!previousMessage) return undefined;
+  return messageSender(previousMessage) === messageSender(message) ? "mt-5" : "mt-12";
+}
+
+function messageSender(message: Doc<"messages">): "user" | "assistant" {
+  return message.role === "user" ? "user" : "assistant";
 }
 
 const SEEN_THREADS_CAP = 64;

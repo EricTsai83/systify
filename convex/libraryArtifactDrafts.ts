@@ -290,7 +290,10 @@ export const listByThread = query({
       .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
       .order("desc")
       .take(ARTIFACT_DRAFT_LIST_LIMIT);
-    return await joinDraftJobs(ctx, drafts);
+    return await joinDraftJobs(
+      ctx,
+      drafts.sort((left, right) => left.createdAt - right.createdAt),
+    );
   },
 });
 

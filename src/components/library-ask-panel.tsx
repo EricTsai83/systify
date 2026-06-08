@@ -41,6 +41,10 @@ const LOCKED_PLACEHOLDER = `${REPOSITORY_GUIDE_COPY.generateAction} to unlock Li
 const LOCKED_HINT = "Library Ask needs at least one guide section in this repository before you can send a question.";
 const DEFAULT_UPDATE_DRAFT_PROMPT = "Refresh this artifact using the codebase as the source of truth.";
 
+type LibraryAskTimelineEntry =
+  | { kind: "message"; _id: Doc<"messages">["_id"]; createdAt: number; message: Doc<"messages"> }
+  | { kind: "draft"; _id: Doc<"artifactDrafts">["_id"]; createdAt: number; entry: LibraryArtifactDraftEntry };
+
 export function LibraryAskPanel({
   repositoryId,
   threadId,
@@ -111,7 +115,7 @@ export function LibraryAskPanel({
   const [visibleRepositoryDraftIds, setVisibleRepositoryDraftIds] = useState<Doc<"artifactDrafts">["_id"][]>([]);
   const draftEntries = useMemo<LibraryArtifactDraftEntry[]>(() => {
     if (threadId) {
-      return confirmedThreadId ? (threadDrafts ?? []) : [];
+      return confirmedThreadId ? [...(threadDrafts ?? [])].sort(compareDraftEntriesByCreatedAt) : [];
     }
     if (!recentDrafts) {
       return [];
@@ -132,13 +136,33 @@ export function LibraryAskPanel({
     threadId,
     visibleRepositoryDraftIds,
   ]);
+  const timelineEntries = useMemo<LibraryAskTimelineEntry[]>(() => {
+    if (!threadId) {
+      return [];
+    }
+    return [
+      ...(messages ?? []).map((message) => ({
+        kind: "message" as const,
+        _id: message._id,
+        createdAt: message._creationTime,
+        message,
+      })),
+      ...draftEntries.map((entry) => ({
+        kind: "draft" as const,
+        _id: entry.draft._id,
+        createdAt: entry.draft.createdAt,
+        entry,
+      })),
+    ].sort(compareTimelineEntries);
+  }, [draftEntries, messages, threadId]);
+  const scrollEntries: readonly { readonly _id: string }[] | undefined = threadId ? timelineEntries : messages;
 
   // Owns stick-to-bottom, anchor preservation on prepend, sentinel
   // observer for load-older, threadId-keyed reset, and prefers-
   // reduced-motion gating for the Ask conversation.
   const conversationScroll = useChatScroll({
     threadId: confirmedThreadId,
-    messages,
+    messages: scrollEntries,
     streamingSignal: activeMessageStream?.content ?? null,
     canLoadOlder: canLoadOlderMessages,
     onLoadOlder: handleLoadOlderMessages,
@@ -424,7 +448,7 @@ export function LibraryAskPanel({
 
   const draftCards =
     draftEntries.length > 0 ? (
-      <div className="space-y-3" data-testid="artifact-draft-list">
+      <div className="space-y-5" data-testid="artifact-draft-list">
         {draftEntries.map((entry) => (
           <LibraryArtifactDraftCard
             key={entry.draft._id}
@@ -455,16 +479,26 @@ export function LibraryAskPanel({
 
       {threadId ? (
         <Conversation scroll={conversationScroll} className="min-h-0 flex-1">
-          <ConversationContent className="space-y-3 px-4 py-3" showLoadOlderSentinel={canLoadOlderMessages}>
-            {(messages ?? []).map((message) => (
-              <MessageBubble
-                key={message._id}
-                message={message}
-                activeMessageStream={activeMessageStream ?? null}
-                onSelectArtifact={onSelectArtifact}
-              />
-            ))}
-            {draftCards}
+          <ConversationContent className="gap-0 px-4 py-3" showLoadOlderSentinel={canLoadOlderMessages}>
+            {timelineEntries.map((entry, index) =>
+              entry.kind === "message" ? (
+                <div key={entry._id} className={timelineSpacingClassName(timelineEntries[index - 1], entry)}>
+                  <MessageBubble
+                    message={entry.message}
+                    activeMessageStream={activeMessageStream ?? null}
+                    onSelectArtifact={onSelectArtifact}
+                  />
+                </div>
+              ) : (
+                <div key={entry._id} className={timelineSpacingClassName(timelineEntries[index - 1], entry)}>
+                  <LibraryArtifactDraftCard
+                    entry={entry.entry}
+                    onApplied={onSelectArtifact}
+                    onRegenerated={handleRepositoryDraftRegenerated}
+                  />
+                </div>
+              ),
+            )}
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
@@ -667,6 +701,33 @@ const LIBRARY_SUGGESTIONS = [
   "Walk me through the architecture.",
   "How is data modeled across the system?",
 ];
+
+function compareDraftEntriesByCreatedAt(left: LibraryArtifactDraftEntry, right: LibraryArtifactDraftEntry) {
+  return left.draft.createdAt - right.draft.createdAt || left.draft._creationTime - right.draft._creationTime;
+}
+
+function compareTimelineEntries(left: LibraryAskTimelineEntry, right: LibraryAskTimelineEntry) {
+  if (left.createdAt !== right.createdAt) {
+    return left.createdAt - right.createdAt;
+  }
+  if (left.kind !== right.kind) {
+    return left.kind === "message" ? -1 : 1;
+  }
+  return String(left._id).localeCompare(String(right._id));
+}
+
+function timelineSpacingClassName(
+  previousEntry: LibraryAskTimelineEntry | undefined,
+  entry: LibraryAskTimelineEntry,
+): string | undefined {
+  if (!previousEntry) return undefined;
+  return timelineEntrySender(previousEntry) === timelineEntrySender(entry) ? "mt-5" : "mt-12";
+}
+
+function timelineEntrySender(entry: LibraryAskTimelineEntry): "user" | "assistant" {
+  if (entry.kind === "draft") return "assistant";
+  return entry.message.role === "user" ? "user" : "assistant";
+}
 
 /**
  * Empty-state shown when the repository has no artifacts yet. The Ask panel

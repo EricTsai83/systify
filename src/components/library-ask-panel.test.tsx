@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   ensureOpen: vi.fn(),
   closeTab: vi.fn(),
   sendMessage: vi.fn(),
+  conversationMessages: [] as Doc<"messages">[],
 }));
 
 vi.mock("convex/react", () => ({
@@ -102,7 +103,9 @@ vi.mock("@/components/chat-empty-state", () => ({
 }));
 
 vi.mock("@/components/chat-message", () => ({
-  MessageBubble: () => <div>message</div>,
+  MessageBubble: ({ message }: { message: Doc<"messages"> }) => (
+    <div data-testid="message-bubble">{message.content}</div>
+  ),
 }));
 
 vi.mock("@/components/confirm-dialog", () => ({
@@ -196,7 +199,7 @@ vi.mock("@/hooks/use-chat-lifecycle", () => ({
 
 vi.mock("@/hooks/use-conversation-thread", () => ({
   useConversationThread: () => ({
-    messages: [],
+    messages: mocks.conversationMessages,
     activeMessageStream: null,
     canLoadOlderMessages: false,
     handleLoadOlderMessages: vi.fn(),
@@ -301,6 +304,21 @@ function makeDraft(overrides: Partial<Doc<"artifactDrafts">> = {}): Doc<"artifac
   } as Doc<"artifactDrafts">;
 }
 
+function makeMessage(overrides: Partial<Doc<"messages">> = {}): Doc<"messages"> {
+  return {
+    _id: "message_1" as Id<"messages">,
+    _creationTime: 1,
+    ownerTokenIdentifier: "user|library-ask-panel",
+    repositoryId,
+    threadId: threadId as Id<"threads">,
+    role: "user",
+    status: "completed",
+    mode: "library",
+    content: "message",
+    ...overrides,
+  } as Doc<"messages">;
+}
+
 function renderPanel(overrides: Partial<React.ComponentProps<typeof LibraryAskPanel>> = {}) {
   return render(
     <LibraryAskPanel
@@ -334,6 +352,7 @@ beforeEach(() => {
   mocks.ensureOpen.mockReset();
   mocks.closeTab.mockReset().mockReturnValue(null);
   mocks.sendMessage.mockReset();
+  mocks.conversationMessages = [];
 
   mocks.useMutation.mockReset();
   mocks.useMutation.mockImplementation((reference: unknown) => {
@@ -420,6 +439,49 @@ describe("LibraryAskPanel artifact drafts", () => {
     expect(screen.getByText("Artifact update draft")).toBeInTheDocument();
     expect(screen.getByText("Reading codebase…")).toBeInTheDocument();
     expect(screen.getByText("42%")).toBeInTheDocument();
+  });
+
+  test("renders thread draft cards in the message timeline by creation time", () => {
+    queryState.threadSummary = { title: "Library Ask", lockedProvider: undefined, defaultModelName: undefined };
+    mocks.conversationMessages = [
+      makeMessage({ _id: "message_1" as Id<"messages">, _creationTime: 10, content: "Before draft" }),
+      makeMessage({ _id: "message_2" as Id<"messages">, _creationTime: 40, content: "After drafts" }),
+    ];
+    queryState.threadDrafts = [
+      {
+        draft: makeDraft({
+          _id: "draft_new" as Id<"artifactDrafts">,
+          _creationTime: 30,
+          jobId: "job_new" as Id<"jobs">,
+          status: "ready",
+          operation: "update",
+          title: "New regenerated draft",
+          createdAt: 30,
+          updatedAt: 30,
+        }),
+        job: makeJob({ _id: "job_new" as Id<"jobs">, status: "completed" }),
+      },
+      {
+        draft: makeDraft({
+          _id: "draft_old" as Id<"artifactDrafts">,
+          _creationTime: 20,
+          jobId: "job_old" as Id<"jobs">,
+          status: "discarded",
+          operation: "update",
+          title: "Old discarded draft",
+          createdAt: 20,
+          updatedAt: 50,
+        }),
+        job: makeJob({ _id: "job_old" as Id<"jobs">, status: "completed" }),
+      },
+    ];
+
+    renderPanel({ threadId });
+
+    const timelineText = screen.getByTestId("conversation").textContent ?? "";
+    expect(timelineText.indexOf("Before draft")).toBeLessThan(timelineText.indexOf("Old discarded draft"));
+    expect(timelineText.indexOf("Old discarded draft")).toBeLessThan(timelineText.indexOf("New regenerated draft"));
+    expect(timelineText.indexOf("New regenerated draft")).toBeLessThan(timelineText.indexOf("After drafts"));
   });
 
   test("does not show stale repository failed drafts on a new thread surface", () => {
