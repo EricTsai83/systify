@@ -3,14 +3,10 @@ import { paginationOptsValidator } from "convex/server";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internal } from "./_generated/api";
 import { mutation, query, internalQuery, internalMutation, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { getDefaultThreadMode } from "./lib/chatMode";
 import { assertFeatureAccess } from "./lib/entitlements";
 import { requireViewerIdentity } from "./lib/auth";
 import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
 import { getRepositorySandboxStatus } from "./lib/repositorySandbox";
-import { makeRepositoryTitle, parseGitHubUrl } from "./lib/github";
-import { pickNextRepositoryColor, touchRepositoryLastAccessed } from "./lib/repositoryPalette";
-import { recordThreadCreatedInHistory } from "./chat/historyState";
 import { startedResultValidator } from "./lib/functionResultSchemas";
 import { runRepositoryCascadeDelete } from "./lib/repositoryCascade";
 import { archiveOwnedRepository, requestRepositoryDeletion, restoreOwnedRepository } from "./lib/repositoryRetirement";
@@ -20,13 +16,7 @@ import {
   loadAccessibleRepositoryForViewer,
   requireActiveRepositoryForViewer,
 } from "./lib/repositoryAccess";
-import {
-  consumeDaytonaGlobalRateLimit,
-  consumeImportRateLimit,
-  IMPORT_JOB_LEASE_MS,
-  SANDBOX_ACTIVATION_JOB_LEASE_MS,
-  throwOperationAlreadyInProgress,
-} from "./lib/rateLimit";
+import { consumeDaytonaGlobalRateLimit, SANDBOX_ACTIVATION_JOB_LEASE_MS } from "./lib/rateLimit";
 import {
   enqueueJob,
   failRunningJob,
@@ -35,51 +25,11 @@ import {
   markQueuedJobRunning,
   runStaleJobRecovery,
 } from "./lib/jobs";
+import { startRepositoryImportFromUrl, startRepositorySyncImport } from "./lib/repositoryImportWorkflow";
 
 const FILE_COUNT_DISPLAY_LIMIT = 400;
 const REPOSITORY_DETAIL_IMPORT_ARTIFACT_LIMIT = 10;
 const REPOSITORY_LIST_TAKE = 200;
-
-async function queueImportWorkflow(
-  ctx: MutationCtx,
-  args: {
-    repositoryId: Id<"repositories">;
-    ownerTokenIdentifier: string;
-    sourceUrl: string;
-    branch?: string;
-    clearLatestRemoteSha?: boolean;
-  },
-) {
-  const jobId = await enqueueJob(ctx, {
-    kind: "import",
-    repositoryId: args.repositoryId,
-    ownerTokenIdentifier: args.ownerTokenIdentifier,
-    costCategory: "indexing",
-    triggerSource: "user",
-    leaseMs: IMPORT_JOB_LEASE_MS,
-  });
-
-  const importId = await ctx.db.insert("imports", {
-    repositoryId: args.repositoryId,
-    ownerTokenIdentifier: args.ownerTokenIdentifier,
-    sourceUrl: args.sourceUrl,
-    branch: args.branch,
-    adapterKind: "git_clone",
-    status: "queued",
-    jobId,
-  });
-
-  await ctx.db.patch(args.repositoryId, {
-    importStatus: "queued",
-    ...(args.clearLatestRemoteSha ? { latestRemoteSha: undefined } : {}),
-  });
-
-  await ctx.scheduler.runAfter(0, internal.importsNode.runImportPipeline, {
-    importId,
-  });
-
-  return { jobId, importId };
-}
 
 export const listRepositories = query({
   args: {},
@@ -332,134 +282,16 @@ export const createRepositoryImport = mutation({
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
     await assertFeatureAccess(ctx, identity, "repoImport");
-    const parsed = parseGitHubUrl(args.url);
-
-    // Check if user has GitHub connected via GitHub App installation
-    const installation = await ctx.db
-      .query("githubInstallations")
-      .withIndex("by_ownerTokenIdentifier_and_status", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("status", "active"),
-      )
-      .first();
-
-    if (!installation) {
-      throw new Error("Please connect your GitHub account first to import repositories.");
-    }
-
-    // Installation tokens can access both public and private repos
-    const accessMode = "private" as const;
-
-    // There may be more than one record if a previous deletion is still
-    // cascading (soft-deleted row lingers until background cleanup finishes)
-    // or if the user archived the repo previously and is now re-importing.
-    // Prefer an active (non-archived, non-deleting) row; fall back to the
-    // archived row and clear `archivedAt` so the user picks up where they
-    // left off without creating a duplicate.
-    const candidates = await ctx.db
-      .query("repositories")
-      .withIndex("by_ownerTokenIdentifier_and_sourceUrl_and_deletionRequestedAt", (q) =>
-        q
-          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
-          .eq("sourceUrl", parsed.normalizedUrl)
-          .eq("deletionRequestedAt", undefined),
-      )
-      .take(10);
-
-    let repository = candidates.find((row) => row.archivedAt === undefined) ?? null;
-    if (!repository) {
-      const archived = candidates
-        .filter((row) => typeof row.archivedAt === "number")
-        .sort((a, b) => (b.archivedAt ?? 0) - (a.archivedAt ?? 0))[0];
-      if (archived) {
-        await ctx.db.patch(archived._id, { archivedAt: undefined });
-        repository = (await ctx.db.get(archived._id)) ?? null;
-      }
-    }
-
-    let repositoryId = repository?._id;
-    let defaultThreadId = repository?.defaultThreadId;
-
-    if (repository && (repository.importStatus === "queued" || repository.importStatus === "running")) {
-      throwOperationAlreadyInProgress(
-        "repositoryImportInFlight",
-        "An import is already in progress for this repository.",
-      );
-    }
-
-    await consumeImportRateLimit(ctx, identity.tokenIdentifier);
-
-    if (!repository) {
-      // Visibility will be updated after the import pipeline checks GitHub API.
-      // Default to 'unknown' until the actual check completes.
-      const color = await pickNextRepositoryColor(ctx, identity.tokenIdentifier);
-      repositoryId = await ctx.db.insert("repositories", {
-        ownerTokenIdentifier: identity.tokenIdentifier,
-        sourceHost: "github",
-        sourceUrl: parsed.normalizedUrl,
-        sourceRepoFullName: parsed.fullName,
-        sourceRepoOwner: parsed.owner,
-        sourceRepoName: parsed.repo,
-        defaultBranch: args.branch ?? parsed.branch,
-        visibility: "unknown",
-        accessMode,
-        importStatus: "idle",
-        detectedLanguages: [],
-        packageManagers: [],
-        entrypoints: [],
-        fileCount: 0,
-        color,
-        lastAccessedAt: Date.now(),
-      });
-
-      repository = await ctx.db.get(repositoryId);
-    } else {
-      await touchRepositoryLastAccessed(ctx, { repositoryId: repository._id });
-    }
-
-    if (!repositoryId || !repository) {
-      throw new Error("Failed to create repository.");
-    }
-
-    const defaultThreadRow = defaultThreadId ? await ctx.db.get(defaultThreadId) : null;
-    const defaultThread = defaultThreadRow?.deletionRequestedAt === undefined ? defaultThreadRow : null;
-    let defaultThreadMode: Doc<"threads">["mode"];
-    if (!isOwnedBy(defaultThread, identity.tokenIdentifier) || defaultThread.repositoryId !== repositoryId) {
-      // Matches `resolveChatModes(true).defaultMode` for any repo-attached
-      // thread, so the auto-created default thread and a manually-created
-      // one start on the same mode.
-      defaultThreadMode = getDefaultThreadMode(true);
-      defaultThreadId = await ctx.db.insert("threads", {
-        repositoryId,
-        ownerTokenIdentifier: identity.tokenIdentifier,
-        title: `${makeRepositoryTitle(repository.sourceRepoFullName)} chat`,
-        mode: defaultThreadMode,
-        lastMessageAt: Date.now(),
-      });
-      const defaultThreadRow = (await ctx.db.get(defaultThreadId))!;
-      await recordThreadCreatedInHistory(ctx, defaultThreadRow);
-    } else {
-      defaultThreadMode = defaultThread.mode;
-    }
-
-    await ctx.db.patch(repositoryId, { accessMode, defaultThreadId });
-
-    const { jobId, importId } = await queueImportWorkflow(ctx, {
-      repositoryId,
+    const result = await startRepositoryImportFromUrl(ctx, {
       ownerTokenIdentifier: identity.tokenIdentifier,
-      sourceUrl: parsed.normalizedUrl,
-      branch: args.branch ?? parsed.branch ?? repository.defaultBranch,
+      url: args.url,
+      branch: args.branch,
     });
 
     // `defaultThreadMode` rides alongside `defaultThreadId` so the import
     // callback can route the user straight to the canonical mode-aware URL
     // (`/r/:repositoryId/discuss/:tid`) without any intermediate redirect.
-    return {
-      repositoryId,
-      importId,
-      jobId,
-      defaultThreadId,
-      defaultThreadMode,
-    };
+    return result;
   },
 });
 
@@ -473,31 +305,9 @@ export const syncRepository = mutation({
     });
     await assertFeatureAccess(ctx, identity, "syncRepository");
 
-    // Check if user has an active GitHub installation
-    const installation = await ctx.db
-      .query("githubInstallations")
-      .withIndex("by_ownerTokenIdentifier_and_status", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("status", "active"),
-      )
-      .first();
-
-    if (!installation) {
-      throw new Error("Please connect your GitHub account first to sync repositories.");
-    }
-
-    // Prevent duplicate syncs while one is already running
-    if (repository.importStatus === "queued" || repository.importStatus === "running") {
-      throwOperationAlreadyInProgress("repositoryImportInFlight", "A sync is already in progress for this repository.");
-    }
-
-    await consumeImportRateLimit(ctx, identity.tokenIdentifier);
-
-    const { jobId, importId } = await queueImportWorkflow(ctx, {
-      repositoryId: args.repositoryId,
+    const { jobId, importId } = await startRepositorySyncImport(ctx, {
       ownerTokenIdentifier: identity.tokenIdentifier,
-      sourceUrl: repository.sourceUrl,
-      branch: repository.defaultBranch,
-      clearLatestRemoteSha: true,
+      repository,
     });
 
     return { jobId, importId };

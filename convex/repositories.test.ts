@@ -463,6 +463,67 @@ describe("repository import guards", () => {
     expect(second.repositoryId).toBe(first.repositoryId);
   });
 
+  test("archived repeated imports restore the repository row and reuse its default thread", async () => {
+    const ownerTokenIdentifier = "user|repeat-archived-import";
+    const t = createTestConvex();
+    await seedGithubInstallation(t, ownerTokenIdentifier);
+    const now = Date.now();
+
+    const { repositoryId, threadId } = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/archived-repeat",
+        sourceRepoFullName: "acme/archived-repeat",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "archived-repeat",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 1,
+        color: "blue",
+        lastAccessedAt: now - 10_000,
+        archivedAt: now - 1_000,
+      });
+      const threadId = await ctx.db.insert("threads", {
+        repositoryId,
+        ownerTokenIdentifier,
+        title: "Archived repeat chat",
+        mode: "library",
+        lastMessageAt: now - 5_000,
+      });
+      await ctx.db.patch(repositoryId, { defaultThreadId: threadId });
+
+      return { repositoryId, threadId };
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const result = await viewer.mutation(api.repositories.createRepositoryImport, {
+      url: "https://github.com/acme/archived-repeat",
+    });
+
+    const state = await t.run(async (ctx) => {
+      const repository = await ctx.db.get(repositoryId);
+      const threads = await ctx.db
+        .query("threads")
+        .withIndex("by_repositoryId_and_lastMessageAt", (q) => q.eq("repositoryId", repositoryId))
+        .take(10);
+      return { repository, threads };
+    });
+
+    expect(result.repositoryId).toBe(repositoryId);
+    expect(result.defaultThreadId).toBe(threadId);
+    expect(result.defaultThreadMode).toBe("library");
+    expect(state.repository?.archivedAt).toBeUndefined();
+    expect(state.repository?.importStatus).toBe("queued");
+    expect(state.repository?.defaultThreadId).toBe(threadId);
+    expect(state.threads.map((thread) => thread._id)).toEqual([threadId]);
+  });
+
   test("createRepositoryImport rejects duplicate imports while one is already running", async () => {
     const ownerTokenIdentifier = "user|duplicate-import";
     const t = createTestConvex();

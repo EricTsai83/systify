@@ -92,6 +92,7 @@ import type * as lib_rateLimit from "../lib/rateLimit.js";
 import type * as lib_repoAnalysis from "../lib/repoAnalysis.js";
 import type * as lib_repositoryAccess from "../lib/repositoryAccess.js";
 import type * as lib_repositoryCascade from "../lib/repositoryCascade.js";
+import type * as lib_repositoryImportWorkflow from "../lib/repositoryImportWorkflow.js";
 import type * as lib_repositoryPalette from "../lib/repositoryPalette.js";
 import type * as lib_repositoryRetirement from "../lib/repositoryRetirement.js";
 import type * as lib_repositorySandbox from "../lib/repositorySandbox.js";
@@ -218,6 +219,7 @@ declare const fullApi: ApiFromModules<{
   "lib/repoAnalysis": typeof lib_repoAnalysis;
   "lib/repositoryAccess": typeof lib_repositoryAccess;
   "lib/repositoryCascade": typeof lib_repositoryCascade;
+  "lib/repositoryImportWorkflow": typeof lib_repositoryImportWorkflow;
   "lib/repositoryPalette": typeof lib_repositoryPalette;
   "lib/repositoryRetirement": typeof lib_repositoryRetirement;
   "lib/repositorySandbox": typeof lib_repositorySandbox;

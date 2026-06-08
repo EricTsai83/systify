@@ -427,6 +427,7 @@ sequenceDiagram
   participant User as User
   participant FE as Frontend
   participant Mut as createRepositoryImport or syncRepository
+  participant Intake as repositoryImportWorkflow
   participant DB as Convex DB
   participant Job as importsNode.runImportPipeline
   participant App as githubAppNode
@@ -439,8 +440,9 @@ sequenceDiagram
   App->>GH: GET /repos/{owner}/{repo} with installation token
   GH-->>App: accessible or denied
   FE->>Mut: create import or sync
-  Mut->>DB: create job, import, and repository records
-  Mut->>DB: schedule runImportPipeline
+  Mut->>Intake: start import intake
+  Intake->>DB: create or restore repository/default thread as needed; create job and import records
+  Intake->>DB: schedule runImportPipeline
   Job->>DB: load owner installation
   Job->>App: checkRepoAccess
   App->>GH: GET /repos/{owner}/{repo}
