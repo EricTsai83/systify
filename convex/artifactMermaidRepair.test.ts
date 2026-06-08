@@ -40,6 +40,36 @@ describe("replaceMatchingMermaidBlock", () => {
     expect(result?.blockIndex).toBe(0);
   });
 
+  test("uses exact raw fenced block text to disambiguate duplicate source", () => {
+    const backtickBlock = ["```mermaid", "flowchart TD", "  A --> B", "```"].join("\n");
+    const tildeBlock = ["~~~mermaid", "flowchart TD", "  A --> B", "~~~"].join("\n");
+    const markdown = ["# Doc", backtickBlock, "", tildeBlock].join("\n");
+
+    const result = replaceMatchingMermaidBlock({
+      contentMarkdown: markdown,
+      originalChart: tildeBlock,
+      repairedChart: "flowchart TD\n  A[Start] --> B[Done]",
+    });
+
+    expect(result?.blockIndex).toBe(1);
+    expect(result?.contentMarkdown).toBe(
+      ["# Doc", backtickBlock, "", "~~~mermaid", "flowchart TD", "  A[Start] --> B[Done]", "~~~"].join("\n"),
+    );
+  });
+
+  test("returns null for ambiguous code-only duplicate source", () => {
+    const duplicate = ["```mermaid", "flowchart TD", "  A --> B", "```"].join("\n");
+    const markdown = ["# Doc", duplicate, "", duplicate].join("\n");
+
+    const result = replaceMatchingMermaidBlock({
+      contentMarkdown: markdown,
+      originalChart: "flowchart TD\n  A --> B",
+      repairedChart: "flowchart TD\n  A[Start] --> B[Done]",
+    });
+
+    expect(result).toBeNull();
+  });
+
   test("returns null when the diagram is no longer present", () => {
     const result = replaceMatchingMermaidBlock({
       contentMarkdown: ["```mermaid", "flowchart TD", "  A --> B", "```"].join("\n"),
@@ -55,5 +85,11 @@ describe("stripMarkdownFence", () => {
   test("unwraps fenced Mermaid responses", () => {
     expect(stripMarkdownFence("```mermaid\nflowchart TD\n  A --> B\n```")).toBe("flowchart TD\n  A --> B");
     expect(stripMarkdownFence("~~~\nflowchart TD\n  A --> B\n~~~")).toBe("flowchart TD\n  A --> B");
+  });
+
+  test("unwraps fenced Mermaid responses inside surrounding text", () => {
+    expect(stripMarkdownFence("Here is the repair:\n\n```mermaid\nflowchart TD\n  A --> B\n```\nDone.")).toBe(
+      "flowchart TD\n  A --> B",
+    );
   });
 });

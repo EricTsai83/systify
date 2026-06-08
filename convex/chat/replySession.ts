@@ -400,6 +400,30 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
 
     let finalReplyContext = groundedReplyContext;
     let resolvedSandboxTooling = groundedReplyContext.sandboxTooling;
+
+    if (!hasProviderApiKey(modelChoice.provider)) {
+      // The heuristic path produces its full answer synchronously, so
+      // there is no LLM stream to abort. We still honor a cancellation
+      // that arrived between `markAssistantReplyRunning` and this point —
+      // the user could have clicked Stop while the context query ran —
+      // by checking the polled flag. Cooperative either way: if cancel
+      // wins the race, we route through the cancel finalize variant
+      // and skip the (very fast) heuristic write entirely.
+      if (await exitIfCancellationSettled()) {
+        return;
+      }
+      const heuristicAnswer = buildHeuristicAnswer(finalReplyContext, userPrompt, relevantChunks);
+      await ctx.runMutation(internal.chat.streaming.finalizeAssistantReply, {
+        threadId: args.threadId,
+        assistantMessageId: args.assistantMessageId,
+        jobId: args.jobId,
+        finalDelta: heuristicAnswer,
+        citationMap: persistedCitationMap,
+      });
+      emitSessionExit("completed");
+      return;
+    }
+
     if (groundedReplyContext.groundSandbox === true && groundedReplyContext.repositoryId) {
       if (await exitIfCancellationObserved()) {
         return;
@@ -443,29 +467,6 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
       if (await exitIfCancellationObserved()) {
         return;
       }
-    }
-
-    if (!hasProviderApiKey(modelChoice.provider)) {
-      // The heuristic path produces its full answer synchronously, so
-      // there is no LLM stream to abort. We still honor a cancellation
-      // that arrived between `markAssistantReplyRunning` and this point —
-      // the user could have clicked Stop while the context query ran —
-      // by checking the polled flag. Cooperative either way: if cancel
-      // wins the race, we route through the cancel finalize variant
-      // and skip the (very fast) heuristic write entirely.
-      if (await exitIfCancellationSettled()) {
-        return;
-      }
-      const heuristicAnswer = buildHeuristicAnswer(finalReplyContext, userPrompt, relevantChunks);
-      await ctx.runMutation(internal.chat.streaming.finalizeAssistantReply, {
-        threadId: args.threadId,
-        assistantMessageId: args.assistantMessageId,
-        jobId: args.jobId,
-        finalDelta: heuristicAnswer,
-        citationMap: persistedCitationMap,
-      });
-      emitSessionExit("completed");
-      return;
     }
 
     const systemPrompt = buildSystemPrompt(finalReplyContext.mode, {
@@ -540,7 +541,7 @@ async function prepareLiveSourceForReply(
     waking: 0.2,
     provisioning: 0.22,
     cloning: 0.3,
-    polling: 0.2,
+    polling: 0.32,
   };
 
   await ctx.runMutation(internal.chat.streaming.updateAssistantReplyProgress, {

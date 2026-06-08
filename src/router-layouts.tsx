@@ -259,6 +259,10 @@ export function RouteErrorBoundary() {
 }
 
 function RouteErrorActions() {
+  const { isAuthenticated } = useConvexAuth();
+  const destination = isAuthenticated ? DEFAULT_AUTHENTICATED_PATH : LANDING_PATH;
+  const actionLabel = isAuthenticated ? "Back to chat" : "Back to home";
+
   return (
     <>
       <Button onClick={() => window.location.reload()}>
@@ -266,9 +270,9 @@ function RouteErrorActions() {
         Refresh page
       </Button>
       <Button asChild variant="secondary">
-        <Link to={DEFAULT_AUTHENTICATED_PATH}>
+        <Link to={destination}>
           <HouseIcon data-icon="inline-start" weight="bold" />
-          Back to chat
+          {actionLabel}
         </Link>
       </Button>
     </>

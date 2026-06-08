@@ -120,7 +120,7 @@ export const LibraryAskThreadTabs = memo(function LibraryAskThreadTabs({
       </ScrollArea>
       <div
         aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-0 w-4 bg-gradient-to-r from-background to-transparent"
+        className="pointer-events-none absolute inset-y-0 left-0 w-2 bg-gradient-to-r from-background to-transparent"
       />
       <div className="flex shrink-0 items-center gap-0.5 border-l border-border px-1.5 py-1">
         <Button

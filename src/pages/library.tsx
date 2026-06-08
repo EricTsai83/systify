@@ -281,9 +281,7 @@ function LibraryRepository({
   );
 }
 
-type LibrarySandboxActivityStatus = NonNullable<
-  ReturnType<typeof useQuery<typeof api.repositories.getSandboxActivityStatus>>
->;
+type LibrarySandboxActivityStatus = ReturnType<typeof useQuery<typeof api.repositories.getSandboxActivityStatus>>;
 
 export function LibraryLiveSourceBadge({ status }: { status: LibrarySandboxActivityStatus | undefined }) {
   const presentation = getLibraryLiveSourcePresentation(status);
@@ -303,7 +301,7 @@ export function LibraryLiveSourceBadge({ status }: { status: LibrarySandboxActiv
 }
 
 function getLibraryLiveSourcePresentation(status: LibrarySandboxActivityStatus | undefined) {
-  if (status === undefined) {
+  if (status == null) {
     return {
       label: "Code access",
       title: "Repository code access status is loading",

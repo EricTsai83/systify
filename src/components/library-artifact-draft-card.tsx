@@ -220,8 +220,40 @@ export function LibraryArtifactDraftCard({
     api.artifacts.getById,
     entry.draft.targetArtifactId ? { artifactId: entry.draft.targetArtifactId } : "skip",
   );
+  const targetArtifactDisabledReason = useMemo(() => {
+    if (entry.draft.operation !== "update") {
+      return undefined;
+    }
+    if (!entry.draft.targetArtifactId || entry.draft.targetArtifactVersion === undefined) {
+      return "Target artifact missing or changed. Regenerate this draft before applying it.";
+    }
+    if (targetArtifact === undefined) {
+      return "Loading target artifact…";
+    }
+    if (
+      targetArtifact === null ||
+      targetArtifact._id !== entry.draft.targetArtifactId ||
+      targetArtifact.ownerTokenIdentifier !== entry.draft.ownerTokenIdentifier ||
+      targetArtifact.version !== entry.draft.targetArtifactVersion
+    ) {
+      return "Target artifact missing or changed. Regenerate this draft before applying it.";
+    }
+    return undefined;
+  }, [
+    entry.draft.operation,
+    entry.draft.ownerTokenIdentifier,
+    entry.draft.targetArtifactId,
+    entry.draft.targetArtifactVersion,
+    targetArtifact,
+  ]);
+  const targetArtifactPreviewReason =
+    targetArtifactDisabledReason === "Loading target artifact…" ? undefined : targetArtifactDisabledReason;
 
   const [isApplying, runApply] = useAsyncCallback(async () => {
+    if (targetArtifactDisabledReason !== undefined) {
+      toast.error(targetArtifactDisabledReason);
+      return;
+    }
     try {
       const result = await applyDraft({ draftId: entry.draft._id });
       onApplied(result.artifactId as ArtifactId);
@@ -309,11 +341,17 @@ export function LibraryArtifactDraftCard({
             ) : null}
           </div>
           {entry.draft.operation === "update" ? (
-            <LibraryArtifactDiffPreview
-              beforeMarkdown={targetArtifact?.contentMarkdown ?? ""}
-              afterMarkdown={entry.draft.contentMarkdown}
-              isLoading={targetArtifact === undefined}
-            />
+            targetArtifactPreviewReason ? (
+              <p className="border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
+                {targetArtifactPreviewReason}
+              </p>
+            ) : (
+              <LibraryArtifactDiffPreview
+                beforeMarkdown={targetArtifact?.contentMarkdown ?? ""}
+                afterMarkdown={entry.draft.contentMarkdown}
+                isLoading={targetArtifact === undefined}
+              />
+            )
           ) : (
             <Markdown className="max-h-96 overflow-y-auto border border-border/70 bg-background px-3 py-2 text-[12px]">
               {entry.draft.contentMarkdown}
@@ -344,7 +382,8 @@ export function LibraryArtifactDraftCard({
               type="button"
               size="sm"
               onClick={() => void runApply()}
-              disabled={isDiscarding || isApplying || isRegenerating}
+              disabled={isDiscarding || isApplying || isRegenerating || targetArtifactDisabledReason !== undefined}
+              title={targetArtifactDisabledReason}
             >
               <CheckIcon size={13} weight="bold" />
               <ButtonStateText current={isApplying ? "Applying…" : "Apply"} states={["Apply", "Applying…"]} />

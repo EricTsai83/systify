@@ -135,4 +135,9 @@ describe("validateMermaidBlock", () => {
     const markdown = ["~~~mermaid", "graph TD", "  a --> b", "~~~"].join("\n");
     expect(validateMermaidBlock(markdown)).toBe(true);
   });
+
+  it("accepts a longer closing fence", () => {
+    const markdown = ["# Architecture Diagram", "", "```mermaid", "graph TD", "  a --> b", "````"].join("\n");
+    expect(validateMermaidBlock(markdown)).toBe(true);
+  });
 });

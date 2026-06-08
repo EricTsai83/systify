@@ -100,12 +100,12 @@ function buildRepairPrompt(args: { chart: string; error: string }): string {
 
 export function stripMarkdownFence(text: string): string {
   const trimmed = text.trim();
-  const fenced = /^```(?:mermaid)?[ \t]*\r?\n([\s\S]*?)\r?\n```$/i.exec(trimmed);
+  const fenced = /```(?:mermaid)?[ \t]*\r?\n([\s\S]*?)\r?\n```/i.exec(trimmed);
   if (fenced?.[1] !== undefined) {
     return fenced[1].trim();
   }
 
-  const tildeFenced = /^~~~(?:mermaid)?[ \t]*\r?\n([\s\S]*?)\r?\n~~~$/i.exec(trimmed);
+  const tildeFenced = /~~~(?:mermaid)?[ \t]*\r?\n([\s\S]*?)\r?\n~~~/i.exec(trimmed);
   if (tildeFenced?.[1] !== undefined) {
     return tildeFenced[1].trim();
   }

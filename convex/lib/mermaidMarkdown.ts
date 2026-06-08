@@ -23,7 +23,7 @@ export function extractMermaidCodeBlocks(markdown: string): MermaidCodeBlock[] {
       continue;
     }
 
-    const closingFence = new RegExp(`^[ \\t]*${escapeRegExp(fence)}[ \\t]*$`);
+    const closingFence = new RegExp(`^[ \\t]*${escapeRegExp(fence[0] ?? "")}{3,}[ \\t]*$`);
     for (let closeIndex = index + 1; closeIndex < lines.length; closeIndex += 1) {
       if (!closingFence.test(lines[closeIndex])) {
         continue;

@@ -523,7 +523,7 @@ describe("LibraryAskPanel artifact drafts", () => {
     expect(screen.getByRole("heading", { name: "Ask the Library" })).toBeInTheDocument();
   });
 
-  test("ready draft Apply and Discard buttons call draft mutations", async () => {
+  test("ready draft Apply button calls apply mutation and selects the artifact", async () => {
     const onSelectArtifact = vi.fn();
     queryState.threadSummary = { title: "Library Ask", lockedProvider: undefined, defaultModelName: undefined };
     queryState.threadDrafts = [
@@ -541,6 +541,18 @@ describe("LibraryAskPanel artifact drafts", () => {
       expect(mocks.applyDraft).toHaveBeenCalledWith({ draftId: "draft_1" });
       expect(onSelectArtifact).toHaveBeenCalledWith("artifact_new");
     });
+  });
+
+  test("ready draft Discard button calls discard mutation", async () => {
+    queryState.threadSummary = { title: "Library Ask", lockedProvider: undefined, defaultModelName: undefined };
+    queryState.threadDrafts = [
+      {
+        draft: makeDraft({ status: "ready", operation: "create" }),
+        job: makeJob({ status: "completed", stage: "Ready to review", progress: 1 }),
+      },
+    ];
+
+    renderPanel({ threadId });
 
     fireEvent.click(screen.getByRole("button", { name: /^Discard$/i }));
 

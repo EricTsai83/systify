@@ -358,8 +358,12 @@ export function LibraryAskPanel({
     premiumModelsDisabledReason,
     highReasoningDisabledReason,
   });
-  const documentActionDisabledReason = artifactDraftDisabledReason ?? draftModelAccessDisabledReason ?? undefined;
-  const composerDisabledReason = askDisabledReason ?? (isLocked ? LOCKED_HINT : askModelAccessDisabledReason);
+  const threadConfirmationDisabledReason =
+    threadId && confirmedThreadId === null ? "Waiting for thread confirmation…" : undefined;
+  const documentActionDisabledReason =
+    threadConfirmationDisabledReason ?? artifactDraftDisabledReason ?? draftModelAccessDisabledReason ?? undefined;
+  const composerDisabledReason =
+    askDisabledReason ?? threadConfirmationDisabledReason ?? (isLocked ? LOCKED_HINT : askModelAccessDisabledReason);
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       if (composerDisabledReason != null || latestAssistantInFlight) {
@@ -407,6 +411,10 @@ export function LibraryAskPanel({
       setError("Loading models — try again in a moment.");
       return;
     }
+    if (threadId && !confirmedThreadId) {
+      setError(threadConfirmationDisabledReason ?? "Waiting for thread confirmation…");
+      return;
+    }
     if (draftIntent.operation === "create" && draftIntent.title.trim().length === 0) {
       setError("Add a title for the new artifact.");
       return;
@@ -421,7 +429,7 @@ export function LibraryAskPanel({
     try {
       const result = await requestDraft({
         repositoryId,
-        threadId: confirmedThreadId ?? undefined,
+        threadId: confirmedThreadId ? confirmedThreadId : undefined,
         operation: draftIntent.operation,
         prompt: requestPrompt,
         title: draftIntent.operation === "create" ? draftIntent.title : undefined,
@@ -436,6 +444,7 @@ export function LibraryAskPanel({
           current.includes(result.draftId) ? current : [...current, result.draftId],
         );
       }
+      setError(null);
       setDraftIntent(null);
     } catch (caught) {
       setError(toUserErrorMessage(caught, "Failed to start artifact draft."));

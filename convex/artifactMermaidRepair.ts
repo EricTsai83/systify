@@ -32,20 +32,37 @@ export function replaceMatchingMermaidBlock(args: {
   repairedChart: string;
 }): MermaidBlockReplacement | null {
   const blocks = extractMermaidCodeBlocks(args.contentMarkdown);
-  const match = blocks.find((block) => block.code === args.originalChart);
-  const trimmedMatch = match ?? blocks.find((block) => block.code.trim() === args.originalChart.trim());
+  const lines = args.contentMarkdown.split(/\r?\n/);
+  const originalChart = args.originalChart.trim();
+  const rawBlocks = blocks.map((block) => ({
+    block,
+    rawBlock: lines.slice(block.startLineIndex - 1, block.endLineIndex + 1).join("\n"),
+  }));
 
-  if (!trimmedMatch) {
+  const selectedRawBlock =
+    selectOnlyMatch(
+      rawBlocks,
+      ({ rawBlock }) => rawBlock === args.originalChart || rawBlock.trim() === originalChart,
+    ) ??
+    selectOnlyMatch(rawBlocks, ({ block }) => block.code === args.originalChart) ??
+    selectOnlyMatch(rawBlocks, ({ block }) => block.code.trim() === originalChart);
+
+  if (!selectedRawBlock) {
     return null;
   }
 
   return {
     contentMarkdown: replaceMermaidCodeBlocks(
       args.contentMarkdown,
-      new Map([[trimmedMatch.blockIndex, args.repairedChart.trim()]]),
+      new Map([[selectedRawBlock.block.blockIndex, args.repairedChart.trim()]]),
     ),
-    blockIndex: trimmedMatch.blockIndex,
+    blockIndex: selectedRawBlock.block.blockIndex,
   };
+}
+
+function selectOnlyMatch<T>(values: readonly T[], predicate: (value: T) => boolean): T | null {
+  const matches = values.filter(predicate);
+  return matches.length === 1 ? matches[0] : null;
 }
 
 export const getRepairContext = internalQuery({
