@@ -11,6 +11,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { AppSidebarLeft } from "@/components/app-sidebar";
 import { ArtifactPanel } from "@/components/artifact-panel";
 import { TopBar } from "@/components/top-bar";
+import { ThreadSearchDialog } from "@/components/thread-search-dialog";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { AppNotice } from "@/components/app-notice";
 import { ChatContainer } from "@/components/chat-panel";
@@ -148,6 +149,7 @@ export function RepositoryShell({
   const [isArtifactSheetOpen, setIsArtifactSheetOpen] = useState(false);
   const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false);
   const [isStatusOpen, setIsStatusOpen] = useState(false);
+  const [isThreadSearchOpen, setIsThreadSearchOpen] = useState(false);
   const [isDesktopLayout, setIsDesktopLayout] = useState<boolean>(() => {
     if (typeof window === "undefined") {
       return true;
@@ -567,10 +569,21 @@ export function RepositoryShell({
           availableRepositories={repositories ?? []}
           onThreadMovedToRepository={handleThreadMovedToRepository}
           isDesktopLayout={isDesktopLayout}
+          onSearchThreads={() => setIsThreadSearchOpen(true)}
+          onNewThread={handleRequestNewThread}
           onSync={() => void handleSync()}
           syncDisabledReason={syncDisabledReason}
           onViewArtifact={handleSelectArtifact}
           showSystemStatus={isArtifactPanelEnabled}
+        />
+
+        <ThreadSearchDialog
+          open={isThreadSearchOpen}
+          onOpenChange={setIsThreadSearchOpen}
+          repositoryId={currentRepositoryId}
+          mode={chatMode}
+          selectedThreadId={effectiveSelectedThreadId}
+          onSelectThread={handleSelectThread}
         />
 
         {isRepoArchived ? (

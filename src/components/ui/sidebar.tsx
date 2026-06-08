@@ -63,6 +63,15 @@ export function useSidebar(side: "left" | "right" = "left"): SidebarSideState {
   return side === "right" ? ctx.right : ctx.left;
 }
 
+export function useSidebarLayout() {
+  const ctx = React.useContext(SidebarContext);
+  if (!ctx) throw new Error("useSidebarLayout must be used within a SidebarProvider");
+  return {
+    isMobile: ctx.isMobile,
+    isSheetMode: ctx.isSheetMode,
+  };
+}
+
 export function SidebarProvider({
   defaultOpen = true,
   children,

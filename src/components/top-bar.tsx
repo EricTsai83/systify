@@ -8,12 +8,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { SidebarTrigger } from "@/components/ui/sidebar";
 import { RepoInfoPopover } from "@/components/repo-info-popover";
 import { RepoStatusIndicator } from "@/components/repo-status-indicator";
 import { SwapThreadRepositoryControl } from "@/components/swap-thread-repository-control";
 import { StatusPill } from "@/components/status-pill";
 import { StatusPanel } from "@/components/status-panel";
+import { ChatModeControls } from "@/components/chat-mode-controls";
 import type { AttachedRepositorySummary } from "@/hooks/use-thread-capabilities";
 import type { ArtifactId, RepositoryId, SandboxModeStatus, ThreadId, ThreadMode } from "@/lib/types";
 
@@ -76,6 +76,8 @@ export function TopBar({
   onPermanentDeleteRepo,
   onThreadMovedToRepository,
   isDesktopLayout,
+  onSearchThreads,
+  onNewThread,
   onSync,
   syncDisabledReason,
   onViewArtifact,
@@ -96,6 +98,8 @@ export function TopBar({
   onPermanentDeleteRepo: () => void;
   onThreadMovedToRepository: (repositoryId: RepositoryId | null, mode: ThreadMode | null) => void;
   isDesktopLayout: boolean;
+  onSearchThreads: () => void;
+  onNewThread: () => void;
   onSync: () => void;
   syncDisabledReason?: string;
   onViewArtifact: (artifactId: ArtifactId) => void;
@@ -121,7 +125,7 @@ export function TopBar({
 }) {
   return (
     <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
-      <SidebarTrigger />
+      <ChatModeControls onSearchThreads={onSearchThreads} onNewThread={onNewThread} />
       {/*
        * Title block renders only once `repoDetail` is fully resolved. Earlier
        * versions surfaced the cached repo name through a `<h1>` fallback so
