@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type React from "react";
 import { Link } from "react-router-dom";
 import {
@@ -9,15 +10,19 @@ import {
   DatabaseIcon,
   LightningIcon,
   StackIcon,
+  StopCircleIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { Logo } from "@/components/logo";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useTimeUntil, useRelativeTime } from "@/hooks/use-relative-time";
 import {
   presentRepositoryIntelligenceSurface,
@@ -25,6 +30,7 @@ import {
   type OperationTone,
   type SurfaceStatus,
 } from "@/lib/operations";
+import { toUserErrorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 import { DEFAULT_AUTHENTICATED_PATH, repositoryPath } from "@/route-paths";
 
@@ -35,9 +41,10 @@ import { DEFAULT_AUTHENTICATED_PATH, repositoryPath } from "@/route-paths";
  * who is in Discuss mode (where the pill is intentionally hidden) still
  * has a single place to answer "what is my system doing right now".
  *
- * Read-only by design. Activate / stop / sync affordances stay on the
- * per-repository TopBar where the user already has the repository
- * context — Resources is a navigation surface, not a control plane.
+ * Repository-centric resource control plane. It keeps the actions scoped to
+ * one repository at a time: open the repo for sync/history work, and stop the
+ * current Live source environment when one exists. The next live-source task
+ * prepares a fresh environment automatically.
  */
 export function ResourcesPage() {
   return (
@@ -93,7 +100,8 @@ export function ResourcesSettingsSection() {
     <>
       <p className="mb-4 text-sm leading-relaxed text-muted-foreground sm:mb-5">
         Live status for every repository you have imported. Track repository knowledge, live source access, and remote
-        updates in one place. Open a repository to sync, refresh, or activate resources.
+        updates in one place. Open a repository to sync or refresh knowledge, and stop live source environments you no
+        longer need.
       </p>
 
       {inventory === undefined ? (
@@ -197,6 +205,9 @@ function ResourceSummarySkeleton() {
 }
 
 function ResourceRow({ row }: { row: InventoryRow }) {
+  const requestSandboxCleanup = useMutation(api.ops.requestSandboxCleanup);
+  const [cleanupError, setCleanupError] = useState<string | null>(null);
+  const [isStopDialogOpen, setIsStopDialogOpen] = useState(false);
   const intelligence = presentRepositoryIntelligenceSurface({
     importStatus: row.importStatus,
     isSyncing: isRepositorySyncing(row),
@@ -208,6 +219,17 @@ function ResourceRow({ row }: { row: InventoryRow }) {
   });
   const lastSyncedLabel = useRelativeTime(row.lastImportedAt);
   const targetPath = repositoryPath(row.repositoryId);
+  const sandboxAction = getSandboxCleanupAction(row);
+  const [isStoppingSandbox, stopSandbox] = useAsyncCallback(async () => {
+    setCleanupError(null);
+    try {
+      await requestSandboxCleanup({ repositoryId: row.repositoryId });
+      setIsStopDialogOpen(false);
+    } catch (error) {
+      setIsStopDialogOpen(false);
+      setCleanupError(toUserErrorMessage(error, "Couldn't stop live source. Try again."));
+    }
+  });
 
   return (
     <Card className="p-4 transition-colors hover:border-foreground/25">
@@ -241,6 +263,7 @@ function ResourceRow({ row }: { row: InventoryRow }) {
               />
             </div>
             <div className="mt-2 flex min-h-4 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] leading-4 text-muted-foreground sm:text-xs">
+              <SandboxPolicy sandbox={row.sandbox} />
               {sandbox.ttlExpiresAt ? <SandboxExpiry ttlExpiresAt={sandbox.ttlExpiresAt} /> : null}
               {lastSyncedLabel ? (
                 <span className="inline-flex items-center gap-1">
@@ -255,15 +278,60 @@ function ResourceRow({ row }: { row: InventoryRow }) {
                 </span>
               ) : null}
             </div>
+            {cleanupError ? (
+              <p className="mt-2 text-[11px] leading-4 text-destructive" role="alert">
+                {cleanupError}
+              </p>
+            ) : null}
           </div>
         </div>
-        <div className="flex flex-row gap-2 sm:shrink-0">
+        <div className="flex flex-row flex-wrap gap-2 sm:shrink-0 sm:justify-end">
+          {sandboxAction ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="flex-1 sm:w-32 sm:flex-none"
+              onClick={() => setIsStopDialogOpen(true)}
+              disabled={isStoppingSandbox}
+            >
+              <StopCircleIcon weight="bold" />
+              <ButtonStateText
+                current={isStoppingSandbox ? "Stopping…" : sandboxAction.label}
+                states={[sandboxAction.label, "Stopping…"]}
+              />
+            </Button>
+          ) : null}
           <Button asChild type="button" variant="secondary" size="sm" className="flex-1 sm:w-32 sm:flex-none">
             <Link to={targetPath}>Open repository</Link>
           </Button>
         </div>
       </div>
+      <ConfirmDialog
+        open={isStopDialogOpen}
+        onOpenChange={setIsStopDialogOpen}
+        title="Stop live source?"
+        description="This closes the current live source environment. The next live-source task will prepare a fresh one."
+        actionLabel={sandboxAction?.label ?? "Stop live source"}
+        loadingLabel="Stopping…"
+        isPending={isStoppingSandbox}
+        onConfirm={() => {
+          void stopSandbox();
+        }}
+      />
     </Card>
+  );
+}
+
+function SandboxPolicy({ sandbox }: { sandbox: InventoryRow["sandbox"] }) {
+  if (!sandbox?.autoStopIntervalMinutes) {
+    return null;
+  }
+  return (
+    <span className="inline-flex items-center gap-1">
+      <LightningIcon size={11} weight="bold" aria-hidden="true" />
+      Auto-stops after {formatMinutes(sandbox.autoStopIntervalMinutes)} idle
+    </span>
   );
 }
 
@@ -367,6 +435,16 @@ function ResourceEmptyState() {
   );
 }
 
+function getSandboxCleanupAction(row: InventoryRow): { label: string } | null {
+  if (!row.sandbox || row.sandbox.status === "archived") {
+    return null;
+  }
+  if (row.sandbox.status === "provisioning") {
+    return { label: "Cancel setup" };
+  }
+  return { label: "Stop live source" };
+}
+
 function isRepositorySyncing(row: InventoryRow) {
   return row.importStatus === "queued" || row.importStatus === "running";
 }
@@ -389,6 +467,10 @@ function getRowTone(intelligence: SurfaceStatus, sandbox: SurfaceStatus): Operat
 
 function formatCount(value: number) {
   return new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value);
+}
+
+function formatMinutes(value: number) {
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value)} min`;
 }
 
 function toneTextClassName(tone: OperationTone) {

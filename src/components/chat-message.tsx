@@ -20,19 +20,18 @@ import { CopyIcon, CheckIcon, WarningCircleIcon, GaugeIcon, ClockIcon, CpuIcon, 
  *   - `"Library + Sandbox"` — both grounding flags on
  *   - `"Library"` — only library grounding
  *   - `"Sandbox"` — only sandbox grounding
- *   - `"Library"` — Library-mode messages (mode === "library")
  *   - `null` — ungrounded Discuss replies and user messages
  *
- * Library-mode rows are tagged simply as "Library" — the mode label and
- * grounding-derived chips are resolved here so the message bubble does
- * not need to know about the mode/grounding split.
+ * Library-mode rows do not need a mode badge; the Library page already
+ * provides that context. Discuss-mode grounding chips remain useful because
+ * they explain which optional grounding axes produced the reply.
  */
 function deriveGroundingChip(message: Doc<"messages">): string | null {
   if (message.role !== "assistant") {
     return null;
   }
   if (message.mode === "library") {
-    return "Library";
+    return null;
   }
   const groundLibrary = message.groundLibrary === true;
   const groundSandbox = message.groundSandbox === true;

@@ -154,6 +154,18 @@ describe("getSandboxActivityStatus", () => {
     const status = await viewer.query(api.repositories.getSandboxActivityStatus, { repositoryId });
     expect(status.kind).toBe("expiring_soon");
   });
+
+  test("returns preparing when the latest sandbox row is provisioning without an active job", async () => {
+    const ownerTokenIdentifier = "user|status-provisioning";
+    const t = createTestConvex();
+    const repositoryId = await seedRepoWithSandbox(t, ownerTokenIdentifier, "provisioning");
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const status = await viewer.query(api.repositories.getSandboxActivityStatus, { repositoryId });
+    expect(status.kind).toBe("preparing");
+    expect(status.activeJob).toBeNull();
+    expect(status.sandbox?.status).toBe("provisioning");
+  });
 });
 
 describe("requestSandboxActivation", () => {
@@ -195,7 +207,7 @@ describe("requestSandboxActivation", () => {
     expect(activationJobs).toHaveLength(1);
   });
 
-  test("getSandboxActivityStatus reports activating while a job is in flight", async () => {
+  test("getSandboxActivityStatus reports preparing while a sandbox-backed job is in flight", async () => {
     const ownerTokenIdentifier = "user|activate-status-flip";
     const t = createTestConvex();
     const repositoryId = await seedRepoWithSandbox(t, ownerTokenIdentifier, "archived");
@@ -203,7 +215,7 @@ describe("requestSandboxActivation", () => {
 
     await viewer.mutation(api.repositories.requestSandboxActivation, { repositoryId });
     const status = await viewer.query(api.repositories.getSandboxActivityStatus, { repositoryId });
-    expect(status.kind).toBe("activating");
+    expect(status.kind).toBe("preparing");
     expect(status.activeJob?.kind).toBe("sandbox_activation");
   });
 });

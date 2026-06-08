@@ -44,7 +44,6 @@
     "@streamdown/cjk": "^1.0.3",
     "@streamdown/code": "^1.1.1",
     "@streamdown/math": "^1.0.2",
-    "@streamdown/mermaid": "^1.0.2",
     "@t3-oss/env-core": "^0.13.11",
     "@workos-inc/authkit-react": "^0.16.1",
     "ai": "^6.0.191",

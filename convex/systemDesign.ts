@@ -12,7 +12,7 @@ import {
   systemDesignKindValidator,
   type SystemDesignKind,
 } from "./lib/systemDesign";
-import { createArtifactInMutation, deleteArtifactInternal } from "./artifactStore";
+import { replaceArtifactInFolderWrite } from "./lib/artifactWrites";
 import {
   completeRunningJob,
   failRunningJob,
@@ -23,17 +23,13 @@ import {
   updateRunningJobProgress,
 } from "./lib/jobs";
 import {
-  assertSandboxDailyCostBudget,
   consumeDaytonaGlobalRateLimit,
-  consumeSandboxDailyCost,
   consumeSystemDesignRateLimit,
-  getSandboxReplyEstimateCents,
   SYSTEM_DESIGN_JOB_LEASE_MS,
 } from "./lib/rateLimit";
 import { listPickableModels, reasoningEffortValidator, type ReasoningEffort } from "./lib/llmCatalog";
 import { llmProviderValidator, type LlmProvider } from "./lib/llmProvider";
 import { loadViewerModelPreferences } from "./lib/userPreferences";
-import { costUsdToCents } from "./lib/llmPricing";
 import {
   persistedArtifactResultValidator,
   recordedKindRunResultValidator,
@@ -41,7 +37,10 @@ import {
 } from "./lib/functionResultSchemas";
 import { logInfo, logWarn } from "./lib/observability";
 import { SYSTEM_DESIGN_PROMPT_VERSIONS } from "./lib/systemDesignPrompts";
-import { SYSTEM_DESIGN_KIND_BUDGET_ESTIMATE_USD, recordUserUsageEvent, reserveUserUsageBudget } from "./lib/userCost";
+import {
+  reserveSandboxLibraryGenerationBudget,
+  settleSandboxLibraryGenerationUsage,
+} from "./lib/sandboxLibraryGenerationAccounting";
 import {
   SYSTEM_DESIGN_DEFAULT_MODEL_CHOICE,
   buildSystemDesignJobSummary,
@@ -552,8 +551,9 @@ export const getGenerationContext = internalQuery({
  * markdown is ready. Resolves the destination folder by `systemKey`, replaces
  * any existing artifact of the same kind in the same folder (so re-running
  * the publication overwrites rather than accumulates), and writes the new
- * row through the standard `createArtifactInMutation` path so chunking +
- * indexing kick in automatically.
+ * row through the Library artifact write module so replacement cleanup,
+ * freshness, chunking state, provenance, and indexing scheduling stay
+ * together.
  */
 export const persistGeneratedArtifact = internalMutation({
   args: {
@@ -602,21 +602,7 @@ export const persistGeneratedArtifact = internalMutation({
       });
     }
 
-    const existing = await ctx.db
-      .query("artifacts")
-      .withIndex("by_repositoryId_and_folderId", (q) =>
-        q.eq("repositoryId", args.repositoryId).eq("folderId", targetFolder._id),
-      )
-      .collect();
-    const stale = existing.find((row) => row.kind === args.kind);
-    if (stale) {
-      // Cascade through `deleteArtifactInternal` so `artifactChunks` are
-      // dropped with the row. A raw `db.delete` here would leak orphan
-      // chunks every time a kind is re-generated.
-      await deleteArtifactInternal(ctx, stale._id);
-    }
-
-    const artifactId = await createArtifactInMutation(ctx, {
+    const artifactId = await replaceArtifactInFolderWrite(ctx, {
       repositoryId: args.repositoryId,
       jobId: args.jobId,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
@@ -740,11 +726,12 @@ export const getJobModelChoice = internalQuery({
  * failed with `transport_rate_limit` so a multi-kind job that runs
  * past the cap fails cleanly rather than crashes.
  *
- * Uses the existing chat-reply estimate (`getSandboxReplyEstimateCents`)
- * which sits at $0.10 by default — System Design kinds with full tool
- * loops can exceed that, but the estimate's role is "is the bucket
- * obviously empty?" not "exactly what will this cost". Settlement on
- * `recordKindRun` charges the actual cost.
+ * Uses the shared sandbox-backed Library generation budget reservation,
+ * which keeps System Design kinds and artifact drafts on the same
+ * estimate path. System Design kinds with full tool loops can exceed the
+ * estimate, but the estimate's role is "is the bucket obviously empty?"
+ * not "exactly what will this cost". Settlement on `recordKindRun`
+ * charges the actual cost.
  */
 export const assertKindCostBudget = internalMutation({
   args: {
@@ -755,16 +742,10 @@ export const assertKindCostBudget = internalMutation({
     startedAt: v.number(),
   },
   handler: async (ctx, args): Promise<void> => {
-    await assertSandboxDailyCostBudget(ctx, {
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      repositoryId: args.repositoryId,
-      estimateCents: getSandboxReplyEstimateCents(),
-    });
-    await reserveUserUsageBudget(ctx, {
+    await reserveSandboxLibraryGenerationBudget(ctx, {
       sourceId: `systemDesign:${args.jobId}:${args.kind}:${args.startedAt}`,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
-      feature: "systemDesign",
-      estimatedCostUsd: SYSTEM_DESIGN_KIND_BUDGET_ESTIMATE_USD,
+      repositoryId: args.repositoryId,
       occurredAtMs: args.startedAt,
     });
   },
@@ -776,9 +757,9 @@ export const assertKindCostBudget = internalMutation({
  * the gateway (not the pre-check estimate), so the daily cap reflects
  * actual spend.
  *
- * `cents <= 0` short-circuits the cap settle (heuristic / unknown
- * cost paths) — `consumeSandboxDailyCost` is idempotent on
- * non-positive amounts.
+ * `cached_hit` rows skip settlement because the artifact was already paid
+ * for. Non-positive or unknown costs short-circuit inside the shared
+ * settlement helper.
  */
 export const recordKindRun = internalMutation({
   args: {
@@ -836,30 +817,19 @@ export const recordKindRun = internalMutation({
     });
 
     if (args.status !== "cached_hit") {
-      await recordUserUsageEvent(ctx, {
+      await settleSandboxLibraryGenerationUsage(ctx, {
         sourceId: args.sourceId ?? `systemDesignKindRun:${kindRunId}`,
         ownerTokenIdentifier: args.ownerTokenIdentifier,
-        feature: "systemDesign",
-        occurredAtMs: args.startedAt,
-        usd: args.totalCostUsd,
-        inputTokens: args.inputTokens,
-        outputTokens: args.outputTokens,
-        cachedInputTokens: args.cachedInputTokens,
-        cacheWriteTokens: args.cacheWriteTokens,
-        reasoningTokens: args.reasoningTokens,
-      });
-    }
-
-    // Daily cap settlement. `cached_hit` rows have no incremental
-    // spend (the artifact was already paid for). Non-positive costs
-    // (heuristic, pricing miss) short-circuit inside
-    // `consumeSandboxDailyCost`.
-    const settleCents = args.status === "cached_hit" ? undefined : costUsdToCents(args.totalCostUsd);
-    if (settleCents !== undefined && settleCents > 0) {
-      await consumeSandboxDailyCost(ctx, {
-        ownerTokenIdentifier: args.ownerTokenIdentifier,
         repositoryId: args.repositoryId,
-        cents: settleCents,
+        occurredAtMs: args.startedAt,
+        totalCostUsd: args.totalCostUsd,
+        usage: {
+          inputTokens: args.inputTokens,
+          outputTokens: args.outputTokens,
+          cachedInputTokens: args.cachedInputTokens,
+          cacheWriteTokens: args.cacheWriteTokens,
+          reasoningTokens: args.reasoningTokens,
+        },
       });
     }
 

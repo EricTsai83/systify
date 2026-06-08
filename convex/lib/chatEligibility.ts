@@ -51,8 +51,9 @@ export type AxisVerdict =
     };
 
 /**
- * Sandbox grounding carries an extra `isActivatable` flag so the composer
- * can render an Activate CTA on a closed-but-recoverable gate.
+ * Sandbox grounding carries an extra `isActivatable` flag for
+ * closed-but-recoverable liveness states. The composer treats that as
+ * "selectable intent" (prepare on send), not as a manual activation CTA.
  */
 export type SandboxGroundingVerdict =
   | { readonly enabled: true }
@@ -126,13 +127,11 @@ export const GROUNDING_LIBRARY_REASON_NO_ARTIFACT =
   "Generate at least one system design artifact to enable Library grounding.";
 
 export const GROUNDING_SANDBOX_REASON_NO_REPO = "Attach a repository to ground replies in live source.";
-export const GROUNDING_SANDBOX_REASON_NO_SANDBOX = "Provision a sandbox to ground replies in live source.";
+export const GROUNDING_SANDBOX_REASON_NO_SANDBOX = "Live source will be prepared when a task needs it.";
 export const GROUNDING_SANDBOX_REASON_PROVISIONING =
-  "Sandbox is provisioning — live-source grounding will be available once it is ready.";
-export const GROUNDING_SANDBOX_REASON_EXPIRED =
-  "Sandbox expired — provision a new sandbox to use live-source grounding.";
-export const GROUNDING_SANDBOX_REASON_FAILED =
-  "Sandbox provisioning failed — provision a new sandbox to use live-source grounding.";
+  "Live source is preparing. You can keep Sandbox grounding selected.";
+export const GROUNDING_SANDBOX_REASON_EXPIRED = "Live source will be prepared when a task needs it.";
+export const GROUNDING_SANDBOX_REASON_FAILED = "Live source will be prepared when a task needs it.";
 
 const ASK_REASON_NO_REPO = "Attach a repository and produce at least one artifact before asking a question.";
 const ASK_REASON_NO_ARTIFACT = "Library Ask needs at least one artifact in this repository.";
@@ -175,8 +174,9 @@ export function resolveChatModes(hasAttachedRepo: boolean): ChatModeResolution {
  * Compute the Sandbox grounding axis from the (sandbox lifecycle, cost cap)
  * matrix. The composer renders the `Sandbox` toggle as disabled when this
  * returns `enabled: false`, with `message` as the tooltip and
- * `isActivatable: true` flagging the "no sandbox provisioned yet — click
- * to start one" sub-state.
+ * `isActivatable: true` flagging recoverable liveness states where the
+ * user can still select Sandbox grounding and let the task prepare live
+ * source lazily.
  *
  * Precedence: cost cap → lifecycle. The cost cap is the more actionable
  * signal for a viewer who already has a healthy sandbox.
@@ -184,7 +184,7 @@ export function resolveChatModes(hasAttachedRepo: boolean): ChatModeResolution {
  * Exported so the per-thread read path (`threadContext.enrichThreadContext`)
  * can derive `sandboxIsActivatable` from this verdict instead of
  * recomputing the (repo + cost-gate + status) tuple in parallel —
- * keeping the activation rule a single source of truth.
+ * keeping the recoverable/selectable rule a single source of truth.
  */
 export function resolveSandboxGroundingAxis(
   hasAttachedRepo: boolean,
@@ -219,7 +219,7 @@ export function resolveSandboxGroundingAxis(
         enabled: false,
         code: "sandbox_provisioning",
         message: GROUNDING_SANDBOX_REASON_PROVISIONING,
-        isActivatable: false,
+        isActivatable: true,
       };
     case "expired":
       return {

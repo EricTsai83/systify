@@ -27,6 +27,7 @@
  * importing it bounded.
  */
 
+import { extractMermaidCodeBlocks } from "./mermaidMarkdown";
 import type { SystemDesignKind } from "./systemDesign";
 
 /**
@@ -392,17 +393,14 @@ export function validateRequiredSections(
 
 /**
  * Pure validator for the `architecture_diagram` kind — checks that
- * the markdown contains at least one fenced \`\`\`mermaid block.
+ * the markdown contains at least one closed fenced \`\`\`mermaid block.
  *
- * Intentionally lax: we do NOT parse the Mermaid syntax. A future
- * iteration can run `mermaid-cli` over the block to catch syntactic
- * errors, but that requires shelling out and the current Node action
- * doesn't have that toolchain. Today's check ensures the block exists
- * — bad syntax surfaces as a broken render in the artifact reader,
- * not as a quality reject.
+ * Mermaid syntax itself is validated by the renderer. This server-side
+ * gate stays intentionally structural so it does not couple background
+ * generation to browser-oriented Mermaid rendering internals.
  */
 export function validateMermaidBlock(markdown: string): boolean {
-  return /```\s*mermaid[\s\S]*?```/i.test(markdown);
+  return extractMermaidCodeBlocks(markdown).length > 0;
 }
 
 function normalizeHeading(text: string): string {

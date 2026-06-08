@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 
 import type React from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { usePaginatedQuery, useQuery } from "convex/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { getFunctionName } from "convex/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { ChatContainer, ChatPanel } from "./chat-panel";
-import type { ArtifactId, MessageId, ThreadId } from "@/lib/types";
+import type { ArtifactId, MessageId, RepositoryId, ThreadId } from "@/lib/types";
 
 // `<ToolCallTrace>` calls `useQuery` for the live event subscription. For
 // the chat-panel suite we only care that the trace component does not
@@ -151,6 +151,7 @@ const queryName = (query: unknown) => {
 
 afterEach(() => {
   cleanup();
+  vi.mocked(useMutation).mockClear();
   vi.mocked(useQuery).mockReset();
   vi.mocked(useQuery).mockReturnValue([]);
   vi.mocked(usePaginatedQuery).mockReset();
@@ -316,6 +317,92 @@ describe("ChatPanel streaming rendering", () => {
             args.capability === "sandbox",
         ),
     ).toBe(true);
+  });
+
+  test("allows send when Sandbox grounding is selected and live source is not ready", async () => {
+    const onSendMessage = vi.fn();
+    render(
+      <ChatPanel
+        selectedThreadId={null}
+        messages={undefined}
+        activeMessageStream={undefined}
+        isChatLoading={false}
+        chatInput="Use the live source"
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={{
+          library: { enabled: true },
+          sandbox: {
+            enabled: false,
+            code: "sandbox_missing",
+            message: "Live source will be prepared when a task needs it.",
+            isActivatable: true,
+          },
+        }}
+        isSending={false}
+        onSendMessage={onSendMessage}
+        sandboxModeStatus={{
+          reasonCode: "missing_sandbox",
+          message: "Live source will be prepared when a task needs it.",
+        }}
+        isSyncing={false}
+        onSync={vi.fn()}
+        attachedRepositoryId={"repo_1" as RepositoryId}
+        repositoryId={"repo_1" as RepositoryId}
+      />,
+    );
+
+    const sendButton = screen.getByTestId("chat-panel-send-button");
+    expect(sendButton).not.toBeDisabled();
+    fireEvent.click(sendButton);
+    await waitFor(() => {
+      expect(onSendMessage).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test("Sandbox toggle records desired grounding without requesting activation", () => {
+    const setGroundSandbox = vi.fn();
+    render(
+      <ChatPanel
+        selectedThreadId={null}
+        messages={undefined}
+        activeMessageStream={undefined}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={setGroundSandbox}
+        grounding={{
+          library: { enabled: true },
+          sandbox: {
+            enabled: false,
+            code: "sandbox_expired",
+            message: "Live source will be prepared when a task needs it.",
+            isActivatable: true,
+          },
+        }}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{
+          reasonCode: "sandbox_expired",
+          message: "Live source will be prepared when a task needs it.",
+        }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("grounding-toggle-sandbox"));
+
+    expect(setGroundSandbox).toHaveBeenCalledWith(true);
+    expect(vi.mocked(useMutation)).not.toHaveBeenCalled();
   });
 
   test("ChatContainer wires shared message and active-stream subscriptions for the selected thread", () => {

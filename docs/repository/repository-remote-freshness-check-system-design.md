@@ -99,7 +99,7 @@ The action prefers an installation token (5,000 req/hour per installation) and f
 
 ### Sync clears `latestRemoteSha`
 
-`syncRepository` queues an import with `clearLatestRemoteSha: true`. The shared `queueImportWorkflow` then patches the repository:
+`syncRepository` delegates to `startRepositorySyncImport`, which queues an import with `clearLatestRemoteSha: true`. The shared import intake then patches the repository:
 
 ```ts
 await ctx.db.patch(args.repositoryId, {

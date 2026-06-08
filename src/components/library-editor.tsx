@@ -1,14 +1,16 @@
-import { useState } from "react";
-import { useQuery } from "convex/react";
+import { useCallback, useState } from "react";
+import { useAction, useQuery } from "convex/react";
 import { CaretRightIcon, CheckIcon, CopySimpleIcon, MinusIcon, PlusIcon } from "@phosphor-icons/react";
+import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
-import { Markdown } from "@/components/markdown";
+import { Markdown, type MermaidRepairRequest } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useLocalStorageEnum } from "@/hooks/use-persisted-state";
+import { toUserErrorMessage } from "@/lib/errors";
 import { formatRelativeTime } from "@/lib/format";
 import { formatArtifactKind } from "@/lib/operations";
 import type { ArtifactFreshness, ArtifactId } from "@/lib/types";
@@ -55,6 +57,7 @@ function fontSizeZoom(size: FontSize): number {
 export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactId; className?: string }) {
   const artifact = useQuery(api.artifacts.getById, { artifactId });
   const folder = useQuery(api.artifactFolders.getById, artifact?.folderId ? { folderId: artifact.folderId } : "skip");
+  const repairMermaidBlock = useAction(api.artifactMermaidRepairNode.repairArtifactMermaidBlock);
 
   const [copied, setCopied] = useState(false);
   const [, runCopy] = useAsyncCallback(async () => {
@@ -69,6 +72,26 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
   });
 
   const [fontSize, setFontSize] = useLocalStorageEnum("systify.library.fontSize", FONT_SIZE_STEPS, DEFAULT_FONT_SIZE);
+  const handleRepairMermaid = useCallback(
+    async ({ chart, error }: MermaidRepairRequest) => {
+      if (!artifact) return;
+
+      try {
+        const result = await repairMermaidBlock({
+          artifactId: artifact._id,
+          chart,
+          error,
+        });
+        if (!result.updated) {
+          throw new Error("The repair did not change this diagram.");
+        }
+        toast.success("Diagram repaired.");
+      } catch (caught) {
+        throw new Error(toUserErrorMessage(caught, "Couldn't repair this diagram."));
+      }
+    },
+    [artifact, repairMermaidBlock],
+  );
 
   if (artifact === undefined) {
     return <EditorSkeleton className={className} />;
@@ -123,8 +146,8 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
             <p className="text-[14px] text-muted-foreground">{artifact.summary}</p>
           </header>
 
-          <div style={{ zoom: fontSizeZoom(fontSize) }}>
-            <Markdown>{artifact.contentMarkdown}</Markdown>
+          <div key={`${artifact._id}:${artifact.version}`} style={{ zoom: fontSizeZoom(fontSize) }}>
+            <Markdown onRepairMermaid={handleRepairMermaid}>{artifact.contentMarkdown}</Markdown>
           </div>
         </article>
       </ScrollArea>
@@ -166,8 +189,8 @@ function FreshnessStatus({
       return (
         <span className="text-[11px] text-red-600 dark:text-red-500">
           {verifiedAge
-            ? `Verified ${verifiedAge} · Stale — re-verify with sandbox grounding`
-            : "Stale — re-verify with sandbox grounding"}
+            ? `Verified ${verifiedAge} · Stale — re-verify with Live source`
+            : "Stale — re-verify with Live source"}
         </span>
       );
     case "unverified":

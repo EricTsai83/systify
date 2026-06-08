@@ -195,6 +195,22 @@ describe("evaluate (read path)", () => {
 });
 
 describe("assertRepositoryModeEligible (write path)", () => {
+  test("discuss + groundSandbox=true with no repo throws no_repository_attached", async () => {
+    const ownerTokenIdentifier = "user|assert-sandbox-no-repo";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    await expect(
+      viewer.run(async (ctx) => {
+        await assertRepositoryModeEligible(ctx, {
+          repositoryId: null,
+          mode: "discuss",
+          groundSandbox: true,
+        });
+      }),
+    ).rejects.toThrow(ConvexError);
+  });
+
   test("discuss + groundLibrary=true with no repo throws no_repository_attached", async () => {
     const ownerTokenIdentifier = "user|assert-no-repo";
     const t = createTestConvex();
@@ -272,6 +288,74 @@ describe("assertRepositoryModeEligible (write path)", () => {
         });
       }),
     ).resolves.not.toThrow();
+  });
+
+  test.each(["missing", "stopped", "failed", "provisioning"] as const)(
+    "discuss + groundSandbox=true allows recoverable %s live-source state",
+    async (sandboxState) => {
+      const ownerTokenIdentifier = `user|assert-sandbox-${sandboxState}`;
+      const t = createTestConvex();
+      const repositoryId = await insertRepository(t, ownerTokenIdentifier, `sandbox-${sandboxState}`);
+      if (sandboxState !== "missing") {
+        await t.run(async (ctx) => {
+          const sandboxId = await ctx.db.insert("sandboxes", {
+            repositoryId,
+            ownerTokenIdentifier,
+            provider: "daytona",
+            sourceAdapter: "git_clone",
+            remoteId: `remote-${sandboxState}`,
+            status: sandboxState,
+            workDir: "/workspace",
+            repoPath: "/workspace/repo",
+            cpuLimit: 2,
+            memoryLimitGiB: 4,
+            diskLimitGiB: 10,
+            ttlExpiresAt: Date.now() + 60_000,
+            autoStopIntervalMinutes: 10,
+            autoArchiveIntervalMinutes: 60,
+            autoDeleteIntervalMinutes: 1440,
+            networkBlockAll: false,
+          });
+          await ctx.db.patch(repositoryId, { latestSandboxId: sandboxId });
+        });
+      }
+      const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+      await expect(
+        viewer.run(async (ctx) => {
+          await assertRepositoryModeEligible(ctx, {
+            repositoryId,
+            mode: "discuss",
+            groundSandbox: true,
+          });
+        }),
+      ).resolves.not.toThrow();
+    },
+  );
+
+  test("discuss + groundSandbox=true still throws when the sandbox daily budget is exhausted", async () => {
+    const ownerTokenIdentifier = "user|assert-sandbox-budget";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier, "sandbox-budget");
+    await t.run(async (ctx) => {
+      const { consumeSandboxDailyCost } = await import("./lib/rateLimit");
+      await consumeSandboxDailyCost(ctx, {
+        ownerTokenIdentifier,
+        repositoryId,
+        cents: 495,
+      });
+    });
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    await expect(
+      viewer.run(async (ctx) => {
+        await assertRepositoryModeEligible(ctx, {
+          repositoryId,
+          mode: "discuss",
+          groundSandbox: true,
+        });
+      }),
+    ).rejects.toThrow(/sandbox_user_cap_exceeded/);
   });
 
   test("a repositoryId the viewer doesn't own throws RepositoryNotFound (not the disabled-reason code)", async () => {

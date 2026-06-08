@@ -6,7 +6,7 @@ import { redact } from "./chat/redaction";
 import { withDaytonaRetry } from "./lib/daytonaRetry";
 import { buildSandboxName } from "./lib/sandboxNames";
 import { logInfo, logWarn } from "./lib/observability";
-import { LIVE_SOURCE_UNAVAILABLE_MESSAGE } from "./lib/sandboxLiveness";
+import { LIVE_SOURCE_UNAVAILABLE_MESSAGE } from "./lib/liveSourceLifecycle";
 import { DEFAULT_AUTO_STOP_MINUTES, DEFAULT_AUTO_ARCHIVE_MINUTES, DEFAULT_AUTO_DELETE_MINUTES } from "./lib/constants";
 
 /**

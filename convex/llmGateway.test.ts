@@ -10,10 +10,12 @@ import {
   LlmRateLimitError,
   TEST_INTERNALS,
   embedViaGateway,
+  generateObjectViaGateway,
   generateViaGateway,
   streamViaGateway,
   type LlmCallContext,
 } from "./lib/llmGateway";
+import { z } from "zod";
 import { ARTIFACT_CHUNK_EMBEDDING_DIMENSIONS } from "./lib/llmCatalog";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -254,6 +256,7 @@ describe("TEST_INTERNALS.buildEmbeddingProviderOptions", () => {
 function buildOkGenerateResult(text = "ok") {
   return {
     text,
+    output: { value: "ok" },
     steps: [],
     totalUsage: {
       inputTokens: 100,
@@ -299,6 +302,35 @@ describe("generateViaGateway — provider dispatch (#1)", () => {
     });
     expect(openaiFactory).toHaveBeenCalledWith("gpt-5.5");
     expect(anthropicFactory).not.toHaveBeenCalled();
+  });
+
+  test("passes prepareStep through to generateText", async () => {
+    vi.mocked(generateText).mockResolvedValueOnce(buildOkGenerateResult());
+    const prepareStep = vi.fn();
+    const t = createTestHarness();
+    await t.action(async (ctx) => {
+      await generateViaGateway(ctx, buildCallCtx({ provider: "openai", modelName: "gpt-5.5" }), {
+        system: "s",
+        prompt: "p",
+        prepareStep,
+      });
+    });
+    expect(vi.mocked(generateText).mock.calls[0]?.[0]).toMatchObject({ prepareStep });
+  });
+
+  test("passes prepareStep through for structured object generation", async () => {
+    vi.mocked(generateText).mockResolvedValueOnce(buildOkGenerateResult());
+    const prepareStep = vi.fn();
+    const t = createTestHarness();
+    await t.action(async (ctx) => {
+      await generateObjectViaGateway(ctx, buildCallCtx({ provider: "openai", modelName: "gpt-5.5" }), {
+        system: "s",
+        prompt: "p",
+        schema: z.object({ value: z.string() }),
+        prepareStep,
+      });
+    });
+    expect(vi.mocked(generateText).mock.calls[0]?.[0]).toMatchObject({ prepareStep });
   });
 
   test("provider=anthropic routes through @ai-sdk/anthropic factory", async () => {

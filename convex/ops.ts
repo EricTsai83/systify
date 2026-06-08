@@ -6,6 +6,12 @@ import { requireOwnedDoc } from "./lib/ownedDocs";
 import { CASCADE_BATCH_SIZE } from "./lib/constants";
 import { completeRunningJob, enqueueJob, failRunningJob, markQueuedJobRunning } from "./lib/jobs";
 import {
+  buildLiveSourceCleanupCompletedPatch,
+  buildLiveSourceRemoteObservationPatch,
+  buildLiveSourceSweepPatch,
+  shouldQueueLiveSourceCleanup,
+} from "./lib/liveSourceLifecycle";
+import {
   expiredSandboxesValidator,
   sandboxCleanupScheduleResultValidator,
   sandboxCleanupStartValidator,
@@ -53,7 +59,7 @@ async function queueSandboxCleanupJob(
   triggerSource: "user" | "system",
   activeCleanupJobs?: Map<Id<"sandboxes">, Id<"jobs">>,
 ): Promise<Id<"jobs"> | null> {
-  if (sandbox.status === "archived") {
+  if (!shouldQueueLiveSourceCleanup(sandbox)) {
     return null;
   }
 
@@ -217,10 +223,7 @@ export const completeSandboxCleanup = internalMutation({
     }
 
     if (sandbox) {
-      await ctx.db.patch(args.sandboxId, {
-        status: "archived",
-        lastUsedAt: Date.now(),
-      });
+      await ctx.db.patch(args.sandboxId, buildLiveSourceCleanupCompletedPatch());
     }
 
     const repositoryId = completedJob.repositoryId;
@@ -239,18 +242,9 @@ export const completeSandboxCleanup = internalMutation({
 });
 
 /**
- * Mirror an authoritative Daytona state back into the local `sandboxes`
- * row. Called by `convex/lib/sandboxLiveness.ts` after a verify-on-use
- * probe so the cache stays consistent with reality even when the webhook
- * never fired (manual deletion in the Daytona dashboard, dead-letter
- * after retries, Daytona-side GC).
- *
- * The state mapping mirrors `convex/daytonaWebhooks.ts:217-232` so the
- * write-through and reactive paths produce the same outcome. The
- * `archived` terminal guard is also mirrored — once a sandbox is locally
- * archived, we don't let a subsequent probe drag it back to `ready` or
- * `stopped`, which would only re-open the same staleness window we just
- * closed.
+ * Mirror an authoritative Daytona state back into the local `sandboxes` row.
+ * The lifecycle Module owns the Daytona-state mapping so verify-on-use and
+ * webhook reconciliation cannot drift.
  */
 export const syncSandboxStatusFromRemote = internalMutation({
   args: {
@@ -275,22 +269,11 @@ export const syncSandboxStatusFromRemote = internalMutation({
       return { patched: false as const };
     }
 
-    const now = Date.now();
-    const patch: Partial<Doc<"sandboxes">> = {};
-    if (args.remoteState === "started") {
-      patch.status = "ready";
-      patch.lastUsedAt = now;
-    } else if (args.remoteState === "stopped") {
-      patch.status = "stopped";
-      patch.lastUsedAt = now;
-    } else if (args.remoteState === "archived" || args.remoteState === "destroyed") {
-      patch.status = "archived";
-      patch.lastUsedAt = now;
-    } else if (args.remoteState === "error") {
-      patch.status = "failed";
-      patch.lastErrorMessage = "Daytona reported the sandbox as errored during a live verification.";
-    }
-    // `unknown` → no-op: don't overwrite a known cache state with a guess.
+    const patch = buildLiveSourceRemoteObservationPatch({
+      sandbox,
+      remoteState: args.remoteState,
+      source: "verify_on_use",
+    });
 
     if (Object.keys(patch).length === 0) {
       return { patched: false as const };
@@ -410,7 +393,7 @@ async function listStaleJobsByStatusAndKind(
   ctx: Pick<QueryCtx, "db">,
   args: {
     status: "queued" | "running";
-    kind: "chat" | "system_design" | "sandbox_activation" | "import";
+    kind: "chat" | "system_design" | "sandbox_activation" | "artifact_draft" | "import";
     now: number;
   },
 ) {
@@ -432,9 +415,11 @@ export const listStaleInteractiveJobs = internalQuery({
         listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "chat", now }),
         listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "system_design", now }),
         listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "sandbox_activation", now }),
+        listStaleJobsByStatusAndKind(ctx, { status: "queued", kind: "artifact_draft", now }),
         listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "chat", now }),
         listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "system_design", now }),
         listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "sandbox_activation", now }),
+        listStaleJobsByStatusAndKind(ctx, { status: "running", kind: "artifact_draft", now }),
       ])
     )
       .flat()
@@ -448,7 +433,12 @@ export const listStaleInteractiveJobs = internalQuery({
       .slice(0, STALE_INTERACTIVE_JOBS_TOTAL_LIMIT);
 
     return jobs.map((job) => {
-      if (job.kind !== "chat" && job.kind !== "system_design" && job.kind !== "sandbox_activation") {
+      if (
+        job.kind !== "chat" &&
+        job.kind !== "system_design" &&
+        job.kind !== "sandbox_activation" &&
+        job.kind !== "artifact_draft"
+      ) {
         throw new Error(`Unexpected stale interactive job kind: ${job.kind}`);
       }
       return {
@@ -494,9 +484,6 @@ export const markSandboxSwept = internalMutation({
     if (!sandbox || sandbox.status === "archived") {
       return;
     }
-    await ctx.db.patch(args.sandboxId, {
-      status: args.newStatus,
-      lastUsedAt: Date.now(),
-    });
+    await ctx.db.patch(args.sandboxId, buildLiveSourceSweepPatch(args.newStatus));
   },
 });

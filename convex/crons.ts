@@ -13,13 +13,6 @@ crons.interval("reconcile stale interactive jobs", { minutes: 5 }, internal.opsN
 crons.interval("reconcile stale import jobs", { minutes: 5 }, internal.opsNode.reconcileStaleImportJobs, {});
 
 crons.interval(
-  "auto pause idle sandbox sessions",
-  { minutes: 1 },
-  internal.sandboxSessionsNode.autoPauseIdleSandboxSessions,
-  {},
-);
-
-crons.interval(
   "retry failed artifact indexing",
   { minutes: 30 },
   internal.artifactIndexing.retryFailedArtifactIndexing,

@@ -179,7 +179,7 @@ describe("requireRepositorySandbox", () => {
     const { repository } = await seedRepo(t, { sandbox: null });
 
     await expect(t.run(async (ctx) => requireRepositorySandbox(ctx, repository))).rejects.toThrow(
-      /no sandbox is ready for this repository/,
+      /Live source will be prepared when a task needs it/,
     );
   });
 
@@ -187,6 +187,8 @@ describe("requireRepositorySandbox", () => {
     const t = convexTest(schema, modules);
     const { repository } = await seedRepo(t, { sandbox: { status: "failed" } });
 
-    await expect(t.run(async (ctx) => requireRepositorySandbox(ctx, repository))).rejects.toThrow(/sandbox failed/);
+    await expect(t.run(async (ctx) => requireRepositorySandbox(ctx, repository))).rejects.toThrow(
+      /Live source will be prepared when a task needs it/,
+    );
   });
 });

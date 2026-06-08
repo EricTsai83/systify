@@ -15,11 +15,12 @@ const STAGE_LABELS: Record<SandboxPreparationStage, { label: string; progress: n
 };
 
 /**
- * Action runner for the explicit chat `Activate` button. Mirrors the
- * shape of other long-running actions: marks the queued job running,
- * drives `ensureSandboxReady` (which is the only place that knows how
- * to wake / provision / clone in one place), and rolls up success or
- * failure through the standard job lifecycle helpers.
+ * Action runner for the compatibility/debug activation mutation. Main
+ * product flows prepare live source from the task action itself; this
+ * runner remains for older clients and internal maintenance tools. It
+ * mirrors the shape of other long-running actions: marks the queued job
+ * running, drives `ensureSandboxReady`, and rolls up success or failure
+ * through the standard job lifecycle helpers.
  */
 export const runSandboxActivation = internalAction({
   args: {

@@ -44,13 +44,6 @@ export interface GroundingToggleBarProps {
     | null
     | undefined;
   /**
-   * Fires when the user clicks the Sandbox toggle while it is in the
-   * "activatable" sub-state (no sandbox provisioned yet / expired /
-   * failed). The caller wires this to `requestSandboxActivation` and
-   * leaves the toggle off until the provisioning lifecycle resolves.
-   */
-  onActivateSandbox?: () => void;
-  /**
    * Fires when the user clicks the "Generate System Design" CTA inside
    * the Library toggle's disabled tooltip. The caller opens the
    * generate-system-design dialog.
@@ -73,8 +66,8 @@ export interface GroundingToggleBarProps {
  * Disabled toggles render with their tooltip-quality reason inline so a
  * glance is enough to tell *why* the option is locked. The Library
  * "no artifact" sub-state additionally renders a "Generate System
- * Design" CTA below the toggle; the Sandbox activatable sub-state
- * flips the toggle's click handler from "set state" to "activate sandbox".
+ * Design" CTA below the toggle; recoverable Sandbox liveness states
+ * stay selectable and prepare on send.
  */
 export function GroundingToggleBar({
   groundLibrary,
@@ -82,7 +75,6 @@ export function GroundingToggleBar({
   setGroundLibrary,
   setGroundSandbox,
   grounding,
-  onActivateSandbox,
   onOpenGenerateSystemDesign,
   generateDisabledReason,
   hidden = false,
@@ -105,7 +97,7 @@ export function GroundingToggleBar({
 
   const libraryEnabled = libraryAxis.enabled;
   const sandboxEnabled = sandboxAxis.enabled;
-  const sandboxIsActivatable = !sandboxAxis.enabled && sandboxAxis.isActivatable === true;
+  const sandboxPreparesOnSend = !sandboxAxis.enabled && sandboxAxis.isActivatable === true;
   const libraryDisabledMessage = !libraryAxis.enabled ? libraryAxis.message : undefined;
   const sandboxDisabledMessage = !sandboxAxis.enabled ? sandboxAxis.message : undefined;
   const showGenerateCta =
@@ -133,18 +125,19 @@ export function GroundingToggleBar({
       />
       <GroundingPill
         label="Sandbox"
-        icon={<FlaskIcon size={14} weight={groundSandbox && sandboxEnabled ? "fill" : "regular"} />}
+        icon={
+          <FlaskIcon
+            size={14}
+            weight={groundSandbox && (sandboxEnabled || sandboxPreparesOnSend) ? "fill" : "regular"}
+          />
+        }
         active={groundSandbox}
-        available={sandboxEnabled || sandboxIsActivatable}
+        available={sandboxEnabled || sandboxPreparesOnSend}
         reason={sandboxDisabledMessage}
-        suffix={sandboxIsActivatable ? "click to activate" : !sandboxEnabled ? undefined : "live source"}
+        suffix={sandboxPreparesOnSend ? "prepares on send" : !sandboxEnabled ? undefined : "live source"}
         onToggle={() => {
-          if (sandboxEnabled) {
+          if (sandboxEnabled || sandboxPreparesOnSend) {
             setGroundSandbox(!groundSandbox);
-            return;
-          }
-          if (sandboxIsActivatable && onActivateSandbox) {
-            onActivateSandbox();
           }
         }}
         testId="grounding-toggle-sandbox"

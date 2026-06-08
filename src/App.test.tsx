@@ -9,6 +9,10 @@ import { createAppMemoryRouter } from "./router";
 import { AUTH_RETURN_TO_KEY } from "./router-layouts";
 
 const getAccessTokenMock = vi.fn<() => Promise<string | null>>();
+const workosAuthMock = vi.hoisted(() => ({
+  signIn: vi.fn(),
+  signOut: vi.fn(),
+}));
 const repolessShellMock = vi.hoisted(() => ({
   mountCount: 0,
   lastThreadId: null as ThreadId | null,
@@ -27,7 +31,12 @@ vi.mock("@workos-inc/authkit-react", async () => {
     // calls this when its `AuthBoundEffects` wrapper mounts; without a default
     // return value vi.fn() would yield `undefined` and the destructure crashes
     // the whole tree.
-    useAuth: vi.fn(() => ({ user: null, isLoading: false })),
+    useAuth: vi.fn(() => ({
+      user: null,
+      isLoading: false,
+      signIn: workosAuthMock.signIn,
+      signOut: workosAuthMock.signOut,
+    })),
   };
 });
 
@@ -126,6 +135,8 @@ describe("App auth token failures", () => {
       }
     }
     getAccessTokenMock.mockReset();
+    workosAuthMock.signIn.mockReset();
+    workosAuthMock.signOut.mockReset();
     repolessShellMock.mountCount = 0;
     repolessShellMock.lastThreadId = null;
     viewerAccessMock.value = undefined;
@@ -148,8 +159,10 @@ describe("App auth token failures", () => {
 
     expect(await screen.findByText("chat page")).toBeInTheDocument();
     expect(
-      await screen.findByText("Authentication failed. Please refresh the page and sign in again."),
+      await screen.findByText("Your session could not be validated. Sign in again to reconnect your account."),
     ).toBeInTheDocument();
+    screen.getByRole("button", { name: "Sign in again" }).click();
+    expect(workosAuthMock.signOut).toHaveBeenCalledTimes(1);
   });
 
   test("loads the home route for signed-out users on /", async () => {
@@ -408,6 +421,21 @@ describe("App auth token failures", () => {
 
     expect(await screen.findByText("This page does not exist.")).toBeInTheDocument();
     expect(await screen.findByText("Go to home")).toBeInTheDocument();
+  });
+
+  test("points signed-in 404 users back to chat", async () => {
+    function useAuth() {
+      return {
+        isLoading: false,
+        user: { id: "user_1" },
+        getAccessToken: getAccessTokenMock,
+      };
+    }
+
+    renderWithAuth(useAuth, ["/does-not-exist"]);
+
+    expect(await screen.findByText("This page does not exist.")).toBeInTheDocument();
+    expect(await screen.findByText("Go to chat")).toBeInTheDocument();
   });
 });
 

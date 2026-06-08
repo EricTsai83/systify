@@ -53,7 +53,7 @@ The repository lifecycle has five first-class entry points:
 - `restoreRepository`
 - `deleteRepository`
 
-Import and sync route into the same `importsNode.runImportPipeline`. Archive stamps `repositories.archivedAt` and stops any live sandbox, but leaves threads, messages, and artifacts intact so Restore can pick up where the user left off. Restore clears `archivedAt`. Deletion is gated on archive (see Deletion Flow below) and goes through sandbox cleanup followed by cascade delete.
+Import and sync route through `convex/lib/repositoryImportWorkflow.ts`, which owns import intake: reusable repository lookup, archived row restoration, default thread repair, job/import creation, and scheduling `importsNode.runImportPipeline`. Archive stamps `repositories.archivedAt` and stops any live sandbox, but leaves threads, messages, and artifacts intact so Restore can pick up where the user left off. Restore clears `archivedAt`. Deletion is gated on archive (see Deletion Flow below) and goes through sandbox cleanup followed by cascade delete.
 
 ## Import / Sync Flow
 
@@ -68,6 +68,8 @@ The first import also creates:
 
 - one `repositories` record
 - one default `threads` record
+
+If the matching repository was previously archived, import intake restores that row instead of creating a duplicate and reuses its default thread when the thread is still active.
 
 This lets the UI show a queued workflow immediately instead of waiting for the full background process to finish before the repository appears.
 

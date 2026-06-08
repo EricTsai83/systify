@@ -93,6 +93,18 @@ describe("resolveRepositoryModes (sandbox cost-cap gate on grounding axis)", () 
     expect(result.grounding.sandbox.enabled).toBe(true);
   });
 
+  test("recoverable live-source states stay selectable for lazy preparation", () => {
+    const recoverableStates: ChatModeSandboxStatus[] = ["none", "provisioning", "expired", "failed"];
+    for (const status of recoverableStates) {
+      const result = resolveRepositoryModes(true, true, status, OPEN_SANDBOX_COST_CAP_GATE);
+      expect(result.grounding.sandbox.enabled).toBe(false);
+      if (!result.grounding.sandbox.enabled) {
+        expect(result.grounding.sandbox.isActivatable).toBe(true);
+        expect(result.grounding.sandbox.message).toMatch(/prepared|preparing/i);
+      }
+    }
+  });
+
   test("closed cap gate doesn't disable discuss or library modes", () => {
     const result = resolveRepositoryModes(true, true, "ready", USER_CAP_GATE_CLOSED);
     expect(result.modes.discuss.enabled).toBe(true);

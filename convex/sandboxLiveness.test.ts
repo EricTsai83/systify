@@ -172,6 +172,46 @@ describe("ensureSandboxReady (via runSandboxActivation)", () => {
     expect(provisionSandboxMock).not.toHaveBeenCalled();
   });
 
+  test("reuses stopped local row when probe says remote is already started", async () => {
+    const t = convexTest(schema, modules);
+    const ownerTokenIdentifier = "user|stopped-remote-started";
+    const { repositoryId, sandboxId } = await seedRepoAndSandbox(t, ownerTokenIdentifier, {
+      sandbox: { status: "stopped", remoteId: "rid-stopped-started" },
+    });
+    probeLiveSandboxMock.mockResolvedValue({ ok: true, remoteState: "started" });
+
+    const jobId = await t.run(async (ctx) =>
+      ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "sandbox_activation",
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+        costCategory: "ops",
+        triggerSource: "user",
+        leaseExpiresAt: Date.now() + 5 * 60_000,
+      }),
+    );
+
+    await t.action(internal.sandboxActivationNode.runSandboxActivation, {
+      jobId,
+      repositoryId,
+      ownerTokenIdentifier,
+    });
+
+    const state = await t.run(async (ctx) => ({
+      job: await ctx.db.get(jobId),
+      sandbox: sandboxId ? await ctx.db.get(sandboxId) : null,
+    }));
+    expect(state.job?.status).toBe("completed");
+    expect(state.job?.sandboxId).toBe(sandboxId);
+    expect(state.sandbox?.status).toBe("ready");
+    expect(probeLiveSandboxMock).toHaveBeenCalledWith("rid-stopped-started");
+    expect(startSandboxMock).not.toHaveBeenCalled();
+    expect(provisionSandboxMock).not.toHaveBeenCalled();
+  });
+
   test("wakes a stopped sandbox via startSandbox", async () => {
     const t = convexTest(schema, modules);
     const ownerTokenIdentifier = "user|stopped-wake";
@@ -337,6 +377,112 @@ describe("ensureSandboxReady (via runSandboxActivation)", () => {
     expect(state.sandbox?.remoteId).toBe("");
     expect(state.jobs.some((job) => job.kind === "cleanup" && job.sandboxId === state.sandbox?._id)).toBe(false);
   });
+
+  test("provisions a fresh sandbox when a ready sandbox probe returns unknown", async () => {
+    const t = convexTest(schema, modules);
+    const ownerTokenIdentifier = "user|unknown-replace";
+    const { repositoryId, sandboxId: staleSandboxId } = await seedRepoAndSandbox(t, ownerTokenIdentifier, {
+      sandbox: { status: "ready", remoteId: "rid-unknown" },
+    });
+
+    await t.run(async (ctx) => {
+      await ctx.db.insert("githubInstallations", {
+        ownerTokenIdentifier,
+        installationId: 12345,
+        accountLogin: "acme",
+        accountType: "Organization",
+        status: "active",
+        repositorySelection: "selected",
+        connectedAt: Date.now(),
+      });
+    });
+
+    probeLiveSandboxMock.mockResolvedValue({
+      ok: false,
+      remoteState: "unknown",
+      reason: "unknown",
+      message: "unknown",
+    });
+    getInstallationAccessTokenMock.mockResolvedValue("github-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            private: true,
+            full_name: "acme/test",
+            default_branch: "main",
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      ),
+    );
+    provisionSandboxMock.mockResolvedValue({
+      remoteId: "remote-fresh",
+      workDir: "/workspace",
+      repoPath: "/workspace/repo",
+      cpuLimit: 2,
+      memoryLimitGiB: 4,
+      diskLimitGiB: 10,
+      autoStopIntervalMinutes: 30,
+      autoArchiveIntervalMinutes: 60,
+      autoDeleteIntervalMinutes: 120,
+      networkBlockAll: false,
+    });
+    cloneRepositoryInSandboxMock.mockResolvedValue({
+      commitSha: "commit-fresh",
+      branch: "main",
+    });
+
+    const jobId = await t.run(async (ctx) =>
+      ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "sandbox_activation",
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+        costCategory: "ops",
+        triggerSource: "user",
+        leaseExpiresAt: Date.now() + 5 * 60_000,
+      }),
+    );
+
+    await t.action(internal.sandboxActivationNode.runSandboxActivation, {
+      jobId,
+      repositoryId,
+      ownerTokenIdentifier,
+    });
+
+    const state = await t.run(async (ctx) => {
+      const repository = await ctx.db.get(repositoryId);
+      const job = await ctx.db.get(jobId);
+      const staleSandbox = staleSandboxId ? await ctx.db.get(staleSandboxId) : null;
+      const freshSandbox = repository?.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
+      return { repository, job, staleSandbox, freshSandbox };
+    });
+
+    expect(probeLiveSandboxMock).toHaveBeenCalledWith("rid-unknown");
+    expect(provisionSandboxMock).toHaveBeenCalledTimes(1);
+    expect(cloneRepositoryInSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        remoteId: "remote-fresh",
+        url: "https://github.com/acme/test",
+        branch: "main",
+        token: "github-token",
+      }),
+    );
+    expect(state.job?.status).toBe("completed");
+    expect(state.job?.sandboxId).toBe(state.freshSandbox?._id);
+    expect(state.freshSandbox?._id).not.toBe(staleSandboxId);
+    expect(state.freshSandbox?.status).toBe("ready");
+    expect(state.freshSandbox?.remoteId).toBe("remote-fresh");
+    expect(state.repository?.latestSandboxId).toBe(state.freshSandbox?._id);
+    expect(state.staleSandbox?.status).toBe("ready");
+  });
 });
 
 describe("reserveOnDemandSandboxRow CAS", () => {
@@ -414,5 +560,30 @@ describe("reserveOnDemandSandboxRow CAS", () => {
 
     expect(result.alreadyExisted).toBe(true);
     expect(result.sandboxId).toBe(sandboxId);
+  });
+
+  test("inserts a fresh row when the latest ready sandbox is explicitly being replaced", async () => {
+    const t = convexTest(schema, modules);
+    const ownerTokenIdentifier = "user|reserve-replace-ready";
+    const { repositoryId, sandboxId } = await seedRepoAndSandbox(t, ownerTokenIdentifier, {
+      sandbox: { status: "ready", remoteId: "rid-ready" },
+    });
+    if (!sandboxId) {
+      throw new Error("Expected seeded sandbox.");
+    }
+
+    const result = await t.mutation(internal.sandboxProvisioning.reserveOnDemandSandboxRow, {
+      repositoryId,
+      ownerTokenIdentifier,
+      sourceAdapter: "git_clone",
+      replaceSandboxId: sandboxId,
+    });
+
+    expect(result.alreadyExisted).toBe(false);
+    expect(result.sandboxId).not.toBe(sandboxId);
+    const repo = await t.run(async (ctx) => await ctx.db.get(repositoryId));
+    expect(repo?.latestSandboxId).toBe(result.sandboxId);
+    const sandbox = await t.run(async (ctx) => await ctx.db.get(result.sandboxId));
+    expect(sandbox?.status).toBe("provisioning");
   });
 });

@@ -9,6 +9,7 @@ import {
   insertTestRepository,
   insertTestThread,
 } from "../test/convex/fixtures";
+import { replaceArtifactInFolderWrite } from "./lib/artifactWrites";
 import { createTestConvex, type SystifyTestConvex } from "../test/convex/harness";
 import { withPausedConvexScheduler } from "../test/convex/scheduler";
 
@@ -52,6 +53,7 @@ async function seedArtifact(
     title?: string;
     summary?: string;
     contentMarkdown?: string;
+    folderId?: Id<"artifactFolders">;
   },
 ): Promise<Id<"artifacts">> {
   return await insertTestArtifact(t, {
@@ -62,6 +64,7 @@ async function seedArtifact(
     title: args.title,
     summary: args.summary,
     contentMarkdown: args.contentMarkdown,
+    folderId: args.folderId,
   });
 }
 
@@ -596,5 +599,91 @@ describe("ArtifactStore — update/delete", () => {
 
     const stored = await t.query(internal.artifactStore.getArtifact, { artifactId });
     expect(stored).toBeNull();
+  });
+});
+
+describe("ArtifactWrites — generated replacement", () => {
+  test("replaces stale folder artifact and applies write side effects together", async () => {
+    await withPausedConvexScheduler(async () => {
+      const t = createTestConvex();
+      const repositoryId = await seedRepository(t);
+      const folderId = await seedArtifactFolder(t, { repositoryId });
+      const staleArtifactId = await seedArtifact(t, {
+        repositoryId,
+        folderId,
+        kind: "architecture_diagram",
+        title: "Old architecture",
+        contentMarkdown: "# Old",
+      });
+
+      await t.run(async (ctx) => {
+        await ctx.db.insert("artifactChunks", {
+          ownerTokenIdentifier: OWNER,
+          repositoryId,
+          artifactId: staleArtifactId,
+          artifactVersion: 1,
+          chunkIndex: 0,
+          headingPath: ["Old"],
+          startOffset: 0,
+          endOffset: 5,
+          content: "# Old",
+        });
+        await ctx.db.insert("artifactViews", {
+          ownerTokenIdentifier: OWNER,
+          repositoryId,
+          artifactId: staleArtifactId,
+          viewedAt: Date.now(),
+        });
+      });
+
+      const artifactId = await t.run(
+        async (ctx) =>
+          await replaceArtifactInFolderWrite(ctx, {
+            repositoryId,
+            folderId,
+            ownerTokenIdentifier: OWNER,
+            kind: "architecture_diagram",
+            title: "New architecture",
+            summary: "New summary",
+            contentMarkdown: "# New",
+            alignedImportCommitSha: "commit-1",
+            generatedByProvider: "openai",
+            generatedByModel: "gpt-5.5",
+            promptVersion: 7,
+          }),
+      );
+
+      const state = await t.run(async (ctx) => ({
+        staleArtifact: await ctx.db.get(staleArtifactId),
+        replacement: await ctx.db.get(artifactId),
+        staleChunks: await ctx.db
+          .query("artifactChunks")
+          .withIndex("by_artifactId_and_chunkIndex", (q) => q.eq("artifactId", staleArtifactId))
+          .collect(),
+        staleViews: await ctx.db
+          .query("artifactViews")
+          .withIndex("by_artifactId", (q) => q.eq("artifactId", staleArtifactId))
+          .collect(),
+      }));
+
+      expect(state.staleArtifact).toBeNull();
+      expect(state.staleChunks).toEqual([]);
+      expect(state.staleViews).toEqual([]);
+      expect(state.replacement).toMatchObject({
+        repositoryId,
+        folderId,
+        ownerTokenIdentifier: OWNER,
+        kind: "architecture_diagram",
+        title: "New architecture",
+        version: 1,
+        chunkingStatus: "pending",
+        alignedImportCommitSha: "commit-1",
+        generatedByProvider: "openai",
+        generatedByModel: "gpt-5.5",
+        promptVersion: 7,
+      });
+      expect(state.replacement?.lastVerifiedAt).toEqual(expect.any(Number));
+      expect(state.replacement?.updatedAt).toEqual(expect.any(Number));
+    });
   });
 });

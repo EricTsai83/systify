@@ -2,7 +2,7 @@
 
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 
@@ -32,6 +32,18 @@ async function seedRepository(t: ReturnType<typeof convexTest>): Promise<Id<"rep
   );
 }
 
+async function seedAccessProfile(t: ReturnType<typeof convexTest>) {
+  await t.run(async (ctx) => {
+    await ctx.db.insert("userAccessProfiles", {
+      ownerTokenIdentifier: OWNER,
+      plan: "internal",
+      billingStatus: "none",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  });
+}
+
 describe("recordSandboxSessionActivity", () => {
   test("rejects negative spentCentsDelta", async () => {
     const t = convexTest(schema, modules);
@@ -44,7 +56,7 @@ describe("recordSandboxSessionActivity", () => {
         startedAt: Date.now(),
         lastActivityAt: Date.now(),
         lastResumedAt: Date.now(),
-        idleAutoPauseMinutes: 10,
+        idleAutoPauseMinutes: 15,
         spentCents: 25,
       }),
     );
@@ -61,83 +73,41 @@ describe("recordSandboxSessionActivity", () => {
   });
 });
 
-describe("idle sandbox session auto-pause", () => {
-  test("lists only active sessions beyond their idle timeout", async () => {
+describe("startSandboxSession", () => {
+  test("starts in starting state when the latest sandbox is expired", async () => {
     const t = convexTest(schema, modules);
+    await seedAccessProfile(t);
     const repositoryId = await seedRepository(t);
-    const now = Date.now();
-    const staleSessionId = await t.run(async (ctx) =>
-      ctx.db.insert("sandboxSessions", {
-        ownerTokenIdentifier: OWNER,
+    const sandboxId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("sandboxes", {
         repositoryId,
-        status: "active",
-        startedAt: now - 30 * 60_000,
-        lastActivityAt: now - 11 * 60_000,
-        lastResumedAt: now - 30 * 60_000,
-        idleAutoPauseMinutes: 10,
-        spentCents: 0,
-      }),
-    );
-    await t.run(async (ctx) => {
-      await ctx.db.insert("sandboxSessions", {
         ownerTokenIdentifier: OWNER,
-        repositoryId,
-        status: "active",
-        startedAt: now - 30 * 60_000,
-        lastActivityAt: now - 5 * 60_000,
-        lastResumedAt: now - 30 * 60_000,
-        idleAutoPauseMinutes: 10,
-        spentCents: 0,
+        provider: "daytona",
+        sourceAdapter: "git_clone",
+        remoteId: "remote-expired",
+        status: "ready",
+        workDir: "/workspace",
+        repoPath: "/workspace/repo",
+        cpuLimit: 2,
+        memoryLimitGiB: 4,
+        diskLimitGiB: 10,
+        ttlExpiresAt: Date.now() - 1_000,
+        autoStopIntervalMinutes: 15,
+        autoArchiveIntervalMinutes: 60,
+        autoDeleteIntervalMinutes: 120,
+        networkBlockAll: false,
       });
-      await ctx.db.insert("sandboxSessions", {
-        ownerTokenIdentifier: OWNER,
-        repositoryId,
-        status: "paused",
-        startedAt: now - 30 * 60_000,
-        lastActivityAt: now - 20 * 60_000,
-        lastResumedAt: now - 30 * 60_000,
-        idleAutoPauseMinutes: 10,
-        spentCents: 0,
-      });
+      await ctx.db.patch(repositoryId, { latestSandboxId: id });
+      return id;
     });
 
-    const candidates = await t.query(internal.sandboxSessions.listAutoPauseCandidates, {
-      now,
-      limit: 10,
+    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+    const sessionId = await viewer.mutation(api.sandboxSessions.startSandboxSession, { repositoryId });
+
+    const session = await t.run(async (ctx) => await ctx.db.get(sessionId));
+    expect(session).toMatchObject({
+      sandboxId,
+      status: "starting",
     });
-
-    expect(candidates.map((session) => session._id)).toEqual([staleSessionId]);
-  });
-
-  test("rechecks idleness before marking a session paused", async () => {
-    const t = convexTest(schema, modules);
-    const repositoryId = await seedRepository(t);
-    const now = Date.now();
-    const sessionId = await t.run(async (ctx) =>
-      ctx.db.insert("sandboxSessions", {
-        ownerTokenIdentifier: OWNER,
-        repositoryId,
-        status: "active",
-        startedAt: now - 30 * 60_000,
-        lastActivityAt: now - 11 * 60_000,
-        lastResumedAt: now - 30 * 60_000,
-        idleAutoPauseMinutes: 10,
-        spentCents: 0,
-      }),
-    );
-
-    await t.run(async (ctx) => {
-      await ctx.db.patch(sessionId, { lastActivityAt: now });
-    });
-
-    const result = await t.mutation(internal.sandboxSessions.markSessionPausedByIdle, {
-      sessionId,
-      now,
-    });
-    const stored = await t.run(async (ctx) => ctx.db.get(sessionId));
-
-    expect(result.paused).toBe(false);
-    expect(stored?.status).toBe("active");
-    expect(stored?.pausedAt).toBeUndefined();
   });
 });

@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
+import { buildLiveSourceRemoteObservationPatch } from "./lib/liveSourceLifecycle";
 import { logInfo, logWarn } from "./lib/observability";
 
 const DAYTONA_WEBHOOK_CONFIRM_WINDOW_MS = 10 * 60_000;
@@ -213,23 +214,14 @@ export const processEvent = internalMutation({
         });
       }
 
-      const sandboxPatch: Partial<Doc<"sandboxes">> = {};
-      if (event.normalizedState === "stopped" && sandbox.status !== "archived") {
-        sandboxPatch.status = "stopped";
-        sandboxPatch.lastUsedAt = now;
-      } else if (event.normalizedState === "started" && sandbox.status !== "archived") {
-        sandboxPatch.status = "ready";
-        sandboxPatch.lastUsedAt = now;
-      } else if (
-        (event.normalizedState === "archived" || event.normalizedState === "destroyed") &&
-        sandbox.status !== "archived"
-      ) {
-        sandboxPatch.status = "archived";
-        sandboxPatch.lastUsedAt = now;
-      } else if (event.normalizedState === "error" && sandbox.status !== "archived") {
-        sandboxPatch.status = "failed";
-        sandboxPatch.lastErrorMessage = "Daytona reported a sandbox error via webhook.";
-      }
+      const sandboxPatch = event.normalizedState
+        ? buildLiveSourceRemoteObservationPatch({
+            sandbox,
+            remoteState: event.normalizedState,
+            source: "webhook",
+            now,
+          })
+        : {};
 
       if (Object.keys(sandboxPatch).length > 0) {
         await ctx.db.patch(sandbox._id, sandboxPatch);

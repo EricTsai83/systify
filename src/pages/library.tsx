@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
+import { CircleIcon, LightningIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import { AppSidebarLeft, AppSidebarRight } from "@/components/app-sidebar";
 import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
 import { LibraryShell } from "@/components/library-shell";
 import { ScreenState } from "@/components/screen-state";
 import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
+import { Badge } from "@/components/ui/badge";
 import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
 import { isViewerFeatureEnabled, useViewerAccess } from "@/hooks/use-viewer-access";
@@ -21,6 +23,7 @@ import type { ArtifactId, RepositoryId, ThreadId, ThreadMode } from "@/lib/types
 import { writeString } from "@/lib/storage";
 import { applyTouchRepositoryOptimistic } from "@/lib/repository-mutations";
 import { DEMO_MODE_COPY } from "@/lib/demo-content";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 const ACTIVE_REPOSITORY_STORAGE_KEY = "systify.activeRepositoryId";
@@ -99,6 +102,7 @@ function LibraryRepository({
   const tabs = useLibraryTabs(repositoryId, artifactId);
 
   const allArtifacts = useQuery(api.artifacts.listMetadataByRepositoryWithFreshness, { repositoryId });
+  const sandboxActivityStatus = useQuery(api.repositories.getSandboxActivityStatus, { repositoryId });
   const { isUnseen, markViewed } = useArtifactViewState(repositoryId);
 
   const hasArtifacts = (allArtifacts?.length ?? 0) > 0;
@@ -131,6 +135,7 @@ function LibraryRepository({
   const highReasoningDisabledReason =
     accessLoadingReason ??
     (isViewerFeatureEnabled(viewerAccess, "highReasoning") ? undefined : DEMO_MODE_COPY.highReasoningDisabled);
+  const artifactDraftDisabledReason = libraryAskDisabledReason ?? generateSystemDesignDisabledReason;
 
   const handleSwitchRepository = useCallback(
     (id: RepositoryId) => {
@@ -237,7 +242,7 @@ function LibraryRepository({
           <h1 className="min-w-0 truncate text-sm font-semibold tracking-tight text-foreground md:text-base">
             {currentRepository?.sourceRepoFullName ?? "Library"}
           </h1>
-          <span className="shrink-0 text-[11px] text-muted-foreground">Read Only</span>
+          <LibraryLiveSourceBadge status={sandboxActivityStatus} />
           <SidebarTrigger side="right" className="ml-auto" />
         </header>
         <div className="flex min-h-0 min-w-0 flex-1">
@@ -259,6 +264,8 @@ function LibraryRepository({
         onGenerate={openGenerateDialog}
         askDisabledReason={libraryAskDisabledReason}
         generateDisabledReason={generateSystemDesignDisabledReason}
+        artifactDraftDisabledReason={artifactDraftDisabledReason}
+        liveSourceStatus={sandboxActivityStatus}
         premiumModelsDisabledReason={premiumModelsDisabledReason}
         highReasoningDisabledReason={highReasoningDisabledReason}
       />
@@ -272,4 +279,66 @@ function LibraryRepository({
       />
     </>
   );
+}
+
+type LibrarySandboxActivityStatus = ReturnType<typeof useQuery<typeof api.repositories.getSandboxActivityStatus>>;
+
+export function LibraryLiveSourceBadge({ status }: { status: LibrarySandboxActivityStatus | undefined }) {
+  const presentation = getLibraryLiveSourcePresentation(status);
+  const Icon = presentation.icon;
+
+  return (
+    <Badge
+      variant="outline"
+      title={presentation.title}
+      aria-label={presentation.title}
+      className={cn("h-6 shrink-0 gap-1.5 px-2 text-[11px] font-medium", presentation.className)}
+    >
+      <Icon size={10} weight="fill" className={presentation.iconClassName} aria-hidden="true" />
+      <span>{presentation.label}</span>
+    </Badge>
+  );
+}
+
+function getLibraryLiveSourcePresentation(status: LibrarySandboxActivityStatus | undefined) {
+  if (status == null) {
+    return {
+      label: "Code access",
+      title: "Repository code access status is loading",
+      icon: CircleIcon,
+      className: "border-border bg-card text-muted-foreground",
+      iconClassName: "animate-pulse text-muted-foreground",
+    };
+  }
+
+  if (status.kind === "ready" || status.kind === "expiring_soon") {
+    return {
+      label: "Code access active",
+      title:
+        status.kind === "expiring_soon"
+          ? "Repository code access is active and will auto-archive soon"
+          : "Repository code access is active",
+      icon: LightningIcon,
+      className: "border-success/35 bg-success/10 text-success",
+      iconClassName: "text-success",
+    };
+  }
+
+  if (status.kind === "preparing") {
+    return {
+      label: "Code access starting",
+      title: "Repository code access is starting",
+      icon: CircleIcon,
+      className: "border-primary/35 bg-primary/10 text-primary",
+      iconClassName: "animate-pulse text-primary",
+    };
+  }
+
+  return {
+    label: "Code access idle",
+    title: "Repository code access starts when a task needs current repository files.",
+    icon: WarningCircleIcon,
+    className: "border-border bg-card text-muted-foreground",
+    iconClassName: "text-muted-foreground",
+  };
 }

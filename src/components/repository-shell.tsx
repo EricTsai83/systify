@@ -450,7 +450,12 @@ export function RepositoryShell({
     }
   }, [groundingState, groundLibrary, setGroundLibrary]);
   useEffect(() => {
-    if (groundingState && !groundingState.sandbox.enabled && groundSandbox) {
+    if (
+      groundingState &&
+      !groundingState.sandbox.enabled &&
+      groundingState.sandbox.isActivatable !== true &&
+      groundSandbox
+    ) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setGroundSandbox(false);
     }

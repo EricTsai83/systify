@@ -5,14 +5,8 @@ import { internalMutation, internalQuery, mutation, query, type MutationCtx } fr
 import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
 import { requireOwnedDoc } from "./lib/ownedDocs";
 import { assertFeatureAccess } from "./lib/entitlements";
-
-const DEFAULT_IDLE_AUTO_PAUSE_MINUTES = 10;
-
-function getIdleAutoPauseMinutes(): number {
-  const raw = process.env.SANDBOX_SESSION_IDLE_AUTO_PAUSE_MINUTES;
-  const parsed = raw ? Number(raw) : DEFAULT_IDLE_AUTO_PAUSE_MINUTES;
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : DEFAULT_IDLE_AUTO_PAUSE_MINUTES;
-}
+import { DEFAULT_AUTO_STOP_MINUTES } from "./lib/constants";
+import { resolveSandboxSessionStartStateForRepository } from "./lib/liveSourceLifecycle";
 
 async function findReusableSession(
   ctx: MutationCtx,
@@ -53,16 +47,21 @@ export const startSandboxSession = mutation({
       return existing._id;
     }
 
+    const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
+    const startState = resolveSandboxSessionStartStateForRepository({
+      latestSandboxId: repository.latestSandboxId,
+      sandbox,
+    });
     const now = Date.now();
     return await ctx.db.insert("sandboxSessions", {
       ownerTokenIdentifier: identity.tokenIdentifier,
       repositoryId: args.repositoryId,
-      sandboxId: repository.latestSandboxId,
-      status: repository.latestSandboxId ? "active" : "starting",
+      sandboxId: startState.sandboxId,
+      status: startState.status,
       startedAt: now,
       lastActivityAt: now,
       lastResumedAt: now,
-      idleAutoPauseMinutes: getIdleAutoPauseMinutes(),
+      idleAutoPauseMinutes: DEFAULT_AUTO_STOP_MINUTES,
       spentCents: 0,
     });
   },
@@ -170,16 +169,21 @@ export const ensureSandboxSessionForThread = internalMutation({
     if (!repository) {
       throw new Error("Repository not found.");
     }
+    const sandbox = repository.latestSandboxId ? await ctx.db.get(repository.latestSandboxId) : null;
+    const startState = resolveSandboxSessionStartStateForRepository({
+      latestSandboxId: repository.latestSandboxId,
+      sandbox,
+    });
     const now = Date.now();
     const sessionId = await ctx.db.insert("sandboxSessions", {
       ownerTokenIdentifier: thread.ownerTokenIdentifier,
       repositoryId: thread.repositoryId,
-      sandboxId: repository.latestSandboxId,
-      status: repository.latestSandboxId ? "active" : "starting",
+      sandboxId: startState.sandboxId,
+      status: startState.status,
       startedAt: now,
       lastActivityAt: now,
       lastResumedAt: now,
-      idleAutoPauseMinutes: getIdleAutoPauseMinutes(),
+      idleAutoPauseMinutes: DEFAULT_AUTO_STOP_MINUTES,
       spentCents: 0,
     });
     await ctx.db.patch(thread._id, { sandboxSessionId: sessionId });
@@ -217,33 +221,4 @@ export const getSessionInternal = internalQuery({
 export const getSandboxInternal = internalQuery({
   args: { sandboxId: v.id("sandboxes") },
   handler: async (ctx, args) => await ctx.db.get(args.sandboxId),
-});
-
-export const listAutoPauseCandidates = internalQuery({
-  args: { now: v.number(), limit: v.number() },
-  handler: async (ctx, args) => {
-    const rows = await ctx.db
-      .query("sandboxSessions")
-      .withIndex("by_status_and_lastActivityAt", (q) => q.eq("status", "active"))
-      .take(Math.max(1, Math.floor(args.limit)));
-    return rows.filter((session) => session.lastActivityAt < args.now - session.idleAutoPauseMinutes * 60_000);
-  },
-});
-
-export const markSessionPausedByIdle = internalMutation({
-  args: { sessionId: v.id("sandboxSessions"), now: v.number() },
-  handler: async (ctx, args) => {
-    const session = await ctx.db.get(args.sessionId);
-    if (!session || session.status !== "active") {
-      return { paused: false };
-    }
-    if (session.lastActivityAt >= args.now - session.idleAutoPauseMinutes * 60_000) {
-      return { paused: false };
-    }
-    await ctx.db.patch(args.sessionId, {
-      status: "paused",
-      pausedAt: args.now,
-    });
-    return { paused: true };
-  },
 });

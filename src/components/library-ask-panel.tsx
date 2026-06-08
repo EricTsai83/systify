@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { BookOpenIcon, PaperPlaneTiltIcon, SparkleIcon } from "@phosphor-icons/react";
+import { BookOpenIcon, FilePlusIcon, GitDiffIcon, PaperPlaneTiltIcon, SparkleIcon } from "@phosphor-icons/react";
 import { useMutation, useQuery } from "convex/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
@@ -16,20 +16,34 @@ import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-inpu
 import { EmptyStateHero, PromptSuggestionList } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import {
+  LibraryArtifactDraftCard,
+  LibraryArtifactDraftConfirmCard,
+  type LibraryArtifactDraftEntry,
+  type LibraryArtifactDraftIntent,
+} from "@/components/library-artifact-draft-card";
 import { LibraryAskThreadTabs } from "@/components/library-ask-thread-tabs";
+import { type PromptInputModelPickerValue } from "@/components/ai-elements/prompt-input-model-picker";
 import { Button } from "@/components/ui/button";
 import { useLibraryAskTabs } from "@/hooks/use-library-ask-tabs";
 import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
 import { useChatLifecycle } from "@/hooks/use-chat-lifecycle";
 import { useConversationThread } from "@/hooks/use-conversation-thread";
+import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
 import { useModelAccessDisabledReason } from "@/hooks/use-model-access-disabled-reason";
 import { toUserErrorMessage } from "@/lib/errors";
 import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
-import type { ArtifactId, RepositoryId, ThreadId } from "@/lib/types";
+import type { ArtifactId, ReasoningEffort, RepositoryId, ThreadId } from "@/lib/types";
 import { toast } from "sonner";
 
 const LOCKED_PLACEHOLDER = `${REPOSITORY_GUIDE_COPY.generateAction} to unlock Library Ask.`;
 const LOCKED_HINT = "Library Ask needs at least one guide section in this repository before you can send a question.";
+const DEFAULT_UPDATE_DRAFT_PROMPT = "Refresh this artifact using the codebase as the source of truth.";
+
+type LibraryAskTimelineEntry =
+  | { kind: "message"; _id: Doc<"messages">["_id"]; createdAt: number; message: Doc<"messages"> }
+  | { kind: "draft"; _id: Doc<"artifactDrafts">["_id"]; createdAt: number; entry: LibraryArtifactDraftEntry };
 
 export function LibraryAskPanel({
   repositoryId,
@@ -41,6 +55,8 @@ export function LibraryAskPanel({
   onGenerate,
   askDisabledReason,
   generateDisabledReason,
+  artifactDraftDisabledReason,
+  liveSourceStatus,
   premiumModelsDisabledReason,
   highReasoningDisabledReason,
 }: {
@@ -70,11 +86,14 @@ export function LibraryAskPanel({
   onGenerate?: () => void;
   askDisabledReason?: string;
   generateDisabledReason?: string;
+  artifactDraftDisabledReason?: string;
+  liveSourceStatus?: { kind: "idle" | "preparing" | "ready" | "expiring_soon" };
   premiumModelsDisabledReason?: string;
   highReasoningDisabledReason?: string;
 }) {
   const archiveThread = useMutation(api.chat.threads.archiveThread);
   const setThreadPinned = useMutation(api.chat.threads.setThreadPinned);
+  const requestDraft = useMutation(api.libraryArtifactDrafts.requestDraft);
 
   const threads = useQuery(api.chat.threads.listThreads, { repositoryId, mode: "library" });
   // Dual-purpose: confirms the active thread exists (so the message queries
@@ -87,13 +106,63 @@ export function LibraryAskPanel({
   const confirmedThreadId = threadId && activeThreadProbe ? threadId : null;
   const { messages, activeMessageStream, canLoadOlderMessages, handleLoadOlderMessages, latestAssistantInFlight } =
     useConversationThread({ threadId: confirmedThreadId });
+  const threadDrafts = useQuery(
+    api.libraryArtifactDrafts.listByThread,
+    confirmedThreadId ? { threadId: confirmedThreadId } : "skip",
+  );
+  const recentDrafts = useQuery(api.libraryArtifactDrafts.listRecentByRepository, threadId ? "skip" : { repositoryId });
+  const [repositoryDraftSessionStartedAt, setRepositoryDraftSessionStartedAt] = useState(() => Date.now());
+  const [visibleRepositoryDraftIds, setVisibleRepositoryDraftIds] = useState<Doc<"artifactDrafts">["_id"][]>([]);
+  const draftEntries = useMemo<LibraryArtifactDraftEntry[]>(() => {
+    if (threadId) {
+      return confirmedThreadId ? [...(threadDrafts ?? [])].sort(compareDraftEntriesByCreatedAt) : [];
+    }
+    if (!recentDrafts) {
+      return [];
+    }
+    return recentDrafts.filter((entry) => {
+      if (entry.draft.threadId !== undefined) {
+        return false;
+      }
+      return (
+        entry.draft.createdAt >= repositoryDraftSessionStartedAt || visibleRepositoryDraftIds.includes(entry.draft._id)
+      );
+    });
+  }, [
+    confirmedThreadId,
+    recentDrafts,
+    repositoryDraftSessionStartedAt,
+    threadDrafts,
+    threadId,
+    visibleRepositoryDraftIds,
+  ]);
+  const timelineEntries = useMemo<LibraryAskTimelineEntry[]>(() => {
+    if (!threadId) {
+      return [];
+    }
+    return [
+      ...(messages ?? []).map((message) => ({
+        kind: "message" as const,
+        _id: message._id,
+        createdAt: message._creationTime,
+        message,
+      })),
+      ...draftEntries.map((entry) => ({
+        kind: "draft" as const,
+        _id: entry.draft._id,
+        createdAt: entry.draft.createdAt,
+        entry,
+      })),
+    ].sort(compareTimelineEntries);
+  }, [draftEntries, messages, threadId]);
+  const scrollEntries: readonly { readonly _id: string }[] | undefined = threadId ? timelineEntries : messages;
 
   // Owns stick-to-bottom, anchor preservation on prepend, sentinel
   // observer for load-older, threadId-keyed reset, and prefers-
   // reduced-motion gating for the Ask conversation.
   const conversationScroll = useChatScroll({
     threadId: confirmedThreadId,
-    messages,
+    messages: scrollEntries,
     streamingSignal: activeMessageStream?.content ?? null,
     canLoadOlder: canLoadOlderMessages,
     onLoadOlder: handleLoadOlderMessages,
@@ -105,7 +174,11 @@ export function LibraryAskPanel({
   const [error, setError] = useState<string | null>(null);
   const [pendingArchiveThreadId, setPendingArchiveThreadId] = useState<ThreadId | null>(null);
   const [isArchivingThread, setIsArchivingThread] = useState(false);
+  const [draftIntent, setDraftIntent] = useState<LibraryArtifactDraftIntent | null>(null);
+  const [draftUserPick, setDraftUserPick] = useState<PromptInputModelPickerValue | null>(null);
+  const [draftReasoningEffort, setDraftReasoningEffort] = useState<ReasoningEffort | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const activeArtifact = useQuery(api.artifacts.getById, activeArtifactId ? { artifactId: activeArtifactId } : "skip");
 
   const handlePickSuggestion = useCallback((suggestion: string) => {
     setInput(suggestion);
@@ -154,6 +227,9 @@ export function LibraryAskPanel({
   useEffect(() => {
     setInput("");
     setError(null);
+    setDraftIntent(null);
+    setRepositoryDraftSessionStartedAt(Date.now());
+    setVisibleRepositoryDraftIds([]);
   }, [threadId]);
 
   const lockedProvider = activeThreadProbe?.lockedProvider ?? null;
@@ -206,6 +282,9 @@ export function LibraryAskPanel({
   const handleCreateThread = useCallback(() => {
     setError(null);
     setInput("");
+    setDraftIntent(null);
+    setRepositoryDraftSessionStartedAt(Date.now());
+    setVisibleRepositoryDraftIds([]);
     onSelectThread(null);
     textareaRef.current?.focus();
   }, [onSelectThread]);
@@ -263,17 +342,31 @@ export function LibraryAskPanel({
   const isLocked = !hasArtifacts;
   const selectedModelPick =
     selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null;
-  const modelAccessDisabledReason = useModelAccessDisabledReason({
+  const askModelAccessDisabledReason = useModelAccessDisabledReason({
     modelPick: selectedModelPick,
     reasoningEffort: selectedReasoningEffort,
     preferenceScope: "library",
     premiumModelsDisabledReason,
     highReasoningDisabledReason,
   });
-  const composerDisabledReason = askDisabledReason ?? (isLocked ? LOCKED_HINT : modelAccessDisabledReason);
+  const draftDefaultPick = useDefaultModelPick({ capability: "sandbox", preferenceScope: "sandbox" });
+  const draftModelPick = draftUserPick ?? draftDefaultPick ?? null;
+  const draftModelAccessDisabledReason = useModelAccessDisabledReason({
+    modelPick: draftModelPick,
+    reasoningEffort: draftReasoningEffort,
+    preferenceScope: "sandbox",
+    premiumModelsDisabledReason,
+    highReasoningDisabledReason,
+  });
+  const threadConfirmationDisabledReason =
+    threadId && confirmedThreadId === null ? "Waiting for thread confirmation…" : undefined;
+  const documentActionDisabledReason =
+    threadConfirmationDisabledReason ?? artifactDraftDisabledReason ?? draftModelAccessDisabledReason ?? undefined;
+  const composerDisabledReason =
+    askDisabledReason ?? threadConfirmationDisabledReason ?? (isLocked ? LOCKED_HINT : askModelAccessDisabledReason);
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
-      if (composerDisabledReason !== null || latestAssistantInFlight) {
+      if (composerDisabledReason != null || latestAssistantInFlight) {
         event.preventDefault();
         return;
       }
@@ -287,6 +380,94 @@ export function LibraryAskPanel({
     : activeArtifactId
       ? "Question about the open artifact..."
       : "Question about this library...";
+  const repositoryCodeLabel = getRepositoryCodeDraftLabel(liveSourceStatus);
+  const openCreateDraft = useCallback(() => {
+    setError(null);
+    setDraftIntent({
+      operation: "create",
+      title: "",
+      folderId: null,
+      prompt: input.trim(),
+    });
+  }, [input]);
+  const openUpdateDraft = useCallback(() => {
+    if (!activeArtifactId) return;
+    setError(null);
+    setDraftIntent({
+      operation: "update",
+      title: activeArtifact?.title ?? "",
+      folderId: null,
+      prompt: input.trim(),
+    });
+  }, [activeArtifact?.title, activeArtifactId, input]);
+
+  const [isRequestingDraft, runRequestDraft] = useAsyncCallback(async () => {
+    if (!draftIntent) return;
+    if (documentActionDisabledReason) {
+      setError(documentActionDisabledReason);
+      return;
+    }
+    if (!draftModelPick) {
+      setError("Loading models — try again in a moment.");
+      return;
+    }
+    if (threadId && !confirmedThreadId) {
+      setError(threadConfirmationDisabledReason ?? "Waiting for thread confirmation…");
+      return;
+    }
+    if (draftIntent.operation === "create" && draftIntent.title.trim().length === 0) {
+      setError("Add a title for the new artifact.");
+      return;
+    }
+    const prompt = draftIntent.prompt.trim();
+    if (draftIntent.operation === "create" && prompt.length === 0) {
+      setError("Describe what to draft.");
+      return;
+    }
+    const requestPrompt =
+      draftIntent.operation === "update" && prompt.length === 0 ? DEFAULT_UPDATE_DRAFT_PROMPT : prompt;
+    try {
+      const result = await requestDraft({
+        repositoryId,
+        threadId: confirmedThreadId ? confirmedThreadId : undefined,
+        operation: draftIntent.operation,
+        prompt: requestPrompt,
+        title: draftIntent.operation === "create" ? draftIntent.title : undefined,
+        folderId: draftIntent.operation === "create" ? (draftIntent.folderId ?? undefined) : undefined,
+        targetArtifactId: draftIntent.operation === "update" ? (activeArtifactId ?? undefined) : undefined,
+        provider: draftModelPick.provider,
+        modelName: draftModelPick.modelName,
+        ...(draftReasoningEffort !== null ? { reasoningEffort: draftReasoningEffort } : {}),
+      });
+      if (!confirmedThreadId) {
+        setVisibleRepositoryDraftIds((current) =>
+          current.includes(result.draftId) ? current : [...current, result.draftId],
+        );
+      }
+      setError(null);
+      setDraftIntent(null);
+    } catch (caught) {
+      setError(toUserErrorMessage(caught, "Failed to start artifact draft."));
+    }
+  });
+
+  const handleRepositoryDraftRegenerated = useCallback((draftId: Doc<"artifactDrafts">["_id"]) => {
+    setVisibleRepositoryDraftIds((current) => (current.includes(draftId) ? current : [...current, draftId]));
+  }, []);
+
+  const draftCards =
+    draftEntries.length > 0 ? (
+      <div className="space-y-5" data-testid="artifact-draft-list">
+        {draftEntries.map((entry) => (
+          <LibraryArtifactDraftCard
+            key={entry.draft._id}
+            entry={entry}
+            onApplied={onSelectArtifact}
+            onRegenerated={handleRepositoryDraftRegenerated}
+          />
+        ))}
+      </div>
+    ) : null;
 
   return (
     // Plain container, not a landmark: this panel renders inside the app
@@ -307,22 +488,37 @@ export function LibraryAskPanel({
 
       {threadId ? (
         <Conversation scroll={conversationScroll} className="min-h-0 flex-1">
-          <ConversationContent className="space-y-3 px-4 py-3" showLoadOlderSentinel={canLoadOlderMessages}>
-            {(messages ?? []).map((message) => (
-              <MessageBubble
-                key={message._id}
-                message={message}
-                activeMessageStream={activeMessageStream ?? null}
-                onSelectArtifact={onSelectArtifact}
-              />
-            ))}
+          <ConversationContent className="gap-0 px-4 py-3" showLoadOlderSentinel={canLoadOlderMessages}>
+            {timelineEntries.map((entry, index) =>
+              entry.kind === "message" ? (
+                <div key={entry._id} className={timelineSpacingClassName(timelineEntries[index - 1], entry)}>
+                  <MessageBubble
+                    message={entry.message}
+                    activeMessageStream={activeMessageStream ?? null}
+                    onSelectArtifact={onSelectArtifact}
+                  />
+                </div>
+              ) : (
+                <div key={entry._id} className={timelineSpacingClassName(timelineEntries[index - 1], entry)}>
+                  <LibraryArtifactDraftCard
+                    entry={entry.entry}
+                    onApplied={onSelectArtifact}
+                    onRegenerated={handleRepositoryDraftRegenerated}
+                  />
+                </div>
+              ),
+            )}
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
       ) : isLocked ? (
-        <NoArtifactsHint onGenerate={onGenerate} generateDisabledReason={generateDisabledReason} />
+        <div className="flex min-h-0 flex-1 animate-in flex-col gap-5 px-4 py-6 fade-in duration-300">
+          {draftCards}
+          <NoArtifactsHint onGenerate={onGenerate} generateDisabledReason={generateDisabledReason} />
+        </div>
       ) : (
         <div className="flex min-h-0 flex-1 animate-in flex-col gap-5 px-4 py-6 fade-in duration-300">
+          {draftCards}
           <div className="flex flex-1 items-center justify-center">
             <EmptyStateHero
               visual={
@@ -334,7 +530,7 @@ export function LibraryAskPanel({
               description={
                 activeArtifactId
                   ? "Answers cite this artifact and other indexed chunks."
-                  : "Answers cite retrieved artifact chunks. For live code state, enable Sandbox grounding in Discuss."
+                  : "Answers cite retrieved artifact chunks. Artifact drafts use the codebase as the source of truth and wait for Apply."
               }
             />
           </div>
@@ -345,6 +541,28 @@ export function LibraryAskPanel({
           />
         </div>
       )}
+
+      {draftIntent ? (
+        <div className="border-t border-border bg-muted/20 p-3">
+          <LibraryArtifactDraftConfirmCard
+            repositoryId={repositoryId}
+            intent={draftIntent}
+            activeArtifactTitle={activeArtifact?.title}
+            disabledReason={documentActionDisabledReason}
+            repositoryCodeLabel={repositoryCodeLabel}
+            modelPick={draftModelPick}
+            onModelPickChange={setDraftUserPick}
+            reasoningEffort={draftReasoningEffort}
+            onReasoningEffortChange={setDraftReasoningEffort}
+            premiumModelsDisabledReason={premiumModelsDisabledReason}
+            highReasoningDisabledReason={highReasoningDisabledReason}
+            onChange={setDraftIntent}
+            onCancel={() => setDraftIntent(null)}
+            onSubmit={() => void runRequestDraft()}
+            isSubmitting={isRequestingDraft}
+          />
+        </div>
+      ) : null}
 
       {/*
        * Inline lock notice. Surfaces above the composer whenever the
@@ -387,11 +605,37 @@ export function LibraryAskPanel({
             onChange={(event) => setInput(event.target.value)}
             placeholder={composerPlaceholder}
             className="min-h-24 text-sm"
-            disabled={isSending || latestAssistantInFlight || composerDisabledReason !== null}
+            disabled={isSending || latestAssistantInFlight || composerDisabledReason != null}
             aria-describedby={composerHintId}
           />
           <PromptInputFooter>
             <PromptInputTools>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 px-2 text-[11px]"
+                onClick={openCreateDraft}
+                disabled={documentActionDisabledReason !== undefined}
+                title={documentActionDisabledReason}
+              >
+                <FilePlusIcon size={13} weight="bold" />
+                Create artifact
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-8 gap-1.5 px-2 text-[11px]"
+                onClick={openUpdateDraft}
+                disabled={documentActionDisabledReason !== undefined || activeArtifactId === null}
+                title={
+                  activeArtifactId === null ? "Open an artifact to draft an update." : documentActionDisabledReason
+                }
+              >
+                <GitDiffIcon size={13} weight="bold" />
+                Update open artifact
+              </Button>
               {/*
                * Library Ask model picker. Hidden while the composer
                * is locked (no artifacts) — the user can't send
@@ -431,7 +675,7 @@ export function LibraryAskPanel({
             <Button
               type="submit"
               size="sm"
-              disabled={!input.trim() || isSending || latestAssistantInFlight || composerDisabledReason !== null}
+              disabled={!input.trim() || isSending || latestAssistantInFlight || composerDisabledReason != null}
               title={composerDisabledReason ?? undefined}
             >
               <PaperPlaneTiltIcon size={14} weight="fill" />
@@ -466,6 +710,33 @@ const LIBRARY_SUGGESTIONS = [
   "Walk me through the architecture.",
   "How is data modeled across the system?",
 ];
+
+function compareDraftEntriesByCreatedAt(left: LibraryArtifactDraftEntry, right: LibraryArtifactDraftEntry) {
+  return left.draft.createdAt - right.draft.createdAt || left.draft._creationTime - right.draft._creationTime;
+}
+
+function compareTimelineEntries(left: LibraryAskTimelineEntry, right: LibraryAskTimelineEntry) {
+  if (left.createdAt !== right.createdAt) {
+    return left.createdAt - right.createdAt;
+  }
+  if (left.kind !== right.kind) {
+    return left.kind === "message" ? -1 : 1;
+  }
+  return String(left._id).localeCompare(String(right._id));
+}
+
+function timelineSpacingClassName(
+  previousEntry: LibraryAskTimelineEntry | undefined,
+  entry: LibraryAskTimelineEntry,
+): string | undefined {
+  if (!previousEntry) return undefined;
+  return timelineEntrySender(previousEntry) === timelineEntrySender(entry) ? "mt-5" : "mt-12";
+}
+
+function timelineEntrySender(entry: LibraryAskTimelineEntry): "user" | "assistant" {
+  if (entry.kind === "draft") return "assistant";
+  return entry.message.role === "user" ? "user" : "assistant";
+}
 
 /**
  * Empty-state shown when the repository has no artifacts yet. The Ask panel
@@ -508,4 +779,17 @@ function NoArtifactsHint({
       ) : null}
     </div>
   );
+}
+
+function getRepositoryCodeDraftLabel(status: { kind: "idle" | "preparing" | "ready" | "expiring_soon" } | undefined) {
+  if (status === undefined) {
+    return "Repository code status is loading. The draft will verify access before it starts.";
+  }
+  if (status.kind === "ready" || status.kind === "expiring_soon") {
+    return "Repository code is ready. The draft will treat the codebase as the source of truth.";
+  }
+  if (status.kind === "preparing") {
+    return "Repository code access is starting. The draft will continue once it is ready.";
+  }
+  return "The draft will prepare repository code access first, then use the codebase as the source of truth.";
 }

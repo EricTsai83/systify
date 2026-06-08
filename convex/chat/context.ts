@@ -85,13 +85,19 @@ export type ReplyContext = {
   chunks: Array<{ path: string; summary: string; content: string }>;
   messages: Array<{ id: Id<"messages">; role: "user" | "assistant" | "system" | "tool"; content: string }>;
   /**
-   * Sandbox-tool wiring information. Populated **only** when the queued
-   * user message has `groundSandbox: true` AND a ready sandbox is attached
-   * to the repository; `undefined` in every other case (Library mode,
-   * Discuss with sandbox grounding off, missing sandbox, sandbox not in
-   * `ready` state).
+   * Sandbox-tool wiring snapshot. Populated only when the queued user
+   * message has `groundSandbox: true` AND the repository already has a
+   * ready sandbox at context-query time.
    *
-   * The fields are everything `generation.ts` needs to construct a
+   * This is no longer the source of truth for whether Sandbox grounding
+   * should use tools. The Node generation action calls `ensureSandboxReady`
+   * for every sandbox-grounded reply and replaces this handle with the
+   * prepared live-source handle before constructing final tools. Keeping
+   * this snapshot available is useful for ready-cache tests and legacy
+   * call sites, but missing/stopped/failed/provisioning rows should not
+   * be interpreted as "answer without tools."
+   *
+   * The fields are everything the action needs to construct a
    * `SandboxFsClient`, pass it to `createSandboxTools`, and record audit
    * log entries for every tool execution:
    *
@@ -106,11 +112,9 @@ export type ReplyContext = {
    *   - `repoPath` — absolute path of the repository's root inside the
    *     sandbox, used to scope every tool call's path validation.
    *
-   * Surfacing this via the context query (rather than a separate fetch in
-   * the action) keeps the `(thread, sandbox, repository)` lookup as a single
-   * transactional snapshot — a sandbox that becomes unavailable between
-   * queueing and generation is reflected here as `undefined` and the action
-   * can fall back to a no-tool reply without an extra `ctx.db.get` race.
+   * The action overwrites this with the `ensureSandboxReady` result before
+   * calling the model, so audit logs always point at the sandbox that was
+   * actually used for the reply.
    */
   sandboxTooling?: {
     sandboxId: Id<"sandboxes">;

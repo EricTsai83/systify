@@ -210,7 +210,7 @@ const MODEL_SETTINGS_SCOPE_COPY: Record<ModelPreferenceScope, { label: string; d
   },
   sandbox: {
     label: "Sandbox",
-    description: "Sandbox-grounded work and System Design generation.",
+    description: "Live source work, artifact drafts, and System Design generation.",
   },
 };
 

@@ -34,7 +34,7 @@ function makeStatus(overrides: Partial<SandboxModeStatus> = {}): SandboxModeStat
 
 describe("isUserRelevantActiveJob / isUserRelevantJob", () => {
   test("admits user-initiated kinds in active states", () => {
-    for (const kind of ["import", "index", "chat", "system_design"] as const) {
+    for (const kind of ["import", "index", "chat", "system_design", "artifact_draft"] as const) {
       expect(isUserRelevantActiveJob(makeJob({ kind, status: "queued" }))).toBe(true);
       expect(isUserRelevantActiveJob(makeJob({ kind, status: "running" }))).toBe(true);
     }
@@ -138,7 +138,7 @@ describe("presentSandboxSurface", () => {
         sandboxModeStatus: makeStatus({ reasonCode: "missing_sandbox" }),
         sandbox: null,
       }).description,
-    ).toMatch(/Activate live source access/);
+    ).toBe("Live source will be prepared when a task needs it.");
   });
 
   test("prefers backend-supplied message when present", () => {

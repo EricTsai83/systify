@@ -1,188 +1,19 @@
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery } from "./_generated/server";
-import type { MutationCtx, QueryCtx } from "./_generated/server";
-import { llmProviderValidator, type LlmProvider } from "./lib/llmProvider";
-import { assertOwnedBy } from "./lib/ownedDocs";
+import type { QueryCtx } from "./_generated/server";
+import {
+  createArtifactWrite,
+  deleteArtifactWrite,
+  markArtifactChunkingStatusWrite,
+  updateArtifactWrite,
+} from "./lib/artifactWrites";
+import { llmProviderValidator } from "./lib/llmProvider";
 
 type ArtifactKind = Doc<"artifacts">["kind"];
 
-interface CreateArtifactArgs {
-  threadId?: Id<"threads">;
-  repositoryId?: Id<"repositories">;
-  ownerTokenIdentifier: string;
-  jobId?: Id<"jobs">;
-  kind: ArtifactKind;
-  title: string;
-  summary: string;
-  contentMarkdown: string;
-  alignedImportCommitSha?: string;
-  /**
-   * Optional folder placement (Phase A folder model). The store re-reads
-   * the folder before insert so callers can pass the id while this module
-   * enforces folder existence, owner, and repository scope.
-   */
-  folderId?: Id<"artifactFolders">;
-  /**
-   * Provenance triple. Together with `alignedImportCommitSha`, these
-   * form the idempotency cache key for the System Design generator —
-   * see `convex/systemDesign.ts:findCachedArtifact`. Non-LLM
-   * artifacts (future user-authored, manual import) leave all three
-   * unset and never participate in the cache lookup.
-   */
-  generatedByProvider?: LlmProvider;
-  generatedByModel?: string;
-  promptVersion?: number;
-  /**
-   * Back-reference to the `systemDesignKindRuns` row that produced
-   * this artifact. Set by `linkKindRun` *after* both rows exist so
-   * write order doesn't matter — kindRunId can be patched in after
-   * the artifact is created.
-   */
-  kindRunId?: Id<"systemDesignKindRuns">;
-}
-
-/**
- * Enforces the polymorphic-parent invariant from the PRD: every artifact must
- * belong to at least one of `thread` or `repository`. The schema makes both
- * fields `v.optional`, so this is the only place the rule is enforced.
- *
- * Exported so direct artifact writers can share the same invariant.
- */
-export function validateParentPresence(
-  threadId: Id<"threads"> | undefined,
-  repositoryId: Id<"repositories"> | undefined,
-) {
-  if (!threadId && !repositoryId) {
-    throw new Error("Artifact must have at least one parent: threadId or repositoryId");
-  }
-}
-
-export async function createArtifactInMutation(ctx: MutationCtx, args: CreateArtifactArgs): Promise<Id<"artifacts">> {
-  validateParentPresence(args.threadId, args.repositoryId);
-
-  if (args.folderId) {
-    const folder = await ctx.db.get(args.folderId);
-    assertOwnedBy(folder, args.ownerTokenIdentifier, "Folder not found.");
-    if (!args.repositoryId) {
-      throw new Error("Cannot place a repo-less artifact in a repository folder.");
-    }
-    if (folder.repositoryId !== args.repositoryId) {
-      throw new Error("Cannot place an artifact in a folder from a different repository.");
-    }
-  }
-
-  const now = Date.now();
-  const artifactId = await ctx.db.insert("artifacts", {
-    threadId: args.threadId,
-    repositoryId: args.repositoryId,
-    jobId: args.jobId,
-    ownerTokenIdentifier: args.ownerTokenIdentifier,
-    kind: args.kind,
-    title: args.title,
-    summary: args.summary,
-    contentMarkdown: args.contentMarkdown,
-    version: 1,
-    folderId: args.folderId,
-    alignedImportCommitSha: args.alignedImportCommitSha,
-    // Every artifact is produced by a sandbox-grounded generator (Library
-    // System Design), so we stamp `lastVerifiedAt` at creation. The
-    // presence of this field is the single signal the Library freshness
-    // UI reads.
-    lastVerifiedAt: now,
-    chunkingStatus: args.repositoryId ? "pending" : undefined,
-    updatedAt: now,
-    generatedByProvider: args.generatedByProvider,
-    generatedByModel: args.generatedByModel,
-    promptVersion: args.promptVersion,
-    kindRunId: args.kindRunId,
-  });
-  if (args.repositoryId) {
-    await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, { artifactId });
-  }
-  return artifactId;
-}
-
 async function getArtifactInternal(ctx: QueryCtx, artifactId: Id<"artifacts">): Promise<Doc<"artifacts"> | null> {
   return await ctx.db.get(artifactId);
-}
-
-async function updateArtifactInternal(
-  ctx: MutationCtx,
-  artifactId: Id<"artifacts">,
-  updates: { title?: string; summary?: string; contentMarkdown?: string },
-): Promise<void> {
-  const artifact = await ctx.db.get(artifactId);
-  if (!artifact) {
-    throw new Error("Artifact not found");
-  }
-
-  // Convex `patch` treats explicit `undefined` as "set field to undefined",
-  // which fails validation for required string fields. Build the patch with
-  // only the keys the caller actually provided.
-  const patch: {
-    title?: string;
-    summary?: string;
-    contentMarkdown?: string;
-    version?: number;
-    chunkingStatus?: "pending";
-    updatedAt?: number;
-  } = {};
-  let changed = false;
-  if (updates.title !== undefined) {
-    patch.title = updates.title;
-    changed = true;
-  }
-  if (updates.summary !== undefined) {
-    patch.summary = updates.summary;
-    changed = true;
-  }
-  if (updates.contentMarkdown !== undefined) {
-    patch.contentMarkdown = updates.contentMarkdown;
-    if (artifact.repositoryId) {
-      patch.chunkingStatus = "pending";
-    }
-    changed = true;
-  }
-
-  if (changed) {
-    patch.version = artifact.version + 1;
-    patch.updatedAt = Date.now();
-    await ctx.db.patch(artifactId, patch);
-    if (artifact.repositoryId && updates.contentMarkdown !== undefined) {
-      await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, {
-        artifactId,
-      });
-    }
-  }
-}
-
-export async function deleteArtifactInternal(ctx: MutationCtx, artifactId: Id<"artifacts">): Promise<void> {
-  const PAGE_SIZE = 100;
-  let hasMoreChunks = true;
-  while (hasMoreChunks) {
-    const chunks = await ctx.db
-      .query("artifactChunks")
-      .withIndex("by_artifactId_and_chunkIndex", (q) => q.eq("artifactId", artifactId))
-      .take(PAGE_SIZE);
-    for (const chunk of chunks) {
-      await ctx.db.delete(chunk._id);
-    }
-    hasMoreChunks = chunks.length === PAGE_SIZE;
-  }
-  let hasMoreViews = true;
-  while (hasMoreViews) {
-    const views = await ctx.db
-      .query("artifactViews")
-      .withIndex("by_artifactId", (q) => q.eq("artifactId", artifactId))
-      .take(PAGE_SIZE);
-    for (const view of views) {
-      await ctx.db.delete(view._id);
-    }
-    hasMoreViews = views.length === PAGE_SIZE;
-  }
-  await ctx.db.delete(artifactId);
 }
 
 async function listByThreadInternal(
@@ -254,6 +85,7 @@ const artifactKindValidator = v.union(
   v.literal("deployment_overview"),
   v.literal("security_overview"),
   v.literal("operations_overview"),
+  v.literal("custom_document"),
 );
 
 export const createArtifact = internalMutation({
@@ -272,7 +104,7 @@ export const createArtifact = internalMutation({
     promptVersion: v.optional(v.number()),
     kindRunId: v.optional(v.id("systemDesignKindRuns")),
   },
-  handler: (ctx, args) => createArtifactInMutation(ctx, args),
+  handler: (ctx, args) => createArtifactWrite(ctx, args),
 });
 
 export const getArtifact = internalQuery({
@@ -286,18 +118,19 @@ export const updateArtifact = internalMutation({
     title: v.optional(v.string()),
     summary: v.optional(v.string()),
     contentMarkdown: v.optional(v.string()),
+    expectedVersion: v.optional(v.number()),
+    lastVerifiedAt: v.optional(v.number()),
+    alignedImportCommitSha: v.optional(v.string()),
+    generatedByProvider: v.optional(llmProviderValidator),
+    generatedByModel: v.optional(v.string()),
+    promptVersion: v.optional(v.number()),
   },
-  handler: (ctx, args) =>
-    updateArtifactInternal(ctx, args.artifactId, {
-      title: args.title,
-      summary: args.summary,
-      contentMarkdown: args.contentMarkdown,
-    }),
+  handler: (ctx, args) => updateArtifactWrite(ctx, args),
 });
 
 export const deleteArtifact = internalMutation({
   args: { artifactId: v.id("artifacts") },
-  handler: (ctx, args) => deleteArtifactInternal(ctx, args.artifactId),
+  handler: (ctx, args) => deleteArtifactWrite(ctx, args.artifactId),
 });
 
 export const markChunkingStatus = internalMutation({
@@ -309,19 +142,7 @@ export const markChunkingStatus = internalMutation({
       v.union(v.literal("embedding_failed"), v.literal("usage_budget_exceeded"), v.literal("feature_not_included")),
     ),
   },
-  handler: async (ctx, args) => {
-    const artifact = await ctx.db.get(args.artifactId);
-    if (!artifact || artifact.version !== args.version) {
-      return { patched: false };
-    }
-    await ctx.db.patch(args.artifactId, {
-      chunkingStatus: args.status,
-      chunkingFailureReason: args.status === "failed" ? args.failureReason : undefined,
-      lastChunkedAt: Date.now(),
-      lastChunkedVersion: args.version,
-    });
-    return { patched: true };
-  },
+  handler: (ctx, args) => markArtifactChunkingStatusWrite(ctx, args),
 });
 
 export const markVerified = internalMutation({

@@ -57,7 +57,7 @@ type StatusPanelProps = {
  * panel under mutual exclusion (only one of the two can be open at a time).
  *
  * Two sections, top-to-bottom:
- *   1. Status cards — Repository intelligence and Live sandbox. Same
+ *   1. Status cards — Repository intelligence and Live source. Same
  *      `present*Surface` helpers as the previous deck, so wording stays
  *      aligned with the chat ticker.
  *   2. Activity — user-relevant jobs with relative timestamps so two
@@ -149,7 +149,7 @@ export function StatusPanel({
             />
 
             <StatusCard
-              eyebrow="Live sandbox"
+              eyebrow="Live source"
               surface={sandboxStatus}
               icon={<LightningIcon weight="bold" />}
               meta={sandboxStatus.ttlExpiresAt ? <RelativeExpiry timestamp={sandboxStatus.ttlExpiresAt} /> : null}

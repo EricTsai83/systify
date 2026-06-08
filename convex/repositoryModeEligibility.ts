@@ -187,6 +187,15 @@ export async function assertRepositoryModeEligible(
   if (groundSandbox) {
     const sandboxAxis = verdict.grounding.sandbox;
     if (!sandboxAxis.enabled) {
+      const isRecoverableLivenessGate =
+        sandboxAxis.code === "sandbox_missing" ||
+        sandboxAxis.code === "sandbox_provisioning" ||
+        sandboxAxis.code === "sandbox_expired" ||
+        sandboxAxis.code === "sandbox_failed";
+      if (isRecoverableLivenessGate) {
+        throwIfDisabled(verdict, args.mode);
+        return;
+      }
       throw new ConvexError({
         code: sandboxAxis.code,
         mode: "discuss",

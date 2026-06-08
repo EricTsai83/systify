@@ -1,41 +1,25 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useQuery } from "convex/react";
 import { CircleIcon, CircleHalfIcon } from "@phosphor-icons/react";
 import type { RepositoryId } from "@/lib/types";
 import { api } from "../../convex/_generated/api";
-import { Button } from "@/components/ui/button";
-import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Spinner } from "@/components/ui/spinner";
-import { useAsyncCallback } from "@/hooks/use-async-callback";
-import { toUserErrorMessage } from "@/lib/errors";
 import { cn } from "@/lib/utils";
 
 /**
  * Chat-side status pill for the repository's live source. Three visual
- * states map to the activation lifecycle the backend exposes:
+ * states map to the lazy preparation lifecycle the backend exposes:
  *
- *   - idle           → "Live source inactive  [Activate]"
- *   - activating     → "Activating live source… {progress}%"
+ *   - idle           → "Live source will prepare on send"
+ *   - preparing      → "Preparing live source… {progress}%"
  *   - ready          → "Live source ready  (stops in X min)"
  *   - expiring_soon  → same shape as ready, amber colouring
  *
  * Hidden when the thread has no repository attached or when the viewer
- * isn't in a sandbox-tooled mode (chat-panel decides whether to mount
- * us). Clicking Activate enqueues a `sandbox_activation` job through
- * `requestSandboxActivation`.
+ * isn't in a sandbox-tooled mode (chat-panel decides whether to mount us).
  */
 export function SandboxActivityPill({ repositoryId }: { repositoryId: RepositoryId }) {
   const status = useQuery(api.repositories.getSandboxActivityStatus, { repositoryId });
-  const requestActivation = useMutation(api.repositories.requestSandboxActivation);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [isSubmitting, activate] = useAsyncCallback(async () => {
-    setErrorMessage(null);
-    try {
-      await requestActivation({ repositoryId });
-    } catch (err) {
-      setErrorMessage(toUserErrorMessage(err, "Couldn't start live source. Try again."));
-    }
-  });
 
   // Tick once a minute so "stops in N min" stays current while the chat
   // panel is open. `Date.now()` is impure for React's purity rules, so
@@ -54,11 +38,10 @@ export function SandboxActivityPill({ repositoryId }: { repositoryId: Repository
     return null;
   }
 
-  // All three states share the same outer flex-col + same inner pill row
-  // height (`min-h-7`, matching `Button size="xs"` so the idle Activate
-  // button sits flush in the same row), so transitions across the
-  // activation lifecycle (idle → activating → ready) don't change the
-  // bubble's height and shove the message list around.
+  // All states share the same outer flex-col + same inner pill row
+  // height (`min-h-7`), so transitions across the lifecycle
+  // (idle → preparing → ready) don't change the bubble's height and
+  // shove the message list around.
   const pillRowClass = "flex min-h-7 items-center gap-2 rounded-md border px-3 py-1.5 text-xs";
 
   if (status.kind === "idle") {
@@ -66,34 +49,25 @@ export function SandboxActivityPill({ repositoryId }: { repositoryId: Repository
       <div className="flex flex-col gap-1">
         <div className={cn(pillRowClass, "border-border/50 bg-muted/30")}>
           <CircleIcon size={12} className="shrink-0 text-muted-foreground" weight="regular" />
-          <span className="min-w-0 flex-1 text-muted-foreground">Live source inactive</span>
-          <Button
-            size="xs"
-            variant="secondary"
-            onClick={() => {
-              void activate();
-            }}
-            disabled={isSubmitting}
-          >
-            <ButtonStateText current={isSubmitting ? "Starting…" : "Activate"} states={["Activate", "Starting…"]} />
-          </Button>
+          <span className="min-w-0 flex-1 text-muted-foreground">Live source will prepare on send</span>
         </div>
-        {errorMessage ? <p className="px-1 text-[11px] text-destructive">{errorMessage}</p> : null}
       </div>
     );
   }
 
-  if (status.kind === "activating") {
-    const progressPct = Math.round((status.activeJob?.progress ?? 0) * 100);
-    const stage = status.activeJob?.stage ?? "Activating live source…";
+  if (status.kind === "preparing") {
+    const progressPct = status.activeJob ? Math.round(status.activeJob.progress * 100) : null;
+    const stage = status.activeJob?.stage ?? "Preparing live source…";
     return (
       <div className="flex flex-col gap-1">
         <div className={cn(pillRowClass, "border-border/50 bg-blue-500/10")}>
           <Spinner size={12} className="shrink-0 text-blue-500" />
           <span className="min-w-0 flex-1 truncate text-blue-700 dark:text-blue-300">{stage}</span>
-          <span className="shrink-0 tabular-nums text-[11px] text-blue-700/80 dark:text-blue-300/80">
-            {progressPct}%
-          </span>
+          {progressPct !== null ? (
+            <span className="shrink-0 tabular-nums text-[11px] text-blue-700/80 dark:text-blue-300/80">
+              {progressPct}%
+            </span>
+          ) : null}
         </div>
       </div>
     );

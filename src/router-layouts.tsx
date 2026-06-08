@@ -1,4 +1,5 @@
 import { Suspense, useEffect, useState } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import {
   Navigate,
@@ -9,7 +10,7 @@ import {
   useRouteError,
   useSearchParams,
 } from "react-router-dom";
-import { WarningCircleIcon } from "@phosphor-icons/react";
+import { ArrowsClockwiseIcon, HouseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { AppNotice } from "@/components/app-notice";
 import { ScreenState } from "@/components/screen-state";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,7 @@ export const AUTH_RETURN_TO_KEY = "systify.auth.returnTo";
 
 export function AppLayout() {
   const { authError } = useConvexAuthStatus();
+  const { signOut } = useAuth();
 
   return (
     <div className="relative flex h-dvh overflow-hidden bg-background">
@@ -42,8 +44,8 @@ export function AppLayout() {
             title="Authentication error"
             message={authError}
             tone="error"
-            actionLabel="Refresh"
-            onAction={() => window.location.reload()}
+            actionLabel="Sign in again"
+            onAction={() => void signOut()}
           />
         </div>
       ) : null}
@@ -186,7 +188,7 @@ export function AuthCallbackRoute() {
         ? "Finishing sign-in and validating your session."
         : elapsedMs < 8_000
           ? "Still syncing your account and permissions. This usually takes a few more seconds."
-          : "This is taking longer than expected. You can retry or return home.";
+          : "This is taking longer than expected. You can retry the sign-in check.";
 
     return (
       <div className="flex h-full w-full items-center justify-center px-6">
@@ -194,14 +196,9 @@ export function AuthCallbackRoute() {
           <h1 className="text-lg font-semibold text-foreground">Signing you in…</h1>
           <p className="mt-2 text-sm text-muted-foreground">{description}</p>
           {isSlow ? (
-            <div className="mt-5 flex items-center justify-center gap-3">
-              <Button asChild variant="secondary">
-                <Link to={LANDING_PATH} replace>
-                  Back to home
-                </Link>
-              </Button>
-              <Button onClick={() => window.location.reload()}>Retry</Button>
-            </div>
+            <Button onClick={() => window.location.reload()} className="mt-5">
+              Retry
+            </Button>
           ) : null}
         </div>
       </div>
@@ -247,6 +244,7 @@ export function RouteErrorBoundary() {
       <ScreenState
         title={`Request failed (${error.status})`}
         description={error.statusText || "Something unexpected happened while loading this page."}
+        actions={<RouteErrorActions />}
       />
     );
   }
@@ -255,11 +253,37 @@ export function RouteErrorBoundary() {
     <ScreenState
       title="Something went wrong"
       description="Please refresh this page. If the issue continues, return home and try again."
+      actions={<RouteErrorActions />}
     />
   );
 }
 
+function RouteErrorActions() {
+  const { isAuthenticated } = useConvexAuth();
+  const destination = isAuthenticated ? DEFAULT_AUTHENTICATED_PATH : LANDING_PATH;
+  const actionLabel = isAuthenticated ? "Back to chat" : "Back to home";
+
+  return (
+    <>
+      <Button onClick={() => window.location.reload()}>
+        <ArrowsClockwiseIcon data-icon="inline-start" weight="bold" />
+        Refresh page
+      </Button>
+      <Button asChild variant="secondary">
+        <Link to={destination}>
+          <HouseIcon data-icon="inline-start" weight="bold" />
+          {actionLabel}
+        </Link>
+      </Button>
+    </>
+  );
+}
+
 export function NotFoundRoute() {
+  const { isAuthenticated } = useConvexAuth();
+  const destination = isAuthenticated ? DEFAULT_AUTHENTICATED_PATH : LANDING_PATH;
+  const actionLabel = isAuthenticated ? "Go to chat" : "Go to home";
+
   return (
     <div className="flex min-h-dvh w-full items-center justify-center px-6">
       <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center">
@@ -267,7 +291,7 @@ export function NotFoundRoute() {
         <p className="mt-2 text-sm text-muted-foreground">The link may be outdated, or the page was moved.</p>
         <div className="mt-5 flex justify-center">
           <Button asChild>
-            <Link to={LANDING_PATH}>Go to home</Link>
+            <Link to={destination}>{actionLabel}</Link>
           </Button>
         </div>
       </div>

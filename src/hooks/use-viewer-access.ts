@@ -1,30 +1,39 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 
 export type ViewerAccess = NonNullable<ReturnType<typeof useViewerAccess>>;
 export type ViewerFeatureName = keyof ViewerAccess["features"];
 
+const ensuredOwnerTokenIdentifiers = new Set<string>();
+const ensuringOwnerTokenIdentifiers = new Set<string>();
+
 export function useViewerAccess(options: { enabled?: boolean } = {}) {
   const viewerAccess = useQuery(api.viewerAccess.getSelf, options.enabled === false ? "skip" : {});
   const ensureSelf = useMutation(api.viewerAccess.ensureSelf);
-  const ensuredOwnerRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (
-      options.enabled === false ||
-      viewerAccess === undefined ||
-      ensuredOwnerRef.current === viewerAccess.ownerTokenIdentifier
-    ) {
+    if (options.enabled === false || viewerAccess === undefined) {
       return;
     }
     const ownerTokenIdentifier = viewerAccess.ownerTokenIdentifier;
-    ensuredOwnerRef.current = ownerTokenIdentifier;
-    void ensureSelf({}).catch(() => {
-      if (ensuredOwnerRef.current === ownerTokenIdentifier) {
-        ensuredOwnerRef.current = null;
-      }
-    });
+    if (
+      ensuredOwnerTokenIdentifiers.has(ownerTokenIdentifier) ||
+      ensuringOwnerTokenIdentifiers.has(ownerTokenIdentifier)
+    ) {
+      return;
+    }
+    ensuringOwnerTokenIdentifiers.add(ownerTokenIdentifier);
+    void ensureSelf({})
+      .then(() => {
+        ensuredOwnerTokenIdentifiers.add(ownerTokenIdentifier);
+      })
+      .catch(() => {
+        ensuredOwnerTokenIdentifiers.delete(ownerTokenIdentifier);
+      })
+      .finally(() => {
+        ensuringOwnerTokenIdentifiers.delete(ownerTokenIdentifier);
+      });
   }, [ensureSelf, options.enabled, viewerAccess]);
 
   return viewerAccess;

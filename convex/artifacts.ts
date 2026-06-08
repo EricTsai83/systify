@@ -1,10 +1,9 @@
 import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
-import { deleteArtifactInternal } from "./artifactStore";
 import { loadOwnedDoc, requireOwnedDoc } from "./lib/ownedDocs";
 import { MAX_ARTIFACT_TITLE_LENGTH } from "./lib/artifactDefaults";
-import { replaceArtifactFolder } from "./lib/artifactWrites";
+import { deleteArtifactWrite, replaceArtifactFolder } from "./lib/artifactWrites";
 import { resolveLatestImportSha, toArtifactMetadataView, toArtifactView } from "./lib/artifactView";
 
 const ARTIFACTS_PER_THREAD_LIMIT = 40;
@@ -295,7 +294,7 @@ export const rename = mutation({
 
 /**
  * Permanent artifact delete. Drives the FolderNavigator's right-click
- * "Delete" affordance. Cascades through `deleteArtifactInternal` so the
+ * "Delete" affordance. Cascades through the artifact write module so the
  * artifact's chunks (`artifactChunks`) and per-viewer view rows
  * (`artifactViews`) are removed in the same transaction — leaving them
  * behind would surface as ghost hits in RAG search and stale unread dots
@@ -307,7 +306,7 @@ export const remove = mutation({
     await requireOwnedDoc(ctx, args.artifactId, {
       notFoundMessage: "Artifact not found.",
     });
-    await deleteArtifactInternal(ctx, args.artifactId);
+    await deleteArtifactWrite(ctx, args.artifactId);
     return null;
   },
 });

@@ -14,11 +14,10 @@ import { stepCountIs } from "ai";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
-import { createSandboxTools } from "./chat/sandboxTools";
-import { getSandboxFsClient } from "./daytona";
 import { generateViaGateway } from "./lib/llmGateway";
 import type { LlmProvider, NormalizedUsage } from "./lib/llmProvider";
 import { emitMetric, logErrorWithId, logWarn } from "./lib/observability";
+import { createSandboxLibraryGenerationTools } from "./lib/sandboxLibraryGeneration";
 import type { EnsureSandboxReadyResult } from "./lib/sandboxLiveness";
 import { SYSTEM_DESIGN_KIND_TITLES, type SystemDesignKind } from "./lib/systemDesign";
 import { classifySystemDesignKindRunError } from "./lib/systemDesignFailureClassification";
@@ -37,6 +36,7 @@ type KindFailureReason = SystemDesignFailureReason;
 interface SystemDesignKindRunModelChoice {
   provider: LlmProvider;
   modelName: string;
+  reasoningEffort: ReasoningEffort | undefined;
 }
 
 export interface RunSystemDesignKindArgs {
@@ -47,7 +47,6 @@ export interface RunSystemDesignKindArgs {
   repository: Doc<"repositories">;
   prepared: EnsureSandboxReadyResult;
   modelChoice: SystemDesignKindRunModelChoice;
-  reasoningEffort: ReasoningEffort | undefined;
   commitSha?: string;
   forceRegenerate: boolean;
 }
@@ -129,9 +128,9 @@ export async function runSystemDesignKind(
         {
           system: config.prompt + budgetSuffix(config.stepBudget),
           prompt: buildUserPrompt(args.repository),
-          tools: createSandboxTools(await getSandboxFsClient(args.prepared.remoteId), args.prepared.repoPath),
+          tools: await createSandboxLibraryGenerationTools(args.prepared),
           stopWhen: stepCountIs(config.stepBudget),
-          reasoningEffort: args.reasoningEffort,
+          reasoningEffort: args.modelChoice.reasoningEffort,
         },
       );
 
@@ -242,6 +241,7 @@ export async function runSystemDesignKind(
       status: runStatus,
       error: telemetryError instanceof Error ? telemetryError.message : String(telemetryError),
     });
+    throw telemetryError;
   }
 
   emitKindRunMetrics({

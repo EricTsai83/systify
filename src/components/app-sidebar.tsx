@@ -181,6 +181,8 @@ type AppSidebarRightProps = {
   onGenerate?: () => void;
   askDisabledReason?: string;
   generateDisabledReason?: string;
+  artifactDraftDisabledReason?: string;
+  liveSourceStatus?: { kind: "idle" | "preparing" | "ready" | "expiring_soon" };
   premiumModelsDisabledReason?: string;
   highReasoningDisabledReason?: string;
 };
@@ -198,6 +200,8 @@ export function AppSidebarRight({
   onGenerate,
   askDisabledReason,
   generateDisabledReason,
+  artifactDraftDisabledReason,
+  liveSourceStatus,
   premiumModelsDisabledReason,
   highReasoningDisabledReason,
 }: AppSidebarRightProps) {
@@ -219,6 +223,8 @@ export function AppSidebarRight({
           onGenerate={onGenerate}
           askDisabledReason={askDisabledReason}
           generateDisabledReason={generateDisabledReason}
+          artifactDraftDisabledReason={artifactDraftDisabledReason}
+          liveSourceStatus={liveSourceStatus}
           premiumModelsDisabledReason={premiumModelsDisabledReason}
           highReasoningDisabledReason={highReasoningDisabledReason}
         />

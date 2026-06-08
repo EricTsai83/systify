@@ -11,9 +11,10 @@
  *
  * The action splits into two reply paths:
  *
- *   1. **Tool-driven sandbox path.** When `replyContext.sandboxTooling` is
- *      populated *and* an API key for the picked provider is set, we build
- *      a `ToolSet` from `createSandboxTools(...)` and hand it to the
+ *   1. **Tool-driven sandbox path.** When the queued message requested
+ *      Sandbox grounding *and* an API key for the picked provider is set,
+ *      we prepare live source with `ensureSandboxReady`, build a `ToolSet`
+ *      from `createSandboxTools(...)`, and hand it to the
  *      reply-stream controller. The controller owns the gateway
  *      `fullStream` event loop, text / reasoning buffers, cancellation
  *      abort wiring, usage recovery, and sandbox tool trace persistence.
@@ -37,8 +38,13 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
 import { getSandboxFsClient } from "../daytona";
-import { verifyAndSyncSandbox, SandboxPreparationError } from "../lib/sandboxLiveness";
-import { emitMetric, logWarn } from "../lib/observability";
+import {
+  ensureSandboxReady,
+  SandboxPreparationError,
+  type EnsureSandboxReadyResult,
+  type SandboxPreparationStage,
+} from "../lib/sandboxLiveness";
+import { emitMetric, logInfo } from "../lib/observability";
 import { hasProviderApiKey } from "../lib/providerEnv";
 import { retrieveArtifactChunks } from "../lib/artifactRag";
 import type { ReplyContext } from "./context";
@@ -58,6 +64,8 @@ import {
 } from "./replyStreamController";
 import { selectRelevantChunks } from "./relevance";
 import { createSandboxTools } from "./sandboxTools";
+
+const LIVE_SOURCE_PREP_FAILED_MESSAGE = "Live source couldn't be prepared. Retry the message.";
 
 /**
  * Terminal-state taxonomy used as the `status` tag on the session
@@ -259,6 +267,24 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
     return false;
   };
 
+  const exitIfCancellationObserved = async (): Promise<boolean> => {
+    const status = await ctx.runQuery(internal.chat.streaming.getJobCancellationStatus, {
+      jobId: args.jobId,
+    });
+    if (status.jobMissing) {
+      emitSessionExit("aborted_orphan");
+      return true;
+    }
+    if (status.cancelled) {
+      // `cancelInFlightReply` already flipped the message and job rows.
+      // During live-source preparation we have no streamed content to
+      // preserve, so the action should simply stop before any LLM call.
+      emitSessionExit("cancelled");
+      return true;
+    }
+    return false;
+  };
+
   const settleStreamOutcome = async (
     outcome: ReplyStreamOutcome,
     citationMap: ReturnType<typeof buildCitationMap> | undefined,
@@ -372,6 +398,9 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
     });
     telemetry.modelName = modelChoice.modelName;
 
+    let finalReplyContext = groundedReplyContext;
+    let resolvedSandboxTooling = groundedReplyContext.sandboxTooling;
+
     if (!hasProviderApiKey(modelChoice.provider)) {
       // The heuristic path produces its full answer synchronously, so
       // there is no LLM stream to abort. We still honor a cancellation
@@ -383,7 +412,7 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
       if (await exitIfCancellationSettled()) {
         return;
       }
-      const heuristicAnswer = buildHeuristicAnswer(groundedReplyContext, userPrompt, relevantChunks);
+      const heuristicAnswer = buildHeuristicAnswer(finalReplyContext, userPrompt, relevantChunks);
       await ctx.runMutation(internal.chat.streaming.finalizeAssistantReply, {
         threadId: args.threadId,
         assistantMessageId: args.assistantMessageId,
@@ -395,76 +424,63 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
       return;
     }
 
-    const systemPrompt = buildSystemPrompt(groundedReplyContext.mode, {
-      groundLibrary: groundedReplyContext.groundLibrary,
-      groundSandbox: groundedReplyContext.groundSandbox,
-    });
-    const userPromptText = buildUserPrompt(groundedReplyContext, userPrompt, relevantChunks);
-
-    // Resolve sandbox tooling once. We only attach tools when:
-    //   1. The queued user message had `groundSandbox: true` (Discuss
-    //      with sandbox grounding enabled).
-    //   2. `getReplyContext` saw a `ready` sandbox attached to the repo
-    //      (it returns `sandboxTooling: undefined` otherwise — see
-    //      context.ts for the full eligibility rules).
-    //   3. A verify-on-use probe confirms Daytona still has the sandbox.
-    //      `getReplyContext` only reads the local cache; a sandbox that
-    //      was manually deleted in the Daytona dashboard between import
-    //      and now still looks `ready` there. Probing now both prevents
-    //      a mid-stream 404 from `getSandboxFsClient` and syncs the
-    //      cache so the next reply skips the sandbox tooling cleanly.
-    //
-    // `assertRepositoryModeEligible` (chat/send.ts) already blocks the
-    // common case where the sandbox is not ready at mutation time, so
-    // this verification only covers the edge case where the sandbox
-    // disappears between mutation and action (e.g. manual deletion in
-    // the Daytona dashboard). Throwing `SandboxPreparationError` here
-    // routes through the outer catch to `failAssistantReply`, which
-    // surfaces the `userFacingMessage` in the assistant bubble — the
-    // user can see what happened and click Activate to recover.
-    const resolvedSandboxTooling = replyContext.sandboxTooling;
-    if (resolvedSandboxTooling) {
-      const sandboxId = resolvedSandboxTooling.sandboxId;
+    if (groundedReplyContext.groundSandbox === true && groundedReplyContext.repositoryId) {
+      if (await exitIfCancellationObserved()) {
+        return;
+      }
       try {
-        const probe = await verifyAndSyncSandbox(ctx, {
-          sandboxId: resolvedSandboxTooling.sandboxId,
-          remoteId: resolvedSandboxTooling.remoteId,
+        const prepared = await prepareLiveSourceForReply(ctx, {
+          repositoryId: groundedReplyContext.repositoryId,
+          ownerTokenIdentifier: groundedReplyContext.ownerTokenIdentifier,
+          jobId: args.jobId,
         });
-        if (!probe.ok) {
-          logWarn("chat", "sandbox_unavailable_at_verify", {
+        resolvedSandboxTooling = {
+          sandboxId: prepared.sandboxId,
+          remoteId: prepared.remoteId,
+          repoPath: prepared.repoPath,
+        };
+        finalReplyContext = {
+          ...groundedReplyContext,
+          sandboxTooling: resolvedSandboxTooling,
+        };
+      } catch (error) {
+        if (await exitIfCancellationObserved()) {
+          return;
+        }
+        if (error instanceof SandboxPreparationError) {
+          logInfo("chat", "assistant_reply_failed_live_source_prep", {
             assistantMessageId: args.assistantMessageId,
             jobId: args.jobId,
-            sandboxId,
-            remoteState: probe.remoteState,
-            reason: probe.reason,
-          });
-          throw new SandboxPreparationError({
-            reason: "live_source_unavailable",
-            userFacingMessage: "Live source went away while preparing this reply. Activate it above and resend.",
+            repositoryId: groundedReplyContext.repositoryId,
+            reason: error.reason,
           });
         }
-      } catch (err) {
-        if (err instanceof SandboxPreparationError) throw err;
-        logWarn("chat", "sandbox_unavailable_at_verify", {
+        await ctx.runMutation(internal.chat.streaming.failAssistantReply, {
           assistantMessageId: args.assistantMessageId,
           jobId: args.jobId,
-          sandboxId,
-          error: err instanceof Error ? err.message : String(err),
+          errorMessage: LIVE_SOURCE_PREP_FAILED_MESSAGE,
+          finalDelta: streamController.getBufferedText(),
         });
-        throw new SandboxPreparationError({
-          reason: "live_source_unavailable",
-          userFacingMessage: "Live source went away while preparing this reply. Activate it above and resend.",
-          cause: err,
-        });
+        emitSessionExit("failed");
+        return;
+      }
+      if (await exitIfCancellationObserved()) {
+        return;
       }
     }
+
+    const systemPrompt = buildSystemPrompt(finalReplyContext.mode, {
+      groundLibrary: finalReplyContext.groundLibrary,
+      groundSandbox: finalReplyContext.groundSandbox,
+    });
+    const userPromptText = buildUserPrompt(finalReplyContext, userPrompt, relevantChunks);
     const sandboxTools: ToolSet | undefined = resolvedSandboxTooling
       ? await buildSandboxTools(resolvedSandboxTooling)
       : undefined;
 
     const streamOutcome = await streamController.consume({
       threadId: args.threadId,
-      replyContext: groundedReplyContext,
+      replyContext: finalReplyContext,
       modelChoice,
       systemPrompt,
       userPromptText,
@@ -510,6 +526,44 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
 async function buildSandboxTools(sandboxTooling: NonNullable<ReplyContext["sandboxTooling"]>): Promise<ToolSet> {
   const fsClient = await getSandboxFsClient(sandboxTooling.remoteId);
   return createSandboxTools(fsClient, sandboxTooling.repoPath);
+}
+
+async function prepareLiveSourceForReply(
+  ctx: ActionCtx,
+  args: {
+    repositoryId: Id<"repositories">;
+    ownerTokenIdentifier: string;
+    jobId: Id<"jobs">;
+  },
+): Promise<EnsureSandboxReadyResult> {
+  const stageProgress: Record<SandboxPreparationStage, number> = {
+    probing: 0.18,
+    waking: 0.2,
+    provisioning: 0.22,
+    cloning: 0.3,
+    polling: 0.32,
+  };
+
+  await ctx.runMutation(internal.chat.streaming.updateAssistantReplyProgress, {
+    jobId: args.jobId,
+    stage: "Preparing live source…",
+    progress: 0.18,
+  });
+
+  return await ensureSandboxReady(
+    ctx,
+    {
+      repositoryId: args.repositoryId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+    },
+    async (stage) => {
+      await ctx.runMutation(internal.chat.streaming.updateAssistantReplyProgress, {
+        jobId: args.jobId,
+        stage: "Preparing live source…",
+        progress: stageProgress[stage] ?? 0.2,
+      });
+    },
+  );
 }
 
 async function hydrateLibraryArtifactChunks(

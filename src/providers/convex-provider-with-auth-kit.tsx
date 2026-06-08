@@ -13,7 +13,7 @@ type ConvexAuthStatus = {
   authError: string | null;
 };
 
-const AUTH_TOKEN_ERROR_MESSAGE = "Authentication failed. Please refresh the page and sign in again.";
+const AUTH_TOKEN_ERROR_MESSAGE = "Your session could not be validated. Sign in again to reconnect your account.";
 
 const ConvexAuthStatusContext = createContext<ConvexAuthStatus | null>(null);
 
