@@ -38,7 +38,9 @@ export function resolveRepositoryLandingMode(args: {
 }): ChatMode {
   const { mode, lastMode, availability } = args;
   if (mode) return mode;
-  const lastModeEnabled = lastMode ? (availability?.modes[lastMode].enabled ?? true) : false;
+  const lastModeEnabled = lastMode
+    ? availability === undefined || (availability !== null && availability.modes[lastMode].enabled)
+    : false;
   if (lastModeEnabled && lastMode) return lastMode;
   return availability?.defaultMode ?? "discuss";
 }
