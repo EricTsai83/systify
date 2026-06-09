@@ -45,6 +45,16 @@ describe("resolveRepositoryLandingMode", () => {
       }),
     ).toBe("discuss");
   });
+
+  test("last mode is used while availability is still loading", () => {
+    expect(
+      resolveRepositoryLandingMode({
+        mode: null,
+        lastMode: "library",
+        availability: undefined,
+      }),
+    ).toBe("library");
+  });
 });
 
 describe("resolveRepositoryLandingDecision", () => {
