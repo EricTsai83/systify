@@ -566,36 +566,35 @@ function AccountSettingsSection() {
             )}
           </div>
 
-          <div className="flex min-h-[88px] flex-col gap-3 border-t border-border px-5 py-3 text-sm sm:min-h-14 sm:flex-row sm:items-center sm:justify-between">
+          <div className="border-t border-border bg-muted/[0.08] px-5 py-4 text-sm">
             {isAccountLoading || viewerAccess === undefined ? (
-              <>
+              <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                 <div className="min-w-0 flex-1 space-y-2">
-                  <Skeleton className="h-4 w-16" aria-hidden="true" />
+                  <Skeleton className="h-4 w-36" aria-hidden="true" />
                   <Skeleton className="h-4 w-80 max-w-full" aria-hidden="true" />
                 </div>
-                <div className="flex shrink-0 flex-col gap-2 sm:items-end">
-                  <Skeleton className="h-6 w-40" aria-hidden="true" />
-                  <Skeleton className="h-7 w-48" aria-hidden="true" />
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-foreground">Plan</p>
-                  <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-                    {formatAccessPlanDescription(viewerAccess.plan)}
-                  </p>
-                </div>
                 <div className="flex min-w-0 shrink-0 flex-col gap-2 sm:items-end">
-                  <div className="flex flex-wrap gap-2 sm:justify-end">
-                    <Badge variant={viewerAccess.plan === "internal" ? "outline" : "muted"}>
+                  <Skeleton className="h-4 w-32" aria-hidden="true" />
+                  <Skeleton className="h-7 w-44" aria-hidden="true" />
+                </div>
+              </div>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                <div className="min-w-0">
+                  <div className="inline-flex max-w-full items-center border border-border/70 bg-background/50 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)]">
+                    <span className="shrink-0 border-r border-border/70 bg-muted/40 px-2 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                      Plan
+                    </span>
+                    <span className="min-w-0 truncate px-2 py-1 text-sm font-semibold text-foreground">
                       {formatAccessPlan(viewerAccess.plan)}
-                    </Badge>
-                    <Badge variant="muted">{formatBillingStatus(viewerAccess.plan, viewerAccess.billingStatus)}</Badge>
+                    </span>
+                    <PlanInfoTooltip plan={viewerAccess.plan} billingStatus={viewerAccess.billingStatus} />
                   </div>
-                  <div className="flex max-w-full items-center gap-2 text-xs text-muted-foreground">
+                </div>
+                <div className="flex min-w-0 shrink-0 sm:justify-end">
+                  <div className="flex max-w-full items-center gap-1.5 text-xs text-muted-foreground">
                     <span className="shrink-0">Support ID</span>
-                    <code className="min-w-0 truncate rounded-sm bg-muted px-1.5 py-1 font-mono text-[11px] text-muted-foreground">
+                    <code className="min-w-0 truncate border border-border/60 bg-background/40 px-1.5 py-1 font-mono text-[11px] text-muted-foreground">
                       {formatSupportAccountId(viewerAccess.ownerTokenIdentifier)}
                     </code>
                     <Tooltip>
@@ -635,7 +634,7 @@ function AccountSettingsSection() {
                     </Tooltip>
                   </div>
                 </div>
-              </>
+              </div>
             )}
           </div>
         </Card>
@@ -2483,6 +2482,31 @@ function MetricInfoTooltip({ label, description }: { label: string; description:
   );
 }
 
+function PlanInfoTooltip({
+  plan,
+  billingStatus,
+}: {
+  plan: "internal" | "free" | "trial" | "pro";
+  billingStatus: "none" | "active" | "past_due" | "canceled";
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center border-l border-border/70 bg-muted/20 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          aria-label={`${formatAccessPlan(plan)} explanation`}
+        >
+          <Info size={13} weight="bold" aria-hidden="true" />
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="top" className="max-w-80">
+        {formatAccessPlanTooltip(plan, billingStatus)}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 function formatCountLabel(count: number, singular: string, plural = `${singular}s`): string {
   if (count === 0) {
     return `No ${plural}`;
@@ -2582,7 +2606,7 @@ function formatGitHubConnection(connection: ReturnType<typeof useGitHubConnectio
 function formatAccessPlan(plan: "internal" | "free" | "trial" | "pro") {
   switch (plan) {
     case "internal":
-      return "Internal";
+      return "Internal access";
     case "trial":
       return "Trial";
     case "pro":
@@ -2592,26 +2616,39 @@ function formatAccessPlan(plan: "internal" | "free" | "trial" | "pro") {
   }
 }
 
-function formatAccessPlanDescription(plan: "internal" | "free" | "trial" | "pro") {
-  switch (plan) {
-    case "internal":
-      return "All early-access features are enabled. Billing is not required.";
-    case "trial":
-      return "Repository import and sync are enabled. Usage-priced features are limited during early access.";
-    case "pro":
-      return "Repository import and sync are enabled. Usage-priced features are limited during early access.";
-    case "free":
-      return "Repository import and sync are enabled. Chat, Sandbox, and System Design stay limited during early access.";
+function formatAccessPlanTooltip(
+  plan: "internal" | "free" | "trial" | "pro",
+  billingStatus: "none" | "active" | "past_due" | "canceled",
+) {
+  if (plan === "internal") {
+    return (
+      <div className="space-y-2 text-xs leading-5">
+        <p className="font-medium text-foreground">Internal access</p>
+        <p>A Systify-managed account type for team members and early-access testing.</p>
+        <div className="space-y-1 border-t border-border/70 pt-2">
+          <p>Includes all early-access features.</p>
+          <p>Billing is not required for this account.</p>
+        </div>
+      </div>
+    );
   }
+  return (
+    <div className="space-y-2 text-xs leading-5">
+      <p className="font-medium text-foreground">{formatAccessPlan(plan)}</p>
+      <p>Repository import and sync are enabled.</p>
+      <div className="space-y-1 border-t border-border/70 pt-2">
+        <p>
+          {plan === "free"
+            ? "Chat, Sandbox, and System Design are limited during early access."
+            : "Usage-priced features are limited during early access."}
+        </p>
+        <p>Billing status: {formatBillingStatus(billingStatus)}.</p>
+      </div>
+    </div>
+  );
 }
 
-function formatBillingStatus(
-  plan: "internal" | "free" | "trial" | "pro",
-  status: "none" | "active" | "past_due" | "canceled",
-) {
-  if (plan === "internal" && status === "none") {
-    return "Billing not required";
-  }
+function formatBillingStatus(status: "none" | "active" | "past_due" | "canceled") {
   switch (status) {
     case "active":
       return "Billing active";
