@@ -1656,7 +1656,7 @@ function ModelsSettingsSection() {
                     key={scope}
                     value={scope}
                     aria-label={`${MODEL_SETTINGS_SCOPE_COPY[scope].label} models`}
-                    className="w-19"
+                    className="w-[4.75rem]"
                   >
                     {MODEL_SETTINGS_SCOPE_COPY[scope].label}
                   </ToggleGroupItem>
