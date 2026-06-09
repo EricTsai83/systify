@@ -13,6 +13,7 @@ import {
   ChartLineUp,
   CheckCircle,
   CheckSquareIcon,
+  CopyIcon,
   EyeIcon,
   FilePdfIcon,
   FunnelSimpleIcon,
@@ -75,6 +76,7 @@ import {
   useUserPreferences,
 } from "@/hooks/use-user-preferences";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
+import { useClipboard } from "@/hooks/use-clipboard";
 import { useLocalStorageEnum } from "@/hooks/use-persisted-state";
 import { useViewerAccess } from "@/hooks/use-viewer-access";
 import {
@@ -441,6 +443,7 @@ function AccountSettingsSection() {
   const viewerAccess = useViewerAccess();
   const githubConnection = useGitHubConnection();
   const disconnectGitHub = useMutation(api.github.disconnectGitHub);
+  const { copied: copiedAccountId, copy: copyAccountId } = useClipboard({ resetAfterMs: 1500 });
   const [isDisconnectDialogOpen, setIsDisconnectDialogOpen] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const isAccountLoading = isAuthLoading || githubConnection.isLoading || viewerAccess === undefined;
@@ -458,6 +461,11 @@ function AccountSettingsSection() {
     if (!manageGitHubUrl) return;
     window.open(manageGitHubUrl, "systify-github-permissions", "width=1020,height=720,popup=yes");
   }, [manageGitHubUrl]);
+
+  const handleCopyAccountId = useCallback(() => {
+    if (!viewerAccess) return;
+    void copyAccountId(getSupportAccountId(viewerAccess.ownerTokenIdentifier));
+  }, [copyAccountId, viewerAccess]);
 
   const [isDisconnectingGitHub, handleDisconnectGitHub] = useAsyncCallback(async () => {
     setDisconnectError(null);
@@ -562,24 +570,70 @@ function AccountSettingsSection() {
             {isAccountLoading || viewerAccess === undefined ? (
               <>
                 <div className="min-w-0 flex-1 space-y-2">
-                  <Skeleton className="h-4 w-44" aria-hidden="true" />
-                  <Skeleton className="h-4 w-72 max-w-full" aria-hidden="true" />
+                  <Skeleton className="h-4 w-16" aria-hidden="true" />
+                  <Skeleton className="h-4 w-80 max-w-full" aria-hidden="true" />
                 </div>
-                <Skeleton className="h-6 w-24" aria-hidden="true" />
+                <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+                  <Skeleton className="h-6 w-40" aria-hidden="true" />
+                  <Skeleton className="h-7 w-48" aria-hidden="true" />
+                </div>
               </>
             ) : (
               <>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-foreground">Access plan</p>
-                  <p className="mt-1 truncate font-mono text-xs text-muted-foreground">
-                    {viewerAccess.ownerTokenIdentifier}
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">Plan</p>
+                  <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+                    {formatAccessPlanDescription(viewerAccess.plan)}
                   </p>
                 </div>
-                <div className="flex shrink-0 flex-wrap gap-2">
-                  <Badge variant={viewerAccess.plan === "internal" ? "outline" : "muted"}>
-                    {formatAccessPlan(viewerAccess.plan)}
-                  </Badge>
-                  <Badge variant="muted">{formatBillingStatus(viewerAccess.billingStatus)}</Badge>
+                <div className="flex min-w-0 shrink-0 flex-col gap-2 sm:items-end">
+                  <div className="flex flex-wrap gap-2 sm:justify-end">
+                    <Badge variant={viewerAccess.plan === "internal" ? "outline" : "muted"}>
+                      {formatAccessPlan(viewerAccess.plan)}
+                    </Badge>
+                    <Badge variant="muted">{formatBillingStatus(viewerAccess.plan, viewerAccess.billingStatus)}</Badge>
+                  </div>
+                  <div className="flex max-w-full items-center gap-2 text-xs text-muted-foreground">
+                    <span className="shrink-0">Support ID</span>
+                    <code className="min-w-0 truncate rounded-sm bg-muted px-1.5 py-1 font-mono text-[11px] text-muted-foreground">
+                      {formatSupportAccountId(viewerAccess.ownerTokenIdentifier)}
+                    </code>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="size-7 shrink-0"
+                          aria-label={copiedAccountId ? "Support ID copied" : "Copy support ID"}
+                          onClick={handleCopyAccountId}
+                        >
+                          <span className="relative size-3.5" aria-hidden="true">
+                            <CopyIcon
+                              size={14}
+                              className={cn(
+                                "absolute inset-0 text-muted-foreground transition-[opacity,filter,transform,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
+                                copiedAccountId
+                                  ? "scale-90 text-muted-foreground/40 opacity-0 blur-[1.5px]"
+                                  : "scale-100 opacity-100 blur-0",
+                              )}
+                            />
+                            <CheckIcon
+                              size={14}
+                              weight="bold"
+                              className={cn(
+                                "absolute inset-0 transition-[opacity,filter,transform,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
+                                copiedAccountId
+                                  ? "scale-100 text-foreground opacity-100 blur-0"
+                                  : "scale-75 text-muted-foreground/40 opacity-0 blur-[1.5px]",
+                              )}
+                            />
+                          </span>
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top">{copiedAccountId ? "Copied" : "Copy support ID"}</TooltipContent>
+                    </Tooltip>
+                  </div>
                 </div>
               </>
             )}
@@ -2538,17 +2592,48 @@ function formatAccessPlan(plan: "internal" | "free" | "trial" | "pro") {
   }
 }
 
-function formatBillingStatus(status: "none" | "active" | "past_due" | "canceled") {
+function formatAccessPlanDescription(plan: "internal" | "free" | "trial" | "pro") {
+  switch (plan) {
+    case "internal":
+      return "All early-access features are enabled. Billing is not required.";
+    case "trial":
+      return "Repository import and sync are enabled. Usage-priced features are limited during early access.";
+    case "pro":
+      return "Repository import and sync are enabled. Usage-priced features are limited during early access.";
+    case "free":
+      return "Repository import and sync are enabled. Chat, Sandbox, and System Design stay limited during early access.";
+  }
+}
+
+function formatBillingStatus(
+  plan: "internal" | "free" | "trial" | "pro",
+  status: "none" | "active" | "past_due" | "canceled",
+) {
+  if (plan === "internal" && status === "none") {
+    return "Billing not required";
+  }
   switch (status) {
     case "active":
-      return "Active";
+      return "Billing active";
     case "past_due":
-      return "Past due";
+      return "Payment past due";
     case "canceled":
-      return "Canceled";
+      return "Billing canceled";
     case "none":
-      return "No billing";
+      return "Billing not configured";
   }
+}
+
+function formatSupportAccountId(ownerTokenIdentifier: string) {
+  const supportId = getSupportAccountId(ownerTokenIdentifier);
+  if (supportId.length <= 18) {
+    return supportId;
+  }
+  return `${supportId.slice(0, 8)}…${supportId.slice(-6)}`;
+}
+
+function getSupportAccountId(ownerTokenIdentifier: string) {
+  return ownerTokenIdentifier.split("|").at(-1) ?? ownerTokenIdentifier;
 }
 
 function parseSettingsSection(section: string | undefined): SettingsSectionId | null {
