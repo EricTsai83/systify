@@ -78,7 +78,7 @@ import {
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useClipboard } from "@/hooks/use-clipboard";
 import { useLocalStorageEnum } from "@/hooks/use-persisted-state";
-import { useViewerAccess, type ViewerFeatureName } from "@/hooks/use-viewer-access";
+import { useViewerAccess, type ViewerAccess } from "@/hooks/use-viewer-access";
 import {
   DEFAULT_AUTHENTICATED_PATH,
   DEFAULT_SETTINGS_SECTION,
@@ -130,12 +130,56 @@ const DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
 const BROWSER_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const USAGE_HISTORY_PERIOD_COUNT = 12;
 const BUDGET_PRESETS_USD = [5, 10, 25, 50] as const;
-const ACCESS_PLAN_FEATURES = [
-  { id: "repoImport", label: "Repository import" },
-  { id: "chatSend", label: "Chat" },
-  { id: "generateSystemDesign", label: "System Design" },
-  { id: "sandboxGrounding", label: "Sandbox grounding" },
-] as const satisfies ReadonlyArray<{ id: ViewerFeatureName; label: string }>;
+type AccessPlan = ViewerAccess["plan"];
+type BillingStatus = ViewerAccess["billingStatus"];
+type AccessPlanCardId = "free" | "pro" | "internal";
+type AccessPlanFeatureIcon = React.ComponentType<{
+  "size"?: number;
+  "weight"?: "regular" | "bold" | "fill";
+  "aria-hidden"?: boolean;
+  "className"?: string;
+}>;
+
+const ACCESS_PLAN_CARDS = [
+  {
+    id: "free",
+    title: "Free",
+    description: "Small monthly limits for basic repository exploration.",
+    badge: undefined,
+    features: [
+      { icon: LightningIcon, label: "Repository import and sync" },
+      { icon: CheckIcon, label: "Basic model access" },
+    ],
+  },
+  {
+    id: "pro",
+    title: "Pro",
+    description: "Expanded usage for repository chat and generated system design.",
+    badge: "Most Popular",
+    features: [
+      { icon: SparkleIcon, label: "Repository chat and Library Ask" },
+      { icon: WrenchIcon, label: "Sandbox grounding" },
+      { icon: ChartLineUpIcon, label: "System Design generation" },
+    ],
+  },
+  {
+    id: "internal",
+    title: "Internal",
+    description: "Managed access for Systify team members and early-access testing.",
+    badge: undefined,
+    features: [
+      { icon: CheckIcon, label: "Everything in Pro" },
+      { icon: BrainIcon, label: "Premium and high-reasoning models" },
+      { icon: WalletIcon, label: "Billing not required" },
+    ],
+  },
+] as const satisfies ReadonlyArray<{
+  id: AccessPlanCardId;
+  title: string;
+  description: string;
+  badge?: string;
+  features: ReadonlyArray<{ icon: AccessPlanFeatureIcon; label: string }>;
+}>;
 const COMMON_TIME_ZONES = [
   "UTC",
   "Asia/Taipei",
@@ -526,132 +570,57 @@ function AccountSettingsSection() {
             )}
           </div>
 
-          <div className="flex min-h-[107px] flex-col gap-3 border-t border-border px-5 py-3 text-sm text-muted-foreground sm:min-h-14 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-h-[107px] flex-col gap-3 border-t border-border px-5 py-3 text-sm text-muted-foreground sm:min-h-14">
             {isAccountLoading ? (
               <>
-                <div className="min-w-0 flex-1 space-y-2">
-                  <Skeleton className="h-4 w-full" aria-hidden="true" />
-                  <Skeleton className="h-4 w-4/5 sm:hidden" aria-hidden="true" />
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Skeleton className="h-4 w-full" aria-hidden="true" />
+                    <Skeleton className="h-4 w-4/5 sm:hidden" aria-hidden="true" />
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <Skeleton className="h-8 w-36" aria-hidden="true" />
+                    <Skeleton className="h-8 w-24" aria-hidden="true" />
+                  </div>
                 </div>
-                <div className="flex shrink-0 flex-wrap gap-2">
-                  <Skeleton className="h-8 w-36" aria-hidden="true" />
-                  <Skeleton className="h-8 w-24" aria-hidden="true" />
+                <div className="flex items-center gap-2 border-t border-border/60 pt-3">
+                  <Skeleton className="h-4 w-16" aria-hidden="true" />
+                  <Skeleton className="h-7 w-44" aria-hidden="true" />
                 </div>
               </>
             ) : (
               <>
-                <p className="min-w-0">
-                  GitHub repository access comes from the connected GitHub App installation. To switch GitHub accounts,
-                  disconnect this installation and connect again.
-                </p>
-                {githubConnection.isConnected ? (
-                  <div className="flex shrink-0 flex-wrap gap-2">
-                    {manageGitHubUrl ? (
-                      <Button type="button" variant="outline" size="sm" onClick={handleManageGitHub}>
-                        <GithubLogoIcon weight="bold" />
-                        Manage on GitHub
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="min-w-0">
+                    GitHub repository access comes from the connected GitHub App installation. To switch GitHub
+                    accounts, disconnect this installation and connect again.
+                  </p>
+                  {githubConnection.isConnected ? (
+                    <div className="flex shrink-0 flex-wrap gap-2">
+                      {manageGitHubUrl ? (
+                        <Button type="button" variant="outline" size="sm" onClick={handleManageGitHub}>
+                          <GithubLogoIcon weight="bold" />
+                          Manage on GitHub
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => {
+                          setDisconnectError(null);
+                          setIsDisconnectDialogOpen(true);
+                        }}
+                      >
+                        Disconnect
                       </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="text-destructive hover:text-destructive"
-                      onClick={() => {
-                        setDisconnectError(null);
-                        setIsDisconnectDialogOpen(true);
-                      }}
-                    >
-                      Disconnect
-                    </Button>
-                  </div>
-                ) : null}
-                {disconnectError ? <p className="text-sm text-destructive sm:basis-full">{disconnectError}</p> : null}
-              </>
-            )}
-          </div>
-
-          <div className="border-t border-border bg-muted/8 px-5 py-4 text-sm">
-            {isAccountLoading || viewerAccess === undefined ? (
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-                <div className="min-w-0 space-y-3">
-                  <div className="flex items-center gap-3">
-                    <Skeleton className="size-9 shrink-0" aria-hidden="true" />
-                    <div className="min-w-0 flex-1 space-y-2">
-                      <Skeleton className="h-4 w-36" aria-hidden="true" />
-                      <Skeleton className="h-5 w-56 max-w-full" aria-hidden="true" />
                     </div>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <Skeleton className="h-7 w-28" aria-hidden="true" />
-                    <Skeleton className="h-7 w-24" aria-hidden="true" />
-                    <Skeleton className="h-7 w-32" aria-hidden="true" />
-                  </div>
+                  ) : null}
                 </div>
-                <div className="flex min-w-0 shrink-0 flex-col gap-2 sm:items-end">
-                  <Skeleton className="h-4 w-32" aria-hidden="true" />
-                  <Skeleton className="h-7 w-44" aria-hidden="true" />
-                </div>
-              </div>
-            ) : (
-              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
-                <div className="min-w-0 space-y-3">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <div className="flex size-9 shrink-0 items-center justify-center border border-primary/25 bg-primary/10 text-primary">
-                      <WalletIcon size={18} weight="bold" aria-hidden="true" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
-                          Access plan
-                        </span>
-                        <Badge variant={billingStatusBadgeVariant(viewerAccess.billingStatus)} className="shrink-0">
-                          {formatBillingStatusBadge(viewerAccess.billingStatus)}
-                        </Badge>
-                      </div>
-                      <div className="mt-1 flex min-w-0 items-center gap-2">
-                        <p className="truncate text-base font-semibold tracking-tight text-foreground">
-                          {formatAccessPlan(viewerAccess.plan)}
-                        </p>
-                        <PlanInfoTooltip plan={viewerAccess.plan} billingStatus={viewerAccess.billingStatus} />
-                      </div>
-                      <p className="mt-1 text-sm leading-5 text-muted-foreground">
-                        {formatAccessPlanSummary(viewerAccess.plan, viewerAccess.billingStatus)}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    {ACCESS_PLAN_FEATURES.map((feature) => {
-                      const isEnabled = viewerAccess.features[feature.id].enabled;
-                      return (
-                        <span
-                          key={feature.id}
-                          className={cn(
-                            "inline-flex h-7 items-center gap-1.5 border px-2.5 text-xs font-medium",
-                            isEnabled
-                              ? "border-emerald-500/25 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300"
-                              : "border-border/70 bg-background/55 text-muted-foreground",
-                          )}
-                        >
-                          {isEnabled ? (
-                            <CheckCircleIcon size={13} weight="fill" aria-hidden="true" />
-                          ) : (
-                            <XIcon size={13} weight="bold" aria-hidden="true" />
-                          )}
-                          {feature.label}
-                        </span>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="min-w-0 border-border/70 pt-3 lg:border-l lg:pl-4 lg:pt-0">
-                  <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground lg:justify-end">
-                    <LightningIcon size={13} weight="bold" aria-hidden="true" />
-                    Account reference
-                  </div>
-                  <div className="flex max-w-full items-center gap-1.5 text-xs text-muted-foreground lg:justify-end">
+                {viewerAccess ? (
+                  <div className="flex max-w-full items-center gap-1.5 border-t border-border/60 pt-3 text-xs text-muted-foreground">
+                    <span className="shrink-0">Support ID</span>
                     <code className="min-w-0 truncate border border-border/70 bg-background/60 px-2 py-1.5 font-mono text-[11px] text-foreground/80">
                       {formatSupportAccountId(viewerAccess.ownerTokenIdentifier)}
                     </code>
@@ -691,6 +660,99 @@ function AccountSettingsSection() {
                       <TooltipContent side="top">{copiedAccountId ? "Copied" : "Copy support ID"}</TooltipContent>
                     </Tooltip>
                   </div>
+                ) : null}
+                {disconnectError ? <p className="text-sm text-destructive sm:basis-full">{disconnectError}</p> : null}
+              </>
+            )}
+          </div>
+
+          <div className="border-t border-border bg-muted/8 px-5 py-5 text-sm">
+            {isAccountLoading || viewerAccess === undefined ? (
+              <div className="grid gap-4 lg:grid-cols-3">
+                {ACCESS_PLAN_CARDS.map((card) => (
+                  <div key={card.id} className="flex min-h-[246px] flex-col border border-border bg-background/40 p-4">
+                    <Skeleton className="mb-4 h-5 w-24" aria-hidden="true" />
+                    <Skeleton className="h-4 w-full" aria-hidden="true" />
+                    <Skeleton className="mt-2 h-4 w-4/5" aria-hidden="true" />
+                    <div className="mt-6 space-y-3">
+                      <Skeleton className="h-4 w-44" aria-hidden="true" />
+                      <Skeleton className="h-4 w-36" aria-hidden="true" />
+                      {card.id === "pro" ? <Skeleton className="h-4 w-40" aria-hidden="true" /> : null}
+                    </div>
+                    <Skeleton className="mt-auto h-10 w-full" aria-hidden="true" />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="grid gap-4 lg:grid-cols-3">
+                  {ACCESS_PLAN_CARDS.map((card) => {
+                    const isCurrent = accessPlanCardId(viewerAccess.plan) === card.id;
+                    const isPromoted = card.id === "pro";
+                    const actionLabel = isCurrent ? "Current Plan" : formatPlanCardAction(card.id, viewerAccess.plan);
+                    const shouldShowAction = isCurrent || actionLabel === "Upgrade";
+                    return (
+                      <div
+                        key={card.id}
+                        className={cn(
+                          "relative flex min-h-[270px] flex-col border bg-background/70 p-4 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)]",
+                          isCurrent || isPromoted ? "border-primary/45" : "border-border",
+                          isCurrent ? "bg-primary/[0.03]" : null,
+                        )}
+                      >
+                        {card.badge ? (
+                          <div className="absolute -top-3 left-1/2 -translate-x-1/2 border border-primary/45 bg-primary px-4 py-1 text-xs font-semibold text-primary-foreground">
+                            {card.badge}
+                          </div>
+                        ) : null}
+                        <div className="flex min-w-0 items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <h3 className="text-xl font-semibold tracking-tight text-foreground">{card.title}</h3>
+                            <p className="mt-7 text-sm leading-6 text-muted-foreground">{card.description}</p>
+                          </div>
+                          {isCurrent ? (
+                            <PlanInfoTooltip plan={viewerAccess.plan} billingStatus={viewerAccess.billingStatus} />
+                          ) : null}
+                        </div>
+
+                        <div className="mt-5 space-y-3">
+                          {card.features.map((feature) => {
+                            const Icon = feature.icon;
+                            return (
+                              <div key={feature.label} className="flex items-start gap-3 text-sm leading-6">
+                                <Icon
+                                  size={16}
+                                  weight="bold"
+                                  aria-hidden="true"
+                                  className={cn(
+                                    "mt-0.5 shrink-0",
+                                    isPromoted ? "text-primary" : "text-muted-foreground",
+                                  )}
+                                />
+                                <span className="text-muted-foreground">{feature.label}</span>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        <div className="mt-auto pt-8">
+                          <p className="mb-4 text-xs font-semibold text-muted-foreground">
+                            {formatPlanCardFootnote(card.id, viewerAccess.billingStatus)}
+                          </p>
+                          {shouldShowAction ? (
+                            <Button
+                              type="button"
+                              variant={isCurrent ? "outline" : isPromoted ? "default" : "outline"}
+                              className={cn("h-10 w-full", !isCurrent && !isPromoted ? "text-muted-foreground" : null)}
+                              disabled
+                            >
+                              {actionLabel}
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -2674,51 +2736,38 @@ function formatAccessPlan(plan: "internal" | "free" | "trial" | "pro") {
   }
 }
 
-function formatAccessPlanSummary(
-  plan: "internal" | "free" | "trial" | "pro",
-  billingStatus: "none" | "active" | "past_due" | "canceled",
-) {
+function accessPlanCardId(plan: AccessPlan): AccessPlanCardId {
   if (plan === "internal") {
-    return "Full early-access capabilities are enabled for this Systify-managed account.";
+    return "internal";
   }
-  if (plan === "free") {
-    return "Repository import is available while usage-priced workflows stay limited during early access.";
+  if (plan === "pro" || plan === "trial") {
+    return "pro";
+  }
+  return "free";
+}
+
+function formatPlanCardAction(cardId: AccessPlanCardId, currentPlan: AccessPlan): string | null {
+  const currentCardId = accessPlanCardId(currentPlan);
+  if (cardId === currentCardId) {
+    return "Current Plan";
+  }
+  if (currentCardId === "free" && cardId === "pro") {
+    return "Upgrade";
+  }
+  return null;
+}
+
+function formatPlanCardFootnote(cardId: AccessPlanCardId, billingStatus: BillingStatus) {
+  if (cardId === "internal") {
+    return "Assigned by the Systify team.";
   }
   if (billingStatus === "past_due") {
-    return "Paid access is still attached to this account, but billing needs attention.";
+    return "Billing needs attention.";
   }
   if (billingStatus === "canceled") {
-    return "Paid access is attached to this account, but billing has been canceled.";
+    return "Billing has been canceled.";
   }
-  return "Usage-priced workflows are available according to the current early-access limits.";
-}
-
-function formatBillingStatusBadge(status: "none" | "active" | "past_due" | "canceled") {
-  switch (status) {
-    case "active":
-      return "Billing active";
-    case "past_due":
-      return "Past due";
-    case "canceled":
-      return "Canceled";
-    case "none":
-      return "No billing";
-  }
-}
-
-function billingStatusBadgeVariant(
-  status: "none" | "active" | "past_due" | "canceled",
-): "muted" | "outline" | "accent" | "destructive" {
-  switch (status) {
-    case "past_due":
-      return "destructive";
-    case "active":
-      return "accent";
-    case "canceled":
-      return "outline";
-    case "none":
-      return "muted";
-  }
+  return "Price shown at checkout.";
 }
 
 function formatAccessPlanTooltip(
