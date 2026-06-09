@@ -9,30 +9,30 @@ import {
   CaretRightIcon,
   CaretUpDownIcon,
   CheckIcon,
-  ChatCircleText,
-  ChartLineUp,
-  CheckCircle,
+  ChatCircleTextIcon,
+  ChartLineUpIcon,
+  CheckCircleIcon,
   CheckSquareIcon,
   CopyIcon,
   EyeIcon,
   FilePdfIcon,
   FunnelSimpleIcon,
-  Gear,
-  GithubLogo,
+  GearIcon,
+  GithubLogoIcon,
   ImageSquareIcon,
-  Info,
+  InfoIcon,
   LightningIcon,
   ListBulletsIcon,
   MagnifyingGlassIcon,
-  Plus,
-  SlidersHorizontal,
+  PlusIcon,
+  SlidersHorizontalIcon,
   SquareIcon,
   SquaresFourIcon,
-  Sparkle,
+  SparkleIcon,
   StarIcon,
-  Wallet,
+  WalletIcon,
   WrenchIcon,
-  X,
+  XIcon,
 } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import { ConfirmDialog } from "@/components/confirm-dialog";
@@ -78,7 +78,7 @@ import {
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useClipboard } from "@/hooks/use-clipboard";
 import { useLocalStorageEnum } from "@/hooks/use-persisted-state";
-import { useViewerAccess } from "@/hooks/use-viewer-access";
+import { useViewerAccess, type ViewerFeatureName } from "@/hooks/use-viewer-access";
 import {
   DEFAULT_AUTHENTICATED_PATH,
   DEFAULT_SETTINGS_SECTION,
@@ -130,6 +130,12 @@ const DATE_FORMATTER = new Intl.DateTimeFormat("en-US", {
 const BROWSER_TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 const USAGE_HISTORY_PERIOD_COUNT = 12;
 const BUDGET_PRESETS_USD = [5, 10, 25, 50] as const;
+const ACCESS_PLAN_FEATURES = [
+  { id: "repoImport", label: "Repository import" },
+  { id: "chatSend", label: "Chat" },
+  { id: "generateSystemDesign", label: "System Design" },
+  { id: "sandboxGrounding", label: "Sandbox grounding" },
+] as const satisfies ReadonlyArray<{ id: ViewerFeatureName; label: string }>;
 const COMMON_TIME_ZONES = [
   "UTC",
   "Asia/Taipei",
@@ -245,7 +251,7 @@ const MODEL_FEATURE_COPY: Record<
   effort: {
     label: "Effort Control",
     description: "Supports per-message reasoning effort.",
-    icon: SlidersHorizontal,
+    icon: SparkleIcon,
   },
   tools: {
     label: "Tool Calling",
@@ -367,7 +373,7 @@ export function SettingsPage() {
           </Link>
           <CaretRightIcon size={12} weight="bold" aria-hidden="true" className="shrink-0 text-muted-foreground/60" />
           <h1 className="flex min-w-0 items-center gap-2">
-            <Gear size={14} weight="bold" className="shrink-0 text-muted-foreground" aria-hidden="true" />
+            <GearIcon size={14} weight="bold" className="shrink-0 text-muted-foreground" aria-hidden="true" />
             <span className="truncate text-sm font-semibold tracking-tight text-foreground">Settings</span>
           </h1>
         </div>
@@ -508,13 +514,12 @@ function AccountSettingsSection() {
                   <div className="min-w-0">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
                       <h2 className="truncate text-base font-semibold tracking-tight">{displayName}</h2>
-                      <Badge variant="muted">WorkOS</Badge>
                     </div>
                     <p className="mt-1 min-h-5 truncate text-sm text-muted-foreground">{user?.email ?? null}</p>
                   </div>
                 </div>
                 <Badge variant={githubConnection.isConnected ? "outline" : "muted"} className="w-fit whitespace-nowrap">
-                  <GithubLogo weight="bold" />
+                  <GithubLogoIcon weight="bold" />
                   {formatGitHubConnection(githubConnection)}
                 </Badge>
               </>
@@ -543,7 +548,7 @@ function AccountSettingsSection() {
                   <div className="flex shrink-0 flex-wrap gap-2">
                     {manageGitHubUrl ? (
                       <Button type="button" variant="outline" size="sm" onClick={handleManageGitHub}>
-                        <GithubLogo weight="bold" />
+                        <GithubLogoIcon weight="bold" />
                         Manage on GitHub
                       </Button>
                     ) : null}
@@ -566,12 +571,22 @@ function AccountSettingsSection() {
             )}
           </div>
 
-          <div className="border-t border-border bg-muted/[0.08] px-5 py-4 text-sm">
+          <div className="border-t border-border bg-muted/8 px-5 py-4 text-sm">
             {isAccountLoading || viewerAccess === undefined ? (
-              <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                <div className="min-w-0 flex-1 space-y-2">
-                  <Skeleton className="h-4 w-36" aria-hidden="true" />
-                  <Skeleton className="h-4 w-80 max-w-full" aria-hidden="true" />
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                <div className="min-w-0 space-y-3">
+                  <div className="flex items-center gap-3">
+                    <Skeleton className="size-9 shrink-0" aria-hidden="true" />
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <Skeleton className="h-4 w-36" aria-hidden="true" />
+                      <Skeleton className="h-5 w-56 max-w-full" aria-hidden="true" />
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Skeleton className="h-7 w-28" aria-hidden="true" />
+                    <Skeleton className="h-7 w-24" aria-hidden="true" />
+                    <Skeleton className="h-7 w-32" aria-hidden="true" />
+                  </div>
                 </div>
                 <div className="flex min-w-0 shrink-0 flex-col gap-2 sm:items-end">
                   <Skeleton className="h-4 w-32" aria-hidden="true" />
@@ -579,22 +594,65 @@ function AccountSettingsSection() {
                 </div>
               </div>
             ) : (
-              <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                <div className="min-w-0">
-                  <div className="inline-flex max-w-full items-center border border-border/70 bg-background/50 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)]">
-                    <span className="shrink-0 border-r border-border/70 bg-muted/40 px-2 py-1 text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-                      Plan
-                    </span>
-                    <span className="min-w-0 truncate px-2 py-1 text-sm font-semibold text-foreground">
-                      {formatAccessPlan(viewerAccess.plan)}
-                    </span>
-                    <PlanInfoTooltip plan={viewerAccess.plan} billingStatus={viewerAccess.billingStatus} />
+              <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
+                <div className="min-w-0 space-y-3">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <div className="flex size-9 shrink-0 items-center justify-center border border-primary/25 bg-primary/10 text-primary">
+                      <WalletIcon size={18} weight="bold" aria-hidden="true" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                          Access plan
+                        </span>
+                        <Badge variant={billingStatusBadgeVariant(viewerAccess.billingStatus)} className="shrink-0">
+                          {formatBillingStatusBadge(viewerAccess.billingStatus)}
+                        </Badge>
+                      </div>
+                      <div className="mt-1 flex min-w-0 items-center gap-2">
+                        <p className="truncate text-base font-semibold tracking-tight text-foreground">
+                          {formatAccessPlan(viewerAccess.plan)}
+                        </p>
+                        <PlanInfoTooltip plan={viewerAccess.plan} billingStatus={viewerAccess.billingStatus} />
+                      </div>
+                      <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                        {formatAccessPlanSummary(viewerAccess.plan, viewerAccess.billingStatus)}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {ACCESS_PLAN_FEATURES.map((feature) => {
+                      const isEnabled = viewerAccess.features[feature.id].enabled;
+                      return (
+                        <span
+                          key={feature.id}
+                          className={cn(
+                            "inline-flex h-7 items-center gap-1.5 border px-2.5 text-xs font-medium",
+                            isEnabled
+                              ? "border-emerald-500/25 bg-emerald-500/8 text-emerald-700 dark:text-emerald-300"
+                              : "border-border/70 bg-background/55 text-muted-foreground",
+                          )}
+                        >
+                          {isEnabled ? (
+                            <CheckCircleIcon size={13} weight="fill" aria-hidden="true" />
+                          ) : (
+                            <XIcon size={13} weight="bold" aria-hidden="true" />
+                          )}
+                          {feature.label}
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
-                <div className="flex min-w-0 shrink-0 sm:justify-end">
-                  <div className="flex max-w-full items-center gap-1.5 text-xs text-muted-foreground">
-                    <span className="shrink-0">Support ID</span>
-                    <code className="min-w-0 truncate border border-border/60 bg-background/40 px-1.5 py-1 font-mono text-[11px] text-muted-foreground">
+
+                <div className="min-w-0 border-border/70 pt-3 lg:border-l lg:pl-4 lg:pt-0">
+                  <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-muted-foreground lg:justify-end">
+                    <LightningIcon size={13} weight="bold" aria-hidden="true" />
+                    Account reference
+                  </div>
+                  <div className="flex max-w-full items-center gap-1.5 text-xs text-muted-foreground lg:justify-end">
+                    <code className="min-w-0 truncate border border-border/70 bg-background/60 px-2 py-1.5 font-mono text-[11px] text-foreground/80">
                       {formatSupportAccountId(viewerAccess.ownerTokenIdentifier)}
                     </code>
                     <Tooltip>
@@ -870,27 +928,27 @@ function UsageSettingsSection({ dashboard }: { dashboard: ViewerUsageDashboard |
     () => [
       {
         key: "chat" as const,
-        icon: <ChatCircleText weight="bold" />,
+        icon: <ChatCircleTextIcon weight="bold" />,
         copy: USAGE_COPY.features.chat,
       },
       {
         key: "systemDesign" as const,
-        icon: <Sparkle weight="bold" />,
+        icon: <SparkleIcon weight="bold" />,
         copy: USAGE_COPY.features.systemDesign,
       },
       {
         key: "artifactIndexing" as const,
-        icon: <ChartLineUp weight="bold" />,
+        icon: <ChartLineUpIcon weight="bold" />,
         copy: USAGE_COPY.features.artifactIndexing,
       },
       {
         key: "libraryRetrieval" as const,
-        icon: <Wallet weight="bold" />,
+        icon: <WalletIcon weight="bold" />,
         copy: USAGE_COPY.features.libraryRetrieval,
       },
       {
         key: "titleGeneration" as const,
-        icon: <Sparkle weight="bold" />,
+        icon: <SparkleIcon weight="bold" />,
         copy: USAGE_COPY.features.titleGeneration,
       },
     ],
@@ -904,7 +962,7 @@ function UsageSettingsSection({ dashboard }: { dashboard: ViewerUsageDashboard |
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
             <div className="min-w-0">
               <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight">
-                <ChartLineUp weight="bold" />
+                <ChartLineUpIcon weight="bold" />
                 {USAGE_COPY.section.title}
               </h2>
               <p className="mt-1 text-sm text-muted-foreground">Estimated provider cost, not an invoice.</p>
@@ -967,7 +1025,7 @@ function UsageSettingsSection({ dashboard }: { dashboard: ViewerUsageDashboard |
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <p className="flex items-center gap-2 text-sm font-semibold">
-                    <Wallet weight="bold" />
+                    <WalletIcon weight="bold" />
                     Budget Progress
                     <MetricInfoTooltip
                       label="Budget Progress"
@@ -1263,7 +1321,7 @@ function UsageSettingsSection({ dashboard }: { dashboard: ViewerUsageDashboard |
                   size="sm"
                   disabled={!dashboard || isSaving || !isUsageProfileDirty || hasFormErrors}
                 >
-                  <CheckCircle weight="bold" />
+                  <CheckCircleIcon weight="bold" />
                   {isSaving ? "Saving" : "Save settings"}
                 </Button>
               </div>
@@ -1358,7 +1416,7 @@ function CustomizationSettingsSection({
               Reset
             </Button>
             <Button type="button" size="sm" onClick={savePreferences} disabled={!isCustomizationDirty}>
-              <CheckCircle weight="bold" />
+              <CheckCircleIcon weight="bold" />
               Save Preferences
             </Button>
           </div>
@@ -1537,7 +1595,7 @@ function ModelsSettingsSection() {
                     key={scope}
                     value={scope}
                     aria-label={`${MODEL_SETTINGS_SCOPE_COPY[scope].label} models`}
-                    className="w-[4.75rem]"
+                    className="w-19"
                   >
                     {MODEL_SETTINGS_SCOPE_COPY[scope].label}
                   </ToggleGroupItem>
@@ -1632,7 +1690,7 @@ function ModelsSettingsSection() {
                     onClick={() => toggleFilter(featureId)}
                   >
                     {MODEL_FEATURE_COPY[featureId].label}
-                    <X size={12} weight="bold" aria-hidden="true" />
+                    <XIcon size={12} weight="bold" aria-hidden="true" />
                   </button>
                 ))}
               </div>
@@ -1899,7 +1957,7 @@ function DefaultModelButton({
   isSaving: boolean;
   onSetDefault: (entry: ModelSettingsEntry) => void;
 }) {
-  const Icon = CheckCircle;
+  const Icon = CheckCircleIcon;
   const tooltip = isSaving
     ? "Saving model preferences"
     : !entry.enabled
@@ -2472,7 +2530,7 @@ function MetricInfoTooltip({ label, description }: { label: string; description:
           className="inline-flex size-4 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label={`${label} explanation`}
         >
-          <Info size={13} weight="bold" aria-hidden="true" />
+          <InfoIcon size={13} weight="bold" aria-hidden="true" />
         </button>
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-72">
@@ -2494,10 +2552,10 @@ function PlanInfoTooltip({
       <TooltipTrigger asChild>
         <button
           type="button"
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center border-l border-border/70 bg-muted/20 text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="inline-flex h-7 w-7 shrink-0 items-center justify-center border-primary/25 bg-primary/2.5 text-muted-foreground transition-colors hover:bg-primary/8 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           aria-label={`${formatAccessPlan(plan)} explanation`}
         >
-          <Info size={13} weight="bold" aria-hidden="true" />
+          <InfoIcon size={13} weight="bold" aria-hidden="true" />
         </button>
       </TooltipTrigger>
       <TooltipContent side="top" className="max-w-80">
@@ -2616,6 +2674,53 @@ function formatAccessPlan(plan: "internal" | "free" | "trial" | "pro") {
   }
 }
 
+function formatAccessPlanSummary(
+  plan: "internal" | "free" | "trial" | "pro",
+  billingStatus: "none" | "active" | "past_due" | "canceled",
+) {
+  if (plan === "internal") {
+    return "Full early-access capabilities are enabled for this Systify-managed account.";
+  }
+  if (plan === "free") {
+    return "Repository import is available while usage-priced workflows stay limited during early access.";
+  }
+  if (billingStatus === "past_due") {
+    return "Paid access is still attached to this account, but billing needs attention.";
+  }
+  if (billingStatus === "canceled") {
+    return "Paid access is attached to this account, but billing has been canceled.";
+  }
+  return "Usage-priced workflows are available according to the current early-access limits.";
+}
+
+function formatBillingStatusBadge(status: "none" | "active" | "past_due" | "canceled") {
+  switch (status) {
+    case "active":
+      return "Billing active";
+    case "past_due":
+      return "Past due";
+    case "canceled":
+      return "Canceled";
+    case "none":
+      return "No billing";
+  }
+}
+
+function billingStatusBadgeVariant(
+  status: "none" | "active" | "past_due" | "canceled",
+): "muted" | "outline" | "accent" | "destructive" {
+  switch (status) {
+    case "past_due":
+      return "destructive";
+    case "active":
+      return "accent";
+    case "canceled":
+      return "outline";
+    case "none":
+      return "muted";
+  }
+}
+
 function formatAccessPlanTooltip(
   plan: "internal" | "free" | "trial" | "pro",
   billingStatus: "none" | "active" | "past_due" | "canceled",
@@ -2714,7 +2819,7 @@ function StatsForNerdsSection({
       <div className="flex items-start justify-between gap-4">
         <div className="flex min-w-0 flex-col gap-1">
           <h2 className="flex items-center gap-2 text-sm font-semibold">
-            <SlidersHorizontal weight="bold" />
+            <SlidersHorizontalIcon weight="bold" />
             Stats for Nerds
           </h2>
           <p className="text-sm leading-6 text-muted-foreground">
@@ -2730,7 +2835,7 @@ function StatsForNerdsSection({
           aria-pressed={statsForNerds}
           onClick={() => setStatsForNerds(!statsForNerds)}
         >
-          {statsForNerds ? <CheckCircle weight="fill" /> : <Info weight="bold" />}
+          {statsForNerds ? <CheckCircleIcon weight="fill" /> : <InfoIcon weight="bold" />}
           {statsForNerds ? "On" : "Off"}
         </Button>
       </div>
@@ -2773,7 +2878,7 @@ function TraitsSection({
     <section className="flex flex-col gap-3">
       <div className="flex flex-col gap-1">
         <h2 className="flex items-center gap-2 text-sm font-semibold">
-          <Sparkle weight="bold" />
+          <SparkleIcon weight="bold" />
           What traits should Systify have?
         </h2>
         <p className="text-sm leading-6 text-muted-foreground">Add custom traits or choose from the defaults.</p>
@@ -2790,7 +2895,7 @@ function TraitsSection({
                 onClick={() => removeTrait(trait)}
                 aria-label={`Remove ${trait}`}
               >
-                <X weight="bold" />
+                <XIcon weight="bold" />
               </button>
             </Badge>
           ))}
@@ -2831,7 +2936,7 @@ function TraitsSection({
               disabled={traitLimitReached}
               onClick={() => addTrait(trait)}
             >
-              <Plus weight="bold" />
+              <PlusIcon weight="bold" />
               {trait}
             </Button>
           ))}
