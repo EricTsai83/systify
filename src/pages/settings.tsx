@@ -544,7 +544,10 @@ function AccountSettingsSection() {
                     <Skeleton className="h-5 w-52 max-w-full" aria-hidden="true" />
                   </div>
                 </div>
-                <Skeleton className="h-6 w-40" aria-hidden="true" />
+                <div className="flex shrink-0 flex-col gap-2 sm:items-end">
+                  <Skeleton className="h-6 w-40" aria-hidden="true" />
+                  <Skeleton className="h-7 w-56 max-w-full" aria-hidden="true" />
+                </div>
               </>
             ) : (
               <>
@@ -562,103 +565,100 @@ function AccountSettingsSection() {
                     <p className="mt-1 min-h-5 truncate text-sm text-muted-foreground">{user?.email ?? null}</p>
                   </div>
                 </div>
-                <Badge variant={githubConnection.isConnected ? "outline" : "muted"} className="w-fit whitespace-nowrap">
-                  <GithubLogoIcon weight="bold" />
-                  {formatGitHubConnection(githubConnection)}
-                </Badge>
+                <div className="flex min-w-0 shrink-0 flex-col gap-2 sm:items-end">
+                  <Badge
+                    variant={githubConnection.isConnected ? "outline" : "muted"}
+                    className="w-fit whitespace-nowrap"
+                  >
+                    <GithubLogoIcon weight="bold" />
+                    {formatGitHubConnection(githubConnection)}
+                  </Badge>
+                  {viewerAccess ? (
+                    <div className="flex max-w-full items-center gap-1.5 text-xs text-muted-foreground">
+                      <span className="shrink-0">Support ID</span>
+                      <code className="min-w-0 max-w-48 truncate border border-border/70 bg-background/60 px-2 py-1.5 font-mono text-[11px] text-foreground/80">
+                        {formatSupportAccountId(viewerAccess.ownerTokenIdentifier)}
+                      </code>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="size-7 shrink-0"
+                            aria-label={copiedAccountId ? "Support ID copied" : "Copy support ID"}
+                            onClick={handleCopyAccountId}
+                          >
+                            <span className="relative size-3.5" aria-hidden="true">
+                              <CopyIcon
+                                size={14}
+                                className={cn(
+                                  "absolute inset-0 text-muted-foreground transition-[opacity,filter,transform,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
+                                  copiedAccountId
+                                    ? "scale-90 text-muted-foreground/40 opacity-0 blur-[1.5px]"
+                                    : "scale-100 opacity-100 blur-0",
+                                )}
+                              />
+                              <CheckIcon
+                                size={14}
+                                weight="bold"
+                                className={cn(
+                                  "absolute inset-0 transition-[opacity,filter,transform,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
+                                  copiedAccountId
+                                    ? "scale-100 text-foreground opacity-100 blur-0"
+                                    : "scale-75 text-muted-foreground/40 opacity-0 blur-[1.5px]",
+                                )}
+                              />
+                            </span>
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top">{copiedAccountId ? "Copied" : "Copy support ID"}</TooltipContent>
+                      </Tooltip>
+                    </div>
+                  ) : null}
+                </div>
               </>
             )}
           </div>
 
-          <div className="flex min-h-[107px] flex-col gap-3 border-t border-border px-5 py-3 text-sm text-muted-foreground sm:min-h-14">
+          <div className="flex min-h-[107px] flex-col gap-3 border-t border-border px-5 py-3 text-sm text-muted-foreground sm:min-h-14 sm:flex-row sm:items-center sm:justify-between">
             {isAccountLoading ? (
               <>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="min-w-0 flex-1 space-y-2">
-                    <Skeleton className="h-4 w-full" aria-hidden="true" />
-                    <Skeleton className="h-4 w-4/5 sm:hidden" aria-hidden="true" />
-                  </div>
-                  <div className="flex shrink-0 flex-wrap gap-2">
-                    <Skeleton className="h-8 w-36" aria-hidden="true" />
-                    <Skeleton className="h-8 w-24" aria-hidden="true" />
-                  </div>
+                <div className="min-w-0 flex-1 space-y-2">
+                  <Skeleton className="h-4 w-full" aria-hidden="true" />
+                  <Skeleton className="h-4 w-4/5 sm:hidden" aria-hidden="true" />
                 </div>
-                <div className="flex items-center gap-2 border-t border-border/60 pt-3">
-                  <Skeleton className="h-4 w-16" aria-hidden="true" />
-                  <Skeleton className="h-7 w-44" aria-hidden="true" />
+                <div className="flex shrink-0 flex-wrap gap-2">
+                  <Skeleton className="h-8 w-36" aria-hidden="true" />
+                  <Skeleton className="h-8 w-24" aria-hidden="true" />
                 </div>
               </>
             ) : (
               <>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="min-w-0">
-                    GitHub repository access comes from the connected GitHub App installation. To switch GitHub
-                    accounts, disconnect this installation and connect again.
-                  </p>
-                  {githubConnection.isConnected ? (
-                    <div className="flex shrink-0 flex-wrap gap-2">
-                      {manageGitHubUrl ? (
-                        <Button type="button" variant="outline" size="sm" onClick={handleManageGitHub}>
-                          <GithubLogoIcon weight="bold" />
-                          Manage on GitHub
-                        </Button>
-                      ) : null}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => {
-                          setDisconnectError(null);
-                          setIsDisconnectDialogOpen(true);
-                        }}
-                      >
-                        Disconnect
+                <p className="min-w-0">
+                  GitHub repository access comes from the connected GitHub App installation. To switch GitHub accounts,
+                  disconnect this installation and connect again.
+                </p>
+                {githubConnection.isConnected ? (
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    {manageGitHubUrl ? (
+                      <Button type="button" variant="outline" size="sm" onClick={handleManageGitHub}>
+                        <GithubLogoIcon weight="bold" />
+                        Manage on GitHub
                       </Button>
-                    </div>
-                  ) : null}
-                </div>
-                {viewerAccess ? (
-                  <div className="flex max-w-full items-center gap-1.5 border-t border-border/60 pt-3 text-xs text-muted-foreground">
-                    <span className="shrink-0">Support ID</span>
-                    <code className="min-w-0 truncate border border-border/70 bg-background/60 px-2 py-1.5 font-mono text-[11px] text-foreground/80">
-                      {formatSupportAccountId(viewerAccess.ownerTokenIdentifier)}
-                    </code>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="size-7 shrink-0"
-                          aria-label={copiedAccountId ? "Support ID copied" : "Copy support ID"}
-                          onClick={handleCopyAccountId}
-                        >
-                          <span className="relative size-3.5" aria-hidden="true">
-                            <CopyIcon
-                              size={14}
-                              className={cn(
-                                "absolute inset-0 text-muted-foreground transition-[opacity,filter,transform,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
-                                copiedAccountId
-                                  ? "scale-90 text-muted-foreground/40 opacity-0 blur-[1.5px]"
-                                  : "scale-100 opacity-100 blur-0",
-                              )}
-                            />
-                            <CheckIcon
-                              size={14}
-                              weight="bold"
-                              className={cn(
-                                "absolute inset-0 transition-[opacity,filter,transform,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
-                                copiedAccountId
-                                  ? "scale-100 text-foreground opacity-100 blur-0"
-                                  : "scale-75 text-muted-foreground/40 opacity-0 blur-[1.5px]",
-                              )}
-                            />
-                          </span>
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent side="top">{copiedAccountId ? "Copied" : "Copy support ID"}</TooltipContent>
-                    </Tooltip>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="text-destructive hover:text-destructive"
+                      onClick={() => {
+                        setDisconnectError(null);
+                        setIsDisconnectDialogOpen(true);
+                      }}
+                    >
+                      Disconnect
+                    </Button>
                   </div>
                 ) : null}
                 {disconnectError ? <p className="text-sm text-destructive sm:basis-full">{disconnectError}</p> : null}
@@ -695,9 +695,10 @@ function AccountSettingsSection() {
                       <div
                         key={card.id}
                         className={cn(
-                          "relative flex min-h-[270px] flex-col border bg-background/70 p-4 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)]",
-                          isCurrent || isPromoted ? "border-primary/45" : "border-border",
-                          isCurrent ? "bg-primary/[0.03]" : null,
+                          "relative flex min-h-[270px] flex-col border p-4 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)]",
+                          isCurrent
+                            ? "border-primary/45 bg-background/70 text-foreground"
+                            : "border-border bg-primary/[0.03] text-foreground",
                         )}
                       >
                         {card.badge ? (
@@ -705,14 +706,9 @@ function AccountSettingsSection() {
                             {card.badge}
                           </div>
                         ) : null}
-                        <div className="flex min-w-0 items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <h3 className="text-xl font-semibold tracking-tight text-foreground">{card.title}</h3>
-                            <p className="mt-7 text-sm leading-6 text-muted-foreground">{card.description}</p>
-                          </div>
-                          {isCurrent ? (
-                            <PlanInfoTooltip plan={viewerAccess.plan} billingStatus={viewerAccess.billingStatus} />
-                          ) : null}
+                        <div className="min-w-0">
+                          <h3 className="text-xl font-semibold tracking-tight text-foreground">{card.title}</h3>
+                          <p className="mt-7 text-sm leading-6 text-muted-foreground">{card.description}</p>
                         </div>
 
                         <div className="mt-5 space-y-3">
@@ -743,7 +739,10 @@ function AccountSettingsSection() {
                             <Button
                               type="button"
                               variant={isCurrent ? "outline" : isPromoted ? "default" : "outline"}
-                              className={cn("h-10 w-full", !isCurrent && !isPromoted ? "text-muted-foreground" : null)}
+                              className={cn(
+                                "h-10 w-full",
+                                isCurrent ? "disabled:opacity-100" : !isPromoted ? "text-muted-foreground" : null,
+                              )}
                               disabled
                             >
                               {actionLabel}
@@ -2602,31 +2601,6 @@ function MetricInfoTooltip({ label, description }: { label: string; description:
   );
 }
 
-function PlanInfoTooltip({
-  plan,
-  billingStatus,
-}: {
-  plan: "internal" | "free" | "trial" | "pro";
-  billingStatus: "none" | "active" | "past_due" | "canceled";
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          className="inline-flex h-7 w-7 shrink-0 items-center justify-center border-primary/25 bg-primary/2.5 text-muted-foreground transition-colors hover:bg-primary/8 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          aria-label={`${formatAccessPlan(plan)} explanation`}
-        >
-          <InfoIcon size={13} weight="bold" aria-hidden="true" />
-        </button>
-      </TooltipTrigger>
-      <TooltipContent side="top" className="max-w-80">
-        {formatAccessPlanTooltip(plan, billingStatus)}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
 function formatCountLabel(count: number, singular: string, plural = `${singular}s`): string {
   if (count === 0) {
     return `No ${plural}`;
@@ -2723,19 +2697,6 @@ function formatGitHubConnection(connection: ReturnType<typeof useGitHubConnectio
   return "Not connected";
 }
 
-function formatAccessPlan(plan: "internal" | "free" | "trial" | "pro") {
-  switch (plan) {
-    case "internal":
-      return "Internal access";
-    case "trial":
-      return "Trial";
-    case "pro":
-      return "Pro";
-    case "free":
-      return "Free demo";
-  }
-}
-
 function accessPlanCardId(plan: AccessPlan): AccessPlanCardId {
   if (plan === "internal") {
     return "internal";
@@ -2768,51 +2729,6 @@ function formatPlanCardFootnote(cardId: AccessPlanCardId, billingStatus: Billing
     return "Billing has been canceled.";
   }
   return "Price shown at checkout.";
-}
-
-function formatAccessPlanTooltip(
-  plan: "internal" | "free" | "trial" | "pro",
-  billingStatus: "none" | "active" | "past_due" | "canceled",
-) {
-  if (plan === "internal") {
-    return (
-      <div className="space-y-2 text-xs leading-5">
-        <p className="font-medium text-foreground">Internal access</p>
-        <p>A Systify-managed account type for team members and early-access testing.</p>
-        <div className="space-y-1 border-t border-border/70 pt-2">
-          <p>Includes all early-access features.</p>
-          <p>Billing is not required for this account.</p>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="space-y-2 text-xs leading-5">
-      <p className="font-medium text-foreground">{formatAccessPlan(plan)}</p>
-      <p>Repository import and sync are enabled.</p>
-      <div className="space-y-1 border-t border-border/70 pt-2">
-        <p>
-          {plan === "free"
-            ? "Chat, Sandbox, and System Design are limited during early access."
-            : "Usage-priced features are limited during early access."}
-        </p>
-        <p>Billing status: {formatBillingStatus(billingStatus)}.</p>
-      </div>
-    </div>
-  );
-}
-
-function formatBillingStatus(status: "none" | "active" | "past_due" | "canceled") {
-  switch (status) {
-    case "active":
-      return "Billing active";
-    case "past_due":
-      return "Payment past due";
-    case "canceled":
-      return "Billing canceled";
-    case "none":
-      return "Billing not configured";
-  }
 }
 
 function formatSupportAccountId(ownerTokenIdentifier: string) {
