@@ -275,38 +275,77 @@ export const MessageBubble = memo(function MessageBubble({
        * visible on completion.
        */}
       {isAssistant ? (
-        <div className="flex min-h-7 items-center justify-between gap-2 px-1">
+        <AssistantMessageFooler
+          isInFlight={isInFlight}
+          costTicker={costTicker}
+          nerdStats={nerdStats}
+          tickerAriaLabel={tickerAriaLabel}
+          content={displayContent}
+        />
+      ) : null}
+    </Message>
+  );
+});
+
+function AssistantMessageFooler({
+  isInFlight,
+  costTicker,
+  nerdStats,
+  tickerAriaLabel,
+  content,
+}: {
+  isInFlight: boolean;
+  costTicker: string | null;
+  nerdStats: {
+    model: string;
+    tokensPerSecond: string;
+    messageTokens: string;
+    generationTime: string;
+  } | null;
+  tickerAriaLabel: string;
+  content: string;
+}) {
+  return (
+    <div className="relative min-h-7">
+      <div
+        className="absolute left-0 -mt-1! -ml-0.5 flex w-full flex-row justify-start gap-1 opacity-100 transition-opacity select-none md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100 md:group-focus:opacity-100 md:group-has-aria-[describedby]:opacity-100 md:group-has-data-[state='delayed-open']:opacity-100 md:group-has-data-[state='instant-open']:opacity-100 print:hidden"
+      >
+        <div className="flex min-h-8 w-full items-center justify-between gap-3 px-2 py-1">
           <div className="min-w-0 flex-1">
             {nerdStats ? (
               <div
-                className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground/80 tabular-nums"
+                className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-muted-foreground/90 tabular-nums"
                 data-testid="message-nerd-stats"
               >
                 {costTicker ? (
-                  <span className="truncate" data-testid="message-cost-ticker" aria-label={tickerAriaLabel}>
+                  <span
+                    className="truncate text-[13px] font-medium"
+                    data-testid="message-cost-ticker"
+                    aria-label={tickerAriaLabel}
+                  >
                     {costTicker}
                   </span>
                 ) : null}
                 <span className="inline-flex items-center gap-1">
-                  <CpuIcon size={12} />
+                  <CpuIcon size={14} />
                   {nerdStats.model}
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <GaugeIcon size={12} />
+                  <GaugeIcon size={14} />
                   {nerdStats.tokensPerSecond}
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <HashIcon size={12} />
+                  <HashIcon size={14} />
                   {nerdStats.messageTokens}
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <ClockIcon size={12} />
+                  <ClockIcon size={14} />
                   {nerdStats.generationTime}
                 </span>
               </div>
             ) : costTicker ? (
               <p
-                className="truncate text-[11px] text-muted-foreground/80 tabular-nums"
+                className="truncate text-[13px] font-medium text-muted-foreground/90 tabular-nums"
                 data-testid="message-cost-ticker"
                 aria-label={tickerAriaLabel}
               >
@@ -316,14 +355,14 @@ export const MessageBubble = memo(function MessageBubble({
           </div>
           {!isInFlight ? (
             <MessageActions className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-              <CopyMessageAction content={displayContent} />
+              <CopyMessageAction content={content} />
             </MessageActions>
           ) : null}
         </div>
-      ) : null}
-    </Message>
+      </div>
+    </div>
   );
-});
+}
 
 function SystemErrorNotice({ status, message }: { status: Doc<"messages">["status"]; message: string }) {
   const title = status === "cancelled" ? "Reply cancelled" : "Reply could not finish";
@@ -390,11 +429,11 @@ function CopyMessageAction({ content }: { content: string }) {
   return (
     <MessageAction
       tooltip={copied ? "Copied" : "Copy reply"}
-      size="xs"
+      size="sm"
       onClick={handleCopy}
       data-testid="message-copy-button"
     >
-      {copied ? <CheckIcon size={14} weight="bold" /> : <CopyIcon size={14} />}
+      {copied ? <CheckIcon size={16} weight="bold" /> : <CopyIcon size={16} />}
     </MessageAction>
   );
 }
