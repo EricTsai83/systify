@@ -275,7 +275,7 @@ export const MessageBubble = memo(function MessageBubble({
        * visible on completion.
        */}
       {isAssistant ? (
-        <AssistantMessageFooler
+        <AssistantMessageFooter
           isInFlight={isInFlight}
           costTicker={costTicker}
           nerdStats={nerdStats}
@@ -287,7 +287,7 @@ export const MessageBubble = memo(function MessageBubble({
   );
 });
 
-function AssistantMessageFooler({
+function AssistantMessageFooter({
   isInFlight,
   costTicker,
   nerdStats,
@@ -307,9 +307,7 @@ function AssistantMessageFooler({
 }) {
   return (
     <div className="relative min-h-7">
-      <div
-        className="absolute left-0 -mt-1! -ml-0.5 flex w-full flex-row justify-start gap-1 opacity-100 transition-opacity select-none md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100 md:group-focus:opacity-100 md:group-has-aria-[describedby]:opacity-100 md:group-has-data-[state='delayed-open']:opacity-100 md:group-has-data-[state='instant-open']:opacity-100 print:hidden"
-      >
+      <div className="absolute left-0 -mt-1! -ml-0.5 flex w-full flex-row justify-start gap-1 opacity-100 transition-opacity select-none md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100 md:group-focus:opacity-100 md:group-has-aria-[describedby]:opacity-100 md:group-has-data-[state='delayed-open']:opacity-100 md:group-has-data-[state='instant-open']:opacity-100 print:hidden">
         <div className="flex min-h-8 w-full items-center justify-between gap-3 px-2 py-1">
           <div className="min-w-0 flex-1">
             {nerdStats ? (
