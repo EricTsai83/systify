@@ -695,10 +695,10 @@ function AccountSettingsSection() {
                       <div
                         key={card.id}
                         className={cn(
-                          "relative flex min-h-[270px] flex-col border p-4 shadow-[inset_0_1px_0_rgb(255_255_255_/_0.04)]",
+                          "relative flex min-h-[270px] flex-col border p-4 shadow-[inset_0_1px_0_rgb(255_255_255/0.04)]",
                           isCurrent
                             ? "border-primary/45 bg-background/70 text-foreground"
-                            : "border-border bg-primary/[0.03] text-foreground",
+                            : "border-border bg-primary/3 text-foreground",
                         )}
                       >
                         {card.badge ? (
@@ -1656,7 +1656,7 @@ function ModelsSettingsSection() {
                     key={scope}
                     value={scope}
                     aria-label={`${MODEL_SETTINGS_SCOPE_COPY[scope].label} models`}
-                    className="w-[4.75rem]"
+                    className="w-19"
                   >
                     {MODEL_SETTINGS_SCOPE_COPY[scope].label}
                   </ToggleGroupItem>
