@@ -30,6 +30,7 @@ export const RepositorySelector = memo(function RepositorySelector({
   onSelectNoRepository,
   onImported,
   importDisabledReason,
+  portalInAnchor = false,
 }: {
   repositories: Doc<"repositories">[] | undefined;
   activeRepositoryId: RepositoryId | null;
@@ -39,6 +40,7 @@ export const RepositorySelector = memo(function RepositorySelector({
   onSelectNoRepository?: () => void;
   onImported: OnImportedCallback;
   importDisabledReason?: string;
+  portalInAnchor?: boolean;
 }) {
   const activeRepository = repositories?.find((repo) => repo._id === activeRepositoryId);
   const isRepoless = activeRepositoryId === null;
@@ -68,6 +70,7 @@ export const RepositorySelector = memo(function RepositorySelector({
         items={repositories}
         value={activeRepository ?? null}
         onValueChange={(repo) => {
+          setPopoverOpen(false);
           if (repo && repo._id !== activeRepositoryId) onSwitchRepository(repo._id);
         }}
         itemToStringLabel={(repo) => repo.sourceRepoFullName}
@@ -93,7 +96,13 @@ export const RepositorySelector = memo(function RepositorySelector({
             </span>
           </ComboboxTrigger>
         </div>
-        <ComboboxContent anchor={anchorRef} side="top" align="start" className="w-64">
+        <ComboboxContent
+          anchor={anchorRef}
+          portalContainer={portalInAnchor ? anchorRef : undefined}
+          side="top"
+          align="start"
+          className="w-64"
+        >
           <ComboboxInput placeholder="Search repositories…" showTrigger={false} />
           {onSelectNoRepository ? (
             <button
