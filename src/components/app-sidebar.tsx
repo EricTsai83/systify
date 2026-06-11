@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { LibraryAskPanel } from "@/components/library-ask-panel";
@@ -7,7 +7,14 @@ import { ProfileCard } from "@/components/profile-card";
 import { RepositoryModeSwitcher } from "@/components/repository-mode-switcher";
 import { RepositoryThreadsRail, RepolessChatsRail } from "@/components/repository-threads-rail";
 import { RepositorySelector } from "@/components/repository-switcher";
-import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from "@/components/ui/sidebar";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  useSidebar,
+  useSidebarLayout,
+} from "@/components/ui/sidebar";
 import { Logo } from "@/components/logo";
 import { resolveEffectiveChatMode, useChatMode } from "@/hooks/use-service-mode";
 import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
@@ -83,6 +90,25 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
   const effectiveChatMode = resolveEffectiveChatMode({ mode, lastMode, availability });
 
   const isLibraryMode = effectiveChatMode === "library";
+  const { isSheetMode } = useSidebarLayout();
+  const { setOpenMobile: setLeftSidebarOpenMobile } = useSidebar("left");
+
+  const handleSwitchRepository = useCallback(
+    (repositoryId: RepositoryId) => {
+      if (isSheetMode) {
+        setLeftSidebarOpenMobile(false);
+      }
+      onSwitchRepository(repositoryId);
+    },
+    [isSheetMode, onSwitchRepository, setLeftSidebarOpenMobile],
+  );
+
+  const handleSelectNoRepository = useCallback(() => {
+    if (isSheetMode) {
+      setLeftSidebarOpenMobile(false);
+    }
+    void navigate(DEFAULT_AUTHENTICATED_PATH);
+  }, [isSheetMode, navigate, setLeftSidebarOpenMobile]);
 
   return (
     <Sidebar
@@ -150,10 +176,11 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
           <RepositorySelector
             repositories={repositories}
             activeRepositoryId={activeRepositoryId}
-            onSwitchRepository={onSwitchRepository}
-            onSelectNoRepository={() => void navigate(DEFAULT_AUTHENTICATED_PATH)}
+            onSwitchRepository={handleSwitchRepository}
+            onSelectNoRepository={handleSelectNoRepository}
             onImported={onImported}
             importDisabledReason={importDisabledReason}
+            portalInAnchor={isSheetMode}
           />
         </div>
       </SidebarFooter>
