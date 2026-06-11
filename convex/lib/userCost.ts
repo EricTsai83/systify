@@ -924,7 +924,7 @@ export async function recordUserUsageEvent(
     cacheWriteTokens?: number;
     reasoningTokens?: number;
   },
-): Promise<void> {
+): Promise<boolean> {
   const sourceId = args.sourceId.trim();
   if (!sourceId) {
     throw new Error("Usage rollup sourceId must be non-empty");
@@ -933,7 +933,7 @@ export async function recordUserUsageEvent(
   const now = Date.now();
   if (!hasRecordableUsage(args)) {
     await settleBudgetReservation(ctx, { sourceId, actualCostUsd: 0, now });
-    return;
+    return false;
   }
 
   const existingEvent = await ctx.db
@@ -941,7 +941,7 @@ export async function recordUserUsageEvent(
     .withIndex("by_sourceId", (q) => q.eq("sourceId", sourceId))
     .unique();
   if (existingEvent) {
-    return;
+    return false;
   }
 
   const profile = await getViewerUsageProfile(ctx, args.ownerTokenIdentifier);
@@ -1014,6 +1014,8 @@ export async function recordUserUsageEvent(
       });
     }
   }
+
+  return true;
 }
 
 export const reserveUsageBudget = internalMutation({

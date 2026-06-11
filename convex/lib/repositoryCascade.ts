@@ -82,6 +82,15 @@ async function drainArtifactFoldersByRepositoryId(
   return docs.length === CASCADE_BATCH_SIZE;
 }
 
+async function drainArtifactDraftsByRepositoryId(ctx: MutationCtx, repositoryId: Id<"repositories">): Promise<boolean> {
+  const docs = await ctx.db
+    .query("artifactDrafts")
+    .withIndex("by_repositoryId_and_status", (q) => q.eq("repositoryId", repositoryId))
+    .take(CASCADE_BATCH_SIZE);
+  for (const doc of docs) await ctx.db.delete(doc._id);
+  return docs.length === CASCADE_BATCH_SIZE;
+}
+
 async function drainRepoChunksByRepositoryId(ctx: MutationCtx, repositoryId: Id<"repositories">): Promise<boolean> {
   const docs = await ctx.db
     .query("repoChunks")
@@ -356,6 +365,7 @@ export async function runRepositoryCascadeDelete(
   more = (await drainArchivedThreadScopesByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainArtifactsByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainArtifactFoldersByRepositoryId(ctx, args.repositoryId)) || more;
+  more = (await drainArtifactDraftsByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainRepoChunksByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainRepoFilesByRepositoryId(ctx, args.repositoryId)) || more;
   more = (await drainImportsByRepositoryId(ctx, args.repositoryId)) || more;

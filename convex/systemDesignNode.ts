@@ -183,6 +183,14 @@ export const runSystemDesignGeneration = internalAction({
         forceRegenerate,
       });
 
+      if (outcome.aborted) {
+        await ctx.runMutation(internal.systemDesign.failGeneration, {
+          jobId: args.jobId,
+          errorMessage: "System Design generation stopped because the repository is no longer active.",
+        });
+        return;
+      }
+
       if (outcome.countsAsSucceeded) {
         succeeded += 1;
       } else {

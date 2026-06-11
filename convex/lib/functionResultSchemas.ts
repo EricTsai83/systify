@@ -117,12 +117,20 @@ export const sandboxLookupResultValidator = v.union(
 );
 export type SandboxLookupResult = Infer<typeof sandboxLookupResultValidator>;
 
-export const persistedArtifactResultValidator = v.object({
-  artifactId: v.id("artifacts"),
-});
+export const persistedArtifactResultValidator = v.union(
+  v.object({
+    persisted: v.literal(true),
+    artifactId: v.id("artifacts"),
+  }),
+  v.object({ persisted: v.literal(false) }),
+);
 export type PersistedArtifactResult = Infer<typeof persistedArtifactResultValidator>;
 
-export const recordedKindRunResultValidator = v.object({
-  kindRunId: v.id("systemDesignKindRuns"),
-});
+export const recordedKindRunResultValidator = v.union(
+  v.object({
+    recorded: v.literal(true),
+    kindRunId: v.id("systemDesignKindRuns"),
+  }),
+  v.object({ recorded: v.literal(false) }),
+);
 export type RecordedKindRunResult = Infer<typeof recordedKindRunResultValidator>;

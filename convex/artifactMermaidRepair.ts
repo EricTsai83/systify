@@ -1,9 +1,16 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery } from "./_generated/server";
+import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { extractMermaidCodeBlocks, replaceMermaidCodeBlocks } from "./lib/mermaidMarkdown";
 import { assertOwnedBy } from "./lib/ownedDocs";
+import {
+  reserveSandboxLibraryGenerationBudget,
+  settleSandboxLibraryGenerationUsage,
+} from "./lib/sandboxLibraryGenerationAccounting";
+import { consumeSystemDesignRateLimit } from "./lib/rateLimit";
+import { isActiveRepository } from "./lib/repositoryAccess";
+import type { NormalizedUsage } from "./lib/llmProvider";
 
 export interface MermaidBlockReplacement {
   contentMarkdown: string;
@@ -65,6 +72,27 @@ function selectOnlyMatch<T>(values: readonly T[], predicate: (value: T) => boole
   return matches.length === 1 ? matches[0] : null;
 }
 
+async function requireActiveRepairArtifact(
+  ctx: QueryCtx | MutationCtx,
+  args: {
+    artifactId: Id<"artifacts">;
+    ownerTokenIdentifier: string;
+  },
+): Promise<Doc<"artifacts">> {
+  const artifact = await ctx.db.get(args.artifactId);
+  assertOwnedBy(artifact, args.ownerTokenIdentifier, "Artifact not found.");
+  if (!artifact.repositoryId) {
+    return artifact;
+  }
+
+  const repository = await ctx.db.get(artifact.repositoryId);
+  if (!repository || repository.ownerTokenIdentifier !== args.ownerTokenIdentifier || !isActiveRepository(repository)) {
+    throw new Error("Artifact not found.");
+  }
+
+  return artifact;
+}
+
 export const getRepairContext = internalQuery({
   args: {
     artifactId: v.id("artifacts"),
@@ -72,8 +100,7 @@ export const getRepairContext = internalQuery({
     chart: v.string(),
   },
   handler: async (ctx, args): Promise<MermaidRepairContext> => {
-    const artifact = await ctx.db.get(args.artifactId);
-    assertOwnedBy(artifact, args.ownerTokenIdentifier, "Artifact not found.");
+    const artifact = await requireActiveRepairArtifact(ctx, args);
 
     const replacement = replaceMatchingMermaidBlock({
       contentMarkdown: artifact.contentMarkdown,
@@ -96,6 +123,66 @@ export const getRepairContext = internalQuery({
   },
 });
 
+export const reserveRepairBudget = internalMutation({
+  args: {
+    artifactId: v.id("artifacts"),
+    ownerTokenIdentifier: v.string(),
+    expectedVersion: v.number(),
+    sourceId: v.string(),
+    occurredAtMs: v.number(),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const artifact = await requireActiveRepairArtifact(ctx, args);
+    if (artifact.version !== args.expectedVersion) {
+      throw new Error("This artifact changed while the diagram was being repaired. Reload and try again.");
+    }
+    await consumeSystemDesignRateLimit(ctx, args.ownerTokenIdentifier);
+    await reserveSandboxLibraryGenerationBudget(ctx, {
+      sourceId: args.sourceId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId: artifact.repositoryId,
+      occurredAtMs: args.occurredAtMs,
+    });
+    return null;
+  },
+});
+
+export const settleRepairUsage = internalMutation({
+  args: {
+    sourceId: v.string(),
+    artifactId: v.id("artifacts"),
+    ownerTokenIdentifier: v.string(),
+    occurredAtMs: v.number(),
+    totalCostUsd: v.optional(v.number()),
+    inputTokens: v.optional(v.number()),
+    outputTokens: v.optional(v.number()),
+    cachedInputTokens: v.optional(v.number()),
+    cacheWriteTokens: v.optional(v.number()),
+    reasoningTokens: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const artifact = await ctx.db.get(args.artifactId);
+    const repositoryId =
+      artifact && artifact.ownerTokenIdentifier === args.ownerTokenIdentifier ? artifact.repositoryId : null;
+    const usage: NormalizedUsage = {
+      inputTokens: args.inputTokens,
+      outputTokens: args.outputTokens,
+      cachedInputTokens: args.cachedInputTokens,
+      cacheWriteTokens: args.cacheWriteTokens,
+      reasoningTokens: args.reasoningTokens,
+    };
+    await settleSandboxLibraryGenerationUsage(ctx, {
+      sourceId: args.sourceId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId,
+      occurredAtMs: args.occurredAtMs,
+      totalCostUsd: args.totalCostUsd,
+      usage,
+    });
+    return null;
+  },
+});
+
 export const applyRepairedBlock = internalMutation({
   args: {
     artifactId: v.id("artifacts"),
@@ -105,8 +192,7 @@ export const applyRepairedBlock = internalMutation({
     repairedChart: v.string(),
   },
   handler: async (ctx, args): Promise<ApplyMermaidRepairResult> => {
-    const artifact = await ctx.db.get(args.artifactId);
-    assertOwnedBy(artifact, args.ownerTokenIdentifier, "Artifact not found.");
+    const artifact = await requireActiveRepairArtifact(ctx, args);
 
     if (artifact.version !== args.expectedVersion) {
       throw new Error("This artifact changed while the diagram was being repaired. Reload and try again.");

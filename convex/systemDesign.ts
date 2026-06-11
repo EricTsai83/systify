@@ -1,8 +1,8 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
-import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
+import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { isActiveRepository, requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
 import { assertFeatureAccess, requiresHighReasoningAccess, requiresPremiumModelAccess } from "./lib/entitlements";
 import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
 import { enqueueJob, findActiveJob } from "./lib/jobs";
@@ -25,6 +25,7 @@ import {
 import {
   consumeDaytonaGlobalRateLimit,
   consumeSystemDesignRateLimit,
+  isLeaseActive,
   SYSTEM_DESIGN_JOB_LEASE_MS,
 } from "./lib/rateLimit";
 import { listPickableModels, reasoningEffortValidator, type ReasoningEffort } from "./lib/llmCatalog";
@@ -75,6 +76,31 @@ const KIND_RUN_TERMINAL_STATUSES = new Set<Doc<"systemDesignKindRuns">["status"]
   "cached_hit",
   "quality_rejected",
 ]);
+
+async function loadActiveSystemDesignWriteTarget(
+  ctx: QueryCtx | MutationCtx,
+  args: {
+    ownerTokenIdentifier: string;
+    repositoryId: Id<"repositories">;
+    jobId: Id<"jobs">;
+  },
+): Promise<{ repository: Doc<"repositories">; job: Doc<"jobs"> } | null> {
+  const [repository, job] = await Promise.all([ctx.db.get(args.repositoryId), ctx.db.get(args.jobId)]);
+  if (!isOwnedBy(repository, args.ownerTokenIdentifier) || !isActiveRepository(repository)) {
+    return null;
+  }
+  if (
+    !job ||
+    job.kind !== "system_design" ||
+    job.status !== "running" ||
+    job.repositoryId !== args.repositoryId ||
+    job.ownerTokenIdentifier !== args.ownerTokenIdentifier ||
+    !isLeaseActive(job.leaseExpiresAt)
+  ) {
+    return null;
+  }
+  return { repository, job };
+}
 
 /**
  * Library System Design generation entry point.
@@ -541,7 +567,7 @@ export const getGenerationContext = internalQuery({
     repository: Doc<"repositories">;
   } | null> => {
     const repository = await ctx.db.get(args.repositoryId);
-    if (!isOwnedBy(repository, args.ownerTokenIdentifier)) return null;
+    if (!isOwnedBy(repository, args.ownerTokenIdentifier) || !isActiveRepository(repository)) return null;
     return { repository };
   },
 });
@@ -575,7 +601,12 @@ export const persistGeneratedArtifact = internalMutation({
     promptVersion: v.optional(v.number()),
   },
   returns: persistedArtifactResultValidator,
-  handler: async (ctx, args): Promise<{ artifactId: Id<"artifacts"> }> => {
+  handler: async (ctx, args): Promise<{ persisted: true; artifactId: Id<"artifacts"> } | { persisted: false }> => {
+    const activeTarget = await loadActiveSystemDesignWriteTarget(ctx, args);
+    if (!activeTarget) {
+      return { persisted: false };
+    }
+
     const folderKey = SYSTEM_DESIGN_KIND_TO_FOLDER[args.kind as SystemDesignKind];
     // Tolerant lookup: `by_repositoryId_and_systemKey` is non-unique, so
     // `.unique()` would throw if two seeded folders ever share a key (e.g.
@@ -617,7 +648,7 @@ export const persistGeneratedArtifact = internalMutation({
       promptVersion: args.promptVersion,
     });
 
-    return { artifactId };
+    return { persisted: true, artifactId };
   },
 });
 
@@ -789,7 +820,57 @@ export const recordKindRun = internalMutation({
     sourceId: v.optional(v.string()),
   },
   returns: recordedKindRunResultValidator,
-  handler: async (ctx, args): Promise<{ kindRunId: Id<"systemDesignKindRuns"> }> => {
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{ recorded: true; kindRunId: Id<"systemDesignKindRuns"> } | { recorded: false }> => {
+    const activeTarget = await loadActiveSystemDesignWriteTarget(ctx, args);
+    if (!activeTarget) {
+      if (args.status !== "cached_hit") {
+        await settleSandboxLibraryGenerationUsage(ctx, {
+          sourceId: args.sourceId ?? `systemDesign:${args.jobId}:${args.kind}:${args.startedAt}`,
+          ownerTokenIdentifier: args.ownerTokenIdentifier,
+          repositoryId: args.repositoryId,
+          occurredAtMs: args.startedAt,
+          totalCostUsd: args.totalCostUsd,
+          usage: {
+            inputTokens: args.inputTokens,
+            outputTokens: args.outputTokens,
+            cachedInputTokens: args.cachedInputTokens,
+            cacheWriteTokens: args.cacheWriteTokens,
+            reasoningTokens: args.reasoningTokens,
+          },
+        });
+      }
+      return { recorded: false };
+    }
+    if (args.artifactId) {
+      const artifact = await ctx.db.get(args.artifactId);
+      if (
+        !isOwnedBy(artifact, args.ownerTokenIdentifier) ||
+        artifact.repositoryId !== args.repositoryId ||
+        artifact.kind !== args.kind
+      ) {
+        if (args.status !== "cached_hit") {
+          await settleSandboxLibraryGenerationUsage(ctx, {
+            sourceId: args.sourceId ?? `systemDesign:${args.jobId}:${args.kind}:${args.startedAt}`,
+            ownerTokenIdentifier: args.ownerTokenIdentifier,
+            repositoryId: args.repositoryId,
+            occurredAtMs: args.startedAt,
+            totalCostUsd: args.totalCostUsd,
+            usage: {
+              inputTokens: args.inputTokens,
+              outputTokens: args.outputTokens,
+              cachedInputTokens: args.cachedInputTokens,
+              cacheWriteTokens: args.cacheWriteTokens,
+              reasoningTokens: args.reasoningTokens,
+            },
+          });
+        }
+        return { recorded: false };
+      }
+    }
+
     const kindRunId = await ctx.db.insert("systemDesignKindRuns", {
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId: args.repositoryId,
@@ -833,7 +914,7 @@ export const recordKindRun = internalMutation({
       });
     }
 
-    return { kindRunId };
+    return { recorded: true, kindRunId };
   },
 });
 
@@ -850,8 +931,20 @@ export const linkKindRun = internalMutation({
     kindRunId: v.id("systemDesignKindRuns"),
   },
   handler: async (ctx, args): Promise<void> => {
-    const artifact = await ctx.db.get(args.artifactId);
-    if (!artifact) {
+    const [artifact, kindRun] = await Promise.all([ctx.db.get(args.artifactId), ctx.db.get(args.kindRunId)]);
+    if (!artifact || !kindRun) {
+      return;
+    }
+    const activeTarget = await loadActiveSystemDesignWriteTarget(ctx, {
+      ownerTokenIdentifier: kindRun.ownerTokenIdentifier,
+      repositoryId: kindRun.repositoryId,
+      jobId: kindRun.jobId,
+    });
+    if (
+      !activeTarget ||
+      !isOwnedBy(artifact, kindRun.ownerTokenIdentifier) ||
+      artifact.repositoryId !== kindRun.repositoryId
+    ) {
       return;
     }
     await ctx.db.patch(args.artifactId, { kindRunId: args.kindRunId });

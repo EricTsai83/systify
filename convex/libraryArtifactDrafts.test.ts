@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 
 import { describe, expect, test } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   insertTestArtifact,
@@ -101,6 +101,66 @@ async function seedReadyDraft(
   return { draftId, jobId };
 }
 
+async function seedRunningDraft(t: SystifyTestConvex, repositoryId: Id<"repositories">) {
+  const now = Date.now();
+  const jobId = await t.run(async (ctx) =>
+    ctx.db.insert("jobs", {
+      repositoryId,
+      ownerTokenIdentifier: OWNER,
+      kind: "artifact_draft",
+      status: "running",
+      stage: "Drafting from codebase...",
+      progress: 0.5,
+      costCategory: "system_design",
+      triggerSource: "user",
+      startedAt: now,
+      leaseExpiresAt: now + 60_000,
+    }),
+  );
+  const draftId = await t.run(async (ctx) =>
+    ctx.db.insert("artifactDrafts", {
+      ownerTokenIdentifier: OWNER,
+      repositoryId,
+      jobId,
+      operation: "create",
+      status: "running",
+      prompt: "Draft a useful artifact.",
+      title: "Custom runbook",
+      summary: "",
+      contentMarkdown: "",
+      generatedByProvider: "openai",
+      generatedByModel: "gpt-5.5",
+      promptVersion: 1,
+      createdAt: now,
+      updatedAt: now,
+    }),
+  );
+  return { draftId, jobId };
+}
+
+async function seedReadySandbox(t: SystifyTestConvex, repositoryId: Id<"repositories">) {
+  return await t.run(async (ctx) =>
+    ctx.db.insert("sandboxes", {
+      repositoryId,
+      ownerTokenIdentifier: OWNER,
+      provider: "daytona",
+      sourceAdapter: "git_clone",
+      remoteId: "remote-draft-ready",
+      status: "ready",
+      workDir: "/workspace",
+      repoPath: "/workspace/repo",
+      cpuLimit: 2,
+      memoryLimitGiB: 4,
+      diskLimitGiB: 10,
+      ttlExpiresAt: Date.now() + 60_000,
+      autoStopIntervalMinutes: 30,
+      autoArchiveIntervalMinutes: 60,
+      autoDeleteIntervalMinutes: 120,
+      networkBlockAll: false,
+    }),
+  );
+}
+
 describe("libraryArtifactDrafts", () => {
   test("request create draft inserts job and draft", async () => {
     await withPausedConvexScheduler(async () => {
@@ -184,6 +244,29 @@ describe("libraryArtifactDrafts", () => {
       expect(state.artifact?.alignedImportCommitSha).toBe("abc123");
       expect(state.artifact?.generatedByModel).toBe("gpt-5.5");
       expect(state.draft?.status).toBe("applied");
+    });
+  });
+
+  test("apply create rejects an archived repository without writing an artifact", async () => {
+    await withPausedConvexScheduler(async () => {
+      const t = createRateLimitedTestConvex();
+      await seedAccessProfile(t);
+      const repositoryId = await seedRepository(t);
+      const { draftId } = await seedReadyDraft(t, { repositoryId, operation: "create" });
+      await t.run(async (ctx) => {
+        await ctx.db.patch(repositoryId, { archivedAt: Date.now() });
+      });
+      const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+
+      await expect(viewer.mutation(api.libraryArtifactDrafts.applyDraft, { draftId })).rejects.toThrow(/archived/i);
+
+      const artifacts = await t.run(async (ctx) =>
+        ctx.db
+          .query("artifacts")
+          .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
+          .take(10),
+      );
+      expect(artifacts).toHaveLength(0);
     });
   });
 
@@ -353,5 +436,41 @@ describe("libraryArtifactDrafts", () => {
         modelName: "gpt-5.5",
       }),
     ).rejects.toThrow(/not available on your current plan/i);
+  });
+
+  test("markDraftReady fails without storing generated markdown after repository archive", async () => {
+    const t = createRateLimitedTestConvex();
+    await seedAccessProfile(t);
+    const repositoryId = await seedRepository(t);
+    const { draftId, jobId } = await seedRunningDraft(t, repositoryId);
+    const sandboxId = await seedReadySandbox(t, repositoryId);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(repositoryId, { archivedAt: Date.now() });
+    });
+
+    const result = await t.mutation(internal.libraryArtifactDrafts.markDraftReady, {
+      draftId,
+      jobId,
+      title: "Generated runbook",
+      summary: "Generated summary",
+      contentMarkdown: "# Generated private content",
+      sandboxId,
+      generatedByProvider: "openai",
+      generatedByModel: "gpt-5.5",
+      promptVersion: 1,
+      totalCostUsd: 0.01,
+      sourceId: `artifactDraft:${jobId}:archived`,
+    });
+
+    const state = await t.run(async (ctx) => ({
+      draft: await ctx.db.get(draftId),
+      job: await ctx.db.get(jobId),
+    }));
+
+    expect(result).toEqual({ ready: false });
+    expect(state.draft?.status).toBe("failed");
+    expect(state.draft?.contentMarkdown).toBe("");
+    expect(state.draft?.errorMessage).toBe("Repository is no longer active.");
+    expect(state.job?.status).toBe("failed");
   });
 });

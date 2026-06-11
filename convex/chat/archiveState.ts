@@ -41,37 +41,39 @@ async function normalizeScopeRows(
     return null;
   }
 
-  const scopedThreads = await ctx.db
-    .query("threads")
-    .withIndex("by_ownerTokenIdentifier_and_archiveScopeKey_and_archivedAt", (q) =>
-      q.eq("ownerTokenIdentifier", primary.ownerTokenIdentifier).eq("archiveScopeKey", primary.scopeKey),
-    )
-    .order("desc")
-    .collect();
-  const activeArchivedThreads = scopedThreads.filter(
-    (thread) =>
-      thread.archivedAt !== undefined &&
-      thread.deletionRequestedAt === undefined &&
-      thread.archiveScopeKey === primary.scopeKey,
-  );
+  let mergedRepositoryId = primary.repositoryId;
+  let mergedLastArchivedAt = primary.lastArchivedAt;
+  let mergedLastThreadId = primary.lastThreadId;
+  let mergedThreadCount = Math.max(0, primary.threadCount);
 
-  if (activeArchivedThreads.length === 0) {
-    for (const row of rows) {
-      await ctx.db.delete(row._id);
+  for (const duplicate of duplicates) {
+    mergedThreadCount += Math.max(0, duplicate.threadCount);
+    if (duplicate.lastArchivedAt > mergedLastArchivedAt) {
+      mergedRepositoryId = duplicate.repositoryId;
+      mergedLastArchivedAt = duplicate.lastArchivedAt;
+      mergedLastThreadId = duplicate.lastThreadId;
     }
+    await ctx.db.delete(duplicate._id);
+  }
+  if (mergedThreadCount === 0) {
+    await ctx.db.delete(primary._id);
     return null;
   }
 
-  const latestThread = activeArchivedThreads[0]!;
   const primaryPatch = {
-    repositoryId: latestThread.repositoryId,
-    lastArchivedAt: latestThread.archivedAt!,
-    lastThreadId: latestThread._id,
-    threadCount: activeArchivedThreads.length,
+    repositoryId: mergedRepositoryId,
+    lastArchivedAt: mergedLastArchivedAt,
+    lastThreadId: mergedLastThreadId,
+    threadCount: mergedThreadCount,
   };
-  await ctx.db.patch(primary._id, primaryPatch);
-  for (const duplicate of duplicates) {
-    await ctx.db.delete(duplicate._id);
+  if (
+    duplicates.length > 0 ||
+    primary.repositoryId !== primaryPatch.repositoryId ||
+    primary.lastArchivedAt !== primaryPatch.lastArchivedAt ||
+    primary.lastThreadId !== primaryPatch.lastThreadId ||
+    primary.threadCount !== primaryPatch.threadCount
+  ) {
+    await ctx.db.patch(primary._id, primaryPatch);
   }
   return { ...primary, ...primaryPatch };
 }

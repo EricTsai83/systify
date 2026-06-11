@@ -9,7 +9,12 @@ import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
 import { getRepositorySandboxStatus } from "./lib/repositorySandbox";
 import { startedResultValidator } from "./lib/functionResultSchemas";
 import { runRepositoryCascadeDelete } from "./lib/repositoryCascade";
-import { archiveOwnedRepository, requestRepositoryDeletion, restoreOwnedRepository } from "./lib/repositoryRetirement";
+import {
+  archiveOwnedRepository,
+  cancelRepositoryGenerationJobs as cancelRepositoryGenerationJobsForRetirement,
+  requestRepositoryDeletion,
+  restoreOwnedRepository,
+} from "./lib/repositoryRetirement";
 import {
   hasRemoteUpdates,
   isRepositoryArchived,
@@ -349,6 +354,18 @@ export const cascadeDeleteRepository = internalMutation({
   returns: v.null(),
   handler: async (ctx, args): Promise<null> => {
     await runRepositoryCascadeDelete(ctx, args);
+    return null;
+  },
+});
+
+export const cancelRepositoryGenerationJobs = internalMutation({
+  args: {
+    repositoryId: v.id("repositories"),
+    reason: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args): Promise<null> => {
+    await cancelRepositoryGenerationJobsForRetirement(ctx, args);
     return null;
   },
 });

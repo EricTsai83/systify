@@ -1,17 +1,24 @@
 /// <reference types="vite/client" />
 
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
 import { convexTest } from "convex-test";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { SYSTEM_DESIGN_PROMPT_VERSIONS } from "./lib/systemDesignPrompts";
+import { peekSandboxDailyCostForUser } from "./lib/rateLimit";
+import { createRateLimitedTestConvex } from "../test/convex/harness";
 
 const modules = import.meta.glob("./**/*.ts");
 
 function createTestConvex() {
   return convexTest(schema, modules);
 }
+
+afterEach(() => {
+  delete process.env.SANDBOX_DAILY_CAP_PER_USER_USD;
+  delete process.env.SANDBOX_DAILY_CAP_PER_REPOSITORY_USD;
+});
 
 async function insertRepository(
   t: ReturnType<typeof createTestConvex>,
@@ -74,7 +81,7 @@ async function insertArtifact(
 describe("findCachedArtifact", () => {
   test("returns an exact cache-key hit", async () => {
     const ownerTokenIdentifier = "user|cached-artifact-hit";
-    const t = createTestConvex();
+    const t = createRateLimitedTestConvex();
     const repositoryId = await insertRepository(t, ownerTokenIdentifier);
     const artifactId = await insertArtifact(t, {
       ownerTokenIdentifier,
@@ -201,6 +208,7 @@ describe("recordKindRun usage rollups", () => {
         costCategory: "system_design",
         triggerSource: "user",
         startedAt,
+        leaseExpiresAt: Date.now() + 60_000,
       });
     });
     const cachedArtifactId = await insertArtifact(t, {
@@ -259,6 +267,130 @@ describe("recordKindRun usage rollups", () => {
       outputTokens: 750,
       cacheWriteTokens: 25,
     });
+  });
+
+  test("duplicate sourceId settlement does not consume the daily cap twice", async () => {
+    process.env.SANDBOX_DAILY_CAP_PER_USER_USD = "0.10";
+    process.env.SANDBOX_DAILY_CAP_PER_REPOSITORY_USD = "0.10";
+
+    const ownerTokenIdentifier = "user|system-design-idempotent-settle";
+    const t = createRateLimitedTestConvex();
+    const startedAt = Date.now();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await t.run(async (ctx) => {
+      return await ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "system_design",
+        status: "running",
+        stage: "generating",
+        progress: 0.5,
+        costCategory: "system_design",
+        triggerSource: "user",
+        startedAt,
+        leaseExpiresAt: Date.now() + 60_000,
+      });
+    });
+    const sourceId = `systemDesign:${jobId}:readme_summary:${startedAt}`;
+    const args = {
+      ownerTokenIdentifier,
+      repositoryId,
+      jobId,
+      kind: "readme_summary" as const,
+      provider: "openai" as const,
+      modelName: "gpt-5.5",
+      promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
+      stepCap: 20,
+      actualSteps: 3,
+      inputTokens: 1_000,
+      outputTokens: 500,
+      totalCostUsd: 0.03,
+      durationMs: 1_000,
+      status: "succeeded" as const,
+      startedAt,
+      sourceId,
+    };
+
+    await t.mutation(internal.systemDesign.recordKindRun, args);
+    await t.mutation(internal.systemDesign.recordKindRun, args);
+
+    const state = await t.run(async (ctx) => {
+      const events = await ctx.db
+        .query("userUsageEvents")
+        .withIndex("by_sourceId", (q) => q.eq("sourceId", sourceId))
+        .take(10);
+      const budget = await peekSandboxDailyCostForUser(ctx, ownerTokenIdentifier);
+      return { events, budget };
+    });
+
+    expect(state.events).toHaveLength(1);
+    expect(state.budget.remainingCents).toBe(7);
+  });
+});
+
+describe("System Design finalization guard", () => {
+  test("skips artifact and kind-run writes after repository archive", async () => {
+    const ownerTokenIdentifier = "user|system-design-finalization-archive";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await t.run(async (ctx) => {
+      return await ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "system_design",
+        status: "running",
+        stage: "generating",
+        progress: 0.5,
+        costCategory: "system_design",
+        triggerSource: "user",
+        startedAt: Date.now(),
+        leaseExpiresAt: Date.now() + 60_000,
+      });
+    });
+    await t.run(async (ctx) => {
+      await ctx.db.patch(repositoryId, { archivedAt: Date.now() });
+    });
+
+    const persisted = await t.mutation(internal.systemDesign.persistGeneratedArtifact, {
+      repositoryId,
+      ownerTokenIdentifier,
+      jobId,
+      kind: "readme_summary",
+      title: "README Summary",
+      summary: "Summary",
+      contentMarkdown: "# Summary",
+    });
+    const recorded = await t.mutation(internal.systemDesign.recordKindRun, {
+      ownerTokenIdentifier,
+      repositoryId,
+      jobId,
+      kind: "readme_summary",
+      provider: "openai",
+      modelName: "gpt-5.5",
+      promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
+      stepCap: 20,
+      actualSteps: 0,
+      durationMs: 1_000,
+      status: "failed",
+      startedAt: Date.now(),
+    });
+
+    const state = await t.run(async (ctx) => {
+      const artifacts = await ctx.db
+        .query("artifacts")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
+        .take(10);
+      const kindRuns = await ctx.db
+        .query("systemDesignKindRuns")
+        .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", repositoryId).eq("kind", "readme_summary"))
+        .take(10);
+      return { artifacts, kindRuns };
+    });
+
+    expect(persisted).toEqual({ persisted: false });
+    expect(recorded).toEqual({ recorded: false });
+    expect(state.artifacts).toHaveLength(0);
+    expect(state.kindRuns).toHaveLength(0);
   });
 });
 
