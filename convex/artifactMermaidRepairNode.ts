@@ -8,6 +8,10 @@ import type { LlmProvider } from "./lib/llmProvider";
 import { getCatalogEntry } from "./lib/llmCatalog";
 import { generateViaGateway } from "./lib/llmGateway";
 import { SYSTEM_DESIGN_DEFAULT_MODEL_CHOICE } from "./lib/systemDesignPlanning";
+import { assertFeatureAccess, requiresHighReasoningAccess, requiresPremiumModelAccess } from "./lib/entitlements";
+
+const MERMAID_REPAIR_CHART_MAX_CHARS = 40_000;
+const MERMAID_REPAIR_ERROR_MAX_CHARS = 4_000;
 
 const SYSTEM_PROMPT = [
   "You repair Mermaid diagram syntax.",
@@ -28,6 +32,12 @@ export const repairArtifactMermaidBlock = action({
     if (!identity) {
       throw new Error("You must sign in to repair diagrams.");
     }
+    if (args.chart.length > MERMAID_REPAIR_CHART_MAX_CHARS) {
+      throw new Error(`Diagram source must be at most ${MERMAID_REPAIR_CHART_MAX_CHARS} characters.`);
+    }
+    if (args.error.length > MERMAID_REPAIR_ERROR_MAX_CHARS) {
+      throw new Error(`Diagram error details must be at most ${MERMAID_REPAIR_ERROR_MAX_CHARS} characters.`);
+    }
 
     const repairContext: MermaidRepairContext = await ctx.runQuery(internal.artifactMermaidRepair.getRepairContext, {
       artifactId: args.artifactId,
@@ -39,22 +49,65 @@ export const repairArtifactMermaidBlock = action({
       modelName: repairContext.generatedByModel,
     });
     const entry = getCatalogEntry(modelChoice.provider, modelChoice.modelName);
+    await assertFeatureAccess(ctx, identity, "libraryAsk");
+    await assertFeatureAccess(ctx, identity, "generateSystemDesign");
+    await assertFeatureAccess(ctx, identity, "sandboxGrounding");
+    if (requiresPremiumModelAccess(modelChoice.provider, modelChoice.modelName)) {
+      await assertFeatureAccess(ctx, identity, "premiumModels");
+    }
+    if (requiresHighReasoningAccess(entry?.reasoningEffort)) {
+      await assertFeatureAccess(ctx, identity, "highReasoning");
+    }
 
-    const result = await generateViaGateway(
-      ctx,
-      {
-        provider: modelChoice.provider,
-        modelName: modelChoice.modelName,
+    const startedAt = Date.now();
+    const sourceId = `mermaidRepair:${args.artifactId}:${repairContext.version}:${startedAt}`;
+    await ctx.runMutation(internal.artifactMermaidRepair.reserveRepairBudget, {
+      artifactId: args.artifactId,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      expectedVersion: repairContext.version,
+      sourceId,
+      occurredAtMs: startedAt,
+    });
+
+    let result: Awaited<ReturnType<typeof generateViaGateway>>;
+    try {
+      result = await generateViaGateway(
+        ctx,
+        {
+          provider: modelChoice.provider,
+          modelName: modelChoice.modelName,
+          ownerTokenIdentifier: identity.tokenIdentifier,
+          capability: "sandbox",
+          feature: "system_design",
+        },
+        {
+          system: SYSTEM_PROMPT,
+          prompt: buildRepairPrompt({ chart: args.chart, error: args.error }),
+          ...(entry?.reasoningEffort ? { reasoningEffort: entry.reasoningEffort } : {}),
+        },
+      );
+    } catch (error) {
+      await ctx.runMutation(internal.artifactMermaidRepair.settleRepairUsage, {
+        sourceId,
+        artifactId: args.artifactId,
         ownerTokenIdentifier: identity.tokenIdentifier,
-        capability: "sandbox",
-        feature: "system_design",
-      },
-      {
-        system: SYSTEM_PROMPT,
-        prompt: buildRepairPrompt({ chart: args.chart, error: args.error }),
-        ...(entry?.reasoningEffort ? { reasoningEffort: entry.reasoningEffort } : {}),
-      },
-    );
+        occurredAtMs: startedAt,
+      });
+      throw error;
+    }
+
+    await ctx.runMutation(internal.artifactMermaidRepair.settleRepairUsage, {
+      sourceId,
+      artifactId: args.artifactId,
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      occurredAtMs: startedAt,
+      totalCostUsd: result.costUsd,
+      inputTokens: result.usage.inputTokens,
+      outputTokens: result.usage.outputTokens,
+      cachedInputTokens: result.usage.cachedInputTokens,
+      cacheWriteTokens: result.usage.cacheWriteTokens,
+      reasoningTokens: result.usage.reasoningTokens,
+    });
     const repairedChart = stripMarkdownFence(result.text);
     if (!repairedChart) {
       throw new Error("The repair returned an empty diagram. Try again.");

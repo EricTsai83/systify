@@ -56,6 +56,7 @@ export interface SystemDesignKindRunOutcome {
   title: string;
   status: KindRunStatus;
   countsAsSucceeded: boolean;
+  aborted: boolean;
 }
 
 export async function runSystemDesignKind(
@@ -84,6 +85,7 @@ export async function runSystemDesignKind(
   let actualSteps = 0;
   let outputCharLength = 0;
   let missingSections: string[] | undefined;
+  let finalizationAborted = false;
 
   if (!args.forceRegenerate && args.commitSha) {
     const cached = await ctx.runQuery(internal.systemDesign.findCachedArtifact, {
@@ -167,8 +169,14 @@ export async function runSystemDesignKind(
             generatedByModel: args.modelChoice.modelName,
             promptVersion: config.promptVersion,
           });
-          artifactId = persisted.artifactId;
-          runStatus = "succeeded";
+          if (persisted.persisted) {
+            artifactId = persisted.artifactId;
+            runStatus = "succeeded";
+          } else {
+            finalizationAborted = true;
+            runStatus = "failed";
+            failureReason = "infra";
+          }
         }
       }
     } catch (error) {
@@ -228,7 +236,17 @@ export async function runSystemDesignKind(
       sourceId: `systemDesign:${args.jobId}:${args.kind}:${startedAt}`,
     });
 
-    if (artifactId && runStatus !== "cached_hit" && recorded.kindRunId) {
+    if (!recorded.recorded) {
+      return {
+        kind: args.kind,
+        title,
+        status: runStatus,
+        countsAsSucceeded: false,
+        aborted: true,
+      };
+    }
+
+    if (artifactId && runStatus !== "cached_hit") {
       await ctx.runMutation(internal.systemDesign.linkKindRun, {
         artifactId,
         kindRunId: recorded.kindRunId,
@@ -263,6 +281,7 @@ export async function runSystemDesignKind(
     title,
     status: runStatus,
     countsAsSucceeded: runStatus === "succeeded" || runStatus === "cached_hit",
+    aborted: finalizationAborted,
   };
 }
 

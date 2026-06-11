@@ -7,7 +7,12 @@ import { llmProviderValidator, type LlmProvider } from "./lib/llmProvider";
 import { requireViewerIdentity } from "./lib/auth";
 import { assertFeatureAccess, requiresHighReasoningAccess, requiresPremiumModelAccess } from "./lib/entitlements";
 import { isOwnedBy, loadOwnedDoc, requireOwnedDoc } from "./lib/ownedDocs";
-import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
+import {
+  isActiveRepository,
+  isRepositoryArchived,
+  isRepositoryDeleting,
+  requireActiveRepositoryForViewer,
+} from "./lib/repositoryAccess";
 import {
   enqueueJob,
   failRunningJob,
@@ -38,6 +43,7 @@ const RECENT_REPOSITORY_DRAFT_STATUSES = ["queued", "running", "ready", "failed"
 const STALE_ARTIFACT_DRAFT_JOB_ERROR_MESSAGE =
   "Artifact draft stalled and was automatically marked as failed. Regenerate to try again.";
 const VERSION_MISMATCH_MESSAGE = "This artifact changed since the draft was generated. Regenerate before applying.";
+const INACTIVE_DRAFT_REPOSITORY_MESSAGE = "Repository is no longer active.";
 
 const draftOperationValidator = v.union(v.literal("create"), v.literal("update"));
 
@@ -45,6 +51,17 @@ type DraftWithJob = {
   draft: Doc<"artifactDrafts">;
   job: Doc<"jobs"> | null;
 };
+
+async function requireActiveRepositoryForDraft(ctx: QueryCtx | MutationCtx, draft: Doc<"artifactDrafts">) {
+  const repository = await ctx.db.get(draft.repositoryId);
+  if (!isOwnedBy(repository, draft.ownerTokenIdentifier) || isRepositoryDeleting(repository)) {
+    throw new Error("Draft not found.");
+  }
+  if (isRepositoryArchived(repository)) {
+    throw new Error("Repository is archived. Restore it before applying drafts.");
+  }
+  return repository;
+}
 
 export const requestDraft = mutation({
   args: {
@@ -135,6 +152,7 @@ export const applyDraft = mutation({
     if (draft.status !== "ready") {
       throw new ConvexError({ code: "DRAFT_NOT_READY", message: "This draft is not ready to apply." });
     }
+    await requireActiveRepositoryForDraft(ctx, draft);
 
     const now = Date.now();
     if (draft.operation === "create") {
@@ -483,6 +501,35 @@ export const markDraftReady = internalMutation({
       return { ready: false };
     }
     const now = Date.now();
+    const repository = await ctx.db.get(draft.repositoryId);
+    if (!isOwnedBy(repository, draft.ownerTokenIdentifier) || !isActiveRepository(repository)) {
+      await settleSandboxLibraryGenerationUsage(ctx, {
+        sourceId: args.sourceId,
+        ownerTokenIdentifier: draft.ownerTokenIdentifier,
+        repositoryId: draft.repositoryId,
+        occurredAtMs: now,
+        totalCostUsd: args.totalCostUsd,
+        usage: {
+          inputTokens: args.inputTokens,
+          outputTokens: args.outputTokens,
+          cachedInputTokens: args.cachedInputTokens,
+          cacheWriteTokens: args.cacheWriteTokens,
+          reasoningTokens: args.reasoningTokens,
+        },
+      });
+      await ctx.db.patch(args.draftId, {
+        status: "failed",
+        errorMessage: INACTIVE_DRAFT_REPOSITORY_MESSAGE,
+        updatedAt: now,
+      });
+      await failRunningJob(ctx, {
+        jobId: args.jobId,
+        expectedKind: "artifact_draft",
+        completedAt: now,
+        errorMessage: INACTIVE_DRAFT_REPOSITORY_MESSAGE,
+      });
+      return { ready: false };
+    }
     await ctx.db.patch(args.draftId, {
       status: "ready",
       title: args.title,

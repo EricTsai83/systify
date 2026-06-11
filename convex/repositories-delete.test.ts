@@ -177,6 +177,23 @@ async function seedRepositoryGraph(
       artifactId,
       viewedAt: now,
     });
+    await ctx.db.insert("artifactDrafts", {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId,
+      jobId: importJobId,
+      operation: "create",
+      status: "ready",
+      prompt: "Draft a runbook.",
+      title: "Draft runbook",
+      summary: "Draft summary",
+      contentMarkdown: "# Draft",
+      generatedByProvider: "openai",
+      generatedByModel: "gpt-5.5",
+      promptVersion: 1,
+      createdAt: now,
+      updatedAt: now,
+      generatedAt: now,
+    });
     await ctx.db.insert("repositoryViewerBootstraps", {
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId,
@@ -351,6 +368,10 @@ async function collectRepositoryDeleteState(
         .query("artifactFolders")
         .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
         .collect(),
+      artifactDrafts: await ctx.db
+        .query("artifactDrafts")
+        .withIndex("by_repositoryId_and_status", (q) => q.eq("repositoryId", args.repositoryId))
+        .collect(),
       artifactViews: await ctx.db
         .query("artifactViews")
         .withIndex("by_ownerTokenIdentifier_and_repositoryId", (q) =>
@@ -429,6 +450,7 @@ describe("repository deletion cleanup", () => {
     expect(state.artifacts).toHaveLength(0);
     expect(state.artifactChunks).toHaveLength(0);
     expect(state.artifactFolders).toHaveLength(0);
+    expect(state.artifactDrafts).toHaveLength(0);
     expect(state.artifactViews).toHaveLength(0);
     expect(state.repositoryViewerBootstraps).toHaveLength(0);
     expect(state.systemDesignKindRuns).toHaveLength(0);

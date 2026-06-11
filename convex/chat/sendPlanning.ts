@@ -43,10 +43,15 @@ type ThreadModelDefaults = {
   lockedProvider?: LlmProvider;
 };
 
+export const CHAT_MESSAGE_MAX_CHARS = 20_000;
+
 export function trimChatMessageContent(content: string): string {
   const trimmedContent = content.trim();
   if (!trimmedContent) {
     throw new Error("Message content cannot be empty.");
+  }
+  if (trimmedContent.length > CHAT_MESSAGE_MAX_CHARS) {
+    throw new Error(`Message content must be at most ${CHAT_MESSAGE_MAX_CHARS} characters.`);
   }
   return trimmedContent;
 }

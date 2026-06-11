@@ -10,7 +10,7 @@ export async function reserveSandboxLibraryGenerationBudget(
   args: {
     sourceId: string;
     ownerTokenIdentifier: string;
-    repositoryId: Id<"repositories">;
+    repositoryId: Id<"repositories"> | null | undefined;
     occurredAtMs: number;
   },
 ) {
@@ -33,13 +33,13 @@ export async function settleSandboxLibraryGenerationUsage(
   args: {
     sourceId: string;
     ownerTokenIdentifier: string;
-    repositoryId: Id<"repositories">;
+    repositoryId: Id<"repositories"> | null | undefined;
     occurredAtMs: number;
     totalCostUsd: number | undefined;
     usage: NormalizedUsage;
   },
 ) {
-  await recordUserUsageEvent(ctx, {
+  const recorded = await recordUserUsageEvent(ctx, {
     sourceId: args.sourceId,
     ownerTokenIdentifier: args.ownerTokenIdentifier,
     feature: "systemDesign",
@@ -51,6 +51,9 @@ export async function settleSandboxLibraryGenerationUsage(
     cacheWriteTokens: args.usage.cacheWriteTokens,
     reasoningTokens: args.usage.reasoningTokens,
   });
+  if (!recorded) {
+    return;
+  }
 
   const settleCents = costUsdToCents(args.totalCostUsd);
   if (settleCents !== undefined && settleCents > 0) {

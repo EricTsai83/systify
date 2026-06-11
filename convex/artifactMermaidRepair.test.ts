@@ -1,6 +1,15 @@
 import { describe, expect, test } from "vitest";
+import { convexTest } from "convex-test";
+import { internal } from "./_generated/api";
 import { replaceMatchingMermaidBlock } from "./artifactMermaidRepair";
 import { stripMarkdownFence } from "./artifactMermaidRepairNode";
+import schema from "./schema";
+
+const modules = import.meta.glob("./**/*.ts");
+
+function createTestConvex() {
+  return convexTest(schema, modules);
+}
 
 describe("replaceMatchingMermaidBlock", () => {
   test("replaces only the matching Mermaid block", () => {
@@ -91,5 +100,50 @@ describe("stripMarkdownFence", () => {
     expect(stripMarkdownFence("Here is the repair:\n\n```mermaid\nflowchart TD\n  A --> B\n```\nDone.")).toBe(
       "flowchart TD\n  A --> B",
     );
+  });
+});
+
+describe("getRepairContext", () => {
+  test("rejects repository-scoped artifacts after repository archive", async () => {
+    const t = createTestConvex();
+    const ownerTokenIdentifier = "user|mermaid-repair-archived";
+    const { artifactId } = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/mermaid",
+        sourceRepoFullName: "acme/mermaid",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "mermaid",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 1,
+        color: "blue",
+        lastAccessedAt: Date.now(),
+        archivedAt: Date.now(),
+      });
+      const artifactId = await ctx.db.insert("artifacts", {
+        ownerTokenIdentifier,
+        repositoryId,
+        kind: "architecture_diagram",
+        title: "Diagram",
+        summary: "Summary",
+        contentMarkdown: ["```mermaid", "flowchart TD", "  A --> B", "```"].join("\n"),
+        version: 1,
+      });
+      return { artifactId };
+    });
+
+    await expect(
+      t.query(internal.artifactMermaidRepair.getRepairContext, {
+        artifactId,
+        ownerTokenIdentifier,
+        chart: "flowchart TD\n  A --> B",
+      }),
+    ).rejects.toThrow(/artifact not found/i);
   });
 });

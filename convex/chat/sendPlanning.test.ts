@@ -2,7 +2,7 @@ import { ConvexError } from "convex/values";
 import { describe, expect, test } from "vitest";
 import type { Id } from "../_generated/dataModel";
 import { normalizeModelPreferences } from "../lib/userPreferences";
-import { completeChatTurnPlan, planChatTurnMode, trimChatMessageContent } from "./sendPlanning";
+import { CHAT_MESSAGE_MAX_CHARS, completeChatTurnPlan, planChatTurnMode, trimChatMessageContent } from "./sendPlanning";
 
 const repositoryId = "repository_send_planning" as unknown as Id<"repositories">;
 const emptyModelPreferences = normalizeModelPreferences(null);
@@ -26,6 +26,12 @@ describe("trimChatMessageContent", () => {
 
   test("rejects empty content", () => {
     expect(() => trimChatMessageContent(" \n\t ")).toThrow(/cannot be empty/i);
+  });
+
+  test("rejects oversized content before queueing", () => {
+    expect(() => trimChatMessageContent("x".repeat(CHAT_MESSAGE_MAX_CHARS + 1))).toThrow(
+      `Message content must be at most ${CHAT_MESSAGE_MAX_CHARS} characters.`,
+    );
   });
 });
 
