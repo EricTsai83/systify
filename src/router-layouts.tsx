@@ -227,7 +227,7 @@ export function AuthCallbackRoute() {
   if (isLoading) {
     const isSlow = elapsedMs >= 8_000;
     const description =
-      elapsedMs < 2_000
+      elapsedMs < 4_000
         ? "Finishing sign-in and validating your session."
         : elapsedMs < 8_000
           ? "Still syncing your account and permissions. This usually takes a few more seconds."
