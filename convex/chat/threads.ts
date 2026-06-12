@@ -73,7 +73,7 @@ export function normalizeAgentProfile(args: { agentRole?: string; agentInstructi
   agentInstructions?: string;
 } {
   return {
-    agentRole: normalizeAgentProfileField(args.agentRole, AGENT_ROLE_MAX_LENGTH, "Agent role"),
+    agentRole: normalizeAgentProfileField(args.agentRole, AGENT_ROLE_MAX_LENGTH, "Agent name"),
     agentInstructions: normalizeAgentProfileField(
       args.agentInstructions,
       AGENT_INSTRUCTIONS_MAX_LENGTH,
@@ -310,6 +310,7 @@ export const updateRepolessThreadAgentProfile = mutation({
 
     const profile = normalizeAgentProfile(args);
     const enablingSingleTurn = thread.singleTurnEnabled !== true && args.singleTurnEnabled === true;
+    const agentNameChanged = (thread.agentRole ?? undefined) !== profile.agentRole;
     let resetPending = thread.singleTurnResetPending;
     if (enablingSingleTurn) {
       const result = await drainThreadMessageArtifacts(ctx, {
@@ -326,6 +327,7 @@ export const updateRepolessThreadAgentProfile = mutation({
       agentRole: profile.agentRole,
       agentInstructions: profile.agentInstructions,
       agentUpdatedAt: Date.now(),
+      ...(agentNameChanged ? { title: profile.agentRole ?? NEW_THREAD_DEFAULT_TITLE, userEditedTitle: undefined } : {}),
     });
 
     if (resetPending === true) {

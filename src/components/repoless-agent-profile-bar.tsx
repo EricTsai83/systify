@@ -48,9 +48,7 @@ export function RepolessAgentProfileBar({
   const role = value.agentRole.trim();
   const hasInstructions = value.agentInstructions.trim().length > 0;
   const hasProfile = role.length > 0 || hasInstructions;
-  const statusText = resetPending
-    ? "Clearing previous messages..."
-    : role || (hasInstructions ? "Custom instructions" : "Default behavior");
+  const statusText = resetPending ? "Clearing previous messages..." : hasProfile ? "Configured" : "Default behavior";
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -126,7 +124,7 @@ export function RepolessAgentProfileBar({
               />
             </div>
             <label className="grid gap-2 text-sm font-medium">
-              <span>Agent role</span>
+              <span>Agent name</span>
               <Input
                 value={draft.agentRole}
                 maxLength={AGENT_ROLE_MAX_LENGTH}

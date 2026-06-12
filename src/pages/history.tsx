@@ -72,6 +72,9 @@ type HistoryThread = {
   title: string;
   mode: ThreadMode;
   lastMessageAt: number;
+  singleTurnEnabled?: boolean;
+  agentRole?: string;
+  agentInstructions?: string;
   activeShare: {
     _id: Id<"threadShares">;
     token: string;
@@ -306,7 +309,7 @@ function SummaryStrip({
 }) {
   const items = [
     { label: "Loaded repository threads", value: summary.repositoryThreads },
-    { label: "Loaded no-repository chats", value: summary.noRepositoryChats },
+    { label: "Loaded no-repository threads", value: summary.noRepositoryChats },
     { label: "Shared links", value: summary.sharedLinks },
   ];
   return (
@@ -470,7 +473,7 @@ function HistoryThreadsForScope({
             </div>
             {isNoRepository ? (
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                General chats that are not attached to a repository.
+                No-repository conversations split into Agent Mode and Thread Mode.
               </p>
             ) : null}
           </div>
@@ -823,9 +826,13 @@ function getHistoryScopeValue(group: HistoryGroup): string {
 
 function getThreadModeLabel(thread: HistoryThread, noRepository: boolean): string {
   if (noRepository) {
-    return "Chat";
+    return isAgentModeThread(thread) ? "Agent Mode" : "Thread Mode";
   }
   return thread.mode === "library" ? "Library Ask" : "Discuss";
+}
+
+function isAgentModeThread(thread: HistoryThread): boolean {
+  return Boolean(thread.agentRole?.trim()) || Boolean(thread.agentInstructions?.trim());
 }
 
 async function copyText(text: string): Promise<boolean> {

@@ -335,7 +335,7 @@ describe("buildUserPrompt artifact numbering", () => {
     );
 
     expect(prompt).toContain("Thread agent profile:");
-    expect(prompt).toContain("Role: Translation agent");
+    expect(prompt).toContain("Name: Translation agent");
     expect(prompt).toContain("Instructions:\nWhenever the user writes Chinese, translate it into English.");
     expect(prompt.indexOf("Thread agent profile:")).toBeLessThan(prompt.indexOf("Repository:"));
     expect(prompt.indexOf("Thread agent profile:")).toBeLessThan(prompt.indexOf("Recent conversation:"));

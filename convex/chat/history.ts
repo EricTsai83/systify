@@ -208,6 +208,9 @@ export const listThreadsForHistoryGroup = query({
         mode: thread.mode,
         lastMessageAt: thread.lastMessageAt,
         pinnedAt: thread.pinnedAt,
+        singleTurnEnabled: thread.singleTurnEnabled,
+        agentRole: thread.agentRole,
+        agentInstructions: thread.agentInstructions,
         activeShare: await findActiveShareForThread(ctx, {
           ownerTokenIdentifier: identity.tokenIdentifier,
           threadId: thread._id,

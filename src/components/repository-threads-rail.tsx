@@ -9,6 +9,7 @@ import {
   PushPinSimpleIcon,
   PushPinSimpleSlashIcon,
   ArchiveIcon,
+  RobotIcon,
 } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
@@ -494,6 +495,7 @@ interface ThreadItemBaseProps {
   titleTextClass: string;
   compact?: boolean;
   repositoryBadge?: React.ReactNode;
+  threadMeta?: React.ReactNode;
   rowRef: React.RefObject<HTMLDivElement | null>;
   inputRef: React.RefObject<HTMLInputElement | null>;
   onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
@@ -517,6 +519,7 @@ function ThreadItemBase({
   titleTextClass,
   compact,
   repositoryBadge,
+  threadMeta,
   rowRef,
   inputRef,
   onSelectThread,
@@ -551,6 +554,7 @@ function ThreadItemBase({
                   )}
                 />
                 {repositoryBadge}
+                {threadMeta}
               </div>
             </EditableRowFrame>
           ) : (
@@ -561,7 +565,13 @@ function ThreadItemBase({
               onFocus={() => onPrewarmThread(thread._id)}
               onKeyDown={handleItemKeyDown}
               aria-keyshortcuts="F2"
-              className={cn("py-1.5 pr-16", compact && "py-1")}
+              className={cn(
+                "py-1.5 pr-16",
+                compact && "py-1",
+                isRepolessAgentThread(thread) &&
+                  "border-l-[3px] border-l-primary/70 bg-primary/[0.06] hover:bg-primary/[0.09]",
+                isSelected && isRepolessAgentThread(thread) && "bg-primary/[0.12]",
+              )}
             >
               <div className="min-w-0 flex-1">
                 <p
@@ -571,6 +581,7 @@ function ThreadItemBase({
                   {thread.title}
                 </p>
                 {repositoryBadge}
+                {threadMeta}
               </div>
             </SidebarMenuButton>
           )}
@@ -689,6 +700,7 @@ function ThreadItem({
       titleTextClass={titleTextClass}
       compact={compact}
       repositoryBadge={<ThreadRepoBadge repository={repository} />}
+      threadMeta={null}
       rowRef={rowRef}
       inputRef={inputRef}
       onSelectThread={onSelectThread}
@@ -713,6 +725,34 @@ function ThreadRepoBadge({ repository }: { repository: Doc<"repositories"> | und
     <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-muted-foreground/80">
       <Icon size={9} weight="bold" className="shrink-0" />
       <span className="truncate">{repository.sourceRepoFullName}</span>
+    </p>
+  );
+}
+
+function isRepolessAgentThread(thread: Doc<"threads">): boolean {
+  return !thread.repositoryId && (Boolean(thread.agentRole?.trim()) || Boolean(thread.agentInstructions?.trim()));
+}
+
+function RepolessThreadModeBadge({ thread }: { thread: Doc<"threads"> }) {
+  const isAgentMode = isRepolessAgentThread(thread);
+
+  if (isAgentMode) {
+    return (
+      <p className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] font-semibold uppercase leading-none tracking-wide text-primary">
+        <RobotIcon size={10} weight="bold" className="shrink-0" />
+        <span>Agent Mode</span>
+        {thread.singleTurnEnabled ? (
+          <span className="border border-primary/30 px-1 py-0.5 text-[9px] leading-none text-primary/80">
+            Single-turn
+          </span>
+        ) : null}
+      </p>
+    );
+  }
+
+  return (
+    <p className="mt-1 text-[10px] font-semibold uppercase leading-none tracking-wide text-muted-foreground/70">
+      Thread Mode
     </p>
   );
 }
@@ -759,6 +799,11 @@ export function RepolessChatsRail({
 
   const pinnedThreads = useMemo(() => threads?.filter((thread) => Boolean(thread.pinnedAt)) ?? [], [threads]);
   const otherThreads = useMemo(() => threads?.filter((thread) => !thread.pinnedAt) ?? [], [threads]);
+  const agentModeThreads = useMemo(() => otherThreads.filter(isRepolessAgentThread), [otherThreads]);
+  const threadModeThreads = useMemo(
+    () => otherThreads.filter((thread) => !isRepolessAgentThread(thread)),
+    [otherThreads],
+  );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -805,39 +850,85 @@ export function RepolessChatsRail({
                 </div>
               </div>
             )}
-            {(otherThreads.length > 0 || pinnedThreads.length === 0) && (
-              <div className="flex flex-col gap-1">
-                <div className="flex items-center gap-1 px-1 pb-1">
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Chats</p>
-                </div>
-                {otherThreads.length === 0 ? (
-                  <p className="px-1 text-xs text-muted-foreground">No conversations yet. Start one above.</p>
-                ) : null}
-                {/* Presence stays mounted while empty so the first chat enters
-                    through AnimatePresence rather than popping in (see the
-                    repo-bound ThreadsSection for the full rationale). */}
-                <div className="flex flex-col">
-                  <AnimatePresence initial={false}>
-                    {otherThreads.map((thread) => (
-                      <ThreadRowMotion key={thread._id} shouldReduceMotion={shouldReduceMotion}>
-                        <RepolessThreadItem
-                          thread={thread}
-                          isSelected={selectedThreadId === thread._id}
-                          isPinned={false}
-                          onSelectThread={onSelectThread}
-                          onPrewarmThread={prewarmThread}
-                          onDeleteThread={onDeleteThread}
-                          onTogglePin={handleTogglePin}
-                          onError={onError}
-                        />
-                      </ThreadRowMotion>
-                    ))}
-                  </AnimatePresence>
-                </div>
-              </div>
-            )}
+            {otherThreads.length === 0 && pinnedThreads.length === 0 ? (
+              <p className="px-1 text-xs text-muted-foreground">No conversations yet. Start one above.</p>
+            ) : null}
+            {agentModeThreads.length > 0 ? (
+              <RepolessThreadSection
+                label="Agent Mode"
+                threads={agentModeThreads}
+                selectedThreadId={selectedThreadId}
+                shouldReduceMotion={shouldReduceMotion}
+                onSelectThread={onSelectThread}
+                onPrewarmThread={prewarmThread}
+                onDeleteThread={onDeleteThread}
+                onTogglePin={handleTogglePin}
+                onError={onError}
+              />
+            ) : null}
+            {threadModeThreads.length > 0 ? (
+              <RepolessThreadSection
+                label="Thread Mode"
+                threads={threadModeThreads}
+                selectedThreadId={selectedThreadId}
+                shouldReduceMotion={shouldReduceMotion}
+                onSelectThread={onSelectThread}
+                onPrewarmThread={prewarmThread}
+                onDeleteThread={onDeleteThread}
+                onTogglePin={handleTogglePin}
+                onError={onError}
+              />
+            ) : null}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function RepolessThreadSection({
+  label,
+  threads,
+  selectedThreadId,
+  shouldReduceMotion,
+  onSelectThread,
+  onPrewarmThread,
+  onDeleteThread,
+  onTogglePin,
+  onError,
+}: {
+  label: "Agent Mode" | "Thread Mode";
+  threads: Doc<"threads">[];
+  selectedThreadId: ThreadId | null;
+  shouldReduceMotion: boolean | null;
+  onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
+  onPrewarmThread: (id: ThreadId) => void;
+  onDeleteThread: (id: ThreadId) => void;
+  onTogglePin: (id: ThreadId, pinned: boolean) => void;
+  onError: (message: string | null) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1 pb-3 last:pb-0">
+      <div className="flex items-center gap-1 px-1 pb-1">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+      </div>
+      <div className="flex flex-col">
+        <AnimatePresence initial={false}>
+          {threads.map((thread) => (
+            <ThreadRowMotion key={thread._id} shouldReduceMotion={shouldReduceMotion}>
+              <RepolessThreadItem
+                thread={thread}
+                isSelected={selectedThreadId === thread._id}
+                isPinned={false}
+                onSelectThread={onSelectThread}
+                onPrewarmThread={onPrewarmThread}
+                onDeleteThread={onDeleteThread}
+                onTogglePin={onTogglePin}
+                onError={onError}
+              />
+            </ThreadRowMotion>
+          ))}
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -889,6 +980,7 @@ function RepolessThreadItem({
       isPinned={isPinned}
       isSelected={isSelected}
       titleTextClass={titleTextClass}
+      threadMeta={<RepolessThreadModeBadge thread={thread} />}
       rowRef={rowRef}
       inputRef={inputRef}
       onSelectThread={onSelectThread}

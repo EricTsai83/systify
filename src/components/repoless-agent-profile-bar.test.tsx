@@ -36,6 +36,20 @@ describe("RepolessAgentProfileBar", () => {
     expect(screen.getByTestId("repoless-single-turn-toggle")).toBeInTheDocument();
   });
 
+  test("does not show the Agent name on the header button", () => {
+    render(
+      <RepolessAgentProfileBar
+        value={{ singleTurnEnabled: false, agentRole: "Translation agent", agentInstructions: "" }}
+        resetPending={false}
+        onSave={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("repoless-agent-profile-button")).toHaveTextContent("Agent Profile");
+    expect(screen.getByTestId("repoless-agent-profile-button")).toHaveTextContent("Configured");
+    expect(screen.queryByText("Translation agent")).not.toBeInTheDocument();
+  });
+
   test("saves Agent Profile edits from the dialog", async () => {
     const onSave = vi.fn();
     render(
@@ -47,7 +61,7 @@ describe("RepolessAgentProfileBar", () => {
     );
 
     fireEvent.click(screen.getByTestId("repoless-agent-profile-button"));
-    fireEvent.change(screen.getByLabelText("Agent role"), { target: { value: "Translation agent" } });
+    fireEvent.change(screen.getByLabelText("Agent name"), { target: { value: "Translation agent" } });
     fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "Translate Chinese into English." } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
 

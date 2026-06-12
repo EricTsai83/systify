@@ -128,7 +128,9 @@ export function ThreadSearchDialog({
                         <div className="truncate text-[13px] font-medium text-foreground">{thread.title}</div>
                       </div>
                       <div className="mt-0.5 text-[11px] text-muted-foreground">
-                        {thread._id === selectedThreadId ? "Current thread" : formatThreadModeLabel(thread.mode)}
+                        {thread._id === selectedThreadId
+                          ? "Current thread"
+                          : formatThreadModeLabel(thread, repositoryId === null)}
                       </div>
                     </div>
                   </button>
@@ -142,6 +144,11 @@ export function ThreadSearchDialog({
   );
 }
 
-function formatThreadModeLabel(mode: ThreadMode): string {
-  return mode === "library" ? "Library Ask" : "Discuss";
+function formatThreadModeLabel(thread: SearchThread, isRepoless: boolean): string {
+  if (isRepoless) {
+    return Boolean(thread.agentRole?.trim()) || Boolean(thread.agentInstructions?.trim())
+      ? "Agent Mode"
+      : "Thread Mode";
+  }
+  return thread.mode === "library" ? "Library Ask" : "Discuss";
 }

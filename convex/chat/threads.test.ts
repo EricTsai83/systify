@@ -5,6 +5,7 @@ import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { insertTestArtifact, insertTestRepository, insertTestThread } from "../../test/convex/fixtures";
 import { createRateLimitedTestConvex as createTestConvex, type SystifyTestConvex } from "../../test/convex/harness";
+import { NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
 
 async function insertRepository(t: SystifyTestConvex, ownerTokenIdentifier: string, slug: string) {
   return await insertTestRepository(t, {
@@ -127,6 +128,7 @@ describe("repoless Agent Profile", () => {
 
     const updated = await t.run((ctx) => ctx.db.get(threadId));
     expect(updated?.singleTurnEnabled).toBe(true);
+    expect(updated?.title).toBe("Translation agent");
     expect(updated?.agentRole).toBe("Translation agent");
     expect(updated?.agentInstructions).toBe("Translate Chinese into English.");
     expect(updated?.agentUpdatedAt).toEqual(expect.any(Number));
@@ -139,6 +141,7 @@ describe("repoless Agent Profile", () => {
     });
     const cleared = await t.run((ctx) => ctx.db.get(threadId));
     expect(cleared?.singleTurnEnabled).toBe(false);
+    expect(cleared?.title).toBe(NEW_THREAD_DEFAULT_TITLE);
     expect(cleared?.agentRole).toBeUndefined();
     expect(cleared?.agentInstructions).toBeUndefined();
   });
@@ -237,6 +240,8 @@ describe("repoless Agent Profile", () => {
       singleTurnEnabled: true,
       agentRole: "Translation agent",
     });
+    const createdThread = await t.run((ctx) => ctx.db.get(threadId));
+    expect(createdThread?.title).toBe("Translation agent");
 
     await t.run(async (ctx) => {
       await ctx.db.patch(threadId, { lastAssistantMessageAt: Date.now() });

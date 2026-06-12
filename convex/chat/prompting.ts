@@ -279,7 +279,7 @@ export function buildUserPrompt(
   relevantChunks: Array<{ path: string; summary: string; content: string }>,
 ) {
   const agentProfileLines = [
-    context.agentRole ? `Role: ${context.agentRole}` : undefined,
+    context.agentRole ? `Name: ${context.agentRole}` : undefined,
     context.agentInstructions ? `Instructions:\n${context.agentInstructions}` : undefined,
   ].filter((line): line is string => line !== undefined);
   const customizationLines = [

@@ -377,10 +377,13 @@ export async function startChatTurnInNewThread(ctx: MutationCtx, args: StartThre
     groundSandbox: turnPlan.groundSandbox,
   });
 
+  const title =
+    repositoryId === undefined && agentProfile.agentRole !== undefined ? agentProfile.agentRole : args.title;
+
   const threadId = await ctx.db.insert("threads", {
     repositoryId,
     ownerTokenIdentifier: identity.tokenIdentifier,
-    title: args.title ?? NEW_THREAD_DEFAULT_TITLE,
+    title: title ?? NEW_THREAD_DEFAULT_TITLE,
     mode: turnPlan.mode,
     lastMessageAt: now,
     ...(repositoryId === undefined
