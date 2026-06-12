@@ -91,6 +91,26 @@
   }
 }
 
+@keyframes soft-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes enter-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes reveal-up {
   0% {
     visibility: hidden;
@@ -364,6 +384,15 @@
     animation: fade-up 0.5s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
 
+  .animate-soft-enter {
+    animation: soft-enter 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+    will-change: opacity, transform;
+  }
+
+  .animate-enter-fade {
+    animation: enter-fade 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+  }
+
   .animate-reveal-up {
     animation: reveal-up 0.5s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
@@ -447,6 +476,8 @@
     .animate-scan-y,
     .animate-caret,
     .animate-fade-up,
+    .animate-soft-enter,
+    .animate-enter-fade,
     .animate-reveal-up,
     .animate-message-rail,
     .animate-pulse-soft,

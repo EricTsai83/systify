@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { RepeatOnceIcon, RobotIcon } from "@phosphor-icons/react";
+import { ChatCircleIcon, PencilSimpleIcon, PlusIcon, RepeatOnceIcon, RobotIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { REPOLESS_SINGLE_TURN_TOOLTIP } from "@/components/repoless-single-turn-copy";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Toggle } from "@/components/ui/toggle";
 import { cn } from "@/lib/utils";
 
 export type RepolessAgentProfileValue = {
@@ -28,34 +28,54 @@ const AGENT_ROLE_MAX_LENGTH = 120;
 const AGENT_INSTRUCTIONS_MAX_LENGTH = 3000;
 const SINGLE_TURN_TOOLTIP_DELAY_MS = 700;
 
-export function RepolessAgentProfileBar({
+export function RepolessChatTypeToggle({
   value,
   disabled,
+  className,
   onSave,
 }: {
   value: RepolessAgentProfileValue;
   disabled?: boolean;
+  className?: string;
   onSave: (next: RepolessAgentProfileValue) => void | Promise<void>;
 }) {
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(value);
   const [isSaving, setIsSaving] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [profileDraft, setProfileDraft] = useState(value);
+  const isAgent = value.agentEnabled;
+  const isDisabled = disabled || isSaving;
+  const ModeIcon = isAgent ? RobotIcon : ChatCircleIcon;
+  const label = isAgent ? "Agent" : "Chat";
+  const ariaLabel = isAgent ? "Switch to regular chat" : "Switch to Agent chat";
+  const hasProfile = value.agentRole.trim().length > 0 || value.agentInstructions.trim().length > 0;
+  const profileLabel = hasProfile ? "Edit profile" : "Create profile";
+  const ProfileIcon = hasProfile ? PencilSimpleIcon : PlusIcon;
 
   useEffect(() => {
-    if (!open) {
-      setDraft(value);
+    if (!profileOpen) {
+      setProfileDraft(value);
     }
-  }, [open, value]);
+  }, [profileOpen, value]);
 
-  const statusText = value.agentEnabled ? "Agent" : "Chat";
+  async function handleToggle() {
+    if (isDisabled) return;
+    setIsSaving(true);
+    try {
+      await onSave({ ...value, agentEnabled: !isAgent });
+    } catch {
+      // The shell owns user-visible error copy.
+    } finally {
+      setIsSaving(false);
+    }
+  }
 
-  async function handleSave(event: FormEvent<HTMLFormElement>) {
+  async function handleSaveProfile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (isSaving) return;
     setIsSaving(true);
     try {
-      await onSave(draft);
-      setOpen(false);
+      await onSave({ ...profileDraft, agentEnabled: true });
+      setProfileOpen(false);
     } catch {
       // The shell owns user-visible error copy.
     } finally {
@@ -64,71 +84,70 @@ export function RepolessAgentProfileBar({
   }
 
   return (
-    <div className="flex min-w-0 items-center">
+    <div className={cn("inline-flex min-w-0 shrink-0 items-center", className)}>
       <Button
         type="button"
         variant="ghost"
         size="xs"
-        disabled={disabled}
-        onClick={() => setOpen(true)}
-        data-testid="repoless-agent-profile-button"
+        disabled={isDisabled}
+        aria-label={ariaLabel}
+        data-testid="repoless-chat-type-toggle"
         className={cn(
           "h-8 w-auto min-w-0 max-w-32 justify-start gap-1.5 border-none bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
           "hover:bg-accent hover:text-foreground focus-visible:bg-transparent focus-visible:text-foreground",
+          isAgent && "rounded-r-none pr-2",
         )}
-        title={statusText}
+        onClick={() => void handleToggle()}
       >
-        <RobotIcon weight={value.agentEnabled ? "fill" : "regular"} />
-        <span className="hidden min-w-0 truncate sm:inline">{statusText}</span>
+        <ModeIcon size={13} weight={isAgent ? "fill" : "regular"} />
+        <span className="hidden min-w-0 truncate sm:inline">{label}</span>
       </Button>
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      {isAgent ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="xs"
+          disabled={isDisabled}
+          onClick={() => setProfileOpen(true)}
+          data-testid="repoless-agent-profile-button"
+          className={cn(
+            "h-8 w-auto min-w-0 max-w-40 justify-start gap-1.5 rounded-l-none border-0 border-l border-border/70 bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
+            "hover:bg-accent hover:text-foreground focus-visible:bg-transparent focus-visible:text-foreground",
+          )}
+          title={profileLabel}
+        >
+          <ProfileIcon size={13} weight="bold" />
+          <span className="hidden min-w-0 truncate sm:inline">{profileLabel}</span>
+        </Button>
+      ) : null}
+
+      <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>Agent Profile</DialogTitle>
             <DialogDescription>Set how this assistant behaves for the current repoless chat.</DialogDescription>
           </DialogHeader>
-          <form className="grid gap-5" onSubmit={(event) => void handleSave(event)}>
-            <div className="grid gap-2">
-              <div className="text-sm font-medium">Chat type</div>
-              <ToggleGroup
-                type="single"
-                variant="outline"
-                size="sm"
-                value={draft.agentEnabled ? "agent" : "regular"}
-                disabled={isSaving}
-                className="w-full"
-                onValueChange={(next) => {
-                  if (next === "agent" || next === "regular") {
-                    setDraft((current) => ({ ...current, agentEnabled: next === "agent" }));
-                  }
-                }}
-              >
-                <ToggleGroupItem value="agent" className="h-8 flex-1 text-xs">
-                  Agent
-                </ToggleGroupItem>
-                <ToggleGroupItem value="regular" className="h-8 flex-1 text-xs">
-                  Regular chat
-                </ToggleGroupItem>
-              </ToggleGroup>
-            </div>
+          <form className="grid gap-5" onSubmit={(event) => void handleSaveProfile(event)}>
             <label className="grid gap-2 text-sm font-medium">
               <span>Agent name</span>
               <Input
-                value={draft.agentRole}
+                value={profileDraft.agentRole}
                 maxLength={AGENT_ROLE_MAX_LENGTH}
-                disabled={isSaving || !draft.agentEnabled}
-                onChange={(event) => setDraft((current) => ({ ...current, agentRole: event.target.value }))}
+                disabled={isSaving}
+                onChange={(event) => setProfileDraft((current) => ({ ...current, agentRole: event.target.value }))}
               />
             </label>
             <label className="grid gap-2 text-sm font-medium">
               <span>Instructions</span>
               <Textarea
-                value={draft.agentInstructions}
+                value={profileDraft.agentInstructions}
                 maxLength={AGENT_INSTRUCTIONS_MAX_LENGTH}
-                disabled={isSaving || !draft.agentEnabled}
+                disabled={isSaving}
                 className="min-h-36"
-                onChange={(event) => setDraft((current) => ({ ...current, agentInstructions: event.target.value }))}
+                onChange={(event) =>
+                  setProfileDraft((current) => ({ ...current, agentInstructions: event.target.value }))
+                }
               />
             </label>
             <DialogFooter>
@@ -152,21 +171,25 @@ export function RepolessSingleTurnToggle({
   value,
   resetPending,
   disabled,
+  className,
   onSave,
 }: {
   value: RepolessAgentProfileValue;
   resetPending: boolean;
   disabled?: boolean;
+  className?: string;
   onSave: (next: RepolessAgentProfileValue) => void | Promise<void>;
 }) {
   const [isSaving, setIsSaving] = useState(false);
   const isOn = value.singleTurnEnabled;
   const isDisabled = disabled || resetPending || isSaving;
+  const label = resetPending ? "Clearing" : isOn ? "Single reply" : "Conversation";
+  const ModeIcon = isOn || resetPending ? RepeatOnceIcon : ChatCircleIcon;
   const ariaLabel = resetPending
-    ? "Single-turn is clearing previous messages"
+    ? "Single reply is clearing previous messages"
     : isOn
-      ? "Turn off Single-turn"
-      : "Turn on Single-turn";
+      ? "Switch to Conversation mode"
+      : "Switch to Single reply mode";
 
   async function handleToggle() {
     if (isDisabled) return;
@@ -184,24 +207,24 @@ export function RepolessSingleTurnToggle({
     <TooltipProvider delayDuration={SINGLE_TURN_TOOLTIP_DELAY_MS} skipDelayDuration={0}>
       <Tooltip>
         <TooltipTrigger asChild>
-          <span className="inline-flex shrink-0">
-            <Button
+          <span className={cn("inline-flex shrink-0", className)}>
+            <Toggle
               type="button"
-              variant={isOn ? "secondary" : "ghost"}
-              size="icon-xs"
+              pressed={isOn}
               disabled={isDisabled}
               aria-label={ariaLabel}
-              aria-pressed={isOn}
               data-testid="repoless-single-turn-toggle"
               className={cn(
-                "h-8 w-8 shrink-0 border-none bg-transparent text-muted-foreground shadow-none hover:bg-accent hover:text-foreground",
-                isOn && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+                "h-8 w-auto min-w-0 max-w-32 shrink-0 justify-start gap-1.5 border-none bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
+                "hover:bg-accent hover:text-foreground focus-visible:bg-transparent focus-visible:text-foreground",
+                "data-[state=on]:bg-transparent data-[state=on]:text-muted-foreground data-[state=on]:hover:bg-accent data-[state=on]:hover:text-foreground",
                 resetPending && "bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-400",
               )}
-              onClick={() => void handleToggle()}
+              onPressedChange={() => void handleToggle()}
             >
-              <RepeatOnceIcon size={13} weight={isOn ? "bold" : "regular"} />
-            </Button>
+              <ModeIcon size={13} weight={isOn ? "bold" : "regular"} />
+              <span className="min-w-0 truncate">{label}</span>
+            </Toggle>
           </span>
         </TooltipTrigger>
         <TooltipContent side="top" className="max-w-72">

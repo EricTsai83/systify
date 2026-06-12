@@ -475,7 +475,7 @@ export function ChatPanel({
         // empty state never needs to scroll, so dropping ScrollArea for
         // this branch is the cleanest fix and lets `flex-1` actually
         // reach the centered Card.
-        <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 flex-col gap-3 px-6 py-6">
+        <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 animate-soft-enter flex-col gap-3 px-6 py-6">
           {sandboxPill}
           {hasAttachedRepository ? <EmptyChatHint /> : <EmptyNoRepoHint />}
           {/*
@@ -510,11 +510,7 @@ export function ChatPanel({
             {sandboxPill}
             {messages && (
               <div
-                className={
-                  skipEntrance
-                    ? "flex flex-col gap-0"
-                    : "flex flex-col gap-0 animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out"
-                }
+                className={skipEntrance ? "flex flex-col gap-0" : "flex flex-col gap-0 animate-soft-enter"}
                 onAnimationEnd={skipEntrance ? undefined : markCurrentThreadSeen}
               >
                 {messages.map((message, index) => {
@@ -575,7 +571,7 @@ export function ChatPanel({
             />
             <PromptInputFooter>
               {composerToolsReady ? (
-                <PromptInputTools>
+                <PromptInputTools className="animate-enter-fade">
                   {composerToolItems.map((item, index) => (
                     <Fragment key={index}>
                       {index > 0 ? <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" /> : null}

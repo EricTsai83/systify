@@ -8,7 +8,7 @@ import { AppSidebarLeft } from "@/components/app-sidebar";
 import { ChatContainer } from "@/components/chat-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
-  RepolessAgentProfileBar,
+  RepolessChatTypeToggle,
   RepolessSingleTurnToggle,
   type RepolessAgentProfileValue,
 } from "@/components/repoless-agent-profile-bar";
@@ -245,12 +245,14 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
                 value={agentProfileValue}
                 resetPending={capabilities.singleTurnResetPending}
                 disabled={capabilities.isLoading}
+                className="animate-enter-fade"
                 onSave={handleSaveAgentProfile}
               />,
-              <RepolessAgentProfileBar
-                key="agent-profile"
+              <RepolessChatTypeToggle
+                key="chat-type"
                 value={agentProfileValue}
                 disabled={capabilities.isLoading}
+                className="animate-enter-fade"
                 onSave={handleSaveAgentProfile}
               />,
             ]}

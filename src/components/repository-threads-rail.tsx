@@ -282,7 +282,7 @@ export function RepositoryThreadsRail({
         </Button>
       </div>
 
-      <div className={cn("min-h-0 flex-1 overflow-y-auto overscroll-contain", compact ? "p-2" : "p-3")}>
+      <div className={cn("no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain", compact ? "p-2" : "p-3")}>
         <ThreadsSection
           threads={threads}
           repositoriesById={repositoriesById}
@@ -351,7 +351,7 @@ function ThreadsSection({
     <div className="flex flex-col">
       <span ref={liveRegionRef} className="sr-only" role="status" aria-live="polite" />
       {threads === undefined ? null : (
-        <>
+        <div className="flex animate-enter-fade flex-col">
           {pinnedThreads.length > 0 && (
             <CollapsibleThreadSection label="Pinned" className="pb-3">
               <ThreadsList
@@ -402,7 +402,7 @@ function ThreadsSection({
               />
             </div>
           )}
-        </>
+        </div>
       )}
     </div>
   );
@@ -826,9 +826,9 @@ export function RepolessChatsRail({
         </Button>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
         {threads === undefined ? null : (
-          <div className="flex flex-col">
+          <div className="flex animate-enter-fade flex-col">
             {pinnedThreads.length > 0 && (
               <CollapsibleThreadSection label="Pinned" className="pb-3">
                 <div className="flex flex-col">

@@ -46,6 +46,16 @@
   }
 }
 
+@layer utilities {
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}
+
 /*
  * Hover-show native scrollbars, theme-aware. Mirrors the visual rule
  * that Radix `<ScrollArea>` already gives us in flagship surfaces, so

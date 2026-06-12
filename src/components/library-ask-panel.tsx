@@ -496,35 +496,39 @@ export function LibraryAskPanel({
       {threadId ? (
         <Conversation scroll={conversationScroll} className="min-h-0 flex-1">
           <ConversationContent className="gap-0 px-4 py-3" showLoadOlderSentinel={canLoadOlderMessages}>
-            {timelineEntries.map((entry, index) =>
-              entry.kind === "message" ? (
-                <div key={entry._id} className={timelineSpacingClassName(timelineEntries[index - 1], entry)}>
-                  <MessageBubble
-                    message={entry.message}
-                    activeMessageStream={activeMessageStream ?? null}
-                    onSelectArtifact={onSelectArtifact}
-                  />
-                </div>
-              ) : (
-                <div key={entry._id} className={timelineSpacingClassName(timelineEntries[index - 1], entry)}>
-                  <LibraryArtifactDraftCard
-                    entry={entry.entry}
-                    onApplied={onSelectArtifact}
-                    onRegenerated={handleRepositoryDraftRegenerated}
-                  />
-                </div>
-              ),
-            )}
+            {confirmedThreadId ? (
+              <div key={confirmedThreadId} className={conversationScroll.didPrepend ? undefined : "animate-soft-enter"}>
+                {timelineEntries.map((entry, index) =>
+                  entry.kind === "message" ? (
+                    <div key={entry._id} className={timelineSpacingClassName(timelineEntries[index - 1], entry)}>
+                      <MessageBubble
+                        message={entry.message}
+                        activeMessageStream={activeMessageStream ?? null}
+                        onSelectArtifact={onSelectArtifact}
+                      />
+                    </div>
+                  ) : (
+                    <div key={entry._id} className={timelineSpacingClassName(timelineEntries[index - 1], entry)}>
+                      <LibraryArtifactDraftCard
+                        entry={entry.entry}
+                        onApplied={onSelectArtifact}
+                        onRegenerated={handleRepositoryDraftRegenerated}
+                      />
+                    </div>
+                  ),
+                )}
+              </div>
+            ) : null}
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
       ) : isLocked ? (
-        <div className="flex min-h-0 flex-1 animate-in flex-col gap-5 px-4 py-6 fade-in duration-300">
+        <div className="flex min-h-0 flex-1 animate-soft-enter flex-col gap-5 px-4 py-6">
           {draftCards}
           <NoArtifactsHint onGenerate={onGenerate} generateDisabledReason={generateDisabledReason} />
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 animate-in flex-col gap-5 px-4 py-6 fade-in duration-300">
+        <div className="flex min-h-0 flex-1 animate-soft-enter flex-col gap-5 px-4 py-6">
           {draftCards}
           <div className="flex flex-1 items-center justify-center">
             <EmptyStateHero
@@ -617,7 +621,7 @@ export function LibraryAskPanel({
           />
           <PromptInputFooter>
             {composerToolsReady ? (
-              <PromptInputTools>
+              <PromptInputTools className="animate-soft-enter">
                 <Button
                   type="button"
                   variant="outline"
@@ -767,7 +771,7 @@ function NoArtifactsHint({
   generateDisabledReason?: string;
 }) {
   return (
-    <div className="flex min-h-0 flex-1 animate-in flex-col items-center justify-center gap-4 px-4 py-6 fade-in duration-300">
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-4 py-6">
       <EmptyStateHero
         visual={
           <div className="flex size-11 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">

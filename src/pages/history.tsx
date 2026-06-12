@@ -651,11 +651,11 @@ function SharedThreadsSection({
       {isLoadingFirstPage ? (
         <SharedRowsSkeleton />
       ) : activeShares.length === 0 && !settledCanLoadMore && !settledIsLoadingMore ? (
-        <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+        <div className="animate-fade-in border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
           No active public share links.
         </div>
       ) : (
-        <div className="border border-border bg-card">
+        <div className="animate-fade-in border border-border bg-card">
           {activeShares.map((share) => (
             <div
               key={share._id}
