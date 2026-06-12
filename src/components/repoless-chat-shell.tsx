@@ -111,6 +111,10 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
           agentRole: capabilities.agentRole ?? "",
           agentInstructions: capabilities.agentInstructions ?? "",
         };
+  const agentProfileConfigured =
+    !agentProfileValue.agentEnabled ||
+    agentProfileValue.agentRole.trim().length > 0 ||
+    agentProfileValue.agentInstructions.trim().length > 0;
 
   const handleSaveAgentProfile = useCallback(
     async (next: RepolessAgentProfileValue) => {
@@ -260,7 +264,11 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
             isSending={isSending}
             onSendMessage={handleSendMessage}
             sendDisabledReason={
-              capabilities.singleTurnResetPending ? "Clearing previous messages…" : chatSendDisabledReason
+              capabilities.singleTurnResetPending
+                ? "Clearing previous messages…"
+                : agentProfileConfigured
+                  ? chatSendDisabledReason
+                  : "Set up Agent before sending."
             }
             sandboxModeStatus={null}
             isSyncing={false}

@@ -1169,8 +1169,8 @@ describe("ChatPanel cancel-in-flight reply", () => {
     expect(screen.queryByTestId("chat-panel-stop-button")).not.toBeInTheDocument();
   });
 
-  test("keeps send-disabled copy out of the composer hint row", () => {
-    const disabledReason = "This send path is disabled.";
+  test("shows send-disabled hover copy and not-allowed cursor", () => {
+    const disabledReason = "Set up Agent before sending.";
 
     render(
       <ChatPanel
@@ -1198,7 +1198,8 @@ describe("ChatPanel cancel-in-flight reply", () => {
     const sendButton = screen.getByTestId("chat-panel-send-button");
     expect(sendButton).toBeDisabled();
     expect(sendButton).toHaveAttribute("title", disabledReason);
-    expect(screen.queryByText(disabledReason)).not.toBeInTheDocument();
+    expect(sendButton.parentElement).toHaveClass("cursor-not-allowed");
+    expect(screen.getByText(disabledReason)).toBeInTheDocument();
   });
 
   test("shows missing-text hover copy and not-allowed cursor when Send is disabled for an empty message", () => {

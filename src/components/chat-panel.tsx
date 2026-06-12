@@ -619,7 +619,7 @@ export function ChatPanel({
                   <ButtonStateText current={isCancellingReply ? "Stopping…" : "Stop"} states={["Stop", "Stopping…"]} />
                 </Button>
               ) : (
-                <SendButtonWithOptionalTooltip disabledReason={emptyMessageDisabledReason}>
+                <SendButtonWithOptionalTooltip disabledReason={sendButtonTitle}>
                   <Button
                     type="submit"
                     variant="default"

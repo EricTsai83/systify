@@ -52,7 +52,7 @@ describe("RepolessChatTypeToggle", () => {
     const toggle = screen.getByTestId("repoless-chat-type-toggle");
     expect(toggle).toHaveTextContent("Agent");
     expect(toggle.querySelector("svg")).toBeInTheDocument();
-    expect(screen.getByTestId("repoless-agent-profile-button")).toHaveTextContent("Edit profile");
+    expect(screen.getByTestId("repoless-agent-profile-button")).toHaveAccessibleName("Edit Agent settings");
 
     fireEvent.click(toggle);
 
@@ -66,7 +66,7 @@ describe("RepolessChatTypeToggle", () => {
     });
   });
 
-  test("shows Create profile as an Agent-mode child action when no profile exists", () => {
+  test("shows an Agent settings action when no profile exists", () => {
     render(
       <RepolessChatTypeToggle
         value={{ agentEnabled: true, singleTurnEnabled: false, agentRole: "", agentInstructions: "" }}
@@ -75,7 +75,8 @@ describe("RepolessChatTypeToggle", () => {
     );
 
     expect(screen.getByTestId("repoless-chat-type-toggle")).toHaveTextContent("Agent");
-    expect(screen.getByTestId("repoless-agent-profile-button")).toHaveTextContent("Create profile");
+    expect(screen.getByTestId("repoless-agent-profile-button")).toHaveAccessibleName("Set up Agent");
+    expect(screen.getByTestId("repoless-agent-profile-button")).toHaveAttribute("aria-invalid", "true");
   });
 
   test("saves Agent Profile edits from the Agent-mode child action", async () => {

@@ -146,7 +146,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
           />
         </SidebarContent>
       ) : activeRepositoryId === null ? (
-        <SidebarContent className="flex min-h-0 flex-1 flex-col">
+        <SidebarContent className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <RepolessChatsRail
             selectedThreadId={selectedThreadId}
             onSelectThread={onSelectThread}
@@ -156,7 +156,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
           />
         </SidebarContent>
       ) : (
-        <SidebarContent className="flex min-h-0 flex-1 flex-col">
+        <SidebarContent className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <RepositoryThreadsRail
             repositoryId={activeRepositoryId}
             repositories={repositories}

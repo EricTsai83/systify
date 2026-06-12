@@ -1,5 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { ChatCircleIcon, PencilSimpleIcon, PlusIcon, RepeatOnceIcon, RobotIcon } from "@phosphor-icons/react";
+import {
+  ChatCircleIcon,
+  ChatsCircleIcon,
+  RepeatOnceIcon,
+  RobotIcon,
+  SlidersHorizontalIcon,
+} from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -27,6 +33,7 @@ export type RepolessAgentProfileValue = {
 const AGENT_ROLE_MAX_LENGTH = 120;
 const AGENT_INSTRUCTIONS_MAX_LENGTH = 3000;
 const SINGLE_TURN_TOOLTIP_DELAY_MS = 700;
+const COMPOSER_CONTROL_ICON_CLASS = "size-3.5";
 
 export function RepolessChatTypeToggle({
   value,
@@ -48,8 +55,7 @@ export function RepolessChatTypeToggle({
   const label = isAgent ? "Agent" : "Chat";
   const ariaLabel = isAgent ? "Switch to regular chat" : "Switch to Agent chat";
   const hasProfile = value.agentRole.trim().length > 0 || value.agentInstructions.trim().length > 0;
-  const profileLabel = hasProfile ? "Edit profile" : "Create profile";
-  const ProfileIcon = hasProfile ? PencilSimpleIcon : PlusIcon;
+  const profileLabel = hasProfile ? "Edit Agent settings" : "Set up Agent";
 
   useEffect(() => {
     if (!profileOpen) {
@@ -84,42 +90,63 @@ export function RepolessChatTypeToggle({
   }
 
   return (
-    <div className={cn("inline-flex min-w-0 shrink-0 items-center", className)}>
+    <div
+      className={cn(
+        "inline-flex h-8 min-w-0 shrink-0 items-center overflow-hidden rounded-none text-muted-foreground",
+        "[&_svg]:shrink-0",
+        className,
+      )}
+    >
       <Button
         type="button"
         variant="ghost"
-        size="xs"
+        size="sm"
         disabled={isDisabled}
         aria-label={ariaLabel}
         data-testid="repoless-chat-type-toggle"
         className={cn(
-          "h-8 w-auto min-w-0 max-w-32 justify-start gap-1.5 border-none bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
+          "h-8 w-auto min-w-0 max-w-32 justify-start gap-1.5 rounded-none border-none bg-transparent px-2 text-xs font-medium shadow-none",
           "hover:bg-accent hover:text-foreground focus-visible:bg-transparent focus-visible:text-foreground",
-          isAgent && "rounded-r-none pr-2",
+          "[&_svg]:size-3.5",
         )}
         onClick={() => void handleToggle()}
       >
-        <ModeIcon size={13} weight={isAgent ? "fill" : "regular"} />
+        <ModeIcon className={COMPOSER_CONTROL_ICON_CLASS} weight={isAgent ? "fill" : "regular"} />
         <span className="hidden min-w-0 truncate sm:inline">{label}</span>
       </Button>
 
       {isAgent ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          disabled={isDisabled}
-          onClick={() => setProfileOpen(true)}
-          data-testid="repoless-agent-profile-button"
-          className={cn(
-            "h-8 w-auto min-w-0 max-w-40 justify-start gap-1.5 rounded-l-none border-0 border-l border-border/70 bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
-            "hover:bg-accent hover:text-foreground focus-visible:bg-transparent focus-visible:text-foreground",
-          )}
-          title={profileLabel}
-        >
-          <ProfileIcon size={13} weight="bold" />
-          <span className="hidden min-w-0 truncate sm:inline">{profileLabel}</span>
-        </Button>
+        <TooltipProvider delayDuration={150}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex shrink-0">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  disabled={isDisabled}
+                  onClick={() => setProfileOpen(true)}
+                  aria-label={profileLabel}
+                  aria-invalid={!hasProfile}
+                  data-testid="repoless-agent-profile-button"
+                  className={cn(
+                    "relative h-8 w-8 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none",
+                    "before:absolute before:left-0 before:top-1/2 before:h-3 before:w-px before:-translate-y-1/2 before:bg-border/55",
+                    "hover:bg-accent hover:text-foreground focus-visible:bg-transparent focus-visible:text-foreground",
+                    !hasProfile && "text-amber-700 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300",
+                    "[&_svg]:size-3.5",
+                  )}
+                >
+                  <SlidersHorizontalIcon
+                    className={COMPOSER_CONTROL_ICON_CLASS}
+                    weight={hasProfile ? "bold" : "regular"}
+                  />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent side="top">{profileLabel}</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       ) : null}
 
       <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
@@ -184,7 +211,7 @@ export function RepolessSingleTurnToggle({
   const isOn = value.singleTurnEnabled;
   const isDisabled = disabled || resetPending || isSaving;
   const label = resetPending ? "Clearing" : isOn ? "Single reply" : "Conversation";
-  const ModeIcon = isOn || resetPending ? RepeatOnceIcon : ChatCircleIcon;
+  const ModeIcon = isOn || resetPending ? RepeatOnceIcon : ChatsCircleIcon;
   const ariaLabel = resetPending
     ? "Single reply is clearing previous messages"
     : isOn
@@ -219,10 +246,11 @@ export function RepolessSingleTurnToggle({
                 "hover:bg-accent hover:text-foreground focus-visible:bg-transparent focus-visible:text-foreground",
                 "data-[state=on]:bg-transparent data-[state=on]:text-muted-foreground data-[state=on]:hover:bg-accent data-[state=on]:hover:text-foreground",
                 resetPending && "bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-400",
+                "[&_svg]:size-3.5",
               )}
               onPressedChange={() => void handleToggle()}
             >
-              <ModeIcon size={13} weight={isOn ? "bold" : "regular"} />
+              <ModeIcon className={COMPOSER_CONTROL_ICON_CLASS} weight={isOn ? "bold" : "regular"} />
               <span className="min-w-0 truncate">{label}</span>
             </Toggle>
           </span>
