@@ -482,7 +482,6 @@ export function ChatPanel({
             />
             <PromptInputFooter>
               <PromptInputTools>
-                {composerControls}
                 {showArtifactToggle && onToggleArtifactPanel ? (
                   <Button
                     type="button"
@@ -534,6 +533,7 @@ export function ChatPanel({
                     disabledReasoningEffortMessage={highReasoningDisabledReason}
                   />
                 ) : null}
+                {composerControls}
                 {showGroundingToggles && chatMode === "discuss" ? (
                   <GroundingToggleBar
                     groundLibrary={groundLibrary}
