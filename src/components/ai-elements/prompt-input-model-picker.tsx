@@ -101,7 +101,7 @@ const PROVIDER_DISPLAY_NAME: Record<LlmProvider, string> = {
   anthropic: "Anthropic",
 };
 
-const MODEL_PICKER_TRIGGER_CLASS_NAME = "h-8 min-w-32 gap-1.5 px-2 text-xs";
+const MODEL_PICKER_TRIGGER_CLASS_NAME = "h-8 w-auto min-w-0 max-w-40 justify-start gap-1.5 px-2 text-xs";
 
 export function PromptInputModelPicker({
   value,
@@ -160,7 +160,7 @@ export function PromptInputModelPicker({
         <Skeleton
           aria-hidden="true"
           data-testid="prompt-input-model-picker-skeleton"
-          className={cn(MODEL_PICKER_TRIGGER_CLASS_NAME, "shrink-0 rounded-none")}
+          className={cn(MODEL_PICKER_TRIGGER_CLASS_NAME, "w-24 shrink-0 rounded-none")}
         />
       </div>
     );
@@ -174,7 +174,9 @@ export function PromptInputModelPicker({
           data-testid="prompt-input-model-picker-trigger"
           className={MODEL_PICKER_TRIGGER_CLASS_NAME}
         >
-          <PromptInputSelectValue placeholder="Pick model">{currentDisplayName}</PromptInputSelectValue>
+          <PromptInputSelectValue className="truncate" placeholder="Pick model">
+            {currentDisplayName}
+          </PromptInputSelectValue>
         </PromptInputSelectTrigger>
         <PromptInputSelectContent>
           {pickerGroups.length === 0 ? (

@@ -1,4 +1,13 @@
-import { useCallback, useMemo, useState, type AnimationEvent, type FormEvent, type ReactNode } from "react";
+import {
+  Children,
+  Fragment,
+  useCallback,
+  useMemo,
+  useState,
+  type AnimationEvent,
+  type FormEvent,
+  type ReactNode,
+} from "react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { findInFlightAssistantMessage, useConversationThread } from "@/hooks/use-conversation-thread";
@@ -373,6 +382,60 @@ export function ChatPanel({
   const sandboxPill =
     shouldShowSandboxPill && attachedRepositoryId ? <SandboxActivityPill repositoryId={attachedRepositoryId} /> : null;
 
+  const composerToolItems: ReactNode[] = [
+    showArtifactToggle && onToggleArtifactPanel ? (
+      <Button
+        type="button"
+        variant={isArtifactPanelOpen ? "secondary" : "ghost"}
+        size="sm"
+        onClick={onToggleArtifactPanel}
+        aria-label="Toggle artifacts panel"
+        aria-pressed={isArtifactPanelOpen}
+        className="h-8 shrink-0 gap-1.5 px-2 text-xs"
+      >
+        <FileTextIcon size={14} weight="bold" />
+        <span className="hidden sm:inline">Artifacts</span>
+      </Button>
+    ) : null,
+    !isReadOnly && setSelectedModel ? (
+      <PromptInputModelPicker
+        value={
+          selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null
+        }
+        onChange={setSelectedModel}
+        threadLockedProvider={threadLockedProvider}
+        capability={modelPickerCapability}
+        preferenceScope={modelPreferenceScope}
+        getDisabledReason={(entry) =>
+          premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
+        }
+      />
+    ) : null,
+    !isReadOnly && setSelectedReasoningEffort ? (
+      <PromptInputReasoningPicker
+        value={selectedReasoningEffort}
+        onChange={setSelectedReasoningEffort}
+        provider={selectedProvider ?? undefined}
+        modelName={selectedModelName ?? undefined}
+        preferenceScope={modelPreferenceScope}
+        disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
+        disabledReasoningEffortMessage={highReasoningDisabledReason}
+      />
+    ) : null,
+    ...Children.toArray(composerControls),
+    showGroundingToggles && chatMode === "discuss" ? (
+      <GroundingToggleBar
+        groundLibrary={groundLibrary}
+        groundSandbox={groundSandbox}
+        setGroundLibrary={setGroundLibrary}
+        setGroundSandbox={setGroundSandbox}
+        grounding={effectiveGrounding}
+        onOpenGenerateSystemDesign={onOpenGenerateSystemDesign}
+        generateDisabledReason={generateSystemDesignDisabledReason}
+      />
+    ) : null,
+  ].filter((item) => item !== null);
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {shouldShowEmptyState ? (
@@ -485,69 +548,12 @@ export function ChatPanel({
             />
             <PromptInputFooter>
               <PromptInputTools>
-                {showArtifactToggle && onToggleArtifactPanel ? (
-                  <Button
-                    type="button"
-                    variant={isArtifactPanelOpen ? "secondary" : "ghost"}
-                    size="sm"
-                    onClick={onToggleArtifactPanel}
-                    aria-label="Toggle artifacts panel"
-                    aria-pressed={isArtifactPanelOpen}
-                    className="h-8 shrink-0 gap-1.5 px-2 text-xs"
-                  >
-                    <FileTextIcon size={14} weight="bold" />
-                    <span className="hidden sm:inline">Artifacts</span>
-                  </Button>
-                ) : null}
-                {/*
-                 * Model picker. Mounted left of the grounding toggles
-                 * so the heaviest UX decision (which LLM provider) sits
-                 * before the lighter toggles. Hidden in read-only
-                 * surfaces (archived repository) because the user
-                 * cannot send a message anyway. Also hidden when the
-                 * caller did not wire `setSelectedModel` — that's the
-                 * signal a unit-test / headless render is using
-                 * `ChatPanel` without picker state.
-                 */}
-                {!isReadOnly && setSelectedModel ? (
-                  <PromptInputModelPicker
-                    value={
-                      selectedProvider && selectedModelName
-                        ? { provider: selectedProvider, modelName: selectedModelName }
-                        : null
-                    }
-                    onChange={setSelectedModel}
-                    threadLockedProvider={threadLockedProvider}
-                    capability={modelPickerCapability}
-                    preferenceScope={modelPreferenceScope}
-                    getDisabledReason={(entry) =>
-                      premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
-                    }
-                  />
-                ) : null}
-                {!isReadOnly && setSelectedReasoningEffort ? (
-                  <PromptInputReasoningPicker
-                    value={selectedReasoningEffort}
-                    onChange={setSelectedReasoningEffort}
-                    provider={selectedProvider ?? undefined}
-                    modelName={selectedModelName ?? undefined}
-                    preferenceScope={modelPreferenceScope}
-                    disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
-                    disabledReasoningEffortMessage={highReasoningDisabledReason}
-                  />
-                ) : null}
-                {composerControls}
-                {showGroundingToggles && chatMode === "discuss" ? (
-                  <GroundingToggleBar
-                    groundLibrary={groundLibrary}
-                    groundSandbox={groundSandbox}
-                    setGroundLibrary={setGroundLibrary}
-                    setGroundSandbox={setGroundSandbox}
-                    grounding={effectiveGrounding}
-                    onOpenGenerateSystemDesign={onOpenGenerateSystemDesign}
-                    generateDisabledReason={generateSystemDesignDisabledReason}
-                  />
-                ) : null}
+                {composerToolItems.map((item, index) => (
+                  <Fragment key={index}>
+                    {index > 0 ? <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" /> : null}
+                    {item}
+                  </Fragment>
+                ))}
               </PromptInputTools>
               {canCancel && !isReadOnly ? (
                 /*

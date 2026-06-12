@@ -235,21 +235,21 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
             threadLockedProvider={capabilities.lockedProvider}
             grounding={undefined}
             showGroundingToggles={false}
-            composerControls={
-              <>
-                <RepolessSingleTurnToggle
-                  value={agentProfileValue}
-                  resetPending={capabilities.singleTurnResetPending}
-                  disabled={capabilities.isLoading}
-                  onSave={handleSaveAgentProfile}
-                />
-                <RepolessAgentProfileBar
-                  value={agentProfileValue}
-                  disabled={capabilities.isLoading}
-                  onSave={handleSaveAgentProfile}
-                />
-              </>
-            }
+            composerControls={[
+              <RepolessSingleTurnToggle
+                key="single-turn"
+                value={agentProfileValue}
+                resetPending={capabilities.singleTurnResetPending}
+                disabled={capabilities.isLoading}
+                onSave={handleSaveAgentProfile}
+              />,
+              <RepolessAgentProfileBar
+                key="agent-profile"
+                value={agentProfileValue}
+                disabled={capabilities.isLoading}
+                onSave={handleSaveAgentProfile}
+              />,
+            ]}
             isSending={isSending}
             onSendMessage={handleSendMessage}
             sendDisabledReason={

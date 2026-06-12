@@ -68,17 +68,21 @@ export function RepolessAgentProfileBar({
     <div className="flex min-w-0 items-center">
       <Button
         type="button"
-        variant={hasProfile ? "secondary" : "outline"}
+        variant="ghost"
         size="xs"
         disabled={disabled}
         onClick={() => setOpen(true)}
         data-testid="repoless-agent-profile-button"
-        className="min-w-0 justify-start gap-2 px-2"
+        className={cn(
+          "h-8 min-w-0 justify-start gap-1.5 border-none bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
+          "hover:bg-accent hover:text-foreground",
+          hasProfile && "text-foreground",
+        )}
         title={statusText}
       >
         <RobotIcon weight={hasProfile ? "fill" : "regular"} />
         <span className="hidden min-w-0 truncate sm:inline">
-          <span className="text-foreground">Agent Profile</span>
+          <span>Agent</span>
           {hasProfile && (
             <span className="ml-1.5 text-muted-foreground" aria-hidden="true">
               {statusText}
@@ -176,9 +180,9 @@ export function RepolessSingleTurnToggle({
               aria-pressed={isOn}
               data-testid="repoless-single-turn-toggle"
               className={cn(
-                "h-7 w-7 shrink-0",
-                isOn && "border-primary/35 bg-primary/10 text-primary hover:bg-primary/15",
-                resetPending && "border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/15",
+                "h-8 w-8 shrink-0 border-none bg-transparent text-muted-foreground shadow-none hover:bg-accent hover:text-foreground",
+                isOn && "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary",
+                resetPending && "bg-amber-500/10 text-amber-700 hover:bg-amber-500/15 dark:text-amber-400",
               )}
               onClick={() => void handleToggle()}
             >

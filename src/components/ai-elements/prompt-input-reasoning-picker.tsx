@@ -185,11 +185,10 @@ export function PromptInputReasoningPicker({
                 onPointerLeave={closeTooltip}
                 onPointerDown={closeTooltip}
                 className={cn(
-                  "h-8 min-w-24 justify-start gap-1.5 rounded-none border border-muted-foreground/65 bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
-                  "hover:border-muted-foreground hover:bg-transparent hover:text-foreground",
-                  "focus-visible:border-ring focus-visible:bg-transparent focus-visible:text-foreground",
-                  "aria-expanded:border-muted-foreground aria-expanded:bg-transparent aria-expanded:text-foreground",
-                  "[&>svg:last-child]:hidden",
+                  "h-8 min-w-24 justify-start gap-1.5 rounded-none border-none bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
+                  "hover:bg-accent hover:text-foreground",
+                  "focus-visible:bg-transparent focus-visible:text-foreground",
+                  "aria-expanded:bg-accent aria-expanded:text-foreground",
                 )}
               >
                 <div className="flex size-4 shrink-0 items-center justify-center self-center text-current">

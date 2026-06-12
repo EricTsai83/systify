@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe("RepolessAgentProfileBar", () => {
-  test("renders Agent Profile button without advertising Single-turn by default", () => {
+  test("renders Agent button without advertising Single-turn by default", () => {
     render(
       <RepolessAgentProfileBar
         value={{ singleTurnEnabled: false, agentRole: "", agentInstructions: "" }}
@@ -21,7 +21,7 @@ describe("RepolessAgentProfileBar", () => {
     expect(screen.queryByText("Single-turn on")).not.toBeInTheDocument();
   });
 
-  test("does not show Single-turn controls inside the Agent Profile dialog", () => {
+  test("does not show Single-turn controls inside the Agent dialog", () => {
     render(
       <RepolessAgentProfileBar
         value={{ singleTurnEnabled: false, agentRole: "", agentInstructions: "" }}
@@ -42,8 +42,9 @@ describe("RepolessAgentProfileBar", () => {
       />,
     );
 
-    expect(screen.getByTestId("repoless-agent-profile-button")).toHaveTextContent("Agent Profile");
+    expect(screen.getByTestId("repoless-agent-profile-button")).toHaveTextContent("Agent");
     expect(screen.getByTestId("repoless-agent-profile-button")).toHaveTextContent("Configured");
+    expect(screen.getByTestId("repoless-agent-profile-button")).not.toHaveTextContent("Profile");
     expect(screen.queryByText("Translation agent")).not.toBeInTheDocument();
   });
 
@@ -70,7 +71,7 @@ describe("RepolessAgentProfileBar", () => {
     });
   });
 
-  test("does not show Single-turn state on the Agent Profile button", () => {
+  test("does not show Single-turn state on the Agent button", () => {
     render(
       <RepolessAgentProfileBar
         value={{ singleTurnEnabled: true, agentRole: "Translation agent", agentInstructions: "" }}

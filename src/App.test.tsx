@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type React from "react";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ThreadId } from "@/lib/types";
 import { App } from "./App";
@@ -205,8 +205,10 @@ describe("App auth token failures", () => {
     const router = renderWithAuth(useAuth, ["/chat/thread_1"]);
 
     expect(await screen.findByText("chat page")).toBeInTheDocument();
-    expect(repolessShellMock.mountCount).toBe(1);
-    expect(repolessShellMock.lastThreadId).toBe("thread_1");
+    await waitFor(() => {
+      expect(repolessShellMock.mountCount).toBe(1);
+      expect(repolessShellMock.lastThreadId).toBe("thread_1");
+    });
 
     await act(async () => {
       await router.navigate("/chat");
