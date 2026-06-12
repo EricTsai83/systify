@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe("RepolessAgentProfileBar", () => {
-  test("renders Single-turn toggle and Agent Profile button", () => {
+  test("renders Agent Profile button without advertising Single-turn by default", () => {
     render(
       <RepolessAgentProfileBar
         value={{ singleTurnEnabled: false, agentRole: "", agentInstructions: "" }}
@@ -18,8 +18,22 @@ describe("RepolessAgentProfileBar", () => {
       />,
     );
 
-    expect(screen.getByTestId("repoless-single-turn-toggle")).toBeInTheDocument();
     expect(screen.getByTestId("repoless-agent-profile-button")).toBeInTheDocument();
+    expect(screen.queryByText("Single-turn on")).not.toBeInTheDocument();
+  });
+
+  test("shows Single-turn toggle inside the Agent Profile dialog", () => {
+    render(
+      <RepolessAgentProfileBar
+        value={{ singleTurnEnabled: false, agentRole: "", agentInstructions: "" }}
+        resetPending={false}
+        onSave={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("repoless-agent-profile-button"));
+
+    expect(screen.getByTestId("repoless-single-turn-toggle")).toBeInTheDocument();
   });
 
   test("saves Agent Profile edits from the dialog", async () => {
@@ -55,7 +69,8 @@ describe("RepolessAgentProfileBar", () => {
       />,
     );
 
-    expect(screen.getByText("Clearing previous messages…")).toBeInTheDocument();
+    expect(screen.getByText("Clearing previous messages...")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("repoless-agent-profile-button"));
     expect(screen.getByTestId("repoless-single-turn-toggle")).toBeDisabled();
   });
 });
