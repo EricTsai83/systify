@@ -910,6 +910,44 @@ export async function reserveUserUsageBudget(
   return { reserved: true, periodKey: period.periodKey };
 }
 
+export async function assertUserUsageBudgetAvailable(
+  ctx: MutationCtx,
+  args: {
+    ownerTokenIdentifier: string;
+    feature: UsageFeature;
+    estimatedCostUsd: number;
+    occurredAtMs: number;
+  },
+): Promise<void> {
+  const estimatedCostUsd = positiveFiniteOrZero(args.estimatedCostUsd);
+  if (estimatedCostUsd <= 0) {
+    return;
+  }
+
+  const profile = await getViewerUsageProfile(ctx, args.ownerTokenIdentifier);
+  if (profile.budgetUsd === null) {
+    return;
+  }
+
+  const period = getUsagePeriodForMs(args.occurredAtMs, profile);
+  const [budgetPeriod, periodUsage] = await Promise.all([
+    getBudgetPeriod(ctx, args.ownerTokenIdentifier, period.periodKey),
+    aggregateCyclePeriod(ctx, args.ownerTokenIdentifier, period.periodKey),
+  ]);
+  const spentUsd = Math.max(budgetPeriod?.spentUsd ?? 0, periodUsage.costUsd);
+  const reservedUsd = budgetPeriod?.reservedUsd ?? 0;
+
+  if (profile.hardCapEnabled && spentUsd + reservedUsd + estimatedCostUsd > profile.budgetUsd) {
+    throwUsageBudgetExceeded({
+      period,
+      budgetUsd: profile.budgetUsd,
+      spentUsd,
+      reservedUsd,
+      estimatedCostUsd,
+    });
+  }
+}
+
 export async function recordUserUsageEvent(
   ctx: MutationCtx,
   args: {

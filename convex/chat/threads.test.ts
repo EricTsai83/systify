@@ -286,6 +286,60 @@ describe("repoless Agent Profile", () => {
     expect(rows.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
   });
 
+  test("single-turn send preserves previous messages when usage budget blocks the turn", async () => {
+    const ownerTokenIdentifier = "user|single-turn-budget-block";
+    const t = createTestConvex();
+    await seedInternalAccess(t, ownerTokenIdentifier);
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const { _id: threadId } = await viewer.mutation(api.chat.threads.createThread, {});
+    await t.run(async (ctx) => {
+      await ctx.db.patch(threadId, { singleTurnEnabled: true });
+      await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "discuss",
+        content: "Previous question",
+      });
+      await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "assistant",
+        status: "completed",
+        mode: "discuss",
+        content: "Previous answer",
+      });
+    });
+    await viewer.mutation(api.lib.userCost.updateViewerUsageProfile, {
+      cycleAnchorDay: 1,
+      timeZone: "UTC",
+      budgetUsd: 0.01,
+      hardCapEnabled: true,
+    });
+
+    await expect(
+      viewer.mutation(api.chat.send.sendMessage, {
+        threadId,
+        content: "Next question",
+        mode: "discuss",
+      }),
+    ).rejects.toThrow("Usage budget reached");
+
+    const rows = await t.run(async (ctx) => ({
+      messages: await ctx.db
+        .query("messages")
+        .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
+        .order("asc")
+        .collect(),
+      jobs: await ctx.db.query("jobs").take(10),
+      thread: await ctx.db.get(threadId),
+    }));
+    expect(rows.messages.map((message) => message.content)).toEqual(["Previous question", "Previous answer"]);
+    expect(rows.jobs).toHaveLength(0);
+    expect(rows.thread?.singleTurnResetPending).toBeUndefined();
+  });
+
   test("single-turn send schedules background reset when previous messages exceed one pass", async () => {
     await withPausedConvexScheduler(async () => {
       const ownerTokenIdentifier = "user|single-turn-send-background-reset";

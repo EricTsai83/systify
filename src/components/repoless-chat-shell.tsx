@@ -24,6 +24,13 @@ import { DEMO_MODE_COPY } from "@/lib/demo-content";
 import { toUserErrorMessage } from "@/lib/errors";
 import { DEFAULT_AUTHENTICATED_PATH, modeAwareThreadPath, repolessThreadPath, repositoryPath } from "@/route-paths";
 
+const DEFAULT_REPOLESS_AGENT_PROFILE: RepolessAgentProfileValue = {
+  agentEnabled: false,
+  singleTurnEnabled: false,
+  agentRole: "",
+  agentInstructions: "",
+};
+
 /**
  * Shell for the repoless chat surface mounted at `/chat` and
  * `/chat/:threadId`. A repoless thread structurally cannot satisfy
@@ -51,12 +58,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
 
   const [threadToArchive, setThreadToArchive] = useState<ThreadId | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [draftAgentProfile, setDraftAgentProfile] = useState<RepolessAgentProfileValue>({
-    agentEnabled: false,
-    singleTurnEnabled: false,
-    agentRole: "",
-    agentInstructions: "",
-  });
+  const [draftAgentProfile, setDraftAgentProfile] = useState<RepolessAgentProfileValue>(DEFAULT_REPOLESS_AGENT_PROFILE);
 
   const chatMode: ChatMode = "discuss";
 
@@ -74,6 +76,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
 
   const onAfterCreateThread = useCallback(
     (threadId: ThreadId) => {
+      setDraftAgentProfile(DEFAULT_REPOLESS_AGENT_PROFILE);
       void navigate(repolessThreadPath(threadId), { replace: true });
     },
     [navigate],
@@ -162,6 +165,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
   );
 
   const handleRequestNewThread = useCallback(() => {
+    setDraftAgentProfile(DEFAULT_REPOLESS_AGENT_PROFILE);
     void navigate(DEFAULT_AUTHENTICATED_PATH);
   }, [navigate]);
 

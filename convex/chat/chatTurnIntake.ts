@@ -20,7 +20,11 @@ import {
 } from "../lib/rateLimit";
 import { requireActiveRepositoryForViewer } from "../lib/repositoryAccess";
 import { NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
-import { CHAT_REPLY_BUDGET_ESTIMATE_USD, reserveUserUsageBudget } from "../lib/userCost";
+import {
+  CHAT_REPLY_BUDGET_ESTIMATE_USD,
+  assertUserUsageBudgetAvailable,
+  reserveUserUsageBudget,
+} from "../lib/userCost";
 import { loadViewerModelPreferences } from "../lib/userPreferences";
 import { recordThreadActivityInHistory, recordThreadCreatedInHistory } from "./historyState";
 import { requireActiveOwnedThread } from "./threadAccess";
@@ -497,6 +501,19 @@ export async function startChatTurnInExistingThread(
       getLeaseRetryAfterMs(activeJob.leaseExpiresAt, now),
     );
   }
+
+  await assertChatTurnBudgetsAndRateLimits(ctx, {
+    ownerTokenIdentifier: identity.tokenIdentifier,
+    repositoryId: turnPlan.repositoryId,
+    groundSandbox: turnPlan.groundSandbox,
+  });
+  await assertUserUsageBudgetAvailable(ctx, {
+    ownerTokenIdentifier: identity.tokenIdentifier,
+    feature: "chat",
+    estimatedCostUsd: CHAT_REPLY_BUDGET_ESTIMATE_USD,
+    occurredAtMs: now,
+  });
+
   if (thread.singleTurnEnabled === true) {
     if (thread.repositoryId !== undefined) {
       throw new Error("Single-turn is only supported for repoless chat threads.");
@@ -522,11 +539,6 @@ export async function startChatTurnInExistingThread(
     await ctx.db.patch(args.threadId, { lastAssistantMessageAt: undefined });
   }
 
-  await assertChatTurnBudgetsAndRateLimits(ctx, {
-    ownerTokenIdentifier: identity.tokenIdentifier,
-    repositoryId: turnPlan.repositoryId,
-    groundSandbox: turnPlan.groundSandbox,
-  });
   const sandboxSessionId = await ensureSandboxSessionForTurn(ctx, {
     threadId: args.threadId,
     groundSandbox: turnPlan.groundSandbox,
