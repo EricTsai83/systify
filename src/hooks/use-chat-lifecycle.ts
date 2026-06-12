@@ -32,6 +32,7 @@ export function useChatLifecycle({
   newThreadTitle,
   newThreadArtifactContext,
   newThreadSingleTurnEnabled,
+  newThreadAgentEnabled,
   newThreadAgentRole,
   newThreadAgentInstructions,
   clearChatInput,
@@ -79,6 +80,7 @@ export function useChatLifecycle({
   newThreadTitle?: string;
   newThreadArtifactContext?: ArtifactId[];
   newThreadSingleTurnEnabled?: boolean;
+  newThreadAgentEnabled?: boolean;
   newThreadAgentRole?: string;
   newThreadAgentInstructions?: string;
   clearChatInput: () => void;
@@ -153,6 +155,7 @@ export function useChatLifecycle({
                   ...(newThreadSingleTurnEnabled !== undefined
                     ? { singleTurnEnabled: newThreadSingleTurnEnabled }
                     : {}),
+                  ...(newThreadAgentEnabled !== undefined ? { agentEnabled: newThreadAgentEnabled } : {}),
                   ...(newThreadAgentRole !== undefined ? { agentRole: newThreadAgentRole } : {}),
                   ...(newThreadAgentInstructions !== undefined
                     ? { agentInstructions: newThreadAgentInstructions }
@@ -193,6 +196,7 @@ export function useChatLifecycle({
         newThreadTitle,
         newThreadArtifactContext,
         newThreadSingleTurnEnabled,
+        newThreadAgentEnabled,
         newThreadAgentRole,
         newThreadAgentInstructions,
         clearChatInput,

@@ -3,6 +3,7 @@ import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { getDefaultThreadMode, type ChatMode } from "../../convex/lib/chatMode";
 import type { ChatModeResolution } from "../../convex/lib/chatEligibility";
+import { isRepolessAgentEnabled } from "@/lib/repoless-agent";
 import type { LlmProvider, RepositoryId, SandboxModeStatus, ThreadId } from "@/lib/types";
 
 type ChatModeVerdicts = ChatModeResolution["modes"];
@@ -81,6 +82,7 @@ export interface ThreadCapabilities {
   defaultGroundSandbox: boolean;
   singleTurnEnabled: boolean;
   singleTurnResetPending: boolean;
+  agentEnabled: boolean;
   agentRole: string | null;
   agentInstructions: string | null;
   /**
@@ -127,6 +129,7 @@ const NO_THREAD_CAPABILITIES: ThreadCapabilities = {
   defaultGroundSandbox: false,
   singleTurnEnabled: false,
   singleTurnResetPending: false,
+  agentEnabled: false,
   agentRole: null,
   agentInstructions: null,
   lockedProvider: null,
@@ -197,6 +200,7 @@ export function useThreadCapabilities(threadId: ThreadId | null): ThreadCapabili
     defaultGroundSandbox: ctx.thread.defaultGroundSandbox ?? false,
     singleTurnEnabled: ctx.thread.singleTurnEnabled ?? false,
     singleTurnResetPending: ctx.thread.singleTurnResetPending ?? false,
+    agentEnabled: isRepolessAgentEnabled(ctx.thread),
     agentRole: ctx.thread.agentRole ?? null,
     agentInstructions: ctx.thread.agentInstructions ?? null,
     lockedProvider: ctx.thread.lockedProvider ?? null,

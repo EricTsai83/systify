@@ -37,6 +37,13 @@ describe("RepolessChatsRail", () => {
         lastMessageAt: 200,
       }),
       makeThread({
+        _id: "thread_disabled_agent" as Id<"threads">,
+        title: "Former agent",
+        agentEnabled: false,
+        agentRole: "Former agent",
+        lastMessageAt: 150,
+      }),
+      makeThread({
         _id: "thread_regular" as Id<"threads">,
         title: "General planning",
         lastMessageAt: 100,
@@ -59,7 +66,9 @@ describe("RepolessChatsRail", () => {
     expect(within(agentSection).getByText("Translation agent")).toBeInTheDocument();
     expect(within(agentSection).queryByLabelText("Single-turn")).not.toBeInTheDocument();
     expect(within(agentSection).queryByText("General planning")).not.toBeInTheDocument();
+    expect(within(agentSection).queryByText("Former agent")).not.toBeInTheDocument();
 
+    expect(within(regularSection).getByText("Former agent")).toBeInTheDocument();
     expect(within(regularSection).getByText("General planning")).toBeInTheDocument();
     expect(within(regularSection).queryByText("Translation agent")).not.toBeInTheDocument();
   });

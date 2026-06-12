@@ -122,6 +122,7 @@ describe("repoless Agent Profile", () => {
 
     await viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
       threadId,
+      agentEnabled: true,
       singleTurnEnabled: true,
       agentRole: "  Translation agent  ",
       agentInstructions: "  Translate Chinese into English.  ",
@@ -136,6 +137,7 @@ describe("repoless Agent Profile", () => {
 
     await viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
       threadId,
+      agentEnabled: true,
       singleTurnEnabled: false,
       agentRole: " ",
       agentInstructions: "\n\t",
@@ -157,6 +159,7 @@ describe("repoless Agent Profile", () => {
     await expect(
       viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
         threadId,
+        agentEnabled: true,
         singleTurnEnabled: true,
         agentRole: "Translation agent",
       }),
@@ -209,6 +212,7 @@ describe("repoless Agent Profile", () => {
 
     await viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
       threadId,
+      agentEnabled: false,
       singleTurnEnabled: true,
     });
 
@@ -349,12 +353,14 @@ describe("repoless Agent Profile", () => {
     await insertThreadMessage(t, { threadId, ownerTokenIdentifier, role: "user", content: "keep me" });
     await viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
       threadId,
+      agentEnabled: false,
       singleTurnEnabled: true,
     });
     await insertThreadMessage(t, { threadId, ownerTokenIdentifier, role: "user", content: "current question" });
 
     await viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
       threadId,
+      agentEnabled: false,
       singleTurnEnabled: false,
     });
 

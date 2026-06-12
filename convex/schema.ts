@@ -820,6 +820,11 @@ export default defineSchema({
      */
     singleTurnResetPending: v.optional(v.boolean()),
     /**
+     * Repoless Agent mode. Missing preserves legacy behavior: threads with
+     * profile text are treated as Agent, otherwise Regular chat.
+     */
+    agentEnabled: v.optional(v.boolean()),
+    /**
      * Repoless Agent Profile fields. Empty values are represented by absent
      * fields so prompt assembly can treat missing and blank identically.
      */

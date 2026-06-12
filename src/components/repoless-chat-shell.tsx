@@ -52,6 +52,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
   const [threadToArchive, setThreadToArchive] = useState<ThreadId | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [draftAgentProfile, setDraftAgentProfile] = useState<RepolessAgentProfileValue>({
+    agentEnabled: false,
     singleTurnEnabled: false,
     agentRole: "",
     agentInstructions: "",
@@ -91,6 +92,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       selectedModelName,
       selectedReasoningEffort,
       newThreadSingleTurnEnabled: urlThreadId === null ? draftAgentProfile.singleTurnEnabled : undefined,
+      newThreadAgentEnabled: urlThreadId === null ? draftAgentProfile.agentEnabled : undefined,
       newThreadAgentRole: urlThreadId === null ? draftAgentProfile.agentRole : undefined,
       newThreadAgentInstructions: urlThreadId === null ? draftAgentProfile.agentInstructions : undefined,
       threadToArchive,
@@ -105,6 +107,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       ? draftAgentProfile
       : {
           singleTurnEnabled: capabilities.singleTurnEnabled,
+          agentEnabled: capabilities.agentEnabled,
           agentRole: capabilities.agentRole ?? "",
           agentInstructions: capabilities.agentInstructions ?? "",
         };
@@ -119,6 +122,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       try {
         await updateAgentProfile({
           threadId: urlThreadId,
+          agentEnabled: next.agentEnabled,
           singleTurnEnabled: next.singleTurnEnabled,
           agentRole: next.agentRole,
           agentInstructions: next.agentInstructions,

@@ -14,9 +14,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { REPOLESS_SINGLE_TURN_TOOLTIP } from "@/components/repoless-single-turn-copy";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { cn } from "@/lib/utils";
 
 export type RepolessAgentProfileValue = {
+  agentEnabled: boolean;
   singleTurnEnabled: boolean;
   agentRole: string;
   agentInstructions: string;
@@ -45,10 +47,7 @@ export function RepolessAgentProfileBar({
     }
   }, [open, value]);
 
-  const role = value.agentRole.trim();
-  const hasInstructions = value.agentInstructions.trim().length > 0;
-  const hasProfile = role.length > 0 || hasInstructions;
-  const statusText = hasProfile ? "Configured" : "Default behavior";
+  const statusText = value.agentEnabled ? "Agent" : "Chat";
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -74,21 +73,13 @@ export function RepolessAgentProfileBar({
         onClick={() => setOpen(true)}
         data-testid="repoless-agent-profile-button"
         className={cn(
-          "h-8 min-w-0 justify-start gap-1.5 border-none bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
-          "hover:bg-accent hover:text-foreground",
-          hasProfile && "text-foreground",
+          "h-8 w-auto min-w-0 max-w-32 justify-start gap-1.5 border-none bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
+          "hover:bg-accent hover:text-foreground focus-visible:bg-transparent focus-visible:text-foreground",
         )}
         title={statusText}
       >
-        <RobotIcon weight={hasProfile ? "fill" : "regular"} />
-        <span className="hidden min-w-0 truncate sm:inline">
-          <span>Agent</span>
-          {hasProfile && (
-            <span className="ml-1.5 text-muted-foreground" aria-hidden="true">
-              {statusText}
-            </span>
-          )}
-        </span>
+        <RobotIcon weight={value.agentEnabled ? "fill" : "regular"} />
+        <span className="hidden min-w-0 truncate sm:inline">{statusText}</span>
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -98,12 +89,35 @@ export function RepolessAgentProfileBar({
             <DialogDescription>Set how this assistant behaves for the current repoless chat.</DialogDescription>
           </DialogHeader>
           <form className="grid gap-5" onSubmit={(event) => void handleSave(event)}>
+            <div className="grid gap-2">
+              <div className="text-sm font-medium">Chat type</div>
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="sm"
+                value={draft.agentEnabled ? "agent" : "regular"}
+                disabled={isSaving}
+                className="w-full"
+                onValueChange={(next) => {
+                  if (next === "agent" || next === "regular") {
+                    setDraft((current) => ({ ...current, agentEnabled: next === "agent" }));
+                  }
+                }}
+              >
+                <ToggleGroupItem value="agent" className="h-8 flex-1 text-xs">
+                  Agent
+                </ToggleGroupItem>
+                <ToggleGroupItem value="regular" className="h-8 flex-1 text-xs">
+                  Regular chat
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </div>
             <label className="grid gap-2 text-sm font-medium">
               <span>Agent name</span>
               <Input
                 value={draft.agentRole}
                 maxLength={AGENT_ROLE_MAX_LENGTH}
-                disabled={isSaving}
+                disabled={isSaving || !draft.agentEnabled}
                 onChange={(event) => setDraft((current) => ({ ...current, agentRole: event.target.value }))}
               />
             </label>
@@ -112,7 +126,7 @@ export function RepolessAgentProfileBar({
               <Textarea
                 value={draft.agentInstructions}
                 maxLength={AGENT_INSTRUCTIONS_MAX_LENGTH}
-                disabled={isSaving}
+                disabled={isSaving || !draft.agentEnabled}
                 className="min-h-36"
                 onChange={(event) => setDraft((current) => ({ ...current, agentInstructions: event.target.value }))}
               />

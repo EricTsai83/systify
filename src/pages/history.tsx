@@ -35,6 +35,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { useStableLoadMoreState } from "@/hooks/use-stable-load-more-state";
 import { formatExpiry } from "@/lib/format-expiry";
 import { formatRelativeTime } from "@/lib/format";
+import { isRepolessAgentEnabled } from "@/lib/repoless-agent";
 import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { modeAwareThreadPath, repolessThreadPath, sharedThreadPath } from "@/route-paths";
 
@@ -73,6 +74,7 @@ type HistoryThread = {
   mode: ThreadMode;
   lastMessageAt: number;
   singleTurnEnabled?: boolean;
+  agentEnabled?: boolean;
   agentRole?: string;
   agentInstructions?: string;
   activeShare: {
@@ -832,7 +834,7 @@ function getThreadModeLabel(thread: HistoryThread, noRepository: boolean): strin
 }
 
 function isAgentModeThread(thread: HistoryThread): boolean {
-  return Boolean(thread.agentRole?.trim()) || Boolean(thread.agentInstructions?.trim());
+  return isRepolessAgentEnabled(thread);
 }
 
 async function copyText(text: string): Promise<boolean> {

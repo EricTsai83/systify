@@ -82,6 +82,14 @@ export function normalizeAgentProfile(args: { agentRole?: string; agentInstructi
   };
 }
 
+export function resolveRepolessAgentEnabled(args: {
+  agentEnabled?: boolean;
+  agentRole?: string;
+  agentInstructions?: string;
+}): boolean {
+  return args.agentEnabled ?? (Boolean(args.agentRole?.trim()) || Boolean(args.agentInstructions?.trim()));
+}
+
 export const listThreads = query({
   args: {
     repositoryId: v.id("repositories"),
@@ -296,6 +304,7 @@ export const getThreadSummary = query({
 export const updateRepolessThreadAgentProfile = mutation({
   args: {
     threadId: v.id("threads"),
+    agentEnabled: v.optional(v.boolean()),
     singleTurnEnabled: v.boolean(),
     agentRole: v.optional(v.string()),
     agentInstructions: v.optional(v.string()),
@@ -309,8 +318,11 @@ export const updateRepolessThreadAgentProfile = mutation({
     }
 
     const profile = normalizeAgentProfile(args);
+    const nextAgentEnabled =
+      args.agentEnabled ?? (profile.agentRole !== undefined || profile.agentInstructions !== undefined);
     const enablingSingleTurn = thread.singleTurnEnabled !== true && args.singleTurnEnabled === true;
     const agentNameChanged = (thread.agentRole ?? undefined) !== profile.agentRole;
+    const agentModeChanged = resolveRepolessAgentEnabled(thread) !== nextAgentEnabled;
     let resetPending = thread.singleTurnResetPending;
     if (enablingSingleTurn) {
       const result = await drainThreadMessageArtifacts(ctx, {
@@ -322,12 +334,18 @@ export const updateRepolessThreadAgentProfile = mutation({
     }
 
     await ctx.db.patch(args.threadId, {
+      agentEnabled: nextAgentEnabled,
       singleTurnEnabled: args.singleTurnEnabled,
       singleTurnResetPending: resetPending,
       agentRole: profile.agentRole,
       agentInstructions: profile.agentInstructions,
       agentUpdatedAt: Date.now(),
-      ...(agentNameChanged ? { title: profile.agentRole ?? NEW_THREAD_DEFAULT_TITLE, userEditedTitle: undefined } : {}),
+      ...(agentNameChanged || agentModeChanged
+        ? {
+            title: nextAgentEnabled ? (profile.agentRole ?? NEW_THREAD_DEFAULT_TITLE) : NEW_THREAD_DEFAULT_TITLE,
+            userEditedTitle: undefined,
+          }
+        : {}),
     });
 
     if (resetPending === true) {
@@ -509,6 +527,7 @@ export const setThreadRepository = mutation({
         mode: nextMode,
         singleTurnEnabled: undefined,
         singleTurnResetPending: undefined,
+        agentEnabled: undefined,
         agentRole: undefined,
         agentInstructions: undefined,
         agentUpdatedAt: undefined,

@@ -250,6 +250,15 @@ describe("HistoryPage", () => {
                 activeShare: null,
               },
               {
+                _id: "thread_no_repo_regular_with_profile",
+                title: "Former agent",
+                mode: "discuss",
+                lastMessageAt: 195,
+                agentEnabled: false,
+                agentRole: "Former agent",
+                activeShare: null,
+              },
+              {
                 _id: "thread_no_repo_agent",
                 title: "Translation agent",
                 mode: "discuss",
@@ -266,6 +275,7 @@ describe("HistoryPage", () => {
     renderHistoryPage();
 
     expect(within(rowForText("General planning")).getByText("Chat")).toBeInTheDocument();
+    expect(within(rowForText("Former agent")).getByText("Chat")).toBeInTheDocument();
     expect(within(rowForText("Translation agent")).getByText("Agent")).toBeInTheDocument();
 
     fireEvent.click(openButtonForRow("Translation agent"));

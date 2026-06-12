@@ -57,6 +57,7 @@ type StartThreadInput = ModelPickerInput &
     mode: ChatMode;
     title?: string;
     artifactContext?: Id<"artifacts">[];
+    agentEnabled?: boolean;
     singleTurnEnabled?: boolean;
     agentRole?: string;
     agentInstructions?: string;
@@ -338,7 +339,10 @@ export async function startChatTurnInNewThread(ctx: MutationCtx, args: StartThre
   const trimmedContent = trimChatMessageContent(args.content);
   const singleTurnEnabled = args.singleTurnEnabled === true;
   const hasAgentProfileArgs =
-    args.singleTurnEnabled !== undefined || args.agentRole !== undefined || args.agentInstructions !== undefined;
+    args.singleTurnEnabled !== undefined ||
+    args.agentEnabled !== undefined ||
+    args.agentRole !== undefined ||
+    args.agentInstructions !== undefined;
   if (repositoryId !== undefined && hasAgentProfileArgs) {
     throw new Error("Single-turn Agent Profile is only supported for repoless chat threads.");
   }
@@ -346,6 +350,8 @@ export async function startChatTurnInNewThread(ctx: MutationCtx, args: StartThre
     agentRole: args.agentRole,
     agentInstructions: args.agentInstructions,
   });
+  const agentEnabled =
+    args.agentEnabled ?? (agentProfile.agentRole !== undefined || agentProfile.agentInstructions !== undefined);
 
   let repository: Doc<"repositories"> | null = null;
   if (repositoryId) {
@@ -385,7 +391,9 @@ export async function startChatTurnInNewThread(ctx: MutationCtx, args: StartThre
   });
 
   const title =
-    repositoryId === undefined && agentProfile.agentRole !== undefined ? agentProfile.agentRole : args.title;
+    repositoryId === undefined && agentEnabled && agentProfile.agentRole !== undefined
+      ? agentProfile.agentRole
+      : args.title;
 
   const threadId = await ctx.db.insert("threads", {
     repositoryId,
@@ -396,9 +404,10 @@ export async function startChatTurnInNewThread(ctx: MutationCtx, args: StartThre
     ...(repositoryId === undefined
       ? {
           singleTurnEnabled,
+          agentEnabled,
           agentRole: agentProfile.agentRole,
           agentInstructions: agentProfile.agentInstructions,
-          ...(agentProfile.agentRole !== undefined || agentProfile.agentInstructions !== undefined
+          ...(agentEnabled || agentProfile.agentRole !== undefined || agentProfile.agentInstructions !== undefined
             ? { agentUpdatedAt: now }
             : {}),
         }

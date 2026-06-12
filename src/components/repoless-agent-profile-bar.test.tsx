@@ -12,7 +12,7 @@ describe("RepolessAgentProfileBar", () => {
   test("renders Agent button without advertising Single-turn by default", () => {
     render(
       <RepolessAgentProfileBar
-        value={{ singleTurnEnabled: false, agentRole: "", agentInstructions: "" }}
+        value={{ agentEnabled: false, singleTurnEnabled: false, agentRole: "", agentInstructions: "" }}
         onSave={vi.fn()}
       />,
     );
@@ -24,7 +24,7 @@ describe("RepolessAgentProfileBar", () => {
   test("does not show Single-turn controls inside the Agent dialog", () => {
     render(
       <RepolessAgentProfileBar
-        value={{ singleTurnEnabled: false, agentRole: "", agentInstructions: "" }}
+        value={{ agentEnabled: false, singleTurnEnabled: false, agentRole: "", agentInstructions: "" }}
         onSave={vi.fn()}
       />,
     );
@@ -37,13 +37,14 @@ describe("RepolessAgentProfileBar", () => {
   test("does not show the Agent name on the header button", () => {
     render(
       <RepolessAgentProfileBar
-        value={{ singleTurnEnabled: false, agentRole: "Translation agent", agentInstructions: "" }}
+        value={{ agentEnabled: true, singleTurnEnabled: false, agentRole: "Translation agent", agentInstructions: "" }}
         onSave={vi.fn()}
       />,
     );
 
     expect(screen.getByTestId("repoless-agent-profile-button")).toHaveTextContent("Agent");
-    expect(screen.getByTestId("repoless-agent-profile-button")).toHaveTextContent("Configured");
+    expect(screen.getByTestId("repoless-agent-profile-button")).not.toHaveClass("text-foreground");
+    expect(screen.getByTestId("repoless-agent-profile-button")).not.toHaveTextContent("Configured");
     expect(screen.getByTestId("repoless-agent-profile-button")).not.toHaveTextContent("Profile");
     expect(screen.queryByText("Translation agent")).not.toBeInTheDocument();
   });
@@ -52,7 +53,7 @@ describe("RepolessAgentProfileBar", () => {
     const onSave = vi.fn();
     render(
       <RepolessAgentProfileBar
-        value={{ singleTurnEnabled: false, agentRole: "", agentInstructions: "" }}
+        value={{ agentEnabled: true, singleTurnEnabled: false, agentRole: "", agentInstructions: "" }}
         onSave={onSave}
       />,
     );
@@ -64,6 +65,7 @@ describe("RepolessAgentProfileBar", () => {
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledWith({
+        agentEnabled: true,
         singleTurnEnabled: false,
         agentRole: "Translation agent",
         agentInstructions: "Translate Chinese into English.",
@@ -74,12 +76,40 @@ describe("RepolessAgentProfileBar", () => {
   test("does not show Single-turn state on the Agent button", () => {
     render(
       <RepolessAgentProfileBar
-        value={{ singleTurnEnabled: true, agentRole: "Translation agent", agentInstructions: "" }}
+        value={{ agentEnabled: true, singleTurnEnabled: true, agentRole: "Translation agent", agentInstructions: "" }}
         onSave={vi.fn()}
       />,
     );
 
     expect(screen.getByTestId("repoless-agent-profile-button")).not.toHaveTextContent("Single-turn");
+  });
+
+  test("can switch an Agent chat to Regular from the dialog", async () => {
+    const onSave = vi.fn();
+    render(
+      <RepolessAgentProfileBar
+        value={{
+          agentEnabled: true,
+          singleTurnEnabled: false,
+          agentRole: "Translation agent",
+          agentInstructions: "Translate Chinese into English.",
+        }}
+        onSave={onSave}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("repoless-agent-profile-button"));
+    fireEvent.click(screen.getByRole("radio", { name: "Regular chat" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalledWith({
+        agentEnabled: false,
+        singleTurnEnabled: false,
+        agentRole: "Translation agent",
+        agentInstructions: "Translate Chinese into English.",
+      });
+    });
   });
 });
 
@@ -88,7 +118,7 @@ describe("RepolessSingleTurnToggle", () => {
     const onSave = vi.fn();
     render(
       <RepolessSingleTurnToggle
-        value={{ singleTurnEnabled: false, agentRole: "Translation agent", agentInstructions: "" }}
+        value={{ agentEnabled: true, singleTurnEnabled: false, agentRole: "Translation agent", agentInstructions: "" }}
         resetPending={false}
         onSave={onSave}
       />,
@@ -98,6 +128,7 @@ describe("RepolessSingleTurnToggle", () => {
 
     await waitFor(() => {
       expect(onSave).toHaveBeenCalledWith({
+        agentEnabled: true,
         singleTurnEnabled: true,
         agentRole: "Translation agent",
         agentInstructions: "",
@@ -108,7 +139,7 @@ describe("RepolessSingleTurnToggle", () => {
   test("shows clearing state and disables Single-turn toggle while reset is pending", () => {
     render(
       <RepolessSingleTurnToggle
-        value={{ singleTurnEnabled: true, agentRole: "Translation agent", agentInstructions: "" }}
+        value={{ agentEnabled: true, singleTurnEnabled: true, agentRole: "Translation agent", agentInstructions: "" }}
         resetPending={true}
         onSave={vi.fn()}
       />,

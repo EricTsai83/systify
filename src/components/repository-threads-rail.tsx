@@ -30,6 +30,7 @@ import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useInlineRename } from "@/hooks/use-inline-rename";
 import { usePrewarmThread } from "@/hooks/use-prewarm-thread";
 import { toUserErrorMessage } from "@/lib/errors";
+import { isRepolessAgentEnabled } from "@/lib/repoless-agent";
 import type { ThreadMode } from "@/route-paths";
 import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -757,7 +758,7 @@ function ThreadRepoBadge({ repository }: { repository: Doc<"repositories"> | und
 }
 
 function isRepolessAgentThread(thread: Doc<"threads">): boolean {
-  return !thread.repositoryId && (Boolean(thread.agentRole?.trim()) || Boolean(thread.agentInstructions?.trim()));
+  return !thread.repositoryId && isRepolessAgentEnabled(thread);
 }
 
 /**

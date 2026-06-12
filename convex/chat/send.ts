@@ -53,6 +53,7 @@ export const sendMessageStartingNewThread = mutation({
      * Repoless-only first-send Agent Profile fields. Existing threads save
      * these settings through `chat.threads.updateRepolessThreadAgentProfile`.
      */
+    agentEnabled: v.optional(v.boolean()),
     singleTurnEnabled: v.optional(v.boolean()),
     agentRole: v.optional(v.string()),
     agentInstructions: v.optional(v.string()),

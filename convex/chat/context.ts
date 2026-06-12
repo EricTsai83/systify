@@ -8,6 +8,7 @@ import type { ReasoningEffort } from "../lib/llmCatalog";
 import type { LlmProvider } from "../lib/llmProvider";
 import { loadViewerCustomization, type UserCustomizationPreferences } from "../lib/userPreferences";
 import type { ExtendedChatMode } from "./prompting";
+import { resolveRepolessAgentEnabled } from "./threads";
 
 export type ReplyContext = {
   ownerTokenIdentifier: string;
@@ -283,8 +284,9 @@ export const getReplyContext = internalQuery({
     // here without a one-off branch.
     const { groundLibrary, groundSandbox } = resolveDiscussGrounding(effectiveMode, userMessage);
     const customization = await loadViewerCustomization(ctx, thread.ownerTokenIdentifier);
-    const agentRole = normalizeOptionalProfileField(thread.agentRole);
-    const agentInstructions = normalizeOptionalProfileField(thread.agentInstructions);
+    const agentProfileEnabled = resolveRepolessAgentEnabled(thread);
+    const agentRole = agentProfileEnabled ? normalizeOptionalProfileField(thread.agentRole) : undefined;
+    const agentInstructions = agentProfileEnabled ? normalizeOptionalProfileField(thread.agentInstructions) : undefined;
 
     // Cross-mode filtering + empty-content filtering happen inside
     // `loadReplyContextMessages` so the helper can over-fetch a bounded

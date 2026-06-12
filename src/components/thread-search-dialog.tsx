@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { filterByQuery } from "@/lib/text-filter";
+import { isRepolessAgentEnabled } from "@/lib/repoless-agent";
 import type { ChatMode, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -146,7 +147,7 @@ export function ThreadSearchDialog({
 
 function formatThreadModeLabel(thread: SearchThread, isRepoless: boolean): string {
   if (isRepoless) {
-    return Boolean(thread.agentRole?.trim()) || Boolean(thread.agentInstructions?.trim()) ? "Agent" : "Chat";
+    return isRepolessAgentEnabled(thread) ? "Agent" : "Chat";
   }
   return thread.mode === "library" ? "Library Ask" : "Discuss";
 }

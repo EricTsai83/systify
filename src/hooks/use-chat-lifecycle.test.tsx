@@ -209,6 +209,7 @@ describe("useChatLifecycle send", () => {
           repositoryId: null,
           chatMode: "discuss",
           newThreadSingleTurnEnabled: true,
+          newThreadAgentEnabled: true,
           newThreadAgentRole: "Translation agent",
           newThreadAgentInstructions: "Translate Chinese into English.",
         }),
@@ -225,6 +226,7 @@ describe("useChatLifecycle send", () => {
       groundLibrary: false,
       groundSandbox: false,
       singleTurnEnabled: true,
+      agentEnabled: true,
       agentRole: "Translation agent",
       agentInstructions: "Translate Chinese into English.",
     });
@@ -238,6 +240,7 @@ describe("useChatLifecycle send", () => {
           repositoryId: null,
           chatMode: "discuss",
           newThreadSingleTurnEnabled: true,
+          newThreadAgentEnabled: true,
           newThreadAgentRole: "Translation agent",
           newThreadAgentInstructions: "Translate Chinese into English.",
         }),

@@ -249,6 +249,7 @@ describe("chat history ordering", () => {
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
     await viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
       threadId,
+      agentEnabled: true,
       singleTurnEnabled: true,
     });
     const userMessageId = await t.run(async (ctx) => {
