@@ -113,7 +113,9 @@ describe("RepolessSingleTurnToggle", () => {
       />,
     );
 
-    expect(screen.getByTestId("repoless-single-turn-toggle")).toHaveAttribute("title", "Clearing previous messages...");
-    expect(screen.getByTestId("repoless-single-turn-toggle")).toBeDisabled();
+    const toggle = screen.getByTestId("repoless-single-turn-toggle");
+    expect(toggle).toHaveAccessibleName("Single-turn is clearing previous messages");
+    expect(toggle).not.toHaveAttribute("title");
+    expect(toggle).toBeDisabled();
   });
 });

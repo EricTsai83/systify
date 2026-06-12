@@ -8,6 +8,7 @@ import {
   PlusIcon,
   PushPinSimpleIcon,
   PushPinSimpleSlashIcon,
+  RepeatOnceIcon,
   ArchiveIcon,
   RobotIcon,
 } from "@phosphor-icons/react";
@@ -16,6 +17,7 @@ import { api } from "../../convex/_generated/api";
 import { MAX_RENAME_TITLE_LENGTH } from "../../convex/lib/threadDefaults";
 import { Button } from "@/components/ui/button";
 import { ButtonStateText } from "@/components/ui/button-state-text";
+import { REPOLESS_SINGLE_TURN_TOOLTIP } from "@/components/repoless-single-turn-copy";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -742,8 +744,13 @@ function RepolessThreadModeBadge({ thread }: { thread: Doc<"threads"> }) {
         <RobotIcon size={10} weight="bold" className="shrink-0" />
         <span>Agent Mode</span>
         {thread.singleTurnEnabled ? (
-          <span className="border border-primary/30 px-1 py-0.5 text-[9px] leading-none text-primary/80">
-            Single-turn
+          <span
+            className="inline-flex h-4 w-4 items-center justify-center border border-primary/30 text-primary/80"
+            title={REPOLESS_SINGLE_TURN_TOOLTIP}
+            aria-label="Single-turn"
+            data-testid="repoless-thread-single-turn-icon"
+          >
+            <RepeatOnceIcon size={10} weight="bold" aria-hidden="true" />
           </span>
         ) : null}
       </p>

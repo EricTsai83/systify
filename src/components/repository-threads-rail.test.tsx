@@ -56,7 +56,8 @@ describe("RepolessChatsRail", () => {
     expect(screen.getAllByText("Agent Mode").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText("Thread Mode").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("Translation agent")).toBeInTheDocument();
-    expect(screen.getByText("Single-turn")).toBeInTheDocument();
+    expect(screen.queryByText("Single-turn")).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("repoless-thread-single-turn-icon").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("General planning")).toBeInTheDocument();
   });
 });

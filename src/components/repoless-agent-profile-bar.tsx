@@ -12,6 +12,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { REPOLESS_SINGLE_TURN_TOOLTIP } from "@/components/repoless-single-turn-copy";
 import { cn } from "@/lib/utils";
 
 export type RepolessAgentProfileValue = {
@@ -22,6 +24,7 @@ export type RepolessAgentProfileValue = {
 
 const AGENT_ROLE_MAX_LENGTH = 120;
 const AGENT_INSTRUCTIONS_MAX_LENGTH = 3000;
+const SINGLE_TURN_TOOLTIP_DELAY_MS = 700;
 
 export function RepolessAgentProfileBar({
   value,
@@ -141,7 +144,11 @@ export function RepolessSingleTurnToggle({
   const [isSaving, setIsSaving] = useState(false);
   const isOn = value.singleTurnEnabled;
   const isDisabled = disabled || resetPending || isSaving;
-  const title = resetPending ? "Clearing previous messages..." : isOn ? "Single-turn is on" : "Turn on Single-turn";
+  const ariaLabel = resetPending
+    ? "Single-turn is clearing previous messages"
+    : isOn
+      ? "Turn off Single-turn"
+      : "Turn on Single-turn";
 
   async function handleToggle() {
     if (isDisabled) return;
@@ -156,23 +163,33 @@ export function RepolessSingleTurnToggle({
   }
 
   return (
-    <Button
-      type="button"
-      variant={isOn ? "secondary" : "ghost"}
-      size="icon-xs"
-      disabled={isDisabled}
-      aria-label={isOn ? "Turn off Single-turn" : "Turn on Single-turn"}
-      aria-pressed={isOn}
-      title={title}
-      data-testid="repoless-single-turn-toggle"
-      className={cn(
-        "h-7 w-7 shrink-0",
-        isOn && "border-primary/35 bg-primary/10 text-primary hover:bg-primary/15",
-        resetPending && "border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/15",
-      )}
-      onClick={() => void handleToggle()}
-    >
-      <RepeatOnceIcon size={13} weight={isOn ? "bold" : "regular"} />
-    </Button>
+    <TooltipProvider delayDuration={SINGLE_TURN_TOOLTIP_DELAY_MS} skipDelayDuration={0}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex shrink-0">
+            <Button
+              type="button"
+              variant={isOn ? "secondary" : "ghost"}
+              size="icon-xs"
+              disabled={isDisabled}
+              aria-label={ariaLabel}
+              aria-pressed={isOn}
+              data-testid="repoless-single-turn-toggle"
+              className={cn(
+                "h-7 w-7 shrink-0",
+                isOn && "border-primary/35 bg-primary/10 text-primary hover:bg-primary/15",
+                resetPending && "border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/15",
+              )}
+              onClick={() => void handleToggle()}
+            >
+              <RepeatOnceIcon size={13} weight={isOn ? "bold" : "regular"} />
+            </Button>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="max-w-72">
+          {REPOLESS_SINGLE_TURN_TOOLTIP}
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
