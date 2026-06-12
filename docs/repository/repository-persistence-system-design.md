@@ -153,14 +153,14 @@ ordered effects:
    This is what keeps the first-paint cache aligned with the
    reconciled state across every subsequent mount, including after
    DB-wins reconciliation, fallback seeding, and URL → state sync.
-3. **DB-wins reconciliation** (live, not one-shot). Whenever both the
-   owned-repository id set (from `listAllOwnerRepositoryIds`) and
-   `getViewerPreferences` are resolved, if the DB carries a different
-   selection than the local state *and* that repository still exists,
-   the local state is updated to match the DB. No write is issued — the
-   DB is already authoritative. Because the effect re-runs on every
-   change to `viewerPreferences`, a switch from another tab propagates
-   here the moment Convex pushes the row update.
+3. **DB-wins reconciliation** (live, not one-shot). Whenever both
+   `getViewerPreferences` and the bounded candidate-id ownership probe
+   (`listOwnedRepositoryIdsById`) are resolved, if the DB carries a different
+   selection than the local state *and* that repository still exists, the local
+   state is updated to match the DB. No write is issued — the DB is already
+   authoritative. Because the effect re-runs on every change to
+   `viewerPreferences`, a switch from another tab propagates here the moment
+   Convex pushes the row update.
 4. **Fallback + seeding.** If the active id is missing or no longer valid,
    pick the most recently accessed repository (from the switcher's 20-row
    recency window) and call `touchRepository` on it. This both promotes
@@ -209,15 +209,13 @@ keyed by id. When the owning repository is deleted, those keys would
 otherwise accumulate in the user's browser indefinitely.
 
 `useStorageGC` (in `src/hooks/use-storage-gc.ts`) is mounted on the shared
-repository lifecycle mount and sweeps the prefixes against the live id set coming
-from `listAllOwnerRepositoryIds` (the *complete* owned set, capped at
-1000) — not the `listRepositoriesForSwitcher` query that powers the
-sidebar dropdown. The shell wires this up explicitly with an inline
-comment at `src/components/repository-shell.tsx:71-78`: GC needs the full
-owned set so that repositories sitting outside the switcher's 20-row
-recency window aren't mistakenly treated as deleted and have their
-scoped keys garbage-collected. The hook handles three trigger paths
-uniformly:
+repository lifecycle mount. It first scans only known id-scoped localStorage
+prefixes, then validates those candidate ids through bounded ownership probes
+(`listOwnedRepositoryIdsById` / `chat.threads.listOwnedThreadIdsById`). This
+keeps the server read set proportional to the browser cache surface rather than
+the viewer's total repository or thread count, while still protecting
+repositories outside the switcher's 20-row recency window from being mistaken as
+deleted. The hook handles three trigger paths uniformly:
 
 - **Initial load.** The first non-null snapshot of the live id set
   garbage-collects any keys left over from a previous session (e.g. the

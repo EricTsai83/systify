@@ -42,6 +42,7 @@ type ThreadShareRepositoryScopeUpdateArgs = {
  */
 const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
 const ARCHIVED_THREAD_BULK_MUTATION_BATCH_SIZE = 10;
+const OWNER_THREAD_ID_PROBE_LIMIT = 200;
 
 export const listThreads = query({
   args: {
@@ -207,29 +208,32 @@ export const listMessagesPaginated = query({
 });
 
 /**
- * All thread ids the viewer owns, capped at 1000. Used by the frontend
- * `useStorageGC` thread-scoped sweep to drop composer-draft localStorage
- * entries (`systify.composer.draft.thread.{tid}`) whose owning thread has
- * been deleted. The cap is intentional — beyond 1000 threads a power user
- * may see drafts on extremely old threads collected as orphans, which is
- * an acceptable trade-off versus paginating the whole table on every
- * subscription tick.
- *
- * The query walks the active-owner last-message index directly; descending
- * order means the freshest 1000 threads always survive the cap.
+ * Bounded ownership probe for thread-scoped client caches. The caller supplies
+ * only ids already present in localStorage, so the read set stays tied to local
+ * cache size rather than total thread history.
  */
-export const listAllOwnerThreadIds = query({
-  args: {},
-  handler: async (ctx) => {
+export const listOwnedThreadIdsById = query({
+  args: {
+    threadIds: v.array(v.string()),
+  },
+  handler: async (ctx, args): Promise<Id<"threads">[]> => {
+    if (args.threadIds.length > OWNER_THREAD_ID_PROBE_LIMIT) {
+      throw new Error(`Too many thread ids to validate. Keep at most ${OWNER_THREAD_ID_PROBE_LIMIT}.`);
+    }
+
     const identity = await requireViewerIdentity(ctx);
-    const rows = await ctx.db
-      .query("threads")
-      .withIndex("by_owner_delete_archive_lastMsg", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
-      )
-      .order("desc")
-      .take(1000);
-    return rows.map((row) => row._id);
+    const uniqueIds = new Set<Id<"threads">>();
+    for (const rawId of args.threadIds) {
+      const threadId = ctx.db.normalizeId("threads", rawId);
+      if (!threadId || uniqueIds.has(threadId)) {
+        continue;
+      }
+      const thread = await ctx.db.get(threadId);
+      if (thread?.ownerTokenIdentifier === identity.tokenIdentifier && thread.deletionRequestedAt === undefined) {
+        uniqueIds.add(threadId);
+      }
+    }
+    return [...uniqueIds];
   },
 });
 

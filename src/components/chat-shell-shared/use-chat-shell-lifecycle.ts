@@ -24,8 +24,6 @@ export function useChatShellLifecycle({
   selectedProvider,
   selectedModelName,
   selectedReasoningEffort,
-  liveRepositoryIds,
-  liveThreadIds,
   threadToArchive,
   setActionError,
   setThreadToArchive,
@@ -50,8 +48,6 @@ export function useChatShellLifecycle({
    * entry's default.
    */
   selectedReasoningEffort?: ReasoningEffort | null;
-  liveRepositoryIds: ReadonlySet<string> | null;
-  liveThreadIds: ReadonlySet<string> | null;
   threadToArchive: ThreadId | null;
   setActionError: (value: string | null) => void;
   setThreadToArchive: (value: ThreadId | null) => void;
@@ -68,7 +64,7 @@ export function useChatShellLifecycle({
   isArchivingThread: boolean;
   handleArchiveThread: () => Promise<void>;
 } {
-  useStorageGC({ liveRepositoryIds, liveThreadIds });
+  useStorageGC();
   const { user, isLoading: isAuthLoading } = useAuth();
   const [lastSettledAuthId, setLastSettledAuthId] = useState<string | null>(user?.id ?? null);
   useEffect(() => {
