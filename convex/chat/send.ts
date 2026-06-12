@@ -46,6 +46,13 @@ export const sendMessageStartingNewThread = mutation({
      * catalog entry's default for this message only.
      */
     reasoningEffort: v.optional(reasoningEffortValidator),
+    /**
+     * Repoless-only first-send Agent Profile fields. Existing threads save
+     * these settings through `chat.threads.updateRepolessThreadAgentProfile`.
+     */
+    singleTurnEnabled: v.optional(v.boolean()),
+    agentRole: v.optional(v.string()),
+    agentInstructions: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return await startChatTurnInNewThread(ctx, args);

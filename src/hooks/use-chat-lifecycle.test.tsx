@@ -202,6 +202,62 @@ describe("useChatLifecycle send", () => {
     expect(payload).not.toHaveProperty("artifactContext");
   });
 
+  test("repoless first send forwards draft Single-turn Agent Profile fields", async () => {
+    const { result } = renderHook(() =>
+      useChatLifecycle(
+        baseArgs({
+          repositoryId: null,
+          chatMode: "discuss",
+          newThreadSingleTurnEnabled: true,
+          newThreadAgentRole: "Translation agent",
+          newThreadAgentInstructions: "Translate Chinese into English.",
+        }),
+      ),
+    );
+
+    await act(async () => {
+      await result.current.handleSendMessage(submitEvent());
+    });
+
+    expect(sendMessageStartingNewThreadMock).toHaveBeenCalledWith({
+      content: "question",
+      mode: "discuss",
+      groundLibrary: false,
+      groundSandbox: false,
+      singleTurnEnabled: true,
+      agentRole: "Translation agent",
+      agentInstructions: "Translate Chinese into English.",
+    });
+  });
+
+  test("existing thread send does not forward draft Single-turn Agent Profile fields", async () => {
+    const { result } = renderHook(() =>
+      useChatLifecycle(
+        baseArgs({
+          selectedThreadId: threadId,
+          repositoryId: null,
+          chatMode: "discuss",
+          newThreadSingleTurnEnabled: true,
+          newThreadAgentRole: "Translation agent",
+          newThreadAgentInstructions: "Translate Chinese into English.",
+        }),
+      ),
+    );
+
+    await act(async () => {
+      await result.current.handleSendMessage(submitEvent());
+    });
+
+    expect(sendMessageMock).toHaveBeenCalledWith({
+      threadId,
+      content: "question",
+      mode: "discuss",
+      groundLibrary: false,
+      groundSandbox: false,
+    });
+    expect(sendMessageStartingNewThreadMock).not.toHaveBeenCalled();
+  });
+
   test("Pending send reentry calls the mutation only once", async () => {
     let resolveStart: (value: typeof startResult) => void = () => {};
     sendMessageStartingNewThreadMock.mockImplementation(

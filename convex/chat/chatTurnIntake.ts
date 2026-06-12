@@ -24,6 +24,7 @@ import { CHAT_REPLY_BUDGET_ESTIMATE_USD, reserveUserUsageBudget } from "../lib/u
 import { loadViewerModelPreferences } from "../lib/userPreferences";
 import { recordThreadActivityInHistory, recordThreadCreatedInHistory } from "./historyState";
 import { requireActiveOwnedThread } from "./threadAccess";
+import { drainThreadMessageArtifacts, normalizeAgentProfile } from "./threads";
 import {
   assertChatTurnModeEligible,
   completeChatTurnPlan,
@@ -56,6 +57,9 @@ type StartThreadInput = ModelPickerInput &
     mode: ChatMode;
     title?: string;
     artifactContext?: Id<"artifacts">[];
+    singleTurnEnabled?: boolean;
+    agentRole?: string;
+    agentInstructions?: string;
   };
 
 type ExistingThreadInput = ModelPickerInput &
@@ -325,6 +329,16 @@ export async function startChatTurnInNewThread(ctx: MutationCtx, args: StartThre
   const modelPreferences = await loadViewerModelPreferences(ctx, identity.tokenIdentifier);
   const repositoryId = args.repositoryId;
   const trimmedContent = trimChatMessageContent(args.content);
+  const singleTurnEnabled = args.singleTurnEnabled === true;
+  const hasAgentProfileArgs =
+    args.singleTurnEnabled !== undefined || args.agentRole !== undefined || args.agentInstructions !== undefined;
+  if (repositoryId !== undefined && hasAgentProfileArgs) {
+    throw new Error("Single-turn Agent Profile is only supported for repoless chat threads.");
+  }
+  const agentProfile = normalizeAgentProfile({
+    agentRole: args.agentRole,
+    agentInstructions: args.agentInstructions,
+  });
 
   let repository: Doc<"repositories"> | null = null;
   if (repositoryId) {
@@ -369,6 +383,16 @@ export async function startChatTurnInNewThread(ctx: MutationCtx, args: StartThre
     title: args.title ?? NEW_THREAD_DEFAULT_TITLE,
     mode: turnPlan.mode,
     lastMessageAt: now,
+    ...(repositoryId === undefined
+      ? {
+          singleTurnEnabled,
+          agentRole: agentProfile.agentRole,
+          agentInstructions: agentProfile.agentInstructions,
+          ...(agentProfile.agentRole !== undefined || agentProfile.agentInstructions !== undefined
+            ? { agentUpdatedAt: now }
+            : {}),
+        }
+      : {}),
     ...(turnPlan.mode === "library" && artifactContext.length > 0 ? { artifactContext } : {}),
     ...(turnPlan.mode === "discuss"
       ? {
@@ -453,6 +477,23 @@ export async function startChatTurnInExistingThread(
       "An assistant reply is already in progress for this thread.",
       getLeaseRetryAfterMs(activeJob.leaseExpiresAt, now),
     );
+  }
+  if (thread.singleTurnEnabled === true) {
+    if (thread.repositoryId !== undefined) {
+      throw new Error("Single-turn is only supported for repoless chat threads.");
+    }
+    if (thread.singleTurnResetPending === true) {
+      throw new Error("Previous messages are still being cleared for this single-turn thread.");
+    }
+    const result = await drainThreadMessageArtifacts(ctx, {
+      threadId: args.threadId,
+      maxMessages: 500,
+      maxStreams: 500,
+    });
+    if (result.messagesRemain || result.streamsRemain || result.streamBudgetExhausted) {
+      throw new Error("Previous messages could not be cleared in one pass. Try again shortly.");
+    }
+    await ctx.db.patch(args.threadId, { lastAssistantMessageAt: undefined });
   }
 
   await assertChatTurnBudgetsAndRateLimits(ctx, {

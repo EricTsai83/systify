@@ -278,6 +278,10 @@ export function buildUserPrompt(
   question: string,
   relevantChunks: Array<{ path: string; summary: string; content: string }>,
 ) {
+  const agentProfileLines = [
+    context.agentRole ? `Role: ${context.agentRole}` : undefined,
+    context.agentInstructions ? `Instructions:\n${context.agentInstructions}` : undefined,
+  ].filter((line): line is string => line !== undefined);
   const customizationLines = [
     context.customization.traits.length > 0
       ? `Preferred traits: ${context.customization.traits.join(", ")}`
@@ -311,6 +315,7 @@ export function buildUserPrompt(
     relevantChunks.length > 0;
 
   return [
+    agentProfileLines.length > 0 ? `Thread agent profile:\n${agentProfileLines.join("\n")}` : undefined,
     context.sourceRepoFullName ? `Repository: ${context.sourceRepoFullName}` : undefined,
     context.repositorySummary ? `Repository summary: ${context.repositorySummary}` : undefined,
     context.readmeSummary ? `README summary: ${context.readmeSummary}` : undefined,

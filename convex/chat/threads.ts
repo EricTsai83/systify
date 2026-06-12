@@ -43,6 +43,44 @@ type ThreadShareRepositoryScopeUpdateArgs = {
 const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
 const ARCHIVED_THREAD_BULK_MUTATION_BATCH_SIZE = 10;
 const OWNER_THREAD_ID_PROBE_LIMIT = 200;
+export const AGENT_ROLE_MAX_LENGTH = 120;
+export const AGENT_INSTRUCTIONS_MAX_LENGTH = 3000;
+const SINGLE_TURN_RESET_MESSAGE_BATCH_SIZE = 200;
+const SINGLE_TURN_RESET_STREAM_BATCH_SIZE = 200;
+
+type ThreadMessageArtifactDrainResult = {
+  messagesRemain: boolean;
+  streamsRemain: boolean;
+  streamBudgetExhausted: boolean;
+};
+
+function normalizeAgentProfileField(value: string | undefined, maxLength: number, label: string): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const normalized = value.trim();
+  if (normalized.length === 0) {
+    return undefined;
+  }
+  if (normalized.length > maxLength) {
+    throw new Error(`${label} must be ${maxLength} characters or fewer.`);
+  }
+  return normalized;
+}
+
+export function normalizeAgentProfile(args: { agentRole?: string; agentInstructions?: string }): {
+  agentRole?: string;
+  agentInstructions?: string;
+} {
+  return {
+    agentRole: normalizeAgentProfileField(args.agentRole, AGENT_ROLE_MAX_LENGTH, "Agent role"),
+    agentInstructions: normalizeAgentProfileField(
+      args.agentInstructions,
+      AGENT_INSTRUCTIONS_MAX_LENGTH,
+      "Agent instructions",
+    ),
+  };
+}
 
 export const listThreads = query({
   args: {
@@ -255,6 +293,78 @@ export const getThreadSummary = query({
   },
 });
 
+export const updateRepolessThreadAgentProfile = mutation({
+  args: {
+    threadId: v.id("threads"),
+    singleTurnEnabled: v.boolean(),
+    agentRole: v.optional(v.string()),
+    agentInstructions: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const { doc: thread } = await requireActiveOwnedThread(ctx, args.threadId, {
+      notFoundMessage: "Thread not found.",
+    });
+    if (thread.repositoryId !== undefined) {
+      throw new Error("Agent Profile is only supported for repoless chat threads.");
+    }
+
+    const profile = normalizeAgentProfile(args);
+    const enablingSingleTurn = thread.singleTurnEnabled !== true && args.singleTurnEnabled === true;
+    let resetPending = thread.singleTurnResetPending;
+    if (enablingSingleTurn) {
+      const result = await drainThreadMessageArtifacts(ctx, {
+        threadId: args.threadId,
+        maxMessages: SINGLE_TURN_RESET_MESSAGE_BATCH_SIZE,
+        maxStreams: SINGLE_TURN_RESET_STREAM_BATCH_SIZE,
+      });
+      resetPending = result.messagesRemain || result.streamsRemain || result.streamBudgetExhausted ? true : undefined;
+    }
+
+    await ctx.db.patch(args.threadId, {
+      singleTurnEnabled: args.singleTurnEnabled,
+      singleTurnResetPending: resetPending,
+      agentRole: profile.agentRole,
+      agentInstructions: profile.agentInstructions,
+      agentUpdatedAt: Date.now(),
+    });
+
+    if (resetPending === true) {
+      await ctx.scheduler.runAfter(0, internal.chat.threads.continueRepolessSingleTurnReset, {
+        threadId: args.threadId,
+      });
+    }
+  },
+});
+
+export const continueRepolessSingleTurnReset = internalMutation({
+  args: {
+    threadId: v.id("threads"),
+  },
+  handler: async (ctx, args) => {
+    const thread = await ctx.db.get(args.threadId);
+    if (!thread || thread.deletionRequestedAt !== undefined || thread.singleTurnResetPending !== true) {
+      return;
+    }
+    if (thread.repositoryId !== undefined || thread.singleTurnEnabled !== true) {
+      await ctx.db.patch(args.threadId, { singleTurnResetPending: undefined });
+      return;
+    }
+
+    const result = await drainThreadMessageArtifacts(ctx, {
+      threadId: args.threadId,
+      maxMessages: SINGLE_TURN_RESET_MESSAGE_BATCH_SIZE,
+      maxStreams: SINGLE_TURN_RESET_STREAM_BATCH_SIZE,
+    });
+    if (result.messagesRemain || result.streamsRemain || result.streamBudgetExhausted) {
+      await ctx.scheduler.runAfter(0, internal.chat.threads.continueRepolessSingleTurnReset, {
+        threadId: args.threadId,
+      });
+      return;
+    }
+    await ctx.db.patch(args.threadId, { singleTurnResetPending: undefined });
+  },
+});
+
 export const createThread = mutation({
   args: {
     repositoryId: v.optional(v.id("repositories")),
@@ -395,6 +505,11 @@ export const setThreadRepository = mutation({
       await ctx.db.patch(args.threadId, {
         repositoryId: args.repositoryId,
         mode: nextMode,
+        singleTurnEnabled: undefined,
+        singleTurnResetPending: undefined,
+        agentRole: undefined,
+        agentInstructions: undefined,
+        agentUpdatedAt: undefined,
         ...(swappedFromRepositoryId ? { artifactContext: undefined } : {}),
       });
       const updatedThread = (await ctx.db.get(args.threadId))!;
@@ -870,6 +985,53 @@ export const deleteThreadContinuation = internalMutation({
   },
 });
 
+export async function drainThreadMessageArtifacts(
+  ctx: MutationCtx,
+  args: {
+    threadId: Id<"threads">;
+    maxMessages: number;
+    maxStreams: number;
+  },
+): Promise<ThreadMessageArtifactDrainResult> {
+  const messages = await ctx.db
+    .query("messages")
+    .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
+    .take(args.maxMessages);
+  for (const message of messages) {
+    await drainMessageToolCallEvents(ctx, message._id);
+    await ctx.db.delete(message._id);
+  }
+
+  if (messages.length === args.maxMessages) {
+    return {
+      messagesRemain: true,
+      streamsRemain: true,
+      streamBudgetExhausted: false,
+    };
+  }
+
+  const streams = await ctx.db
+    .query("messageStreams")
+    .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
+    .take(args.maxStreams);
+
+  let totalChunksProcessed = 0;
+  let streamBudgetExhausted = false;
+  for (const stream of streams) {
+    if (totalChunksProcessed >= MAX_STREAM_CHUNKS_PER_PASS) {
+      streamBudgetExhausted = true;
+      break;
+    }
+    totalChunksProcessed += await deleteMessageStreamState(ctx, stream._id);
+  }
+
+  return {
+    messagesRemain: false,
+    streamsRemain: streams.length === args.maxStreams || streamBudgetExhausted,
+    streamBudgetExhausted,
+  };
+}
+
 async function deleteThreadImpl(ctx: MutationCtx, args: { threadId: Id<"threads"> }): Promise<void> {
   const thread = await ctx.db.get(args.threadId);
   if (!thread) {
@@ -893,20 +1055,13 @@ async function deleteThreadImpl(ctx: MutationCtx, args: { threadId: Id<"threads"
     return;
   }
 
-  const messages = await ctx.db
-    .query("messages")
-    .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
-    .take(500);
-  for (const message of messages) {
-    // Drain orphan tool-call events ahead of deleting the message,
-    // otherwise the live `getMessageToolCallEvents` subscription would
-    // hold rows referencing a now-missing parent. Bounded per-message
-    // (≤ MAX_TOOL_CALL_EVENTS_PER_MESSAGE by construction).
-    await drainMessageToolCallEvents(ctx, message._id);
-    await ctx.db.delete(message._id);
-  }
+  const drainResult = await drainThreadMessageArtifacts(ctx, {
+    threadId: args.threadId,
+    maxMessages: 500,
+    maxStreams: 500,
+  });
 
-  if (messages.length === 500) {
+  if (drainResult.messagesRemain) {
     // Each iteration above can issue up to MAX_TOOL_CALL_EVENTS_PER_MESSAGE
     // event-delete writes plus the message-row delete; 500 messages can
     // exceed Convex's per-mutation write budget. Mirror the
@@ -915,27 +1070,6 @@ async function deleteThreadImpl(ctx: MutationCtx, args: { threadId: Id<"threads"
     // also try to delete streams + the thread row in this mutation.
     await ctx.scheduler.runAfter(0, internal.chat.threads.deleteThreadContinuation, args);
     return;
-  }
-
-  // Drain message streams in this thread, but cap total chunk-row deletions
-  // per invocation. Without a budget, one mutation could try to delete every
-  // chunk across every stream in the thread (e.g. 500 streams * a long
-  // uncompacted tail), which can blow past Convex's per-mutation
-  // read/write limits. Streams we don't get to are picked up by
-  // cleanupOrphanedMessageStreams on the follow-up scheduler tick.
-  const streams = await ctx.db
-    .query("messageStreams")
-    .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
-    .take(500);
-
-  let totalChunksProcessed = 0;
-  let streamBudgetExhausted = false;
-  for (const stream of streams) {
-    if (totalChunksProcessed >= MAX_STREAM_CHUNKS_PER_PASS) {
-      streamBudgetExhausted = true;
-      break;
-    }
-    totalChunksProcessed += await deleteMessageStreamState(ctx, stream._id);
   }
 
   if (thread.repositoryId) {
@@ -947,7 +1081,7 @@ async function deleteThreadImpl(ctx: MutationCtx, args: { threadId: Id<"threads"
 
   await ctx.db.delete(args.threadId);
 
-  if (streamBudgetExhausted || streams.length === 500) {
+  if (drainResult.streamBudgetExhausted || drainResult.streamsRemain) {
     await ctx.scheduler.runAfter(0, internal.chat.threads.cleanupOrphanedMessageStreams, {
       threadId: args.threadId,
     });

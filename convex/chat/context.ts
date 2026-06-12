@@ -57,6 +57,9 @@ export type ReplyContext = {
    * model's default effort.
    */
   reasoningEffort?: ReasoningEffort;
+  agentRole?: string;
+  agentInstructions?: string;
+  singleTurnEnabled: boolean;
   customization: UserCustomizationPreferences;
   repositoryId?: Id<"repositories">;
   repositorySummary?: string;
@@ -300,6 +303,9 @@ export const getReplyContext = internalQuery({
         provider: userMessage.provider,
         modelName: userMessage.modelName,
         reasoningEffort: userMessage.reasoningEffort,
+        agentRole: thread.agentRole,
+        agentInstructions: thread.agentInstructions,
+        singleTurnEnabled: thread.singleTurnEnabled === true,
         customization,
         repositoryId: undefined,
         repositorySummary: undefined,
@@ -381,6 +387,9 @@ export const getReplyContext = internalQuery({
       provider: userMessage.provider,
       modelName: userMessage.modelName,
       reasoningEffort: userMessage.reasoningEffort,
+      agentRole: thread.agentRole,
+      agentInstructions: thread.agentInstructions,
+      singleTurnEnabled: thread.singleTurnEnabled === true,
       customization,
       repositoryId: repository._id,
       repositorySummary: repository.summary,

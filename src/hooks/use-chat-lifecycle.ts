@@ -31,6 +31,9 @@ export function useChatLifecycle({
   selectedReasoningEffort,
   newThreadTitle,
   newThreadArtifactContext,
+  newThreadSingleTurnEnabled,
+  newThreadAgentRole,
+  newThreadAgentInstructions,
   clearChatInput,
   setActionError,
   setThreadToArchive,
@@ -75,6 +78,9 @@ export function useChatLifecycle({
    */
   newThreadTitle?: string;
   newThreadArtifactContext?: ArtifactId[];
+  newThreadSingleTurnEnabled?: boolean;
+  newThreadAgentRole?: string;
+  newThreadAgentInstructions?: string;
   clearChatInput: () => void;
   setActionError: (value: string | null) => void;
   setThreadToArchive: (value: ThreadId | null) => void;
@@ -137,6 +143,18 @@ export function useChatLifecycle({
             chatMode === "library" && newThreadArtifactContext && newThreadArtifactContext.length > 0
               ? { artifactContext: newThreadArtifactContext }
               : {};
+          const agentProfileArgs =
+            repositoryId === null
+              ? {
+                  ...(newThreadSingleTurnEnabled !== undefined
+                    ? { singleTurnEnabled: newThreadSingleTurnEnabled }
+                    : {}),
+                  ...(newThreadAgentRole !== undefined ? { agentRole: newThreadAgentRole } : {}),
+                  ...(newThreadAgentInstructions !== undefined
+                    ? { agentInstructions: newThreadAgentInstructions }
+                    : {}),
+                }
+              : {};
           // Lazy first send. Repoless threads (no `repositoryId`) are
           // legal — the backend creates the thread with `repositoryId:
           // undefined` and the repoless shell navigates to the matching
@@ -147,6 +165,7 @@ export function useChatLifecycle({
             mode: chatMode,
             ...titleArgs,
             ...artifactContextArgs,
+            ...agentProfileArgs,
             ...groundingArgs,
             ...modelArgs,
             ...reasoningArgs,
@@ -169,6 +188,9 @@ export function useChatLifecycle({
         selectedReasoningEffort,
         newThreadTitle,
         newThreadArtifactContext,
+        newThreadSingleTurnEnabled,
+        newThreadAgentRole,
+        newThreadAgentInstructions,
         clearChatInput,
         onAfterCreateThread,
         selectedThreadId,

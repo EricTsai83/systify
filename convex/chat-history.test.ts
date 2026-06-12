@@ -216,6 +216,69 @@ describe("chat history ordering", () => {
       { role: "assistant", mode: "library", content: "library-answer" },
     ]);
   });
+
+  test("getReplyContext for a single-turn thread excludes older deleted messages", async () => {
+    const ownerTokenIdentifier = "user|chat-history-single-turn";
+    const t = convexTest(schema, modules);
+    const threadId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("threads", {
+        ownerTokenIdentifier,
+        title: "Single-turn thread",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+      await ctx.db.insert("messages", {
+        threadId: id,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "discuss",
+        content: "old question",
+      });
+      await ctx.db.insert("messages", {
+        threadId: id,
+        ownerTokenIdentifier,
+        role: "assistant",
+        status: "completed",
+        mode: "discuss",
+        content: "old answer",
+      });
+      return id;
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    await viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
+      threadId,
+      singleTurnEnabled: true,
+    });
+    const userMessageId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "discuss",
+        content: "current question",
+      });
+      await ctx.db.insert("messages", {
+        threadId,
+        ownerTokenIdentifier,
+        role: "assistant",
+        status: "pending",
+        mode: "discuss",
+        content: "",
+      });
+      return id;
+    });
+
+    const context = await t.query(internal.chat.context.getReplyContext, {
+      threadId,
+      userMessageId,
+    });
+
+    expect(context.singleTurnEnabled).toBe(true);
+    expect(context.messages.map((message) => message.content)).toEqual(["current question"]);
+  });
 });
 
 async function seedThreadWithMessages(

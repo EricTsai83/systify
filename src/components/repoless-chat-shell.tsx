@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { AppNotice } from "@/components/app-notice";
@@ -8,6 +8,7 @@ import { AppSidebarLeft } from "@/components/app-sidebar";
 import { ChatModeControls } from "@/components/chat-mode-controls";
 import { ChatContainer } from "@/components/chat-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
+import { RepolessAgentProfileBar, type RepolessAgentProfileValue } from "@/components/repoless-agent-profile-bar";
 import { ThreadSearchDialog } from "@/components/thread-search-dialog";
 import { useChatShellLifecycle } from "@/components/chat-shell-shared/use-chat-shell-lifecycle";
 import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-thread-deletion-recovery";
@@ -15,10 +16,10 @@ import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
-import { useShouldShowChatModeControls } from "@/hooks/use-chat-mode-controls-visibility";
 import { isViewerFeatureEnabled, useViewerAccess } from "@/hooks/use-viewer-access";
 import type { ChatMode, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { DEMO_MODE_COPY } from "@/lib/demo-content";
+import { toUserErrorMessage } from "@/lib/errors";
 import { DEFAULT_AUTHENTICATED_PATH, modeAwareThreadPath, repolessThreadPath, repositoryPath } from "@/route-paths";
 
 /**
@@ -44,11 +45,16 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
   );
 
   const capabilities = useThreadCapabilities(urlThreadId);
+  const updateAgentProfile = useMutation(api.chat.threads.updateRepolessThreadAgentProfile);
 
   const [threadToArchive, setThreadToArchive] = useState<ThreadId | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isThreadSearchOpen, setIsThreadSearchOpen] = useState(false);
-  const shouldShowChatModeControls = useShouldShowChatModeControls();
+  const [draftAgentProfile, setDraftAgentProfile] = useState<RepolessAgentProfileValue>({
+    singleTurnEnabled: false,
+    agentRole: "",
+    agentInstructions: "",
+  });
 
   const chatMode: ChatMode = "discuss";
 
@@ -83,12 +89,46 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       selectedProvider,
       selectedModelName,
       selectedReasoningEffort,
+      newThreadSingleTurnEnabled: urlThreadId === null ? draftAgentProfile.singleTurnEnabled : undefined,
+      newThreadAgentRole: urlThreadId === null ? draftAgentProfile.agentRole : undefined,
+      newThreadAgentInstructions: urlThreadId === null ? draftAgentProfile.agentInstructions : undefined,
       threadToArchive,
       setActionError,
       setThreadToArchive,
       onAfterCreateThread,
       onAfterArchiveThread,
     });
+
+  const agentProfileValue: RepolessAgentProfileValue =
+    urlThreadId === null
+      ? draftAgentProfile
+      : {
+          singleTurnEnabled: capabilities.singleTurnEnabled,
+          agentRole: capabilities.agentRole ?? "",
+          agentInstructions: capabilities.agentInstructions ?? "",
+        };
+
+  const handleSaveAgentProfile = useCallback(
+    async (next: RepolessAgentProfileValue) => {
+      setActionError(null);
+      if (urlThreadId === null) {
+        setDraftAgentProfile(next);
+        return;
+      }
+      try {
+        await updateAgentProfile({
+          threadId: urlThreadId,
+          singleTurnEnabled: next.singleTurnEnabled,
+          agentRole: next.agentRole,
+          agentInstructions: next.agentInstructions,
+        });
+      } catch (error) {
+        setActionError(toUserErrorMessage(error, "Failed to save the Agent Profile."));
+        throw error;
+      }
+    },
+    [updateAgentProfile, urlThreadId],
+  );
 
   const onMissingThread = useCallback(() => {
     void navigate(DEFAULT_AUTHENTICATED_PATH, { replace: true });
@@ -159,14 +199,15 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       />
 
       <SidebarInset>
-        {shouldShowChatModeControls ? (
-          <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
-            <ChatModeControls
-              onSearchThreads={() => setIsThreadSearchOpen(true)}
-              onNewThread={handleRequestNewThread}
-            />
-          </header>
-        ) : null}
+        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
+          <ChatModeControls onSearchThreads={() => setIsThreadSearchOpen(true)} onNewThread={handleRequestNewThread} />
+          <RepolessAgentProfileBar
+            value={agentProfileValue}
+            resetPending={capabilities.singleTurnResetPending}
+            disabled={capabilities.isLoading}
+            onSave={handleSaveAgentProfile}
+          />
+        </header>
 
         <ThreadSearchDialog
           open={isThreadSearchOpen}
@@ -214,7 +255,9 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
             showGroundingToggles={false}
             isSending={isSending}
             onSendMessage={handleSendMessage}
-            sendDisabledReason={chatSendDisabledReason}
+            sendDisabledReason={
+              capabilities.singleTurnResetPending ? "Clearing previous messages…" : chatSendDisabledReason
+            }
             sandboxModeStatus={null}
             isSyncing={false}
             onSync={() => {}}

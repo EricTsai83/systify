@@ -2,6 +2,7 @@
 
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import { insertTestArtifact, insertTestRepository, insertTestThread } from "../../test/convex/fixtures";
 import { createRateLimitedTestConvex as createTestConvex, type SystifyTestConvex } from "../../test/convex/harness";
 
@@ -15,6 +16,40 @@ async function insertRepository(t: SystifyTestConvex, ownerTokenIdentifier: stri
     visibility: "private",
     importStatus: "completed",
     fileCount: 1,
+  });
+}
+
+async function seedInternalAccess(t: SystifyTestConvex, ownerTokenIdentifier: string) {
+  await t.run(async (ctx) => {
+    await ctx.db.insert("userAccessProfiles", {
+      ownerTokenIdentifier,
+      email: `${ownerTokenIdentifier}@example.com`,
+      plan: "internal",
+      billingStatus: "none",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  });
+}
+
+async function insertThreadMessage(
+  t: SystifyTestConvex,
+  args: {
+    threadId: Id<"threads">;
+    ownerTokenIdentifier: string;
+    role: "user" | "assistant";
+    content: string;
+  },
+) {
+  return await t.run(async (ctx) => {
+    return await ctx.db.insert("messages", {
+      threadId: args.threadId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      role: args.role,
+      status: "completed",
+      mode: "discuss",
+      content: args.content,
+    });
   });
 }
 
@@ -61,6 +96,210 @@ describe("createThread", () => {
 
     const intruderThreads = await intruder.query(api.chat.threads.listRepolessThreads, {});
     expect(intruderThreads).toEqual([]);
+  });
+});
+
+describe("repoless Agent Profile", () => {
+  test("new repoless threads default single-turn off", async () => {
+    const ownerTokenIdentifier = "user|agent-profile-default";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const { _id: threadId } = await viewer.mutation(api.chat.threads.createThread, {});
+    const thread = await t.run((ctx) => ctx.db.get(threadId));
+
+    expect(thread?.singleTurnEnabled).toBeUndefined();
+    expect(thread?.singleTurnResetPending).toBeUndefined();
+  });
+
+  test("updates repoless Agent Profile and normalizes blank fields", async () => {
+    const ownerTokenIdentifier = "user|agent-profile-update";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const { _id: threadId } = await viewer.mutation(api.chat.threads.createThread, {});
+
+    await viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
+      threadId,
+      singleTurnEnabled: true,
+      agentRole: "  Translation agent  ",
+      agentInstructions: "  Translate Chinese into English.  ",
+    });
+
+    const updated = await t.run((ctx) => ctx.db.get(threadId));
+    expect(updated?.singleTurnEnabled).toBe(true);
+    expect(updated?.agentRole).toBe("Translation agent");
+    expect(updated?.agentInstructions).toBe("Translate Chinese into English.");
+    expect(updated?.agentUpdatedAt).toEqual(expect.any(Number));
+
+    await viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
+      threadId,
+      singleTurnEnabled: false,
+      agentRole: " ",
+      agentInstructions: "\n\t",
+    });
+    const cleared = await t.run((ctx) => ctx.db.get(threadId));
+    expect(cleared?.singleTurnEnabled).toBe(false);
+    expect(cleared?.agentRole).toBeUndefined();
+    expect(cleared?.agentInstructions).toBeUndefined();
+  });
+
+  test("rejects Agent Profile updates for repository-bound threads", async () => {
+    const ownerTokenIdentifier = "user|agent-profile-repo";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier, "agent-profile-repo");
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const { _id: threadId } = await viewer.mutation(api.chat.threads.createThread, { repositoryId });
+
+    await expect(
+      viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
+        threadId,
+        singleTurnEnabled: true,
+        agentRole: "Translation agent",
+      }),
+    ).rejects.toThrow(/repoless/i);
+  });
+
+  test("turning single-turn on clears existing messages", async () => {
+    const ownerTokenIdentifier = "user|agent-profile-reset";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const { _id: threadId } = await viewer.mutation(api.chat.threads.createThread, {});
+    const messageId = await insertThreadMessage(t, {
+      threadId,
+      ownerTokenIdentifier,
+      role: "assistant",
+      content: "old answer",
+    });
+    await t.run(async (ctx) => {
+      const jobId = await ctx.db.insert("jobs", {
+        ownerTokenIdentifier,
+        threadId,
+        kind: "chat",
+        status: "completed",
+        stage: "completed",
+        progress: 1,
+        costCategory: "chat",
+        triggerSource: "user",
+      });
+      await ctx.db.insert("messageToolCallEvents", {
+        messageId,
+        toolCallId: "tool-1",
+        sequence: 0,
+        type: "start",
+        toolName: "read_file",
+        inputSummary: "{}",
+        occurredAt: Date.now(),
+      });
+      await ctx.db.insert("messageStreams", {
+        threadId,
+        jobId,
+        assistantMessageId: messageId,
+        ownerTokenIdentifier,
+        compactedContent: "",
+        compactedThroughSequence: -1,
+        nextSequence: 0,
+        startedAt: Date.now(),
+        lastAppendedAt: Date.now(),
+      });
+    });
+
+    await viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
+      threadId,
+      singleTurnEnabled: true,
+    });
+
+    const rows = await t.run(async (ctx) => ({
+      messages: await ctx.db
+        .query("messages")
+        .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
+        .collect(),
+      streams: await ctx.db
+        .query("messageStreams")
+        .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
+        .collect(),
+      events: await ctx.db.query("messageToolCallEvents").collect(),
+      thread: await ctx.db.get(threadId),
+    }));
+    expect(rows.messages).toHaveLength(0);
+    expect(rows.streams).toHaveLength(0);
+    expect(rows.events).toHaveLength(0);
+    expect(rows.thread?.singleTurnResetPending).toBeUndefined();
+  });
+
+  test("single-turn send deletes previous messages and resets title generation gate", async () => {
+    const ownerTokenIdentifier = "user|single-turn-send";
+    const t = createTestConvex();
+    await seedInternalAccess(t, ownerTokenIdentifier);
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const { threadId } = await viewer.mutation(api.chat.send.sendMessageStartingNewThread, {
+      content: "First question",
+      mode: "discuss",
+      singleTurnEnabled: true,
+      agentRole: "Translation agent",
+    });
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(threadId, { lastAssistantMessageAt: Date.now() });
+      const oldAssistant = await ctx.db
+        .query("messages")
+        .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
+        .filter((q) => q.eq(q.field("role"), "assistant"))
+        .first();
+      if (oldAssistant) {
+        await ctx.db.patch(oldAssistant._id, { status: "completed", content: "First answer" });
+      }
+      const oldJob = await ctx.db
+        .query("jobs")
+        .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
+        .first();
+      if (oldJob) {
+        await ctx.db.patch(oldJob._id, { status: "completed", leaseExpiresAt: 0 });
+      }
+    });
+
+    await viewer.mutation(api.chat.send.sendMessage, {
+      threadId,
+      content: "Second question",
+      mode: "discuss",
+    });
+
+    const rows = await t.run(async (ctx) => ({
+      thread: await ctx.db.get(threadId),
+      messages: await ctx.db
+        .query("messages")
+        .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
+        .order("asc")
+        .collect(),
+    }));
+    expect(rows.thread?.lastAssistantMessageAt).toBeUndefined();
+    expect(rows.messages.map((message) => message.content)).toEqual(["Second question", ""]);
+    expect(rows.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+  });
+
+  test("disabling single-turn does not delete current messages", async () => {
+    const ownerTokenIdentifier = "user|single-turn-disable";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const { _id: threadId } = await viewer.mutation(api.chat.threads.createThread, {});
+    await insertThreadMessage(t, { threadId, ownerTokenIdentifier, role: "user", content: "keep me" });
+    await viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
+      threadId,
+      singleTurnEnabled: true,
+    });
+    await insertThreadMessage(t, { threadId, ownerTokenIdentifier, role: "user", content: "current question" });
+
+    await viewer.mutation(api.chat.threads.updateRepolessThreadAgentProfile, {
+      threadId,
+      singleTurnEnabled: false,
+    });
+
+    const messages = await t.run((ctx) =>
+      ctx.db
+        .query("messages")
+        .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
+        .collect(),
+    );
+    expect(messages.map((message) => message.content)).toEqual(["current question"]);
   });
 });
 
