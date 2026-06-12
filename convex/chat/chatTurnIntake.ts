@@ -502,18 +502,6 @@ export async function startChatTurnInExistingThread(
     );
   }
 
-  await assertChatTurnBudgetsAndRateLimits(ctx, {
-    ownerTokenIdentifier: identity.tokenIdentifier,
-    repositoryId: turnPlan.repositoryId,
-    groundSandbox: turnPlan.groundSandbox,
-  });
-  await assertUserUsageBudgetAvailable(ctx, {
-    ownerTokenIdentifier: identity.tokenIdentifier,
-    feature: "chat",
-    estimatedCostUsd: CHAT_REPLY_BUDGET_ESTIMATE_USD,
-    occurredAtMs: now,
-  });
-
   if (thread.singleTurnEnabled === true) {
     if (thread.repositoryId !== undefined) {
       throw new Error("Single-turn is only supported for repoless chat threads.");
@@ -538,6 +526,18 @@ export async function startChatTurnInExistingThread(
     }
     await ctx.db.patch(args.threadId, { lastAssistantMessageAt: undefined });
   }
+
+  await assertChatTurnBudgetsAndRateLimits(ctx, {
+    ownerTokenIdentifier: identity.tokenIdentifier,
+    repositoryId: turnPlan.repositoryId,
+    groundSandbox: turnPlan.groundSandbox,
+  });
+  await assertUserUsageBudgetAvailable(ctx, {
+    ownerTokenIdentifier: identity.tokenIdentifier,
+    feature: "chat",
+    estimatedCostUsd: CHAT_REPLY_BUDGET_ESTIMATE_USD,
+    occurredAtMs: now,
+  });
 
   const sandboxSessionId = await ensureSandboxSessionForTurn(ctx, {
     threadId: args.threadId,

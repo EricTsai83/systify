@@ -20,7 +20,7 @@
  */
 
 import { useMemo, type ReactElement, type SVGProps } from "react";
-import { LockSimpleIcon, SparkleIcon } from "@phosphor-icons/react";
+import { LockSimpleIcon } from "@phosphor-icons/react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { LlmProvider, ModelPreferenceScope, PickableModelEntry, UserPickableCapability } from "@/lib/types";
@@ -264,16 +264,6 @@ function groupForPicker(entries: ReadonlyArray<PickableModelEntry>): ProviderGro
 
 function ProviderIcon({ provider, className }: { provider: LlmProvider; className?: string }) {
   const Icon = PROVIDER_ICON[provider];
-  if (!Icon) {
-    return (
-      <SparkleIcon
-        aria-hidden="true"
-        weight="bold"
-        className={cn("size-3.5 shrink-0", className)}
-        data-testid={`prompt-input-model-picker-provider-icon-${provider}`}
-      />
-    );
-  }
   return (
     <Icon
       aria-hidden="true"

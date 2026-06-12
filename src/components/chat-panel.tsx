@@ -401,8 +401,7 @@ export function ChatPanel({
   const sandboxPill =
     shouldShowSandboxPill && attachedRepositoryId ? <SandboxActivityPill repositoryId={attachedRepositoryId} /> : null;
 
-  const hasSelectedModel = selectedProvider !== null && selectedModelName !== null;
-  const modelPickerReady = !shouldRenderModelPicker || (hasSelectedModel && Array.isArray(modelCatalogEntries));
+  const modelPickerReady = !shouldRenderModelPicker || Array.isArray(modelCatalogEntries);
   const reasoningPickerReady = !shouldRenderReasoningPicker || Array.isArray(reasoningCatalogEntries);
   const groundingReady = !(showGroundingToggles && chatMode === "discuss") || grounding !== undefined;
   const composerToolsReady = composerControlsReady && modelPickerReady && reasoningPickerReady && groundingReady;

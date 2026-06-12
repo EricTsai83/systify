@@ -8,6 +8,20 @@ export interface DefaultModelPick {
   modelName: string;
 }
 
+const LLM_PROVIDERS = new Set<LlmProvider>(["openai", "anthropic"]);
+
+function isDefaultModelPick(value: unknown): value is DefaultModelPick {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as { provider?: unknown; modelName?: unknown };
+  return (
+    typeof candidate.modelName === "string" &&
+    typeof candidate.provider === "string" &&
+    LLM_PROVIDERS.has(candidate.provider as LlmProvider)
+  );
+}
+
 /**
  * Resolve the model the composer's picker should display by default
  * for a given capability tier, mirroring the backend cascade in
@@ -51,14 +65,15 @@ export function useDefaultModelPick(args: {
     capability: args.capability,
     preferenceScope: args.preferenceScope,
   });
+  const validCapabilityDefault = isDefaultModelPick(capabilityDefault) ? capabilityDefault : undefined;
   // Provider filter applied only when the thread is locked to a provider
   // whose capability default differs from the global pick. Saves a query
   // roundtrip for the common unlocked / matching case.
   const lockedProviderNeedsLookup =
     args.threadLockedProvider !== null &&
     args.threadLockedProvider !== undefined &&
-    capabilityDefault !== undefined &&
-    capabilityDefault.provider !== args.threadLockedProvider;
+    validCapabilityDefault !== undefined &&
+    validCapabilityDefault.provider !== args.threadLockedProvider;
   const lockedProviderEntries = useQuery(
     api.llmCatalog.listPickableModels,
     lockedProviderNeedsLookup
@@ -84,18 +99,20 @@ export function useDefaultModelPick(args: {
       if (catalogForThreadDefault === undefined) {
         return undefined;
       }
-      const entry = catalogForThreadDefault.find((row) => row.modelName === args.threadDefaultModelName);
+      const entry = Array.isArray(catalogForThreadDefault)
+        ? catalogForThreadDefault.find((row) => row.modelName === args.threadDefaultModelName)
+        : undefined;
       if (entry) {
         return { provider: entry.provider, modelName: entry.modelName };
       }
     }
 
-    if (capabilityDefault === undefined) {
+    if (validCapabilityDefault === undefined) {
       return undefined;
     }
 
     if (lockedProviderNeedsLookup) {
-      if (lockedProviderEntries === undefined) {
+      if (!Array.isArray(lockedProviderEntries)) {
         return undefined;
       }
       const first = lockedProviderEntries[0];
@@ -104,12 +121,12 @@ export function useDefaultModelPick(args: {
       }
     }
 
-    return capabilityDefault;
+    return validCapabilityDefault;
   }, [
     args.threadDefaultModelName,
     catalogForThreadDefault,
-    capabilityDefault,
     lockedProviderEntries,
     lockedProviderNeedsLookup,
+    validCapabilityDefault,
   ]);
 }

@@ -925,7 +925,7 @@ export async function assertUserUsageBudgetAvailable(
   }
 
   const profile = await getViewerUsageProfile(ctx, args.ownerTokenIdentifier);
-  if (profile.budgetUsd === null) {
+  if (profile.budgetUsd === null || !profile.hardCapEnabled) {
     return;
   }
 
@@ -937,7 +937,7 @@ export async function assertUserUsageBudgetAvailable(
   const spentUsd = Math.max(budgetPeriod?.spentUsd ?? 0, periodUsage.costUsd);
   const reservedUsd = budgetPeriod?.reservedUsd ?? 0;
 
-  if (profile.hardCapEnabled && spentUsd + reservedUsd + estimatedCostUsd > profile.budgetUsd) {
+  if (spentUsd + reservedUsd + estimatedCostUsd > profile.budgetUsd) {
     throwUsageBudgetExceeded({
       period,
       budgetUsd: profile.budgetUsd,
