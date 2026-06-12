@@ -231,6 +231,93 @@ describe("ChatPanel streaming rendering", () => {
     expect(listPickableModelArgs).toEqual([{ preferenceScope: "discuss" }]);
   });
 
+  test("holds the composer tools until the model catalog is ready", () => {
+    vi.mocked(useQuery).mockImplementation((...callArgs) => {
+      const [query, args] = callArgs;
+      if (args !== "skip" && queryName(query)?.endsWith("llmCatalog:listPickableModels")) {
+        return undefined;
+      }
+      return [];
+    });
+
+    render(
+      <ChatPanel
+        selectedThreadId={null}
+        messages={undefined}
+        activeMessageStream={undefined}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        selectedProvider="openai"
+        selectedModelName="gpt-5.5"
+        setSelectedModel={vi.fn()}
+        grounding={{
+          library: { enabled: true },
+          sandbox: { enabled: true },
+        }}
+        showGroundingToggles={false}
+        composerControls={<button type="button">Single-turn</button>}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={null}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Single-turn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("prompt-input-model-picker-trigger")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-panel-composer-tools-placeholder")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-panel-send-button")).toBeInTheDocument();
+  });
+
+  test("holds the composer tools until grounding availability is ready", () => {
+    vi.mocked(useQuery).mockImplementation((...callArgs) => {
+      const [query, args] = callArgs;
+      if (args !== "skip" && queryName(query)?.endsWith("llmCatalog:listPickableModels")) {
+        return [sandboxCatalogEntry];
+      }
+      return [];
+    });
+
+    render(
+      <ChatPanel
+        selectedThreadId={null}
+        messages={undefined}
+        activeMessageStream={undefined}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        selectedProvider="openai"
+        selectedModelName="gpt-5.5"
+        setSelectedModel={vi.fn()}
+        grounding={undefined}
+        composerControls={<button type="button">Single-turn</button>}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={null}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Single-turn")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("grounding-toggle-library")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("prompt-input-model-picker-trigger")).not.toBeInTheDocument();
+    expect(screen.getByTestId("chat-panel-composer-tools-placeholder")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-panel-send-button")).toBeInTheDocument();
+  });
+
   test("disables send when the selected model is locked by premium model access", () => {
     vi.mocked(useQuery).mockImplementation((...callArgs) => {
       const [query, args] = callArgs;

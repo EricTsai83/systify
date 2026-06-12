@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { useQuery } from "convex/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { PromptInputModelPicker } from "./prompt-input-model-picker";
@@ -67,7 +67,7 @@ afterEach(() => {
 });
 
 describe("PromptInputModelPicker", () => {
-  test("uses a trigger-sized skeleton while the model catalog loads", () => {
+  test("waits for the model catalog before rendering the trigger", () => {
     vi.mocked(useQuery).mockReturnValue(undefined);
 
     render(
@@ -79,8 +79,8 @@ describe("PromptInputModelPicker", () => {
       />,
     );
 
-    expect(screen.getByTestId("prompt-input-model-picker-skeleton")).toBeInTheDocument();
     expect(screen.queryByTestId("prompt-input-model-picker-trigger")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("prompt-input-model-picker-skeleton")).not.toBeInTheDocument();
   });
 
   test("marks the locked provider label with a tooltip instead of a separate pill", () => {
@@ -103,5 +103,33 @@ describe("PromptInputModelPicker", () => {
     );
     expect(screen.getByText("Locked to Anthropic")).toBeInTheDocument();
     expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+  });
+
+  test.each([
+    {
+      provider: "openai" as const,
+      modelName: "gpt-5-mini",
+      displayName: "GPT-5 mini",
+    },
+    {
+      provider: "anthropic" as const,
+      modelName: "claude-sonnet-4-5",
+      displayName: "Claude Sonnet 4.5",
+    },
+  ])("shows the selected $provider icon in the trigger", ({ provider, modelName, displayName }) => {
+    vi.mocked(useQuery).mockReturnValue(catalogEntries);
+
+    render(
+      <PromptInputModelPicker
+        value={{ provider, modelName }}
+        onChange={vi.fn()}
+        threadLockedProvider={null}
+        preferenceScope="discuss"
+      />,
+    );
+
+    const trigger = screen.getByTestId("prompt-input-model-picker-trigger");
+    expect(within(trigger).getByTestId(`prompt-input-model-picker-provider-icon-${provider}`)).toBeInTheDocument();
+    expect(trigger).toHaveTextContent(displayName);
   });
 });

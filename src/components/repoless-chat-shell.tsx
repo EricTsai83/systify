@@ -254,6 +254,7 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
                 onSave={handleSaveAgentProfile}
               />,
             ]}
+            composerControlsReady={!capabilities.isLoading}
             isSending={isSending}
             onSendMessage={handleSendMessage}
             sendDisabledReason={

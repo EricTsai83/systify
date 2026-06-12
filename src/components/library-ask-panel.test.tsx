@@ -23,6 +23,22 @@ const mocks = vi.hoisted(() => ({
   conversationMessages: [] as Doc<"messages">[],
 }));
 
+const catalogEntries = [
+  {
+    provider: "openai",
+    modelName: "gpt-5.5",
+    displayName: "GPT-5.5",
+    capability: "library",
+    supportsReasoning: true,
+    supportsTools: false,
+    contextWindow: 200_000,
+    userPickable: true,
+    favorite: false,
+    default: false,
+    defaultSource: null,
+  },
+];
+
 vi.mock("convex/react", () => ({
   useMutation: mocks.useMutation,
   useQuery: mocks.useQuery,
@@ -233,7 +249,7 @@ type DraftEntry = {
 
 let queryState: {
   activeArtifact: Doc<"artifacts"> | null;
-  recentDrafts: DraftEntry[];
+  recentDrafts: DraftEntry[] | undefined;
   threadDrafts: DraftEntry[];
   threads: Doc<"threads">[];
   threadSummary: Pick<Doc<"threads">, "title" | "lockedProvider" | "defaultModelName"> | null;
@@ -374,6 +390,7 @@ beforeEach(() => {
     if (name.endsWith("getThreadSummary")) return queryState.threadSummary;
     if (name.endsWith("listByThread")) return queryState.threadDrafts;
     if (name.endsWith("listRecentByRepository")) return queryState.recentDrafts;
+    if (name.endsWith("listPickableModels")) return catalogEntries;
     if (name.endsWith("getById")) return queryState.activeArtifact;
     return undefined;
   });
@@ -565,5 +582,37 @@ describe("LibraryAskPanel artifact drafts", () => {
     renderPanel({ activeArtifactId: null });
 
     expect(screen.getByRole("button", { name: /Update open artifact/i })).toBeDisabled();
+  });
+
+  test("holds composer tools until the library model catalog is ready", () => {
+    mocks.useQuery.mockImplementation((reference: unknown, args: unknown) => {
+      if (args === "skip") return undefined;
+      const name = functionName(reference);
+      if (name.endsWith("listThreads")) return queryState.threads;
+      if (name.endsWith("getThreadSummary")) return queryState.threadSummary;
+      if (name.endsWith("listByThread")) return queryState.threadDrafts;
+      if (name.endsWith("listRecentByRepository")) return queryState.recentDrafts;
+      if (name.endsWith("listPickableModels")) return undefined;
+      if (name.endsWith("getById")) return queryState.activeArtifact;
+      return undefined;
+    });
+
+    renderPanel();
+
+    expect(screen.queryByRole("button", { name: /Create artifact/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("GPT-5.5")).not.toBeInTheDocument();
+    expect(screen.getByTestId("library-ask-composer-tools-placeholder")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
+  });
+
+  test("holds composer tools until recent repository drafts are ready", () => {
+    queryState.recentDrafts = undefined;
+
+    renderPanel();
+
+    expect(screen.queryByRole("button", { name: /Create artifact/i })).not.toBeInTheDocument();
+    expect(screen.queryByText("GPT-5.5")).not.toBeInTheDocument();
+    expect(screen.getByTestId("library-ask-composer-tools-placeholder")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
   });
 });

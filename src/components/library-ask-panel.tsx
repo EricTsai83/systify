@@ -242,6 +242,7 @@ export function LibraryAskPanel({
       threadLockedProvider: lockedProvider,
       threadDefaultModelName: defaultModelName,
     });
+  const libraryCatalogEntries = useQuery(api.llmCatalog.listPickableModels, { preferenceScope: "library" });
 
   const lifecycleThreadId = threadId && activeThreadProbe === undefined ? threadId : confirmedThreadId;
   const newThreadArtifactContext = useMemo(
@@ -340,6 +341,12 @@ export function LibraryAskPanel({
   }, [archiveThread, closeTab, onSelectThread, pendingArchiveThreadId, threadId]);
 
   const isLocked = !hasArtifacts;
+  const draftListReady = threadId
+    ? activeThreadProbe === null || (activeThreadProbe !== undefined && threadDrafts !== undefined)
+    : recentDrafts !== undefined;
+  const composerToolsReady =
+    draftListReady &&
+    (isLocked ? true : selectedProvider !== null && selectedModelName !== null && Array.isArray(libraryCatalogEntries));
   const selectedModelPick =
     selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null;
   const askModelAccessDisabledReason = useModelAccessDisabledReason({
@@ -609,69 +616,75 @@ export function LibraryAskPanel({
             aria-describedby={composerHintId}
           />
           <PromptInputFooter>
-            <PromptInputTools>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 px-2 text-[11px]"
-                onClick={openCreateDraft}
-                disabled={documentActionDisabledReason !== undefined}
-                title={documentActionDisabledReason}
-              >
-                <FilePlusIcon size={13} weight="bold" />
-                Create artifact
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 px-2 text-[11px]"
-                onClick={openUpdateDraft}
-                disabled={documentActionDisabledReason !== undefined || activeArtifactId === null}
-                title={
-                  activeArtifactId === null ? "Open an artifact to draft an update." : documentActionDisabledReason
-                }
-              >
-                <GitDiffIcon size={13} weight="bold" />
-                Update open artifact
-              </Button>
-              {/*
-               * Library Ask model picker. Hidden while the composer
-               * is locked (no artifacts) — the user can't send
-               * anyway, and the picker dropdown would just clutter
-               * the locked-state hint. Library Ask intentionally shows
-               * every user-pickable chat model before the first send; once
-               * the thread is locked to a provider, the picker narrows to
-               * that provider so cached thread context stays coherent.
-               */}
-              {!isLocked ? (
-                <PromptInputModelPicker
-                  value={
-                    selectedProvider && selectedModelName
-                      ? { provider: selectedProvider, modelName: selectedModelName }
-                      : null
+            {composerToolsReady ? (
+              <PromptInputTools>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 px-2 text-[11px]"
+                  onClick={openCreateDraft}
+                  disabled={documentActionDisabledReason !== undefined}
+                  title={documentActionDisabledReason}
+                >
+                  <FilePlusIcon size={13} weight="bold" />
+                  Create artifact
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 px-2 text-[11px]"
+                  onClick={openUpdateDraft}
+                  disabled={documentActionDisabledReason !== undefined || activeArtifactId === null}
+                  title={
+                    activeArtifactId === null ? "Open an artifact to draft an update." : documentActionDisabledReason
                   }
-                  onChange={setSelectedModel}
-                  threadLockedProvider={lockedProvider}
-                  preferenceScope="library"
-                  getDisabledReason={(entry) =>
-                    premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
-                  }
-                />
-              ) : null}
-              {!isLocked ? (
-                <PromptInputReasoningPicker
-                  value={selectedReasoningEffort}
-                  onChange={setSelectedReasoningEffort}
-                  provider={selectedProvider ?? undefined}
-                  modelName={selectedModelName ?? undefined}
-                  preferenceScope="library"
-                  disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
-                  disabledReasoningEffortMessage={highReasoningDisabledReason}
-                />
-              ) : null}
-            </PromptInputTools>
+                >
+                  <GitDiffIcon size={13} weight="bold" />
+                  Update open artifact
+                </Button>
+                {/*
+                 * Library Ask model picker. Hidden while the composer
+                 * is locked (no artifacts) — the user can't send
+                 * anyway, and the picker dropdown would just clutter
+                 * the locked-state hint. Library Ask intentionally shows
+                 * every user-pickable chat model before the first send; once
+                 * the thread is locked to a provider, the picker narrows to
+                 * that provider so cached thread context stays coherent.
+                 */}
+                {!isLocked ? (
+                  <PromptInputModelPicker
+                    value={
+                      selectedProvider && selectedModelName
+                        ? { provider: selectedProvider, modelName: selectedModelName }
+                        : null
+                    }
+                    onChange={setSelectedModel}
+                    threadLockedProvider={lockedProvider}
+                    preferenceScope="library"
+                    getDisabledReason={(entry) =>
+                      premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
+                    }
+                    catalogEntries={libraryCatalogEntries}
+                  />
+                ) : null}
+                {!isLocked ? (
+                  <PromptInputReasoningPicker
+                    value={selectedReasoningEffort}
+                    onChange={setSelectedReasoningEffort}
+                    provider={selectedProvider ?? undefined}
+                    modelName={selectedModelName ?? undefined}
+                    preferenceScope="library"
+                    disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
+                    disabledReasoningEffortMessage={highReasoningDisabledReason}
+                    catalogEntries={libraryCatalogEntries}
+                  />
+                ) : null}
+              </PromptInputTools>
+            ) : (
+              <div aria-hidden="true" data-testid="library-ask-composer-tools-placeholder" className="min-h-8 flex-1" />
+            )}
             <Button
               type="submit"
               size="sm"

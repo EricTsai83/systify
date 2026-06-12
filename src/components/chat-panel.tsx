@@ -8,7 +8,9 @@ import {
   type FormEvent,
   type ReactNode,
 } from "react";
+import { useQuery } from "convex/react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
+import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { findInFlightAssistantMessage, useConversationThread } from "@/hooks/use-conversation-thread";
 import { useModelAccessDisabledReason } from "@/hooks/use-model-access-disabled-reason";
@@ -204,6 +206,8 @@ type ChatPanelProps = {
   onLoadOlderMessages?: () => void;
   /** Optional controls rendered inside the composer toolbar, before model/grounding controls. */
   composerControls?: ReactNode;
+  /** True once caller-owned composer controls have loaded their backing data. */
+  composerControlsReady?: boolean;
 };
 
 type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream" | "isChatLoading"> & {
@@ -280,9 +284,24 @@ export function ChatPanel({
   canLoadOlderMessages = false,
   onLoadOlderMessages = NOOP_LOAD_OLDER,
   composerControls,
+  composerControlsReady = true,
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
   const modelPickerCapability = modelPreferenceScope === "sandbox" ? "sandbox" : undefined;
+  const shouldRenderModelPicker = !isReadOnly && typeof setSelectedModel === "function";
+  const shouldRenderReasoningPicker = !isReadOnly && typeof setSelectedReasoningEffort === "function";
+  const modelCatalogEntries = useQuery(
+    api.llmCatalog.listPickableModels,
+    shouldRenderModelPicker
+      ? modelPickerCapability !== undefined
+        ? { capability: modelPickerCapability, preferenceScope: modelPreferenceScope }
+        : { preferenceScope: modelPreferenceScope }
+      : "skip",
+  );
+  const reasoningCatalogEntries = useQuery(
+    api.llmCatalog.listPickableModels,
+    shouldRenderReasoningPicker ? { preferenceScope: modelPreferenceScope } : "skip",
+  );
   const [showStatsForNerds] = useStatsForNerdsPreference();
 
   // Owns stick-to-bottom on append, anchor preservation on prepend,
@@ -382,6 +401,12 @@ export function ChatPanel({
   const sandboxPill =
     shouldShowSandboxPill && attachedRepositoryId ? <SandboxActivityPill repositoryId={attachedRepositoryId} /> : null;
 
+  const hasSelectedModel = selectedProvider !== null && selectedModelName !== null;
+  const modelPickerReady = !shouldRenderModelPicker || (hasSelectedModel && Array.isArray(modelCatalogEntries));
+  const reasoningPickerReady = !shouldRenderReasoningPicker || Array.isArray(reasoningCatalogEntries);
+  const groundingReady = !(showGroundingToggles && chatMode === "discuss") || grounding !== undefined;
+  const composerToolsReady = composerControlsReady && modelPickerReady && reasoningPickerReady && groundingReady;
+
   const composerToolItems: ReactNode[] = [
     showArtifactToggle && onToggleArtifactPanel ? (
       <Button
@@ -397,7 +422,7 @@ export function ChatPanel({
         <span className="hidden sm:inline">Artifacts</span>
       </Button>
     ) : null,
-    !isReadOnly && setSelectedModel ? (
+    shouldRenderModelPicker ? (
       <PromptInputModelPicker
         value={
           selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null
@@ -409,9 +434,10 @@ export function ChatPanel({
         getDisabledReason={(entry) =>
           premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
         }
+        catalogEntries={modelCatalogEntries}
       />
     ) : null,
-    !isReadOnly && setSelectedReasoningEffort ? (
+    shouldRenderReasoningPicker ? (
       <PromptInputReasoningPicker
         value={selectedReasoningEffort}
         onChange={setSelectedReasoningEffort}
@@ -420,6 +446,7 @@ export function ChatPanel({
         preferenceScope={modelPreferenceScope}
         disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
         disabledReasoningEffortMessage={highReasoningDisabledReason}
+        catalogEntries={reasoningCatalogEntries}
       />
     ) : null,
     ...Children.toArray(composerControls),
@@ -547,14 +574,22 @@ export function ChatPanel({
               aria-describedby={isReadOnly && readOnlyHint ? "readonly-hint" : undefined}
             />
             <PromptInputFooter>
-              <PromptInputTools>
-                {composerToolItems.map((item, index) => (
-                  <Fragment key={index}>
-                    {index > 0 ? <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" /> : null}
-                    {item}
-                  </Fragment>
-                ))}
-              </PromptInputTools>
+              {composerToolsReady ? (
+                <PromptInputTools>
+                  {composerToolItems.map((item, index) => (
+                    <Fragment key={index}>
+                      {index > 0 ? <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" /> : null}
+                      {item}
+                    </Fragment>
+                  ))}
+                </PromptInputTools>
+              ) : (
+                <div
+                  aria-hidden="true"
+                  data-testid="chat-panel-composer-tools-placeholder"
+                  className="min-h-8 flex-1"
+                />
+              )}
               {canCancel && !isReadOnly ? (
                 /*
                  * Stop button. `type="button"` so a stray Enter in
