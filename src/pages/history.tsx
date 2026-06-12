@@ -35,6 +35,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { useStableLoadMoreState } from "@/hooks/use-stable-load-more-state";
 import { formatExpiry } from "@/lib/format-expiry";
 import { formatRelativeTime } from "@/lib/format";
+import { isRepolessAgentEnabled } from "@/lib/repoless-agent";
 import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { modeAwareThreadPath, repolessThreadPath, sharedThreadPath } from "@/route-paths";
 
@@ -72,6 +73,10 @@ type HistoryThread = {
   title: string;
   mode: ThreadMode;
   lastMessageAt: number;
+  singleTurnEnabled?: boolean;
+  agentEnabled?: boolean;
+  agentRole?: string;
+  agentInstructions?: string;
   activeShare: {
     _id: Id<"threadShares">;
     token: string;
@@ -306,7 +311,7 @@ function SummaryStrip({
 }) {
   const items = [
     { label: "Loaded repository threads", value: summary.repositoryThreads },
-    { label: "Loaded no-repository chats", value: summary.noRepositoryChats },
+    { label: "Loaded no-repository threads", value: summary.noRepositoryChats },
     { label: "Shared links", value: summary.sharedLinks },
   ];
   return (
@@ -470,7 +475,7 @@ function HistoryThreadsForScope({
             </div>
             {isNoRepository ? (
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                General chats that are not attached to a repository.
+                No-repository conversations split into agent and regular chats.
               </p>
             ) : null}
           </div>
@@ -646,11 +651,11 @@ function SharedThreadsSection({
       {isLoadingFirstPage ? (
         <SharedRowsSkeleton />
       ) : activeShares.length === 0 && !settledCanLoadMore && !settledIsLoadingMore ? (
-        <div className="border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
+        <div className="animate-fade-in border border-dashed border-border px-4 py-6 text-sm text-muted-foreground">
           No active public share links.
         </div>
       ) : (
-        <div className="border border-border bg-card">
+        <div className="animate-fade-in border border-border bg-card">
           {activeShares.map((share) => (
             <div
               key={share._id}
@@ -823,9 +828,13 @@ function getHistoryScopeValue(group: HistoryGroup): string {
 
 function getThreadModeLabel(thread: HistoryThread, noRepository: boolean): string {
   if (noRepository) {
-    return "Chat";
+    return isAgentModeThread(thread) ? "Agent" : "Chat";
   }
   return thread.mode === "library" ? "Library Ask" : "Discuss";
+}
+
+function isAgentModeThread(thread: HistoryThread): boolean {
+  return isRepolessAgentEnabled(thread);
 }
 
 async function copyText(text: string): Promise<boolean> {

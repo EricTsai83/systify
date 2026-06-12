@@ -242,6 +242,7 @@ export function LibraryAskPanel({
       threadLockedProvider: lockedProvider,
       threadDefaultModelName: defaultModelName,
     });
+  const libraryCatalogEntries = useQuery(api.llmCatalog.listPickableModels, { preferenceScope: "library" });
 
   const lifecycleThreadId = threadId && activeThreadProbe === undefined ? threadId : confirmedThreadId;
   const newThreadArtifactContext = useMemo(
@@ -340,6 +341,12 @@ export function LibraryAskPanel({
   }, [archiveThread, closeTab, onSelectThread, pendingArchiveThreadId, threadId]);
 
   const isLocked = !hasArtifacts;
+  const draftListReady = threadId
+    ? activeThreadProbe === null || (activeThreadProbe !== undefined && threadDrafts !== undefined)
+    : recentDrafts !== undefined;
+  const composerToolsReady =
+    draftListReady &&
+    (isLocked ? true : selectedProvider !== null && selectedModelName !== null && Array.isArray(libraryCatalogEntries));
   const selectedModelPick =
     selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null;
   const askModelAccessDisabledReason = useModelAccessDisabledReason({
@@ -489,35 +496,39 @@ export function LibraryAskPanel({
       {threadId ? (
         <Conversation scroll={conversationScroll} className="min-h-0 flex-1">
           <ConversationContent className="gap-0 px-4 py-3" showLoadOlderSentinel={canLoadOlderMessages}>
-            {timelineEntries.map((entry, index) =>
-              entry.kind === "message" ? (
-                <div key={entry._id} className={timelineSpacingClassName(timelineEntries[index - 1], entry)}>
-                  <MessageBubble
-                    message={entry.message}
-                    activeMessageStream={activeMessageStream ?? null}
-                    onSelectArtifact={onSelectArtifact}
-                  />
-                </div>
-              ) : (
-                <div key={entry._id} className={timelineSpacingClassName(timelineEntries[index - 1], entry)}>
-                  <LibraryArtifactDraftCard
-                    entry={entry.entry}
-                    onApplied={onSelectArtifact}
-                    onRegenerated={handleRepositoryDraftRegenerated}
-                  />
-                </div>
-              ),
-            )}
+            {confirmedThreadId ? (
+              <div key={confirmedThreadId} className={conversationScroll.didPrepend ? undefined : "animate-soft-enter"}>
+                {timelineEntries.map((entry, index) =>
+                  entry.kind === "message" ? (
+                    <div key={entry._id} className={timelineSpacingClassName(timelineEntries[index - 1], entry)}>
+                      <MessageBubble
+                        message={entry.message}
+                        activeMessageStream={activeMessageStream ?? null}
+                        onSelectArtifact={onSelectArtifact}
+                      />
+                    </div>
+                  ) : (
+                    <div key={entry._id} className={timelineSpacingClassName(timelineEntries[index - 1], entry)}>
+                      <LibraryArtifactDraftCard
+                        entry={entry.entry}
+                        onApplied={onSelectArtifact}
+                        onRegenerated={handleRepositoryDraftRegenerated}
+                      />
+                    </div>
+                  ),
+                )}
+              </div>
+            ) : null}
           </ConversationContent>
           <ConversationScrollButton />
         </Conversation>
       ) : isLocked ? (
-        <div className="flex min-h-0 flex-1 animate-in flex-col gap-5 px-4 py-6 fade-in duration-300">
+        <div className="flex min-h-0 flex-1 animate-soft-enter flex-col gap-5 px-4 py-6">
           {draftCards}
           <NoArtifactsHint onGenerate={onGenerate} generateDisabledReason={generateDisabledReason} />
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 animate-in flex-col gap-5 px-4 py-6 fade-in duration-300">
+        <div className="flex min-h-0 flex-1 animate-soft-enter flex-col gap-5 px-4 py-6">
           {draftCards}
           <div className="flex flex-1 items-center justify-center">
             <EmptyStateHero
@@ -609,69 +620,75 @@ export function LibraryAskPanel({
             aria-describedby={composerHintId}
           />
           <PromptInputFooter>
-            <PromptInputTools>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 px-2 text-[11px]"
-                onClick={openCreateDraft}
-                disabled={documentActionDisabledReason !== undefined}
-                title={documentActionDisabledReason}
-              >
-                <FilePlusIcon size={13} weight="bold" />
-                Create artifact
-              </Button>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1.5 px-2 text-[11px]"
-                onClick={openUpdateDraft}
-                disabled={documentActionDisabledReason !== undefined || activeArtifactId === null}
-                title={
-                  activeArtifactId === null ? "Open an artifact to draft an update." : documentActionDisabledReason
-                }
-              >
-                <GitDiffIcon size={13} weight="bold" />
-                Update open artifact
-              </Button>
-              {/*
-               * Library Ask model picker. Hidden while the composer
-               * is locked (no artifacts) — the user can't send
-               * anyway, and the picker dropdown would just clutter
-               * the locked-state hint. Library Ask intentionally shows
-               * every user-pickable chat model before the first send; once
-               * the thread is locked to a provider, the picker narrows to
-               * that provider so cached thread context stays coherent.
-               */}
-              {!isLocked ? (
-                <PromptInputModelPicker
-                  value={
-                    selectedProvider && selectedModelName
-                      ? { provider: selectedProvider, modelName: selectedModelName }
-                      : null
+            {composerToolsReady ? (
+              <PromptInputTools className="animate-soft-enter">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 px-2 text-[11px]"
+                  onClick={openCreateDraft}
+                  disabled={documentActionDisabledReason !== undefined}
+                  title={documentActionDisabledReason}
+                >
+                  <FilePlusIcon size={13} weight="bold" />
+                  Create artifact
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1.5 px-2 text-[11px]"
+                  onClick={openUpdateDraft}
+                  disabled={documentActionDisabledReason !== undefined || activeArtifactId === null}
+                  title={
+                    activeArtifactId === null ? "Open an artifact to draft an update." : documentActionDisabledReason
                   }
-                  onChange={setSelectedModel}
-                  threadLockedProvider={lockedProvider}
-                  preferenceScope="library"
-                  getDisabledReason={(entry) =>
-                    premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
-                  }
-                />
-              ) : null}
-              {!isLocked ? (
-                <PromptInputReasoningPicker
-                  value={selectedReasoningEffort}
-                  onChange={setSelectedReasoningEffort}
-                  provider={selectedProvider ?? undefined}
-                  modelName={selectedModelName ?? undefined}
-                  preferenceScope="library"
-                  disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
-                  disabledReasoningEffortMessage={highReasoningDisabledReason}
-                />
-              ) : null}
-            </PromptInputTools>
+                >
+                  <GitDiffIcon size={13} weight="bold" />
+                  Update open artifact
+                </Button>
+                {/*
+                 * Library Ask model picker. Hidden while the composer
+                 * is locked (no artifacts) — the user can't send
+                 * anyway, and the picker dropdown would just clutter
+                 * the locked-state hint. Library Ask intentionally shows
+                 * every user-pickable chat model before the first send; once
+                 * the thread is locked to a provider, the picker narrows to
+                 * that provider so cached thread context stays coherent.
+                 */}
+                {!isLocked ? (
+                  <PromptInputModelPicker
+                    value={
+                      selectedProvider && selectedModelName
+                        ? { provider: selectedProvider, modelName: selectedModelName }
+                        : null
+                    }
+                    onChange={setSelectedModel}
+                    threadLockedProvider={lockedProvider}
+                    preferenceScope="library"
+                    getDisabledReason={(entry) =>
+                      premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
+                    }
+                    catalogEntries={libraryCatalogEntries}
+                  />
+                ) : null}
+                {!isLocked ? (
+                  <PromptInputReasoningPicker
+                    value={selectedReasoningEffort}
+                    onChange={setSelectedReasoningEffort}
+                    provider={selectedProvider ?? undefined}
+                    modelName={selectedModelName ?? undefined}
+                    preferenceScope="library"
+                    disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
+                    disabledReasoningEffortMessage={highReasoningDisabledReason}
+                    catalogEntries={libraryCatalogEntries}
+                  />
+                ) : null}
+              </PromptInputTools>
+            ) : (
+              <div aria-hidden="true" data-testid="library-ask-composer-tools-placeholder" className="min-h-8 flex-1" />
+            )}
             <Button
               type="submit"
               size="sm"
@@ -754,7 +771,7 @@ function NoArtifactsHint({
   generateDisabledReason?: string;
 }) {
   return (
-    <div className="flex min-h-0 flex-1 animate-in flex-col items-center justify-center gap-4 px-4 py-6 fade-in duration-300">
+    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-4 py-6">
       <EmptyStateHero
         visual={
           <div className="flex size-11 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">

@@ -19,11 +19,12 @@
  * `(provider, modelName)` separately.
  */
 
-import { useMemo } from "react";
+import { useMemo, type ReactElement, type SVGProps } from "react";
 import { LockSimpleIcon } from "@phosphor-icons/react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { LlmProvider, ModelPreferenceScope, PickableModelEntry, UserPickableCapability } from "@/lib/types";
+import { AnthropicIcon, OpenAIIcon } from "@/components/icons";
 import {
   PromptInputSelect,
   PromptInputSelectContent,
@@ -32,7 +33,6 @@ import {
   PromptInputSelectValue,
 } from "@/components/ai-elements/prompt-input";
 import { SelectGroup, SelectLabel } from "@/components/ui/select";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
@@ -79,6 +79,8 @@ export interface PromptInputModelPickerProps {
   getDisabledReason?: (entry: PickableModelEntry) => string | null;
   /** Optional class for sizing inside the composer footer. */
   className?: string;
+  /** Optional preloaded catalog so parent toolbars can gate all controls together. */
+  catalogEntries?: ReadonlyArray<PickableModelEntry> | undefined;
 }
 
 const COMPOSITE_KEY_SEPARATOR = ":";
@@ -101,7 +103,12 @@ const PROVIDER_DISPLAY_NAME: Record<LlmProvider, string> = {
   anthropic: "Anthropic",
 };
 
-const MODEL_PICKER_TRIGGER_CLASS_NAME = "h-8 min-w-32 gap-1.5 px-2 text-xs";
+const PROVIDER_ICON: Record<LlmProvider, (props: SVGProps<SVGSVGElement>) => ReactElement> = {
+  openai: OpenAIIcon,
+  anthropic: AnthropicIcon,
+};
+
+const MODEL_PICKER_TRIGGER_CLASS_NAME = "h-8 w-auto min-w-0 max-w-40 justify-start gap-1.5 px-2 text-xs";
 
 export function PromptInputModelPicker({
   value,
@@ -112,15 +119,17 @@ export function PromptInputModelPicker({
   disabled = false,
   getDisabledReason,
   className,
+  catalogEntries: catalogEntriesProp,
 }: PromptInputModelPickerProps) {
   // `listPickableModels` is a tiny query (~10 entries); we always
   // subscribe to it even when the thread is locked so the lock pill
   // and the trigger's display label can resolve correctly. The
   // catalog narrows downstream via `useMemo`.
-  const catalogEntries = useQuery(
+  const queriedCatalogEntries = useQuery(
     api.llmCatalog.listPickableModels,
     capability !== undefined ? { capability, preferenceScope } : { preferenceScope },
   );
+  const catalogEntries = catalogEntriesProp ?? queriedCatalogEntries;
 
   // `useQuery` returns either `undefined` (loading) or the typed array
   // in production. Guard with `Array.isArray` so a misbehaving mock /
@@ -128,7 +137,10 @@ export function PromptInputModelPicker({
   // payload — fall back to "no models available" instead. Memoize so
   // the identity-stable fallback array doesn't fire downstream
   // `useMemo` invalidations every render.
-  const safeCatalog = useMemo(() => (Array.isArray(catalogEntries) ? catalogEntries : []), [catalogEntries]);
+  const safeCatalog = useMemo<ReadonlyArray<PickableModelEntry>>(
+    () => (Array.isArray(catalogEntries) ? catalogEntries : []),
+    [catalogEntries],
+  );
   const visibleEntries = useMemo(() => {
     if (safeCatalog.length === 0) return [];
     if (!threadLockedProvider) return safeCatalog;
@@ -155,15 +167,7 @@ export function PromptInputModelPicker({
   };
 
   if (catalogEntries === undefined) {
-    return (
-      <div className={cn("flex items-center gap-1", className)}>
-        <Skeleton
-          aria-hidden="true"
-          data-testid="prompt-input-model-picker-skeleton"
-          className={cn(MODEL_PICKER_TRIGGER_CLASS_NAME, "shrink-0 rounded-none")}
-        />
-      </div>
-    );
+    return null;
   }
 
   return (
@@ -174,18 +178,19 @@ export function PromptInputModelPicker({
           data-testid="prompt-input-model-picker-trigger"
           className={MODEL_PICKER_TRIGGER_CLASS_NAME}
         >
-          <PromptInputSelectValue placeholder="Pick model">{currentDisplayName}</PromptInputSelectValue>
+          {value ? <ProviderIcon provider={value.provider} /> : null}
+          <PromptInputSelectValue className="truncate" placeholder="Pick model">
+            {currentDisplayName}
+          </PromptInputSelectValue>
         </PromptInputSelectTrigger>
         <PromptInputSelectContent>
           {pickerGroups.length === 0 ? (
-            // Catalog query still loading OR the lock leaves no
-            // pickable entries. Either way: nothing to choose; the
-            // trigger stays clickable but the menu is empty.
             <div className="px-2 py-1.5 text-xs text-muted-foreground">No models available.</div>
           ) : (
             pickerGroups.map((group) => (
               <SelectGroup key={group.id}>
                 <SelectLabel className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                  {group.provider ? <ProviderIcon provider={group.provider} className="size-3" /> : null}
                   {group.label}
                   {group.provider && threadLockedProvider === group.provider ? (
                     <ProviderLockTooltip provider={group.provider} />
@@ -200,7 +205,10 @@ export function PromptInputModelPicker({
                       disabled={disabledReason !== null}
                       title={disabledReason ?? undefined}
                     >
-                      {entry.displayName}
+                      <span className="flex min-w-0 items-center gap-2">
+                        <ProviderIcon provider={entry.provider} className="size-3.5" />
+                        <span className="truncate">{entry.displayName}</span>
+                      </span>
                     </PromptInputSelectItem>
                   );
                 })}
@@ -252,6 +260,17 @@ function groupForPicker(entries: ReadonlyArray<PickableModelEntry>): ProviderGro
     })),
   );
   return groups;
+}
+
+function ProviderIcon({ provider, className }: { provider: LlmProvider; className?: string }) {
+  const Icon = PROVIDER_ICON[provider];
+  return (
+    <Icon
+      aria-hidden="true"
+      className={cn("size-3.5 shrink-0", className)}
+      data-testid={`prompt-input-model-picker-provider-icon-${provider}`}
+    />
+  );
 }
 
 function ProviderLockTooltip({ provider }: { provider: LlmProvider }) {

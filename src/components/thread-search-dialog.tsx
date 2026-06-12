@@ -7,6 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { filterByQuery } from "@/lib/text-filter";
+import { isRepolessAgentEnabled } from "@/lib/repoless-agent";
 import type { ChatMode, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -128,7 +129,9 @@ export function ThreadSearchDialog({
                         <div className="truncate text-[13px] font-medium text-foreground">{thread.title}</div>
                       </div>
                       <div className="mt-0.5 text-[11px] text-muted-foreground">
-                        {thread._id === selectedThreadId ? "Current thread" : formatThreadModeLabel(thread.mode)}
+                        {thread._id === selectedThreadId
+                          ? "Current thread"
+                          : formatThreadModeLabel(thread, repositoryId === null)}
                       </div>
                     </div>
                   </button>
@@ -142,6 +145,9 @@ export function ThreadSearchDialog({
   );
 }
 
-function formatThreadModeLabel(mode: ThreadMode): string {
-  return mode === "library" ? "Library Ask" : "Discuss";
+function formatThreadModeLabel(thread: SearchThread, isRepoless: boolean): string {
+  if (isRepoless) {
+    return isRepolessAgentEnabled(thread) ? "Agent" : "Chat";
+  }
+  return thread.mode === "library" ? "Library Ask" : "Discuss";
 }

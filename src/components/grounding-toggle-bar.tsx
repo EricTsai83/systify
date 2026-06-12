@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { BookOpenIcon, FlaskIcon } from "@phosphor-icons/react";
 import type { RepositoryModeDisabledReasonCode } from "../../convex/lib/chatEligibility";
 import { Button } from "@/components/ui/button";
@@ -105,57 +106,66 @@ export function GroundingToggleBar({
     libraryAxis.code === "library_no_artifact" &&
     typeof onOpenGenerateSystemDesign === "function";
 
+  const groundingItems = [
+    <GroundingPill
+      key="library"
+      label="Library"
+      icon={<BookOpenIcon size={14} weight={groundLibrary && libraryEnabled ? "fill" : "regular"} />}
+      active={groundLibrary}
+      available={libraryEnabled}
+      reason={libraryDisabledMessage}
+      onToggle={() => {
+        if (!libraryEnabled) return;
+        setGroundLibrary(!groundLibrary);
+      }}
+      testId="grounding-toggle-library"
+    />,
+    <GroundingPill
+      key="sandbox"
+      label="Sandbox"
+      icon={
+        <FlaskIcon size={14} weight={groundSandbox && (sandboxEnabled || sandboxPreparesOnSend) ? "fill" : "regular"} />
+      }
+      active={groundSandbox}
+      available={sandboxEnabled || sandboxPreparesOnSend}
+      reason={sandboxDisabledMessage}
+      suffix={sandboxPreparesOnSend ? "prepares on send" : !sandboxEnabled ? undefined : "live source"}
+      onToggle={() => {
+        if (sandboxEnabled || sandboxPreparesOnSend) {
+          setGroundSandbox(!groundSandbox);
+        }
+      }}
+      testId="grounding-toggle-sandbox"
+    />,
+    showGenerateCta ? (
+      <Button
+        key="generate"
+        type="button"
+        variant="link"
+        size="sm"
+        className="h-7 px-2 text-xs"
+        disabled={generateDisabledReason !== undefined}
+        title={generateDisabledReason}
+        onClick={() => onOpenGenerateSystemDesign?.()}
+        data-testid="grounding-generate-cta"
+      >
+        {REPOSITORY_GUIDE_COPY.generateAction}
+      </Button>
+    ) : null,
+  ].filter((item) => item !== null);
+
   return (
     <div
       role="group"
       aria-label="Discuss grounding toggles"
       className={cn("flex flex-wrap items-center gap-2", className)}
     >
-      <GroundingPill
-        label="Library"
-        icon={<BookOpenIcon size={14} weight={groundLibrary && libraryEnabled ? "fill" : "regular"} />}
-        active={groundLibrary}
-        available={libraryEnabled}
-        reason={libraryDisabledMessage}
-        onToggle={() => {
-          if (!libraryEnabled) return;
-          setGroundLibrary(!groundLibrary);
-        }}
-        testId="grounding-toggle-library"
-      />
-      <GroundingPill
-        label="Sandbox"
-        icon={
-          <FlaskIcon
-            size={14}
-            weight={groundSandbox && (sandboxEnabled || sandboxPreparesOnSend) ? "fill" : "regular"}
-          />
-        }
-        active={groundSandbox}
-        available={sandboxEnabled || sandboxPreparesOnSend}
-        reason={sandboxDisabledMessage}
-        suffix={sandboxPreparesOnSend ? "prepares on send" : !sandboxEnabled ? undefined : "live source"}
-        onToggle={() => {
-          if (sandboxEnabled || sandboxPreparesOnSend) {
-            setGroundSandbox(!groundSandbox);
-          }
-        }}
-        testId="grounding-toggle-sandbox"
-      />
-      {showGenerateCta ? (
-        <Button
-          type="button"
-          variant="link"
-          size="sm"
-          className="h-7 px-2 text-xs"
-          disabled={generateDisabledReason !== undefined}
-          title={generateDisabledReason}
-          onClick={() => onOpenGenerateSystemDesign?.()}
-          data-testid="grounding-generate-cta"
-        >
-          {REPOSITORY_GUIDE_COPY.generateAction}
-        </Button>
-      ) : null}
+      {groundingItems.map((item, index) => (
+        <Fragment key={item.key ?? index}>
+          {index > 0 ? <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" /> : null}
+          {item}
+        </Fragment>
+      ))}
     </div>
   );
 }

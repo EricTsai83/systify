@@ -91,6 +91,26 @@
   }
 }
 
+@keyframes soft-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes enter-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 @keyframes reveal-up {
   0% {
     visibility: hidden;
@@ -139,13 +159,14 @@
  *
  *   appear   →  z1 in,  z2 in,  z3 in    (sequential, each ~10% of cycle, ease-out)
  *   peak     →  all three visible         (hold — head's bigger nod peaks here)
- *   dissipate→  all three pop out together (6% of cycle, ease-out)
- *   pause    →  quiet stretch             (~28% of cycle ≈ 1.4s)
+ *   dissipate→  all three pop out together (11% of cycle, ease-out)
+ *   pause    →  quiet stretch             (~25% of cycle ≈ 1.25s)
  *
  * Appearance is FIFO and staged — bubbles emerge one at a time, bottom to
- * top. Dissipation is synchronized — all three z's share the same 66%→72%
- * fade-out window so they pop out together as a single event, which gives
- * the cycle a clear close-bracket: build up, hold, vanish, rest, repeat.
+ * top. Dissipation is synchronized — all three z's share the same 64%→75%
+ * fade-out window, with a fast first drop and a slower tail so they dissolve
+ * together as a single event. That gives the cycle a clear close-bracket:
+ * build up, hold, vanish, rest, repeat.
  *
  * Easing rationale: the cycle has three sequential fade-ins at very
  * different cycle offsets. A single top-level ease-in-out warps each
@@ -154,9 +175,9 @@
  * speeds). Holding the global function flat at `linear` and shaping each
  * fade with its own `ease-out` keeps the three z's identical: a natural
  * bloom on the way in, and a quick-then-trailing dispersal on the way
- * out. `ease-out` on the dissipation reads as "彈出 + dissolve" rather
- * than "snap" — opacity loses most of its visibility fast then trails
- * gently to zero, which is what natural dispersal looks like.
+ * out. Dissipation uses a staged opacity drop — most visibility is gone
+ * by 68%, then the remaining opacity trails gently to zero — which reads
+ * as natural dispersal instead of a constant-rate fade.
  */
 @keyframes z-puff-1 {
   0% {
@@ -166,11 +187,15 @@
   10% {
     opacity: 1;
   }
-  66% {
+  64% {
     opacity: 1;
-    animation-timing-function: ease-out;
+    animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
   }
-  72%,
+  68% {
+    opacity: 0.24;
+    animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+  75%,
   100% {
     opacity: 0;
   }
@@ -187,11 +212,15 @@
   20% {
     opacity: 1;
   }
-  66% {
+  64% {
     opacity: 1;
-    animation-timing-function: ease-out;
+    animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
   }
-  72%,
+  68% {
+    opacity: 0.24;
+    animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+  75%,
   100% {
     opacity: 0;
   }
@@ -208,11 +237,15 @@
   30% {
     opacity: 1;
   }
-  66% {
+  64% {
     opacity: 1;
-    animation-timing-function: ease-out;
+    animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
   }
-  72%,
+  68% {
+    opacity: 0.24;
+    animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+  75%,
   100% {
     opacity: 0;
   }
@@ -351,6 +384,15 @@
     animation: fade-up 0.5s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
 
+  .animate-soft-enter {
+    animation: soft-enter 0.22s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+    will-change: opacity, transform;
+  }
+
+  .animate-enter-fade {
+    animation: enter-fade 0.32s cubic-bezier(0.25, 0.46, 0.45, 0.94) both;
+  }
+
   .animate-reveal-up {
     animation: reveal-up 0.5s cubic-bezier(0.32, 0.72, 0, 1) both;
   }
@@ -434,6 +476,8 @@
     .animate-scan-y,
     .animate-caret,
     .animate-fade-up,
+    .animate-soft-enter,
+    .animate-enter-fade,
     .animate-reveal-up,
     .animate-message-rail,
     .animate-pulse-soft,

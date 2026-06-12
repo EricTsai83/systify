@@ -31,6 +31,10 @@ export function useChatLifecycle({
   selectedReasoningEffort,
   newThreadTitle,
   newThreadArtifactContext,
+  newThreadSingleTurnEnabled,
+  newThreadAgentEnabled,
+  newThreadAgentRole,
+  newThreadAgentInstructions,
   clearChatInput,
   setActionError,
   setThreadToArchive,
@@ -75,6 +79,10 @@ export function useChatLifecycle({
    */
   newThreadTitle?: string;
   newThreadArtifactContext?: ArtifactId[];
+  newThreadSingleTurnEnabled?: boolean;
+  newThreadAgentEnabled?: boolean;
+  newThreadAgentRole?: string;
+  newThreadAgentInstructions?: string;
   clearChatInput: () => void;
   setActionError: (value: string | null) => void;
   setThreadToArchive: (value: ThreadId | null) => void;
@@ -121,7 +129,7 @@ export function useChatLifecycle({
             : {};
         try {
           if (selectedThreadId) {
-            await sendMessageMutation({
+            const result = await sendMessageMutation({
               threadId: selectedThreadId,
               content: chatInput,
               mode: chatMode,
@@ -129,6 +137,10 @@ export function useChatLifecycle({
               ...modelArgs,
               ...reasoningArgs,
             });
+            if ("status" in result && result.status === "singleTurnResetPending") {
+              setActionError(result.message);
+              return;
+            }
             clearChatInput();
             return;
           }
@@ -136,6 +148,19 @@ export function useChatLifecycle({
           const artifactContextArgs =
             chatMode === "library" && newThreadArtifactContext && newThreadArtifactContext.length > 0
               ? { artifactContext: newThreadArtifactContext }
+              : {};
+          const agentProfileArgs =
+            repositoryId === null
+              ? {
+                  ...(newThreadSingleTurnEnabled !== undefined
+                    ? { singleTurnEnabled: newThreadSingleTurnEnabled }
+                    : {}),
+                  ...(newThreadAgentEnabled !== undefined ? { agentEnabled: newThreadAgentEnabled } : {}),
+                  ...(newThreadAgentRole !== undefined ? { agentRole: newThreadAgentRole } : {}),
+                  ...(newThreadAgentInstructions !== undefined
+                    ? { agentInstructions: newThreadAgentInstructions }
+                    : {}),
+                }
               : {};
           // Lazy first send. Repoless threads (no `repositoryId`) are
           // legal — the backend creates the thread with `repositoryId:
@@ -147,6 +172,7 @@ export function useChatLifecycle({
             mode: chatMode,
             ...titleArgs,
             ...artifactContextArgs,
+            ...agentProfileArgs,
             ...groundingArgs,
             ...modelArgs,
             ...reasoningArgs,
@@ -169,6 +195,10 @@ export function useChatLifecycle({
         selectedReasoningEffort,
         newThreadTitle,
         newThreadArtifactContext,
+        newThreadSingleTurnEnabled,
+        newThreadAgentEnabled,
+        newThreadAgentRole,
+        newThreadAgentInstructions,
         clearChatInput,
         onAfterCreateThread,
         selectedThreadId,

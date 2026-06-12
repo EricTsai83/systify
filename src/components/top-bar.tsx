@@ -124,7 +124,7 @@ export function TopBar({
   showSystemStatus: boolean;
 }) {
   return (
-    <div className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
+    <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
       <ChatModeControls onSearchThreads={onSearchThreads} onNewThread={onNewThread} />
       {/*
        * Title block renders only once `repoDetail` is fully resolved. Earlier

@@ -1,10 +1,13 @@
 import { v } from "convex/values";
-import type { Id } from "../_generated/dataModel";
 import { mutation } from "../_generated/server";
 import { chatModeValidator } from "../lib/chatMode";
 import { reasoningEffortValidator } from "../lib/llmCatalog";
 import { llmProviderValidator } from "../lib/llmProvider";
-import { startChatTurnInExistingThread, startChatTurnInNewThread } from "./chatTurnIntake";
+import {
+  type ExistingThreadChatTurnResult,
+  startChatTurnInExistingThread,
+  startChatTurnInNewThread,
+} from "./chatTurnIntake";
 
 export const sendMessageStartingNewThread = mutation({
   args: {
@@ -46,6 +49,14 @@ export const sendMessageStartingNewThread = mutation({
      * catalog entry's default for this message only.
      */
     reasoningEffort: v.optional(reasoningEffortValidator),
+    /**
+     * Repoless-only first-send Agent Profile fields. Existing threads save
+     * these settings through `chat.threads.updateRepolessThreadAgentProfile`.
+     */
+    agentEnabled: v.optional(v.boolean()),
+    singleTurnEnabled: v.optional(v.boolean()),
+    agentRole: v.optional(v.string()),
+    agentInstructions: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return await startChatTurnInNewThread(ctx, args);
@@ -84,10 +95,7 @@ export const sendMessage = mutation({
      */
     reasoningEffort: v.optional(reasoningEffortValidator),
   },
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ jobId: Id<"jobs">; userMessageId: Id<"messages">; assistantMessageId: Id<"messages"> }> => {
+  handler: async (ctx, args): Promise<ExistingThreadChatTurnResult> => {
     return await startChatTurnInExistingThread(ctx, args);
   },
 });

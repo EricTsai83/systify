@@ -118,7 +118,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
       maxWidth={LEFT_SIDEBAR_MAX_WIDTH}
     >
       <SidebarHeader>
-        <Logo size={30} />
+        <Logo size={26} />
         <div className="min-w-0 leading-tight">
           <div className="truncate text-lg font-semibold tracking-tight">Systify</div>
         </div>
@@ -146,7 +146,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
           />
         </SidebarContent>
       ) : activeRepositoryId === null ? (
-        <SidebarContent className="flex min-h-0 flex-1 flex-col">
+        <SidebarContent className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <RepolessChatsRail
             selectedThreadId={selectedThreadId}
             onSelectThread={onSelectThread}
@@ -156,7 +156,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
           />
         </SidebarContent>
       ) : (
-        <SidebarContent className="flex min-h-0 flex-1 flex-col">
+        <SidebarContent className="flex min-h-0 flex-1 flex-col overflow-hidden">
           <RepositoryThreadsRail
             repositoryId={activeRepositoryId}
             repositories={repositories}

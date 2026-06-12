@@ -1,5 +1,16 @@
-import { useCallback, useMemo, useState, type AnimationEvent, type FormEvent } from "react";
+import {
+  Children,
+  Fragment,
+  useCallback,
+  useMemo,
+  useState,
+  type AnimationEvent,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+import { useQuery } from "convex/react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
+import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { findInFlightAssistantMessage, useConversationThread } from "@/hooks/use-conversation-thread";
 import { useModelAccessDisabledReason } from "@/hooks/use-model-access-disabled-reason";
@@ -25,6 +36,7 @@ import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-inpu
 import { SandboxActivityPill } from "@/components/sandbox-activity-pill";
 import { Button } from "@/components/ui/button";
 import { ButtonStateText } from "@/components/ui/button-state-text";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
   ActiveMessageStream,
   ArtifactId,
@@ -192,6 +204,10 @@ type ChatPanelProps = {
    * threading the callback through.
    */
   onLoadOlderMessages?: () => void;
+  /** Optional controls rendered inside the composer toolbar, before model/grounding controls. */
+  composerControls?: ReactNode;
+  /** True once caller-owned composer controls have loaded their backing data. */
+  composerControlsReady?: boolean;
 };
 
 type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream" | "isChatLoading"> & {
@@ -267,9 +283,25 @@ export function ChatPanel({
   attachedRepositoryId,
   canLoadOlderMessages = false,
   onLoadOlderMessages = NOOP_LOAD_OLDER,
+  composerControls,
+  composerControlsReady = true,
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
   const modelPickerCapability = modelPreferenceScope === "sandbox" ? "sandbox" : undefined;
+  const shouldRenderModelPicker = !isReadOnly && typeof setSelectedModel === "function";
+  const shouldRenderReasoningPicker = !isReadOnly && typeof setSelectedReasoningEffort === "function";
+  const modelCatalogEntries = useQuery(
+    api.llmCatalog.listPickableModels,
+    shouldRenderModelPicker
+      ? modelPickerCapability !== undefined
+        ? { capability: modelPickerCapability, preferenceScope: modelPreferenceScope }
+        : { preferenceScope: modelPreferenceScope }
+      : "skip",
+  );
+  const reasoningCatalogEntries = useQuery(
+    api.llmCatalog.listPickableModels,
+    shouldRenderReasoningPicker ? { preferenceScope: modelPreferenceScope } : "skip",
+  );
   const [showStatsForNerds] = useStatsForNerdsPreference();
 
   // Owns stick-to-bottom on append, anchor preservation on prepend,
@@ -342,6 +374,8 @@ export function ChatPanel({
   // button and lets the submit through) would fire `onSendMessage` mid-flight.
   const isSendBlocked =
     isReadOnly || effectiveSendDisabledReason !== undefined || isSending || isSyncing || !chatInput.trim() || canCancel;
+  const emptyMessageDisabledReason = !chatInput.trim() ? "Message requires text" : undefined;
+  const sendButtonTitle = emptyMessageDisabledReason ?? effectiveSendDisabledReason;
 
   const effectiveGrounding = useMemo(() => {
     if (!sandboxGroundingDisabledReason) {
@@ -367,6 +401,67 @@ export function ChatPanel({
   const sandboxPill =
     shouldShowSandboxPill && attachedRepositoryId ? <SandboxActivityPill repositoryId={attachedRepositoryId} /> : null;
 
+  const modelPickerReady = !shouldRenderModelPicker || Array.isArray(modelCatalogEntries);
+  const reasoningPickerReady = !shouldRenderReasoningPicker || Array.isArray(reasoningCatalogEntries);
+  const groundingReady = !(showGroundingToggles && chatMode === "discuss") || grounding !== undefined;
+  const composerToolsReady = composerControlsReady && modelPickerReady && reasoningPickerReady && groundingReady;
+
+  const composerToolItems: ReactNode[] = [
+    showArtifactToggle && onToggleArtifactPanel ? (
+      <Button
+        type="button"
+        variant={isArtifactPanelOpen ? "secondary" : "ghost"}
+        size="sm"
+        onClick={onToggleArtifactPanel}
+        aria-label="Toggle artifacts panel"
+        aria-pressed={isArtifactPanelOpen}
+        className="h-8 shrink-0 gap-1.5 px-2 text-xs"
+      >
+        <FileTextIcon size={14} weight="bold" />
+        <span className="hidden sm:inline">Artifacts</span>
+      </Button>
+    ) : null,
+    shouldRenderModelPicker ? (
+      <PromptInputModelPicker
+        value={
+          selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null
+        }
+        onChange={setSelectedModel}
+        threadLockedProvider={threadLockedProvider}
+        capability={modelPickerCapability}
+        preferenceScope={modelPreferenceScope}
+        getDisabledReason={(entry) =>
+          premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
+        }
+        catalogEntries={modelCatalogEntries}
+      />
+    ) : null,
+    shouldRenderReasoningPicker ? (
+      <PromptInputReasoningPicker
+        value={selectedReasoningEffort}
+        onChange={setSelectedReasoningEffort}
+        provider={selectedProvider ?? undefined}
+        modelName={selectedModelName ?? undefined}
+        preferenceScope={modelPreferenceScope}
+        disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
+        disabledReasoningEffortMessage={highReasoningDisabledReason}
+        catalogEntries={reasoningCatalogEntries}
+      />
+    ) : null,
+    ...Children.toArray(composerControls),
+    showGroundingToggles && chatMode === "discuss" ? (
+      <GroundingToggleBar
+        groundLibrary={groundLibrary}
+        groundSandbox={groundSandbox}
+        setGroundLibrary={setGroundLibrary}
+        setGroundSandbox={setGroundSandbox}
+        grounding={effectiveGrounding}
+        onOpenGenerateSystemDesign={onOpenGenerateSystemDesign}
+        generateDisabledReason={generateSystemDesignDisabledReason}
+      />
+    ) : null,
+  ].filter((item) => item !== null);
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {shouldShowEmptyState ? (
@@ -379,7 +474,7 @@ export function ChatPanel({
         // empty state never needs to scroll, so dropping ScrollArea for
         // this branch is the cleanest fix and lets `flex-1` actually
         // reach the centered Card.
-        <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 flex-col gap-3 px-6 py-6">
+        <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 animate-soft-enter flex-col gap-3 px-6 py-6">
           {sandboxPill}
           {hasAttachedRepository ? <EmptyChatHint /> : <EmptyNoRepoHint />}
           {/*
@@ -414,11 +509,7 @@ export function ChatPanel({
             {sandboxPill}
             {messages && (
               <div
-                className={
-                  skipEntrance
-                    ? "flex flex-col gap-0"
-                    : "flex flex-col gap-0 animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out"
-                }
+                className={skipEntrance ? "flex flex-col gap-0" : "flex flex-col gap-0 animate-soft-enter"}
                 onAnimationEnd={skipEntrance ? undefined : markCurrentThreadSeen}
               >
                 {messages.map((message, index) => {
@@ -478,70 +569,22 @@ export function ChatPanel({
               aria-describedby={isReadOnly && readOnlyHint ? "readonly-hint" : undefined}
             />
             <PromptInputFooter>
-              <PromptInputTools>
-                {showArtifactToggle && onToggleArtifactPanel ? (
-                  <Button
-                    type="button"
-                    variant={isArtifactPanelOpen ? "secondary" : "ghost"}
-                    size="sm"
-                    onClick={onToggleArtifactPanel}
-                    aria-label="Toggle artifacts panel"
-                    aria-pressed={isArtifactPanelOpen}
-                    className="h-8 shrink-0 gap-1.5 px-2 text-xs"
-                  >
-                    <FileTextIcon size={14} weight="bold" />
-                    <span className="hidden sm:inline">Artifacts</span>
-                  </Button>
-                ) : null}
-                {/*
-                 * Model picker. Mounted left of the grounding toggles
-                 * so the heaviest UX decision (which LLM provider) sits
-                 * before the lighter toggles. Hidden in read-only
-                 * surfaces (archived repository) because the user
-                 * cannot send a message anyway. Also hidden when the
-                 * caller did not wire `setSelectedModel` — that's the
-                 * signal a unit-test / headless render is using
-                 * `ChatPanel` without picker state.
-                 */}
-                {!isReadOnly && setSelectedModel ? (
-                  <PromptInputModelPicker
-                    value={
-                      selectedProvider && selectedModelName
-                        ? { provider: selectedProvider, modelName: selectedModelName }
-                        : null
-                    }
-                    onChange={setSelectedModel}
-                    threadLockedProvider={threadLockedProvider}
-                    capability={modelPickerCapability}
-                    preferenceScope={modelPreferenceScope}
-                    getDisabledReason={(entry) =>
-                      premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
-                    }
-                  />
-                ) : null}
-                {!isReadOnly && setSelectedReasoningEffort ? (
-                  <PromptInputReasoningPicker
-                    value={selectedReasoningEffort}
-                    onChange={setSelectedReasoningEffort}
-                    provider={selectedProvider ?? undefined}
-                    modelName={selectedModelName ?? undefined}
-                    preferenceScope={modelPreferenceScope}
-                    disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
-                    disabledReasoningEffortMessage={highReasoningDisabledReason}
-                  />
-                ) : null}
-                {showGroundingToggles && chatMode === "discuss" ? (
-                  <GroundingToggleBar
-                    groundLibrary={groundLibrary}
-                    groundSandbox={groundSandbox}
-                    setGroundLibrary={setGroundLibrary}
-                    setGroundSandbox={setGroundSandbox}
-                    grounding={effectiveGrounding}
-                    onOpenGenerateSystemDesign={onOpenGenerateSystemDesign}
-                    generateDisabledReason={generateSystemDesignDisabledReason}
-                  />
-                ) : null}
-              </PromptInputTools>
+              {composerToolsReady ? (
+                <PromptInputTools className="animate-enter-fade">
+                  {composerToolItems.map((item, index) => (
+                    <Fragment key={index}>
+                      {index > 0 ? <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" /> : null}
+                      {item}
+                    </Fragment>
+                  ))}
+                </PromptInputTools>
+              ) : (
+                <div
+                  aria-hidden="true"
+                  data-testid="chat-panel-composer-tools-placeholder"
+                  className="min-h-8 flex-1"
+                />
+              )}
               {canCancel && !isReadOnly ? (
                 /*
                  * Stop button. `type="button"` so a stray Enter in
@@ -575,21 +618,23 @@ export function ChatPanel({
                   <ButtonStateText current={isCancellingReply ? "Stopping…" : "Stop"} states={["Stop", "Stopping…"]} />
                 </Button>
               ) : (
-                <Button
-                  type="submit"
-                  variant="default"
-                  size="sm"
-                  disabled={isSendBlocked}
-                  title={effectiveSendDisabledReason}
-                  data-testid="chat-panel-send-button"
-                  className="min-w-30"
-                >
-                  <PaperPlaneTiltIcon weight="bold" />
-                  <ButtonStateText
-                    current={isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
-                    states={["Send", "Sending…", "Syncing…"]}
-                  />
-                </Button>
+                <SendButtonWithOptionalTooltip disabledReason={sendButtonTitle}>
+                  <Button
+                    type="submit"
+                    variant="default"
+                    size="sm"
+                    disabled={isSendBlocked}
+                    title={sendButtonTitle}
+                    data-testid="chat-panel-send-button"
+                    className="min-w-30"
+                  >
+                    <PaperPlaneTiltIcon weight="bold" />
+                    <ButtonStateText
+                      current={isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
+                      states={["Send", "Sending…", "Syncing…"]}
+                    />
+                  </Button>
+                </SendButtonWithOptionalTooltip>
               )}
             </PromptInputFooter>
           </PromptInput>
@@ -601,6 +646,29 @@ export function ChatPanel({
         </div>
       </div>
     </div>
+  );
+}
+
+function SendButtonWithOptionalTooltip({
+  disabledReason,
+  children,
+}: {
+  disabledReason: string | undefined;
+  children: ReactNode;
+}) {
+  if (!disabledReason) {
+    return children;
+  }
+
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex cursor-not-allowed">{children}</span>
+        </TooltipTrigger>
+        <TooltipContent side="top">{disabledReason}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 

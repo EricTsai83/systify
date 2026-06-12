@@ -165,7 +165,7 @@ describe("HistoryPage", () => {
     expect(screen.getByRole("group", { name: /chat history pages/i })).toHaveStyle({ minHeight: "632px" });
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
     expect(screen.getByLabelText("Loaded repository threads: 2")).toBeInTheDocument();
-    expect(screen.getByLabelText("Loaded no-repository chats: 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Loaded no-repository threads: 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Shared links: 1")).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: /select chat history repository/i })).toHaveTextContent("acme/systify");
     expect(screen.getAllByText("acme/systify").length).toBeGreaterThan(0);
@@ -249,6 +249,23 @@ describe("HistoryPage", () => {
                 lastMessageAt: 200,
                 activeShare: null,
               },
+              {
+                _id: "thread_no_repo_regular_with_profile",
+                title: "Former agent",
+                mode: "discuss",
+                lastMessageAt: 195,
+                agentEnabled: false,
+                agentRole: "Former agent",
+                activeShare: null,
+              },
+              {
+                _id: "thread_no_repo_agent",
+                title: "Translation agent",
+                mode: "discuss",
+                lastMessageAt: 190,
+                agentRole: "Translation agent",
+                activeShare: null,
+              },
             ])
           : paginated([]);
       }
@@ -257,8 +274,12 @@ describe("HistoryPage", () => {
 
     renderHistoryPage();
 
-    fireEvent.click(openButtonForRow("General planning"));
-    expect(screen.getByTestId("location")).toHaveTextContent("/chat/thread_no_repo");
+    expect(within(rowForText("General planning")).getByText("Chat")).toBeInTheDocument();
+    expect(within(rowForText("Former agent")).getByText("Chat")).toBeInTheDocument();
+    expect(within(rowForText("Translation agent")).getByText("Agent")).toBeInTheDocument();
+
+    fireEvent.click(openButtonForRow("Translation agent"));
+    expect(screen.getByTestId("location")).toHaveTextContent("/chat/thread_no_repo_agent");
   });
 
   test("share copies a public URL and shared links support copy and revoke", async () => {

@@ -8,6 +8,7 @@ import type { ReasoningEffort } from "../lib/llmCatalog";
 import type { LlmProvider } from "../lib/llmProvider";
 import { loadViewerCustomization, type UserCustomizationPreferences } from "../lib/userPreferences";
 import type { ExtendedChatMode } from "./prompting";
+import { resolveRepolessAgentEnabled } from "./threads";
 
 export type ReplyContext = {
   ownerTokenIdentifier: string;
@@ -57,6 +58,9 @@ export type ReplyContext = {
    * model's default effort.
    */
   reasoningEffort?: ReasoningEffort;
+  agentRole?: string;
+  agentInstructions?: string;
+  singleTurnEnabled: boolean;
   customization: UserCustomizationPreferences;
   repositoryId?: Id<"repositories">;
   repositorySummary?: string;
@@ -132,6 +136,10 @@ const DOCS_ARTIFACT_KINDS: Array<Doc<"artifacts">["kind"]> = [
   "capacity_estimate",
 ];
 const DOCS_ARTIFACTS_TOTAL_LIMIT = 12;
+
+function normalizeOptionalProfileField(value: string | undefined): string | undefined {
+  return value?.trim() || undefined;
+}
 
 /**
  * Load the most recent docs artifacts across all DOCS_ARTIFACT_KINDS for a
@@ -276,6 +284,9 @@ export const getReplyContext = internalQuery({
     // here without a one-off branch.
     const { groundLibrary, groundSandbox } = resolveDiscussGrounding(effectiveMode, userMessage);
     const customization = await loadViewerCustomization(ctx, thread.ownerTokenIdentifier);
+    const agentProfileEnabled = resolveRepolessAgentEnabled(thread);
+    const agentRole = agentProfileEnabled ? normalizeOptionalProfileField(thread.agentRole) : undefined;
+    const agentInstructions = agentProfileEnabled ? normalizeOptionalProfileField(thread.agentInstructions) : undefined;
 
     // Cross-mode filtering + empty-content filtering happen inside
     // `loadReplyContextMessages` so the helper can over-fetch a bounded
@@ -300,6 +311,9 @@ export const getReplyContext = internalQuery({
         provider: userMessage.provider,
         modelName: userMessage.modelName,
         reasoningEffort: userMessage.reasoningEffort,
+        agentRole,
+        agentInstructions,
+        singleTurnEnabled: thread.singleTurnEnabled === true,
         customization,
         repositoryId: undefined,
         repositorySummary: undefined,
@@ -381,6 +395,9 @@ export const getReplyContext = internalQuery({
       provider: userMessage.provider,
       modelName: userMessage.modelName,
       reasoningEffort: userMessage.reasoningEffort,
+      agentRole,
+      agentInstructions,
+      singleTurnEnabled: thread.singleTurnEnabled === true,
       customization,
       repositoryId: repository._id,
       repositorySummary: repository.summary,

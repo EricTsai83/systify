@@ -31,6 +31,7 @@ function makeContext(overrides: Partial<ReplyContext> & { artifacts?: ReplyConte
     mode: "library",
     groundLibrary: false,
     groundSandbox: false,
+    singleTurnEnabled: false,
     customization: { traits: [], customInstructions: "" },
     artifacts: [],
     chunks: [],
@@ -314,6 +315,56 @@ describe("buildUserPrompt artifact numbering", () => {
     expect(prompt).toContain("User preferences:");
     expect(prompt).toContain("Preferred traits: Direct, Skeptical");
     expect(prompt).toContain("Prefer decision records when explaining trade-offs.");
+  });
+
+  test("includes Agent Profile before repository, conversation, and user question", () => {
+    const prompt = buildUserPrompt(
+      makeContext({
+        agentRole: "Translation agent",
+        agentInstructions: "Whenever the user writes Chinese, translate it into English.",
+        messages: [
+          {
+            id: "message_old" as Id<"messages">,
+            role: "user",
+            content: "older question",
+          },
+        ],
+      }),
+      "你好",
+      [],
+    );
+
+    expect(prompt).toContain("Thread agent profile:");
+    expect(prompt).toContain("Name: Translation agent");
+    expect(prompt).toContain("Instructions:\nWhenever the user writes Chinese, translate it into English.");
+    expect(prompt.indexOf("Thread agent profile:")).toBeLessThan(prompt.indexOf("Repository:"));
+    expect(prompt.indexOf("Thread agent profile:")).toBeLessThan(prompt.indexOf("Recent conversation:"));
+    expect(prompt.indexOf("Thread agent profile:")).toBeLessThan(prompt.indexOf("User question:"));
+  });
+
+  test("omits Agent Profile section when role and instructions are empty", () => {
+    const prompt = buildUserPrompt(makeContext({ agentRole: "", agentInstructions: "" }), "Summarize.", []);
+
+    expect(prompt).not.toContain("Thread agent profile:");
+  });
+
+  test("keeps Agent Profile separate from user preferences", () => {
+    const prompt = buildUserPrompt(
+      makeContext({
+        agentRole: "Reviewer",
+        agentInstructions: "Call out uncertainty.",
+        customization: {
+          traits: ["Direct"],
+          customInstructions: "Prefer short answers.",
+        },
+      }),
+      "Review this.",
+      [],
+    );
+
+    expect(prompt).toContain("Thread agent profile:");
+    expect(prompt).toContain("User preferences:");
+    expect(prompt.indexOf("Thread agent profile:")).toBeLessThan(prompt.indexOf("User preferences:"));
   });
 
   test("prefixes each rendered artifact with a 1-based [A#] marker", () => {

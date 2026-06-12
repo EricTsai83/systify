@@ -41,7 +41,7 @@ import {
 } from "@phosphor-icons/react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
-import type { LlmProvider, ModelPreferenceScope, ReasoningEffort } from "@/lib/types";
+import type { LlmProvider, ModelPreferenceScope, PickableModelEntry, ReasoningEffort } from "@/lib/types";
 import {
   PromptInputSelect,
   PromptInputSelectContent,
@@ -79,6 +79,8 @@ export interface PromptInputReasoningPickerProps {
   preferenceScope?: ModelPreferenceScope;
   /** Optional class for sizing inside the composer footer. */
   className?: string;
+  /** Optional preloaded catalog so parent toolbars can gate all controls together. */
+  catalogEntries?: ReadonlyArray<PickableModelEntry> | undefined;
 }
 
 const EFFORTS: readonly ReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh"];
@@ -102,13 +104,18 @@ export function PromptInputReasoningPicker({
   disabledReasoningEffortMessage,
   preferenceScope = "discuss",
   className,
+  catalogEntries: catalogEntriesProp,
 }: PromptInputReasoningPickerProps) {
   // Subscribe to the catalog so we can look up `supportsReasoning`
   // for the currently selected model. The query is shared with the
   // sibling model picker and Convex memoises duplicate subscriptions
   // — no real extra cost.
-  const catalogEntries = useQuery(api.llmCatalog.listPickableModels, { preferenceScope });
-  const safeCatalog = useMemo(() => (Array.isArray(catalogEntries) ? catalogEntries : []), [catalogEntries]);
+  const queriedCatalogEntries = useQuery(api.llmCatalog.listPickableModels, { preferenceScope });
+  const catalogEntries = catalogEntriesProp ?? queriedCatalogEntries;
+  const safeCatalog = useMemo<ReadonlyArray<PickableModelEntry>>(
+    () => (Array.isArray(catalogEntries) ? catalogEntries : []),
+    [catalogEntries],
+  );
 
   const selectedEntry = useMemo(() => {
     if (provider === undefined || modelName === undefined) return undefined;
@@ -185,17 +192,16 @@ export function PromptInputReasoningPicker({
                 onPointerLeave={closeTooltip}
                 onPointerDown={closeTooltip}
                 className={cn(
-                  "h-8 min-w-24 justify-start gap-1.5 rounded-none border border-muted-foreground/65 bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
-                  "hover:border-muted-foreground hover:bg-transparent hover:text-foreground",
-                  "focus-visible:border-ring focus-visible:bg-transparent focus-visible:text-foreground",
-                  "aria-expanded:border-muted-foreground aria-expanded:bg-transparent aria-expanded:text-foreground",
-                  "[&>svg:last-child]:hidden",
+                  "h-8 w-auto min-w-0 max-w-32 justify-start gap-1.5 rounded-none border-none bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
+                  "hover:bg-accent hover:text-foreground",
+                  "focus-visible:bg-transparent focus-visible:text-foreground",
+                  "aria-expanded:bg-accent aria-expanded:text-foreground",
                 )}
               >
                 <div className="flex size-4 shrink-0 items-center justify-center self-center text-current">
                   <currentMeta.Icon size={14} weight="bold" />
                 </div>
-                <PromptInputSelectValue className="flex items-center leading-none" placeholder="Reasoning">
+                <PromptInputSelectValue className="flex items-center truncate leading-none" placeholder="Reasoning">
                   {currentMeta.label}
                 </PromptInputSelectValue>
               </PromptInputSelectTrigger>

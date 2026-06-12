@@ -809,6 +809,29 @@ export default defineSchema({
     defaultGroundLibrary: v.optional(v.boolean()),
     defaultGroundSandbox: v.optional(v.boolean()),
     /**
+     * Repoless-only single-turn mode. Missing means false. When enabled,
+     * the next send clears prior messages/streams/tool-call events before
+     * queueing the new user question and assistant placeholder.
+     */
+    singleTurnEnabled: v.optional(v.boolean()),
+    /**
+     * Repoless-only reset marker used while a long existing thread is being
+     * drained in continuation mutations after single-turn is enabled.
+     */
+    singleTurnResetPending: v.optional(v.boolean()),
+    /**
+     * Repoless Agent mode. Missing preserves legacy behavior: threads with
+     * profile text are treated as Agent, otherwise Regular chat.
+     */
+    agentEnabled: v.optional(v.boolean()),
+    /**
+     * Repoless Agent Profile fields. Empty values are represented by absent
+     * fields so prompt assembly can treat missing and blank identically.
+     */
+    agentRole: v.optional(v.string()),
+    agentInstructions: v.optional(v.string()),
+    agentUpdatedAt: v.optional(v.number()),
+    /**
      * Wall-clock ms epoch when the viewer pinned this thread to the top of
      * their sidebar. Unset on unpin (drop the field via patch). The value
      * doubles as a tiebreaker — most-recently-pinned threads sort above

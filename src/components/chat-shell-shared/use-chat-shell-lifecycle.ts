@@ -24,6 +24,10 @@ export function useChatShellLifecycle({
   selectedProvider,
   selectedModelName,
   selectedReasoningEffort,
+  newThreadSingleTurnEnabled,
+  newThreadAgentEnabled,
+  newThreadAgentRole,
+  newThreadAgentInstructions,
   threadToArchive,
   setActionError,
   setThreadToArchive,
@@ -48,6 +52,10 @@ export function useChatShellLifecycle({
    * entry's default.
    */
   selectedReasoningEffort?: ReasoningEffort | null;
+  newThreadSingleTurnEnabled?: boolean;
+  newThreadAgentEnabled?: boolean;
+  newThreadAgentRole?: string;
+  newThreadAgentInstructions?: string;
   threadToArchive: ThreadId | null;
   setActionError: (value: string | null) => void;
   setThreadToArchive: (value: ThreadId | null) => void;
@@ -90,6 +98,10 @@ export function useChatShellLifecycle({
     selectedProvider,
     selectedModelName,
     selectedReasoningEffort,
+    newThreadSingleTurnEnabled,
+    newThreadAgentEnabled,
+    newThreadAgentRole,
+    newThreadAgentInstructions,
     clearChatInput,
     setActionError,
     setThreadToArchive,
