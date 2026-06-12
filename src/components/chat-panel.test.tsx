@@ -1114,6 +1114,36 @@ describe("ChatPanel cancel-in-flight reply", () => {
     expect(screen.queryByText(disabledReason)).not.toBeInTheDocument();
   });
 
+  test("shows missing-text hover copy and not-allowed cursor when Send is disabled for an empty message", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={threadId}
+        messages={[]}
+        activeMessageStream={null}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={undefined}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={{ reasonCode: "available", message: null }}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    const sendButton = screen.getByTestId("chat-panel-send-button");
+    expect(sendButton).toBeDisabled();
+    expect(sendButton).toHaveAttribute("title", "Message requires text");
+    expect(sendButton.parentElement).toHaveClass("cursor-not-allowed");
+    expect(screen.getByText("Message requires text")).toBeInTheDocument();
+  });
+
   test("renders Stop in place of Send while the latest assistant message is streaming", () => {
     render(
       <ChatPanel

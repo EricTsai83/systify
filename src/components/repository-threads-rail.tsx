@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { AnimatePresence, motion, useReducedMotion, type Transition } from "motion/react";
 import {
@@ -6,18 +6,17 @@ import {
   LockIcon,
   PencilSimpleIcon,
   PlusIcon,
+  CaretRightIcon,
   PushPinSimpleIcon,
   PushPinSimpleSlashIcon,
-  RepeatOnceIcon,
   ArchiveIcon,
-  RobotIcon,
 } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { MAX_RENAME_TITLE_LENGTH } from "../../convex/lib/threadDefaults";
 import { Button } from "@/components/ui/button";
 import { ButtonStateText } from "@/components/ui/button-state-text";
-import { REPOLESS_SINGLE_TURN_TOOLTIP } from "@/components/repoless-single-turn-copy";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -353,10 +352,7 @@ function ThreadsSection({
       {threads === undefined ? null : (
         <>
           {pinnedThreads.length > 0 && (
-            <div className="flex flex-col gap-1 pb-3">
-              <div className="flex items-center gap-1 px-1 pb-1">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Pinned</p>
-              </div>
+            <CollapsibleThreadSection label="Pinned" className="pb-3">
               <ThreadsList
                 threads={pinnedThreads}
                 repositoriesById={repositoriesById}
@@ -368,7 +364,7 @@ function ThreadsSection({
                 compact={compact}
                 onError={onError}
               />
-            </div>
+            </CollapsibleThreadSection>
           )}
           {(otherThreads.length > 0 || pinnedThreads.length === 0) && (
             <div className="flex flex-col gap-1">
@@ -462,6 +458,41 @@ const ThreadsList = memo(function ThreadsList({
     </div>
   );
 });
+
+function CollapsibleThreadSection({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(true);
+
+  return (
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className={cn("flex flex-col gap-1", className)}>
+      <div className="px-1 pb-1">
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            className="flex w-full items-center gap-1 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            aria-label={`${isOpen ? "Collapse" : "Expand"} ${label}`}
+          >
+            <CaretRightIcon
+              size={11}
+              weight="bold"
+              className={cn("shrink-0 transition-transform duration-150", isOpen && "rotate-90")}
+              aria-hidden="true"
+            />
+            <span className="truncate">{label}</span>
+          </button>
+        </CollapsibleTrigger>
+      </div>
+      <CollapsibleContent>{children}</CollapsibleContent>
+    </Collapsible>
+  );
+}
 
 function ThreadRowMotion({
   children,
@@ -567,13 +598,7 @@ function ThreadItemBase({
               onFocus={() => onPrewarmThread(thread._id)}
               onKeyDown={handleItemKeyDown}
               aria-keyshortcuts="F2"
-              className={cn(
-                "py-1.5 pr-16",
-                compact && "py-1",
-                isRepolessAgentThread(thread) &&
-                  "border-l-[3px] border-l-primary/70 bg-primary/[0.06] hover:bg-primary/[0.09]",
-                isSelected && isRepolessAgentThread(thread) && "bg-primary/[0.12]",
-              )}
+              className={cn("py-1.5 pr-16", compact && "py-1")}
             >
               <div className="min-w-0 flex-1">
                 <p
@@ -735,35 +760,6 @@ function isRepolessAgentThread(thread: Doc<"threads">): boolean {
   return !thread.repositoryId && (Boolean(thread.agentRole?.trim()) || Boolean(thread.agentInstructions?.trim()));
 }
 
-function RepolessThreadModeBadge({ thread }: { thread: Doc<"threads"> }) {
-  const isAgentMode = isRepolessAgentThread(thread);
-
-  if (isAgentMode) {
-    return (
-      <p className="mt-1 flex min-w-0 items-center gap-1.5 text-[10px] font-semibold uppercase leading-none tracking-wide text-primary">
-        <RobotIcon size={10} weight="bold" className="shrink-0" />
-        <span>Agent Mode</span>
-        {thread.singleTurnEnabled ? (
-          <span
-            className="inline-flex h-4 w-4 items-center justify-center border border-primary/30 text-primary/80"
-            title={REPOLESS_SINGLE_TURN_TOOLTIP}
-            aria-label="Single-turn"
-            data-testid="repoless-thread-single-turn-icon"
-          >
-            <RepeatOnceIcon size={10} weight="bold" aria-hidden="true" />
-          </span>
-        ) : null}
-      </p>
-    );
-  }
-
-  return (
-    <p className="mt-1 text-[10px] font-semibold uppercase leading-none tracking-wide text-muted-foreground/70">
-      Thread Mode
-    </p>
-  );
-}
-
 /**
  * Sidebar rail for the repoless chat shell. Lists threads with
  * `repositoryId === undefined` via the dedicated
@@ -833,10 +829,7 @@ export function RepolessChatsRail({
         {threads === undefined ? null : (
           <div className="flex flex-col">
             {pinnedThreads.length > 0 && (
-              <div className="flex flex-col gap-1 pb-3">
-                <div className="flex items-center gap-1 px-1 pb-1">
-                  <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Pinned</p>
-                </div>
+              <CollapsibleThreadSection label="Pinned" className="pb-3">
                 <div className="flex flex-col">
                   <AnimatePresence initial={false}>
                     {pinnedThreads.map((thread) => (
@@ -855,14 +848,15 @@ export function RepolessChatsRail({
                     ))}
                   </AnimatePresence>
                 </div>
-              </div>
+              </CollapsibleThreadSection>
             )}
             {otherThreads.length === 0 && pinnedThreads.length === 0 ? (
               <p className="px-1 text-xs text-muted-foreground">No conversations yet. Start one above.</p>
             ) : null}
             {agentModeThreads.length > 0 ? (
               <RepolessThreadSection
-                label="Agent Mode"
+                label="Agent chats"
+                collapsible
                 threads={agentModeThreads}
                 selectedThreadId={selectedThreadId}
                 shouldReduceMotion={shouldReduceMotion}
@@ -875,7 +869,7 @@ export function RepolessChatsRail({
             ) : null}
             {threadModeThreads.length > 0 ? (
               <RepolessThreadSection
-                label="Thread Mode"
+                label="Regular chats"
                 threads={threadModeThreads}
                 selectedThreadId={selectedThreadId}
                 shouldReduceMotion={shouldReduceMotion}
@@ -895,6 +889,7 @@ export function RepolessChatsRail({
 
 function RepolessThreadSection({
   label,
+  collapsible,
   threads,
   selectedThreadId,
   shouldReduceMotion,
@@ -904,7 +899,8 @@ function RepolessThreadSection({
   onTogglePin,
   onError,
 }: {
-  label: "Agent Mode" | "Thread Mode";
+  label: "Agent chats" | "Regular chats";
+  collapsible?: boolean;
   threads: Doc<"threads">[];
   selectedThreadId: ThreadId | null;
   shouldReduceMotion: boolean | null;
@@ -914,11 +910,8 @@ function RepolessThreadSection({
   onTogglePin: (id: ThreadId, pinned: boolean) => void;
   onError: (message: string | null) => void;
 }) {
-  return (
-    <div className="flex flex-col gap-1 pb-3 last:pb-0">
-      <div className="flex items-center gap-1 px-1 pb-1">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
-      </div>
+  const content = (
+    <>
       <div className="flex flex-col">
         <AnimatePresence initial={false}>
           {threads.map((thread) => (
@@ -937,6 +930,23 @@ function RepolessThreadSection({
           ))}
         </AnimatePresence>
       </div>
+    </>
+  );
+
+  if (collapsible) {
+    return (
+      <CollapsibleThreadSection label={label} className="pb-3 last:pb-0">
+        {content}
+      </CollapsibleThreadSection>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1 pb-3 last:pb-0">
+      <div className="flex items-center gap-1 px-1 pb-1">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+      </div>
+      {content}
     </div>
   );
 }
@@ -987,7 +997,7 @@ function RepolessThreadItem({
       isPinned={isPinned}
       isSelected={isSelected}
       titleTextClass={titleTextClass}
-      threadMeta={<RepolessThreadModeBadge thread={thread} />}
+      threadMeta={null}
       rowRef={rowRef}
       inputRef={inputRef}
       onSelectThread={onSelectThread}

@@ -136,6 +136,10 @@ const DOCS_ARTIFACT_KINDS: Array<Doc<"artifacts">["kind"]> = [
 ];
 const DOCS_ARTIFACTS_TOTAL_LIMIT = 12;
 
+function normalizeOptionalProfileField(value: string | undefined): string | undefined {
+  return value?.trim() || undefined;
+}
+
 /**
  * Load the most recent docs artifacts across all DOCS_ARTIFACT_KINDS for a
  * given repository. Uses `.take()` per kind and merges in memory so we never
@@ -279,6 +283,8 @@ export const getReplyContext = internalQuery({
     // here without a one-off branch.
     const { groundLibrary, groundSandbox } = resolveDiscussGrounding(effectiveMode, userMessage);
     const customization = await loadViewerCustomization(ctx, thread.ownerTokenIdentifier);
+    const agentRole = normalizeOptionalProfileField(thread.agentRole);
+    const agentInstructions = normalizeOptionalProfileField(thread.agentInstructions);
 
     // Cross-mode filtering + empty-content filtering happen inside
     // `loadReplyContextMessages` so the helper can over-fetch a bounded
@@ -303,8 +309,8 @@ export const getReplyContext = internalQuery({
         provider: userMessage.provider,
         modelName: userMessage.modelName,
         reasoningEffort: userMessage.reasoningEffort,
-        agentRole: thread.agentRole,
-        agentInstructions: thread.agentInstructions,
+        agentRole,
+        agentInstructions,
         singleTurnEnabled: thread.singleTurnEnabled === true,
         customization,
         repositoryId: undefined,
@@ -387,8 +393,8 @@ export const getReplyContext = internalQuery({
       provider: userMessage.provider,
       modelName: userMessage.modelName,
       reasoningEffort: userMessage.reasoningEffort,
-      agentRole: thread.agentRole,
-      agentInstructions: thread.agentInstructions,
+      agentRole,
+      agentInstructions,
       singleTurnEnabled: thread.singleTurnEnabled === true,
       customization,
       repositoryId: repository._id,

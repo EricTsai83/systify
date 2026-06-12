@@ -265,8 +265,8 @@ describe("HistoryPage", () => {
 
     renderHistoryPage();
 
-    expect(within(rowForText("General planning")).getByText("Thread Mode")).toBeInTheDocument();
-    expect(within(rowForText("Translation agent")).getByText("Agent Mode")).toBeInTheDocument();
+    expect(within(rowForText("General planning")).getByText("Chat")).toBeInTheDocument();
+    expect(within(rowForText("Translation agent")).getByText("Agent")).toBeInTheDocument();
 
     fireEvent.click(openButtonForRow("Translation agent"));
     expect(screen.getByTestId("location")).toHaveTextContent("/chat/thread_no_repo_agent");

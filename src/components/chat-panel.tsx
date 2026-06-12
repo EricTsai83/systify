@@ -25,6 +25,7 @@ import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-inpu
 import { SandboxActivityPill } from "@/components/sandbox-activity-pill";
 import { Button } from "@/components/ui/button";
 import { ButtonStateText } from "@/components/ui/button-state-text";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type {
   ActiveMessageStream,
   ArtifactId,
@@ -345,6 +346,8 @@ export function ChatPanel({
   // button and lets the submit through) would fire `onSendMessage` mid-flight.
   const isSendBlocked =
     isReadOnly || effectiveSendDisabledReason !== undefined || isSending || isSyncing || !chatInput.trim() || canCancel;
+  const emptyMessageDisabledReason = !chatInput.trim() ? "Message requires text" : undefined;
+  const sendButtonTitle = emptyMessageDisabledReason ?? effectiveSendDisabledReason;
 
   const effectiveGrounding = useMemo(() => {
     if (!sandboxGroundingDisabledReason) {
@@ -579,21 +582,23 @@ export function ChatPanel({
                   <ButtonStateText current={isCancellingReply ? "Stopping…" : "Stop"} states={["Stop", "Stopping…"]} />
                 </Button>
               ) : (
-                <Button
-                  type="submit"
-                  variant="default"
-                  size="sm"
-                  disabled={isSendBlocked}
-                  title={effectiveSendDisabledReason}
-                  data-testid="chat-panel-send-button"
-                  className="min-w-30"
-                >
-                  <PaperPlaneTiltIcon weight="bold" />
-                  <ButtonStateText
-                    current={isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
-                    states={["Send", "Sending…", "Syncing…"]}
-                  />
-                </Button>
+                <SendButtonWithOptionalTooltip disabledReason={emptyMessageDisabledReason}>
+                  <Button
+                    type="submit"
+                    variant="default"
+                    size="sm"
+                    disabled={isSendBlocked}
+                    title={sendButtonTitle}
+                    data-testid="chat-panel-send-button"
+                    className="min-w-30"
+                  >
+                    <PaperPlaneTiltIcon weight="bold" />
+                    <ButtonStateText
+                      current={isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
+                      states={["Send", "Sending…", "Syncing…"]}
+                    />
+                  </Button>
+                </SendButtonWithOptionalTooltip>
               )}
             </PromptInputFooter>
           </PromptInput>
@@ -605,6 +610,29 @@ export function ChatPanel({
         </div>
       </div>
     </div>
+  );
+}
+
+function SendButtonWithOptionalTooltip({
+  disabledReason,
+  children,
+}: {
+  disabledReason: string | undefined;
+  children: ReactNode;
+}) {
+  if (!disabledReason) {
+    return children;
+  }
+
+  return (
+    <TooltipProvider delayDuration={150}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="inline-flex cursor-not-allowed">{children}</span>
+        </TooltipTrigger>
+        <TooltipContent side="top">{disabledReason}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 

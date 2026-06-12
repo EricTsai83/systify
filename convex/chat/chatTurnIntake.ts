@@ -75,6 +75,13 @@ type QueuedChatTurn = {
   assistantMessageId: Id<"messages">;
 };
 
+export type ExistingThreadChatTurnResult =
+  | QueuedChatTurn
+  | {
+      status: "singleTurnResetPending";
+      message: string;
+    };
+
 type StartedChatTurn = QueuedChatTurn & {
   threadId: Id<"threads">;
   mode: ChatMode;
@@ -437,7 +444,7 @@ export async function startChatTurnInNewThread(ctx: MutationCtx, args: StartThre
 export async function startChatTurnInExistingThread(
   ctx: MutationCtx,
   args: ExistingThreadInput,
-): Promise<QueuedChatTurn> {
+): Promise<ExistingThreadChatTurnResult> {
   const { identity, doc: thread } = await requireActiveOwnedThread(ctx, args.threadId, {
     notFoundMessage: "Thread not found.",
   });
@@ -494,7 +501,14 @@ export async function startChatTurnInExistingThread(
       maxStreams: 500,
     });
     if (result.messagesRemain || result.streamsRemain || result.streamBudgetExhausted) {
-      throw new Error("Previous messages could not be cleared in one pass. Try again shortly.");
+      await ctx.db.patch(args.threadId, { singleTurnResetPending: true });
+      await ctx.scheduler.runAfter(0, internal.chat.threads.continueRepolessSingleTurnReset, {
+        threadId: args.threadId,
+      });
+      return {
+        status: "singleTurnResetPending",
+        message: "Previous messages are being cleared in background; try again later.",
+      };
     }
     await ctx.db.patch(args.threadId, { lastAssistantMessageAt: undefined });
   }

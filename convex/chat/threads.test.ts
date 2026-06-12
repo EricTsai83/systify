@@ -5,6 +5,7 @@ import { api, internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { insertTestArtifact, insertTestRepository, insertTestThread } from "../../test/convex/fixtures";
 import { createRateLimitedTestConvex as createTestConvex, type SystifyTestConvex } from "../../test/convex/harness";
+import { drainConvexScheduler, withPausedConvexScheduler } from "../../test/convex/scheduler";
 import { NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
 
 async function insertRepository(t: SystifyTestConvex, ownerTokenIdentifier: string, slug: string) {
@@ -279,6 +280,65 @@ describe("repoless Agent Profile", () => {
     expect(rows.thread?.lastAssistantMessageAt).toBeUndefined();
     expect(rows.messages.map((message) => message.content)).toEqual(["Second question", ""]);
     expect(rows.messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+  });
+
+  test("single-turn send schedules background reset when previous messages exceed one pass", async () => {
+    await withPausedConvexScheduler(async () => {
+      const ownerTokenIdentifier = "user|single-turn-send-background-reset";
+      const t = createTestConvex();
+      await seedInternalAccess(t, ownerTokenIdentifier);
+      const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+      const { _id: threadId } = await viewer.mutation(api.chat.threads.createThread, {});
+      await t.run(async (ctx) => {
+        await ctx.db.patch(threadId, { singleTurnEnabled: true });
+        for (let index = 0; index < 501; index += 1) {
+          await ctx.db.insert("messages", {
+            threadId,
+            ownerTokenIdentifier,
+            role: "user",
+            status: "completed",
+            mode: "discuss",
+            content: `Previous message ${index}`,
+          });
+        }
+      });
+
+      const result = await viewer.mutation(api.chat.send.sendMessage, {
+        threadId,
+        content: "Next question",
+        mode: "discuss",
+      });
+      expect(result).toEqual({
+        status: "singleTurnResetPending",
+        message: "Previous messages are being cleared in background; try again later.",
+      });
+
+      const pendingRows = await t.run(async (ctx) => ({
+        thread: await ctx.db.get(threadId),
+        messageCount: (
+          await ctx.db
+            .query("messages")
+            .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
+            .collect()
+        ).length,
+      }));
+      expect(pendingRows.thread?.singleTurnResetPending).toBe(true);
+      expect(pendingRows.messageCount).toBe(1);
+
+      await drainConvexScheduler(t);
+
+      const resetRows = await t.run(async (ctx) => ({
+        thread: await ctx.db.get(threadId),
+        messageCount: (
+          await ctx.db
+            .query("messages")
+            .withIndex("by_threadId", (q) => q.eq("threadId", threadId))
+            .collect()
+        ).length,
+      }));
+      expect(resetRows.thread?.singleTurnResetPending).toBeUndefined();
+      expect(resetRows.messageCount).toBe(0);
+    });
   });
 
   test("disabling single-turn does not delete current messages", async () => {

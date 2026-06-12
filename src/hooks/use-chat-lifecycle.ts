@@ -127,7 +127,7 @@ export function useChatLifecycle({
             : {};
         try {
           if (selectedThreadId) {
-            await sendMessageMutation({
+            const result = await sendMessageMutation({
               threadId: selectedThreadId,
               content: chatInput,
               mode: chatMode,
@@ -135,6 +135,10 @@ export function useChatLifecycle({
               ...modelArgs,
               ...reasoningArgs,
             });
+            if ("status" in result && result.status === "singleTurnResetPending") {
+              setActionError(result.message);
+              return;
+            }
             clearChatInput();
             return;
           }

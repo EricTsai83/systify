@@ -473,7 +473,7 @@ function HistoryThreadsForScope({
             </div>
             {isNoRepository ? (
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                No-repository conversations split into Agent Mode and Thread Mode.
+                No-repository conversations split into agent and regular chats.
               </p>
             ) : null}
           </div>
@@ -826,7 +826,7 @@ function getHistoryScopeValue(group: HistoryGroup): string {
 
 function getThreadModeLabel(thread: HistoryThread, noRepository: boolean): string {
   if (noRepository) {
-    return isAgentModeThread(thread) ? "Agent Mode" : "Thread Mode";
+    return isAgentModeThread(thread) ? "Agent" : "Chat";
   }
   return thread.mode === "library" ? "Library Ask" : "Discuss";
 }

@@ -146,9 +146,7 @@ export function ThreadSearchDialog({
 
 function formatThreadModeLabel(thread: SearchThread, isRepoless: boolean): string {
   if (isRepoless) {
-    return Boolean(thread.agentRole?.trim()) || Boolean(thread.agentInstructions?.trim())
-      ? "Agent Mode"
-      : "Thread Mode";
+    return Boolean(thread.agentRole?.trim()) || Boolean(thread.agentInstructions?.trim()) ? "Agent" : "Chat";
   }
   return thread.mode === "library" ? "Library Ask" : "Discuss";
 }
