@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type AnimationEvent, type FormEvent } from "react";
+import { useCallback, useMemo, useState, type AnimationEvent, type FormEvent, type ReactNode } from "react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { findInFlightAssistantMessage, useConversationThread } from "@/hooks/use-conversation-thread";
@@ -192,6 +192,8 @@ type ChatPanelProps = {
    * threading the callback through.
    */
   onLoadOlderMessages?: () => void;
+  /** Optional controls rendered inside the composer toolbar, before model/grounding controls. */
+  composerControls?: ReactNode;
 };
 
 type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream" | "isChatLoading"> & {
@@ -267,6 +269,7 @@ export function ChatPanel({
   attachedRepositoryId,
   canLoadOlderMessages = false,
   onLoadOlderMessages = NOOP_LOAD_OLDER,
+  composerControls,
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
   const modelPickerCapability = modelPreferenceScope === "sandbox" ? "sandbox" : undefined;
@@ -479,6 +482,7 @@ export function ChatPanel({
             />
             <PromptInputFooter>
               <PromptInputTools>
+                {composerControls}
                 {showArtifactToggle && onToggleArtifactPanel ? (
                   <Button
                     type="button"

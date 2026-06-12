@@ -5,11 +5,13 @@ import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { AppNotice } from "@/components/app-notice";
 import { AppSidebarLeft } from "@/components/app-sidebar";
-import { ChatModeControls } from "@/components/chat-mode-controls";
 import { ChatContainer } from "@/components/chat-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { RepolessAgentProfileBar, type RepolessAgentProfileValue } from "@/components/repoless-agent-profile-bar";
-import { ThreadSearchDialog } from "@/components/thread-search-dialog";
+import {
+  RepolessAgentProfileBar,
+  RepolessSingleTurnToggle,
+  type RepolessAgentProfileValue,
+} from "@/components/repoless-agent-profile-bar";
 import { useChatShellLifecycle } from "@/components/chat-shell-shared/use-chat-shell-lifecycle";
 import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-thread-deletion-recovery";
 import { useRecentThreads } from "@/hooks/use-recent-threads";
@@ -49,7 +51,6 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
 
   const [threadToArchive, setThreadToArchive] = useState<ThreadId | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [isThreadSearchOpen, setIsThreadSearchOpen] = useState(false);
   const [draftAgentProfile, setDraftAgentProfile] = useState<RepolessAgentProfileValue>({
     singleTurnEnabled: false,
     agentRole: "",
@@ -199,25 +200,6 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       />
 
       <SidebarInset>
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
-          <ChatModeControls onSearchThreads={() => setIsThreadSearchOpen(true)} onNewThread={handleRequestNewThread} />
-          <RepolessAgentProfileBar
-            value={agentProfileValue}
-            resetPending={capabilities.singleTurnResetPending}
-            disabled={capabilities.isLoading}
-            onSave={handleSaveAgentProfile}
-          />
-        </header>
-
-        <ThreadSearchDialog
-          open={isThreadSearchOpen}
-          onOpenChange={setIsThreadSearchOpen}
-          repositoryId={null}
-          mode={chatMode}
-          selectedThreadId={urlThreadId}
-          onSelectThread={handleSelectThread}
-        />
-
         {actionError ? (
           <div className="border-b border-border px-6 py-3">
             <AppNotice
@@ -253,6 +235,21 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
             threadLockedProvider={capabilities.lockedProvider}
             grounding={undefined}
             showGroundingToggles={false}
+            composerControls={
+              <>
+                <RepolessSingleTurnToggle
+                  value={agentProfileValue}
+                  resetPending={capabilities.singleTurnResetPending}
+                  disabled={capabilities.isLoading}
+                  onSave={handleSaveAgentProfile}
+                />
+                <RepolessAgentProfileBar
+                  value={agentProfileValue}
+                  disabled={capabilities.isLoading}
+                  onSave={handleSaveAgentProfile}
+                />
+              </>
+            }
             isSending={isSending}
             onSendMessage={handleSendMessage}
             sendDisabledReason={
