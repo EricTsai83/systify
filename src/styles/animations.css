@@ -139,13 +139,14 @@
  *
  *   appear   →  z1 in,  z2 in,  z3 in    (sequential, each ~10% of cycle, ease-out)
  *   peak     →  all three visible         (hold — head's bigger nod peaks here)
- *   dissipate→  all three pop out together (9% of cycle, ease-out)
+ *   dissipate→  all three pop out together (11% of cycle, ease-out)
  *   pause    →  quiet stretch             (~25% of cycle ≈ 1.25s)
  *
  * Appearance is FIFO and staged — bubbles emerge one at a time, bottom to
- * top. Dissipation is synchronized — all three z's share the same 66%→75%
- * fade-out window so they dissolve together as a single event, which gives
- * the cycle a clear close-bracket: build up, hold, vanish, rest, repeat.
+ * top. Dissipation is synchronized — all three z's share the same 64%→75%
+ * fade-out window, with a fast first drop and a slower tail so they dissolve
+ * together as a single event. That gives the cycle a clear close-bracket:
+ * build up, hold, vanish, rest, repeat.
  *
  * Easing rationale: the cycle has three sequential fade-ins at very
  * different cycle offsets. A single top-level ease-in-out warps each
@@ -154,9 +155,9 @@
  * speeds). Holding the global function flat at `linear` and shaping each
  * fade with its own `ease-out` keeps the three z's identical: a natural
  * bloom on the way in, and a quick-then-trailing dispersal on the way
- * out. `ease-out` on the dissipation reads as "soft dissolve" rather
- * than "snap" — opacity loses visibility promptly then trails gently to
- * zero, which is what natural dispersal looks like.
+ * out. Dissipation uses a staged opacity drop — most visibility is gone
+ * by 68%, then the remaining opacity trails gently to zero — which reads
+ * as natural dispersal instead of a constant-rate fade.
  */
 @keyframes z-puff-1 {
   0% {
@@ -166,9 +167,13 @@
   10% {
     opacity: 1;
   }
-  66% {
+  64% {
     opacity: 1;
-    animation-timing-function: ease-out;
+    animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
+  }
+  68% {
+    opacity: 0.24;
+    animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
   }
   75%,
   100% {
@@ -187,9 +192,13 @@
   20% {
     opacity: 1;
   }
-  66% {
+  64% {
     opacity: 1;
-    animation-timing-function: ease-out;
+    animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
+  }
+  68% {
+    opacity: 0.24;
+    animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
   }
   75%,
   100% {
@@ -208,9 +217,13 @@
   30% {
     opacity: 1;
   }
-  66% {
+  64% {
     opacity: 1;
-    animation-timing-function: ease-out;
+    animation-timing-function: cubic-bezier(0.19, 1, 0.22, 1);
+  }
+  68% {
+    opacity: 0.24;
+    animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94);
   }
   75%,
   100% {
