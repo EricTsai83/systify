@@ -239,7 +239,7 @@ function LibraryRepository({
         isUnseen={isUnseen}
       />
       <SidebarInset>
-        <header className="flex h-14 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
           <SidebarTrigger side="left" />
           <h1 className="min-w-0 truncate text-sm font-semibold tracking-tight text-foreground md:text-base">
             {currentRepository?.sourceRepoFullName ?? "Library"}

@@ -118,7 +118,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
       maxWidth={LEFT_SIDEBAR_MAX_WIDTH}
     >
       <SidebarHeader>
-        <Logo size={30} />
+        <Logo size={26} />
         <div className="min-w-0 leading-tight">
           <div className="truncate text-lg font-semibold tracking-tight">Systify</div>
         </div>
