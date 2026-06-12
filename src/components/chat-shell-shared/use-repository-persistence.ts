@@ -89,7 +89,7 @@ export function useRepositoryPersistence({
     if (activeRepositoryId) ids.add(activeRepositoryId);
     const dbRepositoryId = viewerPreferences?.lastActiveRepositoryId ?? null;
     if (dbRepositoryId) ids.add(dbRepositoryId);
-    return [...ids];
+    return [...ids].sort();
   }, [activeRepositoryId, repositories, urlRepositoryId, viewerPreferences]);
 
   const liveRepositoryIds = useQuery(

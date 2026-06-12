@@ -12,7 +12,7 @@ const REPOSITORY_SCOPED_PREFIXES = [
 
 const COMPOSER_DRAFT_THREAD_PREFIX = "systify.composer.draft.thread.";
 const ACTIVE_REPOSITORY_STORAGE_KEY = "systify.activeRepositoryId";
-const STORAGE_GC_ID_PROBE_LIMIT = 200;
+export const STORAGE_GC_ID_PROBE_LIMIT = 200;
 
 /**
  * Collect only ids that actually appear in localStorage. Server validation is
@@ -43,24 +43,33 @@ export function collectStorageGCThreadIds(): string[] {
   return [...ids].sort().slice(0, STORAGE_GC_ID_PROBE_LIMIT);
 }
 
-export function sweepRepositoryStorage(liveRepositoryIds: ReadonlySet<string>): void {
+export function sweepRepositoryStorage(
+  collectedRepositoryIds: ReadonlySet<string>,
+  liveRepositoryIds: ReadonlySet<string>,
+): void {
   for (const prefix of REPOSITORY_SCOPED_PREFIXES) {
     for (const key of listKeysByPrefix(prefix)) {
       const suffix = key.slice(prefix.length);
       const repositoryId = suffix.split(".")[0];
-      if (!repositoryId || !liveRepositoryIds.has(repositoryId)) removeKey(key);
+      if (repositoryId && collectedRepositoryIds.has(repositoryId) && !liveRepositoryIds.has(repositoryId)) {
+        removeKey(key);
+      }
     }
   }
   const activeRepositoryId = readString(ACTIVE_REPOSITORY_STORAGE_KEY);
-  if (activeRepositoryId && !liveRepositoryIds.has(activeRepositoryId)) {
+  if (
+    activeRepositoryId &&
+    collectedRepositoryIds.has(activeRepositoryId) &&
+    !liveRepositoryIds.has(activeRepositoryId)
+  ) {
     removeKey(ACTIVE_REPOSITORY_STORAGE_KEY);
   }
 }
 
-export function sweepThreadStorage(liveThreadIds: ReadonlySet<string>): void {
+export function sweepThreadStorage(collectedThreadIds: ReadonlySet<string>, liveThreadIds: ReadonlySet<string>): void {
   for (const key of listKeysByPrefix(COMPOSER_DRAFT_THREAD_PREFIX)) {
     const threadId = key.slice(COMPOSER_DRAFT_THREAD_PREFIX.length);
-    if (!threadId || !liveThreadIds.has(threadId)) removeKey(key);
+    if (threadId && collectedThreadIds.has(threadId) && !liveThreadIds.has(threadId)) removeKey(key);
   }
 }
 
@@ -84,12 +93,12 @@ export function useStorageGC(): void {
   useEffect(() => {
     if (!hasRepositoryIds) return;
     if (liveRepositoryIds === undefined) return;
-    sweepRepositoryStorage(new Set(liveRepositoryIds));
-  }, [hasRepositoryIds, liveRepositoryIds]);
+    sweepRepositoryStorage(new Set(repositoryIds), new Set(liveRepositoryIds));
+  }, [hasRepositoryIds, liveRepositoryIds, repositoryIds]);
 
   useEffect(() => {
     if (!hasThreadIds) return;
     if (liveThreadIds === undefined) return;
-    sweepThreadStorage(new Set(liveThreadIds));
-  }, [hasThreadIds, liveThreadIds]);
+    sweepThreadStorage(new Set(threadIds), new Set(liveThreadIds));
+  }, [hasThreadIds, liveThreadIds, threadIds]);
 }

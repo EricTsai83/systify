@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test } from "vitest";
 import {
   collectStorageGCRepositoryIds,
   collectStorageGCThreadIds,
+  STORAGE_GC_ID_PROBE_LIMIT,
   sweepRepositoryStorage,
   sweepThreadStorage,
 } from "./use-storage-gc";
@@ -32,13 +33,39 @@ describe("useStorageGC", () => {
     expect(collectStorageGCThreadIds()).toEqual(["tid_a", "tid_b"]);
   });
 
+  test("bounds collected repository ids to the deterministic probe limit", () => {
+    for (let i = 0; i <= STORAGE_GC_ID_PROBE_LIMIT; i += 1) {
+      const repositoryId = `repo_${i.toString().padStart(3, "0")}`;
+      window.localStorage.setItem(`systify.library.tabs.${repositoryId}`, "{}");
+    }
+
+    const ids = collectStorageGCRepositoryIds();
+
+    expect(ids).toHaveLength(STORAGE_GC_ID_PROBE_LIMIT);
+    expect(ids[0]).toBe("repo_000");
+    expect(ids).not.toContain("repo_200");
+  });
+
+  test("bounds collected thread ids to the deterministic probe limit", () => {
+    for (let i = 0; i <= STORAGE_GC_ID_PROBE_LIMIT; i += 1) {
+      const threadId = `tid_${i.toString().padStart(3, "0")}`;
+      window.localStorage.setItem(`systify.composer.draft.thread.${threadId}`, "draft");
+    }
+
+    const ids = collectStorageGCThreadIds();
+
+    expect(ids).toHaveLength(STORAGE_GC_ID_PROBE_LIMIT);
+    expect(ids[0]).toBe("tid_000");
+    expect(ids).not.toContain("tid_200");
+  });
+
   test("removes orphan repository-scoped keys when their repository is no longer live", () => {
     window.localStorage.setItem("systify.library.tabs.repo_alive", "{}");
     window.localStorage.setItem("systify.library.tabs.repo_gone", "{}");
     window.localStorage.setItem("systify.library.askTabs.repo_alive", "[]");
     window.localStorage.setItem("systify.library.askTabs.repo_gone", "[]");
 
-    sweepRepositoryStorage(new Set(["repo_alive"]));
+    sweepRepositoryStorage(new Set(["repo_alive", "repo_gone"]), new Set(["repo_alive"]));
 
     expect(window.localStorage.getItem("systify.library.tabs.repo_alive")).toBe("{}");
     expect(window.localStorage.getItem("systify.library.askTabs.repo_alive")).toBe("[]");
@@ -50,7 +77,7 @@ describe("useStorageGC", () => {
     window.localStorage.setItem("systify.composer.draft.repository.repo_alive.discuss", "live discuss");
     window.localStorage.setItem("systify.composer.draft.repository.repo_gone.discuss", "dead discuss");
 
-    sweepRepositoryStorage(new Set(["repo_alive"]));
+    sweepRepositoryStorage(new Set(["repo_alive", "repo_gone"]), new Set(["repo_alive"]));
 
     expect(window.localStorage.getItem("systify.composer.draft.repository.repo_alive.discuss")).toBe("live discuss");
     expect(window.localStorage.getItem("systify.composer.draft.repository.repo_gone.discuss")).toBeNull();
@@ -62,7 +89,7 @@ describe("useStorageGC", () => {
     window.localStorage.setItem("systify.folderNav.open.repo_gone.nodeX", "true");
     window.localStorage.setItem("systify.folderNav.open.repo_gone.nodeY", "true");
 
-    sweepRepositoryStorage(new Set(["repo_alive"]));
+    sweepRepositoryStorage(new Set(["repo_alive", "repo_gone"]), new Set(["repo_alive"]));
 
     expect(window.localStorage.getItem("systify.folderNav.open.repo_alive.node1")).toBe("true");
     expect(window.localStorage.getItem("systify.folderNav.open.repo_alive.node2")).toBe("false");
@@ -74,7 +101,7 @@ describe("useStorageGC", () => {
     window.localStorage.setItem("systify.composer.draft.thread.tid_alive", "live draft");
     window.localStorage.setItem("systify.composer.draft.thread.tid_gone", "gone draft");
 
-    sweepThreadStorage(new Set(["tid_alive"]));
+    sweepThreadStorage(new Set(["tid_alive", "tid_gone"]), new Set(["tid_alive"]));
 
     expect(window.localStorage.getItem("systify.composer.draft.thread.tid_alive")).toBe("live draft");
     expect(window.localStorage.getItem("systify.composer.draft.thread.tid_gone")).toBeNull();
@@ -84,12 +111,12 @@ describe("useStorageGC", () => {
     window.localStorage.setItem("systify.library.tabs.repo_a", "{}");
     window.localStorage.setItem("systify.library.tabs.repo_b", "{}");
 
-    sweepRepositoryStorage(new Set(["repo_a", "repo_b"]));
+    sweepRepositoryStorage(new Set(["repo_a", "repo_b"]), new Set(["repo_a", "repo_b"]));
 
     expect(window.localStorage.getItem("systify.library.tabs.repo_a")).toBe("{}");
     expect(window.localStorage.getItem("systify.library.tabs.repo_b")).toBe("{}");
 
-    sweepRepositoryStorage(new Set(["repo_a"]));
+    sweepRepositoryStorage(new Set(["repo_a", "repo_b"]), new Set(["repo_a"]));
 
     expect(window.localStorage.getItem("systify.library.tabs.repo_a")).toBe("{}");
     expect(window.localStorage.getItem("systify.library.tabs.repo_b")).toBeNull();
@@ -101,11 +128,33 @@ describe("useStorageGC", () => {
     window.localStorage.setItem("vite-ui-theme", "dark");
     window.localStorage.setItem("systify.library.tabs.repo_gone", "{}");
 
-    sweepRepositoryStorage(new Set<string>());
+    sweepRepositoryStorage(new Set(["repo_active", "repo_gone"]), new Set<string>());
 
     expect(window.localStorage.getItem("systify.activeRepositoryId")).toBeNull();
     expect(window.localStorage.getItem("systify.artifactPanel.open")).toBe("true");
     expect(window.localStorage.getItem("vite-ui-theme")).toBe("dark");
     expect(window.localStorage.getItem("systify.library.tabs.repo_gone")).toBeNull();
+  });
+
+  test("preserves repository keys whose ids were not part of the collected probe", () => {
+    window.localStorage.setItem("systify.library.tabs.repo_scanned", "{}");
+    window.localStorage.setItem("systify.library.tabs.repo_unscanned", "{}");
+    window.localStorage.setItem("systify.activeRepositoryId", "repo_unscanned_active");
+
+    sweepRepositoryStorage(new Set(["repo_scanned"]), new Set<string>());
+
+    expect(window.localStorage.getItem("systify.library.tabs.repo_scanned")).toBeNull();
+    expect(window.localStorage.getItem("systify.library.tabs.repo_unscanned")).toBe("{}");
+    expect(window.localStorage.getItem("systify.activeRepositoryId")).toBe("repo_unscanned_active");
+  });
+
+  test("preserves thread keys whose ids were not part of the collected probe", () => {
+    window.localStorage.setItem("systify.composer.draft.thread.tid_scanned", "scanned draft");
+    window.localStorage.setItem("systify.composer.draft.thread.tid_unscanned", "unscanned draft");
+
+    sweepThreadStorage(new Set(["tid_scanned"]), new Set<string>());
+
+    expect(window.localStorage.getItem("systify.composer.draft.thread.tid_scanned")).toBeNull();
+    expect(window.localStorage.getItem("systify.composer.draft.thread.tid_unscanned")).toBe("unscanned draft");
   });
 });

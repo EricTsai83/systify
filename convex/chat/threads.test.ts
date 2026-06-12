@@ -93,6 +93,18 @@ describe("listThreads", () => {
 });
 
 describe("listOwnedThreadIdsById", () => {
+  test("rejects ownership probes over the 200 id limit", async () => {
+    const ownerTokenIdentifier = "user|thread-probe-limit";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    await expect(
+      viewer.query(api.chat.threads.listOwnedThreadIdsById, {
+        threadIds: Array.from({ length: 201 }, (_, index) => `not-a-convex-id-${index}`),
+      }),
+    ).rejects.toThrow("Too many thread ids to validate. Keep at most 200.");
+  });
+
   test("returns only normalized active thread ids owned by the viewer", async () => {
     const ownerTokenIdentifier = "user|thread-probe-owner";
     const intruderTokenIdentifier = "user|thread-probe-intruder";
@@ -117,6 +129,23 @@ describe("listOwnedThreadIdsById", () => {
     });
 
     expect(result).toEqual([liveThreadId]);
+  });
+
+  test("includes archived owned threads because only deletion is filtered", async () => {
+    const ownerTokenIdentifier = "user|thread-probe-archived";
+    const t = createTestConvex();
+    const archivedThreadId = await insertTestThread(t, {
+      ownerTokenIdentifier,
+      title: "Archived probe thread",
+      archivedAt: Date.now(),
+    });
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const result = await viewer.query(api.chat.threads.listOwnedThreadIdsById, {
+      threadIds: [archivedThreadId],
+    });
+
+    expect(result).toEqual([archivedThreadId]);
   });
 });
 
