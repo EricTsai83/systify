@@ -1,9 +1,12 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import type { Id } from "./_generated/dataModel";
 import { requireViewerIdentity } from "./lib/auth";
 import { chatModeValidator, type ChatMode } from "./lib/chatMode";
 import { requireOwnedDoc } from "./lib/ownedDocs";
 import { upsertLastActiveRepository } from "./lib/userPreferences";
+
+const OWNER_REPOSITORY_ID_PROBE_LIMIT = 200;
 
 /**
  * Repository sidebar selector listing — the 20 most recently accessed
@@ -31,29 +34,33 @@ export const listRepositoriesForSwitcher = query({
 });
 
 /**
- * All repository ids the viewer owns, capped at 1000. Powers two callers
- * that need the *complete* owned set — not the switcher's 20-row recency
- * window:
- *
- *   1. The persisted `lastActiveRepositoryId` existence check in
- *      `use-repository-persistence` — without this, a viewer whose
- *      last-active repo sits outside the top-20 recency window would have
- *      that pointer overwritten by `repositories[0]` on every fresh load.
- *   2. The frontend `useStorageGC` sweep — repos outside the switcher
- *      window must not be treated as garbage.
- *
- * The cap mirrors `chat.threads.listAllOwnerThreadIds`; beyond 1000 owned
- * repos the trailing tail can drop out without a meaningful loss.
+ * Bounded ownership probe for client-side caches that already have candidate
+ * repository ids (URL state, first-paint localStorage, and id-scoped
+ * localStorage GC). This keeps the read set proportional to the local cache
+ * surface instead of the viewer's total repository count.
  */
-export const listAllOwnerRepositoryIds = query({
-  args: {},
-  handler: async (ctx) => {
+export const listOwnedRepositoryIdsById = query({
+  args: {
+    repositoryIds: v.array(v.string()),
+  },
+  handler: async (ctx, args): Promise<Id<"repositories">[]> => {
+    if (args.repositoryIds.length > OWNER_REPOSITORY_ID_PROBE_LIMIT) {
+      throw new Error(`Too many repository ids to validate. Keep at most ${OWNER_REPOSITORY_ID_PROBE_LIMIT}.`);
+    }
+
     const identity = await requireViewerIdentity(ctx);
-    const rows = await ctx.db
-      .query("repositories")
-      .withIndex("by_ownerTokenIdentifier", (q) => q.eq("ownerTokenIdentifier", identity.tokenIdentifier))
-      .take(1000);
-    return rows.map((row) => row._id);
+    const uniqueIds = new Set<Id<"repositories">>();
+    for (const rawId of args.repositoryIds) {
+      const repositoryId = ctx.db.normalizeId("repositories", rawId);
+      if (!repositoryId || uniqueIds.has(repositoryId)) {
+        continue;
+      }
+      const repository = await ctx.db.get(repositoryId);
+      if (repository?.ownerTokenIdentifier === identity.tokenIdentifier) {
+        uniqueIds.add(repositoryId);
+      }
+    }
+    return [...uniqueIds];
   },
 });
 

@@ -1,5 +1,7 @@
 import { useEffect } from "react";
-import { listKeysByPrefix, removeKey } from "@/lib/storage";
+import { useQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { listKeysByPrefix, readString, removeKey } from "@/lib/storage";
 
 const REPOSITORY_SCOPED_PREFIXES = [
   "systify.library.tabs.",
@@ -10,45 +12,84 @@ const REPOSITORY_SCOPED_PREFIXES = [
 
 const COMPOSER_DRAFT_THREAD_PREFIX = "systify.composer.draft.thread.";
 const ACTIVE_REPOSITORY_STORAGE_KEY = "systify.activeRepositoryId";
+const STORAGE_GC_ID_PROBE_LIMIT = 200;
+
+/**
+ * Collect only ids that actually appear in localStorage. Server validation is
+ * therefore bounded by browser cache size, not by the viewer's repository or
+ * thread history.
+ */
+export function collectStorageGCRepositoryIds(): string[] {
+  const ids = new Set<string>();
+  for (const prefix of REPOSITORY_SCOPED_PREFIXES) {
+    for (const key of listKeysByPrefix(prefix)) {
+      const suffix = key.slice(prefix.length);
+      const repositoryId = suffix.split(".")[0];
+      if (repositoryId) ids.add(repositoryId);
+    }
+  }
+
+  const activeRepositoryId = readString(ACTIVE_REPOSITORY_STORAGE_KEY);
+  if (activeRepositoryId) ids.add(activeRepositoryId);
+  return [...ids].sort().slice(0, STORAGE_GC_ID_PROBE_LIMIT);
+}
+
+export function collectStorageGCThreadIds(): string[] {
+  const ids = new Set<string>();
+  for (const key of listKeysByPrefix(COMPOSER_DRAFT_THREAD_PREFIX)) {
+    const threadId = key.slice(COMPOSER_DRAFT_THREAD_PREFIX.length);
+    if (threadId) ids.add(threadId);
+  }
+  return [...ids].sort().slice(0, STORAGE_GC_ID_PROBE_LIMIT);
+}
+
+export function sweepRepositoryStorage(liveRepositoryIds: ReadonlySet<string>): void {
+  for (const prefix of REPOSITORY_SCOPED_PREFIXES) {
+    for (const key of listKeysByPrefix(prefix)) {
+      const suffix = key.slice(prefix.length);
+      const repositoryId = suffix.split(".")[0];
+      if (!repositoryId || !liveRepositoryIds.has(repositoryId)) removeKey(key);
+    }
+  }
+  const activeRepositoryId = readString(ACTIVE_REPOSITORY_STORAGE_KEY);
+  if (activeRepositoryId && !liveRepositoryIds.has(activeRepositoryId)) {
+    removeKey(ACTIVE_REPOSITORY_STORAGE_KEY);
+  }
+}
+
+export function sweepThreadStorage(liveThreadIds: ReadonlySet<string>): void {
+  for (const key of listKeysByPrefix(COMPOSER_DRAFT_THREAD_PREFIX)) {
+    const threadId = key.slice(COMPOSER_DRAFT_THREAD_PREFIX.length);
+    if (!threadId || !liveThreadIds.has(threadId)) removeKey(key);
+  }
+}
 
 /**
  * Garbage-collect localStorage keys whose owning repository or thread no
- * longer exists. Runs whenever the live id sets change — both on initial
- * load and on subscription-driven deletion pushes from other tabs / devices.
- *
- * Pass `null` while the upstream Convex query is still loading so we don't
- * mistakenly wipe everything as "orphan".
- *
- * `systify.activeRepositoryId` is a first-paint cache only, so a stale
- * value is cleared as soon as the live repository id set is known.
+ * longer exists. The hook validates only ids already present in localStorage,
+ * so initial shell mount no longer subscribes to full owner repository/thread
+ * id lists.
  */
-export function useStorageGC({
-  liveRepositoryIds,
-  liveThreadIds,
-}: {
-  liveRepositoryIds: ReadonlySet<string> | null;
-  liveThreadIds?: ReadonlySet<string> | null;
-}): void {
-  useEffect(() => {
-    if (!liveRepositoryIds) return;
-    for (const prefix of REPOSITORY_SCOPED_PREFIXES) {
-      for (const key of listKeysByPrefix(prefix)) {
-        const suffix = key.slice(prefix.length);
-        const repositoryId = suffix.split(".")[0];
-        if (!repositoryId || !liveRepositoryIds.has(repositoryId)) removeKey(key);
-      }
-    }
-    const activeRepositoryId = window.localStorage.getItem(ACTIVE_REPOSITORY_STORAGE_KEY);
-    if (activeRepositoryId && !liveRepositoryIds.has(activeRepositoryId)) {
-      removeKey(ACTIVE_REPOSITORY_STORAGE_KEY);
-    }
-  }, [liveRepositoryIds]);
+export function useStorageGC(): void {
+  const repositoryIds = collectStorageGCRepositoryIds();
+  const threadIds = collectStorageGCThreadIds();
+  const hasRepositoryIds = repositoryIds.length > 0;
+  const hasThreadIds = threadIds.length > 0;
+  const liveRepositoryIds = useQuery(
+    api.repositoryPreferences.listOwnedRepositoryIdsById,
+    hasRepositoryIds ? { repositoryIds } : "skip",
+  );
+  const liveThreadIds = useQuery(api.chat.threads.listOwnedThreadIdsById, hasThreadIds ? { threadIds } : "skip");
 
   useEffect(() => {
-    if (!liveThreadIds) return;
-    for (const key of listKeysByPrefix(COMPOSER_DRAFT_THREAD_PREFIX)) {
-      const threadId = key.slice(COMPOSER_DRAFT_THREAD_PREFIX.length);
-      if (!threadId || !liveThreadIds.has(threadId)) removeKey(key);
-    }
-  }, [liveThreadIds]);
+    if (!hasRepositoryIds) return;
+    if (liveRepositoryIds === undefined) return;
+    sweepRepositoryStorage(new Set(liveRepositoryIds));
+  }, [hasRepositoryIds, liveRepositoryIds]);
+
+  useEffect(() => {
+    if (!hasThreadIds) return;
+    if (liveThreadIds === undefined) return;
+    sweepThreadStorage(new Set(liveThreadIds));
+  }, [hasThreadIds, liveThreadIds]);
 }

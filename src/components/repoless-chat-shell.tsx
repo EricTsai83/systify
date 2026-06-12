@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
@@ -32,21 +32,6 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
   const navigate = useNavigate();
   const viewerAccess = useViewerAccess();
   const repositories = useQuery(api.repositoryPreferences.listRepositoriesForSwitcher);
-  // Live id sets for the localStorage GC sweep that runs inside the
-  // shared chat-shell lifecycle bundle. The GC sweep needs the *complete*
-  // owned-repo set (`listAllOwnerRepositoryIds`); the switcher's 20-row
-  // recency window would otherwise garbage-collect localStorage tied to
-  // repos the user still owns but hasn't touched recently.
-  const ownerRepositoryIds = useQuery(api.repositoryPreferences.listAllOwnerRepositoryIds, {});
-  const ownerThreadIds = useQuery(api.chat.threads.listAllOwnerThreadIds, {});
-  const liveRepositoryIds = useMemo(
-    () => (ownerRepositoryIds ? new Set(ownerRepositoryIds.map((id) => id as string)) : null),
-    [ownerRepositoryIds],
-  );
-  const liveThreadIds = useMemo(
-    () => (ownerThreadIds ? new Set(ownerThreadIds.map((id) => id as string)) : null),
-    [ownerThreadIds],
-  );
 
   // The repoless shell never picks an "active repository" — repository
   // switches navigate into the repository shell via `repositoryPath` and
@@ -98,8 +83,6 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       selectedProvider,
       selectedModelName,
       selectedReasoningEffort,
-      liveRepositoryIds,
-      liveThreadIds,
       threadToArchive,
       setActionError,
       setThreadToArchive,

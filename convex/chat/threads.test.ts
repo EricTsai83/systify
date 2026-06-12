@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from "vitest";
 import { api, internal } from "../_generated/api";
-import { insertTestArtifact, insertTestRepository } from "../../test/convex/fixtures";
+import { insertTestArtifact, insertTestRepository, insertTestThread } from "../../test/convex/fixtures";
 import { createRateLimitedTestConvex as createTestConvex, type SystifyTestConvex } from "../../test/convex/harness";
 
 async function insertRepository(t: SystifyTestConvex, ownerTokenIdentifier: string, slug: string) {
@@ -89,6 +89,34 @@ describe("listThreads", () => {
     expect(threads.map((thread) => thread._id)).toContain(ownerThreadId);
     expect(threads.map((thread) => thread._id)).not.toContain(foreignThreadId);
     expect(threads.every((thread) => thread.ownerTokenIdentifier === ownerTokenIdentifier)).toBe(true);
+  });
+});
+
+describe("listOwnedThreadIdsById", () => {
+  test("returns only normalized active thread ids owned by the viewer", async () => {
+    const ownerTokenIdentifier = "user|thread-probe-owner";
+    const intruderTokenIdentifier = "user|thread-probe-intruder";
+    const t = createTestConvex();
+    const liveThreadId = await insertTestThread(t, {
+      ownerTokenIdentifier,
+      title: "Live probe thread",
+    });
+    const deletingThreadId = await insertTestThread(t, {
+      ownerTokenIdentifier,
+      title: "Deleting probe thread",
+      deletionRequestedAt: Date.now(),
+    });
+    const foreignThreadId = await insertTestThread(t, {
+      ownerTokenIdentifier: intruderTokenIdentifier,
+      title: "Foreign probe thread",
+    });
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const result = await viewer.query(api.chat.threads.listOwnedThreadIdsById, {
+      threadIds: [liveThreadId, deletingThreadId, foreignThreadId, "not-a-convex-id", liveThreadId],
+    });
+
+    expect(result).toEqual([liveThreadId]);
   });
 });
 

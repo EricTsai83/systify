@@ -72,7 +72,9 @@ function LibraryRepository({
   const viewerAccess = useViewerAccess();
 
   const repositories = useQuery(api.repositoryPreferences.listRepositoriesForSwitcher);
-  const ownerRepositoryIds = useQuery(api.repositoryPreferences.listAllOwnerRepositoryIds, {});
+  const authorizedRepositoryIds = useQuery(api.repositoryPreferences.listOwnedRepositoryIdsById, {
+    repositoryIds: [repositoryId],
+  });
   const baseTouchRepository = useMutation(api.repositoryPreferences.touchRepository);
   const touchRepository = useMemo(
     () => baseTouchRepository.withOptimisticUpdate(applyTouchRepositoryOptimistic),
@@ -80,9 +82,9 @@ function LibraryRepository({
   );
 
   const isAuthorizedForRepository = useMemo(() => {
-    if (ownerRepositoryIds === undefined) return null;
-    return (ownerRepositoryIds as ReadonlyArray<string>).includes(repositoryId);
-  }, [ownerRepositoryIds, repositoryId]);
+    if (authorizedRepositoryIds === undefined) return null;
+    return (authorizedRepositoryIds as ReadonlyArray<string>).includes(repositoryId);
+  }, [authorizedRepositoryIds, repositoryId]);
 
   useEffect(() => {
     if (!repositoryId) return;

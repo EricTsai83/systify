@@ -59,17 +59,11 @@ export function useRepositoryPersistence({
   navigate: NavigateFunction;
 }): RepositoryPersistence {
   const repositories = useQuery(api.repositoryPreferences.listRepositoriesForSwitcher);
-  const ownerRepositoryIds = useQuery(api.repositoryPreferences.listAllOwnerRepositoryIds);
   const viewerPreferences = useQuery(api.userPreferences.getViewerPreferences);
   const baseTouchRepository = useMutation(api.repositoryPreferences.touchRepository);
   const touchRepository = useMemo(
     () => baseTouchRepository.withOptimisticUpdate(applyTouchRepositoryOptimistic),
     [baseTouchRepository],
-  );
-
-  const ownerRepositoryIdSet = useMemo(
-    () => (ownerRepositoryIds ? new Set(ownerRepositoryIds as ReadonlyArray<RepositoryId>) : null),
-    [ownerRepositoryIds],
   );
 
   const [activeRepositoryId, setActiveRepositoryId] = useState<RepositoryId | null>(() => {
@@ -84,6 +78,29 @@ export function useRepositoryPersistence({
       removeKey(ACTIVE_REPOSITORY_STORAGE_KEY);
     }
   }, [activeRepositoryId]);
+
+  const repositoryIdsToValidate = useMemo(() => {
+    if (repositories === undefined || viewerPreferences === undefined) {
+      return null;
+    }
+    const ids = new Set<RepositoryId>();
+    for (const repository of repositories) ids.add(repository._id);
+    if (urlRepositoryId) ids.add(urlRepositoryId);
+    if (activeRepositoryId) ids.add(activeRepositoryId);
+    const dbRepositoryId = viewerPreferences?.lastActiveRepositoryId ?? null;
+    if (dbRepositoryId) ids.add(dbRepositoryId);
+    return [...ids];
+  }, [activeRepositoryId, repositories, urlRepositoryId, viewerPreferences]);
+
+  const liveRepositoryIds = useQuery(
+    api.repositoryPreferences.listOwnedRepositoryIdsById,
+    repositoryIdsToValidate ? { repositoryIds: repositoryIdsToValidate } : "skip",
+  );
+
+  const ownerRepositoryIdSet = useMemo(
+    () => (liveRepositoryIds ? new Set(liveRepositoryIds as ReadonlyArray<RepositoryId>) : null),
+    [liveRepositoryIds],
+  );
 
   const resolvedSelection = useMemo(() => {
     if (repositories === undefined || viewerPreferences === undefined || ownerRepositoryIdSet === null) {
