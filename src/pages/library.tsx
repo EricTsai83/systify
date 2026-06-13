@@ -102,7 +102,7 @@ function LibraryRepository({
     [repositories, repositoryId],
   );
 
-  const tabs = useLibraryTabs(repositoryId, artifactId);
+  const tabs = useLibraryTabs(canLoadRepositoryData ? repositoryId : null, canLoadRepositoryData ? artifactId : null);
 
   const allArtifacts = useQuery(
     api.artifacts.listMetadataByRepositoryWithFreshness,
