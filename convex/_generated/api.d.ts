@@ -72,7 +72,6 @@ import type * as lib_constants from "../lib/constants.js";
 import type * as lib_daytonaRetry from "../lib/daytonaRetry.js";
 import type * as lib_daytonaWebhookVerification from "../lib/daytonaWebhookVerification.js";
 import type * as lib_embeddingAccounting from "../lib/embeddingAccounting.js";
-import type * as lib_embeddingAccountingMutations from "../lib/embeddingAccountingMutations.js";
 import type * as lib_entitlements from "../lib/entitlements.js";
 import type * as lib_functionResultSchemas from "../lib/functionResultSchemas.js";
 import type * as lib_github from "../lib/github.js";
@@ -210,7 +209,6 @@ declare const fullApi: ApiFromModules<{
   "lib/daytonaRetry": typeof lib_daytonaRetry;
   "lib/daytonaWebhookVerification": typeof lib_daytonaWebhookVerification;
   "lib/embeddingAccounting": typeof lib_embeddingAccounting;
-  "lib/embeddingAccountingMutations": typeof lib_embeddingAccountingMutations;
   "lib/entitlements": typeof lib_entitlements;
   "lib/functionResultSchemas": typeof lib_functionResultSchemas;
   "lib/github": typeof lib_github;

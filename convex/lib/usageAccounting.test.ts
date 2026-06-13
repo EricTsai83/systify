@@ -80,6 +80,57 @@ describe("usageAccounting lifecycle", () => {
     expect(dashboard.budget.reservedUsd).toBeCloseTo(0.05, 5);
   });
 
+  test("reserve retry skips sandbox cap precheck for an existing sourceId", async () => {
+    process.env.SANDBOX_DAILY_CAP_PER_USER_USD = "0.10";
+    process.env.SANDBOX_DAILY_CAP_PER_REPOSITORY_USD = "0.10";
+
+    const ownerTokenIdentifier = "user|usage-accounting-reserve-sandbox-idempotent";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const now = Date.now();
+
+    await viewer.mutation(api.lib.userCost.updateViewerUsageProfile, {
+      cycleAnchorDay: 1,
+      timeZone: "UTC",
+      budgetUsd: 1,
+      hardCapEnabled: true,
+    });
+
+    const first = await t.mutation(internal.lib.usageAccountingMutations.reserveUsageLifecycle, {
+      sourceId: "message:reserve-sandbox-idempotent",
+      ownerTokenIdentifier,
+      repositoryId: null,
+      feature: "chatReply",
+      sandboxDailyCap: "precheckAndSettle",
+      occurredAtMs: now,
+    });
+    await t.mutation(internal.lib.usageAccountingMutations.settleUsageLifecycle, {
+      sourceId: "systemDesign:reserve-sandbox-idempotent-cap-filler:readme_summary:1",
+      ownerTokenIdentifier,
+      repositoryId: null,
+      feature: "systemDesignGeneration",
+      occurredAtMs: now,
+      usage: {
+        costUsd: 0.1,
+        inputTokens: 1_000,
+        outputTokens: 500,
+      },
+    });
+
+    const budget = await t.run(async (ctx) => await peekSandboxDailyCostForUser(ctx, ownerTokenIdentifier));
+    const second = await t.mutation(internal.lib.usageAccountingMutations.reserveUsageLifecycle, {
+      sourceId: "message:reserve-sandbox-idempotent",
+      ownerTokenIdentifier,
+      repositoryId: null,
+      feature: "chatReply",
+      sandboxDailyCap: "precheckAndSettle",
+      occurredAtMs: now,
+    });
+
+    expect(budget.remainingCents).toBe(0);
+    expect(second).toEqual(first);
+  });
+
   test("settle is idempotent for durable event, rollups, and daily cap", async () => {
     process.env.SANDBOX_DAILY_CAP_PER_USER_USD = "0.10";
     process.env.SANDBOX_DAILY_CAP_PER_REPOSITORY_USD = "0.10";

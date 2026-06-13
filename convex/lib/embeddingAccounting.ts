@@ -7,11 +7,7 @@ import { embedViaGateway, type LlmCallContext, type LlmEmbedResult } from "./llm
 import type { LlmProvider } from "./llmProvider";
 import { assertFeatureAccess } from "./entitlements";
 import { logWarn } from "./observability";
-import {
-  ARTIFACT_INDEXING_BATCH_BUDGET_ESTIMATE_USD,
-  LIBRARY_RETRIEVAL_BUDGET_ESTIMATE_USD,
-  type UsageFeature,
-} from "./userCost";
+import type { UsageFeature } from "./userCost";
 import type { UsageAccountingFeature } from "./usageAccounting";
 
 /**
@@ -50,11 +46,6 @@ export interface EmbedWithAccountingArgs {
   messageId?: Id<"messages">;
   jobId?: Id<"jobs">;
 }
-
-export const EMBEDDING_BUDGET_ESTIMATES = {
-  artifactIndexing: ARTIFACT_INDEXING_BATCH_BUDGET_ESTIMATE_USD,
-  libraryRetrieval: LIBRARY_RETRIEVAL_BUDGET_ESTIMATE_USD,
-} as const satisfies Record<EmbeddingAccountingFeature, number>;
 
 export function resolveArtifactEmbeddingModel(): string {
   return process.env.ARTIFACT_EMBEDDING_MODEL ?? DEFAULT_ARTIFACT_EMBEDDING_MODEL;

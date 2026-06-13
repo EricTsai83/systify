@@ -30,6 +30,23 @@ async function usageEventExists(ctx: MutationCtx, sourceId: string): Promise<boo
   return existingEvent !== null;
 }
 
+async function existingUsageReservation(
+  ctx: MutationCtx,
+  sourceId: string,
+): Promise<{ reserved: boolean; periodKey: string | null } | null> {
+  const existingReservation = await ctx.db
+    .query("userUsageBudgetReservations")
+    .withIndex("by_sourceId", (q) => q.eq("sourceId", sourceId))
+    .unique();
+  if (!existingReservation) {
+    return null;
+  }
+  return {
+    reserved: existingReservation.status === "reserved",
+    periodKey: existingReservation.periodKey,
+  };
+}
+
 export async function reserveUsageLifecycleInMutation(
   ctx: MutationCtx,
   args: LifecycleArgs,
@@ -37,6 +54,14 @@ export async function reserveUsageLifecycleInMutation(
   const sourceId = normalizeUsageAccountingSourceId(args.sourceId);
   const policy = getUsageAccountingPolicy(args.feature);
   const sandboxDailyCap = effectiveSandboxDailyCap(args);
+
+  const existingReservation = await existingUsageReservation(ctx, sourceId);
+  if (existingReservation) {
+    return existingReservation;
+  }
+  if (await usageEventExists(ctx, sourceId)) {
+    return { reserved: false, periodKey: null };
+  }
 
   if (sandboxDailyCap === "precheckAndSettle") {
     await assertSandboxDailyCostBudget(ctx, {
