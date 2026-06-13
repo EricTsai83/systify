@@ -69,6 +69,18 @@ const THREAD_ROW_MOTION: Transition = {
   opacity: { duration: 0.2, ease: "easeOut" },
 };
 
+const THREAD_SECTION_CONTENT_MOTION: Transition = {
+  height: { type: "spring", stiffness: 520, damping: 40, mass: 0.72 },
+  opacity: { duration: 0.1, ease: "easeOut" },
+};
+
+const THREAD_SECTION_CARET_MOTION: Transition = {
+  type: "spring",
+  stiffness: 700,
+  damping: 38,
+  mass: 0.58,
+};
+
 /**
  * Inline rename state machine shared between the repo-bound and repoless
  * thread item components. Same UX in both rails: double-click the title to
@@ -470,9 +482,11 @@ function CollapsibleThreadSection({
   className?: string;
 }) {
   const [isOpen, setIsOpen] = useState(true);
+  const shouldReduceMotion = useReducedMotion();
+  const reduceMotion = shouldReduceMotion === true;
 
   return (
-    <Collapsible open={isOpen} onOpenChange={setIsOpen} className={cn("flex flex-col gap-1", className)}>
+    <Collapsible open={isOpen} onOpenChange={setIsOpen} className={cn("flex flex-col", className)}>
       <div className="px-1 pb-1">
         <CollapsibleTrigger asChild>
           <button
@@ -480,17 +494,36 @@ function CollapsibleThreadSection({
             className="flex w-full items-center gap-1 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             aria-label={`${isOpen ? "Collapse" : "Expand"} ${label}`}
           >
-            <CaretRightIcon
-              size={11}
-              weight="bold"
-              className={cn("shrink-0 transition-transform duration-150", isOpen && "rotate-90")}
+            <motion.span
               aria-hidden="true"
-            />
+              animate={reduceMotion ? undefined : { rotate: isOpen ? 90 : 0 }}
+              transition={THREAD_SECTION_CARET_MOTION}
+              className={cn("flex shrink-0", reduceMotion && isOpen && "rotate-90")}
+            >
+              <CaretRightIcon size={11} weight="bold" />
+            </motion.span>
             <span className="truncate">{label}</span>
           </button>
         </CollapsibleTrigger>
       </div>
-      <CollapsibleContent>{children}</CollapsibleContent>
+      <CollapsibleContent forceMount asChild>
+        <div>
+          <AnimatePresence initial={false}>
+            {isOpen ? (
+              <motion.div
+                key="content"
+                initial={reduceMotion ? false : { height: 0, opacity: 0 }}
+                animate={reduceMotion ? undefined : { height: "auto", opacity: 1 }}
+                exit={reduceMotion ? undefined : { height: 0, opacity: 0 }}
+                transition={THREAD_SECTION_CONTENT_MOTION}
+                style={reduceMotion ? undefined : { overflow: "hidden" }}
+              >
+                {children}
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
+        </div>
+      </CollapsibleContent>
     </Collapsible>
   );
 }
