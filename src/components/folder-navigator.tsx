@@ -16,9 +16,9 @@ import {
 import { api } from "../../convex/_generated/api";
 import { MAX_ARTIFACT_TITLE_LENGTH } from "../../convex/lib/artifactDefaults";
 import { FOLDER_NAME_MAX_LENGTH } from "../../convex/lib/artifactFolderDefaults";
+import { SidebarScrollViewport } from "@/components/sidebar-scroll-viewport";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -298,7 +298,7 @@ export function FolderNavigator({
         </div>
       ) : null}
 
-      <ScrollArea className="min-h-0 flex-1">
+      <SidebarScrollViewport className="flex-1" viewportClassName="pb-12">
         <div className="flex flex-col gap-3 p-3">
           {pinnedRoots.length > 0 ? (
             <NavigatorSection title="Pinned" icon={<PushPinSimpleIcon size={12} weight="fill" />}>
@@ -381,7 +381,7 @@ export function FolderNavigator({
             </NavigatorSection>
           ) : null}
         </div>
-      </ScrollArea>
+      </SidebarScrollViewport>
     </div>
   );
 }

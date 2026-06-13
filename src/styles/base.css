@@ -54,6 +54,24 @@
   .no-scrollbar::-webkit-scrollbar {
     display: none;
   }
+
+  .scroll-shadow-mask {
+    --scroll-shadow-mask-size: 2.75rem;
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      black 1rem,
+      black calc(100% - var(--scroll-shadow-mask-size)),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent 0,
+      black 1rem,
+      black calc(100% - var(--scroll-shadow-mask-size)),
+      transparent 100%
+    );
+  }
 }
 
 /*
