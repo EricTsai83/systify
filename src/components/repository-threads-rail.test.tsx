@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useConvex, useMutation, useQuery } from "convex/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
@@ -73,7 +73,7 @@ describe("RepolessChatsRail", () => {
     expect(within(regularSection).queryByText("Translation agent")).not.toBeInTheDocument();
   });
 
-  test("collapses agent and pinned chat sections", () => {
+  test("collapses agent and pinned chat sections", async () => {
     vi.mocked(useQuery).mockReturnValue([
       makeThread({
         _id: "thread_pinned" as Id<"threads">,
@@ -114,15 +114,19 @@ describe("RepolessChatsRail", () => {
     fireEvent.click(agentToggle);
     fireEvent.click(pinnedToggle);
 
-    expect(screen.queryByText("Translation agent")).not.toBeInTheDocument();
-    expect(screen.queryByText("Pinned planning")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.queryByText("Translation agent")).not.toBeInTheDocument();
+      expect(screen.queryByText("Pinned planning")).not.toBeInTheDocument();
+    });
     expect(screen.getByText("General planning")).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Expand Agent chats" }));
     fireEvent.click(screen.getByRole("button", { name: "Expand Pinned" }));
 
-    expect(screen.getByText("Translation agent")).toBeVisible();
-    expect(screen.getByText("Pinned planning")).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getByText("Translation agent")).toBeVisible();
+      expect(screen.getByText("Pinned planning")).toBeVisible();
+    });
   });
 });
 
