@@ -1,6 +1,6 @@
 import { Suspense, forwardRef, useEffect, useRef, useState, type RefObject } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useConvexConnectionState } from "convex/react";
 import {
   Navigate,
   Outlet,
@@ -24,6 +24,7 @@ import { HomePage } from "@/pages/home";
 
 const MAX_CALLBACK_ERROR_DESCRIPTION_LENGTH = 240;
 const DEMO_BANNER_HEIGHT_CSS_VAR = "--systify-demo-banner-height";
+const CONVEX_CONNECTION_NOTICE_DELAY_MS = 4_000;
 
 /**
  * sessionStorage key used to remember the protected URL an unauthenticated
@@ -35,24 +36,60 @@ export const AUTH_RETURN_TO_KEY = "systify.auth.returnTo";
 
 export function AppLayout() {
   const { authError } = useConvexAuthStatus();
+  const convexConnectionIssue = useConvexConnectionIssue();
   const { signOut } = useAuth();
 
   return (
     <div className="relative flex h-dvh overflow-hidden bg-background">
-      {authError ? (
-        <div className="absolute inset-x-0 top-0 z-10 border-b border-border px-4 py-3">
-          <AppNotice
-            title="Authentication error"
-            message={authError}
-            tone="error"
-            actionLabel="Sign in again"
-            onAction={() => void signOut()}
-          />
+      {authError || convexConnectionIssue ? (
+        <div className="absolute inset-x-0 top-0 z-10 flex flex-col gap-2 border-b border-border bg-background/95 px-4 py-3 shadow-sm backdrop-blur">
+          {authError ? (
+            <AppNotice
+              title="Authentication error"
+              message={authError}
+              tone="error"
+              actionLabel="Sign in again"
+              onAction={() => void signOut()}
+            />
+          ) : null}
+          {convexConnectionIssue ? (
+            <AppNotice
+              title="Connection interrupted"
+              message="Systify is having trouble reaching Convex. Live data may be stale while the app reconnects."
+              tone="warning"
+              actionLabel="Refresh page"
+              onAction={() => window.location.reload()}
+            />
+          ) : null}
         </div>
       ) : null}
       <Outlet />
     </div>
   );
+}
+
+function useConvexConnectionIssue() {
+  const connectionState = useConvexConnectionState();
+  const [delayedIssueKey, setDelayedIssueKey] = useState<string | null>(null);
+  const shouldWatchConnection =
+    !connectionState.isWebSocketConnected &&
+    (connectionState.hasEverConnected || connectionState.connectionRetries > 0 || connectionState.hasInflightRequests);
+  const issueKey = `${connectionState.connectionCount}:${connectionState.connectionRetries}`;
+
+  useEffect(() => {
+    if (!shouldWatchConnection || connectionState.connectionRetries >= 2) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setDelayedIssueKey(issueKey);
+    }, CONVEX_CONNECTION_NOTICE_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [connectionState.connectionRetries, issueKey, shouldWatchConnection]);
+
+  return shouldWatchConnection && (connectionState.connectionRetries >= 2 || delayedIssueKey === issueKey)
+    ? connectionState
+    : null;
 }
 
 export function RouterHydrateFallback() {

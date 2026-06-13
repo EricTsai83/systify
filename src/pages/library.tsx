@@ -85,6 +85,7 @@ function LibraryRepository({
     if (authorizedRepositoryIds === undefined) return null;
     return (authorizedRepositoryIds as ReadonlyArray<string>).includes(repositoryId);
   }, [authorizedRepositoryIds, repositoryId]);
+  const canLoadRepositoryData = isAuthorizedForRepository === true;
 
   useEffect(() => {
     if (!repositoryId) return;
@@ -101,19 +102,26 @@ function LibraryRepository({
     [repositories, repositoryId],
   );
 
-  const tabs = useLibraryTabs(repositoryId, artifactId);
+  const tabs = useLibraryTabs(canLoadRepositoryData ? repositoryId : null, canLoadRepositoryData ? artifactId : null);
 
-  const allArtifacts = useQuery(api.artifacts.listMetadataByRepositoryWithFreshness, { repositoryId });
-  const sandboxActivityStatus = useQuery(api.repositories.getSandboxActivityStatus, { repositoryId });
-  const { isUnseen, markViewed } = useArtifactViewState(repositoryId);
+  const allArtifacts = useQuery(
+    api.artifacts.listMetadataByRepositoryWithFreshness,
+    canLoadRepositoryData ? { repositoryId } : "skip",
+  );
+  const sandboxActivityStatus = useQuery(
+    api.repositories.getSandboxActivityStatus,
+    canLoadRepositoryData ? { repositoryId } : "skip",
+  );
+  const { isUnseen, markViewed } = useArtifactViewState(canLoadRepositoryData ? repositoryId : null);
 
   const hasArtifacts = (allArtifacts?.length ?? 0) > 0;
 
   useEffect(() => {
+    if (!canLoadRepositoryData) return;
     if (tabs.activeArtifactId) {
       markViewed(tabs.activeArtifactId);
     }
-  }, [tabs.activeArtifactId, markViewed]);
+  }, [canLoadRepositoryData, tabs.activeArtifactId, markViewed]);
 
   const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false);
   const openGenerateDialog = useCallback(() => setIsGenerateDialogOpen(true), []);
@@ -189,7 +197,7 @@ function LibraryRepository({
     }
   }, [isAuthorizedForRepository, navigate]);
 
-  const artifactProbe = useQuery(api.artifacts.getById, artifactId ? { artifactId } : "skip");
+  const artifactProbe = useQuery(api.artifacts.getById, canLoadRepositoryData && artifactId ? { artifactId } : "skip");
   useEffect(() => {
     if (!artifactId) return;
     if (repositories === undefined || !currentRepository) return;
@@ -199,7 +207,10 @@ function LibraryRepository({
     }
   }, [artifactId, artifactProbe, askThreadId, currentRepository, navigate, repositoryId, repositories]);
 
-  const askThreadProbe = useQuery(api.chat.threads.getThreadSummary, askThreadId ? { threadId: askThreadId } : "skip");
+  const askThreadProbe = useQuery(
+    api.chat.threads.getThreadSummary,
+    canLoadRepositoryData && askThreadId ? { threadId: askThreadId } : "skip",
+  );
   useEffect(() => {
     if (!askThreadId) return;
     if (askThreadProbe === undefined) return;
