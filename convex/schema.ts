@@ -303,6 +303,12 @@ export default defineSchema({
     ])
     .index("by_ownerTokenIdentifier_and_archivedAt", ["ownerTokenIdentifier", "archivedAt"])
     .index("by_ownerTokenIdentifier_and_lastAccessedAt", ["ownerTokenIdentifier", "lastAccessedAt"])
+    .index("by_owner_delete_archive_lastAccessedAt", [
+      "ownerTokenIdentifier",
+      "deletionRequestedAt",
+      "archivedAt",
+      "lastAccessedAt",
+    ])
     .index("by_sourceRepoFullName", ["sourceRepoFullName"])
     .searchIndex("search_full_name", {
       searchField: "sourceRepoFullName",

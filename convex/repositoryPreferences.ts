@@ -25,8 +25,11 @@ export const listRepositoriesForSwitcher = query({
     const identity = await requireViewerIdentity(ctx);
     return await ctx.db
       .query("repositories")
-      .withIndex("by_ownerTokenIdentifier_and_lastAccessedAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier),
+      .withIndex("by_owner_delete_archive_lastAccessedAt", (q) =>
+        q
+          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+          .eq("deletionRequestedAt", undefined)
+          .eq("archivedAt", undefined),
       )
       .order("desc")
       .take(20);
@@ -56,7 +59,11 @@ export const listOwnedRepositoryIdsById = query({
         continue;
       }
       const repository = await ctx.db.get(repositoryId);
-      if (repository?.ownerTokenIdentifier === identity.tokenIdentifier) {
+      if (
+        repository?.ownerTokenIdentifier === identity.tokenIdentifier &&
+        repository.deletionRequestedAt === undefined &&
+        repository.archivedAt === undefined
+      ) {
         uniqueIds.add(repositoryId);
       }
     }
