@@ -40,7 +40,7 @@ as separate indicators.
 ```mermaid
 flowchart TD
   Import[Import pipeline: persistImportHeader stamps imports.commitSha]
-  Generator[System Design generator: persistGeneratedArtifact -> createArtifactInMutation]
+  Generator[System Design publication settlement -> artifact write helper]
   Aligned[artifacts.alignedImportCommitSha = import commitSha]
   LatestPtr[repositories.latestImportId]
   LatestSha[imports.commitSha of latest import]
@@ -59,10 +59,10 @@ flowchart TD
 
 `artifacts.alignedImportCommitSha` is the only persisted state this feature
 adds. It is the commit SHA of the import snapshot the artifact's prose was
-anchored to. The System Design generator stamps it on every artifact row it
-writes: `persistGeneratedArtifact` (`convex/systemDesign.ts`) forwards the
-`alignedImportCommitSha` argument straight through to `createArtifactInMutation`
-(`convex/artifactStore.ts`), which sets it on the inserted `artifacts` row.
+anchored to. System Design publication settlement stamps it on every generated
+artifact row: `finalizeKindPublication` (`convex/systemDesign.ts`) forwards the
+`alignedImportCommitSha` argument through the artifact write helper, which sets
+it on the inserted `artifacts` row.
 The import pipeline itself (`persistImportHeader`) writes zero artifact rows —
 it only stamps `commitSha` on the `imports` row, and the generator reads that
 value when it produces the artifact.
@@ -187,8 +187,8 @@ scaffolding.
 ## Result
 
 Import drift is one optional SHA on the artifact row, stamped by the System
-Design generator (`persistGeneratedArtifact` -> `createArtifactInMutation`)
-from the import's `commitSha`, and compared at read time against a
+Design publication settlement from the import's `commitSha`, and compared at
+read time against a
 latest-import SHA that is resolved once per query. Every UI state is derived
 from those SHAs; there is no stored flag, no reconciliation, and no
 per-artifact read on the hot subscription path.

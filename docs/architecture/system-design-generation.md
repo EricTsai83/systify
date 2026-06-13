@@ -65,8 +65,9 @@ main for-loop (`convex/systemDesignNode.ts:183-423`):
    `artifacts.by_repo_kind_commit_provider_model_promptVersion`
    index and returns the newest matching artifact. A match short-circuits the
    LLM call entirely: the run status becomes `cached_hit` and the cached
-   artifact's id flows straight into step 7. There is no separate cache table
-   — the artifact itself is the cache.
+   artifact id flows into the same Publication Settlement seam used by
+   generated output. There is no separate cache table — the artifact itself is
+   the cache.
 3. **Cost pre-check.** `assertKindCostBudget`
    (`convex/systemDesign.ts:750`) throws `SANDBOX_DAILY_CAP_EXCEEDED` or
    `SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED` when the per-user or
@@ -86,23 +87,34 @@ main for-loop (`convex/systemDesignNode.ts:183-423`):
    `architecture_diagram` the action additionally runs `validateMermaidBlock`
    to confirm at least one fenced ` ```mermaid ` block. Failure sets
    `runStatus = "quality_rejected"` and records the missing sections.
-6. **Persist artifact.** `persistGeneratedArtifact`
-   (`convex/systemDesign.ts:574`) resolves the destination folder by
-   `systemKey`, cascades-deletes any prior artifact of the same kind in the
-   folder, then writes a new row through `createArtifactInMutation` with the
-   `(generatedByProvider, generatedByModel, promptVersion,
-   alignedImportCommitSha)` fingerprint filled in. These fields become the
-   next run's cache key.
-7. **Telemetry + settlement.** `recordKindRun`
-   (`convex/systemDesign.ts:774`) inserts a `systemDesignKindRuns` row with
-   the normalized usage, cost, duration, status, failure reason, and missing
-   sections, then (in the same mutation) charges the day's sandbox cost cap
-   via `consumeSandboxDailyCost` using the gateway-reported `totalCostUsd`
-   — settlement uses actual spend, not the pre-check estimate. `cached_hit`
-   rows skip settlement because the artifact was already paid for. After the
-   insert, `linkKindRun` (`convex/systemDesign.ts:849`) patches the artifact's
-   `kindRunId` back-reference and vice versa.
-8. **Per-kind metrics.** `emitMetric` calls surface
+6. **Publication Settlement.** `finalizeKindPublication`
+   (`convex/systemDesign.ts`) receives one terminal outcome from the kind-run
+   module: `cached_hit`, `generated`, `quality_rejected`, or `failed`. The
+   settlement module validates that the repository is still owned by the
+   requester, still active, and attached to a running `system_design` job with
+   a live lease before writing any artifact or kindRun row.
+
+   - `cached_hit` validates that the cached artifact still belongs to the same
+     owner, repository, and kind, inserts a `cached_hit` kindRun with
+     `artifactId`, and skips cost settlement because the artifact was paid for
+     by its original generation. It does not patch the cached artifact's
+     `kindRunId`.
+   - `generated` resolves the destination folder from
+     `SYSTEM_DESIGN_KIND_TO_FOLDER`, replaces the prior artifact of the same
+     kind in that folder through the low-level artifact write helper, inserts
+     a `succeeded` kindRun with the new `artifactId`, settles actual usage and
+     cost using `systemDesign:${jobId}:${kind}:${startedAt}`, then patches the
+     new artifact's `kindRunId` back-reference.
+   - `quality_rejected` and `failed` insert kindRun rows without artifacts and
+     settle actual usage/cost when available. Failed outcomes with a
+     `failureLog` also append `jobs.kindFailures`.
+
+   If the active write target disappeared after paid LLM output was produced
+   (repository archived/deleted, job no longer running, or lease expired), the
+   module settles actual usage/cost for non-cache outcomes but writes no
+   artifact, kindRun, or job failure. An inactive `cached_hit` aborts without
+   settlement.
+7. **Per-kind metrics.** `emitMetric` calls surface
    `systemdesign_kind_duration_ms`, `systemdesign_kind_steps_used`,
    `systemdesign_kind_cost_usd`, `systemdesign_kind_tokens`, and
    `systemdesign_kind_failed` so the observability stream carries the same
@@ -219,10 +231,12 @@ seam instead of separate schema / mutation copies:
   validation, our-side bug). Engineering is paged through the standard
   `logErrorWithId` path.
 
-Per-kind failures are isolated. The catch records a `kindFailures` entry on
-the job row via `recordKindFailure` and the for-loop continues to the next
-kind; only sandbox-preparation failure at the top of the action fails the
-whole job.
+Per-kind failures are isolated. The catch builds a `failed` publication
+outcome with the classified `failureReason` and optional failure log; the
+Publication Settlement module appends `jobs.kindFailures` when that log is
+present, inserts the failed kindRun row, settles actual usage/cost when
+available, and the for-loop continues to the next kind. Only
+sandbox-preparation failure at the top of the action fails the whole job.
 
 ### Banner mapping
 

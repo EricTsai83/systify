@@ -111,9 +111,13 @@ without rerunning". Fields:
 - `totalCostUsd` — USD from `estimateCostUsd` against the kind's normalized
   usage
 
-The kind-run row is written by `recordKindRun` in `convex/systemDesign.ts`,
-called from the System Design action in `convex/systemDesignNode.ts`, which
-passes `totalCostUsd: costUsd` directly.
+The kind-run row is written by the Publication Settlement module through
+`finalizeKindPublication` in `convex/systemDesign.ts`, called from the System
+Design action in `convex/systemDesignKindRun.ts`. Cache hits, generated
+markdown, quality rejects, and failures all pass through this seam. Generated,
+failed, and quality-rejected outcomes settle actual usage/cost when available;
+`cached_hit` skips settlement because the artifact was already paid for by the
+run that produced it.
 
 `jobs.estimatedCostUsd` summarizes the full run. The per-job number is fed by
 the same `completeRunningJob` helper that powers chat job completion.
@@ -200,11 +204,14 @@ in `convex/lib/rateLimit.ts`:
   `cents === undefined`; the helper returns early without settlement (the
   conservative direction — better to under-settle than to fabricate a number
   that starves a user's quota).
-- System Design: `recordKindRun` in `convex/systemDesign.ts` settles after
-  writing the kindRun row. `cached_hit` runs skip settlement (the
-  artifact was already paid for on the run that produced it). The
-  `consumeSandboxDailyCost` short-circuit on `cents <= 0` handles pricing
-  misses uniformly.
+- System Design: `finalizeKindPublication` in `convex/systemDesign.ts` routes
+  through `convex/lib/systemDesignPublicationSettlement.ts`. Generated,
+  failed, and quality-rejected outcomes settle after the terminal outcome is
+  shaped; if the repository is archived/deleted before publication, paid
+  non-cache output still settles while artifact/kindRun/job-failure writes are
+  skipped. `cached_hit` runs skip settlement because the artifact was already
+  paid for on the run that produced it. The `consumeSandboxDailyCost`
+  short-circuit on `cents <= 0` handles pricing misses uniformly.
 - Embeddings: the artifact-indexing background action settles per batch via
   `internal.lib.rateLimit.settleSandboxDailyCost` (the action-callable wrapper
   around `consumeSandboxDailyCost`) inside `convex/artifactIndexing.ts`, and

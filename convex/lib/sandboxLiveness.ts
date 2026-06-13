@@ -64,7 +64,7 @@ export async function verifyAndSyncSandbox(
  * `userFacingMessage` is rendered directly to end users in the Library
  * banner / chat status, so it MUST be plain language and MUST NOT
  * include the word "sandbox". The `reason` code is for callers that
- * want to branch on the failure (e.g. System Design's `recordKindFailure`
+ * want to branch on the failure (e.g. System Design publication settlement,
  * which maps the reason to the `kindFailures.reason` discriminator).
  */
 export type SandboxPreparationReason =

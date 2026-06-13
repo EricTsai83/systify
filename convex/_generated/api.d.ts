@@ -112,6 +112,7 @@ import type * as lib_systemDesignFailureClassification from "../lib/systemDesign
 import type * as lib_systemDesignFailures from "../lib/systemDesignFailures.js";
 import type * as lib_systemDesignPlanning from "../lib/systemDesignPlanning.js";
 import type * as lib_systemDesignPrompts from "../lib/systemDesignPrompts.js";
+import type * as lib_systemDesignPublicationSettlement from "../lib/systemDesignPublicationSettlement.js";
 import type * as lib_threadDefaults from "../lib/threadDefaults.js";
 import type * as lib_titleSanitization from "../lib/titleSanitization.js";
 import type * as lib_userCost from "../lib/userCost.js";
@@ -247,6 +248,7 @@ declare const fullApi: ApiFromModules<{
   "lib/systemDesignFailures": typeof lib_systemDesignFailures;
   "lib/systemDesignPlanning": typeof lib_systemDesignPlanning;
   "lib/systemDesignPrompts": typeof lib_systemDesignPrompts;
+  "lib/systemDesignPublicationSettlement": typeof lib_systemDesignPublicationSettlement;
   "lib/threadDefaults": typeof lib_threadDefaults;
   "lib/titleSanitization": typeof lib_titleSanitization;
   "lib/userCost": typeof lib_userCost;

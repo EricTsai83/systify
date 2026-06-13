@@ -52,8 +52,9 @@ export interface KindRunBucket {
   qualityRejectedRuns: number;
   /**
    * Mean step count across every run that recorded steps (cache hits
-   * contribute zero by definition; `recordKindRun` writes `actualSteps:
-   * 0` for them). NaN-safe — `meanSteps === 0` when `totalRuns === 0`.
+   * contribute zero by definition; publication settlement writes
+   * `actualSteps: 0` for them). NaN-safe — `meanSteps === 0` when
+   * `totalRuns === 0`.
    */
   meanSteps: number;
   /** Sum of `actualSteps`; useful for computing mean externally. */
