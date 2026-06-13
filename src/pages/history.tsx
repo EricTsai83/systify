@@ -35,7 +35,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { useStableLoadMoreState } from "@/hooks/use-stable-load-more-state";
 import { formatExpiry } from "@/lib/format-expiry";
 import { formatRelativeTime } from "@/lib/format";
-import { isRepolessAgentEnabled } from "@/lib/repoless-agent";
+import { getRepolessThreadKind, getRepolessThreadKindLabel } from "@/lib/repoless-agent";
 import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { modeAwareThreadPath, repolessThreadPath, sharedThreadPath } from "@/route-paths";
 
@@ -475,7 +475,7 @@ function HistoryThreadsForScope({
             </div>
             {isNoRepository ? (
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                No-repository conversations split into agent and regular chats.
+                No-repository threads split into Agents and Conversations.
               </p>
             ) : null}
           </div>
@@ -828,13 +828,9 @@ function getHistoryScopeValue(group: HistoryGroup): string {
 
 function getThreadModeLabel(thread: HistoryThread, noRepository: boolean): string {
   if (noRepository) {
-    return isAgentModeThread(thread) ? "Agent" : "Chat";
+    return getRepolessThreadKindLabel(getRepolessThreadKind(thread));
   }
   return thread.mode === "library" ? "Library Ask" : "Discuss";
-}
-
-function isAgentModeThread(thread: HistoryThread): boolean {
-  return isRepolessAgentEnabled(thread);
 }
 
 async function copyText(text: string): Promise<boolean> {

@@ -821,7 +821,7 @@ export default defineSchema({
     singleTurnResetPending: v.optional(v.boolean()),
     /**
      * Repoless Agent mode. Missing preserves legacy behavior: threads with
-     * profile text are treated as Agent, otherwise Regular chat.
+     * profile text are treated as Agent, otherwise Conversation.
      */
     agentEnabled: v.optional(v.boolean()),
     /**

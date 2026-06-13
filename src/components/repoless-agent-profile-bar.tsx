@@ -52,8 +52,8 @@ export function RepolessChatTypeToggle({
   const isAgent = value.agentEnabled;
   const isDisabled = disabled || isSaving;
   const ModeIcon = isAgent ? RobotIcon : ChatCircleIcon;
-  const label = isAgent ? "Agent" : "Chat";
-  const ariaLabel = isAgent ? "Switch to regular chat" : "Switch to Agent chat";
+  const label = isAgent ? "Agent" : "Conversation";
+  const ariaLabel = isAgent ? "Switch to Conversation" : "Switch to Agent";
   const hasProfile = value.agentRole.trim().length > 0 || value.agentInstructions.trim().length > 0;
   const profileLabel = hasProfile ? "Edit Agent settings" : "Set up Agent";
 

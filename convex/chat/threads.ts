@@ -10,6 +10,7 @@ import { requireActiveRepositoryForViewer } from "../lib/repositoryAccess";
 import { MAX_RENAME_TITLE_LENGTH, NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
 import { MAX_STREAM_CHUNKS_PER_PASS } from "../lib/constants";
 import { touchRepositoryLastAccessed } from "../lib/repositoryPalette";
+import { isRepolessAgentThread } from "../lib/repolessThreadKind";
 import { deleteMessageStreamState } from "./streamStore";
 import { drainMessageToolCallEvents } from "./toolCallEventStore";
 import {
@@ -87,7 +88,7 @@ export function resolveRepolessAgentEnabled(args: {
   agentRole?: string;
   agentInstructions?: string;
 }): boolean {
-  return args.agentEnabled ?? (Boolean(args.agentRole?.trim()) || Boolean(args.agentInstructions?.trim()));
+  return isRepolessAgentThread(args);
 }
 
 export const listThreads = query({

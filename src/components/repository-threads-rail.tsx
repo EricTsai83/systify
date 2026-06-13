@@ -10,6 +10,8 @@ import {
   PushPinSimpleIcon,
   PushPinSimpleSlashIcon,
   ArchiveIcon,
+  RobotIcon,
+  ChatsCircleIcon,
 } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
@@ -30,7 +32,7 @@ import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useInlineRename } from "@/hooks/use-inline-rename";
 import { usePrewarmThread } from "@/hooks/use-prewarm-thread";
 import { toUserErrorMessage } from "@/lib/errors";
-import { isRepolessAgentEnabled } from "@/lib/repoless-agent";
+import { getRepolessThreadKind, getRepolessThreadKindLabel, isRepolessAgentEnabled } from "@/lib/repoless-agent";
 import type { ThreadMode } from "@/route-paths";
 import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -889,7 +891,7 @@ export function RepolessChatsRail({
             ) : null}
             {agentModeThreads.length > 0 ? (
               <RepolessThreadSection
-                label="Agent chats"
+                label="Agents"
                 collapsible
                 threads={agentModeThreads}
                 selectedThreadId={selectedThreadId}
@@ -903,7 +905,7 @@ export function RepolessChatsRail({
             ) : null}
             {threadModeThreads.length > 0 ? (
               <RepolessThreadSection
-                label="Regular chats"
+                label="Conversations"
                 threads={threadModeThreads}
                 selectedThreadId={selectedThreadId}
                 shouldReduceMotion={shouldReduceMotion}
@@ -933,7 +935,7 @@ function RepolessThreadSection({
   onTogglePin,
   onError,
 }: {
-  label: "Agent chats" | "Regular chats";
+  label: "Agents" | "Conversations";
   collapsible?: boolean;
   threads: Doc<"threads">[];
   selectedThreadId: ThreadId | null;
@@ -1031,7 +1033,7 @@ function RepolessThreadItem({
       isPinned={isPinned}
       isSelected={isSelected}
       titleTextClass={titleTextClass}
-      threadMeta={null}
+      threadMeta={<RepolessThreadKindBadge thread={thread} />}
       rowRef={rowRef}
       inputRef={inputRef}
       onSelectThread={onSelectThread}
@@ -1044,5 +1046,17 @@ function RepolessThreadItem({
       handleKeyDown={handleKeyDown}
       handleItemKeyDown={handleItemKeyDown}
     />
+  );
+}
+
+function RepolessThreadKindBadge({ thread }: { thread: Doc<"threads"> }) {
+  const kind = getRepolessThreadKind(thread);
+  const Icon = kind === "agent" ? RobotIcon : ChatsCircleIcon;
+  const label = getRepolessThreadKindLabel(kind);
+  return (
+    <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-muted-foreground/80">
+      <Icon size={9} weight={kind === "agent" ? "fill" : "bold"} className="shrink-0" aria-hidden="true" />
+      <span className="truncate">{label}</span>
+    </p>
   );
 }

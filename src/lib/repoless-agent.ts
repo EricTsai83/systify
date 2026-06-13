@@ -1,7 +1,7 @@
-export function isRepolessAgentEnabled(args: {
-  agentEnabled?: boolean;
-  agentRole?: string | null;
-  agentInstructions?: string | null;
-}): boolean {
-  return args.agentEnabled ?? (Boolean(args.agentRole?.trim()) || Boolean(args.agentInstructions?.trim()));
-}
+export {
+  getRepolessThreadKind,
+  getRepolessThreadKindLabel,
+  isRepolessAgentThread as isRepolessAgentEnabled,
+  type RepolessThreadKind,
+  type RepolessThreadKindSource,
+} from "../../convex/lib/repolessThreadKind";

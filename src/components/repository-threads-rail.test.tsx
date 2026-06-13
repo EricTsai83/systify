@@ -27,7 +27,7 @@ afterEach(() => {
 });
 
 describe("RepolessChatsRail", () => {
-  test("separates agent chats from regular chats", () => {
+  test("separates agents from conversations", () => {
     vi.mocked(useQuery).mockReturnValue([
       makeThread({
         _id: "thread_agent" as Id<"threads">,
@@ -60,8 +60,8 @@ describe("RepolessChatsRail", () => {
       />,
     );
 
-    const agentSection = getSection("Agent chats");
-    const regularSection = getSection("Regular chats");
+    const agentSection = getSection("Agents");
+    const regularSection = getSection("Conversations");
 
     expect(within(agentSection).getByText("Translation agent")).toBeInTheDocument();
     expect(within(agentSection).queryByLabelText("Single-turn")).not.toBeInTheDocument();
@@ -73,13 +73,20 @@ describe("RepolessChatsRail", () => {
     expect(within(regularSection).queryByText("Translation agent")).not.toBeInTheDocument();
   });
 
-  test("collapses agent and pinned chat sections", async () => {
+  test("collapses agent and pinned sections", async () => {
     vi.mocked(useQuery).mockReturnValue([
       makeThread({
         _id: "thread_pinned" as Id<"threads">,
         title: "Pinned planning",
         pinnedAt: 300,
         lastMessageAt: 300,
+      }),
+      makeThread({
+        _id: "thread_pinned_agent" as Id<"threads">,
+        title: "Pinned translator",
+        agentRole: "Translator",
+        pinnedAt: 250,
+        lastMessageAt: 250,
       }),
       makeThread({
         _id: "thread_agent" as Id<"threads">,
@@ -104,11 +111,13 @@ describe("RepolessChatsRail", () => {
       />,
     );
 
-    const agentToggle = screen.getByRole("button", { name: "Collapse Agent chats" });
+    const agentToggle = screen.getByRole("button", { name: "Collapse Agents" });
     const pinnedToggle = screen.getByRole("button", { name: "Collapse Pinned" });
 
     expect(screen.getByText("Translation agent")).toBeVisible();
     expect(screen.getByText("Pinned planning")).toBeVisible();
+    expect(within(rowButtonForText("Pinned planning")).getByText("Conversation")).toBeVisible();
+    expect(within(rowButtonForText("Pinned translator")).getByText("Agent")).toBeVisible();
     expect(screen.getByText("General planning")).toBeVisible();
 
     fireEvent.click(agentToggle);
@@ -117,20 +126,30 @@ describe("RepolessChatsRail", () => {
     await waitFor(() => {
       expect(screen.queryByText("Translation agent")).not.toBeInTheDocument();
       expect(screen.queryByText("Pinned planning")).not.toBeInTheDocument();
+      expect(screen.queryByText("Pinned translator")).not.toBeInTheDocument();
     });
     expect(screen.getByText("General planning")).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "Expand Agent chats" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Agents" }));
     fireEvent.click(screen.getByRole("button", { name: "Expand Pinned" }));
 
     await waitFor(() => {
       expect(screen.getByText("Translation agent")).toBeVisible();
       expect(screen.getByText("Pinned planning")).toBeVisible();
+      expect(screen.getByText("Pinned translator")).toBeVisible();
     });
   });
 });
 
-function getSection(label: "Agent chats" | "Regular chats"): HTMLElement {
+function rowButtonForText(text: string): HTMLElement {
+  const button = screen.getByText(text).closest("button");
+  if (!button) {
+    throw new Error(`Thread row not found: ${text}`);
+  }
+  return button;
+}
+
+function getSection(label: "Agents" | "Conversations"): HTMLElement {
   const heading = screen.getByText(label);
   const section = heading.closest("div")?.parentElement;
   if (!section) {
