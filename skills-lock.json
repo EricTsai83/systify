@@ -53,6 +53,12 @@
       "skillPath": ".agents/skills/impeccable/SKILL.md",
       "computedHash": "d0cf58213e8581548a63a717d69a3b1c1eaed4c68d25887ca7b0698393b0530f"
     },
+    "improve": {
+      "source": "shadcn/improve",
+      "sourceType": "github",
+      "skillPath": "skills/improve/SKILL.md",
+      "computedHash": "7a0f09dd535fc84391dc63bea826d6aeab985b92423fa4dd93edacb5dfb82524"
+    },
     "improve-codebase-architecture": {
       "source": "mattpocock/skills",
       "sourceType": "github",
