@@ -105,14 +105,14 @@ function OwlAsciiArt() {
  * Shared hero block for chatroom empty states — visual, title, optional
  * description. The same structural primitive backs Library Ask, Discuss,
  * and the no-repo hint so the framework stays consistent even
- * when the visual (icon vs. ASCII owl) and copy differ per context.
+ * when the visual (icon vs. ASCII owl vs. no icon) and copy differ per context.
  */
 export function EmptyStateHero({
   visual,
   title,
   description,
 }: {
-  visual: ReactNode;
+  visual?: ReactNode;
   title: ReactNode;
   description?: ReactNode;
 }) {
