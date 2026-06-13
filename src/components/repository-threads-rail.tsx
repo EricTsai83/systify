@@ -303,7 +303,7 @@ export function RepositoryThreadsRail({
         </Button>
       </div>
 
-      <ThreadListViewport className={compact ? "p-2" : "p-3"}>
+      <ThreadListViewport className={compact ? "px-2 pb-2 pt-5" : "px-3 pb-3 pt-5"}>
         <ThreadsSection
           threads={threads}
           repositoriesById={repositoriesById}
@@ -325,11 +325,11 @@ function ThreadListViewport({ children, className }: { children: React.ReactNode
       <div className={cn("no-scrollbar h-full overflow-y-auto overscroll-contain", className)}>{children}</div>
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-0 h-8 backdrop-blur-[2px] [-webkit-mask-image:linear-gradient(to_bottom,black_0%,transparent_100%)] [mask-image:linear-gradient(to_bottom,black_0%,transparent_100%)]"
+        className="pointer-events-none absolute inset-x-0 top-0 h-4 backdrop-blur-[2px] [-webkit-mask-image:linear-gradient(to_bottom,black_0%,transparent_100%)] mask-[linear-gradient(to_bottom,black_0%,transparent_100%)]"
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 bottom-0 h-8 backdrop-blur-[2px] [-webkit-mask-image:linear-gradient(to_top,black_0%,transparent_100%)] [mask-image:linear-gradient(to_top,black_0%,transparent_100%)]"
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-4 backdrop-blur-[2px] [-webkit-mask-image:linear-gradient(to_top,black_0%,transparent_100%)] mask-[linear-gradient(to_top,black_0%,transparent_100%)]"
       />
     </div>
   );
@@ -921,7 +921,7 @@ export function RepolessChatsRail({
         </Button>
       </div>
 
-      <ThreadListViewport className="p-3">
+      <ThreadListViewport className="px-3 pb-3 pt-4">
         {threads === undefined ? null : (
           <div className="flex animate-enter-fade flex-col">
             {pinnedThreads.length > 0 && (
