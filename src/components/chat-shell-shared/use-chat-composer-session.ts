@@ -58,6 +58,15 @@ type UseChatComposerSessionArgs = RepositoryComposerSessionArgs | RepolessCompos
 
 const DEFAULT_PLACEHOLDER = "Ask about architecture, module boundaries, data flow, risks…";
 
+type GroundingState = {
+  threadId: ThreadId | null;
+  repositoryId: RepositoryId | null;
+  surface: UseChatComposerSessionArgs["surface"];
+  defaultsSeeded: boolean;
+  library: boolean;
+  sandbox: boolean;
+};
+
 export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatComposerViewModel {
   useStorageGC();
   const { user, isLoading: isAuthLoading } = useAuth();
@@ -76,28 +85,52 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
     mode: args.mode,
   });
 
-  const [groundingByThread, setGroundingByThread] = useState<{
-    threadId: ThreadId | null;
-    library: boolean;
-    sandbox: boolean;
-  }>({
+  const [groundingByThread, setGroundingByThread] = useState<GroundingState>(() => ({
     threadId: args.threadId,
-    library: false,
-    sandbox: false,
-  });
+    repositoryId: args.repositoryId,
+    surface: args.surface,
+    defaultsSeeded: !args.capabilities.isLoading,
+    library: args.threadId === null || args.capabilities.isLoading ? false : args.capabilities.defaultGroundLibrary,
+    sandbox: args.threadId === null || args.capabilities.isLoading ? false : args.capabilities.defaultGroundSandbox,
+  }));
 
   useEffect(() => {
-    if (groundingByThread.threadId === args.threadId) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    const sameContext =
+      groundingByThread.threadId === args.threadId &&
+      groundingByThread.repositoryId === args.repositoryId &&
+      groundingByThread.surface === args.surface;
+    if (sameContext && groundingByThread.defaultsSeeded) return;
+    if (args.capabilities.isLoading) {
+      if (sameContext) return;
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setGroundingByThread({
+        threadId: args.threadId,
+        repositoryId: args.repositoryId,
+        surface: args.surface,
+        defaultsSeeded: false,
+        library: false,
+        sandbox: false,
+      });
+      return;
+    }
     setGroundingByThread({
       threadId: args.threadId,
+      repositoryId: args.repositoryId,
+      surface: args.surface,
+      defaultsSeeded: true,
       library: args.threadId === null ? false : args.capabilities.defaultGroundLibrary,
       sandbox: args.threadId === null ? false : args.capabilities.defaultGroundSandbox,
     });
   }, [
     args.capabilities.defaultGroundLibrary,
     args.capabilities.defaultGroundSandbox,
+    args.capabilities.isLoading,
+    args.repositoryId,
+    args.surface,
     args.threadId,
+    groundingByThread.defaultsSeeded,
+    groundingByThread.repositoryId,
+    groundingByThread.surface,
     groundingByThread.threadId,
   ]);
 
@@ -153,6 +186,7 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
     reasoningEffort: selectedReasoningEffort,
     modelCatalogEntries: reasoningCatalogEntries,
   });
+  const accessResolved = args.viewerAccess !== undefined;
 
   useEffect(() => {
     if (rawGroundingAvailability && !rawGroundingAvailability.library.enabled && groundingByThread.library) {
@@ -174,11 +208,11 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
   }, [groundingByThread.sandbox, rawGroundingAvailability, setGroundSandbox]);
 
   useEffect(() => {
-    if (access.sandboxGroundingDisabledReason && groundingByThread.sandbox) {
+    if (accessResolved && access.sandboxGroundingDisabledReason && groundingByThread.sandbox) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setGroundSandbox(false);
     }
-  }, [access.sandboxGroundingDisabledReason, groundingByThread.sandbox, setGroundSandbox]);
+  }, [access.sandboxGroundingDisabledReason, accessResolved, groundingByThread.sandbox, setGroundSandbox]);
 
   const effectiveGrounding = useMemo(
     () =>

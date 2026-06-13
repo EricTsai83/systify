@@ -126,6 +126,9 @@ export async function settleUsageLifecycleInMutation(
 export async function releaseUsageLifecycleInMutation(ctx: MutationCtx, args: LifecycleArgs): Promise<null> {
   const sourceId = normalizeUsageAccountingSourceId(args.sourceId);
   const policy = getUsageAccountingPolicy(args.feature);
+  if (await usageEventExists(ctx, sourceId)) {
+    return null;
+  }
   await recordUserUsageEvent(ctx, {
     sourceId,
     ownerTokenIdentifier: args.ownerTokenIdentifier,

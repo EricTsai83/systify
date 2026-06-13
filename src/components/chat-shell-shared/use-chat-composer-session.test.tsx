@@ -51,6 +51,7 @@ vi.mock("@/hooks/use-storage-gc", () => ({
 import { useChatComposerSession } from "./use-chat-composer-session";
 
 const repositoryId = "repo_1" as RepositoryId;
+const secondRepositoryId = "repo_2" as RepositoryId;
 const threadId = "thread_1" as ThreadId;
 const nextThreadId = "thread_2" as ThreadId;
 
@@ -128,6 +129,83 @@ describe("useChatComposerSession", () => {
     rerender({
       activeThreadId: threadId,
       capabilities: capabilities({ defaultGroundLibrary: true, defaultGroundSandbox: true }),
+    });
+
+    expect(result.current.tools.grounding?.groundLibrary).toBe(true);
+    expect(result.current.tools.grounding?.groundSandbox).toBe(true);
+  });
+
+  test("same new-thread id does not share grounding across repositories", () => {
+    const { result, rerender } = renderHook(
+      ({ activeRepositoryId }) =>
+        useChatComposerSession({
+          surface: "repository",
+          threadId: null,
+          repositoryId: activeRepositoryId,
+          mode: "discuss",
+          capabilities: capabilities({
+            attachedRepository: { id: activeRepositoryId, fullName: "owner/repo", shortName: "repo" },
+          }),
+          groundingAvailability: enabledGrounding(),
+          viewerAccess: viewerAccess(),
+          isSyncing: false,
+          isReadOnly: false,
+          setActionError: vi.fn(),
+          onAfterCreateThread: vi.fn(),
+        }),
+      {
+        initialProps: { activeRepositoryId: repositoryId },
+      },
+    );
+
+    act(() => {
+      result.current.tools.grounding?.setGroundLibrary(true);
+      result.current.tools.grounding?.setGroundSandbox(true);
+    });
+    expect(result.current.tools.grounding?.groundLibrary).toBe(true);
+    expect(result.current.tools.grounding?.groundSandbox).toBe(true);
+
+    rerender({ activeRepositoryId: secondRepositoryId });
+
+    expect(result.current.tools.grounding?.groundLibrary).toBe(false);
+    expect(result.current.tools.grounding?.groundSandbox).toBe(false);
+  });
+
+  test("active thread grounding defaults seed after capabilities settle", () => {
+    const { result, rerender } = renderHook(
+      ({ capabilities }) =>
+        useChatComposerSession({
+          surface: "repository",
+          threadId,
+          repositoryId,
+          mode: "discuss",
+          capabilities,
+          groundingAvailability: enabledGrounding(),
+          viewerAccess: viewerAccess(),
+          isSyncing: false,
+          isReadOnly: false,
+          setActionError: vi.fn(),
+          onAfterCreateThread: vi.fn(),
+        }),
+      {
+        initialProps: {
+          capabilities: capabilities({
+            isLoading: true,
+            defaultGroundLibrary: true,
+            defaultGroundSandbox: true,
+          }),
+        },
+      },
+    );
+
+    expect(result.current.tools.grounding?.groundLibrary).toBe(false);
+    expect(result.current.tools.grounding?.groundSandbox).toBe(false);
+
+    rerender({
+      capabilities: capabilities({
+        defaultGroundLibrary: true,
+        defaultGroundSandbox: true,
+      }),
     });
 
     expect(result.current.tools.grounding?.groundLibrary).toBe(true);
@@ -266,6 +344,36 @@ describe("useChatComposerSession", () => {
       message: "Demo mode does not start live source sessions.",
       isActivatable: false,
     });
+  });
+
+  test("access loading does not auto-clear Sandbox grounding before access resolves", () => {
+    const { result, rerender } = renderHook(
+      ({ viewerAccessValue }) =>
+        useChatComposerSession({
+          surface: "repository",
+          threadId: nextThreadId,
+          repositoryId,
+          mode: "discuss",
+          capabilities: capabilities(),
+          groundingAvailability: enabledGrounding(),
+          viewerAccess: viewerAccessValue,
+          isSyncing: false,
+          isReadOnly: false,
+          setActionError: vi.fn(),
+          onAfterCreateThread: vi.fn(),
+        }),
+      {
+        initialProps: { viewerAccessValue: undefined as ViewerAccess | undefined },
+      },
+    );
+
+    act(() => result.current.tools.grounding?.setGroundSandbox(true));
+
+    expect(result.current.tools.grounding?.groundSandbox).toBe(true);
+
+    rerender({ viewerAccessValue: viewerAccess({ sandboxGrounding: false }) });
+
+    expect(result.current.tools.grounding?.groundSandbox).toBe(false);
   });
 });
 

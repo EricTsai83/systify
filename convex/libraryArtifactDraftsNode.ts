@@ -202,7 +202,7 @@ export const runArtifactDraft = internalAction({
       usageAccounting.totalCostUsd = totalCostUsd;
 
       const output = result.object;
-      await ctx.runMutation(internal.libraryArtifactDrafts.markDraftReady, {
+      const readyResult: { ready: boolean } = await ctx.runMutation(internal.libraryArtifactDrafts.markDraftReady, {
         draftId: args.draftId,
         jobId: args.jobId,
         title: output.title.trim(),
@@ -223,6 +223,9 @@ export const runArtifactDraft = internalAction({
         totalCostUsd,
         sourceId,
       });
+      if (!readyResult.ready) {
+        throw new Error("Artifact draft could not be marked ready.");
+      }
       usageAccounting.handled = true;
 
       logInfo("artifactDraft", "draft_ready", {

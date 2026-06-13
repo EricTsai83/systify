@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
@@ -27,29 +27,26 @@ export function useChatShellLifecycle({
   handleArchiveThread: () => Promise<void>;
 } {
   const archiveThreadMutation = useMutation(api.chat.threads.archiveThread);
+  const selectedThreadIdRef = useRef(selectedThreadId);
+  useLayoutEffect(() => {
+    selectedThreadIdRef.current = selectedThreadId;
+  }, [selectedThreadId]);
 
   const [isArchivingThread, handleArchiveThread] = useAsyncCallback(
     useCallback(async () => {
       if (!threadToArchive) return;
+      const archivedId = threadToArchive;
       setActionError(null);
       try {
-        await archiveThreadMutation({ threadId: threadToArchive });
-        const archivedId = threadToArchive;
+        await archiveThreadMutation({ threadId: archivedId });
         setThreadToArchive(null);
-        if (selectedThreadId === archivedId) {
+        if (selectedThreadIdRef.current === archivedId) {
           onAfterArchiveThread(archivedId);
         }
       } catch (error) {
         setActionError(toUserErrorMessage(error, "Failed to archive the thread."));
       }
-    }, [
-      archiveThreadMutation,
-      onAfterArchiveThread,
-      selectedThreadId,
-      setActionError,
-      setThreadToArchive,
-      threadToArchive,
-    ]),
+    }, [archiveThreadMutation, onAfterArchiveThread, setActionError, setThreadToArchive, threadToArchive]),
   );
 
   return {

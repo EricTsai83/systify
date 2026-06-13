@@ -161,14 +161,12 @@ export const generateThreadTitle = internalAction({
         feature: "titleGeneration",
         occurredAtMs,
         usage: {
-          ...(result.costUsd !== undefined ? { costUsd: result.costUsd } : {}),
-          ...(result.usage.inputTokens !== undefined ? { inputTokens: result.usage.inputTokens } : {}),
-          ...(result.usage.outputTokens !== undefined ? { outputTokens: result.usage.outputTokens } : {}),
-          ...(result.usage.cachedInputTokens !== undefined
-            ? { cachedInputTokens: result.usage.cachedInputTokens }
-            : {}),
-          ...(result.usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: result.usage.cacheWriteTokens } : {}),
-          ...(result.usage.reasoningTokens !== undefined ? { reasoningTokens: result.usage.reasoningTokens } : {}),
+          costUsd: result.costUsd,
+          inputTokens: result.usage.inputTokens,
+          outputTokens: result.usage.outputTokens,
+          cachedInputTokens: result.usage.cachedInputTokens,
+          cacheWriteTokens: result.usage.cacheWriteTokens,
+          reasoningTokens: result.usage.reasoningTokens,
         },
       });
 
