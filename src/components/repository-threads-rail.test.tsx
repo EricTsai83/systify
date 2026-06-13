@@ -21,6 +21,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.mocked(useConvex).mockReset();
   vi.mocked(useMutation).mockReset();
   vi.mocked(useQuery).mockReset();
@@ -73,6 +74,58 @@ describe("RepolessChatsRail", () => {
     expect(within(regularSection).queryByText("Translation agent")).not.toBeInTheDocument();
   });
 
+  test("groups conversations by recent activity", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-13T12:00:00"));
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayMs = todayStart.getTime();
+
+    vi.mocked(useQuery).mockReturnValue([
+      makeThread({
+        _id: "thread_yesterday" as Id<"threads">,
+        title: "Yesterday planning",
+        lastMessageAt: todayMs - 12 * 60 * 60 * 1000,
+      }),
+      makeThread({
+        _id: "thread_last_7" as Id<"threads">,
+        title: "Week-old planning",
+        lastMessageAt: todayMs - 3 * 24 * 60 * 60 * 1000,
+      }),
+      makeThread({
+        _id: "thread_last_30" as Id<"threads">,
+        title: "Month planning",
+        lastMessageAt: todayMs - 14 * 24 * 60 * 60 * 1000,
+      }),
+      makeThread({
+        _id: "thread_agent" as Id<"threads">,
+        title: "Translation agent",
+        agentRole: "Translation agent",
+        lastMessageAt: todayMs - 3 * 24 * 60 * 60 * 1000,
+      }),
+    ]);
+
+    render(
+      <RepolessChatsRail
+        selectedThreadId={null}
+        onSelectThread={vi.fn()}
+        onDeleteThread={vi.fn()}
+        onRequestNewThread={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+
+    const conversationsSection = getSection("Conversations");
+    const yesterdayGroup = within(conversationsSection).getByRole("group", { name: "Yesterday" });
+    const last7Group = within(conversationsSection).getByRole("group", { name: "Last 7 days" });
+    const last30Group = within(conversationsSection).getByRole("group", { name: "Last 30 days" });
+
+    expect(within(yesterdayGroup).getByText("Yesterday planning")).toBeInTheDocument();
+    expect(within(last7Group).getByText("Week-old planning")).toBeInTheDocument();
+    expect(within(last30Group).getByText("Month planning")).toBeInTheDocument();
+    expect(within(conversationsSection).queryByText("Translation agent")).not.toBeInTheDocument();
+  });
+
   test("collapses agent and pinned sections", async () => {
     vi.mocked(useQuery).mockReturnValue([
       makeThread({
@@ -116,8 +169,10 @@ describe("RepolessChatsRail", () => {
 
     expect(screen.getByText("Translation agent")).toBeVisible();
     expect(screen.getByText("Pinned planning")).toBeVisible();
-    expect(within(rowButtonForText("Pinned planning")).getByText("Conversation")).toBeVisible();
-    expect(within(rowButtonForText("Pinned translator")).getByText("Agent")).toBeVisible();
+    expect(within(rowButtonForText("Pinned planning")).getByLabelText("Conversation")).toBeVisible();
+    expect(within(rowButtonForText("Pinned translator")).getByLabelText("Agent")).toBeVisible();
+    expect(within(rowButtonForText("Translation agent")).queryByLabelText("Agent")).not.toBeInTheDocument();
+    expect(within(rowButtonForText("General planning")).queryByLabelText("Conversation")).not.toBeInTheDocument();
     expect(screen.getByText("General planning")).toBeVisible();
 
     fireEvent.click(agentToggle);

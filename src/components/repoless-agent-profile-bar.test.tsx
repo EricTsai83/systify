@@ -158,7 +158,7 @@ describe("RepolessSingleTurnToggle", () => {
     });
   });
 
-  test("renders the current chat history mode as icon and text", () => {
+  test("renders the current chat history mode with a compact icon-only Conversation state", () => {
     const { rerender } = render(
       <RepolessSingleTurnToggle
         value={{ agentEnabled: true, singleTurnEnabled: false, agentRole: "Translation agent", agentInstructions: "" }}
@@ -167,7 +167,10 @@ describe("RepolessSingleTurnToggle", () => {
       />,
     );
 
-    expect(screen.getByTestId("repoless-single-turn-toggle")).toHaveTextContent("Conversation");
+    const conversationToggle = screen.getByTestId("repoless-single-turn-toggle");
+    expect(conversationToggle).toHaveAccessibleName("Switch to Single reply mode");
+    expect(conversationToggle).not.toHaveTextContent("Conversation");
+    expect(conversationToggle.querySelector("svg")).toBeInTheDocument();
 
     rerender(
       <RepolessSingleTurnToggle

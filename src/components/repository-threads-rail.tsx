@@ -83,6 +83,13 @@ const THREAD_SECTION_CARET_MOTION: Transition = {
   mass: 0.58,
 };
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+type ThreadRecencySection = {
+  label: string;
+  threads: Doc<"threads">[];
+};
+
 /**
  * Inline rename state machine shared between the repo-bound and repoless
  * thread item components. Same UX in both rails: double-click the title to
@@ -296,7 +303,7 @@ export function RepositoryThreadsRail({
         </Button>
       </div>
 
-      <div className={cn("no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain", compact ? "p-2" : "p-3")}>
+      <ThreadListViewport className={compact ? "p-2" : "p-3"}>
         <ThreadsSection
           threads={threads}
           repositoriesById={repositoriesById}
@@ -307,7 +314,23 @@ export function RepositoryThreadsRail({
           compact={compact}
           onError={onError}
         />
-      </div>
+      </ThreadListViewport>
+    </div>
+  );
+}
+
+function ThreadListViewport({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className="relative min-h-0 flex-1 overflow-hidden">
+      <div className={cn("no-scrollbar h-full overflow-y-auto overscroll-contain", className)}>{children}</div>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 h-8 backdrop-blur-[2px] [-webkit-mask-image:linear-gradient(to_bottom,black_0%,transparent_100%)] [mask-image:linear-gradient(to_bottom,black_0%,transparent_100%)]"
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-8 backdrop-blur-[2px] [-webkit-mask-image:linear-gradient(to_top,black_0%,transparent_100%)] [mask-image:linear-gradient(to_top,black_0%,transparent_100%)]"
+      />
     </div>
   );
 }
@@ -384,7 +407,7 @@ function ThreadsSection({
           {(otherThreads.length > 0 || pinnedThreads.length === 0) && (
             <div className="flex flex-col gap-1">
               <div className="flex items-center justify-between px-1 pb-1">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Threads</p>
+                <p className="text-[11px] font-semibold text-muted-foreground">Threads</p>
               </div>
               {otherThreads.length === 0 ? (
                 <p
@@ -493,7 +516,7 @@ function CollapsibleThreadSection({
         <CollapsibleTrigger asChild>
           <button
             type="button"
-            className="flex w-full items-center gap-1 text-left text-[11px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="flex w-full items-center gap-1 text-left text-[11px] font-semibold text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
             aria-label={`${isOpen ? "Collapse" : "Expand"} ${label}`}
           >
             <motion.span
@@ -563,6 +586,7 @@ interface ThreadItemBaseProps {
   isSelected: boolean;
   titleTextClass: string;
   compact?: boolean;
+  titlePrefix?: React.ReactNode;
   repositoryBadge?: React.ReactNode;
   threadMeta?: React.ReactNode;
   rowRef: React.RefObject<HTMLDivElement | null>;
@@ -587,6 +611,7 @@ function ThreadItemBase({
   isSelected,
   titleTextClass,
   compact,
+  titlePrefix,
   repositoryBadge,
   threadMeta,
   rowRef,
@@ -637,12 +662,15 @@ function ThreadItemBase({
               className={cn("py-1.5 pr-16", compact && "py-1")}
             >
               <div className="min-w-0 flex-1">
-                <p
-                  onDoubleClick={handleStartEdit}
-                  className={cn("cursor-pointer truncate font-medium text-foreground", titleTextClass)}
-                >
-                  {thread.title}
-                </p>
+                <div className="flex min-w-0 items-center gap-1.5">
+                  {titlePrefix}
+                  <p
+                    onDoubleClick={handleStartEdit}
+                    className={cn("min-w-0 flex-1 cursor-pointer truncate font-medium text-foreground", titleTextClass)}
+                  >
+                    {thread.title}
+                  </p>
+                </div>
                 {repositoryBadge}
                 {threadMeta}
               </div>
@@ -796,6 +824,38 @@ function isRepolessAgentThread(thread: Doc<"threads">): boolean {
   return !thread.repositoryId && isRepolessAgentEnabled(thread);
 }
 
+function getThreadRecencySections(threads: Doc<"threads">[]): ThreadRecencySection[] {
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const todayMs = startOfToday.getTime();
+  const yesterdayMs = todayMs - DAY_MS;
+  const sevenDaysMs = todayMs - 7 * DAY_MS;
+  const thirtyDaysMs = todayMs - 30 * DAY_MS;
+
+  const today: Doc<"threads">[] = [];
+  const yesterday: Doc<"threads">[] = [];
+  const last7: Doc<"threads">[] = [];
+  const last30: Doc<"threads">[] = [];
+  const older: Doc<"threads">[] = [];
+
+  for (const thread of threads) {
+    const ts = thread.lastMessageAt;
+    if (ts >= todayMs) today.push(thread);
+    else if (ts >= yesterdayMs) yesterday.push(thread);
+    else if (ts >= sevenDaysMs) last7.push(thread);
+    else if (ts >= thirtyDaysMs) last30.push(thread);
+    else older.push(thread);
+  }
+
+  const sections: ThreadRecencySection[] = [];
+  if (today.length > 0) sections.push({ label: "Today", threads: today });
+  if (yesterday.length > 0) sections.push({ label: "Yesterday", threads: yesterday });
+  if (last7.length > 0) sections.push({ label: "Last 7 days", threads: last7 });
+  if (last30.length > 0) sections.push({ label: "Last 30 days", threads: last30 });
+  if (older.length > 0) sections.push({ label: "Older", threads: older });
+  return sections;
+}
+
 /**
  * Sidebar rail for the repoless chat shell. Lists threads with
  * `repositoryId === undefined` via the dedicated
@@ -861,7 +921,7 @@ export function RepolessChatsRail({
         </Button>
       </div>
 
-      <div className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+      <ThreadListViewport className="p-3">
         {threads === undefined ? null : (
           <div className="flex animate-enter-fade flex-col">
             {pinnedThreads.length > 0 && (
@@ -918,7 +978,7 @@ export function RepolessChatsRail({
             ) : null}
           </div>
         )}
-      </div>
+      </ThreadListViewport>
     </div>
   );
 }
@@ -948,24 +1008,36 @@ function RepolessThreadSection({
 }) {
   const content = (
     <>
-      <div className="flex flex-col">
-        <AnimatePresence initial={false}>
-          {threads.map((thread) => (
-            <ThreadRowMotion key={thread._id} shouldReduceMotion={shouldReduceMotion}>
-              <RepolessThreadItem
-                thread={thread}
-                isSelected={selectedThreadId === thread._id}
-                isPinned={false}
+      {label === "Conversations" ? (
+        <div className="flex flex-col gap-2">
+          {getThreadRecencySections(threads).map((section) => (
+            <div key={section.label} role="group" aria-label={section.label} className="flex flex-col">
+              <p className="px-1 pb-1 text-[10px] font-medium text-muted-foreground/80">{section.label}</p>
+              <RepolessThreadRows
+                threads={section.threads}
+                selectedThreadId={selectedThreadId}
+                shouldReduceMotion={shouldReduceMotion}
                 onSelectThread={onSelectThread}
                 onPrewarmThread={onPrewarmThread}
                 onDeleteThread={onDeleteThread}
                 onTogglePin={onTogglePin}
                 onError={onError}
               />
-            </ThreadRowMotion>
+            </div>
           ))}
-        </AnimatePresence>
-      </div>
+        </div>
+      ) : (
+        <RepolessThreadRows
+          threads={threads}
+          selectedThreadId={selectedThreadId}
+          shouldReduceMotion={shouldReduceMotion}
+          onSelectThread={onSelectThread}
+          onPrewarmThread={onPrewarmThread}
+          onDeleteThread={onDeleteThread}
+          onTogglePin={onTogglePin}
+          onError={onError}
+        />
+      )}
     </>
   );
 
@@ -980,9 +1052,50 @@ function RepolessThreadSection({
   return (
     <div className="flex flex-col gap-1 pb-3 last:pb-0">
       <div className="flex items-center gap-1 px-1 pb-1">
-        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">{label}</p>
+        <p className="text-[11px] font-semibold text-muted-foreground">{label}</p>
       </div>
       {content}
+    </div>
+  );
+}
+
+function RepolessThreadRows({
+  threads,
+  selectedThreadId,
+  shouldReduceMotion,
+  onSelectThread,
+  onPrewarmThread,
+  onDeleteThread,
+  onTogglePin,
+  onError,
+}: {
+  threads: Doc<"threads">[];
+  selectedThreadId: ThreadId | null;
+  shouldReduceMotion: boolean | null;
+  onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
+  onPrewarmThread: (id: ThreadId) => void;
+  onDeleteThread: (id: ThreadId) => void;
+  onTogglePin: (id: ThreadId, pinned: boolean) => void;
+  onError: (message: string | null) => void;
+}) {
+  return (
+    <div className="flex flex-col">
+      <AnimatePresence initial={false}>
+        {threads.map((thread) => (
+          <ThreadRowMotion key={thread._id} shouldReduceMotion={shouldReduceMotion}>
+            <RepolessThreadItem
+              thread={thread}
+              isSelected={selectedThreadId === thread._id}
+              isPinned={false}
+              onSelectThread={onSelectThread}
+              onPrewarmThread={onPrewarmThread}
+              onDeleteThread={onDeleteThread}
+              onTogglePin={onTogglePin}
+              onError={onError}
+            />
+          </ThreadRowMotion>
+        ))}
+      </AnimatePresence>
     </div>
   );
 }
@@ -1033,7 +1146,8 @@ function RepolessThreadItem({
       isPinned={isPinned}
       isSelected={isSelected}
       titleTextClass={titleTextClass}
-      threadMeta={<RepolessThreadKindBadge thread={thread} />}
+      titlePrefix={isPinned ? <RepolessThreadKindIcon thread={thread} /> : null}
+      threadMeta={null}
       rowRef={rowRef}
       inputRef={inputRef}
       onSelectThread={onSelectThread}
@@ -1049,14 +1163,17 @@ function RepolessThreadItem({
   );
 }
 
-function RepolessThreadKindBadge({ thread }: { thread: Doc<"threads"> }) {
+function RepolessThreadKindIcon({ thread }: { thread: Doc<"threads"> }) {
   const kind = getRepolessThreadKind(thread);
   const Icon = kind === "agent" ? RobotIcon : ChatsCircleIcon;
   const label = getRepolessThreadKindLabel(kind);
   return (
-    <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-muted-foreground/80">
-      <Icon size={9} weight={kind === "agent" ? "fill" : "bold"} className="shrink-0" aria-hidden="true" />
-      <span className="truncate">{label}</span>
-    </p>
+    <span
+      aria-label={label}
+      title={label}
+      className="inline-flex size-3 shrink-0 items-center justify-center text-muted-foreground/80"
+    >
+      <Icon size={12} weight={kind === "agent" ? "fill" : "bold"} aria-hidden="true" />
+    </span>
   );
 }
