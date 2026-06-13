@@ -31,6 +31,7 @@ import {
 import { logInfo, logWarn } from "./lib/observability";
 import { SYSTEM_DESIGN_PROMPT_VERSIONS } from "./lib/systemDesignPrompts";
 import { reserveSandboxLibraryGenerationBudget } from "./lib/sandboxLibraryGenerationAccounting";
+import { buildUsageSourceId } from "./lib/usageAccounting";
 import {
   SYSTEM_DESIGN_DEFAULT_MODEL_CHOICE,
   buildSystemDesignJobSummary,
@@ -654,7 +655,7 @@ export const assertKindCostBudget = internalMutation({
   },
   handler: async (ctx, args): Promise<void> => {
     await reserveSandboxLibraryGenerationBudget(ctx, {
-      sourceId: `systemDesign:${args.jobId}:${args.kind}:${args.startedAt}`,
+      sourceId: buildUsageSourceId.systemDesign(args.jobId, args.kind, args.startedAt),
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId: args.repositoryId,
       occurredAtMs: args.startedAt,

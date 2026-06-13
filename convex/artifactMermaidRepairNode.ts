@@ -9,6 +9,7 @@ import { getCatalogEntry } from "./lib/llmCatalog";
 import { generateViaGateway } from "./lib/llmGateway";
 import { SYSTEM_DESIGN_DEFAULT_MODEL_CHOICE } from "./lib/systemDesignPlanning";
 import { assertFeatureAccess, requiresHighReasoningAccess, requiresPremiumModelAccess } from "./lib/entitlements";
+import { buildUsageSourceId } from "./lib/usageAccounting";
 
 const MERMAID_REPAIR_CHART_MAX_CHARS = 40_000;
 const MERMAID_REPAIR_ERROR_MAX_CHARS = 4_000;
@@ -60,7 +61,7 @@ export const repairArtifactMermaidBlock = action({
     }
 
     const startedAt = Date.now();
-    const sourceId = `mermaidRepair:${args.artifactId}:${repairContext.version}:${startedAt}`;
+    const sourceId = buildUsageSourceId.mermaidRepair(args.artifactId, repairContext.version, startedAt);
     await ctx.runMutation(internal.artifactMermaidRepair.reserveRepairBudget, {
       artifactId: args.artifactId,
       ownerTokenIdentifier: identity.tokenIdentifier,

@@ -43,10 +43,11 @@ distinct error.
    `$0.10`) and closes the Sandbox grounding axis when either bucket has
    insufficient headroom — the gate surfaces as a structured `ConvexError`
    via the eligibility resolver, never via a direct rate-limiter throw on the
-   chat path. The hard assert (`assertSandboxDailyCostBudget`, which calls
-   `rateLimiter.check` and throws on denial) is the System Design pre-check
-   at `convex/systemDesign.ts:756` (`assertKindCostBudget`). Settlement on
-   `finalizeAssistantReply` records the actual cost via `consumeSandboxDailyCost`.
+   chat path. Hard pre-checks and actual-cost settlement are owned by
+   `convex/lib/usageAccountingMutations.ts`; it calls the bucket primitives
+   `assertSandboxDailyCostBudget` and `consumeSandboxDailyCost` from
+   `convex/lib/rateLimit.ts` according to each lifecycle feature policy.
+   `rateLimit.ts` remains the bucket implementation, not the feature lifecycle.
    `maxReserved` absorbs settlement overruns when an in-flight reply lands the
    bucket below zero.
 2. **Per-user requests per minute.** Bucket `llmRequestsPerUserPerMinute`,
@@ -154,16 +155,18 @@ distinct entry points before any LLM call lands:
   (`sandbox_user_cap_exceeded` / `sandbox_repository_cap_exceeded`),
   surfaced to the UI with a midnight-UTC countdown via the same gate the
   composer renders.
-- **System Design pre-check** uses the hard assert
-  `assertSandboxDailyCostBudget` directly (`convex/systemDesign.ts:756`,
-  wrapped as `assertKindCostBudget`). On denial it throws a `ConvexError`
-  with `code: "SANDBOX_DAILY_CAP_EXCEEDED"` (or
-  `SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED`); the per-kind action catches it
-  and records the kind as failed with `failureReason: "transport_rate_limit"`.
+- **Metered lifecycle pre-check** uses
+  `usageAccountingMutations.reserveUsageLifecycle`. For features with
+  `sandboxDailyCap: "precheckAndSettle"` (sandbox chat replies and System
+  Design generation), the lifecycle calls `assertSandboxDailyCostBudget` before
+  reserving user budget. On denial it throws a `ConvexError` with
+  `code: "SANDBOX_DAILY_CAP_EXCEEDED"` (or
+  `"SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED"`); the per-kind action catches it and
+  records the kind as failed with `failureReason: "transport_rate_limit"`.
 
 Both entry points read the same `peekSandboxDailyCost*` snapshots, so
 "is the bucket empty?" gives the same answer either way; what differs is
-the surface (eligibility verdict vs. direct throw) and the caller that
+the surface (eligibility verdict vs. lifecycle throw) and the caller that
 handles it.
 
 ### Concurrency slot leak on action crash

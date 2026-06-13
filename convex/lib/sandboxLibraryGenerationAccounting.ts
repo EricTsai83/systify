@@ -1,9 +1,11 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
 import type { NormalizedUsage } from "./llmProvider";
-import { costUsdToCents } from "./llmPricing";
-import { assertSandboxDailyCostBudget, consumeSandboxDailyCost, getSandboxReplyEstimateCents } from "./rateLimit";
-import { SYSTEM_DESIGN_KIND_BUDGET_ESTIMATE_USD, recordUserUsageEvent, reserveUserUsageBudget } from "./userCost";
+import {
+  releaseUsageLifecycleInMutation,
+  reserveUsageLifecycleInMutation,
+  settleUsageLifecycleInMutation,
+} from "./usageAccountingMutations";
 
 export async function reserveSandboxLibraryGenerationBudget(
   ctx: MutationCtx,
@@ -14,16 +16,11 @@ export async function reserveSandboxLibraryGenerationBudget(
     occurredAtMs: number;
   },
 ) {
-  await assertSandboxDailyCostBudget(ctx, {
-    ownerTokenIdentifier: args.ownerTokenIdentifier,
-    repositoryId: args.repositoryId,
-    estimateCents: getSandboxReplyEstimateCents(),
-  });
-  await reserveUserUsageBudget(ctx, {
+  await reserveUsageLifecycleInMutation(ctx, {
     sourceId: args.sourceId,
     ownerTokenIdentifier: args.ownerTokenIdentifier,
-    feature: "systemDesign",
-    estimatedCostUsd: SYSTEM_DESIGN_KIND_BUDGET_ESTIMATE_USD,
+    repositoryId: args.repositoryId ?? null,
+    feature: "systemDesignGeneration",
     occurredAtMs: args.occurredAtMs,
   });
 }
@@ -39,28 +36,37 @@ export async function settleSandboxLibraryGenerationUsage(
     usage: NormalizedUsage;
   },
 ) {
-  const recorded = await recordUserUsageEvent(ctx, {
+  await settleUsageLifecycleInMutation(ctx, {
     sourceId: args.sourceId,
     ownerTokenIdentifier: args.ownerTokenIdentifier,
-    feature: "systemDesign",
+    repositoryId: args.repositoryId ?? null,
+    feature: "systemDesignGeneration",
     occurredAtMs: args.occurredAtMs,
-    usd: args.totalCostUsd,
-    inputTokens: args.usage.inputTokens,
-    outputTokens: args.usage.outputTokens,
-    cachedInputTokens: args.usage.cachedInputTokens,
-    cacheWriteTokens: args.usage.cacheWriteTokens,
-    reasoningTokens: args.usage.reasoningTokens,
+    usage: {
+      costUsd: args.totalCostUsd,
+      inputTokens: args.usage.inputTokens,
+      outputTokens: args.usage.outputTokens,
+      cachedInputTokens: args.usage.cachedInputTokens,
+      cacheWriteTokens: args.usage.cacheWriteTokens,
+      reasoningTokens: args.usage.reasoningTokens,
+    },
   });
-  if (!recorded) {
-    return;
-  }
+}
 
-  const settleCents = costUsdToCents(args.totalCostUsd);
-  if (settleCents !== undefined && settleCents > 0) {
-    await consumeSandboxDailyCost(ctx, {
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      repositoryId: args.repositoryId,
-      cents: settleCents,
-    });
-  }
+export async function releaseSandboxLibraryGenerationUsage(
+  ctx: MutationCtx,
+  args: {
+    sourceId: string;
+    ownerTokenIdentifier: string;
+    repositoryId: Id<"repositories"> | null | undefined;
+    occurredAtMs: number;
+  },
+) {
+  await releaseUsageLifecycleInMutation(ctx, {
+    sourceId: args.sourceId,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    repositoryId: args.repositoryId ?? null,
+    feature: "systemDesignGeneration",
+    occurredAtMs: args.occurredAtMs,
+  });
 }

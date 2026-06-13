@@ -137,8 +137,9 @@ the same `completeRunningJob` helper that powers chat job completion.
    including jobs would double-count.
 
 The query returns a `UserCostBreakdown` with `total`, `byProvider`, `byModel`
-(keyed `${provider}:${modelName}`), `byFeature.{chat, systemDesign}`, and
-`byDay` (UTC-day rollup, sparse — zero-spend days omitted). Each dimension is
+(keyed `${provider}:${modelName}`),
+`byFeature.{chat, systemDesign, artifactIndexing, libraryRetrieval, titleGeneration}`,
+and `byDay` (UTC-day rollup, sparse — zero-spend days omitted). Each dimension is
 the same `CostBucket` shape (`usd`, `inputTokens`, `outputTokens`,
 `cachedInputTokens`, `cacheWriteTokens`, `reasoningTokens`, `count`) so a UI
 that renders a stacked bar chart per provider can reuse the same accessor over
@@ -156,15 +157,25 @@ grow with every assistant reply and every System Design kind run in the
 requested window. The public viewer-facing query instead reads
 `userUsageDailyRollups`, a bounded operational summary table.
 
-`recordUserUsageEvent` in `convex/lib/userCost.ts` is the single write
-interface for this summary. Callers provide a stable `sourceId`,
-`ownerTokenIdentifier`, feature (`chat` or `systemDesign`), occurrence time,
-and the normalized cost / token fields. The helper owns the important
-accounting invariants:
+`convex/lib/usageAccounting.ts` and
+`convex/lib/usageAccountingMutations.ts` are the single feature-lifecycle
+interface for this summary. Feature callers build one stable `sourceId`, call
+`reserveUsageLifecycle` before the gateway call when a reservation/pre-check is
+needed, then call either `settleUsageLifecycle` with normalized cost / tokens
+or `releaseUsageLifecycle` when the gateway failed before usage existed.
+
+`convex/lib/userCost.ts` remains the low-level user ledger / budget primitive.
+`recordUserUsageEvent` is still the single rollup writer, but production
+feature code reaches it through the lifecycle module so reservation release,
+daily-cap settlement, durable event writes, and retry idempotency stay ordered
+in one place. The lifecycle owns these invariants:
 
 - empty, zero, negative, and non-finite usage is ignored;
 - `sourceId` is required and must be non-empty;
-- `userUsageEvents.by_sourceId` is checked first, so retries are idempotent;
+- `settleUsageLifecycle` checks `userUsageEvents.by_sourceId` before consuming
+  daily cap, so retries are idempotent across both usage rollups and cap spend;
+- `releaseUsageLifecycle` records zero usage through `userCost`, releasing any
+  matching reservation without writing rollups or consuming daily cap;
 - the event is persisted in `userUsageEvents` as a durable dedupe ledger;
 - the daily counter is written to one of 16 stable shards under
   `(ownerTokenIdentifier, yyyymmdd, feature, shard)`.
@@ -173,16 +184,23 @@ The sharding is deliberate. A single daily counter document would keep reads
 cheap but concentrate every same-user same-day chat finalization into one
 Convex document, creating avoidable OCC contention under tab-spam or parallel
 System Design runs. Sixteen shards keep write contention low while the viewer
-query remains bounded: at most `30 days * 2 features * 16 shards = 960` rollup
+query remains bounded: at most `30 days * 5 features * 16 shards = 2400` rollup
 rows. The query reads one extra row and throws if the cardinality invariant is
 exceeded, so data-model drift cannot silently undercount user spend.
 
-Current source ids:
+Current lifecycle source ids and policies:
 
-- Chat assistant replies use `message:${message._id}` from
-  `convex/chat/streaming.ts`.
-- System Design kind runs use `systemDesignKindRun:${kindRunId}` from
-  `convex/systemDesign.ts`.
+| Lifecycle feature | User rollup feature | Source id format | User budget estimate | Sandbox daily cap |
+| --- | --- | --- | --- | --- |
+| `chatReply` | `chat` | `message:${messageId}` | `CHAT_REPLY_BUDGET_ESTIMATE_USD` | `precheckAndSettle` only when the reply is sandbox-grounded; non-sandbox chat overrides to `none` |
+| `titleGeneration` | `titleGeneration` | `title:${threadId}:${userMessageId}` | `TITLE_GENERATION_BUDGET_ESTIMATE_USD` | `none` |
+| `systemDesignGeneration` | `systemDesign` | `systemDesign:${jobId}:${kind}:${startedAt}` | `SYSTEM_DESIGN_KIND_BUDGET_ESTIMATE_USD` | `precheckAndSettle` |
+| `artifactIndexingEmbedding` | `artifactIndexing` | `artifactIndexing:${artifactId}:${artifactVersion}:${batchIndex}` | `ARTIFACT_INDEXING_BATCH_BUDGET_ESTIMATE_USD` | `settleOnly` |
+| `libraryRetrievalEmbedding` | `libraryRetrieval` | `libraryRetrieval:${messageOrThreadId}:${queryHash}` | `LIBRARY_RETRIEVAL_BUDGET_ESTIMATE_USD` | `settleOnly` |
+
+`buildUsageSourceId.systemDesignKindRun(kindRunId)` is reserved for future
+kind-run keyed settlements and currently preserves the
+`systemDesignKindRun:${kindRunId}` format.
 
 System Design `cached_hit` rows are intentionally skipped. They represent an
 idempotency match against an already-paid artifact, not a new LLM call. Failed
@@ -192,32 +210,26 @@ summary instead of being counted as a free event.
 
 ### Daily cap settlement
 
-Three settlement call sites, all routing through
-`consumeSandboxDailyCost(ctx, {ownerTokenIdentifier, repositoryId, cents})`
-in `convex/lib/rateLimit.ts`:
+Daily-cap settlement is also centralized in `settleUsageLifecycle`. The
+mutation first checks the durable `userUsageEvents.by_sourceId` ledger; if the
+source id was already recorded, it returns without consuming the cap. For
+first-time settlements with `costUsdToCents(costUsd) > 0`, features whose
+policy is not `none` call
+`consumeSandboxDailyCost(ctx, {ownerTokenIdentifier, repositoryId, cents})`.
+Then the lifecycle writes the user usage event / rollups through
+`recordUserUsageEvent`, which also settles the user-budget reservation.
 
-- Chat: `settleSandboxReplyCost` inside `convex/chat/streaming.ts`, invoked
-  from the chat finalize / fail / cancel mutations. Converts
-  `args.costUsd` via `costUsdToCents`, looks up the thread's `repositoryId`, and
-  settles against both the per-user and per-repository buckets. A heuristic
-  reply (no `OPENAI_API_KEY`) and a pricing-miss reply both arrive with
-  `cents === undefined`; the helper returns early without settlement (the
-  conservative direction — better to under-settle than to fabricate a number
-  that starves a user's quota).
-- System Design: `finalizeKindPublication` in `convex/systemDesign.ts` routes
-  through `convex/lib/systemDesignPublicationSettlement.ts`. Generated,
-  failed, and quality-rejected outcomes settle after the terminal outcome is
-  shaped; if the repository is archived/deleted before publication, paid
-  non-cache output still settles while artifact/kindRun/job-failure writes are
-  skipped. `cached_hit` runs skip settlement because the artifact was already
-  paid for on the run that produced it. The `consumeSandboxDailyCost`
-  short-circuit on `cents <= 0` handles pricing misses uniformly.
-- Embeddings: the artifact-indexing background action settles per batch via
-  `internal.lib.rateLimit.settleSandboxDailyCost` (the action-callable wrapper
-  around `consumeSandboxDailyCost`) inside `convex/artifactIndexing.ts`, and
-  the Library Ask hybrid RAG settles the per-query embed in
-  `convex/lib/artifactRag.ts:retrieveArtifactChunks`. Both paths gate on
-  `costUsdToCents(costUsd)` so pricing misses settle to a no-op.
+The settlement surfaces remain the same feature paths:
+
+- Chat terminal mutations call the lifecycle once for completed, failed, and
+  cancelled replies. Stale recovery still skips settlement because no reliable
+  usage data exists.
+- System Design publication, artifact drafts, and Mermaid repair route through
+  `convex/lib/sandboxLibraryGenerationAccounting.ts`, now a thin adapter to
+  the lifecycle.
+- Artifact indexing and Library retrieval embedding call
+  `embedWithAccounting`, which reserves, releases on gateway failure, and
+  settles per embedding gateway call.
 
 Cap config defaults live in `convex/lib/rateLimit.ts` under
 `sandboxCostUsdPerUserDaily` and `sandboxCostUsdPerRepositoryDaily`. Live
@@ -266,7 +278,7 @@ step in the rollout plan.
 final usage frame before tear-down. The chat action calls `readGatewayUsage`
 on every terminal exit path (success, cancel, fail, aborted-orphan) and the
 fail/cancel mutations persist whatever was returned, including partial cost
-(`convex/chat/streaming.ts:551-560`, `595-616`). The daily cap settles on
+(`convex/chat/streaming.ts`). The daily cap settles on
 partial cost too — better partial-pretty-good than none-at-all.
 
 **Stale chat recovery.** Stale-recovery in `convex/chat/streaming.ts:626-645`
@@ -277,12 +289,12 @@ its settlement raced the recovery) or fabricate spend. The trade-off is
 accepted: a stalled reply may slip the daily cap by its actual cost, but the
 recovery itself is rare.
 
-**Settlement bug ("daily cap doesn't trigger").** If `consumeSandboxDailyCost`
-is skipped on a code path, runaway spend won't bounce off the cap. The
+**Settlement bug ("daily cap doesn't trigger").** If a metered path bypasses
+`settleUsageLifecycle`, runaway spend won't bounce off the cap. The
 `peekSandboxDailyCostForUser` query reflects live consumed cents for the
 current UTC day — if a high-spend user shows zero or implausibly low cents,
-settlement has a bug on whichever path generated the spend. Trace from the
-peek value back to the offending finalize/fail/cancel mutation.
+trace the feature's source id through `usageAccountingMutations` and confirm
+the terminal path called the lifecycle exactly once.
 
 ## Future evolution
 

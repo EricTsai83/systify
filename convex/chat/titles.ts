@@ -16,10 +16,9 @@
 import { v } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import { internalMutation, internalQuery } from "../_generated/server";
-import { costUsdToCents } from "../lib/llmPricing";
-import { consumeSandboxDailyCost } from "../lib/rateLimit";
 import { isDefaultTitle } from "../lib/threadDefaults";
-import { recordUserUsageEvent } from "../lib/userCost";
+import { buildUsageSourceId } from "../lib/usageAccounting";
+import { settleUsageLifecycleInMutation } from "../lib/usageAccountingMutations";
 
 export interface TitleGenContext {
   thread: Doc<"threads">;
@@ -81,18 +80,7 @@ export const patchThreadTitle = internalMutation({
   },
 });
 
-/**
- * Settle the daily sandbox-cost cap for a title-gen LLM call. The Node
- * action that owns the `generateViaGateway` call cannot reach mutation
- * helpers directly, so the settlement is wrapped here and invoked via
- * `ctx.runMutation` from {@link ./titlesNode}.
- *
- * Looks up the thread to recover `repositoryId`; a deleted thread degrades
- * to user-only settlement (mirrors {@link ./streaming}'s pattern). The
- * `costUsdToCents` short-circuit on `undefined` / non-positive amounts is
- * idempotent inside `consumeSandboxDailyCost`, so the call site can
- * forward `undefined` cost without branching first.
- */
+/** Compatibility shim for older internal callers; new title gen uses the lifecycle mutation directly. */
 export const settleTitleGenCost = internalMutation({
   args: {
     threadId: v.id("threads"),
@@ -106,27 +94,21 @@ export const settleTitleGenCost = internalMutation({
     reasoningTokens: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const cents = costUsdToCents(args.costUsd);
-    if (cents !== undefined && cents > 0) {
-      const thread = await ctx.db.get(args.threadId);
-      const repositoryId = thread?.repositoryId ?? null;
-      await consumeSandboxDailyCost(ctx, {
-        ownerTokenIdentifier: args.ownerTokenIdentifier,
-        repositoryId,
-        cents,
-      });
-    }
-    await recordUserUsageEvent(ctx, {
-      sourceId: `title:${args.threadId}:${args.userMessageId}`,
+    const thread = await ctx.db.get(args.threadId);
+    await settleUsageLifecycleInMutation(ctx, {
+      sourceId: buildUsageSourceId.title(args.threadId, args.userMessageId),
       ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId: thread?.repositoryId ?? null,
       feature: "titleGeneration",
       occurredAtMs: Date.now(),
-      usd: args.costUsd,
-      inputTokens: args.inputTokens,
-      outputTokens: args.outputTokens,
-      cachedInputTokens: args.cachedInputTokens,
-      cacheWriteTokens: args.cacheWriteTokens,
-      reasoningTokens: args.reasoningTokens,
+      usage: {
+        costUsd: args.costUsd,
+        inputTokens: args.inputTokens,
+        outputTokens: args.outputTokens,
+        cachedInputTokens: args.cachedInputTokens,
+        cacheWriteTokens: args.cacheWriteTokens,
+        reasoningTokens: args.reasoningTokens,
+      },
     });
   },
 });

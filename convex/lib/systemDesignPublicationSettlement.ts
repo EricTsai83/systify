@@ -11,6 +11,7 @@ import { isActiveRepository } from "./repositoryAccess";
 import { settleSandboxLibraryGenerationUsage } from "./sandboxLibraryGenerationAccounting";
 import { SYSTEM_DESIGN_KIND_TO_FOLDER, type SystemDesignKind } from "./systemDesign";
 import { systemDesignFailureReasonValidator, type SystemDesignFailureReason } from "./systemDesignFailures";
+import { buildUsageSourceId } from "./usageAccounting";
 
 const normalizedUsageValidator = v.object({
   inputTokens: v.optional(v.number()),
@@ -388,5 +389,5 @@ function systemDesignSettlementSourceId(args: {
   kind: SystemDesignKind;
   startedAt: number;
 }): string {
-  return `systemDesign:${args.jobId}:${args.kind}:${args.startedAt}`;
+  return buildUsageSourceId.systemDesign(args.jobId, args.kind, args.startedAt);
 }

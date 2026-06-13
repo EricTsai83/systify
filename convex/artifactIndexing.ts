@@ -10,10 +10,11 @@ import {
   DEFAULT_ARTIFACT_CHUNK_HARD_TOKEN_CAP,
   DEFAULT_ARTIFACT_CHUNK_SOFT_TOKEN_CAP,
 } from "./lib/artifactChunking";
-import { EMBEDDING_BUDGET_ESTIMATES, embedWithAccounting } from "./lib/embeddingAccounting";
+import { embedWithAccounting } from "./lib/embeddingAccounting";
 import { assertFeatureAccess } from "./lib/entitlements";
 import { logInfo, logWarn } from "./lib/observability";
 import { isUsageBudgetExceededError } from "./lib/userCost";
+import { buildUsageSourceId } from "./lib/usageAccounting";
 
 const DEFAULT_EMBEDDING_BATCH_SIZE = 100;
 const FAILED_INDEXING_RETRY_BACKOFF_MS = 30 * 60_000;
@@ -240,14 +241,13 @@ async function embedArtifactChunks(
   const embeddings: number[][] = [];
   for (let index = 0; index < args.values.length; index += batchSize) {
     const batch = args.values.slice(index, index + batchSize);
-    const sourceId = `artifactIndexing:${args.artifactId}:${args.artifactVersion}:${index}`;
+    const sourceId = buildUsageSourceId.artifactIndexing(args.artifactId, args.artifactVersion, index);
     const result = await embedWithAccounting(ctx, {
       sourceId,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId: args.repositoryId ?? null,
       usageFeature: "artifactIndexing",
       gatewayFeature: "indexing",
-      estimatedCostUsd: EMBEDDING_BUDGET_ESTIMATES.artifactIndexing,
       values: batch,
     });
     embeddings.push(...result.embeddings);

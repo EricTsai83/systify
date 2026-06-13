@@ -30,6 +30,7 @@ import { sanitizeTitle } from "../lib/titleSanitization";
 import { logErrorWithId } from "../lib/observability";
 import { ROLE_MODELS } from "../lib/llmCatalog";
 import { isUsageBudgetExceededError } from "../lib/userCost";
+import { buildUsageSourceId } from "../lib/usageAccounting";
 import type { TitleGenContext } from "./titles";
 
 /**
@@ -42,8 +43,6 @@ import type { TitleGenContext } from "./titles";
  */
 const TITLE_PROVIDER = ROLE_MODELS.internalTitle.provider;
 const TITLE_MODEL = ROLE_MODELS.internalTitle.modelName;
-const TITLE_GENERATION_BUDGET_ESTIMATE_USD = 0.001;
-
 /**
  * Minimum trimmed length of the user's first message before we bother
  * calling the LLM. `"hi"` / `"test"` / `"ok"` lack the signal to produce a
@@ -106,14 +105,14 @@ export const generateThreadTitle = internalAction({
         return;
       }
 
-      const sourceId = `title:${args.threadId}:${args.userMessageId}`;
+      const sourceId = buildUsageSourceId.title(args.threadId, args.userMessageId);
       const occurredAtMs = Date.now();
       try {
-        await ctx.runMutation(internal.lib.userCost.reserveUsageBudget, {
+        await ctx.runMutation(internal.lib.usageAccountingMutations.reserveUsageLifecycle, {
           sourceId,
           ownerTokenIdentifier: titleContext.thread.ownerTokenIdentifier,
+          repositoryId: titleContext.thread.repositoryId ?? null,
           feature: "titleGeneration",
-          estimatedCostUsd: TITLE_GENERATION_BUDGET_ESTIMATE_USD,
           occurredAtMs,
         });
       } catch (error) {
@@ -143,30 +142,34 @@ export const generateThreadTitle = internalAction({
           prompt: buildTitlePrompt(titleContext),
         },
       ).catch(async (error: unknown) => {
-        await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
+        await ctx.runMutation(internal.lib.usageAccountingMutations.releaseUsageLifecycle, {
           sourceId,
           ownerTokenIdentifier: titleContext.thread.ownerTokenIdentifier,
+          repositoryId: titleContext.thread.repositoryId ?? null,
           feature: "titleGeneration",
           occurredAtMs,
         });
         throw error;
       });
 
-      // Settle against the daily cap regardless of whether the title
-      // sanitizer accepts the output — the LLM spend has already
-      // landed. `settleTitleGenCost` is idempotent on `undefined` /
-      // non-positive cost (pricing miss, heuristic), so no branching
-      // needed here.
-      await ctx.runMutation(internal.chat.titles.settleTitleGenCost, {
-        threadId: args.threadId,
-        userMessageId: args.userMessageId,
-        costUsd: result.costUsd,
+      // Settle regardless of whether the sanitizer accepts the output:
+      // the LLM spend has already landed.
+      await ctx.runMutation(internal.lib.usageAccountingMutations.settleUsageLifecycle, {
+        sourceId,
         ownerTokenIdentifier: titleContext.thread.ownerTokenIdentifier,
-        inputTokens: result.usage.inputTokens,
-        outputTokens: result.usage.outputTokens,
-        cachedInputTokens: result.usage.cachedInputTokens,
-        cacheWriteTokens: result.usage.cacheWriteTokens,
-        reasoningTokens: result.usage.reasoningTokens,
+        repositoryId: titleContext.thread.repositoryId ?? null,
+        feature: "titleGeneration",
+        occurredAtMs,
+        usage: {
+          ...(result.costUsd !== undefined ? { costUsd: result.costUsd } : {}),
+          ...(result.usage.inputTokens !== undefined ? { inputTokens: result.usage.inputTokens } : {}),
+          ...(result.usage.outputTokens !== undefined ? { outputTokens: result.usage.outputTokens } : {}),
+          ...(result.usage.cachedInputTokens !== undefined
+            ? { cachedInputTokens: result.usage.cachedInputTokens }
+            : {}),
+          ...(result.usage.cacheWriteTokens !== undefined ? { cacheWriteTokens: result.usage.cacheWriteTokens } : {}),
+          ...(result.usage.reasoningTokens !== undefined ? { reasoningTokens: result.usage.reasoningTokens } : {}),
+        },
       });
 
       const sanitized = sanitizeTitle(result.text);

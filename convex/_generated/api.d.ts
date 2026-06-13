@@ -115,6 +115,8 @@ import type * as lib_systemDesignPrompts from "../lib/systemDesignPrompts.js";
 import type * as lib_systemDesignPublicationSettlement from "../lib/systemDesignPublicationSettlement.js";
 import type * as lib_threadDefaults from "../lib/threadDefaults.js";
 import type * as lib_titleSanitization from "../lib/titleSanitization.js";
+import type * as lib_usageAccounting from "../lib/usageAccounting.js";
+import type * as lib_usageAccountingMutations from "../lib/usageAccountingMutations.js";
 import type * as lib_userCost from "../lib/userCost.js";
 import type * as lib_userPreferences from "../lib/userPreferences.js";
 import type * as lib_withLlmRetry from "../lib/withLlmRetry.js";
@@ -251,6 +253,8 @@ declare const fullApi: ApiFromModules<{
   "lib/systemDesignPublicationSettlement": typeof lib_systemDesignPublicationSettlement;
   "lib/threadDefaults": typeof lib_threadDefaults;
   "lib/titleSanitization": typeof lib_titleSanitization;
+  "lib/usageAccounting": typeof lib_usageAccounting;
+  "lib/usageAccountingMutations": typeof lib_usageAccountingMutations;
   "lib/userCost": typeof lib_userCost;
   "lib/userPreferences": typeof lib_userPreferences;
   "lib/withLlmRetry": typeof lib_withLlmRetry;
