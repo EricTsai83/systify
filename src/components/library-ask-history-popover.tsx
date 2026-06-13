@@ -9,7 +9,7 @@ import type { Doc } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { SidebarScrollViewport } from "@/components/sidebar-scroll-viewport";
 import type { ThreadId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -143,7 +143,7 @@ export function LibraryAskHistoryPopover({
             className="h-9 border-0 bg-transparent text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
           />
         </div>
-        <ScrollArea className="max-h-[60vh]">
+        <SidebarScrollViewport className="max-h-[60vh]" viewportClassName="max-h-[60vh] pb-12">
           {threads === undefined ? (
             <div className="px-3 py-4 text-center text-xs text-muted-foreground">Loading threads…</div>
           ) : sections.length === 0 ? (
@@ -236,7 +236,7 @@ export function LibraryAskHistoryPopover({
               ))}
             </div>
           )}
-        </ScrollArea>
+        </SidebarScrollViewport>
       </PopoverContent>
     </Popover>
   );

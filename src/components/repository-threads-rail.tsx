@@ -19,6 +19,7 @@ import { MAX_RENAME_TITLE_LENGTH } from "../../convex/lib/threadDefaults";
 import { Button } from "@/components/ui/button";
 import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { SidebarScrollViewport } from "@/components/sidebar-scroll-viewport";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -303,7 +304,11 @@ export function RepositoryThreadsRail({
         </Button>
       </div>
 
-      <ThreadListViewport className={compact ? "px-2 pb-2 pt-5" : "px-3 pb-3 pt-5"}>
+      <SidebarScrollViewport
+        className="flex-1"
+        topFade
+        viewportClassName={compact ? "px-2 pb-12 pt-5" : "px-3 pb-12 pt-5"}
+      >
         <ThreadsSection
           threads={threads}
           repositoriesById={repositoriesById}
@@ -314,23 +319,7 @@ export function RepositoryThreadsRail({
           compact={compact}
           onError={onError}
         />
-      </ThreadListViewport>
-    </div>
-  );
-}
-
-function ThreadListViewport({ children, className }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className="relative min-h-0 flex-1 overflow-hidden">
-      <div className={cn("no-scrollbar h-full overflow-y-auto overscroll-contain", className)}>{children}</div>
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-0 h-4 backdrop-blur-[2px] [-webkit-mask-image:linear-gradient(to_bottom,black_0%,transparent_100%)] mask-[linear-gradient(to_bottom,black_0%,transparent_100%)]"
-      />
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 bottom-0 h-4 backdrop-blur-[2px] [-webkit-mask-image:linear-gradient(to_top,black_0%,transparent_100%)] mask-[linear-gradient(to_top,black_0%,transparent_100%)]"
-      />
+      </SidebarScrollViewport>
     </div>
   );
 }
@@ -921,7 +910,7 @@ export function RepolessChatsRail({
         </Button>
       </div>
 
-      <ThreadListViewport className="px-3 pb-3 pt-4">
+      <SidebarScrollViewport className="flex-1" topFade viewportClassName="px-3 pb-12 pt-4">
         {threads === undefined ? null : (
           <div className="flex animate-enter-fade flex-col">
             {pinnedThreads.length > 0 && (
@@ -978,7 +967,7 @@ export function RepolessChatsRail({
             ) : null}
           </div>
         )}
-      </ThreadListViewport>
+      </SidebarScrollViewport>
     </div>
   );
 }
