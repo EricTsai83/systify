@@ -290,6 +290,12 @@ export default defineSchema({
       "deletionRequestedAt",
       "lastImportedAt",
     ])
+    .index("by_owner_delete_archive_importedAt", [
+      "ownerTokenIdentifier",
+      "deletionRequestedAt",
+      "archivedAt",
+      "lastImportedAt",
+    ])
     .index("by_ownerTokenIdentifier_and_sourceUrl_and_deletionRequestedAt", [
       "ownerTokenIdentifier",
       "sourceUrl",

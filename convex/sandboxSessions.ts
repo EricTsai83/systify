@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery, mutation, query, type MutationCtx } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
 import { requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
 import { requireOwnedDoc } from "./lib/ownedDocs";
 import { assertFeatureAccess } from "./lib/entitlements";
@@ -9,7 +9,7 @@ import { DEFAULT_AUTO_STOP_MINUTES } from "./lib/constants";
 import { resolveSandboxSessionStartStateForRepository } from "./lib/liveSourceLifecycle";
 
 async function findReusableSession(
-  ctx: MutationCtx,
+  ctx: QueryCtx,
   repositoryId: Id<"repositories">,
 ): Promise<Doc<"sandboxSessions"> | null> {
   for (const status of ["active", "starting", "paused"] as const) {
@@ -115,19 +115,20 @@ export const getSandboxSessionCostSummary = query({
     await requireOwnedDoc(ctx, args.repositoryId, {
       notFoundMessage: "Repository not found.",
     });
-    const repositorySessions = await ctx.db
-      .query("sandboxSessions")
-      .withIndex("by_repositoryId_and_startedAt", (q) => q.eq("repositoryId", args.repositoryId))
-      .order("desc")
-      .collect();
-    const current = repositorySessions.find(
-      (session) => session.status === "starting" || session.status === "active" || session.status === "paused",
-    );
+    const current = (await findReusableSession(ctx, args.repositoryId)) ?? undefined;
+
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const todaySpentCents = repositorySessions
-      .filter((session) => session.startedAt >= todayStart.getTime())
-      .reduce((sum, session) => sum + session.spentCents, 0);
+
+    let todaySpentCents = 0;
+    for await (const session of ctx.db
+      .query("sandboxSessions")
+      .withIndex("by_repositoryId_and_startedAt", (q) =>
+        q.eq("repositoryId", args.repositoryId).gte("startedAt", todayStart.getTime()),
+      )) {
+      todaySpentCents += session.spentCents;
+    }
+
     return {
       current,
       todaySpentCents,

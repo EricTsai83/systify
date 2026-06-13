@@ -18,6 +18,7 @@ export default defineConfig([
       "tailwind.config.js",
       "vite.config.ts",
       ".deepsec/**",
+      ".claude/worktrees/**",
     ],
   },
   {

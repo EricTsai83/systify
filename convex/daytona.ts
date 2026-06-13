@@ -172,27 +172,28 @@ export async function deleteSandbox(remoteId: string) {
 
 export async function listSandboxesByLabel(labels: Record<string, string>): Promise<ListedSandbox[]> {
   const daytona = createDaytonaClient();
-  const sandboxes: ListedSandbox[] = [];
-  let page = 1;
-  let totalPages = 1;
-
-  while (page <= totalPages) {
-    const result = await withDaytonaRetry(() => daytona.list(labels, page, 100), {
+  // The SDK's `list` returns an async iterator that paginates internally
+  // (per-page size via `limit`), so we drain it instead of looping pages
+  // ourselves. The whole drain is wrapped in one retry: listing is
+  // read-only and idempotent, so re-draining from scratch on a transient
+  // failure yields the same result.
+  return withDaytonaRetry(
+    async () => {
+      const sandboxes: ListedSandbox[] = [];
+      for await (const sandbox of daytona.list({ labels, limit: 100 })) {
+        sandboxes.push({
+          remoteId: sandbox.id,
+          labels: sandbox.labels,
+          createdAt: sandbox.createdAt,
+        });
+      }
+      return sandboxes;
+    },
+    {
       operation: "sandbox.list",
-      resourceId: `page=${page}`,
-    });
-    sandboxes.push(
-      ...result.items.map((sandbox) => ({
-        remoteId: sandbox.id,
-        labels: sandbox.labels,
-        createdAt: sandbox.createdAt,
-      })),
-    );
-    totalPages = result.totalPages;
-    page += 1;
-  }
-
-  return sandboxes;
+      resourceId: `labels=${Object.keys(labels).join(",")}`,
+    },
+  );
 }
 
 /**

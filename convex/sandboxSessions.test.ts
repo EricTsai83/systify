@@ -3,12 +3,13 @@
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
 
 const OWNER = "user|sandbox-session-test";
+type SandboxSessionStatus = Doc<"sandboxSessions">["status"];
 
 async function seedRepository(t: ReturnType<typeof convexTest>): Promise<Id<"repositories">> {
   return await t.run(async (ctx) =>
@@ -44,6 +45,29 @@ async function seedAccessProfile(t: ReturnType<typeof convexTest>) {
   });
 }
 
+async function seedSandboxSession(
+  t: ReturnType<typeof convexTest>,
+  args: {
+    repositoryId: Id<"repositories">;
+    status: SandboxSessionStatus;
+    startedAt: number;
+    spentCents: number;
+  },
+): Promise<Id<"sandboxSessions">> {
+  return await t.run(async (ctx) =>
+    ctx.db.insert("sandboxSessions", {
+      ownerTokenIdentifier: OWNER,
+      repositoryId: args.repositoryId,
+      status: args.status,
+      startedAt: args.startedAt,
+      lastActivityAt: args.startedAt,
+      lastResumedAt: args.startedAt,
+      idleAutoPauseMinutes: 15,
+      spentCents: args.spentCents,
+    }),
+  );
+}
+
 describe("recordSandboxSessionActivity", () => {
   test("rejects negative spentCentsDelta", async () => {
     const t = convexTest(schema, modules);
@@ -70,6 +94,70 @@ describe("recordSandboxSessionActivity", () => {
 
     const stored = await t.run(async (ctx) => ctx.db.get(sessionId));
     expect(stored?.spentCents).toBe(25);
+  });
+});
+
+describe("getSandboxSessionCostSummary", () => {
+  test("returns an old active session as current but excludes old spend", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await seedRepository(t);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const oldStartedAt = todayStart.getTime() - 60_000;
+    const todayStartedAt = todayStart.getTime() + 60_000;
+    const activeSessionId = await seedSandboxSession(t, {
+      repositoryId,
+      status: "active",
+      startedAt: oldStartedAt,
+      spentCents: 125,
+    });
+    await seedSandboxSession(t, {
+      repositoryId,
+      status: "ended",
+      startedAt: oldStartedAt,
+      spentCents: 200,
+    });
+    await seedSandboxSession(t, {
+      repositoryId,
+      status: "ended",
+      startedAt: todayStartedAt,
+      spentCents: 30,
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+    const summary = await viewer.query(api.sandboxSessions.getSandboxSessionCostSummary, { repositoryId });
+
+    expect(summary.current?._id).toBe(activeSessionId);
+    expect(summary.current?.status).toBe("active");
+    expect(summary.todaySpentCents).toBe(30);
+    expect(summary.now).toEqual(expect.any(Number));
+  });
+
+  test("includes multiple sessions from today in spend", async () => {
+    const t = convexTest(schema, modules);
+    const repositoryId = await seedRepository(t);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayStartedAt = todayStart.getTime() + 60_000;
+
+    await seedSandboxSession(t, {
+      repositoryId,
+      status: "ended",
+      startedAt: todayStartedAt,
+      spentCents: 30,
+    });
+    await seedSandboxSession(t, {
+      repositoryId,
+      status: "stopped",
+      startedAt: todayStartedAt + 60_000,
+      spentCents: 45,
+    });
+
+    const viewer = t.withIdentity({ tokenIdentifier: OWNER });
+    const summary = await viewer.query(api.sandboxSessions.getSandboxSessionCostSummary, { repositoryId });
+
+    expect(summary.current).toBeUndefined();
+    expect(summary.todaySpentCents).toBe(75);
   });
 });
 
