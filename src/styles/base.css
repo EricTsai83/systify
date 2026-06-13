@@ -55,8 +55,24 @@
     display: none;
   }
 
-  .scroll-shadow-mask {
+  .scroll-shadow-mask-bottom,
+  .scroll-shadow-mask-y {
     --scroll-shadow-mask-size: 2.75rem;
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      black 0,
+      black calc(100% - var(--scroll-shadow-mask-size)),
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      black 0,
+      black calc(100% - var(--scroll-shadow-mask-size)),
+      transparent 100%
+    );
+  }
+
+  .scroll-shadow-mask-y {
     -webkit-mask-image: linear-gradient(
       to bottom,
       transparent 0,

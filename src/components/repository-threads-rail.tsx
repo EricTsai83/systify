@@ -304,7 +304,11 @@ export function RepositoryThreadsRail({
         </Button>
       </div>
 
-      <SidebarScrollViewport className="flex-1" viewportClassName={compact ? "px-2 pb-12 pt-5" : "px-3 pb-12 pt-5"}>
+      <SidebarScrollViewport
+        className="flex-1"
+        topFade
+        viewportClassName={compact ? "px-2 pb-12 pt-5" : "px-3 pb-12 pt-5"}
+      >
         <ThreadsSection
           threads={threads}
           repositoriesById={repositoriesById}
@@ -906,7 +910,7 @@ export function RepolessChatsRail({
         </Button>
       </div>
 
-      <SidebarScrollViewport className="flex-1" viewportClassName="px-3 pb-12 pt-4">
+      <SidebarScrollViewport className="flex-1" topFade viewportClassName="px-3 pb-12 pt-4">
         {threads === undefined ? null : (
           <div className="flex animate-enter-fade flex-col">
             {pinnedThreads.length > 0 && (
