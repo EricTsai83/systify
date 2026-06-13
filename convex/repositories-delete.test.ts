@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { convexTest } from "convex-test";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
+import { CASCADE_BATCH_SIZE } from "./lib/constants";
+import { REPOSITORY_OWNED_DATA_LIFECYCLE_REGISTRY } from "./lib/repositoryOwnedDataLifecycle";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -51,6 +53,7 @@ async function seedRepositoryGraph(
   threadId: Id<"threads">;
   assistantMessageId: Id<"messages">;
   streamId: Id<"messageStreams">;
+  artifactId: Id<"artifacts">;
   remoteId: string;
 }> {
   return await t.run(async (ctx) => {
@@ -232,6 +235,16 @@ async function seedRepositoryGraph(
       mode: "discuss",
       content: "Done",
     });
+    await ctx.db.insert("artifacts", {
+      threadId,
+      jobId: chatJobId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      kind: "custom_document",
+      title: "Thread note",
+      summary: "Thread-local artifact",
+      contentMarkdown: "# Thread note",
+      version: 1,
+    });
     await ctx.db.insert("messageToolCallEvents", {
       messageId: assistantMessageId,
       toolCallId: "call-1",
@@ -257,6 +270,31 @@ async function seedRepositoryGraph(
       streamId,
       sequence: 0,
       text: "Done",
+    });
+    await ctx.db.insert("threadShares", {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      threadId,
+      repositoryId,
+      token: "share-delete-graph-token",
+      tokenPrefix: "share-delete",
+      createdAt: now,
+      expiresAt: now + 60_000,
+    });
+    await ctx.db.insert("chatHistoryGroups", {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      groupKey: `repository:${repositoryId}`,
+      repositoryId,
+      lastThreadAt: now,
+      lastThreadId: threadId,
+      threadCount: 1,
+    });
+    await ctx.db.insert("archivedThreadScopes", {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      scopeKey: `repository:${repositoryId}`,
+      repositoryId,
+      lastArchivedAt: now,
+      lastThreadId: threadId,
+      threadCount: 1,
     });
 
     const sandboxId = await ctx.db.insert("sandboxes", {
@@ -300,6 +338,17 @@ async function seedRepositoryGraph(
       idleAutoPauseMinutes: 10,
       spentCents: 1,
     });
+    await ctx.db.insert("sandboxToolCallLog", {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      threadId,
+      messageId: assistantMessageId,
+      sandboxId,
+      toolName: "read_file",
+      inputJson: '{"path":"src/main.ts"}',
+      outputBytes: 42,
+      durationMs: 5,
+      redactedFields: [],
+    });
 
     await ctx.db.patch(repositoryId, {
       latestImportId: importId,
@@ -308,7 +357,7 @@ async function seedRepositoryGraph(
       defaultThreadId: threadId,
     });
 
-    return { repositoryId, threadId, assistantMessageId, streamId, remoteId };
+    return { repositoryId, threadId, assistantMessageId, streamId, artifactId, remoteId };
   });
 }
 
@@ -388,9 +437,25 @@ async function collectRepositoryDeleteState(
         .query("systemDesignKindRuns")
         .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", args.repositoryId))
         .collect(),
+      threadShares: await ctx.db
+        .query("threadShares")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
+        .collect(),
+      chatHistoryGroups: await ctx.db
+        .query("chatHistoryGroups")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
+        .collect(),
+      archivedThreadScopes: await ctx.db
+        .query("archivedThreadScopes")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
+        .collect(),
       threads: await ctx.db
         .query("threads")
         .withIndex("by_repositoryId_and_lastMessageAt", (q) => q.eq("repositoryId", args.repositoryId))
+        .collect(),
+      threadArtifacts: await ctx.db
+        .query("artifacts")
+        .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
         .collect(),
       messages: await ctx.db
         .query("messages")
@@ -412,6 +477,10 @@ async function collectRepositoryDeleteState(
         .query("sandboxRemoteObservations")
         .withIndex("by_remoteId", (q) => q.eq("remoteId", args.remoteId))
         .collect(),
+      sandboxToolCallLog: await ctx.db
+        .query("sandboxToolCallLog")
+        .withIndex("by_owner_and_time", (q) => q.eq("ownerTokenIdentifier", args.ownerTokenIdentifier))
+        .collect(),
     };
   });
 }
@@ -429,6 +498,48 @@ describe("repository deletion cleanup", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  test("repository-owned data lifecycle registry covers cascade and retained tables", () => {
+    const expectedTables = [
+      "archivedThreadScopes",
+      "artifactChunks",
+      "artifactDrafts",
+      "artifactFolders",
+      "artifactViews",
+      "artifacts",
+      "chatHistoryGroups",
+      "imports",
+      "jobs",
+      "messageStreamChunks",
+      "messageStreams",
+      "messageToolCallEvents",
+      "messages",
+      "repoChunks",
+      "repoFiles",
+      "repositories",
+      "repositoryViewerBootstraps",
+      "sandboxRemoteObservations",
+      "sandboxSessions",
+      "sandboxToolCallLog",
+      "sandboxes",
+      "systemDesignKindRuns",
+      "threadShares",
+      "threads",
+      "userPreferences",
+    ].sort();
+    const registryTables = REPOSITORY_OWNED_DATA_LIFECYCLE_REGISTRY.map((entry) => entry.table);
+    const retainedEntries = REPOSITORY_OWNED_DATA_LIFECYCLE_REGISTRY.filter((entry) => entry.disposition === "retain");
+
+    expect(new Set(registryTables).size).toBe(registryTables.length);
+    expect([...registryTables].sort()).toEqual(expectedTables);
+    expect(retainedEntries.map((entry) => entry.table)).toEqual(["sandboxToolCallLog"]);
+    expect(retainedEntries[0]?.cleanupPath).toContain("90-day TTL");
+    expect(
+      REPOSITORY_OWNED_DATA_LIFECYCLE_REGISTRY.filter((entry) => entry.disposition !== "retain").map(
+        (entry) => entry.table,
+      ),
+    ).not.toContain("sandboxToolCallLog");
   });
 
   test("cascadeDeleteRepository removes the repository-scoped data graph when sandboxes are already archived", async () => {
@@ -454,7 +565,11 @@ describe("repository deletion cleanup", () => {
     expect(state.artifactViews).toHaveLength(0);
     expect(state.repositoryViewerBootstraps).toHaveLength(0);
     expect(state.systemDesignKindRuns).toHaveLength(0);
+    expect(state.threadShares).toHaveLength(0);
+    expect(state.chatHistoryGroups).toHaveLength(0);
+    expect(state.archivedThreadScopes).toHaveLength(0);
     expect(state.threads).toHaveLength(0);
+    expect(state.threadArtifacts).toHaveLength(0);
     expect(state.messages).toHaveLength(0);
     expect(state.messageToolCallEvents).toHaveLength(0);
     expect(state.messageStreams).toHaveLength(0);
@@ -463,6 +578,8 @@ describe("repository deletion cleanup", () => {
     expect(state.sandboxRemoteObservations[0]?.discoveryStatus).toBe("ignored");
     expect(state.sandboxRemoteObservations[0]?.repositoryId).toBeUndefined();
     expect(state.sandboxRemoteObservations[0]?.sandboxId).toBeUndefined();
+    expect(state.sandboxToolCallLog).toHaveLength(1);
+    expect(state.sandboxToolCallLog[0]?.messageId).toBe(ids.assistantMessageId);
   });
 
   test("cascadeDeleteRepository waits for live sandbox cleanup before deleting repository jobs", async () => {
@@ -508,6 +625,47 @@ describe("repository deletion cleanup", () => {
     expect(state.sandboxRemoteObservations[0]?.discoveryStatus).toBe("known");
     expect(state.sandboxRemoteObservations[0]?.repositoryId).toBe(ids.repositoryId);
     expect(deleteSandboxMock).not.toHaveBeenCalled();
+  });
+
+  test("cascadeDeleteRepository drains large repository-owned row sets through scheduled batches", async () => {
+    const ownerTokenIdentifier = "user|cascade-batches";
+    const t = makeHarness();
+    const ids = await seedRepositoryGraph(t, { ownerTokenIdentifier, sandboxStatus: "archived" });
+
+    await t.run(async (ctx) => {
+      for (let index = 0; index < CASCADE_BATCH_SIZE + 5; index += 1) {
+        await ctx.db.insert("artifactChunks", {
+          ownerTokenIdentifier,
+          repositoryId: ids.repositoryId,
+          artifactId: ids.artifactId,
+          artifactVersion: 1,
+          chunkIndex: index + 1,
+          headingPath: ["Overflow"],
+          startOffset: index,
+          endOffset: index + 1,
+          content: `chunk ${index}`,
+        });
+      }
+    });
+
+    await t.mutation(internal.repositories.cascadeDeleteRepository, { repositoryId: ids.repositoryId });
+
+    const afterFirstBatch = await t.run(async (ctx) => ({
+      repository: await ctx.db.get(ids.repositoryId),
+      artifactChunks: await ctx.db
+        .query("artifactChunks")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", ids.repositoryId))
+        .take(CASCADE_BATCH_SIZE),
+    }));
+    expect(afterFirstBatch.repository).not.toBeNull();
+    expect(afterFirstBatch.artifactChunks.length).toBeGreaterThan(0);
+
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+    const finalState = await collectRepositoryDeleteState(t, { ownerTokenIdentifier, ...ids });
+    expect(finalState.repository).toBeNull();
+    expect(finalState.artifactChunks).toHaveLength(0);
+    expect(finalState.sandboxToolCallLog).toHaveLength(1);
   });
 
   test("deleteRepository deletes the remote sandbox before removing sandbox records", async () => {

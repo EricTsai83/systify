@@ -96,6 +96,8 @@ import type * as lib_repolessThreadKind from "../lib/repolessThreadKind.js";
 import type * as lib_repositoryAccess from "../lib/repositoryAccess.js";
 import type * as lib_repositoryCascade from "../lib/repositoryCascade.js";
 import type * as lib_repositoryImportWorkflow from "../lib/repositoryImportWorkflow.js";
+import type * as lib_repositoryOwnedDataAdapters from "../lib/repositoryOwnedDataAdapters.js";
+import type * as lib_repositoryOwnedDataLifecycle from "../lib/repositoryOwnedDataLifecycle.js";
 import type * as lib_repositoryPalette from "../lib/repositoryPalette.js";
 import type * as lib_repositoryRetirement from "../lib/repositoryRetirement.js";
 import type * as lib_repositorySandbox from "../lib/repositorySandbox.js";
@@ -228,6 +230,8 @@ declare const fullApi: ApiFromModules<{
   "lib/repositoryAccess": typeof lib_repositoryAccess;
   "lib/repositoryCascade": typeof lib_repositoryCascade;
   "lib/repositoryImportWorkflow": typeof lib_repositoryImportWorkflow;
+  "lib/repositoryOwnedDataAdapters": typeof lib_repositoryOwnedDataAdapters;
+  "lib/repositoryOwnedDataLifecycle": typeof lib_repositoryOwnedDataLifecycle;
   "lib/repositoryPalette": typeof lib_repositoryPalette;
   "lib/repositoryRetirement": typeof lib_repositoryRetirement;
   "lib/repositorySandbox": typeof lib_repositorySandbox;
