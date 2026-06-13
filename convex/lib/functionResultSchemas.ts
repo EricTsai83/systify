@@ -134,3 +134,32 @@ export const recordedKindRunResultValidator = v.union(
   v.object({ recorded: v.literal(false) }),
 );
 export type RecordedKindRunResult = Infer<typeof recordedKindRunResultValidator>;
+
+const systemDesignKindPublicationStatusValidator = v.union(
+  v.literal("succeeded"),
+  v.literal("failed"),
+  v.literal("cached_hit"),
+  v.literal("quality_rejected"),
+);
+
+export const systemDesignKindPublicationFinalizationResultValidator = v.union(
+  v.object({
+    finalized: v.literal(true),
+    status: systemDesignKindPublicationStatusValidator,
+    kindRunId: v.id("systemDesignKindRuns"),
+    artifactId: v.optional(v.id("artifacts")),
+    countsAsSucceeded: v.boolean(),
+    aborted: v.literal(false),
+  }),
+  v.object({
+    finalized: v.literal(false),
+    status: systemDesignKindPublicationStatusValidator,
+    countsAsSucceeded: v.literal(false),
+    aborted: v.literal(true),
+    reason: v.union(v.literal("inactive_target"), v.literal("invalid_cached_artifact")),
+    settledUsage: v.boolean(),
+  }),
+);
+export type SystemDesignKindPublicationFinalizationResult = Infer<
+  typeof systemDesignKindPublicationFinalizationResultValidator
+>;

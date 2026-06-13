@@ -5,8 +5,9 @@ import { z } from "zod";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
-import { internalAction } from "./_generated/server";
+import { internalAction, type ActionCtx } from "./_generated/server";
 import { generateObjectViaGateway, generateViaGateway } from "./lib/llmGateway";
+import type { NormalizedUsage } from "./lib/llmProvider";
 import { logErrorWithId, logInfo } from "./lib/observability";
 import {
   ARTIFACT_DRAFT_SANDBOX_STAGE_LABELS,
@@ -18,6 +19,7 @@ import {
   type EnsureSandboxReadyResult,
 } from "./lib/sandboxLibraryGeneration";
 import { SandboxPreparationError } from "./lib/sandboxLiveness";
+import { buildUsageSourceId } from "./lib/usageAccounting";
 import { ARTIFACT_DRAFT_PROMPT_VERSION } from "./libraryArtifactDrafts";
 
 const ARTIFACT_DRAFT_STEP_BUDGET = 12;
@@ -44,6 +46,16 @@ export const runArtifactDraft = internalAction({
     if (!started.started) {
       return;
     }
+
+    let usageAccounting:
+      | {
+          sourceId: string;
+          occurredAtMs: number;
+          usage: NormalizedUsage;
+          totalCostUsd: number | undefined;
+          handled: boolean;
+        }
+      | undefined;
 
     try {
       const context = await ctx.runQuery(internal.libraryArtifactDrafts.getDraftGenerationContext, {
@@ -102,6 +114,14 @@ export const runArtifactDraft = internalAction({
         missingSelectionMessage: "Artifact draft job is missing its model selection.",
       });
       const startedAt = Date.now();
+      const sourceId = buildUsageSourceId.artifactDraft(args.jobId, startedAt);
+      usageAccounting = {
+        sourceId,
+        occurredAtMs: startedAt,
+        usage: {},
+        totalCostUsd: undefined,
+        handled: false,
+      };
       await ctx.runMutation(internal.libraryArtifactDrafts.assertDraftCostBudget, {
         ownerTokenIdentifier: args.ownerTokenIdentifier,
         repositoryId: args.repositoryId,
@@ -143,6 +163,8 @@ export const runArtifactDraft = internalAction({
           reasoningEffort: modelChoice.reasoningEffort,
         },
       );
+      usageAccounting.usage = draftResult.usage;
+      usageAccounting.totalCostUsd = draftResult.costUsd;
       const draftText = draftResult.text.trim();
       if (draftText.length === 0) {
         throw new Error("Artifact draft model returned an empty draft.");
@@ -176,9 +198,11 @@ export const runArtifactDraft = internalAction({
       );
       const usage = combineSandboxLibraryGenerationUsage(draftResult.usage, result.usage);
       const totalCostUsd = combineSandboxLibraryGenerationCost(draftResult.costUsd, result.costUsd);
+      usageAccounting.usage = usage;
+      usageAccounting.totalCostUsd = totalCostUsd;
 
       const output = result.object;
-      await ctx.runMutation(internal.libraryArtifactDrafts.markDraftReady, {
+      const readyResult: { ready: boolean } = await ctx.runMutation(internal.libraryArtifactDrafts.markDraftReady, {
         draftId: args.draftId,
         jobId: args.jobId,
         title: output.title.trim(),
@@ -197,8 +221,12 @@ export const runArtifactDraft = internalAction({
         cacheWriteTokens: usage.cacheWriteTokens,
         reasoningTokens: usage.reasoningTokens,
         totalCostUsd,
-        sourceId: `artifactDraft:${args.jobId}:${startedAt}`,
+        sourceId,
       });
+      if (!readyResult.ready) {
+        throw new Error("Artifact draft could not be marked ready.");
+      }
+      usageAccounting.handled = true;
 
       logInfo("artifactDraft", "draft_ready", {
         draftId: args.draftId,
@@ -208,6 +236,14 @@ export const runArtifactDraft = internalAction({
         modelName: modelChoice.modelName,
       });
     } catch (error) {
+      if (usageAccounting && !usageAccounting.handled) {
+        await settleFailedDraftUsage(ctx, {
+          ownerTokenIdentifier: args.ownerTokenIdentifier,
+          repositoryId: args.repositoryId,
+          accounting: usageAccounting,
+        });
+        usageAccounting.handled = true;
+      }
       const errorId = logErrorWithId("artifactDraft", "draft_generation_failed", error, {
         draftId: args.draftId,
         jobId: args.jobId,
@@ -221,6 +257,61 @@ export const runArtifactDraft = internalAction({
     }
   },
 });
+
+async function settleFailedDraftUsage(
+  ctx: ActionCtx,
+  args: {
+    ownerTokenIdentifier: string;
+    repositoryId: Doc<"repositories">["_id"];
+    accounting: {
+      sourceId: string;
+      occurredAtMs: number;
+      usage: NormalizedUsage;
+      totalCostUsd: number | undefined;
+    };
+  },
+): Promise<void> {
+  const hasUsage =
+    args.accounting.totalCostUsd !== undefined ||
+    args.accounting.usage.inputTokens !== undefined ||
+    args.accounting.usage.outputTokens !== undefined ||
+    args.accounting.usage.cachedInputTokens !== undefined ||
+    args.accounting.usage.cacheWriteTokens !== undefined ||
+    args.accounting.usage.reasoningTokens !== undefined;
+
+  if (!hasUsage) {
+    await ctx.runMutation(internal.lib.usageAccountingMutations.releaseUsageLifecycle, {
+      sourceId: args.accounting.sourceId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId: args.repositoryId,
+      feature: "systemDesignGeneration",
+      occurredAtMs: args.accounting.occurredAtMs,
+    });
+    return;
+  }
+
+  await ctx.runMutation(internal.lib.usageAccountingMutations.settleUsageLifecycle, {
+    sourceId: args.accounting.sourceId,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    repositoryId: args.repositoryId,
+    feature: "systemDesignGeneration",
+    occurredAtMs: args.accounting.occurredAtMs,
+    usage: {
+      ...(args.accounting.totalCostUsd !== undefined ? { costUsd: args.accounting.totalCostUsd } : {}),
+      ...(args.accounting.usage.inputTokens !== undefined ? { inputTokens: args.accounting.usage.inputTokens } : {}),
+      ...(args.accounting.usage.outputTokens !== undefined ? { outputTokens: args.accounting.usage.outputTokens } : {}),
+      ...(args.accounting.usage.cachedInputTokens !== undefined
+        ? { cachedInputTokens: args.accounting.usage.cachedInputTokens }
+        : {}),
+      ...(args.accounting.usage.cacheWriteTokens !== undefined
+        ? { cacheWriteTokens: args.accounting.usage.cacheWriteTokens }
+        : {}),
+      ...(args.accounting.usage.reasoningTokens !== undefined
+        ? { reasoningTokens: args.accounting.usage.reasoningTokens }
+        : {}),
+    },
+  });
+}
 
 function toCodeAccessUserMessage(message: string) {
   return message

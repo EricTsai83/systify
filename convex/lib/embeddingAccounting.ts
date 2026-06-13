@@ -4,15 +4,11 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
 import { embedViaGateway, type LlmCallContext, type LlmEmbedResult } from "./llmGateway";
-import { costUsdToCents } from "./llmPricing";
 import type { LlmProvider } from "./llmProvider";
 import { assertFeatureAccess } from "./entitlements";
 import { logWarn } from "./observability";
-import {
-  ARTIFACT_INDEXING_BATCH_BUDGET_ESTIMATE_USD,
-  LIBRARY_RETRIEVAL_BUDGET_ESTIMATE_USD,
-  type UsageFeature,
-} from "./userCost";
+import type { UsageFeature } from "./userCost";
+import type { UsageAccountingFeature } from "./usageAccounting";
 
 /**
  * Embedding model shared by artifact chunk indexing and Library semantic
@@ -24,6 +20,11 @@ export const DEFAULT_ARTIFACT_EMBEDDING_MODEL = "text-embedding-3-small";
 const DEFAULT_ARTIFACT_EMBEDDING_PROVIDER: LlmProvider = "openai";
 
 export type EmbeddingAccountingFeature = Extract<UsageFeature, "artifactIndexing" | "libraryRetrieval">;
+
+const USAGE_ACCOUNTING_FEATURE_BY_EMBEDDING_FEATURE = {
+  artifactIndexing: "artifactIndexingEmbedding",
+  libraryRetrieval: "libraryRetrievalEmbedding",
+} as const satisfies Record<EmbeddingAccountingFeature, UsageAccountingFeature>;
 
 export interface AccountedEmbeddingResult extends LlmEmbedResult {
   provider: LlmProvider;
@@ -38,7 +39,6 @@ export interface EmbedWithAccountingArgs {
   repositoryId: Id<"repositories"> | null;
   usageFeature: EmbeddingAccountingFeature;
   gatewayFeature: LlmCallContext["feature"];
-  estimatedCostUsd: number;
   provider?: LlmProvider;
   modelName?: string;
   occurredAtMs?: number;
@@ -46,11 +46,6 @@ export interface EmbedWithAccountingArgs {
   messageId?: Id<"messages">;
   jobId?: Id<"jobs">;
 }
-
-export const EMBEDDING_BUDGET_ESTIMATES = {
-  artifactIndexing: ARTIFACT_INDEXING_BATCH_BUDGET_ESTIMATE_USD,
-  libraryRetrieval: LIBRARY_RETRIEVAL_BUDGET_ESTIMATE_USD,
-} as const satisfies Record<EmbeddingAccountingFeature, number>;
 
 export function resolveArtifactEmbeddingModel(): string {
   return process.env.ARTIFACT_EMBEDDING_MODEL ?? DEFAULT_ARTIFACT_EMBEDDING_MODEL;
@@ -72,11 +67,13 @@ export async function embedWithAccounting(
     await assertFeatureAccess(ctx, args.ownerTokenIdentifier, "artifactIndexing");
   }
 
-  await ctx.runMutation(internal.lib.userCost.reserveUsageBudget, {
+  const usageAccountingFeature = USAGE_ACCOUNTING_FEATURE_BY_EMBEDDING_FEATURE[args.usageFeature];
+
+  await ctx.runMutation(internal.lib.usageAccountingMutations.reserveUsageLifecycle, {
     sourceId: args.sourceId,
     ownerTokenIdentifier: args.ownerTokenIdentifier,
-    feature: args.usageFeature,
-    estimatedCostUsd: args.estimatedCostUsd,
+    repositoryId: args.repositoryId,
+    feature: usageAccountingFeature,
     occurredAtMs,
   });
 
@@ -100,6 +97,8 @@ export async function embedWithAccounting(
         sourceId: args.sourceId,
         ownerTokenIdentifier: args.ownerTokenIdentifier,
         usageFeature: args.usageFeature,
+        usageAccountingFeature,
+        repositoryId: args.repositoryId,
         occurredAtMs,
         error: originalError,
       }),
@@ -121,6 +120,7 @@ export async function embedWithAccounting(
     ownerTokenIdentifier: args.ownerTokenIdentifier,
     repositoryId: args.repositoryId,
     usageFeature: args.usageFeature,
+    usageAccountingFeature,
     occurredAtMs,
     result,
   });
@@ -139,15 +139,18 @@ async function recordEmbeddingFailure(
     sourceId: string;
     ownerTokenIdentifier: string;
     usageFeature: EmbeddingAccountingFeature;
+    usageAccountingFeature: UsageAccountingFeature;
+    repositoryId: Id<"repositories"> | null;
     occurredAtMs: number;
     error: unknown;
   },
 ): Promise<void> {
   try {
-    await ctx.runMutation(internal.lib.userCost.recordUsageEvent, {
+    await ctx.runMutation(internal.lib.usageAccountingMutations.releaseUsageLifecycle, {
       sourceId: args.sourceId,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
-      feature: args.usageFeature,
+      repositoryId: args.repositoryId,
+      feature: args.usageAccountingFeature,
       occurredAtMs: args.occurredAtMs,
     });
   } catch (recordError) {
@@ -167,21 +170,22 @@ async function settleEmbeddingUsage(
     ownerTokenIdentifier: string;
     repositoryId: Id<"repositories"> | null;
     usageFeature: EmbeddingAccountingFeature;
+    usageAccountingFeature: UsageAccountingFeature;
     occurredAtMs: number;
     result: LlmEmbedResult;
   },
 ): Promise<number | undefined> {
-  const settledCents = costUsdToCents(args.result.costUsd);
-  await ctx.runMutation(internal.lib.embeddingAccountingMutations.settleAndRecordUsage, {
+  const settlement = await ctx.runMutation(internal.lib.usageAccountingMutations.settleUsageLifecycle, {
     sourceId: args.sourceId,
     ownerTokenIdentifier: args.ownerTokenIdentifier,
-    feature: args.usageFeature,
     repositoryId: args.repositoryId,
-    cents: settledCents ?? 0,
+    feature: args.usageAccountingFeature,
     occurredAtMs: args.occurredAtMs,
-    ...(args.result.costUsd !== undefined ? { usd: args.result.costUsd } : {}),
-    inputTokens: args.result.usage.inputTokens,
+    usage: {
+      ...(args.result.costUsd !== undefined ? { costUsd: args.result.costUsd } : {}),
+      ...(args.result.usage.inputTokens !== undefined ? { inputTokens: args.result.usage.inputTokens } : {}),
+    },
   });
 
-  return settledCents;
+  return settlement.settledCents ?? undefined;
 }

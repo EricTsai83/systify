@@ -129,7 +129,7 @@ describe("resolveModelForReply", () => {
 
   test("each capability default exists in the pricing table (cost cap accuracy)", () => {
     // `estimateCostUsd` returns `undefined` for unknown models, which
-    // `settleSandboxReplyCost` treats as "no cost recorded". A default
+    // usage-accounting settlement treats as "no cost recorded". A default
     // that drifts off the pricing table would silently let users
     // overspend — pinning the pairing as a test invariant catches the
     // drift the moment a default is bumped without a pricing entry.

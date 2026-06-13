@@ -17,6 +17,7 @@ import { AppNotice } from "@/components/app-notice";
 import { ChatContainer } from "@/components/chat-panel";
 import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
 import { StatusPanel } from "@/components/status-panel";
+import { useChatComposerSession } from "@/components/chat-shell-shared/use-chat-composer-session";
 import { useChatShellLifecycle } from "@/components/chat-shell-shared/use-chat-shell-lifecycle";
 import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-thread-deletion-recovery";
 import { useRepositoryLandingDecision } from "@/components/chat-shell-shared/use-repository-landing";
@@ -27,19 +28,9 @@ import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useRepositoryLifecycle } from "@/hooks/use-repository-lifecycle";
 import { useChatMode } from "@/hooks/use-service-mode";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
-import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
 import { isViewerFeatureEnabled, useViewerAccess } from "@/hooks/use-viewer-access";
-import type {
-  ArtifactId,
-  ChatMode,
-  ModelPreferenceScope,
-  RepositoryId,
-  SandboxModeStatus,
-  ThreadId,
-  ThreadMode,
-  UserPickableCapability,
-} from "@/lib/types";
+import type { ArtifactId, ChatMode, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { DEMO_MODE_COPY } from "@/lib/demo-content";
 import { cn } from "@/lib/utils";
 import {
@@ -100,31 +91,6 @@ export function RepositoryShell({
   const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] = useState(false);
   const chatMode: ChatMode = landingDecision.intendedChatMode;
 
-  const [groundingByThread, setGroundingByThread] = useState<{
-    threadId: ThreadId | null;
-    library: boolean;
-    sandbox: boolean;
-  }>({ threadId: urlThreadId, library: false, sandbox: false });
-  const groundLibrary = groundingByThread.library;
-  const groundSandbox = groundingByThread.sandbox;
-  const modelCapability: UserPickableCapability = groundSandbox ? "sandbox" : chatMode;
-  const modelPreferenceScope: ModelPreferenceScope = groundSandbox ? "sandbox" : chatMode;
-  const setGroundLibrary = useCallback(
-    (next: boolean) => setGroundingByThread((prev) => ({ ...prev, library: next })),
-    [],
-  );
-  const setGroundSandbox = useCallback(
-    (next: boolean) => setGroundingByThread((prev) => ({ ...prev, sandbox: next })),
-    [],
-  );
-  const { selectedProvider, selectedModelName, setSelectedModel, selectedReasoningEffort, setSelectedReasoningEffort } =
-    useComposerModelPick({
-      threadId: urlThreadId,
-      capability: modelCapability,
-      preferenceScope: modelPreferenceScope,
-      threadLockedProvider: capabilities.lockedProvider,
-      threadDefaultModelName: capabilities.defaultModelName,
-    });
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<{ title: string; message: string } | null>(null);
   useEffect(() => {
@@ -180,14 +146,7 @@ export function RepositoryShell({
   const isRepositorySyncing =
     !isRepoArchived &&
     (repoDetail?.repository.importStatus === "queued" || repoDetail?.repository.importStatus === "running");
-  const effectiveSandboxModeStatus: SandboxModeStatus | null =
-    effectiveSelectedThreadId !== null ? capabilities.sandboxModeStatus : (repoDetail?.sandboxModeStatus ?? null);
   const accessLoadingReason = viewerAccess === undefined ? "Loading access…" : undefined;
-  const chatSendDisabledReason =
-    accessLoadingReason ??
-    (isViewerFeatureEnabled(viewerAccess, chatMode === "library" ? "libraryAsk" : "chatSend")
-      ? undefined
-      : DEMO_MODE_COPY.lockedMessage);
   const importDisabledReason =
     accessLoadingReason ??
     (isViewerFeatureEnabled(viewerAccess, "repoImport") ? undefined : DEMO_MODE_COPY.importDisabled);
@@ -203,9 +162,6 @@ export function RepositoryShell({
       generateSystemDesignDisabledReason = DEMO_MODE_COPY.sandboxDisabled;
     }
   }
-  const sandboxGroundingDisabledReason =
-    accessLoadingReason ??
-    (isViewerFeatureEnabled(viewerAccess, "sandboxGrounding") ? undefined : DEMO_MODE_COPY.sandboxDisabled);
   const premiumModelsDisabledReason =
     accessLoadingReason ??
     (isViewerFeatureEnabled(viewerAccess, "premiumModels") ? undefined : DEMO_MODE_COPY.premiumModelsDisabled);
@@ -394,65 +350,13 @@ export function RepositoryShell({
     }
   }, [currentRepositoryId, mode, navigate]);
 
-  const {
-    chatInput,
-    setChatInput,
-    isSending,
-    handleSendMessage,
-    isCancellingReply,
-    handleCancelInFlightReply,
-    isArchivingThread,
-    handleArchiveThread,
-  } = useChatShellLifecycle({
-    urlThreadId,
-    repositoryId: currentRepositoryId,
-    chatMode,
-    groundLibrary,
-    groundSandbox,
-    selectedProvider,
-    selectedModelName,
-    selectedReasoningEffort,
+  const { isArchivingThread, handleArchiveThread } = useChatShellLifecycle({
+    selectedThreadId: effectiveSelectedThreadId,
     threadToArchive,
     setActionError,
     setThreadToArchive,
-    onAfterCreateThread,
     onAfterArchiveThread,
   });
-
-  useEffect(() => {
-    if (groundingByThread.threadId === urlThreadId) return;
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setGroundingByThread({
-      threadId: urlThreadId,
-      library: urlThreadId === null ? false : capabilities.defaultGroundLibrary,
-      sandbox: urlThreadId === null ? false : capabilities.defaultGroundSandbox,
-    });
-  }, [urlThreadId, capabilities.defaultGroundLibrary, capabilities.defaultGroundSandbox, groundingByThread.threadId]);
-
-  const groundingState = availability?.grounding;
-  useEffect(() => {
-    if (groundingState && !groundingState.library.enabled && groundLibrary) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setGroundLibrary(false);
-    }
-  }, [groundingState, groundLibrary, setGroundLibrary]);
-  useEffect(() => {
-    if (
-      groundingState &&
-      !groundingState.sandbox.enabled &&
-      groundingState.sandbox.isActivatable !== true &&
-      groundSandbox
-    ) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setGroundSandbox(false);
-    }
-  }, [groundingState, groundSandbox, setGroundSandbox]);
-  useEffect(() => {
-    if (sandboxGroundingDisabledReason && groundSandbox) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setGroundSandbox(false);
-    }
-  }, [groundSandbox, sandboxGroundingDisabledReason, setGroundSandbox]);
 
   const {
     isSyncing,
@@ -479,48 +383,33 @@ export function RepositoryShell({
   });
 
   const chatReadOnlyHint = isRepoArchived ? "Restore this repository to send messages or run analyses." : undefined;
+  const composer = useChatComposerSession({
+    surface: "repository",
+    threadId: effectiveSelectedThreadId,
+    repositoryId: currentRepositoryId,
+    mode: chatMode,
+    capabilities,
+    groundingAvailability: availability?.grounding,
+    viewerAccess,
+    isSyncing: isSyncing || isRepositorySyncing,
+    isReadOnly: isRepoArchived,
+    readOnlyHint: chatReadOnlyHint,
+    setActionError,
+    onOpenGenerateSystemDesign: () => setIsGenerateDialogOpen(true),
+    onAfterCreateThread,
+  });
 
   const chatContainerNode = (
     <ChatContainer
       selectedThreadId={effectiveSelectedThreadId}
-      repositoryId={currentRepositoryId}
       isShellLoading={isChatShellLoading}
-      chatInput={chatInput}
-      setChatInput={setChatInput}
+      composer={composer}
       chatMode={chatMode}
-      groundLibrary={groundLibrary}
-      groundSandbox={groundSandbox}
-      setGroundLibrary={setGroundLibrary}
-      setGroundSandbox={setGroundSandbox}
-      selectedProvider={selectedProvider}
-      selectedModelName={selectedModelName}
-      setSelectedModel={setSelectedModel}
-      premiumModelsDisabledReason={premiumModelsDisabledReason}
-      modelPreferenceScope={modelPreferenceScope}
-      selectedReasoningEffort={selectedReasoningEffort}
-      setSelectedReasoningEffort={setSelectedReasoningEffort}
-      highReasoningDisabledReason={highReasoningDisabledReason}
-      threadLockedProvider={capabilities.lockedProvider}
-      grounding={availability?.grounding}
-      showGroundingToggles
-      onOpenGenerateSystemDesign={() => setIsGenerateDialogOpen(true)}
-      generateSystemDesignDisabledReason={generateSystemDesignDisabledReason}
-      isSending={isSending}
-      onSendMessage={handleSendMessage}
-      sendDisabledReason={chatSendDisabledReason}
-      onCancelInFlightReply={handleCancelInFlightReply}
-      isCancellingReply={isCancellingReply}
-      sandboxModeStatus={effectiveSandboxModeStatus}
-      isSyncing={isSyncing || isRepositorySyncing}
-      onSync={() => void handleSync()}
-      sandboxGroundingDisabledReason={sandboxGroundingDisabledReason}
       isArtifactPanelOpen={isDesktopLayout ? isArtifactPanelOpen : isArtifactSheetOpen}
       onToggleArtifactPanel={handleToggleArtifactPanel}
       showArtifactToggle={isArtifactPanelEnabled}
       hasAttachedRepository={capabilities.attachedRepository !== null}
       onSelectArtifact={handleSelectArtifact}
-      isReadOnly={isRepoArchived}
-      readOnlyHint={chatReadOnlyHint}
       attachedRepositoryId={capabilities.attachedRepository?.id}
     />
   );

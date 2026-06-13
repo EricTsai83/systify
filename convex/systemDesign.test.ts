@@ -8,6 +8,7 @@ import schema from "./schema";
 import { SYSTEM_DESIGN_PROMPT_VERSIONS } from "./lib/systemDesignPrompts";
 import { peekSandboxDailyCostForUser } from "./lib/rateLimit";
 import { createRateLimitedTestConvex } from "../test/convex/harness";
+import { withPausedConvexScheduler } from "../test/convex/scheduler";
 
 const modules = import.meta.glob("./**/*.ts");
 
@@ -54,11 +55,13 @@ async function insertArtifact(
     ownerTokenIdentifier: string;
     repositoryId: Id<"repositories">;
     kind?: "readme_summary" | "security_overview";
+    folderId?: Id<"artifactFolders">;
     alignedImportCommitSha?: string;
     generatedByProvider?: "openai" | "anthropic";
     generatedByModel?: string;
     promptVersion?: number;
     title?: string;
+    contentMarkdown?: string;
   },
 ) {
   return await t.run(async (ctx) => {
@@ -68,12 +71,60 @@ async function insertArtifact(
       kind: args.kind ?? "readme_summary",
       title: args.title ?? "README Summary",
       summary: "Summary",
-      contentMarkdown: "# Summary",
+      contentMarkdown: args.contentMarkdown ?? "# Summary",
       version: 1,
+      ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
       ...(args.alignedImportCommitSha !== undefined ? { alignedImportCommitSha: args.alignedImportCommitSha } : {}),
       ...(args.generatedByProvider !== undefined ? { generatedByProvider: args.generatedByProvider } : {}),
       ...(args.generatedByModel !== undefined ? { generatedByModel: args.generatedByModel } : {}),
       ...(args.promptVersion !== undefined ? { promptVersion: args.promptVersion } : {}),
+    });
+  });
+}
+
+async function insertSystemDesignFolder(
+  t: ReturnType<typeof createTestConvex>,
+  args: {
+    ownerTokenIdentifier: string;
+    repositoryId: Id<"repositories">;
+    systemKey?: string;
+    name?: string;
+  },
+) {
+  return await t.run(async (ctx) => {
+    return await ctx.db.insert("artifactFolders", {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId: args.repositoryId,
+      name: args.name ?? "Overview",
+      systemKey: args.systemKey ?? "overview",
+    });
+  });
+}
+
+async function insertRunningSystemDesignJob(
+  t: ReturnType<typeof createTestConvex>,
+  args: {
+    ownerTokenIdentifier: string;
+    repositoryId: Id<"repositories">;
+    startedAt?: number;
+    selections?: Array<"readme_summary" | "security_overview">;
+    leaseExpiresAt?: number;
+  },
+) {
+  const startedAt = args.startedAt ?? Date.now();
+  return await t.run(async (ctx) => {
+    return await ctx.db.insert("jobs", {
+      repositoryId: args.repositoryId,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      kind: "system_design",
+      status: "running",
+      stage: "generating",
+      progress: 0.5,
+      costCategory: "system_design",
+      triggerSource: "user",
+      selections: args.selections,
+      startedAt,
+      leaseExpiresAt: args.leaseExpiresAt ?? Date.now() + 60_000,
     });
   });
 }
@@ -191,176 +242,138 @@ describe("findCachedArtifact", () => {
   });
 });
 
-describe("recordKindRun usage rollups", () => {
-  test("records metered System Design usage and skips cached hits", async () => {
-    const ownerTokenIdentifier = "user|system-design-rollup";
-    const t = createTestConvex();
-    const startedAt = Date.UTC(2026, 3, 24, 10, 0, 0);
-    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
-    const jobId = await t.run(async (ctx) => {
-      return await ctx.db.insert("jobs", {
-        repositoryId,
+describe("finalizeKindPublication", () => {
+  test("generated success replaces stale artifact, links kindRun, and settles usage once", async () => {
+    await withPausedConvexScheduler(async () => {
+      process.env.SANDBOX_DAILY_CAP_PER_USER_USD = "0.10";
+      process.env.SANDBOX_DAILY_CAP_PER_REPOSITORY_USD = "0.10";
+
+      const ownerTokenIdentifier = "user|system-design-finalize-generated";
+      const t = createRateLimitedTestConvex();
+      const startedAt = Date.UTC(2026, 3, 24, 10, 0, 0);
+      const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+      const folderId = await insertSystemDesignFolder(t, { ownerTokenIdentifier, repositoryId });
+      const staleArtifactId = await insertArtifact(t, {
         ownerTokenIdentifier,
-        kind: "system_design",
-        status: "running",
-        stage: "generating",
-        progress: 0.5,
-        costCategory: "system_design",
-        triggerSource: "user",
-        startedAt,
-        leaseExpiresAt: Date.now() + 60_000,
+        repositoryId,
+        folderId,
+        contentMarkdown: "# Old summary",
       });
+      const jobId = await insertRunningSystemDesignJob(t, { ownerTokenIdentifier, repositoryId, startedAt });
+      const sourceId = `systemDesign:${jobId}:readme_summary:${startedAt}`;
+
+      const result = await t.mutation(internal.systemDesign.finalizeKindPublication, {
+        ownerTokenIdentifier,
+        repositoryId,
+        jobId,
+        kind: "readme_summary",
+        provider: "anthropic",
+        modelName: "claude-sonnet-4-6",
+        promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
+        alignedImportCommitSha: "commit-a",
+        stepCap: 20,
+        actualSteps: 3,
+        durationMs: 1_000,
+        startedAt,
+        outcome: {
+          kind: "generated",
+          title: "README Summary",
+          summary: "Fresh summary",
+          contentMarkdown: "# Fresh summary\n\nGenerated body.",
+          outputCharLength: 32,
+          usage: {
+            inputTokens: 2_000,
+            outputTokens: 750,
+            cacheWriteTokens: 25,
+          },
+          totalCostUsd: 0.03,
+        },
+      });
+
+      expect(result).toMatchObject({
+        finalized: true,
+        status: "succeeded",
+        countsAsSucceeded: true,
+        aborted: false,
+      });
+      if (!result.finalized || !result.artifactId) {
+        throw new Error("Expected generated finalization to create an artifact.");
+      }
+      const artifactId = result.artifactId;
+
+      const state = await t.run(async (ctx) => {
+        const artifact = await ctx.db.get(artifactId);
+        const staleArtifact = await ctx.db.get(staleArtifactId);
+        const kindRuns = await ctx.db
+          .query("systemDesignKindRuns")
+          .withIndex("by_jobId", (q) => q.eq("jobId", jobId))
+          .take(10);
+        const events = await ctx.db
+          .query("userUsageEvents")
+          .withIndex("by_sourceId", (q) => q.eq("sourceId", sourceId))
+          .take(10);
+        const rollups = await ctx.db
+          .query("userUsageDailyRollups")
+          .withIndex("by_ownerTokenIdentifier_and_yyyymmdd", (q) =>
+            q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("yyyymmdd", "2026-04-24"),
+          )
+          .take(10);
+        const budget = await peekSandboxDailyCostForUser(ctx, ownerTokenIdentifier);
+        return { artifact, staleArtifact, kindRuns, events, rollups, budget };
+      });
+
+      expect(state.staleArtifact).toBeNull();
+      expect(state.kindRuns).toHaveLength(1);
+      expect(state.artifact).toMatchObject({
+        repositoryId,
+        folderId,
+        ownerTokenIdentifier,
+        kind: "readme_summary",
+        title: "README Summary",
+        summary: "Fresh summary",
+        version: 1,
+        chunkingStatus: "pending",
+        alignedImportCommitSha: "commit-a",
+        generatedByProvider: "anthropic",
+        generatedByModel: "claude-sonnet-4-6",
+        promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
+        kindRunId: state.kindRuns[0]._id,
+      });
+      expect(state.kindRuns[0]).toMatchObject({
+        status: "succeeded",
+        artifactId: result.artifactId,
+        inputTokens: 2_000,
+        outputTokens: 750,
+        cacheWriteTokens: 25,
+        totalCostUsd: 0.03,
+        outputCharLength: 32,
+      });
+      expect(state.events).toHaveLength(1);
+      expect(state.rollups[0]).toMatchObject({
+        feature: "systemDesign",
+        events: 1,
+        inputTokens: 2_000,
+        outputTokens: 750,
+        cacheWriteTokens: 25,
+      });
+      expect(state.budget.remainingCents).toBe(7);
     });
+  });
+
+  test("cache hit records a free kindRun and leaves cached artifact provenance untouched", async () => {
+    const ownerTokenIdentifier = "user|system-design-finalize-cache-hit";
+    const t = createTestConvex();
+    const startedAt = Date.now();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await insertRunningSystemDesignJob(t, { ownerTokenIdentifier, repositoryId, startedAt });
     const cachedArtifactId = await insertArtifact(t, {
       ownerTokenIdentifier,
       repositoryId,
-      kind: "security_overview",
-    });
-
-    await t.mutation(internal.systemDesign.recordKindRun, {
-      ownerTokenIdentifier,
-      repositoryId,
-      jobId,
-      kind: "readme_summary",
-      provider: "anthropic",
-      modelName: "claude-sonnet-4-6",
-      promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
-      stepCap: 20,
-      actualSteps: 3,
-      inputTokens: 2_000,
-      outputTokens: 750,
-      cacheWriteTokens: 25,
-      durationMs: 1_000,
-      status: "succeeded",
-      startedAt,
-    });
-    await t.mutation(internal.systemDesign.recordKindRun, {
-      ownerTokenIdentifier,
-      repositoryId,
-      jobId,
-      kind: "security_overview",
-      artifactId: cachedArtifactId,
-      provider: "anthropic",
-      modelName: "claude-sonnet-4-6",
-      promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.security_overview,
-      stepCap: 20,
-      actualSteps: 0,
-      durationMs: 10,
-      status: "cached_hit",
-      startedAt,
-    });
-
-    const rollups = await t.run(async (ctx) => {
-      return await ctx.db
-        .query("userUsageDailyRollups")
-        .withIndex("by_ownerTokenIdentifier_and_yyyymmdd", (q) =>
-          q.eq("ownerTokenIdentifier", ownerTokenIdentifier).eq("yyyymmdd", "2026-04-24"),
-        )
-        .take(10);
-    });
-
-    expect(rollups).toHaveLength(1);
-    expect(rollups[0]).toMatchObject({
-      feature: "systemDesign",
-      events: 1,
-      inputTokens: 2_000,
-      outputTokens: 750,
-      cacheWriteTokens: 25,
-    });
-  });
-
-  test("duplicate sourceId settlement does not consume the daily cap twice", async () => {
-    process.env.SANDBOX_DAILY_CAP_PER_USER_USD = "0.10";
-    process.env.SANDBOX_DAILY_CAP_PER_REPOSITORY_USD = "0.10";
-
-    const ownerTokenIdentifier = "user|system-design-idempotent-settle";
-    const t = createRateLimitedTestConvex();
-    const startedAt = Date.now();
-    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
-    const jobId = await t.run(async (ctx) => {
-      return await ctx.db.insert("jobs", {
-        repositoryId,
-        ownerTokenIdentifier,
-        kind: "system_design",
-        status: "running",
-        stage: "generating",
-        progress: 0.5,
-        costCategory: "system_design",
-        triggerSource: "user",
-        startedAt,
-        leaseExpiresAt: Date.now() + 60_000,
-      });
+      contentMarkdown: "# Cached summary",
     });
     const sourceId = `systemDesign:${jobId}:readme_summary:${startedAt}`;
-    const args = {
-      ownerTokenIdentifier,
-      repositoryId,
-      jobId,
-      kind: "readme_summary" as const,
-      provider: "openai" as const,
-      modelName: "gpt-5.5",
-      promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
-      stepCap: 20,
-      actualSteps: 3,
-      inputTokens: 1_000,
-      outputTokens: 500,
-      totalCostUsd: 0.03,
-      durationMs: 1_000,
-      status: "succeeded" as const,
-      startedAt,
-      sourceId,
-    };
 
-    await t.mutation(internal.systemDesign.recordKindRun, args);
-    await t.mutation(internal.systemDesign.recordKindRun, args);
-
-    const state = await t.run(async (ctx) => {
-      const events = await ctx.db
-        .query("userUsageEvents")
-        .withIndex("by_sourceId", (q) => q.eq("sourceId", sourceId))
-        .take(10);
-      const budget = await peekSandboxDailyCostForUser(ctx, ownerTokenIdentifier);
-      return { events, budget };
-    });
-
-    expect(state.events).toHaveLength(1);
-    expect(state.budget.remainingCents).toBe(7);
-  });
-});
-
-describe("System Design finalization guard", () => {
-  test("skips artifact and kind-run writes after repository archive", async () => {
-    const ownerTokenIdentifier = "user|system-design-finalization-archive";
-    const t = createTestConvex();
-    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
-    const jobId = await t.run(async (ctx) => {
-      return await ctx.db.insert("jobs", {
-        repositoryId,
-        ownerTokenIdentifier,
-        kind: "system_design",
-        status: "running",
-        stage: "generating",
-        progress: 0.5,
-        costCategory: "system_design",
-        triggerSource: "user",
-        startedAt: Date.now(),
-        leaseExpiresAt: Date.now() + 60_000,
-      });
-    });
-    await t.run(async (ctx) => {
-      await ctx.db.patch(repositoryId, { archivedAt: Date.now() });
-    });
-
-    const persisted = await t.mutation(internal.systemDesign.persistGeneratedArtifact, {
-      repositoryId,
-      ownerTokenIdentifier,
-      jobId,
-      kind: "readme_summary",
-      title: "README Summary",
-      summary: "Summary",
-      contentMarkdown: "# Summary",
-    });
-    const recorded = await t.mutation(internal.systemDesign.recordKindRun, {
+    const result = await t.mutation(internal.systemDesign.finalizeKindPublication, {
       ownerTokenIdentifier,
       repositoryId,
       jobId,
@@ -370,9 +383,80 @@ describe("System Design finalization guard", () => {
       promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
       stepCap: 20,
       actualSteps: 0,
-      durationMs: 1_000,
-      status: "failed",
-      startedAt: Date.now(),
+      durationMs: 10,
+      startedAt,
+      outcome: {
+        kind: "cached_hit",
+        cachedArtifactId,
+        outputCharLength: "# Cached summary".length,
+      },
+    });
+
+    const state = await t.run(async (ctx) => {
+      const artifact = await ctx.db.get(cachedArtifactId);
+      const kindRuns = await ctx.db
+        .query("systemDesignKindRuns")
+        .withIndex("by_jobId", (q) => q.eq("jobId", jobId))
+        .take(10);
+      const events = await ctx.db
+        .query("userUsageEvents")
+        .withIndex("by_sourceId", (q) => q.eq("sourceId", sourceId))
+        .take(10);
+      return { artifact, kindRuns, events };
+    });
+
+    expect(result).toMatchObject({
+      finalized: true,
+      status: "cached_hit",
+      artifactId: cachedArtifactId,
+      countsAsSucceeded: true,
+      aborted: false,
+    });
+    expect(state.kindRuns).toHaveLength(1);
+    expect(state.kindRuns[0]).toMatchObject({
+      status: "cached_hit",
+      artifactId: cachedArtifactId,
+      actualSteps: 0,
+      outputCharLength: "# Cached summary".length,
+    });
+    expect(state.artifact?.kindRunId).toBeUndefined();
+    expect(state.events).toHaveLength(0);
+  });
+
+  test("quality rejection records missing sections, settles usage, and creates no artifact", async () => {
+    process.env.SANDBOX_DAILY_CAP_PER_USER_USD = "0.10";
+    process.env.SANDBOX_DAILY_CAP_PER_REPOSITORY_USD = "0.10";
+
+    const ownerTokenIdentifier = "user|system-design-finalize-quality";
+    const t = createRateLimitedTestConvex();
+    const startedAt = Date.now();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await insertRunningSystemDesignJob(t, { ownerTokenIdentifier, repositoryId, startedAt });
+    const sourceId = `systemDesign:${jobId}:readme_summary:${startedAt}`;
+
+    const result = await t.mutation(internal.systemDesign.finalizeKindPublication, {
+      ownerTokenIdentifier,
+      repositoryId,
+      jobId,
+      kind: "readme_summary",
+      provider: "openai",
+      modelName: "gpt-5.5",
+      promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
+      stepCap: 20,
+      actualSteps: 2,
+      durationMs: 500,
+      startedAt,
+      outcome: {
+        kind: "quality_rejected",
+        failureReason: "output_quality",
+        missingSections: ["overview", "risks"],
+        outputCharLength: 128,
+        usage: {
+          inputTokens: 900,
+          outputTokens: 300,
+        },
+        totalCostUsd: 0.02,
+      },
     });
 
     const state = await t.run(async (ctx) => {
@@ -382,15 +466,359 @@ describe("System Design finalization guard", () => {
         .take(10);
       const kindRuns = await ctx.db
         .query("systemDesignKindRuns")
-        .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", repositoryId).eq("kind", "readme_summary"))
+        .withIndex("by_jobId", (q) => q.eq("jobId", jobId))
         .take(10);
-      return { artifacts, kindRuns };
+      const events = await ctx.db
+        .query("userUsageEvents")
+        .withIndex("by_sourceId", (q) => q.eq("sourceId", sourceId))
+        .take(10);
+      const budget = await peekSandboxDailyCostForUser(ctx, ownerTokenIdentifier);
+      return { artifacts, kindRuns, events, budget };
     });
 
-    expect(persisted).toEqual({ persisted: false });
-    expect(recorded).toEqual({ recorded: false });
+    expect(result).toMatchObject({
+      finalized: true,
+      status: "quality_rejected",
+      countsAsSucceeded: false,
+      aborted: false,
+    });
+    expect(state.artifacts).toHaveLength(0);
+    expect(state.kindRuns).toHaveLength(1);
+    expect(state.kindRuns[0]).toMatchObject({
+      status: "quality_rejected",
+      failureReason: "output_quality",
+      missingSections: ["overview", "risks"],
+      outputCharLength: 128,
+    });
+    expect(state.events).toHaveLength(1);
+    expect(state.budget.remainingCents).toBe(8);
+  });
+
+  test("failed outcome appends job failure, settles usage, and creates no artifact", async () => {
+    process.env.SANDBOX_DAILY_CAP_PER_USER_USD = "0.10";
+    process.env.SANDBOX_DAILY_CAP_PER_REPOSITORY_USD = "0.10";
+
+    const ownerTokenIdentifier = "user|system-design-finalize-failed";
+    const t = createRateLimitedTestConvex();
+    const startedAt = Date.now();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await insertRunningSystemDesignJob(t, { ownerTokenIdentifier, repositoryId, startedAt });
+    const sourceId = `systemDesign:${jobId}:readme_summary:${startedAt}`;
+
+    const result = await t.mutation(internal.systemDesign.finalizeKindPublication, {
+      ownerTokenIdentifier,
+      repositoryId,
+      jobId,
+      kind: "readme_summary",
+      provider: "openai",
+      modelName: "gpt-5.5",
+      promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
+      stepCap: 20,
+      actualSteps: 1,
+      durationMs: 400,
+      startedAt,
+      outcome: {
+        kind: "failed",
+        failureReason: "transport_other",
+        failureLog: {
+          errorId: "err_123",
+          message: "provider failed",
+        },
+        usage: {
+          inputTokens: 500,
+          outputTokens: 100,
+        },
+        totalCostUsd: 0.01,
+      },
+    });
+
+    const state = await t.run(async (ctx) => {
+      const job = await ctx.db.get(jobId);
+      const artifacts = await ctx.db
+        .query("artifacts")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
+        .take(10);
+      const kindRuns = await ctx.db
+        .query("systemDesignKindRuns")
+        .withIndex("by_jobId", (q) => q.eq("jobId", jobId))
+        .take(10);
+      const events = await ctx.db
+        .query("userUsageEvents")
+        .withIndex("by_sourceId", (q) => q.eq("sourceId", sourceId))
+        .take(10);
+      return { job, artifacts, kindRuns, events };
+    });
+
+    expect(result).toMatchObject({
+      finalized: true,
+      status: "failed",
+      countsAsSucceeded: false,
+      aborted: false,
+    });
+    expect(state.artifacts).toHaveLength(0);
+    expect(state.kindRuns).toHaveLength(1);
+    expect(state.kindRuns[0]).toMatchObject({
+      status: "failed",
+      failureReason: "transport_other",
+      inputTokens: 500,
+      outputTokens: 100,
+    });
+    expect(state.job?.kindFailures).toEqual([
+      {
+        kind: "readme_summary",
+        errorId: "err_123",
+        message: "provider failed",
+        reason: "transport_other",
+      },
+    ]);
+    expect(state.events).toHaveLength(1);
+  });
+
+  test("settles paid generated output but writes nothing when repository is archived", async () => {
+    process.env.SANDBOX_DAILY_CAP_PER_USER_USD = "0.10";
+    process.env.SANDBOX_DAILY_CAP_PER_REPOSITORY_USD = "0.10";
+
+    const ownerTokenIdentifier = "user|system-design-finalize-archived-paid";
+    const t = createRateLimitedTestConvex();
+    const startedAt = Date.now();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await insertRunningSystemDesignJob(t, { ownerTokenIdentifier, repositoryId, startedAt });
+    const sourceId = `systemDesign:${jobId}:readme_summary:${startedAt}`;
+    await t.run(async (ctx) => {
+      await ctx.db.patch(repositoryId, { archivedAt: Date.now() });
+    });
+
+    const result = await t.mutation(internal.systemDesign.finalizeKindPublication, {
+      ownerTokenIdentifier,
+      repositoryId,
+      jobId,
+      kind: "readme_summary",
+      provider: "openai",
+      modelName: "gpt-5.5",
+      promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
+      stepCap: 20,
+      actualSteps: 3,
+      durationMs: 1_000,
+      startedAt,
+      outcome: {
+        kind: "generated",
+        title: "README Summary",
+        summary: "Summary",
+        contentMarkdown: "# Summary",
+        outputCharLength: 9,
+        usage: {
+          inputTokens: 1_000,
+          outputTokens: 500,
+        },
+        totalCostUsd: 0.02,
+      },
+    });
+
+    const state = await t.run(async (ctx) => {
+      const artifacts = await ctx.db
+        .query("artifacts")
+        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
+        .take(10);
+      const kindRuns = await ctx.db
+        .query("systemDesignKindRuns")
+        .withIndex("by_jobId", (q) => q.eq("jobId", jobId))
+        .take(10);
+      const events = await ctx.db
+        .query("userUsageEvents")
+        .withIndex("by_sourceId", (q) => q.eq("sourceId", sourceId))
+        .take(10);
+      const budget = await peekSandboxDailyCostForUser(ctx, ownerTokenIdentifier);
+      return { artifacts, kindRuns, events, budget };
+    });
+
+    expect(result).toEqual({
+      finalized: false,
+      status: "succeeded",
+      countsAsSucceeded: false,
+      aborted: true,
+      reason: "inactive_target",
+      settledUsage: true,
+    });
     expect(state.artifacts).toHaveLength(0);
     expect(state.kindRuns).toHaveLength(0);
+    expect(state.events).toHaveLength(1);
+    expect(state.budget.remainingCents).toBe(8);
+  });
+
+  test("aborts archived cache hit without kindRun or settlement", async () => {
+    const ownerTokenIdentifier = "user|system-design-finalize-archived-cache";
+    const t = createTestConvex();
+    const startedAt = Date.now();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await insertRunningSystemDesignJob(t, { ownerTokenIdentifier, repositoryId, startedAt });
+    const cachedArtifactId = await insertArtifact(t, { ownerTokenIdentifier, repositoryId });
+    const sourceId = `systemDesign:${jobId}:readme_summary:${startedAt}`;
+    await t.run(async (ctx) => {
+      await ctx.db.patch(repositoryId, { archivedAt: Date.now() });
+    });
+
+    const result = await t.mutation(internal.systemDesign.finalizeKindPublication, {
+      ownerTokenIdentifier,
+      repositoryId,
+      jobId,
+      kind: "readme_summary",
+      provider: "openai",
+      modelName: "gpt-5.5",
+      promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
+      stepCap: 20,
+      actualSteps: 0,
+      durationMs: 10,
+      startedAt,
+      outcome: {
+        kind: "cached_hit",
+        cachedArtifactId,
+        outputCharLength: 9,
+      },
+    });
+
+    const state = await t.run(async (ctx) => {
+      const kindRuns = await ctx.db
+        .query("systemDesignKindRuns")
+        .withIndex("by_jobId", (q) => q.eq("jobId", jobId))
+        .take(10);
+      const events = await ctx.db
+        .query("userUsageEvents")
+        .withIndex("by_sourceId", (q) => q.eq("sourceId", sourceId))
+        .take(10);
+      return { kindRuns, events };
+    });
+
+    expect(result).toEqual({
+      finalized: false,
+      status: "cached_hit",
+      countsAsSucceeded: false,
+      aborted: true,
+      reason: "inactive_target",
+      settledUsage: false,
+    });
+    expect(state.kindRuns).toHaveLength(0);
+    expect(state.events).toHaveLength(0);
+  });
+
+  test("aborts invalid cached artifact without kindRun or settlement", async () => {
+    const ownerTokenIdentifier = "user|system-design-finalize-invalid-cache";
+    const t = createTestConvex();
+    const startedAt = Date.now();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await insertRunningSystemDesignJob(t, { ownerTokenIdentifier, repositoryId, startedAt });
+    const wrongKindArtifactId = await insertArtifact(t, {
+      ownerTokenIdentifier,
+      repositoryId,
+      kind: "security_overview",
+    });
+    const sourceId = `systemDesign:${jobId}:readme_summary:${startedAt}`;
+
+    const result = await t.mutation(internal.systemDesign.finalizeKindPublication, {
+      ownerTokenIdentifier,
+      repositoryId,
+      jobId,
+      kind: "readme_summary",
+      provider: "openai",
+      modelName: "gpt-5.5",
+      promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
+      stepCap: 20,
+      actualSteps: 0,
+      durationMs: 10,
+      startedAt,
+      outcome: {
+        kind: "cached_hit",
+        cachedArtifactId: wrongKindArtifactId,
+        outputCharLength: 9,
+      },
+    });
+
+    const state = await t.run(async (ctx) => {
+      const kindRuns = await ctx.db
+        .query("systemDesignKindRuns")
+        .withIndex("by_jobId", (q) => q.eq("jobId", jobId))
+        .take(10);
+      const events = await ctx.db
+        .query("userUsageEvents")
+        .withIndex("by_sourceId", (q) => q.eq("sourceId", sourceId))
+        .take(10);
+      return { kindRuns, events };
+    });
+
+    expect(result).toEqual({
+      finalized: false,
+      status: "cached_hit",
+      countsAsSucceeded: false,
+      aborted: true,
+      reason: "invalid_cached_artifact",
+      settledUsage: false,
+    });
+    expect(state.kindRuns).toHaveLength(0);
+    expect(state.events).toHaveLength(0);
+  });
+
+  test("duplicate sourceId settlement keeps usage and daily cap idempotent", async () => {
+    await withPausedConvexScheduler(async () => {
+      process.env.SANDBOX_DAILY_CAP_PER_USER_USD = "0.10";
+      process.env.SANDBOX_DAILY_CAP_PER_REPOSITORY_USD = "0.10";
+
+      const ownerTokenIdentifier = "user|system-design-idempotent-settle";
+      const t = createRateLimitedTestConvex();
+      const startedAt = Date.now();
+      const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+      await insertSystemDesignFolder(t, { ownerTokenIdentifier, repositoryId });
+      const jobId = await insertRunningSystemDesignJob(t, { ownerTokenIdentifier, repositoryId, startedAt });
+      const sourceId = `systemDesign:${jobId}:readme_summary:${startedAt}`;
+      const args = {
+        ownerTokenIdentifier,
+        repositoryId,
+        jobId,
+        kind: "readme_summary",
+        provider: "openai",
+        modelName: "gpt-5.5",
+        promptVersion: SYSTEM_DESIGN_PROMPT_VERSIONS.readme_summary,
+        stepCap: 20,
+        actualSteps: 3,
+        durationMs: 1_000,
+        startedAt,
+        outcome: {
+          kind: "generated",
+          title: "README Summary",
+          summary: "Summary",
+          contentMarkdown: "# Summary",
+          outputCharLength: 9,
+          usage: {
+            inputTokens: 1_000,
+            outputTokens: 500,
+          },
+          totalCostUsd: 0.03,
+        },
+      } as const;
+
+      await t.mutation(internal.systemDesign.finalizeKindPublication, args);
+      await t.mutation(internal.systemDesign.finalizeKindPublication, args);
+
+      const state = await t.run(async (ctx) => {
+        const kindRuns = await ctx.db
+          .query("systemDesignKindRuns")
+          .withIndex("by_jobId", (q) => q.eq("jobId", jobId))
+          .take(10);
+        const events = await ctx.db
+          .query("userUsageEvents")
+          .withIndex("by_sourceId", (q) => q.eq("sourceId", sourceId))
+          .take(10);
+        const artifacts = await ctx.db
+          .query("artifacts")
+          .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", repositoryId).eq("kind", "readme_summary"))
+          .take(10);
+        const budget = await peekSandboxDailyCostForUser(ctx, ownerTokenIdentifier);
+        return { kindRuns, events, artifacts, budget };
+      });
+
+      expect(state.kindRuns).toHaveLength(2);
+      expect(state.events).toHaveLength(1);
+      expect(state.artifacts).toHaveLength(1);
+      expect(state.budget.remainingCents).toBe(7);
+    });
   });
 });
 

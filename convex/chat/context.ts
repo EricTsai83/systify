@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import type { Doc, Id } from "../_generated/dataModel";
+import type { Id } from "../_generated/dataModel";
 import type { QueryCtx } from "../_generated/server";
 import { internalQuery } from "../_generated/server";
 import { resolveDiscussGrounding } from "../lib/chatMode";
@@ -7,10 +7,15 @@ import { MAX_CONTEXT_MESSAGES } from "../lib/constants";
 import type { ReasoningEffort } from "../lib/llmCatalog";
 import type { LlmProvider } from "../lib/llmProvider";
 import { loadViewerCustomization, type UserCustomizationPreferences } from "../lib/userPreferences";
-import type { ExtendedChatMode } from "./prompting";
+import {
+  createReplyGroundingPlan,
+  type ExtendedChatMode,
+  type ReplyGroundingPlan,
+  type RepositoryGroundingSnapshot,
+} from "./replyGrounding";
 import { resolveRepolessAgentEnabled } from "./threads";
 
-export type ReplyContext = {
+export type ReplyTurnContext = {
   ownerTokenIdentifier: string;
   /**
    * Effective mode for this reply, anchored to the queued user message:
@@ -27,15 +32,6 @@ export type ReplyContext = {
    * `buildSystemPrompt` without re-deriving the rule.
    */
   mode: ExtendedChatMode;
-  /**
-   * Per-message grounding flags anchored to the queued user message.
-   * Meaningful only on `mode === "discuss"` — Library mode leaves both
-   * unset and uses the implicit artifact-grounded contract. Both default
-   * to `false` when unset. `generation.ts` reads these to decide which
-   * system prompt block to compose and whether to wire sandbox tools.
-   */
-  groundLibrary: boolean;
-  groundSandbox: boolean;
   /**
    * Provider + model the user picked at send time (`messages.provider /
    * messages.modelName` on the queued user message). Anchored to the
@@ -62,113 +58,12 @@ export type ReplyContext = {
   agentInstructions?: string;
   singleTurnEnabled: boolean;
   customization: UserCustomizationPreferences;
-  repositoryId?: Id<"repositories">;
-  repositorySummary?: string;
-  readmeSummary?: string;
-  architectureSummary?: string;
-  sourceRepoFullName?: string;
-  /**
-   * Artifacts in scope for this reply. The `id` is exposed alongside the
-   * displayed fields so `generation.ts` can build a numbered citation map
-   * (`[A1] → artifactId`) that travels with the assistant message and lets
-   * the frontend resolve `[A#]` tokens back to specific artifact rows.
-   */
-  artifacts: Array<{ id: Id<"artifacts">; title: string; summary: string; contentMarkdown: string }>;
-  artifactChunks?: Array<{
-    chunkId: Id<"artifactChunks">;
-    artifactId: Id<"artifacts">;
-    artifactTitle: string;
-    artifactKind: Doc<"artifacts">["kind"];
-    headingPath: string[];
-    content: string;
-    lexicalScore: number;
-    semanticScore: number;
-    rrfScore: number;
-  }>;
-  artifactContext?: Id<"artifacts">[];
-  chunks: Array<{ path: string; summary: string; content: string }>;
   messages: Array<{ id: Id<"messages">; role: "user" | "assistant" | "system" | "tool"; content: string }>;
-  /**
-   * Sandbox-tool wiring snapshot. Populated only when the queued user
-   * message has `groundSandbox: true` AND the repository already has a
-   * ready sandbox at context-query time.
-   *
-   * This is no longer the source of truth for whether Sandbox grounding
-   * should use tools. The Node generation action calls `ensureSandboxReady`
-   * for every sandbox-grounded reply and replaces this handle with the
-   * prepared live-source handle before constructing final tools. Keeping
-   * this snapshot available is useful for ready-cache tests and legacy
-   * call sites, but missing/stopped/failed/provisioning rows should not
-   * be interpreted as "answer without tools."
-   *
-   * The fields are everything the action needs to construct a
-   * `SandboxFsClient`, pass it to `createSandboxTools`, and record audit
-   * log entries for every tool execution:
-   *
-   *   - `sandboxId` — Convex-side sandbox row id. The audit log
-   *     (`sandboxToolCallLog.sandboxId`) keys against this so a future
-   *     forensic query can correlate "user X's tool calls" with a
-   *     specific sandbox lifecycle. Surfacing it from the context query
-   *     (rather than re-fetching the sandbox row in the action) keeps the
-   *     lookup transactional with the `(thread, sandbox, repository)`
-   *     read.
-   *   - `remoteId` — Daytona-side sandbox identifier (`sandboxes.remoteId`).
-   *   - `repoPath` — absolute path of the repository's root inside the
-   *     sandbox, used to scope every tool call's path validation.
-   *
-   * The action overwrites this with the `ensureSandboxReady` result before
-   * calling the model, so audit logs always point at the sandbox that was
-   * actually used for the reply.
-   */
-  sandboxTooling?: {
-    sandboxId: Id<"sandboxes">;
-    remoteId: string;
-    repoPath: string;
-  };
+  grounding: ReplyGroundingPlan;
 };
-
-const DOCS_ARTIFACT_KINDS: Array<Doc<"artifacts">["kind"]> = [
-  "architecture_diagram",
-  "architecture_overview",
-  "design_review",
-  "migration_plan",
-  "trade_off_matrix",
-  "capacity_estimate",
-];
-const DOCS_ARTIFACTS_TOTAL_LIMIT = 12;
 
 function normalizeOptionalProfileField(value: string | undefined): string | undefined {
   return value?.trim() || undefined;
-}
-
-/**
- * Load the most recent docs artifacts across all DOCS_ARTIFACT_KINDS for a
- * given repository. Uses `.take()` per kind and merges in memory so we never
- * issue multiple `.paginate()` calls; Convex only supports a single paginated
- * query per function execution.
- */
-async function loadLatestDocsArtifacts(ctx: Pick<QueryCtx, "db">, repositoryId: Id<"repositories">) {
-  const perKindResults = await Promise.all(
-    DOCS_ARTIFACT_KINDS.map((kind) =>
-      ctx.db
-        .query("artifacts")
-        .withIndex("by_repositoryId_and_kind", (q) => q.eq("repositoryId", repositoryId).eq("kind", kind))
-        .order("desc")
-        .take(DOCS_ARTIFACTS_TOTAL_LIMIT),
-    ),
-  );
-
-  const allArtifacts = perKindResults.flat();
-
-  // Sort descending by _creationTime (tie-break on _id) and keep the top N.
-  allArtifacts.sort((a, b) => {
-    if (b._creationTime !== a._creationTime) {
-      return b._creationTime - a._creationTime;
-    }
-    return b._id > a._id ? 1 : -1;
-  });
-
-  return allArtifacts.slice(0, DOCS_ARTIFACTS_TOTAL_LIMIT);
 }
 
 /**
@@ -297,101 +192,24 @@ export const getReplyContext = internalQuery({
     // switch left stale assistant rows in the most recent `limit` slots.
     const messages = await loadReplyContextMessages(ctx, args.threadId, effectiveMode, MAX_CONTEXT_MESSAGES);
 
-    // Discuss with both grounding axes off is "training-only chat": no
-    // repo lookup even if the thread has one attached, because the user
-    // explicitly turned grounding off in the composer. The unattached-
-    // thread branch shares the same empty shape — Library mode never
-    // lands here (it always uses the repository-backed branch below).
-    if (!thread.repositoryId || (effectiveMode === "discuss" && !groundLibrary && !groundSandbox)) {
-      return {
-        ownerTokenIdentifier: thread.ownerTokenIdentifier,
-        mode: effectiveMode,
-        groundLibrary,
-        groundSandbox,
-        provider: userMessage.provider,
-        modelName: userMessage.modelName,
-        reasoningEffort: userMessage.reasoningEffort,
-        agentRole,
-        agentInstructions,
-        singleTurnEnabled: thread.singleTurnEnabled === true,
-        customization,
-        repositoryId: undefined,
-        repositorySummary: undefined,
-        readmeSummary: undefined,
-        architectureSummary: undefined,
-        sourceRepoFullName: undefined,
-        artifacts: [],
-        artifactChunks: [],
-        artifactContext: thread.artifactContext,
-        chunks: [],
-        messages: messages.map((message) => ({
-          id: message._id,
-          role: message.role,
-          content: message.content,
-        })),
+    let repositorySnapshot: RepositoryGroundingSnapshot | null = null;
+    if (thread.repositoryId && (effectiveMode === "library" || groundLibrary || groundSandbox)) {
+      const repository = await ctx.db.get(thread.repositoryId);
+      if (!repository || repository.ownerTokenIdentifier !== thread.ownerTokenIdentifier) {
+        throw new Error("Repository not found.");
+      }
+      repositorySnapshot = {
+        repositoryId: repository._id,
+        sourceRepoFullName: repository.sourceRepoFullName,
+        repositorySummary: repository.summary,
+        readmeSummary: repository.readmeSummary,
+        architectureSummary: repository.architectureSummary,
       };
     }
 
-    const repository = await ctx.db.get(thread.repositoryId);
-    if (!repository || repository.ownerTokenIdentifier !== thread.ownerTokenIdentifier) {
-      throw new Error("Repository not found.");
-    }
-
-    // Artifact retrieval is two-pronged:
-    //   - Library mode always loads artifacts (Ask scope filter when
-    //     present, latest docs artifacts otherwise).
-    //   - Discuss mode loads artifacts only when the user enabled the
-    //     Library grounding toggle for this message.
-    //
-    // Both branches read the same artifact set; the difference is the
-    // toggle gate.
-    let artifacts: Array<Doc<"artifacts">> = [];
-    const shouldLoadArtifacts = effectiveMode === "library" || groundLibrary;
-    if (shouldLoadArtifacts) {
-      if (thread.artifactContext && thread.artifactContext.length > 0) {
-        const scoped = await Promise.all(thread.artifactContext.map((artifactId) => ctx.db.get(artifactId)));
-        artifacts = scoped.filter(
-          (artifact): artifact is Doc<"artifacts"> =>
-            artifact !== null &&
-            artifact.repositoryId === repository._id &&
-            artifact.ownerTokenIdentifier === repository.ownerTokenIdentifier,
-        );
-      } else {
-        artifacts = await loadLatestDocsArtifacts(ctx, repository._id);
-      }
-    }
-
-    // Library mode is artifact-only retrieval; sandbox-grounded Discuss
-    // replies are tool-driven (the model fetches what it needs via
-    // `read_file` / `list_dir` / `run_shell`). Both paths intentionally
-    // skip pre-loaded code chunks so knowledge sources stay
-    // non-overlapping (artifacts vs. live tool calls).
-    const chunks: Array<{ path: string; summary: string; content: string }> = [];
-
-    // Sandbox-tool wiring: surface the live sandbox handle here so the
-    // action can build a `SandboxFsClient` without an extra fetch. We
-    // only expose it when the message asked for sandbox grounding AND
-    // the sandbox is in `ready` state — `provisioning`, `stopped`,
-    // `archived`, and `failed` would all surface as a tool-call failure
-    // mid-stream, which is much worse UX than answering without tools
-    // and telling the user the sandbox isn't ready.
-    let sandboxTooling: ReplyContext["sandboxTooling"];
-    if (groundSandbox && repository.latestSandboxId) {
-      const sandbox = await ctx.db.get(repository.latestSandboxId);
-      if (sandbox?.status === "ready" && sandbox.remoteId && sandbox.repoPath) {
-        sandboxTooling = {
-          sandboxId: sandbox._id,
-          remoteId: sandbox.remoteId,
-          repoPath: sandbox.repoPath,
-        };
-      }
-    }
-
     return {
-      ownerTokenIdentifier: repository.ownerTokenIdentifier,
+      ownerTokenIdentifier: thread.ownerTokenIdentifier,
       mode: effectiveMode,
-      groundLibrary,
-      groundSandbox,
       provider: userMessage.provider,
       modelName: userMessage.modelName,
       reasoningEffort: userMessage.reasoningEffort,
@@ -399,26 +217,18 @@ export const getReplyContext = internalQuery({
       agentInstructions,
       singleTurnEnabled: thread.singleTurnEnabled === true,
       customization,
-      repositoryId: repository._id,
-      repositorySummary: repository.summary,
-      readmeSummary: repository.readmeSummary,
-      architectureSummary: repository.architectureSummary,
-      sourceRepoFullName: repository.sourceRepoFullName,
-      artifacts: artifacts.map((artifact) => ({
-        id: artifact._id,
-        title: artifact.title,
-        summary: artifact.summary,
-        contentMarkdown: artifact.contentMarkdown,
-      })),
-      artifactChunks: [],
-      artifactContext: thread.artifactContext,
-      chunks,
       messages: messages.map((message) => ({
         id: message._id,
         role: message.role,
         content: message.content,
       })),
-      sandboxTooling,
+      grounding: createReplyGroundingPlan({
+        mode: effectiveMode,
+        flags: { groundLibrary, groundSandbox },
+        ownerTokenIdentifier: thread.ownerTokenIdentifier,
+        repository: repositorySnapshot,
+        artifactScope: thread.artifactContext,
+      }),
     };
   },
 });

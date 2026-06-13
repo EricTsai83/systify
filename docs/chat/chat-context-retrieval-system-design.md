@@ -2,100 +2,125 @@
 
 ## Purpose
 
-This document explains the two distinct retrieval architectures Systify uses to ground chat replies. Both are bounded to the latest published import snapshot, but they differ entirely in mechanism: sandbox-grounded Discuss replies are tool-driven (no pre-loaded chunks), while Library Ask uses hybrid lexical + vector retrieval over `artifactChunks`.
+This document explains how Systify grounds chat replies behind the Reply Grounding Module. The reply session does not interpret raw context fields such as `artifacts`, `artifactChunks`, `chunks`, or `sandboxTooling`. Instead, `getReplyContext` returns turn-level data plus a `ReplyGroundingPlan`, and the Node-side grounding module hydrates that plan into prompt evidence and prepared live-source tooling before generation.
 
-## The Two Flows
+## Grounding Plan
 
-Chat has only two modes — `discuss` and `library` — and each one resolves grounding differently:
+`internal.chat.context.getReplyContext` still owns the queue-time invariants:
 
-- `discuss` with the per-message **sandbox grounding** toggle on: the model fetches what it needs through sandbox tools at generation time. No code chunks are loaded into the prompt up front.
-- `discuss` with the per-message **Library grounding** toggle on, and `library` mode: artifacts are loaded and (for Library Ask) `artifactChunks` are retrieved via hybrid RAG.
-- `discuss` with both toggles off: training-only chat — no repo lookup at all, even when the thread has a repository attached.
+- validate the thread
+- validate the queued user message
+- anchor `mode`, provider/model/reasoning, and grounding flags to that queued message
+- load the bounded conversation window
+- load viewer customization and the thread agent profile
+- seed a `ReplyGroundingPlan`
 
-`convex/chat/context.ts:325-330` hardcodes `chunks: []` with an explicit comment for the repository-backed branch, and `convex/chat/context.ts:369` hardcodes `artifactChunks: []`. The actual `artifactChunks` retrieval happens later in the action via `convex/lib/artifactRag.ts:retrieveArtifactChunks`, not inside the context query.
+The returned turn context is intentionally narrow:
 
-## Chosen Design
+- owner identity
+- effective mode
+- provider/model/reasoning
+- agent profile
+- user customization
+- conversation messages
+- `grounding: ReplyGroundingPlan`
+
+The plan is then completed by `convex/chat/replyGroundingNode.ts`:
+
+- `hydrateReplyGroundingForGeneration` resolves pending artifact retrieval into prompt artifact evidence and a citation map.
+- `prepareLiveSourceGrounding` resolves live-source preparation into prepared sandbox tooling.
 
 ```mermaid
 flowchart TD
-  Q[Queued User Message]
-  M{Mode and Grounding}
-  S[Sandbox-grounded Discuss]
-  L[Library Ask]
-  T[sandboxTooling: read_file, list_dir, run_shell]
-  A[retrieveArtifactChunks: hybrid RAG]
-  Audit[sandboxToolCallLog]
-  P[Prompt]
+  Q[Queued user message]
+  C[getReplyContext]
+  G[ReplyGroundingPlan seed]
+  A[hydrateReplyGroundingForGeneration]
+  S[prepareLiveSourceGrounding]
+  P[ReplyPromptInput]
+  R[replyStreamController]
 
-  Q --> M
-  M -->|discuss + groundSandbox| S
-  M -->|library or discuss + groundLibrary| L
-  S --> T --> Audit
-  T --> P
-  L --> A --> P
+  Q --> C --> G
+  G -->|artifactEvidence: pending_retrieval| A --> P
+  G -->|liveSource: prepare| S --> P
+  G -->|no grounding| P
+  P --> R
 ```
 
-### 1. Sandbox-grounded Discuss (tool-driven)
+## Sources Of Truth
 
-When the queued user message carries `groundSandbox: true` and the repository's latest sandbox is in `ready` state, `getReplyContext` surfaces a `sandboxTooling` handle (`sandboxId`, `remoteId`, `repoPath`) alongside an empty `chunks: []`.
+### 1. Ungrounded Discuss
 
-The action wires that handle into `sandboxTooling` (`read_file`, `list_dir`, `run_shell`) so the LLM gateway can let the model pull whatever it needs from the live sandbox during generation. Nothing is pre-fetched.
+`discuss` with both grounding toggles off is training-only chat.
 
-Every tool execution writes an entry into `sandboxToolCallLog`, keyed by the same `sandboxId` the context query returned. That gives the audit log a single transactional anchor: the `(thread, sandbox, repository)` triple read at queue time is exactly the triple every tool call belongs to.
+Source of truth:
 
-If the sandbox is unavailable (`provisioning`, `stopped`, `archived`, `failed`, or missing), `sandboxTooling` is left `undefined` and the action falls back to a no-tool reply — answering without tools is strictly better than streaming a mid-reply tool-call failure.
+- `grounding.repository === null`
+- `grounding.artifactEvidence.kind === "none"`
+- `grounding.liveSource.kind === "none"`
 
-### 2. Library Ask (hybrid RAG)
+Even when the thread has an attached repository, ungrounded Discuss performs no repository lookup and exposes no repository summary, artifacts, chunks, or live-source tooling to generation.
 
-Library mode (and Discuss with `groundLibrary: true`) loads a bounded artifact set in `getReplyContext`: scoped to `thread.artifactContext` when set, otherwise the latest docs artifacts across the documented kinds.
+### 2. Library Grounding And Library Ask
 
-`artifactChunks` retrieval is then performed by `convex/lib/artifactRag.ts:retrieveArtifactChunks`, called from the reply action — not from the context query. The retriever:
+`library` mode and `discuss` with `groundLibrary: true` are artifact-grounded.
 
-- runs lexical search (`artifactChunkStore.searchContent` + `searchSummary`, scoped by `repositoryId`) and semantic search (vector search over `artifactChunks.by_embedding`) in parallel via `Promise.allSettled`
-- requests a query embedding through `embedViaGateway` from the multi-provider LLM gateway, settling embedding spend into the per-user / per-repository daily-cap buckets
-- fuses the two channels with Reciprocal Rank Fusion (`RRF_K = 60`) and returns the top-N candidates
+Source of truth:
 
-The embedding call is wrapped in `Promise.allSettled`, so if the embedding provider fails or returns nothing, retrieval degrades gracefully to lexical-only — the `retrieval_mode` log field records `"hybrid"` vs `"lexical_only"` for each query. Chunks without embeddings simply never appear in the semantic channel and rely on the lexical channel.
+- `grounding.repository` contains the repository snapshot.
+- `grounding.artifactEvidence.kind === "pending_retrieval"` after `getReplyContext`.
+- `hydrateReplyGroundingForGeneration` calls `retrieveArtifactChunks`.
+- Hydration returns `artifactEvidence.kind === "ready"` with:
+  - `promptArtifacts`
+  - `citationMap`
 
-### Note on `repoChunks` search indexes
+Scoped Library Ask keeps the selected artifact ids in `pending_retrieval.artifactScope`. If the explicit scope exists but resolves to no valid artifact for the repository owner, hydration returns ready empty evidence and does not broaden the search to the full repository.
 
-`repoChunks.search_summary` and `repoChunks.search_content` are still defined on the schema, but **no code path currently queries them**. The sandbox-grounded Discuss path is tool-driven (no pre-loaded code chunks), and Library Ask retrieves from `artifactChunks`, not `repoChunks`. Future retrieval work over repository code would re-activate these indexes; today they are unread.
+Retrieved chunks are preferred over whole-artifact fallback rows. When no chunks are retrieved, the prompt falls back to the valid scoped artifacts or the latest docs artifacts. The citation map is built from the same ready artifact evidence the prompt renders, capped to the same `MAX_CONTEXT_ARTIFACTS` window.
 
-## Why Not Pre-load Code Chunks for Sandbox-grounded Discuss
+### 3. Sandbox Grounding
 
-A naive design would pre-fetch the top-K most relevant `repoChunks` into the prompt before the model runs. That was rejected because:
+`discuss` with `groundSandbox: true` is live-source grounded.
 
-1. the sandbox already exposes the full repo through `read_file` / `list_dir` / `run_shell`, so the model can ask for exactly the files it needs based on the partial reasoning so far
-2. pre-loading guesses at relevance before the model has even started reasoning, while tool calls let the model expand its view based on what it has just learned
-3. two parallel knowledge sources (pre-loaded chunks + live tool calls) would have to be kept non-overlapping to avoid contradictions and wasted prompt tokens
+Source of truth:
 
-The current contract is intentional: tool-driven for sandbox-grounded Discuss, artifact-grounded for Library, never both.
+- `grounding.repository` contains the repository snapshot.
+- `grounding.liveSource.kind === "prepare"` after `getReplyContext`.
+- `prepareLiveSourceGrounding` updates assistant progress, calls `ensureSandboxReady`, and writes the prepared tooling into `liveSource.readyHint`.
 
-## Why Hybrid Over Lexical-Only for Library Ask
+The context query no longer checks whether the latest sandbox row is already ready and no longer returns a top-level `sandboxTooling` handle. Sandbox availability is an action-side preparation concern. If preparation fails, the assistant message fails with:
 
-Pure lexical search misses paraphrased questions where the user's vocabulary doesn't overlap with the artifact text. Pure semantic search loses precision on exact symbol names and short technical phrases.
+```text
+Live source couldn't be prepared. Retry the message.
+```
 
-RRF over the two channels gets both: lexical wins on exact matches, semantic wins on paraphrases, and the rank-based fusion is robust to the very different score scales each side produces. The `RRF_K = 60` constant matches the published RRF defaults and gives sane behavior without per-channel tuning.
+The stream controller receives only:
 
-## Trade-Offs
+```ts
+groundingAudit: {
+  ownerTokenIdentifier: string;
+  sandboxTooling?: SandboxTooling;
+}
+```
 
-This design accepts:
+That gives tool-call auditing the owner and sandbox id it needs without coupling the stream controller to the full Library/Discuss/Sandbox grounding shape.
 
-- two completely different retrieval paths to maintain (sandbox tools vs hybrid RAG)
-- embedding-time cost for every Library Ask query (settled into the daily-cap buckets)
-- unused `repoChunks.search_summary` / `search_content` indexes carried by the schema
+## Inactive Repo Chunk Path
 
-That is a deliberate trade for:
+`repoChunks` and the old `ReplyContext.chunks` path are not active reply grounding. The reply generation path no longer selects `repoChunks`, no longer builds a chunk search query, and no longer passes relevant code excerpts into `buildUserPrompt`.
 
-- sandbox-grounded Discuss answers grounded in whatever the model decides it needs to read, not a pre-computed guess
-- Library Ask recall that survives both exact-match and paraphrased questions
-- a clean knowledge-source contract — artifacts vs live tool calls, never overlapping
+`repoChunks.search_summary` and `repoChunks.search_content` may still exist in schema history, but Library grounding uses `artifactChunks` RAG and Sandbox grounding uses live tools. Future source-code RAG would need a new design that does not revive the old wide `ReplyContext` shape.
 
-## Result
+## Why This Shape
 
-The two retrieval architectures together give chat replies a mode-appropriate grounding source:
+The previous interface flattened conversation, repository summaries, artifact documents, retrieved artifact chunks, old repo chunks, and sandbox tooling into one broad context object. That forced `replySession.ts` to know which fields were valid under every mode and grounding flag combination.
 
-- sandbox-grounded Discuss reads the live repo through tools, with every call audited in `sandboxToolCallLog`
-- Library Ask retrieves the most relevant `artifactChunks` via hybrid lexical + vector fusion, with graceful fallback to lexical-only when embeddings are unavailable
-- both flows stay strictly inside the latest published snapshot of the repository
+The grounding plan localizes those decisions:
 
+- mode and flags are resolved once at the query boundary
+- artifact retrieval and citation evidence are produced together
+- live-source preparation intent and prepared tooling are represented together
+- prompt construction consumes ready grounding, not raw retrieval internals
+- stream auditing consumes only the audit fields it needs
+
+The result is a narrower reply session and a clearer source-of-truth contract for each grounding mode.

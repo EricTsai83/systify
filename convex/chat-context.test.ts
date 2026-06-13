@@ -4,7 +4,6 @@ import { describe, expect, test } from "vitest";
 import { convexTest } from "convex-test";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
-import { selectRelevantChunks } from "./chat/relevance";
 import schema from "./schema";
 
 const modules = import.meta.glob("./**/*.ts");
@@ -46,19 +45,15 @@ describe("chat reply context", () => {
     });
   });
 
-  test("sandbox mode returns no chunks and no pre-loaded artifacts", async () => {
-    // Sandbox mode is LLM-driven retrieval — the model runs `read_file`
-    // / `list_dir` against the live sandbox via tools. Pre-loading
-    // indexed `repoChunks` would waste work and silently outvote tool
-    // results when the index is stale. All artifact kinds (including
-    // system-design artifacts) are excluded from context.artifacts in
-    // sandbox mode — the model retrieves live source state via tools
-    // rather than cached summaries to avoid divergence when the index is
-    // stale.
+  test("discuss with Sandbox grounding returns a live-source prepare intent without raw context files", async () => {
+    // Sandbox grounding is LLM-driven retrieval — the model runs `read_file`
+    // / `list_dir` against the live sandbox via tools. The context query
+    // should seed the preparation intent only; it must not preload repo
+    // chunks, artifacts, or a ready sandbox-tooling snapshot.
     const ownerTokenIdentifier = "user|sandbox-context";
     const t = convexTest(schema, modules);
 
-    const { threadId, userMessageId } = await t.run(async (ctx) => {
+    const { repositoryId, threadId, userMessageId } = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
@@ -135,9 +130,8 @@ describe("chat reply context", () => {
         content: "const value = 1;",
       });
 
-      // Control row — sandbox mode no longer pre-loads any artifacts
-      // (design context is read on demand via tools), so this row must
-      // NOT appear in `context.artifacts`.
+      // Control row — sandbox mode no longer pre-loads any artifact
+      // documents; design context is read on demand via tools.
       await ctx.db.insert("artifacts", {
         repositoryId,
         jobId: latestJobId,
@@ -164,29 +158,33 @@ describe("chat reply context", () => {
         content: "What does the latest source tree look like?",
       });
 
-      return { threadId, userMessageId };
+      return { repositoryId, threadId, userMessageId };
     });
 
     const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
-    // Chunks always [] in sandbox mode.
-    expect(context.chunks).toEqual([]);
-    // Sandbox mode no longer pre-loads artifacts; design context is read on
-    // demand through sandbox tools instead.
-    expect(context.artifacts).toEqual([]);
-    // No sandbox row exists yet, so sandboxTooling stays undefined.
-    expect(context.sandboxTooling).toBeUndefined();
+    expect(context.grounding.flags).toEqual({ groundLibrary: false, groundSandbox: true });
+    expect(context.grounding.repository).toMatchObject({
+      repositoryId,
+      sourceRepoFullName: "acme/sandbox-context-repo",
+    });
+    expect(context.grounding.artifactEvidence).toEqual({ kind: "none" });
+    expect(context.grounding.liveSource).toEqual({
+      kind: "prepare",
+      repositoryId,
+      ownerTokenIdentifier,
+    });
+    expect(context).not.toHaveProperty("artifacts");
+    expect(context).not.toHaveProperty("artifactChunks");
+    expect(context).not.toHaveProperty("chunks");
+    expect(context).not.toHaveProperty("sandboxTooling");
   });
 
-  test("sandbox mode exposes sandboxTooling when the repository has a ready sandbox", async () => {
-    // Generation.ts builds the SandboxFsClient from this surfaced metadata.
-    // Failing to expose it would silently fall back to the no-tool path even
-    // when a healthy sandbox exists. The audit log also keys against
-    // `sandboxTooling.sandboxId`, so this test pins all three exposed fields.
+  test("sandbox grounding stays a prepare intent even when a ready sandbox row exists", async () => {
     const ownerTokenIdentifier = "user|sandbox-tooling-ready";
     const t = convexTest(schema, modules);
 
-    const { threadId, userMessageId, sandboxId } = await t.run(async (ctx) => {
+    const { repositoryId, threadId, userMessageId } = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
@@ -244,156 +242,21 @@ describe("chat reply context", () => {
         content: "Read the entrypoint.",
       });
 
-      return { threadId, userMessageId, sandboxId };
+      return { repositoryId, threadId, userMessageId };
     });
 
     const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
-    expect(context.sandboxTooling).toEqual({
-      sandboxId,
-      remoteId: "remote-tool-ready",
-      repoPath: "/workspace/repo",
+    expect(context.grounding.liveSource).toEqual({
+      kind: "prepare",
+      repositoryId,
+      ownerTokenIdentifier,
     });
+    expect(context.grounding.liveSource).not.toHaveProperty("readyHint");
+    expect(context).not.toHaveProperty("sandboxTooling");
   });
 
-  test.each(["provisioning", "stopped", "archived", "failed"] as const)(
-    "sandbox mode leaves sandboxTooling undefined when sandbox status is %s (not ready)",
-    async (sandboxStatus) => {
-      // Surfacing tooling for a non-ready sandbox would cause the action's
-      // tool-call path to fail mid-stream — much worse UX than recognising
-      // up-front that the sandbox isn't usable and falling through to the
-      // no-tool reply path.
-      const ownerTokenIdentifier = `user|sandbox-tooling-${sandboxStatus}`;
-      const t = convexTest(schema, modules);
-
-      const { threadId, userMessageId } = await t.run(async (ctx) => {
-        const repositoryId = await ctx.db.insert("repositories", {
-          ownerTokenIdentifier,
-          sourceHost: "github",
-          sourceUrl: `https://github.com/acme/tooling-${sandboxStatus}`,
-          sourceRepoFullName: `acme/tooling-${sandboxStatus}`,
-          sourceRepoOwner: "acme",
-          sourceRepoName: `tooling-${sandboxStatus}`,
-          defaultBranch: "main",
-          visibility: "private",
-          accessMode: "private",
-          importStatus: "completed",
-          detectedLanguages: [],
-          packageManagers: [],
-          entrypoints: [],
-          fileCount: 0,
-          color: "blue",
-          lastAccessedAt: Date.now(),
-        });
-
-        const sandboxId = await ctx.db.insert("sandboxes", {
-          repositoryId,
-          ownerTokenIdentifier,
-          provider: "daytona",
-          sourceAdapter: "git_clone",
-          remoteId: `remote-${sandboxStatus}`,
-          status: sandboxStatus,
-          workDir: "/workspace",
-          repoPath: "/workspace/repo",
-          cpuLimit: 2,
-          memoryLimitGiB: 4,
-          diskLimitGiB: 10,
-          ttlExpiresAt: Date.now() + 60_000,
-          autoStopIntervalMinutes: 10,
-          autoArchiveIntervalMinutes: 60,
-          autoDeleteIntervalMinutes: 1440,
-          networkBlockAll: false,
-        });
-        await ctx.db.patch(repositoryId, { latestSandboxId: sandboxId });
-
-        const threadId = await ctx.db.insert("threads", {
-          repositoryId,
-          ownerTokenIdentifier,
-          title: `Tooling ${sandboxStatus} thread`,
-          mode: "discuss",
-          lastMessageAt: Date.now(),
-        });
-        const userMessageId = await ctx.db.insert("messages", {
-          repositoryId,
-          threadId,
-          ownerTokenIdentifier,
-          role: "user",
-          status: "completed",
-          mode: "discuss",
-          groundSandbox: true,
-          content: "Try to use a tool.",
-        });
-
-        return { threadId, userMessageId };
-      });
-
-      const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
-
-      expect(context.sandboxTooling).toBeUndefined();
-    },
-  );
-
-  test("content matches influence ranking even when path and summary miss", () => {
-    const ranked = selectRelevantChunks(
-      [
-        {
-          path: "src/helpers.ts",
-          summary: "Generic utility helpers",
-          content: "This module coordinates auth middleware session token validation.",
-        },
-        {
-          path: "src/misc.ts",
-          summary: "Assorted helpers",
-          content: "This module formats timestamps.",
-        },
-      ],
-      "How does auth middleware work?",
-    );
-
-    expect(ranked[0]?.path).toBe("src/helpers.ts");
-  });
-
-  test("preserves short technical tokens while dropping question filler words", () => {
-    const ranked = selectRelevantChunks(
-      [
-        {
-          path: "src/how-does-work.ts",
-          summary: "How does the system work",
-          content: "This file explains how it works for you.",
-        },
-        {
-          path: "src/db-auth.ts",
-          summary: "DB auth adapter",
-          content: "Database auth token validation pipeline.",
-        },
-      ],
-      "How does db auth work?",
-    );
-
-    expect(ranked[0]?.path).toBe("src/db-auth.ts");
-  });
-
-  test("preserves original candidate order for equal scores", () => {
-    const ranked = selectRelevantChunks(
-      [
-        {
-          path: "src/zeta.ts",
-          summary: "Auth helper",
-          content: "Token refresh flow.",
-        },
-        {
-          path: "src/alpha.ts",
-          summary: "Auth helper",
-          content: "Token refresh flow.",
-        },
-      ],
-      "auth",
-    );
-
-    expect(ranked.map((chunk) => chunk.path)).toEqual(["src/zeta.ts", "src/alpha.ts"]);
-  });
-
-  test("returns early with empty artifacts and chunks for repository-less threads", async () => {
+  test("ungrounded Discuss on a repository-less thread returns no repository grounding", async () => {
     const ownerTokenIdentifier = "user|repo-less-thread";
     const t = convexTest(schema, modules);
 
@@ -417,15 +280,14 @@ describe("chat reply context", () => {
 
     const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
-    expect(context.sourceRepoFullName).toBeUndefined();
-    expect(context.artifacts).toHaveLength(0);
-    expect(context.chunks).toHaveLength(0);
-    expect(context.repositorySummary).toBeUndefined();
-    expect(context.readmeSummary).toBeUndefined();
-    expect(context.architectureSummary).toBeUndefined();
+    expect(context.grounding.repository).toBeNull();
+    expect(context.grounding.artifactEvidence).toEqual({ kind: "none" });
+    expect(context.grounding.liveSource).toEqual({ kind: "none" });
+    expect(context).not.toHaveProperty("artifacts");
+    expect(context).not.toHaveProperty("chunks");
   });
 
-  test("docs mode uses artifact-only context and skips indexed code chunks", async () => {
+  test("Library mode returns pending artifact retrieval and skips raw indexed code chunks", async () => {
     const ownerTokenIdentifier = "user|docs-artifact-only";
     const t = convexTest(schema, modules);
 
@@ -533,22 +395,27 @@ describe("chat reply context", () => {
     });
 
     const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
-    expect(context.artifacts.map((artifact) => artifact.title)).toContain("Architecture diagram");
-    expect(context.chunks).toHaveLength(0);
+    expect(context.grounding.repository).toMatchObject({
+      sourceRepoFullName: "acme/docs-mode",
+    });
+    expect(context.grounding.artifactEvidence).toEqual({ kind: "pending_retrieval" });
+    expect(context.grounding.liveSource).toEqual({ kind: "none" });
+    expect(context).not.toHaveProperty("artifactChunks");
+    expect(context).not.toHaveProperty("chunks");
   });
 
-  test("docs mode can fill the limit from a single artifact kind", async () => {
-    const ownerTokenIdentifier = "user|docs-single-kind";
+  test("Discuss with Library grounding returns pending artifact retrieval", async () => {
+    const ownerTokenIdentifier = "user|discuss-library-grounding";
     const t = convexTest(schema, modules);
 
-    const { threadId, userMessageId } = await t.run(async (ctx) => {
+    const { repositoryId, threadId, userMessageId } = await t.run(async (ctx) => {
       const repositoryId = await ctx.db.insert("repositories", {
         ownerTokenIdentifier,
         sourceHost: "github",
-        sourceUrl: "https://github.com/acme/docs-single-kind",
-        sourceRepoFullName: "acme/docs-single-kind",
+        sourceUrl: "https://github.com/acme/discuss-library-grounding",
+        sourceRepoFullName: "acme/discuss-library-grounding",
         sourceRepoOwner: "acme",
-        sourceRepoName: "docs-single-kind",
+        sourceRepoName: "discuss-library-grounding",
         defaultBranch: "main",
         visibility: "private",
         accessMode: "private",
@@ -560,46 +427,88 @@ describe("chat reply context", () => {
         color: "blue",
         lastAccessedAt: Date.now(),
       });
-
       const threadId = await ctx.db.insert("threads", {
         repositoryId,
         ownerTokenIdentifier,
-        title: "Docs single kind thread",
-        mode: "library",
+        title: "Discuss library grounding",
+        mode: "discuss",
         lastMessageAt: Date.now(),
       });
-
-      for (let index = 0; index < 20; index += 1) {
-        await ctx.db.insert("artifacts", {
-          repositoryId,
-          threadId,
-          ownerTokenIdentifier,
-          kind: "architecture_diagram",
-          title: `Architecture diagram ${index}`,
-          summary: `Diagram summary ${index}`,
-          contentMarkdown: `graph TD\nA${index}-->B${index}`,
-          version: 1,
-        });
-      }
-
       const userMessageId = await ctx.db.insert("messages", {
         repositoryId,
         threadId,
         ownerTokenIdentifier,
         role: "user",
         status: "completed",
-        mode: "library",
-        content: "Show the latest architecture artifacts.",
+        mode: "discuss",
+        groundLibrary: true,
+        content: "Use the library evidence.",
       });
-
-      return { threadId, userMessageId };
+      return { repositoryId, threadId, userMessageId };
     });
 
     const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
-    expect(context.artifacts).toHaveLength(12);
-    expect(context.artifacts[0]?.title).toBe("Architecture diagram 19");
-    expect(context.artifacts[11]?.title).toBe("Architecture diagram 8");
+    expect(context.grounding.flags).toEqual({ groundLibrary: true, groundSandbox: false });
+    expect(context.grounding.repository?.repositoryId).toBe(repositoryId);
+    expect(context.grounding.artifactEvidence).toEqual({ kind: "pending_retrieval" });
+    expect(context.grounding.liveSource).toEqual({ kind: "none" });
+  });
+
+  test("Discuss with both grounding axes returns artifact and live-source intents", async () => {
+    const ownerTokenIdentifier = "user|discuss-both-grounding";
+    const t = convexTest(schema, modules);
+
+    const { repositoryId, threadId, userMessageId } = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/discuss-both-grounding",
+        sourceRepoFullName: "acme/discuss-both-grounding",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "discuss-both-grounding",
+        defaultBranch: "main",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 0,
+        color: "blue",
+        lastAccessedAt: Date.now(),
+      });
+      const threadId = await ctx.db.insert("threads", {
+        repositoryId,
+        ownerTokenIdentifier,
+        title: "Discuss both grounding",
+        mode: "discuss",
+        lastMessageAt: Date.now(),
+      });
+      const userMessageId = await ctx.db.insert("messages", {
+        repositoryId,
+        threadId,
+        ownerTokenIdentifier,
+        role: "user",
+        status: "completed",
+        mode: "discuss",
+        groundLibrary: true,
+        groundSandbox: true,
+        content: "Use both evidence sources.",
+      });
+      return { repositoryId, threadId, userMessageId };
+    });
+
+    const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
+
+    expect(context.grounding.flags).toEqual({ groundLibrary: true, groundSandbox: true });
+    expect(context.grounding.repository?.repositoryId).toBe(repositoryId);
+    expect(context.grounding.artifactEvidence).toEqual({ kind: "pending_retrieval" });
+    expect(context.grounding.liveSource).toEqual({
+      kind: "prepare",
+      repositoryId,
+      ownerTokenIdentifier,
+    });
   });
 
   test("discuss mode returns no repo context even when a repository is attached", async () => {
@@ -716,12 +625,11 @@ describe("chat reply context", () => {
 
     const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
-    expect(context.artifacts).toHaveLength(0);
-    expect(context.chunks).toHaveLength(0);
-    expect(context.repositorySummary).toBeUndefined();
-    expect(context.readmeSummary).toBeUndefined();
-    expect(context.architectureSummary).toBeUndefined();
-    expect(context.sourceRepoFullName).toBeUndefined();
+    expect(context.grounding.repository).toBeNull();
+    expect(context.grounding.artifactEvidence).toEqual({ kind: "none" });
+    expect(context.grounding.liveSource).toEqual({ kind: "none" });
+    expect(context).not.toHaveProperty("artifacts");
+    expect(context).not.toHaveProperty("chunks");
     // Messages are still returned so the model can see the conversation.
     expect(context.messages.map((message) => message.content)).toEqual(["Let's brainstorm."]);
   });
@@ -827,12 +735,10 @@ describe("chat reply context", () => {
     ).rejects.toThrow(/queued user message not found/i);
   });
 
-  test("exposes artifact ids on the reply context for docs-mode citation maps", async () => {
-    // The prompt builder needs each artifact's `_id` so it can
-    // assemble a numbered `[A#] → artifactId` map and persist it on
-    // `messages.citationMap`. Without `id` on the context entry, the
-    // frontend would only see `[A1]` tokens with no way to resolve them
-    // back to the artifact in the side panel.
+  test("Library Ask anchors explicit artifact scope on pending retrieval", async () => {
+    // Scoped Library Ask should carry the selected artifact ids as retrieval
+    // intent. The query does not expose raw artifact documents; hydration
+    // turns these ids into prompt evidence and a citation map later.
     const ownerTokenIdentifier = "user|docs-id-exposure";
     const t = convexTest(schema, modules);
 
@@ -874,6 +780,7 @@ describe("chat reply context", () => {
         contentMarkdown: "graph TD\nA-->B",
         version: 1,
       });
+      await ctx.db.patch(threadId, { artifactContext: [expectedArtifactId] });
 
       const userMessageId = await ctx.db.insert("messages", {
         repositoryId,
@@ -890,9 +797,11 @@ describe("chat reply context", () => {
 
     const context = await t.query(internal.chat.context.getReplyContext, { threadId, userMessageId });
 
-    expect(context.artifacts).toHaveLength(1);
-    expect(context.artifacts[0]?.id).toBe(expectedArtifactId);
-    expect(context.artifacts[0]?.title).toBe("Architecture diagram");
+    expect(context.grounding.artifactEvidence).toEqual({
+      kind: "pending_retrieval",
+      artifactScope: [expectedArtifactId],
+    });
+    expect(context).not.toHaveProperty("artifacts");
   });
 
   test("rejects a userMessageId that points to an assistant message", async () => {

@@ -4,8 +4,9 @@ import { internal } from "../_generated/api";
 import type { Doc, Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
 import type { ArtifactChunkSearchHit } from "../artifactChunkStore";
-import { EMBEDDING_BUDGET_ESTIMATES, embedWithAccounting } from "./embeddingAccounting";
+import { embedWithAccounting } from "./embeddingAccounting";
 import { logInfo, logWarn } from "./observability";
+import { buildUsageSourceId } from "./usageAccounting";
 
 const DEFAULT_RETRIEVAL_TOP_N = 8;
 const DEFAULT_RETRIEVAL_CANDIDATE_K = 20;
@@ -144,7 +145,10 @@ async function retrieveLexical(
 }
 
 async function retrieveSemantic(ctx: ActionCtx, args: RetrieveArgs, candidateK: number): Promise<RetrievalHit[]> {
-  const sourceId = `libraryRetrieval:${args.messageId ?? args.threadId ?? "unattributed"}:${stableHash(args.query)}`;
+  const sourceId = buildUsageSourceId.libraryRetrieval(
+    args.messageId ?? args.threadId ?? "unattributed",
+    stableHash(args.query),
+  );
   const { embeddings } = await embedWithAccounting(ctx, {
     values: [args.query],
     sourceId,
@@ -156,7 +160,6 @@ async function retrieveSemantic(ctx: ActionCtx, args: RetrieveArgs, candidateK: 
     // the metric grouped with the same feature as the chat generation
     // that triggered it; no new gateway feature literal is warranted.
     gatewayFeature: "chat",
-    estimatedCostUsd: EMBEDDING_BUDGET_ESTIMATES.libraryRetrieval,
     ...(args.threadId !== undefined ? { threadId: args.threadId } : {}),
     ...(args.messageId !== undefined ? { messageId: args.messageId } : {}),
   });

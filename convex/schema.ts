@@ -564,8 +564,11 @@ export default defineSchema({
     /**
      * Forensic anchor back to the originating `systemDesignKindRuns` row
      * so a user looking at an artifact can trace it to the exact LLM run
-     * (token usage, step count, duration). Optional because non-System-
-     * Design artifacts have no kind-run row.
+     * (token usage, step count, duration). For newly-generated System
+     * Design artifacts, publication settlement patches this field after
+     * inserting the kindRun row with the artifactId. Cached-hit rows do not
+     * patch the cached artifact, preserving its original generation source.
+     * Optional because non-System-Design artifacts have no kind-run row.
      */
     kindRunId: v.optional(v.id("systemDesignKindRuns")),
   })
@@ -1539,11 +1542,13 @@ export default defineSchema({
    *      failing for that repo" to the exact step trace + failure
    *      reason of every recent attempt.
    *
-   * Lifecycle: rows are written from `convex/systemDesign.ts:
-   * recordKindRun` exactly once per attempt. They are never patched
-   * after insert — the artifact row updates separately via
-   * `linkKindRun`. Rows never expire today; retention can be added as
-   * a cron when volume justifies it.
+   * Lifecycle: rows are inserted by publication settlement
+   * (`finalizeKindPublication`) exactly once per finalized attempt. Success
+   * and cached-hit rows carry `artifactId` at insert time; the kindRun row is
+   * not patched afterward. For newly-generated artifacts, the same
+   * finalization mutation patches `artifacts.kindRunId` as the artifact ->
+   * kindRun back-reference. Rows never expire today; retention can be added
+   * as a cron when volume justifies it.
    */
   systemDesignKindRuns: defineTable({
     ownerTokenIdentifier: v.string(),
@@ -1551,9 +1556,10 @@ export default defineSchema({
     jobId: v.id("jobs"),
     kind: systemDesignKindValidator,
     /**
-     * Set on `succeeded` and `cached_hit` rows; absent on `failed` and
-     * `quality_rejected`. The `linkKindRun` mutation patches the
-     * artifact's `kindRunId` back-reference once both rows exist.
+     * Set at insert time on `succeeded` and `cached_hit` rows; absent on
+     * `failed` and `quality_rejected`. The kindRun row is not patched after
+     * insert. For newly-generated artifacts, publication settlement patches
+     * the artifact's `kindRunId` back-reference in the same mutation.
      */
     artifactId: v.optional(v.id("artifacts")),
     provider: llmProviderValidator,

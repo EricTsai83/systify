@@ -3,6 +3,7 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { getFunctionName } from "convex/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { buildChatSendRequest } from "@/lib/chat-composer-session";
 import type { ArtifactId, ChatMode, MessageId, RepositoryId, ThreadId } from "@/lib/types";
 
 const {
@@ -26,6 +27,12 @@ vi.mock("convex/react", () => ({
 import { useChatLifecycle } from "./use-chat-lifecycle";
 
 type LifecycleArgs = Parameters<typeof useChatLifecycle>[0];
+type SendConfig = Omit<Parameters<typeof buildChatSendRequest>[0], "content">;
+type LifecycleArgsOverrides = Partial<SendConfig> &
+  Partial<Omit<LifecycleArgs, "selectedThreadId" | "buildSendRequest">> & {
+    selectedThreadId?: ThreadId | null;
+    buildSendRequest?: LifecycleArgs["buildSendRequest"];
+  };
 
 const repositoryId = "repo_1" as RepositoryId;
 const threadId = "thread_1" as ThreadId;
@@ -50,28 +57,39 @@ const mutationName = (mutation: unknown) => {
   }
 };
 
-function submitEvent(): React.FormEvent<HTMLFormElement> {
+function submitEvent(content = "question"): React.FormEvent<HTMLFormElement> {
+  const form = document.createElement("form");
+  const textarea = document.createElement("textarea");
+  textarea.name = "message";
+  textarea.value = content;
+  form.append(textarea);
   return {
     preventDefault: vi.fn(),
+    currentTarget: form,
   } as unknown as React.FormEvent<HTMLFormElement>;
 }
 
-function baseArgs(overrides: Partial<LifecycleArgs> = {}): LifecycleArgs {
-  return {
-    selectedThreadId: null,
+function baseArgs(overrides: LifecycleArgsOverrides = {}): LifecycleArgs {
+  const {
+    selectedThreadId = null,
+    buildSendRequest,
+    clearChatInput = vi.fn(),
+    setActionError = vi.fn(),
+    onAfterCreateThread = vi.fn(),
+    ...sendOverrides
+  } = overrides;
+  const sendConfig: SendConfig = {
+    selectedThreadId,
     repositoryId,
-    threadToArchive: null,
-    chatInput: "question",
-    chatMode: "library",
-    selectedProvider: null,
-    selectedModelName: null,
-    selectedReasoningEffort: null,
-    clearChatInput: vi.fn(),
-    setActionError: vi.fn(),
-    setThreadToArchive: vi.fn(),
-    onAfterCreateThread: vi.fn(),
-    onAfterArchiveThread: vi.fn(),
-    ...overrides,
+    mode: "library",
+    ...sendOverrides,
+  };
+  return {
+    selectedThreadId,
+    buildSendRequest: buildSendRequest ?? ((content) => buildChatSendRequest({ ...sendConfig, content })),
+    clearChatInput,
+    setActionError,
+    onAfterCreateThread,
   };
 }
 
@@ -116,7 +134,7 @@ describe("useChatLifecycle send", () => {
     const { result } = renderHook(() =>
       useChatLifecycle(
         baseArgs({
-          chatMode: "library",
+          mode: "library",
           newThreadTitle: "Library Ask",
           newThreadArtifactContext: [artifactId],
           clearChatInput,
@@ -172,13 +190,13 @@ describe("useChatLifecycle send", () => {
     const { result } = renderHook(() =>
       useChatLifecycle(
         baseArgs({
-          chatMode: "discuss",
+          mode: "discuss",
           selectedThreadId: null,
           groundLibrary: true,
           groundSandbox: false,
-          selectedProvider: "openai",
-          selectedModelName: "gpt-test",
-          selectedReasoningEffort: "high",
+          provider: "openai",
+          modelName: "gpt-test",
+          reasoningEffort: "high",
           newThreadArtifactContext: [artifactId],
         }),
       ),
@@ -207,7 +225,7 @@ describe("useChatLifecycle send", () => {
       useChatLifecycle(
         baseArgs({
           repositoryId: null,
-          chatMode: "discuss",
+          mode: "discuss",
           newThreadSingleTurnEnabled: true,
           newThreadAgentEnabled: true,
           newThreadAgentRole: "Translation agent",
@@ -238,7 +256,7 @@ describe("useChatLifecycle send", () => {
         baseArgs({
           selectedThreadId: threadId,
           repositoryId: null,
-          chatMode: "discuss",
+          mode: "discuss",
           newThreadSingleTurnEnabled: true,
           newThreadAgentEnabled: true,
           newThreadAgentRole: "Translation agent",

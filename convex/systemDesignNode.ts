@@ -40,19 +40,19 @@ import { runSystemDesignKind } from "./systemDesignKindRun";
  *      retry, normalized usage all happen inside the gateway.
  *   5. Quality gate: section presence + (for `architecture_diagram`)
  *      mermaid block presence. Rejection records `quality_rejected`.
- *   6. Persist artifact + telemetry row in two mutations
- *      (`persistGeneratedArtifact` then `recordKindRun`), then patch the
- *      back-reference via `linkKindRun`.
- *   7. Settlement of the day's sandbox cost cap rides inside
- *      `recordKindRun` so the kindRun row and the cap decrement are
- *      atomic.
- *   8. Per-kind metrics (duration, cost, steps).
+ *   6. Publication Settlement via `finalizeKindPublication`. Cache hits,
+ *      generated markdown, quality rejects, and generation failures all pass
+ *      through this single mutation. It validates the active write target,
+ *      writes any artifact/kindRun rows, appends failure summaries, settles
+ *      actual usage for paid outcomes, and patches the artifact -> kindRun
+ *      back-reference when a new artifact is published.
+ *   7. Per-kind metrics (duration, cost, steps).
  *
  * Per-kind failures are isolated: the catch translates the error into a
- * `failureReason` literal, records a structured `kindFailures` entry,
- * and the loop continues to the next kind. Progress flows back through
- * `updateGenerationProgress` after every kind completes (success, cache
- * hit, or fail). If sandbox preparation fails up front the whole run is
+ * `failureReason` literal and hands the failure outcome to publication
+ * settlement; the loop then continues to the next kind. Progress flows back
+ * through `updateGenerationProgress` after every kind completes (success,
+ * cache hit, or fail). If sandbox preparation fails up front the whole run is
  * failed with the structured `userFacingMessage` and no kinds run.
  */
 export const runSystemDesignGeneration = internalAction({

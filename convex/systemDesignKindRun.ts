@@ -6,8 +6,7 @@
  * The Interface is intentionally small: execute one selected System Design
  * kind and return whether the job-level orchestrator should count it as
  * succeeded. The Implementation hides the cache probe, budget check, LLM
- * call, quality gate, artifact persistence, kind-run telemetry row, cost
- * settlement, and per-kind metrics.
+ * call, quality gate, publication settlement, and per-kind metrics.
  */
 
 import { stepCountIs } from "ai";
@@ -22,6 +21,7 @@ import type { EnsureSandboxReadyResult } from "./lib/sandboxLiveness";
 import { SYSTEM_DESIGN_KIND_TITLES, type SystemDesignKind } from "./lib/systemDesign";
 import { classifySystemDesignKindRunError } from "./lib/systemDesignFailureClassification";
 import type { SystemDesignFailureReason } from "./lib/systemDesignFailures";
+import type { SystemDesignKindPublicationOutcome } from "./lib/systemDesignPublicationSettlement";
 import {
   budgetSuffix,
   getKindRunConfig,
@@ -57,6 +57,7 @@ export interface SystemDesignKindRunOutcome {
   status: KindRunStatus;
   countsAsSucceeded: boolean;
   aborted: boolean;
+  artifactId?: Id<"artifacts">;
 }
 
 export async function runSystemDesignKind(
@@ -77,15 +78,12 @@ export async function runSystemDesignKind(
     details: { jobId: args.jobId, repositoryId: args.repositoryId },
   });
 
-  let runStatus: KindRunStatus = "failed";
   let failureReason: KindFailureReason | undefined;
-  let artifactId: Id<"artifacts"> | undefined;
   let usage: NormalizedUsage = {};
   let costUsd: number | undefined;
   let actualSteps = 0;
   let outputCharLength = 0;
-  let missingSections: string[] | undefined;
-  let finalizationAborted = false;
+  let outcome: SystemDesignKindPublicationOutcome | undefined;
 
   if (!args.forceRegenerate && args.commitSha) {
     const cached = await ctx.runQuery(internal.systemDesign.findCachedArtifact, {
@@ -97,9 +95,12 @@ export async function runSystemDesignKind(
       promptVersion: config.promptVersion,
     });
     if (cached) {
-      runStatus = "cached_hit";
-      artifactId = cached._id;
       outputCharLength = cached.contentMarkdown.length;
+      outcome = {
+        kind: "cached_hit",
+        cachedArtifactId: cached._id,
+        outputCharLength,
+      };
       emitMetric("systemdesign_kind_cache_hit", {
         tags: { kind: args.kind, provider: args.modelChoice.provider, model: args.modelChoice.modelName },
         details: { repositoryId: args.repositoryId, commitSha: args.commitSha },
@@ -107,7 +108,7 @@ export async function runSystemDesignKind(
     }
   }
 
-  if (runStatus !== "cached_hit") {
+  if (!outcome) {
     try {
       await ctx.runMutation(internal.systemDesign.assertKindCostBudget, {
         ownerTokenIdentifier: args.ownerTokenIdentifier,
@@ -143,44 +144,44 @@ export async function runSystemDesignKind(
       outputCharLength = text.length;
 
       if (text.length === 0) {
-        runStatus = "failed";
         failureReason = "model_empty_output";
+        outcome = {
+          kind: "failed",
+          failureReason,
+          outputCharLength: outputCharLength > 0 ? outputCharLength : undefined,
+          usage,
+          totalCostUsd: costUsd,
+        };
       } else {
         const validation = validateRequiredSections(text, config.expectedSections);
         const mermaidOk = args.kind !== "architecture_diagram" || validateMermaidBlock(text);
         if (!validation.ok || !mermaidOk) {
-          runStatus = "quality_rejected";
           failureReason = "output_quality";
-          missingSections = [...validation.missingSections];
+          const missingSections = [...validation.missingSections];
           if (!mermaidOk) {
             missingSections.push("mermaid_block");
           }
+          outcome = {
+            kind: "quality_rejected",
+            failureReason,
+            missingSections,
+            outputCharLength,
+            usage,
+            totalCostUsd: costUsd,
+          };
         } else {
-          const persisted = await ctx.runMutation(internal.systemDesign.persistGeneratedArtifact, {
-            repositoryId: args.repositoryId,
-            ownerTokenIdentifier: args.ownerTokenIdentifier,
-            jobId: args.jobId,
-            kind: args.kind,
+          outcome = {
+            kind: "generated",
             title,
             summary: extractSummary(text),
             contentMarkdown: text,
-            alignedImportCommitSha: args.commitSha,
-            generatedByProvider: args.modelChoice.provider,
-            generatedByModel: args.modelChoice.modelName,
-            promptVersion: config.promptVersion,
-          });
-          if (persisted.persisted) {
-            artifactId = persisted.artifactId;
-            runStatus = "succeeded";
-          } else {
-            finalizationAborted = true;
-            runStatus = "failed";
-            failureReason = "infra";
-          }
+            outputCharLength,
+            usage,
+            totalCostUsd: costUsd,
+          };
         }
       }
     } catch (error) {
-      runStatus = "failed";
       failureReason = classifySystemDesignKindRunError(error);
       const errorId = logErrorWithId("systemDesign", "kind_generation_failed", error, {
         jobId: args.jobId,
@@ -197,71 +198,61 @@ export async function runSystemDesignKind(
         failureReason,
       });
       const rawMessage = error instanceof Error ? error.message : String(error);
-      await ctx.runMutation(internal.systemDesign.recordKindFailure, {
-        jobId: args.jobId,
-        kind: args.kind,
-        errorId,
-        message: rawMessage,
-        reason: failureReason,
-      });
+      outcome = {
+        kind: "failed",
+        failureReason,
+        failureLog: {
+          errorId,
+          message: rawMessage,
+        },
+        outputCharLength: outputCharLength > 0 ? outputCharLength : undefined,
+        usage,
+        totalCostUsd: costUsd,
+      };
     }
+  }
+
+  if (!outcome) {
+    failureReason = "infra";
+    outcome = {
+      kind: "failed",
+      failureReason,
+      outputCharLength: outputCharLength > 0 ? outputCharLength : undefined,
+      usage,
+      totalCostUsd: costUsd,
+    };
   }
 
   const durationMs = Date.now() - startedAt;
-  try {
-    const recorded = await ctx.runMutation(internal.systemDesign.recordKindRun, {
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      repositoryId: args.repositoryId,
-      jobId: args.jobId,
-      kind: args.kind,
-      ...(runStatus === "cached_hit" && artifactId ? { artifactId } : {}),
-      provider: args.modelChoice.provider,
-      modelName: args.modelChoice.modelName,
-      promptVersion: config.promptVersion,
-      alignedImportCommitSha: args.commitSha,
-      stepCap: config.stepBudget,
-      actualSteps,
-      inputTokens: usage.inputTokens,
-      outputTokens: usage.outputTokens,
-      cachedInputTokens: usage.cachedInputTokens,
-      cacheWriteTokens: usage.cacheWriteTokens,
-      reasoningTokens: usage.reasoningTokens,
-      totalCostUsd: costUsd,
-      durationMs,
-      status: runStatus,
-      failureReason,
-      outputCharLength: outputCharLength > 0 ? outputCharLength : undefined,
-      missingSections,
-      startedAt,
-      sourceId: `systemDesign:${args.jobId}:${args.kind}:${startedAt}`,
-    });
-
-    if (!recorded.recorded) {
-      return {
+  const finalization = await (async () => {
+    try {
+      return await ctx.runMutation(internal.systemDesign.finalizeKindPublication, {
+        ownerTokenIdentifier: args.ownerTokenIdentifier,
+        repositoryId: args.repositoryId,
+        jobId: args.jobId,
         kind: args.kind,
-        title,
-        status: runStatus,
-        countsAsSucceeded: false,
-        aborted: true,
-      };
-    }
-
-    if (artifactId && runStatus !== "cached_hit") {
-      await ctx.runMutation(internal.systemDesign.linkKindRun, {
-        artifactId,
-        kindRunId: recorded.kindRunId,
+        provider: args.modelChoice.provider,
+        modelName: args.modelChoice.modelName,
+        promptVersion: config.promptVersion,
+        alignedImportCommitSha: args.commitSha,
+        stepCap: config.stepBudget,
+        actualSteps,
+        durationMs,
+        startedAt,
+        outcome,
       });
+    } catch (telemetryError) {
+      logWarn("systemDesign", "kind_publication_finalization_failed", {
+        jobId: args.jobId,
+        kind: args.kind,
+        status: outcome.kind,
+        error: telemetryError instanceof Error ? telemetryError.message : String(telemetryError),
+      });
+      throw telemetryError;
     }
-  } catch (telemetryError) {
-    logWarn("systemDesign", "kind_run_telemetry_failed", {
-      jobId: args.jobId,
-      kind: args.kind,
-      status: runStatus,
-      error: telemetryError instanceof Error ? telemetryError.message : String(telemetryError),
-    });
-    throw telemetryError;
-  }
+  })();
 
+  const runStatus = finalization.status;
   emitKindRunMetrics({
     jobId: args.jobId,
     kind: args.kind,
@@ -280,8 +271,9 @@ export async function runSystemDesignKind(
     kind: args.kind,
     title,
     status: runStatus,
-    countsAsSucceeded: runStatus === "succeeded" || runStatus === "cached_hit",
-    aborted: finalizationAborted,
+    countsAsSucceeded: finalization.countsAsSucceeded,
+    aborted: finalization.aborted,
+    artifactId: finalization.finalized ? finalization.artifactId : undefined,
   };
 }
 

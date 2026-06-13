@@ -62,6 +62,14 @@ The Discuss composer exposes a two-axis toggle bar (`grounding-toggle-bar.tsx`) 
 
 Per-thread defaults live on `threads.defaultGroundLibrary` and `threads.defaultGroundSandbox`. Each send updates these so reopening the thread restores the toggle state the user last sent with. The composer's `setGroundLibrary` / `setGroundSandbox` state is keyed by `threadId`, so a verdict refresh from `repositoryModeEligibility.evaluate` does not stomp on a user's mid-session click.
 
+## Composer Session
+
+Discuss composer state is assembled by a shared Composer Session Module rather than by the repository shell or the rendering panel. The pure helper `src/lib/chat-composer-session.ts` resolves model route, access-disabled reasons, effective grounding availability, and send-request payloads. The React adapter `src/components/chat-shell-shared/use-chat-composer-session.ts` owns draft persistence, thread-keyed grounding state, model picker state, catalog readiness, send/cancel lifecycle, and the final `ChatComposerViewModel`.
+
+`RepositoryShell` and `RepolessChatShell` provide surface-specific inputs to the same module. The repository adapter supplies repository id, active mode, grounding availability, viewer access, sync/read-only state, and the Generate System Design dialog opener. The repoless adapter fixes the surface to Discuss, disables grounding by construction, and supplies draft Agent Profile fields only for lazy first-send repoless thread creation.
+
+`ChatPanel` consumes the resolved composer view model. It no longer decides model preference scope, model access disabled reason, grounding effective state, catalog readiness, or send payload shape. Its remaining responsibilities are rendering the conversation, scroll/older-message behavior, in-flight reply presentation, empty state, and laying out toolbar controls supplied by the composer.
+
 Capability-based model selection routes the reply based on the (mode, groundSandbox) pair:
 
 - `groundSandbox: true` → `sandbox` tier — tool-using replies benefit from stronger reasoning.

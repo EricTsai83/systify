@@ -1,18 +1,12 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
 import { isActiveRepository, requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
 import { assertFeatureAccess, requiresHighReasoningAccess, requiresPremiumModelAccess } from "./lib/entitlements";
 import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
 import { enqueueJob, findActiveJob } from "./lib/jobs";
-import {
-  ensureSystemDesignFolders,
-  SYSTEM_DESIGN_KIND_TO_FOLDER,
-  systemDesignKindValidator,
-  type SystemDesignKind,
-} from "./lib/systemDesign";
-import { replaceArtifactInFolderWrite } from "./lib/artifactWrites";
+import { ensureSystemDesignFolders, systemDesignKindValidator, type SystemDesignKind } from "./lib/systemDesign";
 import {
   completeRunningJob,
   failRunningJob,
@@ -25,23 +19,19 @@ import {
 import {
   consumeDaytonaGlobalRateLimit,
   consumeSystemDesignRateLimit,
-  isLeaseActive,
   SYSTEM_DESIGN_JOB_LEASE_MS,
 } from "./lib/rateLimit";
 import { listPickableModels, reasoningEffortValidator, type ReasoningEffort } from "./lib/llmCatalog";
 import { llmProviderValidator, type LlmProvider } from "./lib/llmProvider";
 import { loadViewerModelPreferences } from "./lib/userPreferences";
 import {
-  persistedArtifactResultValidator,
-  recordedKindRunResultValidator,
   startedResultValidator,
+  systemDesignKindPublicationFinalizationResultValidator,
 } from "./lib/functionResultSchemas";
 import { logInfo, logWarn } from "./lib/observability";
 import { SYSTEM_DESIGN_PROMPT_VERSIONS } from "./lib/systemDesignPrompts";
-import {
-  reserveSandboxLibraryGenerationBudget,
-  settleSandboxLibraryGenerationUsage,
-} from "./lib/sandboxLibraryGenerationAccounting";
+import { reserveSandboxLibraryGenerationBudget } from "./lib/sandboxLibraryGenerationAccounting";
+import { buildUsageSourceId } from "./lib/usageAccounting";
 import {
   SYSTEM_DESIGN_DEFAULT_MODEL_CHOICE,
   buildSystemDesignJobSummary,
@@ -49,7 +39,10 @@ import {
   planSystemDesignGenerationRequest,
   resolveSystemDesignCachePreviewModel,
 } from "./lib/systemDesignPlanning";
-import { systemDesignFailureReasonValidator } from "./lib/systemDesignFailures";
+import {
+  finalizeSystemDesignKindPublication,
+  systemDesignKindPublicationOutcomeValidator,
+} from "./lib/systemDesignPublicationSettlement";
 
 /**
  * Loop guard for the stale-recovery auto-resume path. A System Design
@@ -76,31 +69,6 @@ const KIND_RUN_TERMINAL_STATUSES = new Set<Doc<"systemDesignKindRuns">["status"]
   "cached_hit",
   "quality_rejected",
 ]);
-
-async function loadActiveSystemDesignWriteTarget(
-  ctx: QueryCtx | MutationCtx,
-  args: {
-    ownerTokenIdentifier: string;
-    repositoryId: Id<"repositories">;
-    jobId: Id<"jobs">;
-  },
-): Promise<{ repository: Doc<"repositories">; job: Doc<"jobs"> } | null> {
-  const [repository, job] = await Promise.all([ctx.db.get(args.repositoryId), ctx.db.get(args.jobId)]);
-  if (!isOwnedBy(repository, args.ownerTokenIdentifier) || !isActiveRepository(repository)) {
-    return null;
-  }
-  if (
-    !job ||
-    job.kind !== "system_design" ||
-    job.status !== "running" ||
-    job.repositoryId !== args.repositoryId ||
-    job.ownerTokenIdentifier !== args.ownerTokenIdentifier ||
-    !isLeaseActive(job.leaseExpiresAt)
-  ) {
-    return null;
-  }
-  return { repository, job };
-}
 
 /**
  * Library System Design generation entry point.
@@ -373,32 +341,6 @@ export const updateGenerationProgress = internalMutation({
   },
 });
 
-export const recordKindFailure = internalMutation({
-  args: {
-    jobId: v.id("jobs"),
-    kind: systemDesignKindValidator,
-    errorId: v.string(),
-    message: v.string(),
-    reason: v.optional(systemDesignFailureReasonValidator),
-  },
-  handler: async (ctx, args) => {
-    const job = await ctx.db.get(args.jobId);
-    if (!job) return;
-    const previous = job.kindFailures ?? [];
-    await ctx.db.patch(args.jobId, {
-      kindFailures: [
-        ...previous,
-        {
-          kind: args.kind,
-          errorId: args.errorId,
-          message: args.message.slice(0, 200),
-          reason: args.reason,
-        },
-      ],
-    });
-  },
-});
-
 export const completeGeneration = internalMutation({
   args: {
     jobId: v.id("jobs"),
@@ -572,97 +514,6 @@ export const getGenerationContext = internalQuery({
   },
 });
 
-/**
- * Internal-only artifact persister called by the Node action once a kind's
- * markdown is ready. Resolves the destination folder by `systemKey`, replaces
- * any existing artifact of the same kind in the same folder (so re-running
- * the publication overwrites rather than accumulates), and writes the new
- * row through the Library artifact write module so replacement cleanup,
- * freshness, chunking state, provenance, and indexing scheduling stay
- * together.
- */
-export const persistGeneratedArtifact = internalMutation({
-  args: {
-    repositoryId: v.id("repositories"),
-    ownerTokenIdentifier: v.string(),
-    jobId: v.id("jobs"),
-    kind: systemDesignKindValidator,
-    title: v.string(),
-    summary: v.string(),
-    contentMarkdown: v.string(),
-    alignedImportCommitSha: v.optional(v.string()),
-    /**
-     * Provenance triple — together with `alignedImportCommitSha`,
-     * forms the cache key the next generation run will probe via
-     * `findCachedArtifact`.
-     */
-    generatedByProvider: v.optional(llmProviderValidator),
-    generatedByModel: v.optional(v.string()),
-    promptVersion: v.optional(v.number()),
-  },
-  returns: persistedArtifactResultValidator,
-  handler: async (ctx, args): Promise<{ persisted: true; artifactId: Id<"artifacts"> } | { persisted: false }> => {
-    const activeTarget = await loadActiveSystemDesignWriteTarget(ctx, args);
-    if (!activeTarget) {
-      return { persisted: false };
-    }
-
-    const folderKey = SYSTEM_DESIGN_KIND_TO_FOLDER[args.kind as SystemDesignKind];
-    // Tolerant lookup: `by_repositoryId_and_systemKey` is non-unique, so
-    // `.unique()` would throw if two seeded folders ever share a key (e.g.
-    // a race between concurrent `ensureSystemDesignFolders` callers). Take
-    // up to 2 and pick the oldest deterministically (Convex orders by
-    // `_creationTime` within an index), warning when we see a collision so
-    // ops can dedup the table out-of-band.
-    const candidates = await ctx.db
-      .query("artifactFolders")
-      .withIndex("by_repositoryId_and_systemKey", (q) =>
-        q.eq("repositoryId", args.repositoryId).eq("systemKey", folderKey),
-      )
-      .take(2);
-
-    const targetFolder = candidates[0] ?? null;
-    if (targetFolder === null) {
-      throw new Error(`Destination folder for ${args.kind} (systemKey=${folderKey}) is missing.`);
-    }
-    if (candidates.length > 1) {
-      logWarn("system_design", "duplicate_seeded_folder", {
-        repositoryId: args.repositoryId,
-        systemKey: folderKey,
-        chosenFolderId: targetFolder._id,
-      });
-    }
-
-    const artifactId = await replaceArtifactInFolderWrite(ctx, {
-      repositoryId: args.repositoryId,
-      jobId: args.jobId,
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      kind: args.kind,
-      title: args.title,
-      summary: args.summary,
-      contentMarkdown: args.contentMarkdown,
-      folderId: targetFolder._id,
-      alignedImportCommitSha: args.alignedImportCommitSha,
-      generatedByProvider: args.generatedByProvider,
-      generatedByModel: args.generatedByModel,
-      promptVersion: args.promptVersion,
-    });
-
-    return { persisted: true, artifactId };
-  },
-});
-
-/**
- * Mutation arg validator for the `recordKindRun` insert. Mirrors the
- * schema's `kindRunStatus` union — keep them in sync.
- */
-const recordKindRunStatus = v.union(
-  v.literal("succeeded"),
-  v.literal("failed"),
-  v.literal("cached_hit"),
-  v.literal("quality_rejected"),
-);
-
 type SystemDesignCacheKey = {
   repositoryId: Id<"repositories">;
   kind: SystemDesignKind;
@@ -705,6 +556,36 @@ export const findCachedArtifact = internalQuery({
   },
   handler: async (ctx, args): Promise<Doc<"artifacts"> | null> => {
     return await findCachedArtifactByKey(ctx, args);
+  },
+});
+
+/**
+ * Atomic publication settlement for one System Design kind. The Node action
+ * sends the terminal outcome here after cache lookup / LLM generation /
+ * quality classification; this mutation owns every write that makes that
+ * outcome durable: active-target validation, artifact replacement, kindRun
+ * insertion, failure summary append, usage settlement, and the artifact
+ * back-reference patch.
+ */
+export const finalizeKindPublication = internalMutation({
+  args: {
+    ownerTokenIdentifier: v.string(),
+    repositoryId: v.id("repositories"),
+    jobId: v.id("jobs"),
+    kind: systemDesignKindValidator,
+    provider: llmProviderValidator,
+    modelName: v.string(),
+    promptVersion: v.number(),
+    alignedImportCommitSha: v.optional(v.string()),
+    stepCap: v.number(),
+    actualSteps: v.number(),
+    durationMs: v.number(),
+    startedAt: v.number(),
+    outcome: systemDesignKindPublicationOutcomeValidator,
+  },
+  returns: systemDesignKindPublicationFinalizationResultValidator,
+  handler: async (ctx, args) => {
+    return await finalizeSystemDesignKindPublication(ctx, args);
   },
 });
 
@@ -761,8 +642,8 @@ export const getJobModelChoice = internalQuery({
  * which keeps System Design kinds and artifact drafts on the same
  * estimate path. System Design kinds with full tool loops can exceed the
  * estimate, but the estimate's role is "is the bucket obviously empty?"
- * not "exactly what will this cost". Settlement on `recordKindRun`
- * charges the actual cost.
+ * not "exactly what will this cost". Publication settlement charges the
+ * actual cost after the terminal outcome is known.
  */
 export const assertKindCostBudget = internalMutation({
   args: {
@@ -774,181 +655,11 @@ export const assertKindCostBudget = internalMutation({
   },
   handler: async (ctx, args): Promise<void> => {
     await reserveSandboxLibraryGenerationBudget(ctx, {
-      sourceId: `systemDesign:${args.jobId}:${args.kind}:${args.startedAt}`,
+      sourceId: buildUsageSourceId.systemDesign(args.jobId, args.kind, args.startedAt),
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId: args.repositoryId,
       occurredAtMs: args.startedAt,
     });
-  },
-});
-
-/**
- * Append a per-kind run row and settle daily-cap accounting in one
- * atomic mutation. Settlement uses the post-call `totalCostUsd` from
- * the gateway (not the pre-check estimate), so the daily cap reflects
- * actual spend.
- *
- * `cached_hit` rows skip settlement because the artifact was already paid
- * for. Non-positive or unknown costs short-circuit inside the shared
- * settlement helper.
- */
-export const recordKindRun = internalMutation({
-  args: {
-    ownerTokenIdentifier: v.string(),
-    repositoryId: v.id("repositories"),
-    jobId: v.id("jobs"),
-    kind: systemDesignKindValidator,
-    artifactId: v.optional(v.id("artifacts")),
-    provider: llmProviderValidator,
-    modelName: v.string(),
-    promptVersion: v.number(),
-    alignedImportCommitSha: v.optional(v.string()),
-    stepCap: v.number(),
-    actualSteps: v.number(),
-    inputTokens: v.optional(v.number()),
-    outputTokens: v.optional(v.number()),
-    cachedInputTokens: v.optional(v.number()),
-    cacheWriteTokens: v.optional(v.number()),
-    reasoningTokens: v.optional(v.number()),
-    totalCostUsd: v.optional(v.number()),
-    durationMs: v.number(),
-    status: recordKindRunStatus,
-    failureReason: v.optional(systemDesignFailureReasonValidator),
-    outputCharLength: v.optional(v.number()),
-    missingSections: v.optional(v.array(v.string())),
-    startedAt: v.number(),
-    sourceId: v.optional(v.string()),
-  },
-  returns: recordedKindRunResultValidator,
-  handler: async (
-    ctx,
-    args,
-  ): Promise<{ recorded: true; kindRunId: Id<"systemDesignKindRuns"> } | { recorded: false }> => {
-    const activeTarget = await loadActiveSystemDesignWriteTarget(ctx, args);
-    if (!activeTarget) {
-      if (args.status !== "cached_hit") {
-        await settleSandboxLibraryGenerationUsage(ctx, {
-          sourceId: args.sourceId ?? `systemDesign:${args.jobId}:${args.kind}:${args.startedAt}`,
-          ownerTokenIdentifier: args.ownerTokenIdentifier,
-          repositoryId: args.repositoryId,
-          occurredAtMs: args.startedAt,
-          totalCostUsd: args.totalCostUsd,
-          usage: {
-            inputTokens: args.inputTokens,
-            outputTokens: args.outputTokens,
-            cachedInputTokens: args.cachedInputTokens,
-            cacheWriteTokens: args.cacheWriteTokens,
-            reasoningTokens: args.reasoningTokens,
-          },
-        });
-      }
-      return { recorded: false };
-    }
-    if (args.artifactId) {
-      const artifact = await ctx.db.get(args.artifactId);
-      if (
-        !isOwnedBy(artifact, args.ownerTokenIdentifier) ||
-        artifact.repositoryId !== args.repositoryId ||
-        artifact.kind !== args.kind
-      ) {
-        if (args.status !== "cached_hit") {
-          await settleSandboxLibraryGenerationUsage(ctx, {
-            sourceId: args.sourceId ?? `systemDesign:${args.jobId}:${args.kind}:${args.startedAt}`,
-            ownerTokenIdentifier: args.ownerTokenIdentifier,
-            repositoryId: args.repositoryId,
-            occurredAtMs: args.startedAt,
-            totalCostUsd: args.totalCostUsd,
-            usage: {
-              inputTokens: args.inputTokens,
-              outputTokens: args.outputTokens,
-              cachedInputTokens: args.cachedInputTokens,
-              cacheWriteTokens: args.cacheWriteTokens,
-              reasoningTokens: args.reasoningTokens,
-            },
-          });
-        }
-        return { recorded: false };
-      }
-    }
-
-    const kindRunId = await ctx.db.insert("systemDesignKindRuns", {
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      repositoryId: args.repositoryId,
-      jobId: args.jobId,
-      kind: args.kind,
-      artifactId: args.artifactId,
-      provider: args.provider,
-      modelName: args.modelName,
-      promptVersion: args.promptVersion,
-      alignedImportCommitSha: args.alignedImportCommitSha,
-      stepCap: args.stepCap,
-      actualSteps: args.actualSteps,
-      inputTokens: args.inputTokens,
-      outputTokens: args.outputTokens,
-      cachedInputTokens: args.cachedInputTokens,
-      cacheWriteTokens: args.cacheWriteTokens,
-      reasoningTokens: args.reasoningTokens,
-      totalCostUsd: args.totalCostUsd,
-      durationMs: args.durationMs,
-      status: args.status,
-      failureReason: args.failureReason,
-      outputCharLength: args.outputCharLength,
-      missingSections: args.missingSections,
-      startedAt: args.startedAt,
-    });
-
-    if (args.status !== "cached_hit") {
-      await settleSandboxLibraryGenerationUsage(ctx, {
-        sourceId: args.sourceId ?? `systemDesignKindRun:${kindRunId}`,
-        ownerTokenIdentifier: args.ownerTokenIdentifier,
-        repositoryId: args.repositoryId,
-        occurredAtMs: args.startedAt,
-        totalCostUsd: args.totalCostUsd,
-        usage: {
-          inputTokens: args.inputTokens,
-          outputTokens: args.outputTokens,
-          cachedInputTokens: args.cachedInputTokens,
-          cacheWriteTokens: args.cacheWriteTokens,
-          reasoningTokens: args.reasoningTokens,
-        },
-      });
-    }
-
-    return { recorded: true, kindRunId };
-  },
-});
-
-/**
- * Patch a previously-created artifact with the back-reference to its
- * originating `systemDesignKindRuns` row. Split out from
- * `persistGeneratedArtifact` because the kindRun is recorded AFTER
- * the artifact is written (so analytics see the artifact's success
- * before pulling the run trace).
- */
-export const linkKindRun = internalMutation({
-  args: {
-    artifactId: v.id("artifacts"),
-    kindRunId: v.id("systemDesignKindRuns"),
-  },
-  handler: async (ctx, args): Promise<void> => {
-    const [artifact, kindRun] = await Promise.all([ctx.db.get(args.artifactId), ctx.db.get(args.kindRunId)]);
-    if (!artifact || !kindRun) {
-      return;
-    }
-    const activeTarget = await loadActiveSystemDesignWriteTarget(ctx, {
-      ownerTokenIdentifier: kindRun.ownerTokenIdentifier,
-      repositoryId: kindRun.repositoryId,
-      jobId: kindRun.jobId,
-    });
-    if (
-      !activeTarget ||
-      !isOwnedBy(artifact, kindRun.ownerTokenIdentifier) ||
-      artifact.repositoryId !== kindRun.repositoryId
-    ) {
-      return;
-    }
-    await ctx.db.patch(args.artifactId, { kindRunId: args.kindRunId });
-    await ctx.db.patch(args.kindRunId, { artifactId: args.artifactId });
   },
 });
 

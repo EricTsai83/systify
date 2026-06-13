@@ -2,11 +2,12 @@ import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { type MutationCtx, internalMutation, internalQuery, query } from "../_generated/server";
 import { loadOwnedDoc } from "../lib/ownedDocs";
-import { CHAT_JOB_LEASE_MS, consumeSandboxDailyCost } from "../lib/rateLimit";
+import { CHAT_JOB_LEASE_MS } from "../lib/rateLimit";
 import { jobCancellationStatusValidator, startedResultValidator } from "../lib/functionResultSchemas";
 import { costUsdToCents } from "../lib/llmPricing";
 import { logInfo, logWarn } from "../lib/observability";
-import { recordUserUsageEvent } from "../lib/userCost";
+import { buildUsageSourceId } from "../lib/usageAccounting";
+import { settleUsageLifecycleInMutation } from "../lib/usageAccountingMutations";
 import {
   MAX_LIVE_REASONING_CHARS,
   MAX_TOOL_CALL_EVENTS_PER_MESSAGE,
@@ -99,72 +100,52 @@ async function foldAndDrainToolCallEvents(
 }
 
 /**
- * Settle the actual reply cost against the per-user and (when applicable)
- * per-repository daily caps.
- *
- * Called from every terminal-state path:
- *   - `finalizeAssistantReply` (success)
- *   - `failAssistantReply` (upstream error / mid-stream failure)
- *   - `markAssistantReplyCancelled` (user-initiated stop)
- *   - `recoverStaleChatJob` (lease expired)
- *
- * Settling on every path matters because partial replies still incur
- * cost from OpenAI — a sandbox reply that was cancelled after 30s of
- * tool calls produced real spend that must count against the cap.
- * Skipping settlement on cancellation/failure would let users repeatedly
- * hit Stop just before finalize and bypass the cap.
- *
- * Idempotent on `cents <= 0` so the call site can pass through whatever
- * `estimateCostUsd` produced (including `undefined`) without checking
- * it first.
+ * Settle chat reply usage into the durable user ledger and, for sandbox
+ * grounded replies only, the sandbox daily cost cap.
  */
-async function settleSandboxReplyCost(
+async function settleChatReplyUsage(
   ctx: MutationCtx,
   args: {
     jobId: Id<"jobs">;
     assistantMessage: Doc<"messages"> | null;
-    costUsd: number | undefined;
+    occurredAtMs: number;
+    usage: TerminalUsage | undefined;
   },
 ): Promise<void> {
-  // Only sandbox-grounded replies bill against the daily cap. The check on
-  // `assistantMessage.groundSandbox` is the source of truth — using the job's
-  // `costCategory` would also work today (sandbox ↔ system_design), but
-  // the message-level groundSandbox flag keeps this code resilient if the
-  // costCategory mapping ever changes.
-  if (!args.assistantMessage || args.assistantMessage.groundSandbox !== true) {
-    return;
-  }
-  const cents = costUsdToCents(args.costUsd);
-  if (cents === undefined || cents <= 0) {
-    // Heuristic-only replies (no OPENAI_API_KEY) and pricing-table
-    // misses arrive here. We deliberately do not settle in those cases:
-    //   - heuristic replies are free (no LLM call)
-    //   - pricing-miss replies have unknowable cost; double-counting
-    //     them as "free" is the conservative direction (better than
-    //     guessing a number and starving the user's quota by accident)
+  if (!args.assistantMessage) {
     return;
   }
 
-  // Look up the repository from the thread (the message stores threadId,
-  // not repositoryId). Concurrent thread deletion makes this a defensive
-  // fetch — if the thread is gone, we still want the per-user settlement
-  // to land, so a missing thread degrades to "user-only settlement" rather
-  // than blocking the cost recording entirely.
-  const thread = await ctx.db.get(args.assistantMessage.threadId);
-  const repositoryId = thread?.repositoryId ?? null;
+  const isSandboxReply = args.assistantMessage.groundSandbox === true;
+  const thread = isSandboxReply ? await ctx.db.get(args.assistantMessage.threadId) : null;
+  const repositoryId = isSandboxReply ? (thread?.repositoryId ?? null) : null;
 
-  await consumeSandboxDailyCost(ctx, {
+  const settlement = await settleUsageLifecycleInMutation(ctx, {
+    sourceId: buildUsageSourceId.chatReply(args.assistantMessage._id),
     ownerTokenIdentifier: args.assistantMessage.ownerTokenIdentifier,
     repositoryId,
-    cents,
+    feature: "chatReply",
+    sandboxDailyCap: isSandboxReply ? "settleOnly" : "none",
+    occurredAtMs: args.occurredAtMs,
+    usage: {
+      costUsd: args.usage?.costUsd,
+      inputTokens: args.usage?.inputTokens,
+      outputTokens: args.usage?.outputTokens,
+      cachedInputTokens: args.usage?.cachedInputTokens,
+      reasoningTokens: args.usage?.reasoningTokens,
+    },
   });
+
+  if (!isSandboxReply || settlement.settledCents === null) {
+    return;
+  }
 
   logInfo("chat", "sandbox_cost_settled", {
     jobId: args.jobId,
     assistantMessageId: args.assistantMessage._id,
     ownerTokenIdentifier: args.assistantMessage.ownerTokenIdentifier,
     repositoryId,
-    cents,
+    cents: settlement.settledCents,
   });
 }
 
@@ -707,28 +688,16 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
     // non-sandbox replies and for `costUsd === undefined`.
     if (outcome.kind !== "stale") {
       const usage = usageForChatRollup(outcome, message);
-      await settleSandboxReplyCost(ctx, {
+      await settleChatReplyUsage(ctx, {
         jobId: outcome.jobId,
         assistantMessage: message,
-        costUsd: usage?.costUsd,
+        occurredAtMs: now,
+        usage,
       });
       await recordSandboxSessionActivityForReply(ctx, {
         assistantMessage: message,
         costUsd: usage?.costUsd,
       });
-      if (message) {
-        await recordUserUsageEvent(ctx, {
-          sourceId: `message:${message._id}`,
-          ownerTokenIdentifier: message.ownerTokenIdentifier,
-          feature: "chat",
-          occurredAtMs: now,
-          usd: usage?.costUsd,
-          inputTokens: usage?.inputTokens,
-          outputTokens: usage?.outputTokens,
-          cachedInputTokens: usage?.cachedInputTokens,
-          reasoningTokens: usage?.reasoningTokens,
-        });
-      }
     }
 
     return applied;

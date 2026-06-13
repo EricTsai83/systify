@@ -268,9 +268,9 @@ The lease is set **at insert time** rather than only at the `queued → running`
 
 Per-kind failures are isolated in a `try/catch`; the failing kind is logged with an `errorId` and skipped without affecting later kinds. After every kind completes (success or failure) the action updates `jobs.stage` / `jobs.progress` via `updateGenerationProgress`.
 
-### 4. Persist the artifacts
+### 4. Publication settlement
 
-`persistGeneratedArtifact` resolves the destination folder via the kind→folder map and `artifactFolders.systemKey`, then replaces any existing artifact of the same kind in that folder so re-running the publication overwrites rather than accumulates. The artifact is written through the standard `createArtifactInMutation` path so the chunking + embedding pipeline kicks in automatically.
+`finalizeKindPublication` resolves the destination folder via the kind→folder map and `artifactFolders.systemKey`, then replaces any existing artifact of the same kind in that folder so re-running the publication overwrites rather than accumulates. The artifact is written through the standard artifact write helper so the chunking + embedding pipeline kicks in automatically.
 
 Every System Design kind is sandbox-grounded, so `createArtifactInMutation` stamps `lastVerifiedAt: now` at creation. (`lastVerifiedAt` is the single signal the freshness UI reads — an artifact is "verified" iff this field is set; sandbox-grounded chat replies can re-stamp it later on re-read.)
 
@@ -312,4 +312,3 @@ Artifacts produced by System Design generation flow back into later Library Ask 
 - Sandbox tooling (`read_file`, `list_dir`, `run_shell`) is gated only by daily cost cap (per-user and per-repository) and the repo / sandbox lifecycle. `run_shell` is gated by a deny list of obviously destructive patterns, a 32 KiB output cap, a 60 s timeout ceiling, and a workdir pinned inside the repository.
 - Chat and System Design generation are both AI features, but their outputs and tracking models are still split between thread replies and artifacts.
 - The current System Design generation pass is a fixed starter set of overviews. Per-folder regeneration, additional artifact kinds, and partial re-runs are future work.
-

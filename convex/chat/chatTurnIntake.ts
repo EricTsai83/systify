@@ -10,21 +10,16 @@ import type { LlmProvider } from "../lib/llmProvider";
 import { requireOwnedDoc } from "../lib/ownedDocs";
 import {
   CHAT_JOB_LEASE_MS,
-  assertSandboxDailyCostBudget,
   consumeChatGlobalRateLimit,
   consumeChatRateLimit,
   consumeDaytonaGlobalRateLimit,
-  getSandboxReplyEstimateCents,
   getLeaseRetryAfterMs,
   throwOperationAlreadyInProgress,
 } from "../lib/rateLimit";
 import { requireActiveRepositoryForViewer } from "../lib/repositoryAccess";
 import { NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
-import {
-  CHAT_REPLY_BUDGET_ESTIMATE_USD,
-  assertUserUsageBudgetAvailable,
-  reserveUserUsageBudget,
-} from "../lib/userCost";
+import { buildUsageSourceId } from "../lib/usageAccounting";
+import { reserveUsageLifecycleInMutation } from "../lib/usageAccountingMutations";
 import { loadViewerModelPreferences } from "../lib/userPreferences";
 import { recordThreadActivityInHistory, recordThreadCreatedInHistory } from "./historyState";
 import { requireActiveOwnedThread } from "./threadAccess";
@@ -156,17 +151,9 @@ async function assertChatTurnBudgetsAndRateLimits(
   ctx: MutationCtx,
   args: {
     ownerTokenIdentifier: string;
-    repositoryId: Id<"repositories"> | null;
     groundSandbox: boolean;
   },
 ): Promise<void> {
-  if (args.groundSandbox) {
-    await assertSandboxDailyCostBudget(ctx, {
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      repositoryId: args.repositoryId,
-      estimateCents: getSandboxReplyEstimateCents(),
-    });
-  }
   await consumeChatRateLimit(ctx, args.ownerTokenIdentifier);
   await consumeChatGlobalRateLimit(ctx);
   if (args.groundSandbox) {
@@ -222,7 +209,6 @@ async function insertChatTurn(
     trimmedContent: string;
     ownerTokenIdentifier: string;
     now: number;
-    sandboxSessionId?: Id<"sandboxSessions">;
   },
 ): Promise<QueuedChatTurn> {
   // Sandbox-grounded Discuss replies use tool calls and the heavier model
@@ -284,6 +270,20 @@ async function insertChatTurn(
     lastAppendedAt: args.now,
   });
 
+  await reserveUsageLifecycleInMutation(ctx, {
+    sourceId: buildUsageSourceId.chatReply(assistantMessageId),
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    repositoryId: args.groundSandbox === true ? (args.thread.repositoryId ?? null) : null,
+    feature: "chatReply",
+    sandboxDailyCap: args.groundSandbox === true ? "precheckAndSettle" : "none",
+    occurredAtMs: args.now,
+  });
+
+  const sandboxSessionId = await ensureSandboxSessionForTurn(ctx, {
+    threadId: args.thread._id,
+    groundSandbox: args.groundSandbox === true,
+  });
+
   const threadPatch: {
     mode: ChatMode;
     lastMessageAt: number;
@@ -295,7 +295,7 @@ async function insertChatTurn(
   } = {
     mode: args.mode,
     lastMessageAt: args.now,
-    ...(args.sandboxSessionId !== undefined && { sandboxSessionId: args.sandboxSessionId }),
+    ...(sandboxSessionId !== undefined && { sandboxSessionId }),
   };
   if (args.mode === "discuss") {
     threadPatch.defaultGroundLibrary = args.groundLibrary === true;
@@ -310,14 +310,6 @@ async function insertChatTurn(
   if (updatedThread) {
     await recordThreadActivityInHistory(ctx, updatedThread);
   }
-
-  await reserveUserUsageBudget(ctx, {
-    sourceId: `message:${assistantMessageId}`,
-    ownerTokenIdentifier: args.ownerTokenIdentifier,
-    feature: "chat",
-    estimatedCostUsd: CHAT_REPLY_BUDGET_ESTIMATE_USD,
-    occurredAtMs: args.now,
-  });
 
   await ctx.scheduler.runAfter(0, internal.chat.generation.generateAssistantReply, {
     threadId: args.thread._id,
@@ -390,7 +382,6 @@ export async function startChatTurnInNewThread(ctx: MutationCtx, args: StartThre
   const now = Date.now();
   await assertChatTurnBudgetsAndRateLimits(ctx, {
     ownerTokenIdentifier: identity.tokenIdentifier,
-    repositoryId: turnPlan.repositoryId,
     groundSandbox: turnPlan.groundSandbox,
   });
 
@@ -427,11 +418,6 @@ export async function startChatTurnInNewThread(ctx: MutationCtx, args: StartThre
 
   const thread = (await ctx.db.get(threadId))!;
   await recordThreadCreatedInHistory(ctx, thread);
-  const sandboxSessionId = await ensureSandboxSessionForTurn(ctx, {
-    threadId,
-    groundSandbox: turnPlan.groundSandbox,
-  });
-
   const queuedTurn = await insertChatTurn(ctx, {
     thread,
     repository,
@@ -444,7 +430,6 @@ export async function startChatTurnInNewThread(ctx: MutationCtx, args: StartThre
     trimmedContent,
     ownerTokenIdentifier: identity.tokenIdentifier,
     now,
-    sandboxSessionId,
   });
 
   return {
@@ -529,18 +514,6 @@ export async function startChatTurnInExistingThread(
 
   await assertChatTurnBudgetsAndRateLimits(ctx, {
     ownerTokenIdentifier: identity.tokenIdentifier,
-    repositoryId: turnPlan.repositoryId,
-    groundSandbox: turnPlan.groundSandbox,
-  });
-  await assertUserUsageBudgetAvailable(ctx, {
-    ownerTokenIdentifier: identity.tokenIdentifier,
-    feature: "chat",
-    estimatedCostUsd: CHAT_REPLY_BUDGET_ESTIMATE_USD,
-    occurredAtMs: now,
-  });
-
-  const sandboxSessionId = await ensureSandboxSessionForTurn(ctx, {
-    threadId: args.threadId,
     groundSandbox: turnPlan.groundSandbox,
   });
 
@@ -556,6 +529,5 @@ export async function startChatTurnInExistingThread(
     trimmedContent,
     ownerTokenIdentifier: identity.tokenIdentifier,
     now,
-    sandboxSessionId,
   });
 }

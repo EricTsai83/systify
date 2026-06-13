@@ -33,6 +33,7 @@ import {
   reserveSandboxLibraryGenerationBudget,
   settleSandboxLibraryGenerationUsage,
 } from "./lib/sandboxLibraryGenerationAccounting";
+import { buildUsageSourceId } from "./lib/usageAccounting";
 
 export const ARTIFACT_DRAFT_PROMPT_VERSION = 1;
 
@@ -465,7 +466,7 @@ export const assertDraftCostBudget = internalMutation({
   },
   handler: async (ctx, args): Promise<void> => {
     await reserveSandboxLibraryGenerationBudget(ctx, {
-      sourceId: `artifactDraft:${args.jobId}:${args.startedAt}`,
+      sourceId: buildUsageSourceId.artifactDraft(args.jobId, args.startedAt),
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId: args.repositoryId,
       occurredAtMs: args.startedAt,

@@ -19,9 +19,9 @@ import { STREAM_FLUSH_THRESHOLD } from "../lib/constants";
 import { LlmRateLimitError, streamViaGateway, type LlmStreamResult } from "../lib/llmGateway";
 import type { LlmProvider } from "../lib/llmProvider";
 import { emitMetric, logInfo, logWarn } from "../lib/observability";
-import type { ReplyContext } from "./context";
 import type { ReasoningEffort, UserPickableCapability } from "./modelSelection";
 import { redact } from "./redaction";
+import type { SandboxTooling } from "./replyGrounding";
 import {
   countUtf8Bytes,
   extractAuditMetadataFromToolOutput,
@@ -104,9 +104,14 @@ interface ReplyStreamModelChoice {
   capability: UserPickableCapability;
 }
 
+export type ReplyGroundingAudit = {
+  ownerTokenIdentifier: string;
+  sandboxTooling?: SandboxTooling;
+};
+
 interface ConsumeReplyStreamArgs {
   threadId: Id<"threads">;
-  replyContext: ReplyContext;
+  groundingAudit: ReplyGroundingAudit;
   modelChoice: ReplyStreamModelChoice;
   systemPrompt: string;
   userPromptText: string;
@@ -275,7 +280,7 @@ export function createReplyStreamController(ctx: ActionCtx, controllerArgs: Repl
         {
           provider: args.modelChoice.provider,
           modelName: args.modelChoice.modelName,
-          ownerTokenIdentifier: args.replyContext.ownerTokenIdentifier,
+          ownerTokenIdentifier: args.groundingAudit.ownerTokenIdentifier,
           capability: args.modelChoice.capability,
           feature: "chat",
           threadId: args.threadId,
@@ -427,12 +432,12 @@ export function createReplyStreamController(ctx: ActionCtx, controllerArgs: Repl
             details: buildToolMetricDetails(controllerArgs.assistantMessageId, controllerArgs.jobId, part.toolCallId),
           });
 
-          if (args.replyContext.sandboxTooling) {
+          if (args.groundingAudit.sandboxTooling) {
             await tryRecordSandboxToolCallLogEntry(ctx, {
-              ownerTokenIdentifier: args.replyContext.ownerTokenIdentifier,
+              ownerTokenIdentifier: args.groundingAudit.ownerTokenIdentifier,
               threadId: args.threadId,
               messageId: controllerArgs.assistantMessageId,
-              sandboxId: args.replyContext.sandboxTooling.sandboxId,
+              sandboxId: args.groundingAudit.sandboxTooling.sandboxId,
               toolName: toolCall?.toolName ?? part.toolName,
               inputJson: toolCall?.inputSummary ?? "{}",
               outputBytes: countUtf8Bytes(resultJson),
@@ -480,12 +485,12 @@ export function createReplyStreamController(ctx: ActionCtx, controllerArgs: Repl
             details: buildToolMetricDetails(controllerArgs.assistantMessageId, controllerArgs.jobId, part.toolCallId),
           });
 
-          if (args.replyContext.sandboxTooling) {
+          if (args.groundingAudit.sandboxTooling) {
             await tryRecordSandboxToolCallLogEntry(ctx, {
-              ownerTokenIdentifier: args.replyContext.ownerTokenIdentifier,
+              ownerTokenIdentifier: args.groundingAudit.ownerTokenIdentifier,
               threadId: args.threadId,
               messageId: controllerArgs.assistantMessageId,
-              sandboxId: args.replyContext.sandboxTooling.sandboxId,
+              sandboxId: args.groundingAudit.sandboxTooling.sandboxId,
               toolName: toolCall?.toolName ?? part.toolName,
               inputJson: toolCall?.inputSummary ?? "{}",
               outputBytes: 0,
