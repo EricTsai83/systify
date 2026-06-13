@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
     getSandboxFsClient: vi.fn(),
     createSandboxTools: vi.fn(),
     hasProviderApiKey: vi.fn(),
+    retrieveArtifactChunks: vi.fn(),
     consume: vi.fn(),
   };
 });
@@ -43,6 +44,10 @@ vi.mock("./sandboxTools", () => ({
 
 vi.mock("../lib/providerEnv", () => ({
   hasProviderApiKey: mocks.hasProviderApiKey,
+}));
+
+vi.mock("../lib/artifactRag", () => ({
+  retrieveArtifactChunks: mocks.retrieveArtifactChunks,
 }));
 
 vi.mock("./replyStreamController", () => ({
@@ -173,12 +178,168 @@ async function seedSandboxGroundedReply(t: SystifyTestConvex) {
   });
 }
 
+async function seedLibraryGroundedReply(t: SystifyTestConvex) {
+  return await t.run(async (ctx) => {
+    const repositoryId = await ctx.db.insert("repositories", {
+      ownerTokenIdentifier: OWNER,
+      sourceHost: "github",
+      sourceUrl: "https://github.com/acme/reply-session-library",
+      sourceRepoFullName: "acme/reply-session-library",
+      sourceRepoOwner: "acme",
+      sourceRepoName: "reply-session-library",
+      defaultBranch: "main",
+      visibility: "private",
+      accessMode: "private",
+      importStatus: "completed",
+      detectedLanguages: [],
+      packageManagers: [],
+      entrypoints: [],
+      fileCount: 1,
+      color: "blue",
+      lastAccessedAt: Date.now(),
+    });
+    const threadId = await ctx.db.insert("threads", {
+      repositoryId,
+      ownerTokenIdentifier: OWNER,
+      title: "Library reply session",
+      mode: "library",
+      lastMessageAt: Date.now(),
+    });
+    const jobId = await ctx.db.insert("jobs", {
+      repositoryId,
+      threadId,
+      ownerTokenIdentifier: OWNER,
+      kind: "chat",
+      status: "queued",
+      stage: "queued",
+      progress: 0,
+      costCategory: "chat",
+      triggerSource: "user",
+      leaseExpiresAt: Date.now() + 60_000,
+    });
+    const artifactId = await ctx.db.insert("artifacts", {
+      repositoryId,
+      threadId,
+      jobId,
+      ownerTokenIdentifier: OWNER,
+      kind: "architecture_overview",
+      title: "Architecture overview",
+      summary: "Runtime boundaries.",
+      contentMarkdown: "Fallback artifact body.",
+      version: 1,
+    });
+    await ctx.db.patch(threadId, { artifactContext: [artifactId] });
+    const chunkId = await ctx.db.insert("artifactChunks", {
+      repositoryId,
+      ownerTokenIdentifier: OWNER,
+      artifactId,
+      artifactVersion: 1,
+      chunkIndex: 0,
+      headingPath: ["Runtime"],
+      startOffset: 0,
+      endOffset: 30,
+      content: "Runtime evidence from retrieved chunks.",
+      summary: "Runtime evidence.",
+    });
+    const userMessageId = await ctx.db.insert("messages", {
+      repositoryId,
+      threadId,
+      jobId,
+      ownerTokenIdentifier: OWNER,
+      role: "user",
+      status: "completed",
+      mode: "library",
+      content: "What does runtime use?",
+      provider: "openai",
+      modelName: "gpt-5.5",
+    });
+    const assistantMessageId = await ctx.db.insert("messages", {
+      repositoryId,
+      threadId,
+      jobId,
+      ownerTokenIdentifier: OWNER,
+      role: "assistant",
+      status: "pending",
+      mode: "library",
+      content: "",
+      provider: "openai",
+      modelName: "gpt-5.5",
+    });
+    await ctx.db.insert("messageStreams", {
+      repositoryId,
+      threadId,
+      jobId,
+      assistantMessageId,
+      ownerTokenIdentifier: OWNER,
+      compactedContent: "",
+      compactedThroughSequence: -1,
+      nextSequence: 0,
+      startedAt: Date.now(),
+      lastAppendedAt: Date.now(),
+    });
+
+    return { repositoryId, threadId, jobId, artifactId, chunkId, userMessageId, assistantMessageId };
+  });
+}
+
 beforeEach(() => {
   mocks.ensureSandboxReady.mockReset();
   mocks.getSandboxFsClient.mockReset().mockResolvedValue({ readFile: vi.fn() });
   mocks.createSandboxTools.mockReset().mockReturnValue({ read_file: {} });
   mocks.hasProviderApiKey.mockReset().mockReturnValue(true);
+  mocks.retrieveArtifactChunks.mockReset().mockResolvedValue([]);
   mocks.consume.mockReset().mockResolvedValue({ kind: "completed", finalDelta: "Live answer.", usage: {} });
+});
+
+describe("runAssistantReplySession artifact grounding", () => {
+  test("hydrates Library Ask artifact evidence before streaming and persists the ready citation map", async () => {
+    const t = createTestConvex();
+    const ids = await seedLibraryGroundedReply(t);
+    mocks.retrieveArtifactChunks.mockResolvedValue([
+      {
+        chunkId: ids.chunkId,
+        artifactId: ids.artifactId,
+        artifactTitle: "Architecture overview",
+        artifactKind: "architecture_overview",
+        headingPath: ["Runtime"],
+        content: "Runtime evidence from retrieved chunks.",
+        lexicalScore: 1,
+        semanticScore: 0.5,
+        rrfScore: 0.03,
+      },
+    ]);
+
+    await t.action(internal.chat.generation.generateAssistantReply, replyActionArgs(ids));
+
+    expect(mocks.retrieveArtifactChunks).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        ownerTokenIdentifier: OWNER,
+        repositoryId: ids.repositoryId,
+        query: "What does runtime use?",
+        threadId: ids.threadId,
+        messageId: ids.userMessageId,
+        artifactScope: [ids.artifactId],
+      }),
+    );
+    expect(mocks.consume).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userPromptText: expect.stringContaining("Runtime evidence from retrieved chunks."),
+        groundingAudit: { ownerTokenIdentifier: OWNER },
+        sandboxTools: undefined,
+      }),
+    );
+
+    const assistant = await t.run(async (ctx) => await ctx.db.get(ids.assistantMessageId));
+    expect(assistant?.citationMap).toEqual([
+      {
+        index: 1,
+        artifactId: ids.artifactId,
+        chunkId: ids.chunkId,
+        headingPath: ["Runtime"],
+      },
+    ]);
+  });
 });
 
 describe("runAssistantReplySession live-source preparation", () => {
@@ -205,16 +366,18 @@ describe("runAssistantReplySession live-source preparation", () => {
     expect(mocks.createSandboxTools).toHaveBeenCalledWith(expect.anything(), "/workspace/repo");
     expect(mocks.consume).toHaveBeenCalledWith(
       expect.objectContaining({
-        replyContext: expect.objectContaining({
+        groundingAudit: {
+          ownerTokenIdentifier: OWNER,
           sandboxTooling: {
             sandboxId: ids.sandboxId,
             remoteId: "remote-prepared",
             repoPath: "/workspace/repo",
           },
-        }),
+        },
         sandboxTools: { read_file: {} },
       }),
     );
+    expect(mocks.consume.mock.calls[0]?.[0]).not.toHaveProperty("replyContext");
   });
 
   test("fails the assistant message when live source preparation fails", async () => {
@@ -253,5 +416,85 @@ describe("runAssistantReplySession live-source preparation", () => {
     await t.action(internal.chat.generation.generateAssistantReply, replyActionArgs(ids));
 
     expect(mocks.consume).not.toHaveBeenCalled();
+  });
+
+  test("passes both artifact evidence and sandbox tools when both grounding axes are enabled", async () => {
+    const t = createTestConvex();
+    const ids = await seedLibraryGroundedReply(t);
+    const sandboxId = await t.run(async (ctx) => {
+      await ctx.db.patch(ids.threadId, { mode: "discuss" });
+      await ctx.db.patch(ids.userMessageId, {
+        mode: "discuss",
+        groundLibrary: true,
+        groundSandbox: true,
+      });
+      await ctx.db.patch(ids.assistantMessageId, {
+        mode: "discuss",
+        groundLibrary: true,
+        groundSandbox: true,
+      });
+      return await ctx.db.insert("sandboxes", {
+        repositoryId: ids.repositoryId,
+        ownerTokenIdentifier: OWNER,
+        provider: "daytona",
+        sourceAdapter: "git_clone",
+        remoteId: "remote-both",
+        status: "ready",
+        workDir: "/workspace",
+        repoPath: "/workspace/repo",
+        cpuLimit: 2,
+        memoryLimitGiB: 4,
+        diskLimitGiB: 10,
+        ttlExpiresAt: Date.now() + 60_000,
+        autoStopIntervalMinutes: 10,
+        autoArchiveIntervalMinutes: 60,
+        autoDeleteIntervalMinutes: 1440,
+        networkBlockAll: false,
+      });
+    });
+    mocks.retrieveArtifactChunks.mockResolvedValue([
+      {
+        chunkId: ids.chunkId,
+        artifactId: ids.artifactId,
+        artifactTitle: "Architecture overview",
+        artifactKind: "architecture_overview",
+        headingPath: ["Runtime"],
+        content: "Runtime evidence from retrieved chunks.",
+        lexicalScore: 1,
+        semanticScore: 0.5,
+        rrfScore: 0.03,
+      },
+    ]);
+    mocks.ensureSandboxReady.mockResolvedValue({
+      sandboxId,
+      remoteId: "remote-both",
+      repoPath: "/workspace/repo",
+    });
+
+    await t.action(internal.chat.generation.generateAssistantReply, replyActionArgs(ids));
+
+    expect(mocks.retrieveArtifactChunks).toHaveBeenCalled();
+    expect(mocks.ensureSandboxReady).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        repositoryId: ids.repositoryId,
+        ownerTokenIdentifier: OWNER,
+      },
+      expect.any(Function),
+    );
+    expect(mocks.consume).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userPromptText: expect.stringContaining("Runtime evidence from retrieved chunks."),
+        groundingAudit: {
+          ownerTokenIdentifier: OWNER,
+          sandboxTooling: {
+            sandboxId,
+            remoteId: "remote-both",
+            repoPath: "/workspace/repo",
+          },
+        },
+        sandboxTools: { read_file: {} },
+      }),
+    );
   });
 });

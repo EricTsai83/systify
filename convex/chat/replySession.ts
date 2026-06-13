@@ -38,16 +38,10 @@ import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import type { ActionCtx } from "../_generated/server";
 import { getSandboxFsClient } from "../daytona";
-import {
-  ensureSandboxReady,
-  SandboxPreparationError,
-  type EnsureSandboxReadyResult,
-  type SandboxPreparationStage,
-} from "../lib/sandboxLiveness";
+import { SandboxPreparationError } from "../lib/sandboxLiveness";
 import { emitMetric, logInfo } from "../lib/observability";
 import { hasProviderApiKey } from "../lib/providerEnv";
-import { retrieveArtifactChunks } from "../lib/artifactRag";
-import type { ReplyContext } from "./context";
+import type { ReplyTurnContext } from "./context";
 import { resolveModelForReply } from "./modelSelection";
 import {
   buildCitationMap,
@@ -55,14 +49,16 @@ import {
   buildSystemPrompt,
   buildUserPrompt,
   type ExtendedChatMode,
+  type ReplyPromptInput,
 } from "./prompting";
+import { getPreparedSandboxTooling, type ReadyReplyGrounding, type SandboxTooling } from "./replyGrounding";
+import { hydrateReplyGroundingForGeneration, prepareLiveSourceGrounding } from "./replyGroundingNode";
 import {
   createReplyStreamController,
   formatReplyStreamError,
   type GatewayUsage,
   type ReplyStreamOutcome,
 } from "./replyStreamController";
-import { selectRelevantChunks } from "./relevance";
 import { createSandboxTools } from "./sandboxTools";
 
 const LIVE_SOURCE_PREP_FAILED_MESSAGE = "Live source couldn't be prepared. Retry the message.";
@@ -351,7 +347,7 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
     const replyContext = (await ctx.runQuery(internal.chat.context.getReplyContext, {
       threadId: args.threadId,
       userMessageId: args.userMessageId,
-    })) as ReplyContext;
+    })) as ReplyTurnContext;
 
     // Capture the mode tag as soon as we know it from the context query
     // so even a mid-action throw still produces a session metric tagged
@@ -368,13 +364,13 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
       throw new Error("Queued user message not present in conversational window for this assistant reply.");
     }
     const userPrompt = queuedUserMessage.content;
-    const groundedReplyContext = await hydrateLibraryArtifactChunks(ctx, {
-      replyContext,
+    const hydratedTurnContext = await hydrateReplyGroundingForGeneration(ctx, {
+      turnContext: replyContext,
       threadId: args.threadId,
       userMessageId: args.userMessageId,
       query: userPrompt,
     });
-    const relevantChunks = selectRelevantChunks(groundedReplyContext.chunks, userPrompt);
+    const hydratedPromptInput = toReplyPromptInput(hydratedTurnContext);
 
     // Build the citation map *before* the heuristic / streaming branches so
     // both paths persist the same `[A#] -> artifact evidence` lookup the
@@ -382,7 +378,7 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
     // when no artifact evidence was selected — ungrounded `discuss` and
     // unattached threads have an empty list, so persisting `[]` would just
     // add noise to the message row without any frontend usefulness.
-    const citationMap = buildCitationMap(groundedReplyContext);
+    const citationMap = buildCitationMap(hydratedPromptInput.grounding.artifactEvidence);
     const persistedCitationMap = citationMap.length > 0 ? citationMap : undefined;
 
     // Resolve the picked `(provider, modelName)` pair early so the
@@ -391,15 +387,16 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
     // (but no `OPENAI_API_KEY`) should still get LLM-powered replies.
     const modelChoice = resolveModelForReply({
       mode: replyContext.mode,
-      groundSandbox: groundedReplyContext.groundSandbox,
+      groundSandbox: hydratedTurnContext.grounding.flags.groundSandbox,
       overrideProvider: replyContext.provider,
       overrideModelName: replyContext.modelName,
       overrideReasoningEffort: replyContext.reasoningEffort,
     });
     telemetry.modelName = modelChoice.modelName;
 
-    let finalReplyContext = groundedReplyContext;
-    let resolvedSandboxTooling = groundedReplyContext.sandboxTooling;
+    let finalTurnContext = hydratedTurnContext;
+    let finalPromptInput = hydratedPromptInput;
+    let resolvedSandboxTooling = getPreparedSandboxTooling(hydratedTurnContext.grounding);
 
     if (!hasProviderApiKey(modelChoice.provider)) {
       // The heuristic path produces its full answer synchronously, so
@@ -412,7 +409,7 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
       if (await exitIfCancellationSettled()) {
         return;
       }
-      const heuristicAnswer = buildHeuristicAnswer(finalReplyContext, userPrompt, relevantChunks);
+      const heuristicAnswer = buildHeuristicAnswer(finalPromptInput, userPrompt);
       await ctx.runMutation(internal.chat.streaming.finalizeAssistantReply, {
         threadId: args.threadId,
         assistantMessageId: args.assistantMessageId,
@@ -424,25 +421,21 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
       return;
     }
 
-    if (groundedReplyContext.groundSandbox === true && groundedReplyContext.repositoryId) {
+    if (hydratedTurnContext.grounding.liveSource.kind === "prepare") {
       if (await exitIfCancellationObserved()) {
         return;
       }
       try {
-        const prepared = await prepareLiveSourceForReply(ctx, {
-          repositoryId: groundedReplyContext.repositoryId,
-          ownerTokenIdentifier: groundedReplyContext.ownerTokenIdentifier,
+        const preparedGrounding = await prepareLiveSourceGrounding(ctx, {
+          grounding: hydratedTurnContext.grounding,
           jobId: args.jobId,
         });
-        resolvedSandboxTooling = {
-          sandboxId: prepared.sandboxId,
-          remoteId: prepared.remoteId,
-          repoPath: prepared.repoPath,
+        resolvedSandboxTooling = getPreparedSandboxTooling(preparedGrounding);
+        finalTurnContext = {
+          ...hydratedTurnContext,
+          grounding: preparedGrounding,
         };
-        finalReplyContext = {
-          ...groundedReplyContext,
-          sandboxTooling: resolvedSandboxTooling,
-        };
+        finalPromptInput = toReplyPromptInput(finalTurnContext);
       } catch (error) {
         if (await exitIfCancellationObserved()) {
           return;
@@ -451,7 +444,7 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
           logInfo("chat", "assistant_reply_failed_live_source_prep", {
             assistantMessageId: args.assistantMessageId,
             jobId: args.jobId,
-            repositoryId: groundedReplyContext.repositoryId,
+            repositoryId: hydratedTurnContext.grounding.liveSource.repositoryId,
             reason: error.reason,
           });
         }
@@ -469,18 +462,18 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
       }
     }
 
-    const systemPrompt = buildSystemPrompt(finalReplyContext.mode, {
-      groundLibrary: finalReplyContext.groundLibrary,
-      groundSandbox: finalReplyContext.groundSandbox,
-    });
-    const userPromptText = buildUserPrompt(finalReplyContext, userPrompt, relevantChunks);
+    const systemPrompt = buildSystemPrompt(finalPromptInput.turn.mode, finalPromptInput.grounding.flags);
+    const userPromptText = buildUserPrompt(finalPromptInput, userPrompt);
     const sandboxTools: ToolSet | undefined = resolvedSandboxTooling
       ? await buildSandboxTools(resolvedSandboxTooling)
       : undefined;
 
     const streamOutcome = await streamController.consume({
       threadId: args.threadId,
-      replyContext: finalReplyContext,
+      groundingAudit: {
+        ownerTokenIdentifier: finalTurnContext.ownerTokenIdentifier,
+        ...(resolvedSandboxTooling ? { sandboxTooling: resolvedSandboxTooling } : {}),
+      },
       modelChoice,
       systemPrompt,
       userPromptText,
@@ -523,78 +516,21 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
  * hallucinate file contents. The action's outer catch surfaces the
  * error to the user as a normal failure.
  */
-async function buildSandboxTools(sandboxTooling: NonNullable<ReplyContext["sandboxTooling"]>): Promise<ToolSet> {
+function toReplyPromptInput(turnContext: ReplyTurnContext): ReplyPromptInput {
+  if (turnContext.grounding.artifactEvidence.kind === "pending_retrieval") {
+    throw new Error("Artifact grounding was not hydrated before prompt construction.");
+  }
+  const readyGrounding: ReadyReplyGrounding = {
+    ...turnContext.grounding,
+    artifactEvidence: turnContext.grounding.artifactEvidence,
+  };
+  return {
+    turn: turnContext,
+    grounding: readyGrounding,
+  };
+}
+
+async function buildSandboxTools(sandboxTooling: SandboxTooling): Promise<ToolSet> {
   const fsClient = await getSandboxFsClient(sandboxTooling.remoteId);
   return createSandboxTools(fsClient, sandboxTooling.repoPath);
-}
-
-async function prepareLiveSourceForReply(
-  ctx: ActionCtx,
-  args: {
-    repositoryId: Id<"repositories">;
-    ownerTokenIdentifier: string;
-    jobId: Id<"jobs">;
-  },
-): Promise<EnsureSandboxReadyResult> {
-  const stageProgress: Record<SandboxPreparationStage, number> = {
-    probing: 0.18,
-    waking: 0.2,
-    provisioning: 0.22,
-    cloning: 0.3,
-    polling: 0.32,
-  };
-
-  await ctx.runMutation(internal.chat.streaming.updateAssistantReplyProgress, {
-    jobId: args.jobId,
-    stage: "Preparing live source…",
-    progress: 0.18,
-  });
-
-  return await ensureSandboxReady(
-    ctx,
-    {
-      repositoryId: args.repositoryId,
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-    },
-    async (stage) => {
-      await ctx.runMutation(internal.chat.streaming.updateAssistantReplyProgress, {
-        jobId: args.jobId,
-        stage: "Preparing live source…",
-        progress: stageProgress[stage] ?? 0.2,
-      });
-    },
-  );
-}
-
-async function hydrateLibraryArtifactChunks(
-  ctx: ActionCtx,
-  args: {
-    replyContext: ReplyContext;
-    threadId: Id<"threads">;
-    userMessageId: Id<"messages">;
-    query: string;
-  },
-): Promise<ReplyContext> {
-  const shouldRetrieveArtifacts = args.replyContext.mode === "library" || args.replyContext.groundLibrary === true;
-  if (!shouldRetrieveArtifacts || !args.replyContext.repositoryId) {
-    return args.replyContext;
-  }
-
-  const scopedArtifactIds = args.replyContext.artifacts.map((artifact) => artifact.id);
-  const hasExplicitArtifactScope =
-    args.replyContext.artifactContext !== undefined && args.replyContext.artifactContext.length > 0;
-  if (hasExplicitArtifactScope && scopedArtifactIds.length === 0) {
-    return { ...args.replyContext, artifactChunks: [] };
-  }
-
-  const artifactChunks = await retrieveArtifactChunks(ctx, {
-    ownerTokenIdentifier: args.replyContext.ownerTokenIdentifier,
-    repositoryId: args.replyContext.repositoryId,
-    query: args.query,
-    threadId: args.threadId,
-    messageId: args.userMessageId,
-    ...(hasExplicitArtifactScope ? { artifactScope: scopedArtifactIds } : {}),
-  });
-
-  return { ...args.replyContext, artifactChunks };
 }

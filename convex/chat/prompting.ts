@@ -1,22 +1,26 @@
-import type { Id } from "../_generated/dataModel";
 import type { ChatMode } from "../lib/chatMode";
 import { MAX_CONTEXT_ARTIFACTS } from "../lib/constants";
-import type { ReplyContext } from "./context";
+import type { ReplyTurnContext } from "./context";
+import {
+  buildCitationMapFromArtifactEvidence,
+  type ArtifactGroundingEvidence,
+  type CitationMapEntry,
+  type ReadyReplyGrounding,
+} from "./replyGrounding";
 
 const MAX_CONVERSATION_HISTORY_MESSAGES = 24;
 const MAX_CONVERSATION_MESSAGE_CHARS = 1200;
 const MAX_ARTIFACT_EXCERPT_CHARS = 1400;
-const MAX_RELEVANT_CODE_EXCERPT_CHARS = 1200;
 
 /**
  * UI language for the degraded heuristic response. The chat UI is currently
  * English-only, so we default to "en". The i18n map below is intentionally
  * preserved so additional locales can be plugged in once the UI starts
- * persisting a per-thread/per-user language hint (e.g. on `ReplyContext`).
+ * persisting a per-thread/per-user language hint (e.g. on the turn context).
  */
 type UILanguage = "en" | "zh";
 
-function getUILanguage(_context: ReplyContext): UILanguage {
+function getUILanguage(_input: ReplyPromptInput): UILanguage {
   return "en";
 }
 
@@ -128,6 +132,22 @@ const SYSTEM_PROMPT_LIBRARY = [
 
 export type ExtendedChatMode = ChatMode;
 
+export type ReplyTurnPromptFields = Pick<
+  ReplyTurnContext,
+  | "ownerTokenIdentifier"
+  | "mode"
+  | "agentRole"
+  | "agentInstructions"
+  | "singleTurnEnabled"
+  | "customization"
+  | "messages"
+>;
+
+export type ReplyPromptInput = {
+  turn: ReplyTurnPromptFields;
+  grounding: ReadyReplyGrounding;
+};
+
 /**
  * Per-message grounding flags for Discuss mode. Library mode does not use
  * these — the artifact retrieval is implicit in the mode. Both `false` or
@@ -178,19 +198,6 @@ export function buildSystemPrompt(mode: ChatMode, flags: GroundingFlags = {}): s
 }
 
 /**
- * Citation entry persisted on `messages.citationMap`. Each entry maps the
- * `[A#]` token the model sees in the prompt back to the specific artifact
- * id, so the frontend can turn `[A1]` in the assistant's reply into a link
- * that scrolls to / highlights that artifact in the side panel.
- */
-export type CitationMapEntry = {
-  index: number;
-  artifactId: Id<"artifacts">;
-  chunkId?: Id<"artifactChunks">;
-  headingPath?: string[];
-};
-
-/**
  * Numbered artifact evidence that ends up in the assistant message's
  * `citationMap`. Retrieved chunks win over whole-artifact fallback rows
  * because Library Ask answers should cite the exact excerpt the model saw.
@@ -198,20 +205,8 @@ export type CitationMapEntry = {
  * frontend `[A#]` resolution and the prompt stay in lockstep — anything past
  * the slice is invisible to the model and must not resolve client-side.
  */
-export function buildCitationMap(context: ReplyContext): CitationMapEntry[] {
-  const artifactChunks = context.artifactChunks ?? [];
-  if (artifactChunks.length > 0) {
-    return artifactChunks.slice(0, MAX_CONTEXT_ARTIFACTS).map((chunk, index) => ({
-      index: index + 1,
-      artifactId: chunk.artifactId,
-      chunkId: chunk.chunkId,
-      headingPath: chunk.headingPath,
-    }));
-  }
-
-  return context.artifacts
-    .slice(0, MAX_CONTEXT_ARTIFACTS)
-    .map((artifact, index) => ({ index: index + 1, artifactId: artifact.id }));
+export function buildCitationMap(evidence: ArtifactGroundingEvidence): CitationMapEntry[] {
+  return buildCitationMapFromArtifactEvidence(evidence);
 }
 
 function buildHeadingSlug(headingPath: string[]): string {
@@ -236,69 +231,66 @@ function formatHeadingPath(headingPath: string[]): string {
   return headingPath.join(" > ");
 }
 
-function buildArtifactChunkEvidenceLabels(context: ReplyContext): string[] {
-  return (context.artifactChunks ?? []).slice(0, MAX_CONTEXT_ARTIFACTS).map((chunk, index) => {
-    const heading = chunk.headingPath.length > 0 ? ` (${formatHeadingPath(chunk.headingPath)})` : "";
-    return `${formatArtifactCitationToken(index + 1, chunk.headingPath)} ${chunk.artifactTitle}${heading}`;
+function buildArtifactEvidenceLabels(evidence: ArtifactGroundingEvidence): string[] {
+  if (evidence.kind !== "ready") {
+    return [];
+  }
+  return evidence.promptArtifacts.slice(0, MAX_CONTEXT_ARTIFACTS).map((artifact, index) => {
+    if (artifact.kind === "chunk") {
+      const heading = artifact.headingPath.length > 0 ? ` (${formatHeadingPath(artifact.headingPath)})` : "";
+      return `${formatArtifactCitationToken(index + 1, artifact.headingPath)} ${artifact.artifactTitle}${heading}`;
+    }
+    return `[A${index + 1}] ${artifact.title}`;
   });
 }
 
-function buildArtifactEvidenceSection(context: ReplyContext): string {
-  const artifactChunks = context.artifactChunks ?? [];
-  if (artifactChunks.length > 0) {
-    return artifactChunks
-      .slice(0, MAX_CONTEXT_ARTIFACTS)
-      .map((chunk, index) =>
-        [
-          `## ${formatArtifactCitationToken(index + 1, chunk.headingPath)} ${chunk.artifactTitle}`,
-          `Kind: ${chunk.artifactKind}`,
-          chunk.headingPath.length > 0 ? `Section: ${formatHeadingPath(chunk.headingPath)}` : undefined,
-          chunk.content.slice(0, MAX_ARTIFACT_EXCERPT_CHARS),
-        ]
-          .filter((line): line is string => line !== undefined)
-          .join("\n"),
-      )
-      .join("\n\n");
+function buildArtifactEvidenceSection(evidence: ArtifactGroundingEvidence): string {
+  if (evidence.kind !== "ready") {
+    return "";
   }
 
-  return context.artifacts
+  return evidence.promptArtifacts
     .slice(0, MAX_CONTEXT_ARTIFACTS)
-    .map(
-      (artifact, index) =>
-        `## [A${index + 1}] ${artifact.title}\n${artifact.summary}\n${artifact.contentMarkdown.slice(
-          0,
-          MAX_ARTIFACT_EXCERPT_CHARS,
-        )}`,
-    )
+    .map((artifact, index) => {
+      if (artifact.kind === "chunk") {
+        return [
+          `## ${formatArtifactCitationToken(index + 1, artifact.headingPath)} ${artifact.artifactTitle}`,
+          `Kind: ${artifact.artifactKind}`,
+          artifact.headingPath.length > 0 ? `Section: ${formatHeadingPath(artifact.headingPath)}` : undefined,
+          artifact.content.slice(0, MAX_ARTIFACT_EXCERPT_CHARS),
+        ]
+          .filter((line): line is string => line !== undefined)
+          .join("\n");
+      }
+      return [
+        `## [A${index + 1}] ${artifact.title}`,
+        artifact.summary,
+        artifact.contentMarkdown.slice(0, MAX_ARTIFACT_EXCERPT_CHARS),
+      ].join("\n");
+    })
     .join("\n\n");
 }
 
-export function buildUserPrompt(
-  context: ReplyContext,
-  question: string,
-  relevantChunks: Array<{ path: string; summary: string; content: string }>,
-) {
+export function buildUserPrompt(input: ReplyPromptInput, question: string) {
+  const { turn, grounding } = input;
+  const repository = grounding.repository;
   const agentProfileLines = [
-    context.agentRole ? `Name: ${context.agentRole}` : undefined,
-    context.agentInstructions ? `Instructions:\n${context.agentInstructions}` : undefined,
+    turn.agentRole ? `Name: ${turn.agentRole}` : undefined,
+    turn.agentInstructions ? `Instructions:\n${turn.agentInstructions}` : undefined,
   ].filter((line): line is string => line !== undefined);
   const customizationLines = [
-    context.customization.traits.length > 0
-      ? `Preferred traits: ${context.customization.traits.join(", ")}`
-      : undefined,
-    context.customization.customInstructions
-      ? `Additional stable preferences:\n${context.customization.customInstructions}`
+    turn.customization.traits.length > 0 ? `Preferred traits: ${turn.customization.traits.join(", ")}` : undefined,
+    turn.customization.customInstructions
+      ? `Additional stable preferences:\n${turn.customization.customInstructions}`
       : undefined,
   ].filter((line): line is string => line !== undefined);
 
-  const artifactSection = buildArtifactEvidenceSection(context);
-  const chunkSection = relevantChunks
-    .map((chunk) => `### ${chunk.path}\n${chunk.summary}\n${chunk.content.slice(0, MAX_RELEVANT_CODE_EXCERPT_CHARS)}`)
-    .join("\n\n");
+  const artifactSection = buildArtifactEvidenceSection(grounding.artifactEvidence);
+  const shouldRenderArtifactSection = grounding.artifactEvidence.kind === "ready";
   const historyMessages =
-    context.messages.at(-1)?.role === "user" && context.messages.at(-1)?.content.trim() === question.trim()
-      ? context.messages.slice(0, -1)
-      : context.messages;
+    turn.messages.at(-1)?.role === "user" && turn.messages.at(-1)?.content.trim() === question.trim()
+      ? turn.messages.slice(0, -1)
+      : turn.messages;
   const conversationSection = historyMessages
     .filter((message) => message.content.trim().length > 0)
     .slice(-MAX_CONVERSATION_HISTORY_MESSAGES)
@@ -307,28 +299,17 @@ export function buildUserPrompt(
     )
     .join("\n\n");
 
-  const hasRepoContext =
-    !!context.sourceRepoFullName ||
-    !!context.repositorySummary ||
-    context.artifacts.length > 0 ||
-    (context.artifactChunks ?? []).length > 0 ||
-    relevantChunks.length > 0;
-
   return [
     agentProfileLines.length > 0 ? `Thread agent profile:\n${agentProfileLines.join("\n")}` : undefined,
-    context.sourceRepoFullName ? `Repository: ${context.sourceRepoFullName}` : undefined,
-    context.repositorySummary ? `Repository summary: ${context.repositorySummary}` : undefined,
-    context.readmeSummary ? `README summary: ${context.readmeSummary}` : undefined,
-    context.architectureSummary ? `Architecture summary: ${context.architectureSummary}` : undefined,
-    ...(hasRepoContext
-      ? [
-          "",
-          "Artifacts:",
-          artifactSection || "No artifacts were pre-selected.",
-          ...(chunkSection ? ["", "Relevant code excerpts:", chunkSection] : []),
-          "",
-        ]
-      : ["No repository is attached to this thread; answer from general architecture knowledge."]),
+    repository?.sourceRepoFullName ? `Repository: ${repository.sourceRepoFullName}` : undefined,
+    repository?.repositorySummary ? `Repository summary: ${repository.repositorySummary}` : undefined,
+    repository?.readmeSummary ? `README summary: ${repository.readmeSummary}` : undefined,
+    repository?.architectureSummary ? `Architecture summary: ${repository.architectureSummary}` : undefined,
+    ...(repository
+      ? shouldRenderArtifactSection
+        ? ["", "Artifacts:", artifactSection || "No artifact evidence was selected.", ""]
+        : []
+      : ["No repository grounding is attached to this reply; answer from general architecture knowledge."]),
     conversationSection ? `Recent conversation:\n${conversationSection}` : undefined,
     customizationLines.length > 0 ? `User preferences:\n${customizationLines.join("\n")}` : undefined,
     `User question: ${question}`,
@@ -337,13 +318,9 @@ export function buildUserPrompt(
     .join("\n");
 }
 
-/**
- * Code-excerpt fixture passed by the relevance pipeline into the heuristic
- * fallback. Lifted out of `buildHeuristicAnswer`'s parameter list so the
- * `HEURISTIC_MESSAGES` table below can name the type without referring to a
- * local that hasn't been declared at module scope.
- */
-type HeuristicChunk = { readonly path: string; readonly summary: string; readonly content: string };
+function isSandboxGrounded(input: ReplyPromptInput): boolean {
+  return input.grounding.liveSource.kind === "prepare" || input.grounding.flags.groundSandbox === true;
+}
 
 /**
  * Per-language builders for the no-API-key degraded path. Three branches
@@ -359,17 +336,15 @@ type HeuristicChunk = { readonly path: string; readonly summary: string; readonl
  * keeps the per-language builder declarative. The caller filters before
  * joining so the produced markdown has no blank rows from absent fields.
  *
- * `summaries` is a `Partial<ReplyContext>` so the builder doesn't carry the
- * whole `ReplyContext` shape (which the messages do not need); only the
- * three string fields it actually reads are used.
+ * `repository` is a narrow grounding snapshot so the builder doesn't carry
+ * the whole turn context shape.
  */
 type HeuristicMessageBuilders = {
   readonly sandbox: (question: string) => string[];
   readonly noRepo: (question: string) => string[];
   readonly withRepo: (
     question: string,
-    chunks: ReadonlyArray<HeuristicChunk>,
-    summaries: Partial<ReplyContext>,
+    repository: NonNullable<ReplyPromptInput["grounding"]["repository"]>,
     artifactEvidenceLabels: ReadonlyArray<string>,
   ) => Array<string | undefined>;
 };
@@ -390,20 +365,18 @@ const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
       "",
       "Suggestion: Attach a repository from the sidebar and ask again to get grounded / deep mode responses.",
     ],
-    withRepo: (question, chunks, summaries, artifactEvidenceLabels) => [
+    withRepo: (question, repository, artifactEvidenceLabels) => [
       "`OPENAI_API_KEY` is not configured, so I'm using indexed repository artifacts to answer.",
       "",
-      `Repository: ${summaries.sourceRepoFullName ?? "(unknown)"}`,
-      summaries.repositorySummary ? `- Summary: ${summaries.repositorySummary}` : undefined,
-      summaries.architectureSummary ? `- Architecture: ${summaries.architectureSummary}` : undefined,
+      `Repository: ${repository.sourceRepoFullName ?? "(unknown)"}`,
+      repository.repositorySummary ? `- Summary: ${repository.repositorySummary}` : undefined,
+      repository.architectureSummary ? `- Architecture: ${repository.architectureSummary}` : undefined,
       "",
       `Your question: ${question}`,
       "",
       artifactEvidenceLabels.length > 0
         ? `Most relevant artifact excerpts: ${artifactEvidenceLabels.join(", ")}`
-        : chunks.length > 0
-          ? `Most relevant code references: ${chunks.map((chunk) => `\`${chunk.path}\``).join(", ")}`
-          : "Not enough code snippets were selected; consider running a system design first.",
+        : "Not enough artifact evidence was selected; consider running a system design first.",
     ],
   },
   zh: {
@@ -421,40 +394,34 @@ const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
       "",
       "建議：在側邊欄附加一個 repository 之後再提問，就能取得 grounded / deep 模式的回覆。",
     ],
-    withRepo: (question, chunks, summaries, artifactEvidenceLabels) => [
+    withRepo: (question, repository, artifactEvidenceLabels) => [
       "目前沒有設定 `OPENAI_API_KEY`，所以我先用已索引的 repository artifact 回答。",
       "",
-      `Repository: ${summaries.sourceRepoFullName ?? "(unknown)"}`,
-      summaries.repositorySummary ? `- Summary: ${summaries.repositorySummary}` : undefined,
-      summaries.architectureSummary ? `- Architecture: ${summaries.architectureSummary}` : undefined,
+      `Repository: ${repository.sourceRepoFullName ?? "(unknown)"}`,
+      repository.repositorySummary ? `- Summary: ${repository.repositorySummary}` : undefined,
+      repository.architectureSummary ? `- Architecture: ${repository.architectureSummary}` : undefined,
       "",
       `你的問題：${question}`,
       "",
       artifactEvidenceLabels.length > 0
         ? `我目前最相關的 artifact 線索來自：${artifactEvidenceLabels.join("、")}`
-        : chunks.length > 0
-          ? `我目前最相關的線索來自：${chunks.map((chunk) => `\`${chunk.path}\``).join(", ")}`
-          : "目前沒有足夠的程式碼片段被選中，建議先執行一次深度分析。",
+        : "目前沒有足夠的 artifact 線索被選中，建議先執行一次深度分析。",
     ],
   },
 };
 
-export function buildHeuristicAnswer(
-  context: ReplyContext,
-  question: string,
-  relevantChunks: ReadonlyArray<HeuristicChunk>,
-) {
-  const language = getUILanguage(context);
+export function buildHeuristicAnswer(input: ReplyPromptInput, question: string) {
+  const language = getUILanguage(input);
 
   // Sandbox-grounded Discuss reply with no API key: the model can't run
   // the live tools, so surface a dead-end message rather than letting the
   // heuristic fallback produce text that pretends to have inspected the
   // sandbox.
-  if (context.groundSandbox === true) {
+  if (isSandboxGrounded(input)) {
     return HEURISTIC_MESSAGES[language].sandbox(question).join("\n");
   }
 
-  if (!context.sourceRepoFullName) {
+  if (!input.grounding.repository) {
     return HEURISTIC_MESSAGES[language].noRepo(question).join("\n");
   }
 
@@ -464,7 +431,7 @@ export function buildHeuristicAnswer(
   // `string[]` and the ESLint / `noUncheckedIndexedAccess` future-toggle would
   // not trip.
   return HEURISTIC_MESSAGES[language]
-    .withRepo(question, relevantChunks, context, buildArtifactChunkEvidenceLabels(context))
+    .withRepo(question, input.grounding.repository, buildArtifactEvidenceLabels(input.grounding.artifactEvidence))
     .filter((line): line is string => line !== undefined)
     .join("\n");
 }

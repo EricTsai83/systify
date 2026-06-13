@@ -5,17 +5,18 @@ import {
   buildHeuristicAnswer,
   buildSystemPrompt,
   buildUserPrompt,
+  type ReplyPromptInput,
 } from "./chat/prompting";
 import type { ChatMode } from "./lib/chatMode";
 import type { Id } from "./_generated/dataModel";
-import type { ReplyContext } from "./chat/context";
 import { MAX_CONTEXT_ARTIFACTS } from "./lib/constants";
+import { buildReadyArtifactEvidence, type PromptArtifactEvidence } from "./chat/replyGrounding";
 
 /**
  * Test helpers for the docs-citation tests below. We mint deterministic
- * fake `Id<"artifacts">` strings rather than going through `convexTest` —
- * the prompt builders are pure functions over a `ReplyContext`, so a
- * fixture is sufficient and keeps the tests fast.
+ * fake ids rather than going through `convexTest` — the prompt builders are
+ * pure functions over a `ReplyPromptInput`, so a fixture is sufficient and
+ * keeps the tests fast.
  */
 function makeArtifactId(suffix: string): Id<"artifacts"> {
   return `artifact_${suffix}` as unknown as Id<"artifacts">;
@@ -25,23 +26,54 @@ function makeArtifactChunkId(suffix: string): Id<"artifactChunks"> {
   return `artifact_chunk_${suffix}` as unknown as Id<"artifactChunks">;
 }
 
-function makeContext(overrides: Partial<ReplyContext> & { artifacts?: ReplyContext["artifacts"] } = {}): ReplyContext {
+function makeRepositoryId(suffix: string): Id<"repositories"> {
+  return `repository_${suffix}` as unknown as Id<"repositories">;
+}
+
+function makePromptInput(
+  overrides: Partial<ReplyPromptInput["turn"]> & {
+    repository?: ReplyPromptInput["grounding"]["repository"];
+    flags?: Partial<ReplyPromptInput["grounding"]["flags"]>;
+    artifactEvidence?: ReplyPromptInput["grounding"]["artifactEvidence"];
+    liveSource?: ReplyPromptInput["grounding"]["liveSource"];
+  } = {},
+): ReplyPromptInput {
+  const { repository, flags, artifactEvidence, liveSource, ...turnOverrides } = overrides;
   return {
-    ownerTokenIdentifier: "owner|test",
-    mode: "library",
-    groundLibrary: false,
-    groundSandbox: false,
-    singleTurnEnabled: false,
-    customization: { traits: [], customInstructions: "" },
-    artifacts: [],
-    chunks: [],
-    messages: [],
-    sourceRepoFullName: "acme/widget",
-    repositorySummary: undefined,
-    readmeSummary: undefined,
-    architectureSummary: undefined,
-    ...overrides,
+    turn: {
+      ownerTokenIdentifier: "owner|test",
+      mode: "library",
+      singleTurnEnabled: false,
+      customization: { traits: [], customInstructions: "" },
+      messages: [],
+      ...turnOverrides,
+    },
+    grounding: {
+      mode: turnOverrides.mode ?? "library",
+      flags: {
+        groundLibrary: false,
+        groundSandbox: false,
+        ...flags,
+      },
+      repository:
+        repository === undefined
+          ? {
+              repositoryId: makeRepositoryId("widget"),
+              sourceRepoFullName: "acme/widget",
+            }
+          : repository,
+      artifactEvidence: artifactEvidence ?? { kind: "none" },
+      liveSource: liveSource ?? { kind: "none" },
+    },
   };
+}
+
+function readyArtifacts(promptArtifacts: PromptArtifactEvidence[]): ReplyPromptInput["grounding"]["artifactEvidence"] {
+  const evidence = buildReadyArtifactEvidence(promptArtifacts);
+  if (evidence.kind !== "ready") {
+    throw new Error("Expected ready artifact evidence.");
+  }
+  return evidence;
 }
 
 /**
@@ -295,21 +327,20 @@ describe("buildDiscussSystemPrompt composability", () => {
 
 describe("buildUserPrompt artifact numbering", () => {
   test("omits user preferences when no customization is set", () => {
-    const prompt = buildUserPrompt(makeContext(), "Summarize.", []);
+    const prompt = buildUserPrompt(makePromptInput(), "Summarize.");
 
     expect(prompt).not.toContain("User preferences:");
   });
 
   test("includes stable user preferences when customization is set", () => {
     const prompt = buildUserPrompt(
-      makeContext({
+      makePromptInput({
         customization: {
           traits: ["Direct", "Skeptical"],
           customInstructions: "Prefer decision records when explaining trade-offs.",
         },
       }),
       "How should we evolve this?",
-      [],
     );
 
     expect(prompt).toContain("User preferences:");
@@ -319,7 +350,7 @@ describe("buildUserPrompt artifact numbering", () => {
 
   test("includes Agent Profile before repository, conversation, and user question", () => {
     const prompt = buildUserPrompt(
-      makeContext({
+      makePromptInput({
         agentRole: "Translation agent",
         agentInstructions: "Whenever the user writes Chinese, translate it into English.",
         messages: [
@@ -331,7 +362,6 @@ describe("buildUserPrompt artifact numbering", () => {
         ],
       }),
       "你好",
-      [],
     );
 
     expect(prompt).toContain("Thread agent profile:");
@@ -343,14 +373,14 @@ describe("buildUserPrompt artifact numbering", () => {
   });
 
   test("omits Agent Profile section when role and instructions are empty", () => {
-    const prompt = buildUserPrompt(makeContext({ agentRole: "", agentInstructions: "" }), "Summarize.", []);
+    const prompt = buildUserPrompt(makePromptInput({ agentRole: "", agentInstructions: "" }), "Summarize.");
 
     expect(prompt).not.toContain("Thread agent profile:");
   });
 
   test("keeps Agent Profile separate from user preferences", () => {
     const prompt = buildUserPrompt(
-      makeContext({
+      makePromptInput({
         agentRole: "Reviewer",
         agentInstructions: "Call out uncertainty.",
         customization: {
@@ -359,7 +389,6 @@ describe("buildUserPrompt artifact numbering", () => {
         },
       }),
       "Review this.",
-      [],
     );
 
     expect(prompt).toContain("Thread agent profile:");
@@ -368,24 +397,26 @@ describe("buildUserPrompt artifact numbering", () => {
   });
 
   test("prefixes each rendered artifact with a 1-based [A#] marker", () => {
-    const context = makeContext({
-      artifacts: [
+    const context = makePromptInput({
+      artifactEvidence: readyArtifacts([
         {
-          id: makeArtifactId("alpha"),
+          kind: "artifact",
+          artifactId: makeArtifactId("alpha"),
           title: "Architecture diagram",
           summary: "Module boundaries.",
           contentMarkdown: "graph TD\nA-->B",
         },
         {
-          id: makeArtifactId("beta"),
+          kind: "artifact",
+          artifactId: makeArtifactId("beta"),
           title: "Risk hotspots",
           summary: "Top 3 risks identified.",
           contentMarkdown: "1. coupling\n2. flaky tests\n3. db migration",
         },
-      ],
+      ]),
     });
 
-    const prompt = buildUserPrompt(context, "What does the diagram say?", []);
+    const prompt = buildUserPrompt(context, "What does the diagram say?");
 
     // Both markers must show up in the rendered artifact section. This
     // is the contract that the system-prompt citation hint relies on:
@@ -397,17 +428,10 @@ describe("buildUserPrompt artifact numbering", () => {
 
   test("renders retrieved artifact chunks as the numbered evidence when present", () => {
     const prompt = buildUserPrompt(
-      makeContext({
-        artifacts: [
+      makePromptInput({
+        artifactEvidence: readyArtifacts([
           {
-            id: makeArtifactId("whole-artifact"),
-            title: "Whole artifact fallback",
-            summary: "Fallback summary",
-            contentMarkdown: "Full artifact body that should not be rendered while chunks are present.",
-          },
-        ],
-        artifactChunks: [
-          {
+            kind: "chunk",
             chunkId: makeArtifactChunkId("data-model"),
             artifactId: makeArtifactId("data-model"),
             artifactTitle: "Data model overview",
@@ -418,10 +442,9 @@ describe("buildUserPrompt artifact numbering", () => {
             semanticScore: 0.5,
             rrfScore: 0.03,
           },
-        ],
+        ]),
       }),
       "How is repository data organized?",
-      [],
     );
 
     expect(prompt).toContain("## [A1#architecture/data-model] Data model overview");
@@ -436,16 +459,19 @@ describe("buildUserPrompt artifact numbering", () => {
     // model but visible in the citation map; both must agree on the
     // visible window.
     const overflow = MAX_CONTEXT_ARTIFACTS + 1;
-    const context = makeContext({
-      artifacts: Array.from({ length: overflow }, (_, index) => ({
-        id: makeArtifactId(`art-${index}`),
-        title: `Artifact ${index}`,
-        summary: `Summary ${index}`,
-        contentMarkdown: `Body ${index}`,
-      })),
+    const context = makePromptInput({
+      artifactEvidence: readyArtifacts(
+        Array.from({ length: overflow }, (_, index) => ({
+          kind: "artifact",
+          artifactId: makeArtifactId(`art-${index}`),
+          title: `Artifact ${index}`,
+          summary: `Summary ${index}`,
+          contentMarkdown: `Body ${index}`,
+        })),
+      ),
     });
 
-    const prompt = buildUserPrompt(context, "Summarize.", []);
+    const prompt = buildUserPrompt(context, "Summarize.");
 
     // First marker is `[A1]`, last one is exactly `[A${MAX_CONTEXT_ARTIFACTS}]`.
     expect(prompt).toContain("[A1]");
@@ -461,14 +487,12 @@ describe("buildCitationMap", () => {
   test("returns 1-based entries that pair each [A#] with its artifact id", () => {
     const alphaId = makeArtifactId("alpha");
     const betaId = makeArtifactId("beta");
-    const context = makeContext({
-      artifacts: [
-        { id: alphaId, title: "Alpha", summary: "", contentMarkdown: "" },
-        { id: betaId, title: "Beta", summary: "", contentMarkdown: "" },
-      ],
-    });
+    const evidence = readyArtifacts([
+      { kind: "artifact", artifactId: alphaId, title: "Alpha", summary: "", contentMarkdown: "" },
+      { kind: "artifact", artifactId: betaId, title: "Beta", summary: "", contentMarkdown: "" },
+    ]);
 
-    const map = buildCitationMap(context);
+    const map = buildCitationMap(evidence);
 
     // Index numbering is 1-based to mirror the `[A1]` token the model
     // sees; the artifact ids are returned in the *same* order the
@@ -483,24 +507,22 @@ describe("buildCitationMap", () => {
   test("uses retrieved artifact chunks for citation map entries when available", () => {
     const artifactId = makeArtifactId("data-model");
     const chunkId = makeArtifactChunkId("data-model");
-    const context = makeContext({
-      artifacts: [{ id: makeArtifactId("fallback"), title: "Fallback", summary: "", contentMarkdown: "" }],
-      artifactChunks: [
-        {
-          chunkId,
-          artifactId,
-          artifactTitle: "Data model overview",
-          artifactKind: "data_model_overview",
-          headingPath: ["Architecture", "Data Model"],
-          content: "Repository aggregate notes.",
-          lexicalScore: 1,
-          semanticScore: 0.5,
-          rrfScore: 0.03,
-        },
-      ],
-    });
+    const evidence = readyArtifacts([
+      {
+        kind: "chunk",
+        chunkId,
+        artifactId,
+        artifactTitle: "Data model overview",
+        artifactKind: "data_model_overview",
+        headingPath: ["Architecture", "Data Model"],
+        content: "Repository aggregate notes.",
+        lexicalScore: 1,
+        semanticScore: 0.5,
+        rrfScore: 0.03,
+      },
+    ]);
 
-    expect(buildCitationMap(context)).toEqual([
+    expect(buildCitationMap(evidence)).toEqual([
       {
         index: 1,
         artifactId,
@@ -512,16 +534,17 @@ describe("buildCitationMap", () => {
 
   test("caps at MAX_CONTEXT_ARTIFACTS so the map and prompt stay in lockstep", () => {
     const overflow = MAX_CONTEXT_ARTIFACTS + 2;
-    const context = makeContext({
-      artifacts: Array.from({ length: overflow }, (_, index) => ({
-        id: makeArtifactId(`art-${index}`),
+    const evidence = readyArtifacts(
+      Array.from({ length: overflow }, (_, index) => ({
+        kind: "artifact",
+        artifactId: makeArtifactId(`art-${index}`),
         title: `Artifact ${index}`,
         summary: "",
         contentMarkdown: "",
       })),
-    });
+    );
 
-    const map = buildCitationMap(context);
+    const map = buildCitationMap(evidence);
 
     // Same cap as `buildUserPrompt`: a frontend that resolves
     // `[A${MAX_CONTEXT_ARTIFACTS + 1}]` against this map must get
@@ -535,7 +558,7 @@ describe("buildCitationMap", () => {
     // discuss / unattached threads have no artifacts; an empty map
     // signals "no resolvable citations" so the generation pipeline can
     // skip persisting the field on `messages.citationMap`.
-    const map = buildCitationMap(makeContext({ artifacts: [] }));
+    const map = buildCitationMap({ kind: "none" });
     expect(map).toEqual([]);
   });
 });
@@ -543,9 +566,10 @@ describe("buildCitationMap", () => {
 describe("buildHeuristicAnswer", () => {
   test("names retrieved artifact chunks when the no-provider fallback answers a Library-grounded reply", () => {
     const answer = buildHeuristicAnswer(
-      makeContext({
-        artifactChunks: [
+      makePromptInput({
+        artifactEvidence: readyArtifacts([
           {
+            kind: "chunk",
             chunkId: makeArtifactChunkId("security"),
             artifactId: makeArtifactId("security"),
             artifactTitle: "Security overview",
@@ -556,10 +580,9 @@ describe("buildHeuristicAnswer", () => {
             semanticScore: 0,
             rrfScore: 0.02,
           },
-        ],
+        ]),
       }),
       "What protects tokens?",
-      [],
     );
 
     expect(answer).toContain("Most relevant artifact excerpts");

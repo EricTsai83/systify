@@ -10,17 +10,6 @@ export const MAX_CONTEXT_ARTIFACTS = 6;
 /** Maximum number of recent messages loaded for a chat reply. */
 export const MAX_CONTEXT_MESSAGES = 20;
 
-/**
- * Maximum number of relevant code chunks selected for a chat reply.
- *
- * `docs` (artifact-only) and `sandbox` (LLM-driven via tools) replies
- * don't pre-load chunks; the relevance selector is still imported by
- * `chat/generation.ts` and exercised by direct unit tests in
- * `chat-context.test.ts`, so the cap stays here as the contract for any
- * future caller that introduces chunk pre-selection.
- */
-export const MAX_RELEVANT_CHUNKS = 6;
-
 /** Number of documents to delete per batch in cascade operations. */
 export const CASCADE_BATCH_SIZE = 200;
 
