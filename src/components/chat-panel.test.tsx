@@ -6,8 +6,24 @@ import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { getFunctionName } from "convex/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
-import { ChatContainer, ChatPanel } from "./chat-panel";
-import type { ArtifactId, MessageId, RepositoryId, ThreadId } from "@/lib/types";
+import { api } from "../../convex/_generated/api";
+import { ChatContainer as RealChatContainer, ChatPanel as RealChatPanel } from "./chat-panel";
+import { getModelAccessDisabledReason } from "@/hooks/use-model-access-disabled-reason";
+import type {
+  ChatComposerViewModel,
+  ComposerGroundingViewModel,
+} from "@/components/chat-shell-shared/chat-composer-types";
+import type {
+  ArtifactId,
+  ChatMode,
+  LlmProvider,
+  MessageId,
+  ModelPreferenceScope,
+  ReasoningEffort,
+  RepositoryId,
+  SandboxModeStatus,
+  ThreadId,
+} from "@/lib/types";
 
 // `<ToolCallTrace>` calls `useQuery` for the live event subscription. For
 // the chat-panel suite we only care that the trace component does not
@@ -162,6 +178,232 @@ afterEach(() => {
     isLoading: false,
   });
 });
+
+type LegacyModelPick = {
+  provider: LlmProvider;
+  modelName: string;
+};
+
+type LegacyChatPanelProps = Omit<React.ComponentProps<typeof RealChatPanel>, "composer"> & {
+  chatInput: string;
+  setChatInput: (next: string) => void;
+  chatMode: ChatMode;
+  groundLibrary: boolean;
+  groundSandbox: boolean;
+  setGroundLibrary: (next: boolean) => void;
+  setGroundSandbox: (next: boolean) => void;
+  selectedProvider?: LlmProvider | null;
+  selectedModelName?: string | null;
+  setSelectedModel?: (next: LegacyModelPick) => void;
+  premiumModelsDisabledReason?: string;
+  modelPreferenceScope?: ModelPreferenceScope;
+  selectedReasoningEffort?: ReasoningEffort | null;
+  setSelectedReasoningEffort?: (next: ReasoningEffort | null) => void;
+  highReasoningDisabledReason?: string;
+  threadLockedProvider?: LlmProvider | null;
+  grounding?: ComposerGroundingViewModel["grounding"];
+  showGroundingToggles?: boolean;
+  onOpenGenerateSystemDesign?: () => void;
+  generateSystemDesignDisabledReason?: string;
+  isSending: boolean;
+  onSendMessage: (event: React.FormEvent<HTMLFormElement>) => Promise<void> | void;
+  sendDisabledReason?: string;
+  onCancelInFlightReply?: () => Promise<void> | void;
+  isCancellingReply?: boolean;
+  sandboxModeStatus?: SandboxModeStatus | null;
+  isSyncing: boolean;
+  onSync?: () => void;
+  sandboxGroundingDisabledReason?: string;
+  isReadOnly?: boolean;
+  readOnlyHint?: string;
+  repositoryId?: RepositoryId | null;
+  composerControls?: React.ReactNode;
+  composerControlsReady?: boolean;
+};
+
+type LegacyChatContainerProps = Omit<LegacyChatPanelProps, "messages" | "activeMessageStream" | "isChatLoading"> & {
+  isShellLoading: boolean;
+};
+
+function ChatPanel(props: LegacyChatPanelProps) {
+  const composer = useLegacyComposer(props);
+  return (
+    <RealChatPanel
+      selectedThreadId={props.selectedThreadId}
+      messages={props.messages}
+      activeMessageStream={props.activeMessageStream}
+      isChatLoading={props.isChatLoading}
+      composer={composer}
+      chatMode={props.chatMode}
+      isArtifactPanelOpen={props.isArtifactPanelOpen}
+      onToggleArtifactPanel={props.onToggleArtifactPanel}
+      showArtifactToggle={props.showArtifactToggle}
+      hasAttachedRepository={props.hasAttachedRepository}
+      onSelectArtifact={props.onSelectArtifact}
+      attachedRepositoryId={props.attachedRepositoryId}
+      canLoadOlderMessages={props.canLoadOlderMessages}
+      onLoadOlderMessages={props.onLoadOlderMessages}
+    />
+  );
+}
+
+function ChatContainer(props: LegacyChatContainerProps) {
+  const composer = useLegacyComposer(props);
+  return (
+    <RealChatContainer
+      selectedThreadId={props.selectedThreadId}
+      isShellLoading={props.isShellLoading}
+      composer={composer}
+      chatMode={props.chatMode}
+      isArtifactPanelOpen={props.isArtifactPanelOpen}
+      onToggleArtifactPanel={props.onToggleArtifactPanel}
+      showArtifactToggle={props.showArtifactToggle}
+      hasAttachedRepository={props.hasAttachedRepository}
+      onSelectArtifact={props.onSelectArtifact}
+      attachedRepositoryId={props.attachedRepositoryId}
+      canLoadOlderMessages={props.canLoadOlderMessages}
+      onLoadOlderMessages={props.onLoadOlderMessages}
+    />
+  );
+}
+
+function useLegacyComposer(props: LegacyChatPanelProps | LegacyChatContainerProps): ChatComposerViewModel {
+  const modelPreferenceScope = props.modelPreferenceScope ?? "discuss";
+  const modelPickerCapability = modelPreferenceScope === "sandbox" ? "sandbox" : undefined;
+  const shouldRenderModelPicker = props.isReadOnly !== true && typeof props.setSelectedModel === "function";
+  const shouldRenderReasoningPicker =
+    props.isReadOnly !== true && typeof props.setSelectedReasoningEffort === "function";
+  const modelCatalogEntries = useQuery(
+    api.llmCatalog.listPickableModels,
+    shouldRenderModelPicker
+      ? modelPickerCapability !== undefined
+        ? { capability: modelPickerCapability, preferenceScope: modelPreferenceScope }
+        : { preferenceScope: modelPreferenceScope }
+      : "skip",
+  );
+  const reasoningCatalogEntries = useQuery(
+    api.llmCatalog.listPickableModels,
+    shouldRenderReasoningPicker ? { preferenceScope: modelPreferenceScope } : "skip",
+  );
+  const selectedModel =
+    props.selectedProvider && props.selectedModelName
+      ? { provider: props.selectedProvider, modelName: props.selectedModelName }
+      : null;
+  const shouldCheckPremiumModel = props.premiumModelsDisabledReason !== undefined && selectedModel !== null;
+  const accessCatalogEntries = useQuery(
+    api.llmCatalog.listPickableModels,
+    shouldCheckPremiumModel && !shouldRenderReasoningPicker ? { preferenceScope: modelPreferenceScope } : "skip",
+  );
+  const modelAccessCatalogEntries = shouldRenderReasoningPicker ? reasoningCatalogEntries : accessCatalogEntries;
+  const modelAccessDisabledReason =
+    getModelAccessDisabledReason({
+      modelPick: selectedModel,
+      reasoningEffort: props.selectedReasoningEffort,
+      catalogEntries: modelAccessCatalogEntries,
+      premiumModelsDisabledReason: props.premiumModelsDisabledReason,
+      highReasoningDisabledReason: props.highReasoningDisabledReason,
+      modelCatalogLoading: shouldCheckPremiumModel && modelAccessCatalogEntries === undefined,
+    }) ?? undefined;
+  const effectiveSendDisabledReason = props.sendDisabledReason ?? modelAccessDisabledReason;
+  const emptyDisabledReason = props.chatInput.trim() ? undefined : "Message requires text";
+  const readOnlyDisabledReason =
+    props.isReadOnly === true ? (props.readOnlyHint ?? "This thread is read-only.") : undefined;
+  const disabledReason = emptyDisabledReason ?? effectiveSendDisabledReason ?? readOnlyDisabledReason;
+  const grounding = props.sandboxGroundingDisabledReason
+    ? {
+        library: props.grounding?.library ?? {
+          enabled: false as const,
+          code: "loading" as const,
+          message: "Loading grounding availability…",
+        },
+        sandbox: {
+          enabled: false as const,
+          code: "feature_not_included" as const,
+          message: props.sandboxGroundingDisabledReason,
+        },
+      }
+    : props.grounding;
+  const showGroundingToggles = props.showGroundingToggles ?? props.chatMode === "discuss";
+  const modelPickerReady = !shouldRenderModelPicker || Array.isArray(modelCatalogEntries);
+  const reasoningPickerReady = !shouldRenderReasoningPicker || Array.isArray(reasoningCatalogEntries);
+  const groundingReady = !(showGroundingToggles && props.chatMode === "discuss") || props.grounding !== undefined;
+  const toolsReady =
+    (props.composerControlsReady ?? true) && modelPickerReady && reasoningPickerReady && groundingReady;
+
+  return {
+    input: {
+      value: props.chatInput,
+      setValue: props.setChatInput,
+      placeholder:
+        props.isReadOnly === true
+          ? (props.readOnlyHint ?? "This thread is read-only.")
+          : "Ask about architecture, module boundaries, data flow, risks…",
+      readOnly: props.isReadOnly === true,
+      readOnlyHint: props.readOnlyHint,
+    },
+    tools: {
+      ready: toolsReady,
+      modelPicker: shouldRenderModelPicker
+        ? {
+            value: selectedModel,
+            onChange: props.setSelectedModel!,
+            threadLockedProvider: props.threadLockedProvider,
+            capability: modelPickerCapability,
+            preferenceScope: modelPreferenceScope,
+            getDisabledReason: (entry) =>
+              props.premiumModelsDisabledReason && entry.capability === "sandbox"
+                ? props.premiumModelsDisabledReason
+                : null,
+            catalogEntries: modelCatalogEntries,
+          }
+        : null,
+      reasoningPicker: shouldRenderReasoningPicker
+        ? {
+            value: props.selectedReasoningEffort ?? null,
+            onChange: props.setSelectedReasoningEffort!,
+            provider: props.selectedProvider ?? undefined,
+            modelName: props.selectedModelName ?? undefined,
+            preferenceScope: modelPreferenceScope,
+            disabledReasoningEfforts: props.highReasoningDisabledReason ? ["high", "xhigh"] : [],
+            disabledReasoningEffortMessage: props.highReasoningDisabledReason,
+            catalogEntries: reasoningCatalogEntries,
+          }
+        : null,
+      grounding:
+        showGroundingToggles && props.chatMode === "discuss"
+          ? {
+              groundLibrary: props.groundLibrary,
+              groundSandbox: props.groundSandbox,
+              setGroundLibrary: props.setGroundLibrary,
+              setGroundSandbox: props.setGroundSandbox,
+              grounding,
+              onOpenGenerateSystemDesign: props.onOpenGenerateSystemDesign,
+              generateDisabledReason: props.generateSystemDesignDisabledReason,
+            }
+          : null,
+      extraControls: props.composerControls,
+    },
+    send: {
+      isSending: props.isSending,
+      isBlocked:
+        props.isReadOnly === true ||
+        effectiveSendDisabledReason !== undefined ||
+        props.isSending ||
+        props.isSyncing ||
+        props.chatInput.trim().length === 0,
+      disabledReason,
+      buttonState: props.isSyncing ? "Syncing…" : props.isSending ? "Sending…" : "Send",
+      onSubmit: async (event) => {
+        await props.onSendMessage(event);
+      },
+    },
+    cancel: {
+      canCancel: typeof props.onCancelInFlightReply === "function",
+      isCancelling: props.isCancellingReply ?? false,
+      onCancel: props.onCancelInFlightReply,
+    },
+  };
+}
 
 describe("ChatPanel streaming rendering", () => {
   test("hides Discuss grounding toggles when the shell disables them", () => {

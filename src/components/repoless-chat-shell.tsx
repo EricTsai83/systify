@@ -12,11 +12,11 @@ import {
   RepolessSingleTurnToggle,
   type RepolessAgentProfileValue,
 } from "@/components/repoless-agent-profile-bar";
+import { useChatComposerSession } from "@/components/chat-shell-shared/use-chat-composer-session";
 import { useChatShellLifecycle } from "@/components/chat-shell-shared/use-chat-shell-lifecycle";
 import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-thread-deletion-recovery";
 import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
-import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
 import { isViewerFeatureEnabled, useViewerAccess } from "@/hooks/use-viewer-access";
 import type { ChatMode, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
@@ -62,15 +62,6 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
 
   const chatMode: ChatMode = "discuss";
 
-  const { selectedProvider, selectedModelName, setSelectedModel, selectedReasoningEffort, setSelectedReasoningEffort } =
-    useComposerModelPick({
-      threadId: urlThreadId,
-      capability: "discuss",
-      preferenceScope: "chat",
-      threadLockedProvider: capabilities.lockedProvider,
-      threadDefaultModelName: capabilities.defaultModelName,
-    });
-
   const recentThreadIds = useRecentThreads(urlThreadId);
   useWarmThreadSubscriptions(recentThreadIds);
 
@@ -86,24 +77,13 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
     void navigate(DEFAULT_AUTHENTICATED_PATH);
   }, [navigate]);
 
-  const { chatInput, setChatInput, isSending, handleSendMessage, isArchivingThread, handleArchiveThread } =
-    useChatShellLifecycle({
-      urlThreadId,
-      repositoryId: null,
-      chatMode,
-      selectedProvider,
-      selectedModelName,
-      selectedReasoningEffort,
-      newThreadSingleTurnEnabled: urlThreadId === null ? draftAgentProfile.singleTurnEnabled : undefined,
-      newThreadAgentEnabled: urlThreadId === null ? draftAgentProfile.agentEnabled : undefined,
-      newThreadAgentRole: urlThreadId === null ? draftAgentProfile.agentRole : undefined,
-      newThreadAgentInstructions: urlThreadId === null ? draftAgentProfile.agentInstructions : undefined,
-      threadToArchive,
-      setActionError,
-      setThreadToArchive,
-      onAfterCreateThread,
-      onAfterArchiveThread,
-    });
+  const { isArchivingThread, handleArchiveThread } = useChatShellLifecycle({
+    selectedThreadId: urlThreadId,
+    threadToArchive,
+    setActionError,
+    setThreadToArchive,
+    onAfterArchiveThread,
+  });
 
   const agentProfileValue: RepolessAgentProfileValue =
     urlThreadId === null
@@ -181,20 +161,49 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
     [navigate],
   );
 
-  const isChatShellLoading = urlThreadId !== null && capabilities.isLoading;
   const accessLoadingReason = viewerAccess === undefined ? "Loading access…" : undefined;
-  const chatSendDisabledReason =
-    accessLoadingReason ??
-    (isViewerFeatureEnabled(viewerAccess, "chatSend") ? undefined : DEMO_MODE_COPY.lockedMessage);
   const importDisabledReason =
     accessLoadingReason ??
     (isViewerFeatureEnabled(viewerAccess, "repoImport") ? undefined : DEMO_MODE_COPY.importDisabled);
-  const premiumModelsDisabledReason =
-    accessLoadingReason ??
-    (isViewerFeatureEnabled(viewerAccess, "premiumModels") ? undefined : DEMO_MODE_COPY.premiumModelsDisabled);
-  const highReasoningDisabledReason =
-    accessLoadingReason ??
-    (isViewerFeatureEnabled(viewerAccess, "highReasoning") ? undefined : DEMO_MODE_COPY.highReasoningDisabled);
+  const composerSendDisabledReason = capabilities.singleTurnResetPending
+    ? "Clearing previous messages…"
+    : agentProfileConfigured
+      ? undefined
+      : "Set up Agent before sending.";
+  const composer = useChatComposerSession({
+    surface: "repoless",
+    threadId: urlThreadId,
+    repositoryId: null,
+    mode: chatMode,
+    capabilities,
+    viewerAccess,
+    isSyncing: false,
+    isReadOnly: false,
+    setActionError,
+    onAfterCreateThread,
+    draftAgentProfile,
+    extraControls: [
+      <RepolessSingleTurnToggle
+        key="single-turn"
+        value={agentProfileValue}
+        resetPending={capabilities.singleTurnResetPending}
+        disabled={capabilities.isLoading}
+        className="animate-enter-fade"
+        onSave={handleSaveAgentProfile}
+      />,
+      <RepolessChatTypeToggle
+        key="chat-type"
+        value={agentProfileValue}
+        disabled={capabilities.isLoading}
+        className="animate-enter-fade"
+        onSave={handleSaveAgentProfile}
+      />,
+    ],
+    extraControlsReady: !capabilities.isLoading,
+    extraSendDisabledReason: composerSendDisabledReason,
+  });
+
+  const isChatShellLoading = urlThreadId !== null && capabilities.isLoading;
 
   return (
     <>
@@ -227,56 +236,9 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
         <div className="flex min-h-0 min-w-0 flex-1">
           <ChatContainer
             selectedThreadId={urlThreadId}
-            repositoryId={null}
             isShellLoading={isChatShellLoading}
-            chatInput={chatInput}
-            setChatInput={setChatInput}
+            composer={composer}
             chatMode={chatMode}
-            groundLibrary={false}
-            groundSandbox={false}
-            setGroundLibrary={() => {}}
-            setGroundSandbox={() => {}}
-            selectedProvider={selectedProvider}
-            selectedModelName={selectedModelName}
-            setSelectedModel={setSelectedModel}
-            premiumModelsDisabledReason={premiumModelsDisabledReason}
-            modelPreferenceScope="chat"
-            selectedReasoningEffort={selectedReasoningEffort}
-            setSelectedReasoningEffort={setSelectedReasoningEffort}
-            highReasoningDisabledReason={highReasoningDisabledReason}
-            threadLockedProvider={capabilities.lockedProvider}
-            grounding={undefined}
-            showGroundingToggles={false}
-            composerControls={[
-              <RepolessSingleTurnToggle
-                key="single-turn"
-                value={agentProfileValue}
-                resetPending={capabilities.singleTurnResetPending}
-                disabled={capabilities.isLoading}
-                className="animate-enter-fade"
-                onSave={handleSaveAgentProfile}
-              />,
-              <RepolessChatTypeToggle
-                key="chat-type"
-                value={agentProfileValue}
-                disabled={capabilities.isLoading}
-                className="animate-enter-fade"
-                onSave={handleSaveAgentProfile}
-              />,
-            ]}
-            composerControlsReady={!capabilities.isLoading}
-            isSending={isSending}
-            onSendMessage={handleSendMessage}
-            sendDisabledReason={
-              capabilities.singleTurnResetPending
-                ? "Clearing previous messages…"
-                : agentProfileConfigured
-                  ? chatSendDisabledReason
-                  : "Set up Agent before sending."
-            }
-            sandboxModeStatus={null}
-            isSyncing={false}
-            onSync={() => {}}
             showArtifactToggle={false}
             hasAttachedRepository={false}
           />

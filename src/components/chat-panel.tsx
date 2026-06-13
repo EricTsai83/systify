@@ -1,19 +1,7 @@
-import {
-  Children,
-  Fragment,
-  useCallback,
-  useMemo,
-  useState,
-  type AnimationEvent,
-  type FormEvent,
-  type ReactNode,
-} from "react";
-import { useQuery } from "convex/react";
+import { Children, Fragment, useCallback, useMemo, useState, type AnimationEvent, type ReactNode } from "react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
-import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { findInFlightAssistantMessage, useConversationThread } from "@/hooks/use-conversation-thread";
-import { useModelAccessDisabledReason } from "@/hooks/use-model-access-disabled-reason";
 import { useStatsForNerdsPreference } from "@/hooks/use-user-preferences";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { useChatScroll } from "@/components/ai-elements/use-chat-scroll";
@@ -26,36 +14,23 @@ import {
 import { EmptyChatHint, EmptyNoRepoHint } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
 import { MODE_EXAMPLES } from "@/components/chat-modes";
-import { GroundingToggleBar, type GroundingAxisLike } from "@/components/grounding-toggle-bar";
+import { GroundingToggleBar } from "@/components/grounding-toggle-bar";
 import { ModeExamples } from "@/components/mode-examples";
-import {
-  PromptInputModelPicker,
-  type PromptInputModelPickerValue,
-} from "@/components/ai-elements/prompt-input-model-picker";
+import { PromptInputModelPicker } from "@/components/ai-elements/prompt-input-model-picker";
 import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-input-reasoning-picker";
 import { SandboxActivityPill } from "@/components/sandbox-activity-pill";
 import { Button } from "@/components/ui/button";
 import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type {
-  ActiveMessageStream,
-  ArtifactId,
-  ChatMode,
-  LlmProvider,
-  ModelPreferenceScope,
-  ReasoningEffort,
-  RepositoryId,
-  SandboxModeStatus,
-  ThreadId,
-} from "@/lib/types";
+import type { ActiveMessageStream, ArtifactId, ChatMode, RepositoryId, ThreadId } from "@/lib/types";
+import type { ChatComposerViewModel } from "@/components/chat-shell-shared/chat-composer-types";
 
 type ChatPanelProps = {
   selectedThreadId: ThreadId | null;
   messages: Doc<"messages">[] | undefined;
   activeMessageStream: ActiveMessageStream | null | undefined;
   isChatLoading: boolean;
-  chatInput: string;
-  setChatInput: (v: string) => void;
+  composer: ChatComposerViewModel;
   /**
    * The thread's persisted mode. Always `"discuss"` for panels rendered
    * by the Discuss page; Library has its own surface. Kept as a prop so
@@ -63,96 +38,6 @@ type ChatPanelProps = {
    * shell) can drive it.
    */
   chatMode: ChatMode;
-  /**
-   * Per-message grounding toggle state. The Discuss composer mirrors
-   * these into the send-mutation args so the assistant reply observes
-   * the same flags the user saw at click time.
-   */
-  groundLibrary: boolean;
-  groundSandbox: boolean;
-  setGroundLibrary: (v: boolean) => void;
-  setGroundSandbox: (v: boolean) => void;
-  /**
-   * Composer model picker state. `selectedProvider` + `selectedModelName`
-   * are the current pair the picker is rendering; `setSelectedModel`
-   * fires when the user picks a new entry. The shell owns the actual
-   * state (so it can pre-fill from `thread.defaultModelName` on thread
-   * switches) and passes it through.
-   *
-   * `threadLockedProvider` mirrors `threads.lockedProvider` from the
-   * thread-context query. When set, the picker hides the other provider's
-   * group and renders the lock pill.
-   *
-   * All four are optional so unit-test renders / headless callers can
-   * mount `ChatPanel` without threading picker state through. The
-   * picker is hidden when `setSelectedModel` is omitted — that's the
-   * single signal "this caller does not own picker state".
-   */
-  selectedProvider?: LlmProvider | null;
-  selectedModelName?: string | null;
-  setSelectedModel?: (next: PromptInputModelPickerValue) => void;
-  premiumModelsDisabledReason?: string;
-  modelPreferenceScope?: ModelPreferenceScope;
-  /**
-   * Per-message reasoning-effort override. The picker shows only when
-   * the selected model's catalog entry supports reasoning. `null`
-   * means "fall back to catalog default" — the gateway threads that
-   * cascade for us.
-   *
-   * As with the model picker, the shell owns the state; the picker
-   * resets between sends unless the shell chooses to remember it.
-   */
-  selectedReasoningEffort?: ReasoningEffort | null;
-  setSelectedReasoningEffort?: (next: ReasoningEffort | null) => void;
-  highReasoningDisabledReason?: string;
-  threadLockedProvider?: LlmProvider | null;
-  /**
-   * Per-axis availability verdict from `repositoryModeEligibility.evaluate`.
-   * Mirrors the structured shape the eligibility module exposes, but typed
-   * loosely here so the panel can render the toggle bar before the type
-   * narrows on first paint.
-   */
-  grounding:
-    | {
-        library: GroundingAxisLike;
-        sandbox: GroundingAxisLike;
-      }
-    | null
-    | undefined;
-  /**
-   * Whether to show Discuss grounding controls. Repoless `/chat` routes are
-   * Discuss-only but have no repository context, so Library/Sandbox controls
-   * would be permanently unusable there.
-   */
-  showGroundingToggles?: boolean;
-  /** Fires when the user clicks the Library "Generate System Design" CTA. */
-  onOpenGenerateSystemDesign?: () => void;
-  generateSystemDesignDisabledReason?: string;
-  isSending: boolean;
-  onSendMessage: (e: FormEvent<HTMLFormElement>) => Promise<void>;
-  sendDisabledReason?: string;
-  /**
-   * Fires when the user clicks Stop on the in-flight reply. The
-   * shell wires this to the `chat.cancel.cancelInFlightReply` mutation. The
-   * panel only renders the Stop affordance when this prop is supplied *and*
-   * the latest assistant message is still in a non-terminal state, so
-   * tests / headless renders that don't need cancellation can simply omit
-   * the prop and continue to see the Send button.
-   */
-  onCancelInFlightReply?: () => void | Promise<void>;
-  /**
-   * True between user click and the assistant message transitioning out
-   * of `streaming` / `pending`. While true the button
-   * label switches to "Stopping…" so the user sees an acknowledgement that
-   * the request is in flight even before the bubble flips to "Cancelled".
-   * Defaults to `false` so existing call sites don't have to thread this
-   * through immediately.
-   */
-  isCancellingReply?: boolean;
-  sandboxModeStatus: SandboxModeStatus | null;
-  isSyncing: boolean;
-  onSync: () => void;
-  sandboxGroundingDisabledReason?: string;
   isArtifactPanelOpen?: boolean;
   onToggleArtifactPanel?: () => void;
   showArtifactToggle?: boolean;
@@ -166,29 +51,11 @@ type ChatPanelProps = {
    */
   onSelectArtifact?: (artifactId: ArtifactId) => void;
   /**
-   * When true, the chat input and Send/Stop buttons are disabled and a
-   * read-only hint is shown below the composer. Used by the archived-
-   * repository banner so historical messages stay browsable but no new
-   * messages can be sent until the repo is restored.
-   */
-  isReadOnly?: boolean;
-  /** Optional copy shown below the disabled composer when `isReadOnly` is true. */
-  readOnlyHint?: string;
-  /**
    * Repository attached to the current thread, if any. Used to mount
    * the passive `SandboxActivityPill` in sandbox-tooled modes. Optional
    * so pre-repo and unit-test render paths can omit it.
    */
   attachedRepositoryId?: RepositoryId;
-  /**
-   * Repository the composer is rendered inside, when no thread is
-   * selected. Acts as the anchor for the lazy
-   * `sendMessageStartingNewThread` path — when supplied the Send button
-   * stays enabled on a no-thread URL so the first send can create the
-   * thread atomically. Optional so callers without a repository context
-   * can omit it.
-   */
-  repositoryId?: RepositoryId | null;
   /**
    * Whether the paginated message subscription has more history to
    * fetch (`status === "CanLoadMore"`). The conversation mounts a top
@@ -204,10 +71,6 @@ type ChatPanelProps = {
    * threading the callback through.
    */
   onLoadOlderMessages?: () => void;
-  /** Optional controls rendered inside the composer toolbar, before model/grounding controls. */
-  composerControls?: ReactNode;
-  /** True once caller-owned composer controls have loaded their backing data. */
-  composerControlsReady?: boolean;
 };
 
 type ChatContainerProps = Omit<ChatPanelProps, "messages" | "activeMessageStream" | "isChatLoading"> & {
@@ -246,62 +109,18 @@ export function ChatPanel({
   messages,
   activeMessageStream,
   isChatLoading,
-  chatInput,
-  setChatInput,
+  composer,
   chatMode,
-  groundLibrary,
-  groundSandbox,
-  setGroundLibrary,
-  setGroundSandbox,
-  selectedProvider = null,
-  selectedModelName = null,
-  setSelectedModel,
-  premiumModelsDisabledReason,
-  modelPreferenceScope = "discuss",
-  selectedReasoningEffort = null,
-  setSelectedReasoningEffort,
-  highReasoningDisabledReason,
-  threadLockedProvider = null,
-  grounding,
-  showGroundingToggles = chatMode === "discuss",
-  onOpenGenerateSystemDesign,
-  generateSystemDesignDisabledReason,
-  isSending,
-  onSendMessage,
-  sendDisabledReason,
-  onCancelInFlightReply,
-  isCancellingReply = false,
-  isSyncing,
-  sandboxGroundingDisabledReason,
   isArtifactPanelOpen = false,
   onToggleArtifactPanel,
   showArtifactToggle = false,
   hasAttachedRepository = true,
   onSelectArtifact,
-  isReadOnly = false,
-  readOnlyHint,
   attachedRepositoryId,
   canLoadOlderMessages = false,
   onLoadOlderMessages = NOOP_LOAD_OLDER,
-  composerControls,
-  composerControlsReady = true,
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
-  const modelPickerCapability = modelPreferenceScope === "sandbox" ? "sandbox" : undefined;
-  const shouldRenderModelPicker = !isReadOnly && typeof setSelectedModel === "function";
-  const shouldRenderReasoningPicker = !isReadOnly && typeof setSelectedReasoningEffort === "function";
-  const modelCatalogEntries = useQuery(
-    api.llmCatalog.listPickableModels,
-    shouldRenderModelPicker
-      ? modelPickerCapability !== undefined
-        ? { capability: modelPickerCapability, preferenceScope: modelPreferenceScope }
-        : { preferenceScope: modelPreferenceScope }
-      : "skip",
-  );
-  const reasoningCatalogEntries = useQuery(
-    api.llmCatalog.listPickableModels,
-    shouldRenderReasoningPicker ? { preferenceScope: modelPreferenceScope } : "skip",
-  );
   const [showStatsForNerds] = useStatsForNerdsPreference();
 
   // Owns stick-to-bottom on append, anchor preservation on prepend,
@@ -351,20 +170,10 @@ export function ChatPanel({
     [selectedThreadId],
   );
 
-  const selectedModelPick =
-    selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null;
-  const modelAccessDisabledReason = useModelAccessDisabledReason({
-    modelPick: selectedModelPick,
-    reasoningEffort: selectedReasoningEffort,
-    preferenceScope: modelPreferenceScope,
-    premiumModelsDisabledReason,
-    highReasoningDisabledReason,
-  });
-  const effectiveSendDisabledReason = sendDisabledReason ?? modelAccessDisabledReason ?? undefined;
-
   const inFlightAssistantMessage = useMemo(() => findInFlightAssistantMessage(messages), [messages]);
 
-  const canCancel = inFlightAssistantMessage !== null && typeof onCancelInFlightReply === "function";
+  const canCancel =
+    inFlightAssistantMessage !== null && composer.cancel.canCancel && typeof composer.cancel.onCancel === "function";
 
   // Centralized gate for "should a Send fire right now?". Used both as the
   // Send button's `disabled` prop and to short-circuit the PromptInput's
@@ -372,39 +181,14 @@ export function ChatPanel({
   // the shared gate, pressing Enter while the Stop button is rendered (Stop is
   // `type="button"`, so the textarea's submit-disabled probe finds no submit
   // button and lets the submit through) would fire `onSendMessage` mid-flight.
-  const isSendBlocked =
-    isReadOnly || effectiveSendDisabledReason !== undefined || isSending || isSyncing || !chatInput.trim() || canCancel;
-  const emptyMessageDisabledReason = !chatInput.trim() ? "Message requires text" : undefined;
-  const sendButtonTitle = emptyMessageDisabledReason ?? effectiveSendDisabledReason;
-
-  const effectiveGrounding = useMemo(() => {
-    if (!sandboxGroundingDisabledReason) {
-      return grounding;
-    }
-    return {
-      library: grounding?.library ?? {
-        enabled: false,
-        code: "loading" as const,
-        message: "Loading grounding availability…",
-      },
-      sandbox: {
-        enabled: false as const,
-        code: "feature_not_included" as const,
-        message: sandboxGroundingDisabledReason,
-      },
-    };
-  }, [grounding, sandboxGroundingDisabledReason]);
+  const isSendBlocked = composer.send.isBlocked || canCancel;
+  const sendButtonTitle = composer.send.disabledReason;
 
   const shouldShowEmptyState = !isChatLoading && !hasMessages;
-  const shouldShowSandboxPill = groundSandbox && attachedRepositoryId !== undefined;
+  const shouldShowSandboxPill = composer.tools.grounding?.groundSandbox === true && attachedRepositoryId !== undefined;
 
   const sandboxPill =
     shouldShowSandboxPill && attachedRepositoryId ? <SandboxActivityPill repositoryId={attachedRepositoryId} /> : null;
-
-  const modelPickerReady = !shouldRenderModelPicker || Array.isArray(modelCatalogEntries);
-  const reasoningPickerReady = !shouldRenderReasoningPicker || Array.isArray(reasoningCatalogEntries);
-  const groundingReady = !(showGroundingToggles && chatMode === "discuss") || grounding !== undefined;
-  const composerToolsReady = composerControlsReady && modelPickerReady && reasoningPickerReady && groundingReady;
 
   const composerToolItems: ReactNode[] = [
     showArtifactToggle && onToggleArtifactPanel ? (
@@ -421,43 +205,41 @@ export function ChatPanel({
         <span className="hidden sm:inline">Artifacts</span>
       </Button>
     ) : null,
-    shouldRenderModelPicker ? (
+    composer.tools.modelPicker ? (
       <PromptInputModelPicker
-        value={
-          selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null
-        }
-        onChange={setSelectedModel}
-        threadLockedProvider={threadLockedProvider}
-        capability={modelPickerCapability}
-        preferenceScope={modelPreferenceScope}
-        getDisabledReason={(entry) =>
-          premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
-        }
-        catalogEntries={modelCatalogEntries}
+        value={composer.tools.modelPicker.value}
+        onChange={composer.tools.modelPicker.onChange}
+        threadLockedProvider={composer.tools.modelPicker.threadLockedProvider}
+        capability={composer.tools.modelPicker.capability}
+        preferenceScope={composer.tools.modelPicker.preferenceScope}
+        disabled={composer.tools.modelPicker.disabled}
+        getDisabledReason={composer.tools.modelPicker.getDisabledReason}
+        catalogEntries={composer.tools.modelPicker.catalogEntries}
       />
     ) : null,
-    shouldRenderReasoningPicker ? (
+    composer.tools.reasoningPicker ? (
       <PromptInputReasoningPicker
-        value={selectedReasoningEffort}
-        onChange={setSelectedReasoningEffort}
-        provider={selectedProvider ?? undefined}
-        modelName={selectedModelName ?? undefined}
-        preferenceScope={modelPreferenceScope}
-        disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
-        disabledReasoningEffortMessage={highReasoningDisabledReason}
-        catalogEntries={reasoningCatalogEntries}
+        value={composer.tools.reasoningPicker.value}
+        onChange={composer.tools.reasoningPicker.onChange}
+        provider={composer.tools.reasoningPicker.provider}
+        modelName={composer.tools.reasoningPicker.modelName}
+        preferenceScope={composer.tools.reasoningPicker.preferenceScope}
+        disabled={composer.tools.reasoningPicker.disabled}
+        disabledReasoningEfforts={composer.tools.reasoningPicker.disabledReasoningEfforts}
+        disabledReasoningEffortMessage={composer.tools.reasoningPicker.disabledReasoningEffortMessage}
+        catalogEntries={composer.tools.reasoningPicker.catalogEntries}
       />
     ) : null,
-    ...Children.toArray(composerControls),
-    showGroundingToggles && chatMode === "discuss" ? (
+    ...Children.toArray(composer.tools.extraControls),
+    composer.tools.grounding ? (
       <GroundingToggleBar
-        groundLibrary={groundLibrary}
-        groundSandbox={groundSandbox}
-        setGroundLibrary={setGroundLibrary}
-        setGroundSandbox={setGroundSandbox}
-        grounding={effectiveGrounding}
-        onOpenGenerateSystemDesign={onOpenGenerateSystemDesign}
-        generateDisabledReason={generateSystemDesignDisabledReason}
+        groundLibrary={composer.tools.grounding.groundLibrary}
+        groundSandbox={composer.tools.grounding.groundSandbox}
+        setGroundLibrary={composer.tools.grounding.setGroundLibrary}
+        setGroundSandbox={composer.tools.grounding.setGroundSandbox}
+        grounding={composer.tools.grounding.grounding}
+        onOpenGenerateSystemDesign={composer.tools.grounding.onOpenGenerateSystemDesign}
+        generateDisabledReason={composer.tools.grounding.generateDisabledReason}
       />
     ) : null,
   ].filter((item) => item !== null);
@@ -483,13 +265,13 @@ export function ChatPanel({
            * card has `flex-1` and pushes everything below toward the
            * composer), giving the prompts a consistent "just above
            * the input" anchor regardless of viewport height. Clicking
-           * a card seeds `chatInput` but does not auto-submit.
+           * a card seeds the composer input but does not auto-submit.
            */}
           <ModeExamples
             mode={chatMode}
             examples={MODE_EXAMPLES[chatMode]}
-            onUseExample={(prompt) => setChatInput(prompt)}
-            disabled={isReadOnly}
+            onUseExample={(prompt) => composer.input.setValue(prompt)}
+            disabled={composer.input.readOnly}
           />
         </div>
       ) : (
@@ -539,10 +321,10 @@ export function ChatPanel({
          * `PromptInput` (ai-elements) wraps the form in an `InputGroup`
          * primitive that aligns the textarea + toolbar / submit as a
          * single bordered control. Submitting routes through PromptInput's
-         * internal handler, which fires our `onSendMessage` with the
-         * captured form event. Per-message state (`chatInput`) stays
-         * controlled here so the parent's already-persisted draft logic
-         * (mode switches, thread switches) is untouched.
+         * internal handler, which fires the composer submit callback with
+         * the captured form event. Per-message state stays controlled by
+         * the composer session so persisted draft behavior remains outside
+         * the rendering panel.
          *
          * `readonly-hint` lives OUTSIDE the PromptInput because InputGroup
          * expects only textarea + addons as children; arbitrary `<p>`
@@ -552,24 +334,20 @@ export function ChatPanel({
           <PromptInput
             onSubmit={(_, event) => {
               if (isSendBlocked) return;
-              void onSendMessage(event);
+              void composer.send.onSubmit(event);
             }}
           >
             <PromptInputTextarea
               name="message"
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              placeholder={
-                isReadOnly
-                  ? (readOnlyHint ?? "This thread is read-only.")
-                  : "Ask about architecture, module boundaries, data flow, risks…"
-              }
+              value={composer.input.value}
+              onChange={(e) => composer.input.setValue(e.target.value)}
+              placeholder={composer.input.placeholder}
               className="min-h-20"
-              readOnly={isReadOnly}
-              aria-describedby={isReadOnly && readOnlyHint ? "readonly-hint" : undefined}
+              readOnly={composer.input.readOnly}
+              aria-describedby={composer.input.readOnly && composer.input.readOnlyHint ? "readonly-hint" : undefined}
             />
             <PromptInputFooter>
-              {composerToolsReady ? (
+              {composer.tools.ready ? (
                 <PromptInputTools className="animate-enter-fade">
                   {composerToolItems.map((item, index) => (
                     <Fragment key={index}>
@@ -585,7 +363,7 @@ export function ChatPanel({
                   className="min-h-8 flex-1"
                 />
               )}
-              {canCancel && !isReadOnly ? (
+              {canCancel && !composer.input.readOnly ? (
                 /*
                  * Stop button. `type="button"` so a stray Enter in
                  * the textarea cannot accidentally submit a Stop click as if
@@ -606,16 +384,19 @@ export function ChatPanel({
                   type="button"
                   variant="destructive"
                   size="sm"
-                  disabled={isCancellingReply}
+                  disabled={composer.cancel.isCancelling}
                   aria-label="Stop generating reply"
                   data-testid="chat-panel-stop-button"
                   className="min-w-30"
                   onClick={() => {
-                    void onCancelInFlightReply?.();
+                    void composer.cancel.onCancel?.();
                   }}
                 >
                   <StopCircleIcon weight="bold" />
-                  <ButtonStateText current={isCancellingReply ? "Stopping…" : "Stop"} states={["Stop", "Stopping…"]} />
+                  <ButtonStateText
+                    current={composer.cancel.isCancelling ? "Stopping…" : "Stop"}
+                    states={["Stop", "Stopping…"]}
+                  />
                 </Button>
               ) : (
                 <SendButtonWithOptionalTooltip disabledReason={sendButtonTitle}>
@@ -629,18 +410,15 @@ export function ChatPanel({
                     className="min-w-30"
                   >
                     <PaperPlaneTiltIcon weight="bold" />
-                    <ButtonStateText
-                      current={isSyncing ? "Syncing…" : isSending ? "Sending…" : "Send"}
-                      states={["Send", "Sending…", "Syncing…"]}
-                    />
+                    <ButtonStateText current={composer.send.buttonState} states={["Send", "Sending…", "Syncing…"]} />
                   </Button>
                 </SendButtonWithOptionalTooltip>
               )}
             </PromptInputFooter>
           </PromptInput>
-          {isReadOnly && readOnlyHint ? (
+          {composer.input.readOnly && composer.input.readOnlyHint ? (
             <p id="readonly-hint" className="text-xs text-muted-foreground">
-              {readOnlyHint}
+              {composer.input.readOnlyHint}
             </p>
           ) : null}
         </div>

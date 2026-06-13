@@ -32,6 +32,7 @@ import { useConversationThread } from "@/hooks/use-conversation-thread";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useDefaultModelPick } from "@/hooks/use-default-model-pick";
 import { useModelAccessDisabledReason } from "@/hooks/use-model-access-disabled-reason";
+import { buildChatSendRequest } from "@/lib/chat-composer-session";
 import { toUserErrorMessage } from "@/lib/errors";
 import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import type { ArtifactId, ReasoningEffort, RepositoryId, ThreadId } from "@/lib/types";
@@ -257,23 +258,23 @@ export function LibraryAskPanel({
     },
     [ensureOpen, onSelectThread],
   );
-  const handleAfterLifecycleArchive = useCallback(() => {}, []);
   const { isSending, handleSendMessage: handleLifecycleSendMessage } = useChatLifecycle({
     selectedThreadId: lifecycleThreadId,
-    repositoryId,
-    threadToArchive: pendingArchiveThreadId,
-    chatInput: input,
-    chatMode: "library",
-    selectedProvider,
-    selectedModelName,
-    selectedReasoningEffort,
-    newThreadTitle: "Library Ask",
-    newThreadArtifactContext,
+    buildSendRequest: (content) =>
+      buildChatSendRequest({
+        selectedThreadId: lifecycleThreadId,
+        repositoryId,
+        mode: "library",
+        content,
+        provider: selectedProvider,
+        modelName: selectedModelName,
+        reasoningEffort: selectedReasoningEffort,
+        newThreadTitle: "Library Ask",
+        newThreadArtifactContext,
+      }),
     clearChatInput: clearInput,
     setActionError: setError,
-    setThreadToArchive: setPendingArchiveThreadId,
     onAfterCreateThread: handleAfterCreateThread,
-    onAfterArchiveThread: handleAfterLifecycleArchive,
   });
 
   // "+" no longer eagerly creates a thread — it transitions the panel to a
