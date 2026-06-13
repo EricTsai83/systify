@@ -496,7 +496,10 @@ export function LibraryAskPanel({
 
       {threadId ? (
         <Conversation scroll={conversationScroll} className="min-h-0 flex-1">
-          <ConversationContent className="gap-0 px-4 py-3" showLoadOlderSentinel={canLoadOlderMessages}>
+          <ConversationContent
+            className={`gap-0 px-4 py-3 ${isLocked ? "min-h-full" : ""}`}
+            showLoadOlderSentinel={canLoadOlderMessages}
+          >
             {confirmedThreadId ? (
               <div key={confirmedThreadId} className={conversationScroll.didPrepend ? undefined : "animate-soft-enter"}>
                 {timelineEntries.map((entry, index) =>
@@ -519,6 +522,14 @@ export function LibraryAskPanel({
                   ),
                 )}
               </div>
+            ) : null}
+            {isLocked ? (
+              <NoArtifactsHint
+                className={confirmedThreadId ? "mt-4" : undefined}
+                descriptionId={composerHintId}
+                onGenerate={onGenerate}
+                generateDisabledReason={generateDisabledReason}
+              />
             ) : null}
           </ConversationContent>
           <ConversationScrollButton />
@@ -576,34 +587,7 @@ export function LibraryAskPanel({
         </div>
       ) : null}
 
-      {/*
-       * Inline lock notice. Surfaces above the composer whenever the
-       * artifact gate is closed AND the user is on an existing thread,
-       * where the no-thread empty state's CTA isn't reachable (the
-       * messages list takes that slot). The no-thread case renders
-       * `NoArtifactsHint` instead, which already carries the CTA.
-       */}
-      {isLocked && threadId ? (
-        <div className="flex items-start gap-2 border-t border-border bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
-          <SparkleIcon size={12} weight="fill" className="mt-0.5 shrink-0 text-amber-500" />
-          <p id="library-ask-locked-hint" className="min-w-0 flex-1 leading-4">
-            {LOCKED_HINT}
-          </p>
-          {onGenerate ? (
-            <button
-              type="button"
-              disabled={generateDisabledReason !== undefined}
-              title={generateDisabledReason}
-              onClick={onGenerate}
-              className="shrink-0 font-medium text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-            >
-              Generate
-            </button>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div className="border-t border-border p-3">
+      <div className="border-t border-border px-4 py-3">
         {error ? <p className="mb-2 text-xs text-destructive">{error}</p> : null}
         <PromptInput
           onSubmit={(_, event) => {
@@ -765,28 +749,30 @@ function timelineEntrySender(entry: LibraryAskTimelineEntry): "user" | "assistan
  * tall sidebar column.
  */
 function NoArtifactsHint({
+  className,
+  descriptionId,
   onGenerate,
   generateDisabledReason,
 }: {
+  className?: string;
+  descriptionId?: string;
   onGenerate?: () => void;
   generateDisabledReason?: string;
 }) {
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-4 py-6">
+    <div
+      className={`flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-4 py-6 ${className ?? ""}`.trim()}
+    >
       <EmptyStateHero
-        visual={
-          <div className="flex size-11 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
-            <SparkleIcon size={20} weight="duotone" />
-          </div>
-        }
         title={REPOSITORY_GUIDE_COPY.noArtifactsTitle}
-        description={REPOSITORY_GUIDE_COPY.noArtifactsDescription}
+        description={<span id={descriptionId}>{REPOSITORY_GUIDE_COPY.noArtifactsDescription}</span>}
       />
       {onGenerate ? (
         <Button
           type="button"
-          size="sm"
-          className="gap-1.5"
+          variant="default"
+          size="default"
+          className="gap-2 px-4"
           disabled={generateDisabledReason !== undefined}
           title={generateDisabledReason}
           onClick={onGenerate}
