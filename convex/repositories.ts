@@ -43,13 +43,16 @@ export const listRepositories = query({
     const identity = await requireViewerIdentity(ctx);
     const repositories = await ctx.db
       .query("repositories")
-      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
+      .withIndex("by_owner_delete_archive_importedAt", (q) =>
+        q
+          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+          .eq("deletionRequestedAt", undefined)
+          .eq("archivedAt", undefined),
       )
       .order("desc")
       .take(REPOSITORY_LIST_TAKE);
 
-    return repositories.filter((repo) => repo.archivedAt === undefined);
+    return repositories;
   },
 });
 
@@ -69,16 +72,17 @@ export const listResourceInventory = query({
 
     const repositories = await ctx.db
       .query("repositories")
-      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
+      .withIndex("by_owner_delete_archive_importedAt", (q) =>
+        q
+          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+          .eq("deletionRequestedAt", undefined)
+          .eq("archivedAt", undefined),
       )
       .order("desc")
       .take(REPOSITORY_LIST_TAKE);
 
-    const activeRepositories = repositories.filter((repo) => repo.archivedAt === undefined);
-
     const inventory = await Promise.all(
-      activeRepositories.map(async (repo) => {
+      repositories.map(async (repo) => {
         const sandboxStatus = await getRepositorySandboxStatus(ctx, repo);
         const { sandboxModeStatus, sandbox } = sandboxStatus;
         return {
@@ -174,9 +178,13 @@ export const getImportedRepoSummaries = query({
     const identity = await requireViewerIdentity(ctx);
     const repos = await ctx.db
       .query("repositories")
-      .withIndex("by_ownerTokenIdentifier_and_deletionRequestedAt_and_importedAt", (q) =>
-        q.eq("ownerTokenIdentifier", identity.tokenIdentifier).eq("deletionRequestedAt", undefined),
+      .withIndex("by_owner_delete_archive_importedAt", (q) =>
+        q
+          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
+          .eq("deletionRequestedAt", undefined)
+          .eq("archivedAt", undefined),
       )
+      .order("desc")
       .take(REPOSITORY_LIST_TAKE);
 
     const summaries: Record<
@@ -189,9 +197,6 @@ export const getImportedRepoSummaries = query({
     > = {};
 
     for (const repo of repos) {
-      if (repo.archivedAt !== undefined) {
-        continue;
-      }
       summaries[repo.sourceRepoFullName] = {
         importStatus: repo.importStatus,
         lastImportedAt: repo.lastImportedAt,

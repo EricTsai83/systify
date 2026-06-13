@@ -22,6 +22,7 @@ async function seedRepository(
     sourceRepoName?: string;
     archivedAt?: number;
     deletionRequestedAt?: number;
+    lastImportedAt?: number;
   },
 ) {
   return await t.run(async (ctx) => {
@@ -43,6 +44,7 @@ async function seedRepository(
       fileCount: 1,
       color: "blue",
       lastAccessedAt: Date.now(),
+      ...(args.lastImportedAt !== undefined ? { lastImportedAt: args.lastImportedAt } : {}),
       ...(args.archivedAt !== undefined ? { archivedAt: args.archivedAt } : {}),
       ...(args.deletionRequestedAt !== undefined ? { deletionRequestedAt: args.deletionRequestedAt } : {}),
     });
@@ -215,6 +217,36 @@ describe("repository listings honour archive state", () => {
     expect(active.map((repo) => repo._id)).toEqual([activeId]);
     expect(archived.page.map((repo) => repo._id)).toEqual([archivedId]);
     expect(archived.isDone).toBe(true);
+  });
+
+  test("active-list queries include older active rows when newer archived rows crowd the fixed slice", async () => {
+    const ownerTokenIdentifier = "user|listing-archive-crowding";
+    const t = createTestConvex();
+    const now = Date.now();
+
+    const activeId = await seedRepository(t, {
+      ownerTokenIdentifier,
+      sourceRepoName: "crowded-active",
+      lastImportedAt: now,
+    });
+
+    for (let index = 0; index < 201; index += 1) {
+      await seedRepository(t, {
+        ownerTokenIdentifier,
+        sourceRepoName: `crowded-archived-${index}`,
+        archivedAt: now + index + 1,
+        lastImportedAt: now + index + 1,
+      });
+    }
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const repositories = await viewer.query(api.repositories.listRepositories, {});
+    const summaries = await viewer.query(api.repositories.getImportedRepoSummaries, {});
+    const inventory = await viewer.query(api.repositories.listResourceInventory, {});
+
+    expect(repositories.map((repo) => repo._id)).toEqual([activeId]);
+    expect(Object.keys(summaries)).toEqual(["acme/crowded-active"]);
+    expect(inventory.map((row) => row.repositoryId)).toEqual([activeId]);
   });
 
   test("listArchivedRepositories paginates across cursors and stops on isDone", async () => {
