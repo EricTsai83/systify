@@ -79,6 +79,8 @@ export interface PromptInputReasoningPickerProps {
   preferenceScope?: ModelPreferenceScope;
   /** Optional class for sizing inside the composer footer. */
   className?: string;
+  /** Optional class for resizing the select trigger outside the composer footer. */
+  triggerClassName?: string;
   /** Optional preloaded catalog so parent toolbars can gate all controls together. */
   catalogEntries?: ReadonlyArray<PickableModelEntry> | undefined;
 }
@@ -104,6 +106,7 @@ export function PromptInputReasoningPicker({
   disabledReasoningEffortMessage,
   preferenceScope = "discuss",
   className,
+  triggerClassName,
   catalogEntries: catalogEntriesProp,
 }: PromptInputReasoningPickerProps) {
   // Subscribe to the catalog so we can look up `supportsReasoning`
@@ -196,6 +199,7 @@ export function PromptInputReasoningPicker({
                   "hover:bg-accent hover:text-foreground",
                   "focus-visible:bg-transparent focus-visible:text-foreground",
                   "aria-expanded:bg-accent aria-expanded:text-foreground",
+                  triggerClassName,
                 )}
               >
                 <div className="flex size-4 shrink-0 items-center justify-center self-center text-current">

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
-import { FileTextIcon, SparkleIcon } from "@phosphor-icons/react";
+import { BracketsCurlyIcon, FileTextIcon, SparkleIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -163,29 +163,68 @@ export function GenerateSystemDesignDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex items-center justify-between gap-2 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5">
-          <span className="text-[11px] font-medium text-muted-foreground">Model</span>
-          <div className="flex items-center gap-1">
-            <PromptInputModelPicker
-              value={modelPick}
-              onChange={setModelPick}
-              capability="sandbox"
-              preferenceScope="sandbox"
-              disabled={isSubmitting || jobInProgress}
-              getDisabledReason={(entry) =>
-                premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
-              }
-            />
-            <PromptInputReasoningPicker
-              value={reasoningEffort}
-              onChange={setReasoningEffort}
-              provider={modelPick?.provider}
-              modelName={modelPick?.modelName}
-              preferenceScope="sandbox"
-              disabled={isSubmitting || jobInProgress}
-              disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
-              disabledReasoningEffortMessage={highReasoningDisabledReason}
-            />
+        <div className="grid min-h-18 grid-cols-1 gap-2 border border-border/60 bg-muted/20 p-2 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,0.48fr)]">
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className="flex h-4 items-center px-0.5 text-[11px] font-medium text-muted-foreground">Model</span>
+            <div className="relative flex h-9 min-w-0 items-center border border-border/70 bg-background/70">
+              {modelPick ? (
+                <>
+                  <div className="absolute inset-0 flex items-center gap-2 px-3 text-[13px] text-muted-foreground">
+                    <span className="h-3 w-3 animate-pulse rounded-full bg-muted-foreground/30" />
+                    <span>Loading models</span>
+                  </div>
+                  <PromptInputModelPicker
+                    value={modelPick}
+                    onChange={setModelPick}
+                    capability="sandbox"
+                    preferenceScope="sandbox"
+                    disabled={isSubmitting || jobInProgress}
+                    className="relative min-w-0 flex-1 bg-background"
+                    triggerClassName="h-9 w-full max-w-none rounded-none px-3 text-[13px] text-foreground"
+                    getDisabledReason={(entry) =>
+                      premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
+                    }
+                  />
+                </>
+              ) : (
+                <div className="flex w-full items-center gap-2 px-3 text-[13px] text-muted-foreground">
+                  <span className="h-3 w-3 animate-pulse rounded-full bg-muted-foreground/30" />
+                  <span>Loading models</span>
+                </div>
+              )}
+            </div>
+          </div>
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className="flex h-4 items-center px-0.5 text-[11px] font-medium text-muted-foreground">
+              Reasoning effort
+            </span>
+            <div className="relative flex h-9 min-w-0 items-center border border-border/70 bg-background/70">
+              {modelPick ? (
+                <>
+                  <div className="absolute inset-0 flex items-center gap-2 px-3 text-[13px] text-muted-foreground">
+                    <BracketsCurlyIcon size={14} weight="bold" />
+                    <span>Default</span>
+                  </div>
+                  <PromptInputReasoningPicker
+                    value={reasoningEffort}
+                    onChange={setReasoningEffort}
+                    provider={modelPick.provider}
+                    modelName={modelPick.modelName}
+                    preferenceScope="sandbox"
+                    disabled={isSubmitting || jobInProgress}
+                    className="relative min-w-0 flex-1 bg-background"
+                    triggerClassName="h-9 w-full max-w-none rounded-none px-3 text-[13px] text-foreground"
+                    disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
+                    disabledReasoningEffortMessage={highReasoningDisabledReason}
+                  />
+                </>
+              ) : (
+                <div className="flex w-full items-center gap-2 px-3 text-[13px] text-muted-foreground">
+                  <BracketsCurlyIcon size={14} weight="bold" />
+                  <span>Default</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

@@ -79,6 +79,8 @@ export interface PromptInputModelPickerProps {
   getDisabledReason?: (entry: PickableModelEntry) => string | null;
   /** Optional class for sizing inside the composer footer. */
   className?: string;
+  /** Optional class for resizing the select trigger outside the composer footer. */
+  triggerClassName?: string;
   /** Optional preloaded catalog so parent toolbars can gate all controls together. */
   catalogEntries?: ReadonlyArray<PickableModelEntry> | undefined;
 }
@@ -119,6 +121,7 @@ export function PromptInputModelPicker({
   disabled = false,
   getDisabledReason,
   className,
+  triggerClassName,
   catalogEntries: catalogEntriesProp,
 }: PromptInputModelPickerProps) {
   // `listPickableModels` is a tiny query (~10 entries); we always
@@ -176,7 +179,7 @@ export function PromptInputModelPicker({
         <PromptInputSelectTrigger
           aria-label="Pick model"
           data-testid="prompt-input-model-picker-trigger"
-          className={MODEL_PICKER_TRIGGER_CLASS_NAME}
+          className={cn(MODEL_PICKER_TRIGGER_CLASS_NAME, triggerClassName)}
         >
           {value ? <ProviderIcon provider={value.provider} /> : null}
           <PromptInputSelectValue className="truncate" placeholder="Pick model">
