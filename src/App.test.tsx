@@ -2,6 +2,7 @@
 
 import type React from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import type { ConnectionState } from "convex/browser";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import type { ThreadId } from "@/lib/types";
 import { App } from "./App";
@@ -19,6 +20,18 @@ const repolessShellMock = vi.hoisted(() => ({
 }));
 const viewerAccessMock = vi.hoisted(() => ({
   value: undefined as { ownerTokenIdentifier: string; plan: "free" | "internal" } | undefined,
+}));
+const convexConnectionStateMock = vi.hoisted(() => ({
+  value: {
+    hasInflightRequests: false,
+    isWebSocketConnected: true,
+    timeOfOldestInflightRequest: null,
+    hasEverConnected: true,
+    connectionCount: 1,
+    connectionRetries: 0,
+    inflightMutations: 0,
+    inflightActions: 0,
+  } as ConnectionState,
 }));
 
 vi.mock("@workos-inc/authkit-react", async () => {
@@ -116,6 +129,7 @@ vi.mock("convex/react", async () => {
     },
     ConvexReactClient: class {},
     useConvexAuth: () => React.useContext(AuthContext),
+    useConvexConnectionState: () => convexConnectionStateMock.value,
     useMutation: () => async () => undefined,
     useQuery: () => viewerAccessMock.value,
   };
@@ -140,6 +154,16 @@ describe("App auth token failures", () => {
     repolessShellMock.mountCount = 0;
     repolessShellMock.lastThreadId = null;
     viewerAccessMock.value = undefined;
+    convexConnectionStateMock.value = {
+      hasInflightRequests: false,
+      isWebSocketConnected: true,
+      timeOfOldestInflightRequest: null,
+      hasEverConnected: true,
+      connectionCount: 1,
+      connectionRetries: 0,
+      inflightMutations: 0,
+      inflightActions: 0,
+    };
     vi.restoreAllMocks();
   });
 
@@ -235,6 +259,33 @@ describe("App auth token failures", () => {
     expect(await screen.findByText("chat page")).toBeInTheDocument();
     expect(screen.getByText("Demo Mode")).toBeInTheDocument();
     expect(screen.getByText(/Cost-incurring features are disabled/)).toBeInTheDocument();
+  });
+
+  test("shows a Convex connection notice after repeated WebSocket retries", async () => {
+    convexConnectionStateMock.value = {
+      hasInflightRequests: true,
+      isWebSocketConnected: false,
+      timeOfOldestInflightRequest: new Date(0),
+      hasEverConnected: true,
+      connectionCount: 1,
+      connectionRetries: 2,
+      inflightMutations: 0,
+      inflightActions: 0,
+    };
+
+    function useAuth() {
+      return {
+        isLoading: false,
+        user: { id: "user_1" },
+        getAccessToken: getAccessTokenMock,
+      };
+    }
+
+    renderWithAuth(useAuth, ["/chat"]);
+
+    expect(await screen.findByText("chat page")).toBeInTheDocument();
+    expect(screen.getByText("Connection interrupted")).toBeInTheDocument();
+    expect(screen.getByText(/trouble reaching Convex/i)).toBeInTheDocument();
   });
 
   test("does not flash the demo banner while protected-route access is loading", async () => {
