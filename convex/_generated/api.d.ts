@@ -92,6 +92,7 @@ import type * as lib_ownedDocs from "../lib/ownedDocs.js";
 import type * as lib_providerEnv from "../lib/providerEnv.js";
 import type * as lib_rateLimit from "../lib/rateLimit.js";
 import type * as lib_repoAnalysis from "../lib/repoAnalysis.js";
+import type * as lib_repolessThreadKind from "../lib/repolessThreadKind.js";
 import type * as lib_repositoryAccess from "../lib/repositoryAccess.js";
 import type * as lib_repositoryCascade from "../lib/repositoryCascade.js";
 import type * as lib_repositoryImportWorkflow from "../lib/repositoryImportWorkflow.js";
@@ -223,6 +224,7 @@ declare const fullApi: ApiFromModules<{
   "lib/providerEnv": typeof lib_providerEnv;
   "lib/rateLimit": typeof lib_rateLimit;
   "lib/repoAnalysis": typeof lib_repoAnalysis;
+  "lib/repolessThreadKind": typeof lib_repolessThreadKind;
   "lib/repositoryAccess": typeof lib_repositoryAccess;
   "lib/repositoryCascade": typeof lib_repositoryCascade;
   "lib/repositoryImportWorkflow": typeof lib_repositoryImportWorkflow;

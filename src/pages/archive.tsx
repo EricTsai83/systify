@@ -23,6 +23,7 @@ import { ConfirmDialog } from "@/components/confirm-dialog";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { toUserErrorMessage } from "@/lib/errors";
 import { formatRelativeTime, formatTimestamp } from "@/lib/format";
+import { getRepolessThreadKind, getRepolessThreadKindLabel } from "@/lib/repoless-agent";
 import type { RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
 
@@ -144,6 +145,9 @@ type ArchivedThread = {
   repositoryId?: RepositoryId;
   title: string;
   mode: ThreadMode;
+  agentEnabled?: boolean;
+  agentRole?: string;
+  agentInstructions?: string;
   archivedAt: number;
   repository: {
     _id: RepositoryId;
@@ -425,7 +429,11 @@ function ArchivedThreadRow({
       }
     }, [restoreThread, thread._id]),
   );
-  const modeLabel = thread.repositoryId ? (thread.mode === "library" ? "Library Ask" : "Discuss") : "Chat";
+  const modeLabel = thread.repositoryId
+    ? thread.mode === "library"
+      ? "Library Ask"
+      : "Discuss"
+    : getRepolessThreadKindLabel(getRepolessThreadKind(thread));
 
   return (
     <div

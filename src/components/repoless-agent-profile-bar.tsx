@@ -1,11 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import {
-  ChatCircleIcon,
-  ChatsCircleIcon,
-  RepeatOnceIcon,
-  RobotIcon,
-  SlidersHorizontalIcon,
-} from "@phosphor-icons/react";
+import { ChatCircleIcon, RepeatIcon, RepeatOnceIcon, RobotIcon, SlidersHorizontalIcon } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -52,8 +46,8 @@ export function RepolessChatTypeToggle({
   const isAgent = value.agentEnabled;
   const isDisabled = disabled || isSaving;
   const ModeIcon = isAgent ? RobotIcon : ChatCircleIcon;
-  const label = isAgent ? "Agent" : "Chat";
-  const ariaLabel = isAgent ? "Switch to regular chat" : "Switch to Agent chat";
+  const label = isAgent ? "Agent" : "Conversation";
+  const ariaLabel = isAgent ? "Switch to Conversation" : "Switch to Agent";
   const hasProfile = value.agentRole.trim().length > 0 || value.agentInstructions.trim().length > 0;
   const profileLabel = hasProfile ? "Edit Agent settings" : "Set up Agent";
 
@@ -211,7 +205,8 @@ export function RepolessSingleTurnToggle({
   const isOn = value.singleTurnEnabled;
   const isDisabled = disabled || resetPending || isSaving;
   const label = resetPending ? "Clearing" : isOn ? "Single reply" : "Conversation";
-  const ModeIcon = isOn || resetPending ? RepeatOnceIcon : ChatsCircleIcon;
+  const ModeIcon = isOn || resetPending ? RepeatOnceIcon : RepeatIcon;
+  const showLabel = isOn || resetPending;
   const ariaLabel = resetPending
     ? "Single reply is clearing previous messages"
     : isOn
@@ -251,7 +246,7 @@ export function RepolessSingleTurnToggle({
               onPressedChange={() => void handleToggle()}
             >
               <ModeIcon className={COMPOSER_CONTROL_ICON_CLASS} weight={isOn ? "bold" : "regular"} />
-              <span className="min-w-0 truncate">{label}</span>
+              {showLabel ? <span className="min-w-0 truncate">{label}</span> : null}
             </Toggle>
           </span>
         </TooltipTrigger>

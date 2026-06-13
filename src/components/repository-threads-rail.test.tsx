@@ -21,13 +21,14 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.mocked(useConvex).mockReset();
   vi.mocked(useMutation).mockReset();
   vi.mocked(useQuery).mockReset();
 });
 
 describe("RepolessChatsRail", () => {
-  test("separates agent chats from regular chats", () => {
+  test("separates agents from conversations", () => {
     vi.mocked(useQuery).mockReturnValue([
       makeThread({
         _id: "thread_agent" as Id<"threads">,
@@ -60,8 +61,8 @@ describe("RepolessChatsRail", () => {
       />,
     );
 
-    const agentSection = getSection("Agent chats");
-    const regularSection = getSection("Regular chats");
+    const agentSection = getSection("Agents");
+    const regularSection = getSection("Conversations");
 
     expect(within(agentSection).getByText("Translation agent")).toBeInTheDocument();
     expect(within(agentSection).queryByLabelText("Single-turn")).not.toBeInTheDocument();
@@ -73,13 +74,72 @@ describe("RepolessChatsRail", () => {
     expect(within(regularSection).queryByText("Translation agent")).not.toBeInTheDocument();
   });
 
-  test("collapses agent and pinned chat sections", async () => {
+  test("groups conversations by recent activity", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-13T12:00:00"));
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayMs = todayStart.getTime();
+
+    vi.mocked(useQuery).mockReturnValue([
+      makeThread({
+        _id: "thread_yesterday" as Id<"threads">,
+        title: "Yesterday planning",
+        lastMessageAt: todayMs - 12 * 60 * 60 * 1000,
+      }),
+      makeThread({
+        _id: "thread_last_7" as Id<"threads">,
+        title: "Week-old planning",
+        lastMessageAt: todayMs - 3 * 24 * 60 * 60 * 1000,
+      }),
+      makeThread({
+        _id: "thread_last_30" as Id<"threads">,
+        title: "Month planning",
+        lastMessageAt: todayMs - 14 * 24 * 60 * 60 * 1000,
+      }),
+      makeThread({
+        _id: "thread_agent" as Id<"threads">,
+        title: "Translation agent",
+        agentRole: "Translation agent",
+        lastMessageAt: todayMs - 3 * 24 * 60 * 60 * 1000,
+      }),
+    ]);
+
+    render(
+      <RepolessChatsRail
+        selectedThreadId={null}
+        onSelectThread={vi.fn()}
+        onDeleteThread={vi.fn()}
+        onRequestNewThread={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+
+    const conversationsSection = getSection("Conversations");
+    const yesterdayGroup = within(conversationsSection).getByRole("group", { name: "Yesterday" });
+    const last7Group = within(conversationsSection).getByRole("group", { name: "Last 7 days" });
+    const last30Group = within(conversationsSection).getByRole("group", { name: "Last 30 days" });
+
+    expect(within(yesterdayGroup).getByText("Yesterday planning")).toBeInTheDocument();
+    expect(within(last7Group).getByText("Week-old planning")).toBeInTheDocument();
+    expect(within(last30Group).getByText("Month planning")).toBeInTheDocument();
+    expect(within(conversationsSection).queryByText("Translation agent")).not.toBeInTheDocument();
+  });
+
+  test("collapses agent and pinned sections", async () => {
     vi.mocked(useQuery).mockReturnValue([
       makeThread({
         _id: "thread_pinned" as Id<"threads">,
         title: "Pinned planning",
         pinnedAt: 300,
         lastMessageAt: 300,
+      }),
+      makeThread({
+        _id: "thread_pinned_agent" as Id<"threads">,
+        title: "Pinned translator",
+        agentRole: "Translator",
+        pinnedAt: 250,
+        lastMessageAt: 250,
       }),
       makeThread({
         _id: "thread_agent" as Id<"threads">,
@@ -104,11 +164,15 @@ describe("RepolessChatsRail", () => {
       />,
     );
 
-    const agentToggle = screen.getByRole("button", { name: "Collapse Agent chats" });
+    const agentToggle = screen.getByRole("button", { name: "Collapse Agents" });
     const pinnedToggle = screen.getByRole("button", { name: "Collapse Pinned" });
 
     expect(screen.getByText("Translation agent")).toBeVisible();
     expect(screen.getByText("Pinned planning")).toBeVisible();
+    expect(within(rowButtonForText("Pinned planning")).getByLabelText("Conversation")).toBeVisible();
+    expect(within(rowButtonForText("Pinned translator")).getByLabelText("Agent")).toBeVisible();
+    expect(within(rowButtonForText("Translation agent")).queryByLabelText("Agent")).not.toBeInTheDocument();
+    expect(within(rowButtonForText("General planning")).queryByLabelText("Conversation")).not.toBeInTheDocument();
     expect(screen.getByText("General planning")).toBeVisible();
 
     fireEvent.click(agentToggle);
@@ -117,20 +181,30 @@ describe("RepolessChatsRail", () => {
     await waitFor(() => {
       expect(screen.queryByText("Translation agent")).not.toBeInTheDocument();
       expect(screen.queryByText("Pinned planning")).not.toBeInTheDocument();
+      expect(screen.queryByText("Pinned translator")).not.toBeInTheDocument();
     });
     expect(screen.getByText("General planning")).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "Expand Agent chats" }));
+    fireEvent.click(screen.getByRole("button", { name: "Expand Agents" }));
     fireEvent.click(screen.getByRole("button", { name: "Expand Pinned" }));
 
     await waitFor(() => {
       expect(screen.getByText("Translation agent")).toBeVisible();
       expect(screen.getByText("Pinned planning")).toBeVisible();
+      expect(screen.getByText("Pinned translator")).toBeVisible();
     });
   });
 });
 
-function getSection(label: "Agent chats" | "Regular chats"): HTMLElement {
+function rowButtonForText(text: string): HTMLElement {
+  const button = screen.getByText(text).closest("button");
+  if (!button) {
+    throw new Error(`Thread row not found: ${text}`);
+  }
+  return button;
+}
+
+function getSection(label: "Agents" | "Conversations"): HTMLElement {
   const heading = screen.getByText(label);
   const section = heading.closest("div")?.parentElement;
   if (!section) {

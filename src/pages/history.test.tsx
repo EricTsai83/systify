@@ -274,8 +274,8 @@ describe("HistoryPage", () => {
 
     renderHistoryPage();
 
-    expect(within(rowForText("General planning")).getByText("Chat")).toBeInTheDocument();
-    expect(within(rowForText("Former agent")).getByText("Chat")).toBeInTheDocument();
+    expect(within(rowForText("General planning")).getByText("Conversation")).toBeInTheDocument();
+    expect(within(rowForText("Former agent")).getByText("Conversation")).toBeInTheDocument();
     expect(within(rowForText("Translation agent")).getByText("Agent")).toBeInTheDocument();
 
     fireEvent.click(openButtonForRow("Translation agent"));

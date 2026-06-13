@@ -133,7 +133,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
       ) : null}
 
       {isLibraryMode && libraryRepositoryId && onSelectLibraryArtifact && onGenerate ? (
-        <SidebarContent className="min-h-0 flex-1 overflow-hidden">
+        <SidebarContent className="min-h-0 flex-1">
           <LibraryTree
             repositoryId={libraryRepositoryId}
             artifacts={libraryArtifacts ?? []}
@@ -146,7 +146,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
           />
         </SidebarContent>
       ) : activeRepositoryId === null ? (
-        <SidebarContent className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <SidebarContent className="flex min-h-0 flex-1 flex-col">
           <RepolessChatsRail
             selectedThreadId={selectedThreadId}
             onSelectThread={onSelectThread}
@@ -156,7 +156,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
           />
         </SidebarContent>
       ) : (
-        <SidebarContent className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <SidebarContent className="flex min-h-0 flex-1 flex-col">
           <RepositoryThreadsRail
             repositoryId={activeRepositoryId}
             repositories={repositories}

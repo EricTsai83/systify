@@ -9,7 +9,7 @@ afterEach(() => {
 });
 
 describe("RepolessChatTypeToggle", () => {
-  test("renders Chat with the regular chat icon and switches to Agent", async () => {
+  test("renders Conversation with the conversation icon and switches to Agent", async () => {
     const onSave = vi.fn();
     render(
       <RepolessChatTypeToggle
@@ -19,7 +19,7 @@ describe("RepolessChatTypeToggle", () => {
     );
 
     const toggle = screen.getByTestId("repoless-chat-type-toggle");
-    expect(toggle).toHaveTextContent("Chat");
+    expect(toggle).toHaveTextContent("Conversation");
     expect(toggle.querySelector("svg")).toBeInTheDocument();
     expect(screen.queryByTestId("repoless-agent-profile-button")).not.toBeInTheDocument();
 
@@ -35,7 +35,7 @@ describe("RepolessChatTypeToggle", () => {
     });
   });
 
-  test("renders Agent with a distinct icon and switches to Chat", async () => {
+  test("renders Agent with a distinct icon and switches to Conversation", async () => {
     const onSave = vi.fn();
     render(
       <RepolessChatTypeToggle
@@ -115,7 +115,7 @@ describe("RepolessChatTypeToggle", () => {
     expect(screen.getByTestId("repoless-agent-profile-button")).not.toHaveTextContent("Single-turn");
   });
 
-  test("does not include Chat type controls inside the Agent Profile dialog", () => {
+  test("does not include chat type controls inside the Agent Profile dialog", () => {
     render(
       <RepolessChatTypeToggle
         value={{
@@ -131,7 +131,7 @@ describe("RepolessChatTypeToggle", () => {
     fireEvent.click(screen.getByTestId("repoless-agent-profile-button"));
 
     expect(screen.queryByText("Chat type")).not.toBeInTheDocument();
-    expect(screen.queryByRole("radio", { name: "Regular chat" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("radio", { name: "Conversation" })).not.toBeInTheDocument();
   });
 });
 
@@ -158,7 +158,7 @@ describe("RepolessSingleTurnToggle", () => {
     });
   });
 
-  test("renders the current chat history mode as icon and text", () => {
+  test("renders the current chat history mode with a compact icon-only Conversation state", () => {
     const { rerender } = render(
       <RepolessSingleTurnToggle
         value={{ agentEnabled: true, singleTurnEnabled: false, agentRole: "Translation agent", agentInstructions: "" }}
@@ -167,7 +167,10 @@ describe("RepolessSingleTurnToggle", () => {
       />,
     );
 
-    expect(screen.getByTestId("repoless-single-turn-toggle")).toHaveTextContent("Conversation");
+    const conversationToggle = screen.getByTestId("repoless-single-turn-toggle");
+    expect(conversationToggle).toHaveAccessibleName("Switch to Single reply mode");
+    expect(conversationToggle).not.toHaveTextContent("Conversation");
+    expect(conversationToggle.querySelector("svg")).toBeInTheDocument();
 
     rerender(
       <RepolessSingleTurnToggle
