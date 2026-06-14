@@ -26,24 +26,18 @@ export type GroundingAxisLike =
       readonly isActivatable?: boolean;
     };
 
+export type GroundingAxisId = "library" | "sandbox";
+
+export type GroundingAxisControl = {
+  id: GroundingAxisId;
+  label: string;
+  active: boolean;
+  verdict: GroundingAxisLike;
+  onActiveChange: (next: boolean) => void;
+};
+
 export interface GroundingToggleBarProps {
-  groundLibrary: boolean;
-  groundSandbox: boolean;
-  setGroundLibrary: (v: boolean) => void;
-  setGroundSandbox: (v: boolean) => void;
-  /**
-   * Eligibility verdict from `repositoryModeEligibility.evaluate`. `null`
-   * or `undefined` while the query loads — the bar renders both toggles
-   * disabled until the verdict lands so a flash of clickable toggles
-   * cannot fire an immediately-rejected send mutation.
-   */
-  grounding:
-    | {
-        library: GroundingAxisLike;
-        sandbox: GroundingAxisLike;
-      }
-    | null
-    | undefined;
+  axes: readonly GroundingAxisControl[];
   /**
    * Fires when the user clicks the "Generate System Design" CTA inside
    * the Library toggle's disabled tooltip. The caller opens the
@@ -54,6 +48,44 @@ export interface GroundingToggleBarProps {
   /** Hides the whole bar when true (e.g. on Library Mode where it does not apply). */
   hidden?: boolean;
   className?: string;
+}
+
+const LOADING_GROUNDING_VERDICT: GroundingAxisLike = {
+  enabled: false,
+  code: "loading",
+  message: "Loading grounding availability…",
+};
+
+// eslint-disable-next-line react-refresh/only-export-components
+export function createDiscussGroundingAxes(input: {
+  groundLibrary: boolean;
+  groundSandbox: boolean;
+  setGroundLibrary: (next: boolean) => void;
+  setGroundSandbox: (next: boolean) => void;
+  grounding:
+    | {
+        library: GroundingAxisLike;
+        sandbox: GroundingAxisLike;
+      }
+    | null
+    | undefined;
+}): readonly GroundingAxisControl[] {
+  return [
+    {
+      id: "library",
+      label: "Library",
+      active: input.groundLibrary,
+      verdict: input.grounding?.library ?? LOADING_GROUNDING_VERDICT,
+      onActiveChange: input.setGroundLibrary,
+    },
+    {
+      id: "sandbox",
+      label: "Sandbox",
+      active: input.groundSandbox,
+      verdict: input.grounding?.sandbox ?? LOADING_GROUNDING_VERDICT,
+      onActiveChange: input.setGroundSandbox,
+    },
+  ];
 }
 
 /**
@@ -71,11 +103,7 @@ export interface GroundingToggleBarProps {
  * stay selectable and prepare on send.
  */
 export function GroundingToggleBar({
-  groundLibrary,
-  groundSandbox,
-  setGroundLibrary,
-  setGroundSandbox,
-  grounding,
+  axes,
   onOpenGenerateSystemDesign,
   generateDisabledReason,
   hidden = false,
@@ -85,59 +113,18 @@ export function GroundingToggleBar({
     return null;
   }
 
-  const libraryAxis: GroundingAxisLike = grounding?.library ?? {
-    enabled: false,
-    code: "loading",
-    message: "Loading grounding availability…",
-  };
-  const sandboxAxis: GroundingAxisLike = grounding?.sandbox ?? {
-    enabled: false,
-    code: "loading",
-    message: "Loading grounding availability…",
-  };
-
-  const libraryEnabled = libraryAxis.enabled;
-  const sandboxEnabled = sandboxAxis.enabled;
-  const sandboxPreparesOnSend = !sandboxAxis.enabled && sandboxAxis.isActivatable === true;
-  const libraryDisabledMessage = !libraryAxis.enabled ? libraryAxis.message : undefined;
-  const sandboxDisabledMessage = !sandboxAxis.enabled ? sandboxAxis.message : undefined;
-  const showGenerateCta =
-    !libraryAxis.enabled &&
-    libraryAxis.code === "library_no_artifact" &&
-    typeof onOpenGenerateSystemDesign === "function";
-
-  const groundingItems = [
-    <GroundingPill
-      key="library"
-      label="Library"
-      icon={<BookOpenIcon size={14} weight={groundLibrary && libraryEnabled ? "fill" : "regular"} />}
-      active={groundLibrary}
-      available={libraryEnabled}
-      reason={libraryDisabledMessage}
-      onToggle={() => {
-        if (!libraryEnabled) return;
-        setGroundLibrary(!groundLibrary);
-      }}
-      testId="grounding-toggle-library"
-    />,
-    <GroundingPill
-      key="sandbox"
-      label="Sandbox"
-      icon={
-        <FlaskIcon size={14} weight={groundSandbox && (sandboxEnabled || sandboxPreparesOnSend) ? "fill" : "regular"} />
-      }
-      active={groundSandbox}
-      available={sandboxEnabled || sandboxPreparesOnSend}
-      reason={sandboxDisabledMessage}
-      suffix={sandboxPreparesOnSend ? "prepares on send" : !sandboxEnabled ? undefined : "live source"}
-      onToggle={() => {
-        if (sandboxEnabled || sandboxPreparesOnSend) {
-          setGroundSandbox(!groundSandbox);
-        }
-      }}
-      testId="grounding-toggle-sandbox"
-    />,
-    showGenerateCta ? (
+  const groundingItems = axes.flatMap((axis) => {
+    const pill = <GroundingAxisPill key={axis.id} axis={axis} />;
+    const showGenerateCta =
+      axis.id === "library" &&
+      !axis.verdict.enabled &&
+      axis.verdict.code === "library_no_artifact" &&
+      typeof onOpenGenerateSystemDesign === "function";
+    if (!showGenerateCta) {
+      return [pill];
+    }
+    return [
+      pill,
       <Button
         key="generate"
         type="button"
@@ -150,9 +137,9 @@ export function GroundingToggleBar({
         data-testid="grounding-generate-cta"
       >
         {REPOSITORY_GUIDE_COPY.generateAction}
-      </Button>
-    ) : null,
-  ].filter((item) => item !== null);
+      </Button>,
+    ];
+  });
 
   return (
     <div
@@ -167,6 +154,34 @@ export function GroundingToggleBar({
         </Fragment>
       ))}
     </div>
+  );
+}
+
+function GroundingAxisPill({ axis }: { axis: GroundingAxisControl }) {
+  const enabled = axis.verdict.enabled;
+  const activatable = !axis.verdict.enabled && axis.verdict.isActivatable === true;
+  const available = enabled || (axis.id === "sandbox" && activatable);
+  const reason = !axis.verdict.enabled ? axis.verdict.message : undefined;
+  const suffix =
+    axis.id === "sandbox" ? (activatable ? "prepares on send" : enabled ? "live source" : undefined) : undefined;
+  const Icon = axis.id === "library" ? BookOpenIcon : FlaskIcon;
+  const iconFilled = axis.active && available;
+
+  return (
+    <GroundingPill
+      label={axis.label}
+      icon={<Icon size={14} weight={iconFilled ? "fill" : "regular"} />}
+      active={axis.active}
+      available={available}
+      reason={reason}
+      suffix={suffix}
+      onToggle={() => {
+        if (available) {
+          axis.onActiveChange(!axis.active);
+        }
+      }}
+      testId={`grounding-toggle-${axis.id}`}
+    />
   );
 }
 

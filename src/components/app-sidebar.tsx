@@ -165,7 +165,11 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
             onSelectThread={onSelectThread}
             onDeleteThread={onDeleteThread}
             onError={onError}
-            onRequestNewThread={onRequestNewThread}
+            createControl={
+              onRequestNewThread
+                ? { kind: "navigate", label: "New thread", onRequestNewThread }
+                : { kind: "createDiscuss" }
+            }
           />
         </SidebarContent>
       )}

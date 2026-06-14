@@ -91,6 +91,47 @@ type ThreadRecencySection = {
   threads: Doc<"threads">[];
 };
 
+export type ThreadRailCreateControl =
+  | {
+      kind: "navigate";
+      label?: string;
+      onRequestNewThread: () => void;
+    }
+  | {
+      kind: "createDiscuss";
+      label?: string;
+      requireRepository?: boolean;
+    }
+  | {
+      kind: "createLibraryAsk";
+      label?: string;
+      requireRepository: true;
+    };
+
+type ThreadRowState = {
+  isSelected: boolean;
+  isPinned: boolean;
+  compact: boolean;
+};
+
+type ThreadRenameState = {
+  isEditing: boolean;
+  isCommitting: boolean;
+  draft: string;
+  setDraft: (value: string) => void;
+  startEdit: () => void;
+  commit: () => void | Promise<void>;
+  handleInputKeyDown: (event: React.KeyboardEvent<HTMLInputElement>) => void;
+  handleRowKeyDown: (event: React.KeyboardEvent<HTMLElement>) => void;
+};
+
+type ThreadRowActions = {
+  select: (thread: Doc<"threads">) => void;
+  prewarm: (threadId: ThreadId) => void;
+  archive: (threadId: ThreadId) => void;
+  togglePin: (threadId: ThreadId, pinned: boolean) => void;
+};
+
 /**
  * Inline rename state machine shared between the repo-bound and repoless
  * thread item components. Same UX in both rails: double-click the title to
@@ -191,10 +232,7 @@ export function RepositoryThreadsRail({
   onDeleteThread,
   onError,
   compact,
-  newThreadVariant,
-  newThreadButtonLabel,
-  requireRepositoryForCreate = false,
-  onRequestNewThread,
+  createControl = { kind: "createDiscuss" },
 }: {
   repositoryId: RepositoryId | null;
   repositories: Doc<"repositories">[] | undefined;
@@ -204,17 +242,7 @@ export function RepositoryThreadsRail({
   onDeleteThread: (id: ThreadId) => void;
   onError: (message: string | null) => void;
   compact?: boolean;
-  newThreadVariant?: "default" | "libraryAsk";
-  newThreadButtonLabel?: string;
-  /** Library Ask always needs a concrete repository; Discuss sidebar historically allowed creating from a null pointer. */
-  requireRepositoryForCreate?: boolean;
-  /**
-   * When supplied, clicking "New thread" on the default rail variant navigates
-   * to the shell's draft surface instead of pre-creating a backend thread.
-   * Repository Discuss uses `/r/:repositoryId/discuss/new`; Library Ask still
-   * creates its thread through the Ask panel flow.
-   */
-  onRequestNewThread?: () => void;
+  createControl?: ThreadRailCreateControl;
 }) {
   const createThreadMutation = useMutation(api.chat.threads.createThread);
   const createLibraryAskThreadMutation = useMutation(api.chat.threads.createLibraryAskThread);
@@ -232,15 +260,21 @@ export function RepositoryThreadsRail({
 
   const [isCreatingThread, handleCreateThread] = useAsyncCallback(
     useCallback(async () => {
-      if (requireRepositoryForCreate && !repositoryId) return;
       onError(null);
       try {
-        if (newThreadVariant === "libraryAsk") {
+        if (createControl.kind === "navigate") {
+          createControl.onRequestNewThread();
+          return;
+        }
+        if (createControl.kind === "createLibraryAsk") {
           if (!repositoryId) {
             return;
           }
           const created = await createLibraryAskThreadMutation({ repositoryId });
           onSelectThread(created._id, created.mode);
+          return;
+        }
+        if (createControl.requireRepository === true && !repositoryId) {
           return;
         }
         const created = await createThreadMutation({
@@ -252,24 +286,15 @@ export function RepositoryThreadsRail({
         onError(toUserErrorMessage(error, "Failed to start a conversation."));
       }
     }, [
+      createControl,
       createLibraryAskThreadMutation,
       createThreadMutation,
-      newThreadVariant,
       onError,
       onSelectThread,
-      requireRepositoryForCreate,
       threadMode,
       repositoryId,
     ]),
   );
-
-  const handleNewThreadClick = useCallback(() => {
-    if (onRequestNewThread && newThreadVariant !== "libraryAsk") {
-      onRequestNewThread();
-      return;
-    }
-    void handleCreateThread();
-  }, [handleCreateThread, newThreadVariant, onRequestNewThread]);
 
   const handleTogglePin = useCallback(
     (threadId: ThreadId, pinned: boolean) => {
@@ -284,24 +309,13 @@ export function RepositoryThreadsRail({
   return (
     <div className={cn("flex min-h-0 flex-1 flex-col", compact && "min-h-[120px]")}>
       <div className={cn("shrink-0 border-b border-border", compact ? "px-2 py-1.5" : "px-3 py-2")}>
-        <Button
-          type="button"
-          variant="default"
-          size="sm"
-          className={cn("h-8 w-full justify-start gap-1.5 text-xs active:scale-100", compact && "h-8")}
-          disabled={
-            (requireRepositoryForCreate && !repositoryId) ||
-            (newThreadVariant === "libraryAsk" && !repositoryId) ||
-            isCreatingThread
-          }
-          onClick={handleNewThreadClick}
-        >
-          <PlusIcon size={13} weight="bold" />
-          <ButtonStateText
-            current={isCreatingThread ? "Creating…" : (newThreadButtonLabel ?? "New thread")}
-            states={[newThreadButtonLabel ?? "New thread", "Creating…"]}
-          />
-        </Button>
+        <ThreadCreateButton
+          createControl={createControl}
+          repositoryId={repositoryId}
+          isCreatingThread={isCreatingThread}
+          compact={compact}
+          onCreate={() => void handleCreateThread()}
+        />
       </div>
 
       <SidebarScrollViewport
@@ -321,6 +335,38 @@ export function RepositoryThreadsRail({
         />
       </SidebarScrollViewport>
     </div>
+  );
+}
+
+function ThreadCreateButton({
+  createControl,
+  repositoryId,
+  isCreatingThread,
+  compact,
+  onCreate,
+}: {
+  createControl: ThreadRailCreateControl;
+  repositoryId: RepositoryId | null;
+  isCreatingThread: boolean;
+  compact?: boolean;
+  onCreate: () => void;
+}) {
+  const label = createControl.label ?? "New thread";
+  const requiresRepository =
+    createControl.kind === "createLibraryAsk" ||
+    (createControl.kind === "createDiscuss" && createControl.requireRepository === true);
+  return (
+    <Button
+      type="button"
+      variant="default"
+      size="sm"
+      className={cn("h-8 w-full justify-start gap-1.5 text-xs active:scale-100", compact && "h-8")}
+      disabled={(requiresRepository && !repositoryId) || isCreatingThread}
+      onClick={onCreate}
+    >
+      <PlusIcon size={13} weight="bold" />
+      <ButtonStateText current={isCreatingThread ? "Creating…" : label} states={[label, "Creating…"]} />
+    </Button>
   );
 }
 
@@ -568,163 +614,240 @@ function ThreadRowMotion({
 
 interface ThreadItemBaseProps {
   thread: Doc<"threads">;
-  isEditing: boolean;
-  isCommitting: boolean;
-  draft: string;
-  isPinned: boolean;
-  isSelected: boolean;
+  rowState: ThreadRowState;
+  rename: ThreadRenameState;
+  actions: ThreadRowActions;
+  rowRef: React.RefObject<HTMLDivElement | null>;
+  inputRef: React.RefObject<HTMLInputElement | null>;
   titleTextClass: string;
-  compact?: boolean;
   titlePrefix?: React.ReactNode;
   repositoryBadge?: React.ReactNode;
   threadMeta?: React.ReactNode;
-  rowRef: React.RefObject<HTMLDivElement | null>;
-  inputRef: React.RefObject<HTMLInputElement | null>;
-  onSelectThread: (id: ThreadId | null, mode: ThreadMode) => void;
-  onPrewarmThread: (id: ThreadId) => void;
-  onDeleteThread: (id: ThreadId) => void;
-  onTogglePin: (id: ThreadId, pinned: boolean) => void;
-  setDraft: (value: string) => void;
-  handleStartEdit: () => void;
-  handleCommit: () => void | Promise<void>;
-  handleKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
-  handleItemKeyDown: (e: React.KeyboardEvent<HTMLElement>) => void;
 }
 
 function ThreadItemBase({
   thread,
-  isEditing,
-  isCommitting,
-  draft,
-  isPinned,
-  isSelected,
+  rowState,
+  rename,
+  actions,
+  rowRef,
+  inputRef,
   titleTextClass,
-  compact,
   titlePrefix,
   repositoryBadge,
   threadMeta,
-  rowRef,
-  inputRef,
-  onSelectThread,
-  onPrewarmThread,
-  onDeleteThread,
-  onTogglePin,
-  setDraft,
-  handleStartEdit,
-  handleCommit,
-  handleKeyDown,
-  handleItemKeyDown,
 }: ThreadItemBaseProps) {
   return (
     <ContextMenu>
-      <ContextMenuTrigger asChild disabled={isEditing}>
+      <ContextMenuTrigger asChild disabled={rename.isEditing}>
         <div ref={rowRef} className="group relative">
-          {isEditing ? (
-            <EditableRowFrame className={cn("py-1.5 pr-16", compact && "py-1")}>
-              <div className="min-w-0 flex-1">
-                <input
-                  ref={inputRef}
-                  value={draft}
-                  maxLength={MAX_RENAME_TITLE_LENGTH}
-                  aria-label="Rename thread"
-                  disabled={isCommitting}
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  onBlur={() => void handleCommit()}
-                  className={cn(
-                    "m-0 block w-full truncate border-0 bg-transparent p-0 font-medium text-foreground outline-none ring-0",
-                    titleTextClass,
-                  )}
-                />
-                {repositoryBadge}
-                {threadMeta}
-              </div>
-            </EditableRowFrame>
+          {rename.isEditing ? (
+            <EditableThreadRow
+              rename={rename}
+              inputRef={inputRef}
+              compact={rowState.compact}
+              titleTextClass={titleTextClass}
+              repositoryBadge={repositoryBadge}
+              threadMeta={threadMeta}
+            />
           ) : (
-            <SidebarMenuButton
-              selected={isSelected}
-              onClick={() => onSelectThread(thread._id, thread.mode)}
-              onMouseEnter={() => onPrewarmThread(thread._id)}
-              onFocus={() => onPrewarmThread(thread._id)}
-              onKeyDown={handleItemKeyDown}
-              aria-keyshortcuts="F2"
-              className={cn("py-1.5 pr-16", compact && "py-1")}
-            >
-              <div className="min-w-0 flex-1">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  {titlePrefix}
-                  <p
-                    onDoubleClick={handleStartEdit}
-                    className={cn("min-w-0 flex-1 cursor-pointer truncate font-medium text-foreground", titleTextClass)}
-                  >
-                    {thread.title}
-                  </p>
-                </div>
-                {repositoryBadge}
-                {threadMeta}
-              </div>
-            </SidebarMenuButton>
+            <ReadonlyThreadRow
+              thread={thread}
+              rowState={rowState}
+              actions={actions}
+              rename={rename}
+              titlePrefix={titlePrefix}
+              repositoryBadge={repositoryBadge}
+              threadMeta={threadMeta}
+              titleTextClass={titleTextClass}
+            />
           )}
-          <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
-              onClick={(event) => {
-                event.stopPropagation();
-                onTogglePin(thread._id, !isPinned);
-              }}
-              aria-label={isPinned ? "Unpin thread" : "Pin thread"}
-              aria-pressed={isPinned}
-              title={isPinned ? "Unpin thread" : "Pin thread"}
-            >
-              {isPinned ? (
-                <PushPinSimpleSlashIcon size={13} weight="bold" />
-              ) : (
-                <PushPinSimpleIcon size={13} weight="bold" />
-              )}
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
-              onClick={(event) => {
-                event.stopPropagation();
-                onDeleteThread(thread._id);
-              }}
-              aria-label="Archive thread"
-              title="Archive thread"
-            >
-              <ArchiveIcon size={13} weight="bold" />
-            </Button>
-          </div>
+          <ThreadRowActionsOverlay
+            thread={thread}
+            isPinned={rowState.isPinned}
+            onTogglePin={actions.togglePin}
+            onDeleteThread={actions.archive}
+          />
         </div>
       </ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuGroup>
-          <ContextMenuItem onClick={() => onTogglePin(thread._id, !isPinned)}>
-            {isPinned ? (
-              <>
-                <PushPinSimpleSlashIcon weight="bold" /> Unpin
-              </>
-            ) : (
-              <>
-                <PushPinSimpleIcon weight="bold" /> Pin to top
-              </>
-            )}
-          </ContextMenuItem>
-          <ContextMenuItem onClick={handleStartEdit}>
-            <PencilSimpleIcon weight="bold" /> Rename
-          </ContextMenuItem>
-        </ContextMenuGroup>
-        <ContextMenuSeparator />
-        <ContextMenuGroup>
-          <ContextMenuItem onClick={() => onDeleteThread(thread._id)}>
-            <ArchiveIcon weight="bold" /> Archive
-          </ContextMenuItem>
-        </ContextMenuGroup>
-      </ContextMenuContent>
+      <ThreadRowContextMenu
+        thread={thread}
+        isPinned={rowState.isPinned}
+        onTogglePin={actions.togglePin}
+        onDeleteThread={actions.archive}
+        onStartEdit={rename.startEdit}
+      />
     </ContextMenu>
+  );
+}
+
+function ReadonlyThreadRow({
+  thread,
+  rowState,
+  actions,
+  rename,
+  titlePrefix,
+  repositoryBadge,
+  threadMeta,
+  titleTextClass,
+}: {
+  thread: Doc<"threads">;
+  rowState: ThreadRowState;
+  actions: ThreadRowActions;
+  rename: ThreadRenameState;
+  titlePrefix?: React.ReactNode;
+  repositoryBadge?: React.ReactNode;
+  threadMeta?: React.ReactNode;
+  titleTextClass: string;
+}) {
+  return (
+    <SidebarMenuButton
+      selected={rowState.isSelected}
+      onClick={() => actions.select(thread)}
+      onMouseEnter={() => actions.prewarm(thread._id)}
+      onFocus={() => actions.prewarm(thread._id)}
+      onKeyDown={rename.handleRowKeyDown}
+      aria-keyshortcuts="F2"
+      className={cn("py-1.5 pr-16", rowState.compact && "py-1")}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-1.5">
+          {titlePrefix}
+          <p
+            onDoubleClick={rename.startEdit}
+            className={cn("min-w-0 flex-1 cursor-pointer truncate font-medium text-foreground", titleTextClass)}
+          >
+            {thread.title}
+          </p>
+        </div>
+        {repositoryBadge}
+        {threadMeta}
+      </div>
+    </SidebarMenuButton>
+  );
+}
+
+function EditableThreadRow({
+  rename,
+  inputRef,
+  compact,
+  titleTextClass,
+  repositoryBadge,
+  threadMeta,
+}: {
+  rename: ThreadRenameState;
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  compact: boolean;
+  titleTextClass: string;
+  repositoryBadge?: React.ReactNode;
+  threadMeta?: React.ReactNode;
+}) {
+  return (
+    <EditableRowFrame className={cn("py-1.5 pr-16", compact && "py-1")}>
+      <div className="min-w-0 flex-1">
+        <input
+          ref={inputRef}
+          value={rename.draft}
+          maxLength={MAX_RENAME_TITLE_LENGTH}
+          aria-label="Rename thread"
+          disabled={rename.isCommitting}
+          onChange={(e) => rename.setDraft(e.target.value)}
+          onKeyDown={rename.handleInputKeyDown}
+          onBlur={() => void rename.commit()}
+          className={cn(
+            "m-0 block w-full truncate border-0 bg-transparent p-0 font-medium text-foreground outline-none ring-0",
+            titleTextClass,
+          )}
+        />
+        {repositoryBadge}
+        {threadMeta}
+      </div>
+    </EditableRowFrame>
+  );
+}
+
+function ThreadRowActionsOverlay({
+  thread,
+  isPinned,
+  onTogglePin,
+  onDeleteThread,
+}: {
+  thread: Doc<"threads">;
+  isPinned: boolean;
+  onTogglePin: (id: ThreadId, pinned: boolean) => void;
+  onDeleteThread: (id: ThreadId) => void;
+}) {
+  return (
+    <div className="pointer-events-none absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+      <Button
+        variant="ghost"
+        size="icon"
+        className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+        onClick={(event) => {
+          event.stopPropagation();
+          onTogglePin(thread._id, !isPinned);
+        }}
+        aria-label={isPinned ? "Unpin thread" : "Pin thread"}
+        aria-pressed={isPinned}
+        title={isPinned ? "Unpin thread" : "Pin thread"}
+      >
+        {isPinned ? <PushPinSimpleSlashIcon size={13} weight="bold" /> : <PushPinSimpleIcon size={13} weight="bold" />}
+      </Button>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="pointer-events-auto h-6 w-6 text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+        onClick={(event) => {
+          event.stopPropagation();
+          onDeleteThread(thread._id);
+        }}
+        aria-label="Archive thread"
+        title="Archive thread"
+      >
+        <ArchiveIcon size={13} weight="bold" />
+      </Button>
+    </div>
+  );
+}
+
+function ThreadRowContextMenu({
+  thread,
+  isPinned,
+  onTogglePin,
+  onDeleteThread,
+  onStartEdit,
+}: {
+  thread: Doc<"threads">;
+  isPinned: boolean;
+  onTogglePin: (id: ThreadId, pinned: boolean) => void;
+  onDeleteThread: (id: ThreadId) => void;
+  onStartEdit: () => void;
+}) {
+  return (
+    <ContextMenuContent>
+      <ContextMenuGroup>
+        <ContextMenuItem onClick={() => onTogglePin(thread._id, !isPinned)}>
+          {isPinned ? (
+            <>
+              <PushPinSimpleSlashIcon weight="bold" /> Unpin
+            </>
+          ) : (
+            <>
+              <PushPinSimpleIcon weight="bold" /> Pin to top
+            </>
+          )}
+        </ContextMenuItem>
+        <ContextMenuItem onClick={onStartEdit}>
+          <PencilSimpleIcon weight="bold" /> Rename
+        </ContextMenuItem>
+      </ContextMenuGroup>
+      <ContextMenuSeparator />
+      <ContextMenuGroup>
+        <ContextMenuItem onClick={() => onDeleteThread(thread._id)}>
+          <ArchiveIcon weight="bold" /> Archive
+        </ContextMenuItem>
+      </ContextMenuGroup>
+    </ContextMenuContent>
   );
 }
 
@@ -769,29 +892,38 @@ function ThreadItem({
   });
 
   const titleTextClass = threadTitleTextClass(compact);
+  const rowState: ThreadRowState = {
+    isSelected,
+    isPinned,
+    compact: compact === true,
+  };
+  const rename: ThreadRenameState = {
+    isEditing,
+    isCommitting,
+    draft,
+    setDraft,
+    startEdit: handleStartEdit,
+    commit: handleCommit,
+    handleInputKeyDown: handleKeyDown,
+    handleRowKeyDown: handleItemKeyDown,
+  };
+  const actions: ThreadRowActions = {
+    select: (target) => onSelectThread(target._id, target.mode),
+    prewarm: onPrewarmThread,
+    archive: onDeleteThread,
+    togglePin: onTogglePin,
+  };
   return (
     <ThreadItemBase
       thread={thread}
-      isEditing={isEditing}
-      isCommitting={isCommitting}
-      draft={draft}
-      isPinned={isPinned}
-      isSelected={isSelected}
-      titleTextClass={titleTextClass}
-      compact={compact}
-      repositoryBadge={<ThreadRepoBadge repository={repository} />}
-      threadMeta={null}
+      rowState={rowState}
+      rename={rename}
+      actions={actions}
       rowRef={rowRef}
       inputRef={inputRef}
-      onSelectThread={onSelectThread}
-      onPrewarmThread={onPrewarmThread}
-      onDeleteThread={onDeleteThread}
-      onTogglePin={onTogglePin}
-      setDraft={setDraft}
-      handleStartEdit={handleStartEdit}
-      handleCommit={handleCommit}
-      handleKeyDown={handleKeyDown}
-      handleItemKeyDown={handleItemKeyDown}
+      titleTextClass={titleTextClass}
+      repositoryBadge={<ThreadRepoBadge repository={repository} />}
+      threadMeta={null}
     />
   );
 }
@@ -1126,28 +1258,38 @@ function RepolessThreadItem({
   });
 
   const titleTextClass = threadTitleTextClass(false);
+  const rowState: ThreadRowState = {
+    isSelected,
+    isPinned,
+    compact: false,
+  };
+  const rename: ThreadRenameState = {
+    isEditing,
+    isCommitting,
+    draft,
+    setDraft,
+    startEdit: handleStartEdit,
+    commit: handleCommit,
+    handleInputKeyDown: handleKeyDown,
+    handleRowKeyDown: handleItemKeyDown,
+  };
+  const actions: ThreadRowActions = {
+    select: (target) => onSelectThread(target._id, target.mode),
+    prewarm: onPrewarmThread,
+    archive: onDeleteThread,
+    togglePin: onTogglePin,
+  };
   return (
     <ThreadItemBase
       thread={thread}
-      isEditing={isEditing}
-      isCommitting={isCommitting}
-      draft={draft}
-      isPinned={isPinned}
-      isSelected={isSelected}
+      rowState={rowState}
+      rename={rename}
+      actions={actions}
+      rowRef={rowRef}
+      inputRef={inputRef}
       titleTextClass={titleTextClass}
       titlePrefix={isPinned ? <RepolessThreadKindIcon thread={thread} /> : null}
       threadMeta={null}
-      rowRef={rowRef}
-      inputRef={inputRef}
-      onSelectThread={onSelectThread}
-      onPrewarmThread={onPrewarmThread}
-      onDeleteThread={onDeleteThread}
-      onTogglePin={onTogglePin}
-      setDraft={setDraft}
-      handleStartEdit={handleStartEdit}
-      handleCommit={handleCommit}
-      handleKeyDown={handleKeyDown}
-      handleItemKeyDown={handleItemKeyDown}
     />
   );
 }

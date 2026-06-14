@@ -405,9 +405,14 @@ export function RepositoryShell({
       isShellLoading={isChatShellLoading}
       composer={composer}
       chatMode={chatMode}
-      isArtifactPanelOpen={isDesktopLayout ? isArtifactPanelOpen : isArtifactSheetOpen}
-      onToggleArtifactPanel={handleToggleArtifactPanel}
-      showArtifactToggle={isArtifactPanelEnabled}
+      artifactToggle={
+        isArtifactPanelEnabled
+          ? {
+              isOpen: isDesktopLayout ? isArtifactPanelOpen : isArtifactSheetOpen,
+              onToggle: handleToggleArtifactPanel,
+            }
+          : null
+      }
       hasAttachedRepository={capabilities.attachedRepository !== null}
       onSelectArtifact={handleSelectArtifact}
       attachedRepositoryId={capabilities.attachedRepository?.id}

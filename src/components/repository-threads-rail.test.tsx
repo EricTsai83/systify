@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { useConvex, useMutation, useQuery } from "convex/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
-import { RepolessChatsRail } from "./repository-threads-rail";
+import { RepolessChatsRail, RepositoryThreadsRail } from "./repository-threads-rail";
 
 vi.mock("convex/react", () => ({
   useConvex: vi.fn(),
@@ -193,6 +193,129 @@ describe("RepolessChatsRail", () => {
       expect(screen.getByText("Pinned planning")).toBeVisible();
       expect(screen.getByText("Pinned translator")).toBeVisible();
     });
+  });
+});
+
+describe("RepositoryThreadsRail create controls", () => {
+  test("navigate create control does not create a backend thread", () => {
+    const createThread = vi.fn();
+    const createLibraryAskThread = vi.fn();
+    const onRequestNewThread = vi.fn();
+    vi.mocked(useMutation)
+      .mockReturnValueOnce(createThread as unknown as ReturnType<typeof useMutation>)
+      .mockReturnValueOnce(createLibraryAskThread as unknown as ReturnType<typeof useMutation>)
+      .mockReturnValueOnce(vi.fn() as unknown as ReturnType<typeof useMutation>);
+    vi.mocked(useQuery).mockReturnValue([]);
+
+    render(
+      <RepositoryThreadsRail
+        repositoryId={"repo_1" as Id<"repositories">}
+        repositories={[]}
+        threadMode="discuss"
+        selectedThreadId={null}
+        onSelectThread={vi.fn()}
+        onDeleteThread={vi.fn()}
+        onError={vi.fn()}
+        createControl={{ kind: "navigate", label: "New thread", onRequestNewThread }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /new thread/i }));
+
+    expect(onRequestNewThread).toHaveBeenCalledTimes(1);
+    expect(createThread).not.toHaveBeenCalled();
+    expect(createLibraryAskThread).not.toHaveBeenCalled();
+  });
+
+  test("createLibraryAsk create control uses library ask mutation", async () => {
+    const createLibraryAskThread = vi.fn().mockResolvedValue({
+      _id: "thread_library" as Id<"threads">,
+      mode: "library",
+    });
+    const onSelectThread = vi.fn();
+    vi.mocked(useMutation)
+      .mockReturnValueOnce(vi.fn() as unknown as ReturnType<typeof useMutation>)
+      .mockReturnValueOnce(createLibraryAskThread as unknown as ReturnType<typeof useMutation>)
+      .mockReturnValueOnce(vi.fn() as unknown as ReturnType<typeof useMutation>);
+    vi.mocked(useQuery).mockReturnValue([]);
+
+    render(
+      <RepositoryThreadsRail
+        repositoryId={"repo_1" as Id<"repositories">}
+        repositories={[]}
+        threadMode="library"
+        selectedThreadId={null}
+        onSelectThread={onSelectThread}
+        onDeleteThread={vi.fn()}
+        onError={vi.fn()}
+        createControl={{ kind: "createLibraryAsk", label: "New Ask", requireRepository: true }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /new ask/i }));
+
+    await waitFor(() => {
+      expect(createLibraryAskThread).toHaveBeenCalledWith({ repositoryId: "repo_1" });
+    });
+    expect(onSelectThread).toHaveBeenCalledWith("thread_library", "library");
+  });
+
+  test("createDiscuss create control uses discuss mutation", async () => {
+    const createThread = vi.fn().mockResolvedValue({
+      _id: "thread_discuss" as Id<"threads">,
+      mode: "discuss",
+    });
+    const onSelectThread = vi.fn();
+    vi.mocked(useMutation)
+      .mockReturnValueOnce(createThread as unknown as ReturnType<typeof useMutation>)
+      .mockReturnValueOnce(vi.fn() as unknown as ReturnType<typeof useMutation>)
+      .mockReturnValueOnce(vi.fn() as unknown as ReturnType<typeof useMutation>);
+    vi.mocked(useQuery).mockReturnValue([]);
+
+    render(
+      <RepositoryThreadsRail
+        repositoryId={"repo_1" as Id<"repositories">}
+        repositories={[]}
+        threadMode="discuss"
+        selectedThreadId={null}
+        onSelectThread={onSelectThread}
+        onDeleteThread={vi.fn()}
+        onError={vi.fn()}
+        createControl={{ kind: "createDiscuss" }}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /new thread/i }));
+
+    await waitFor(() => {
+      expect(createThread).toHaveBeenCalledWith({ repositoryId: "repo_1", mode: "discuss" });
+    });
+    expect(onSelectThread).toHaveBeenCalledWith("thread_discuss", "discuss");
+  });
+
+  test("requireRepository prevents discuss creation when repository is null", () => {
+    const createThread = vi.fn();
+    vi.mocked(useMutation)
+      .mockReturnValueOnce(createThread as unknown as ReturnType<typeof useMutation>)
+      .mockReturnValueOnce(vi.fn() as unknown as ReturnType<typeof useMutation>)
+      .mockReturnValueOnce(vi.fn() as unknown as ReturnType<typeof useMutation>);
+    vi.mocked(useQuery).mockReturnValue([]);
+
+    render(
+      <RepositoryThreadsRail
+        repositoryId={null}
+        repositories={[]}
+        threadMode="discuss"
+        selectedThreadId={null}
+        onSelectThread={vi.fn()}
+        onDeleteThread={vi.fn()}
+        onError={vi.fn()}
+        createControl={{ kind: "createDiscuss", requireRepository: true }}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /new thread/i })).toBeDisabled();
+    expect(createThread).not.toHaveBeenCalled();
   });
 });
 
