@@ -56,6 +56,110 @@ function deriveGroundingChip(message: Doc<"messages">): string | null {
  */
 const ASSISTANT_ALLOWED_TAGS: AllowedTags = { citation: [], unverified: [] };
 
+type MessageBubbleViewModel = {
+  fromRole: "system" | "user" | "assistant";
+  isAssistant: boolean;
+  isInFlight: boolean;
+  isLiveStream: boolean;
+  displayContent: string;
+  statusLabel: string | null;
+  groundingChip: string | null;
+  showHeader: boolean;
+  isTerminalSystemError: boolean;
+  isSystemErrorOnly: boolean;
+  errorMessage: string | null;
+  reasoning: {
+    content: string | null;
+    isStreaming: boolean;
+    durationSeconds: number | undefined;
+  };
+  usage: {
+    costTicker: string | null;
+    tickerAriaLabel: string;
+    nerdStats: ReactNode | null;
+  };
+  markdown: {
+    prepared: string;
+    unverifiedClaims: Doc<"messages">["unverifiedClaims"] | undefined;
+  };
+};
+
+function buildMessageBubbleViewModel(
+  message: Doc<"messages">,
+  activeMessageStream: ActiveMessageStream | null,
+  showStatsForNerds: boolean,
+): MessageBubbleViewModel {
+  const isAssistant = message.role === "assistant";
+  const fromRole: "system" | "user" | "assistant" = message.role === "tool" ? "assistant" : message.role;
+  const statusLabel = getMessageStatusLabel(message.status);
+  const isInFlight = message.status === "streaming" || message.status === "pending";
+  const isLiveStream = isAssistant && activeMessageStream?.assistantMessageId === message._id;
+  const displayContent = isLiveStream ? activeMessageStream.content || message.content : message.content;
+  const isTerminalSystemError =
+    isAssistant &&
+    (message.status === "failed" || message.status === "cancelled") &&
+    message.errorMessage !== undefined &&
+    message.errorMessage.trim().length > 0;
+  const errorMessage = message.errorMessage?.trim() ? message.errorMessage : null;
+  const isSystemErrorOnly =
+    isTerminalSystemError && errorMessage !== null && errorMessage.trim() === displayContent.trim();
+  const groundingChip = deriveGroundingChip(message);
+  const unverifiedClaims = isAssistant && !isInFlight ? message.unverifiedClaims : undefined;
+  const costTicker = isAssistant && !isInFlight ? buildCostTickerLabel(message) : null;
+  const tickerAriaLabel =
+    costTicker === null
+      ? "Cost information"
+      : message.estimatedCostUsd !== undefined
+        ? `Reply cost ${costTicker}`
+        : `Usage ${costTicker}`;
+  const reasoningContent = isAssistant
+    ? isLiveStream
+      ? (activeMessageStream?.reasoning ?? null)
+      : (message.reasoning ?? null)
+    : null;
+  const isReasoningStreaming = Boolean(
+    isAssistant &&
+    isLiveStream &&
+    activeMessageStream &&
+    activeMessageStream.reasoningStartedAt !== null &&
+    activeMessageStream.reasoningEndedAt === null,
+  );
+  const nerdStats =
+    isAssistant && showStatsForNerds ? buildNerdStats(message, displayContent, activeMessageStream) : null;
+
+  return {
+    fromRole,
+    isAssistant,
+    isInFlight,
+    isLiveStream,
+    displayContent,
+    statusLabel,
+    groundingChip,
+    showHeader: groundingChip !== null || statusLabel !== null,
+    isTerminalSystemError,
+    isSystemErrorOnly,
+    errorMessage,
+    reasoning: {
+      content: reasoningContent,
+      isStreaming: isReasoningStreaming,
+      durationSeconds: isAssistant
+        ? computeReasoningDurationSeconds(message, activeMessageStream, isLiveStream)
+        : undefined,
+    },
+    usage: {
+      costTicker,
+      tickerAriaLabel,
+      nerdStats: nerdStats ? (
+        <MessageNerdStats stats={nerdStats} costTicker={costTicker} tickerAriaLabel={tickerAriaLabel} />
+      ) : null,
+    },
+    markdown: {
+      prepared: isAssistant ? prepareAssistantMarkdown(displayContent, unverifiedClaims) : "",
+      unverifiedClaims,
+    },
+  };
+}
+
 /**
  * One assistant- or user-message bubble. Pure presentational: every
  * piece of content (mode badge, status label, cost ticker, citation
@@ -79,61 +183,7 @@ export const MessageBubble = memo(function MessageBubble({
   onSelectArtifact?: (artifactId: ArtifactId) => void;
   showStatsForNerds?: boolean;
 }) {
-  const isAssistant = message.role === "assistant";
-  // `Message`'s `from` accepts `"system" | "user" | "assistant"`, but the
-  // Convex schema also allows `"tool"` (tool-call traces folded into a
-  // turn). Map `"tool"` → `"assistant"` so the bubble stays left-aligned
-  // and the rest of the rendering branches unchanged (the original
-  // `<Card>` rendered tool rows under the assistant-style fallback).
-  const fromRole: "system" | "user" | "assistant" = message.role === "tool" ? "assistant" : message.role;
-  const statusLabel = getMessageStatusLabel(message.status);
-  // While the reply is still landing, the status label gets a subtle
-  // text-shimmer so the user has an at-a-glance cue that something is
-  // actively happening (in addition to streaming content / tool ticker).
-  // Terminal states render the plain label so the eye isn't pulled to a
-  // finished bubble.
-  const isInFlight = message.status === "streaming" || message.status === "pending";
-  const displayContent =
-    isAssistant && activeMessageStream?.assistantMessageId === message._id
-      ? activeMessageStream.content || message.content
-      : message.content;
-  const isTerminalSystemError =
-    isAssistant &&
-    (message.status === "failed" || message.status === "cancelled") &&
-    message.errorMessage !== undefined &&
-    message.errorMessage.trim().length > 0;
-  const isSystemErrorOnly = isTerminalSystemError && message.errorMessage?.trim() === displayContent.trim();
-  // Assistant messages show a small grounding chip so the user can tell
-  // which grounding axes produced the answer (and trace surprising
-  // replies back to a wrong toggle). User messages still carry the
-  // grounding flags in the schema, but the sender already knows what
-  // they asked for — the chip would just be visual noise on their own
-  // bubble.
-  const groundingChip = deriveGroundingChip(message);
-  // `[A#]` rewrite: only assistant content is rewritten because user input
-  // never contains real citation tokens (and rewriting it would let a user
-  // accidentally render a "fake" citation by typing `[A1]`).
-  //
-  // `unverifiedClaims` is only rendered for terminal assistant states.
-  // While the message is still streaming `displayContent` is the
-  // live `activeMessageStream.content`, which the lint hasn't seen yet —
-  // applying ranges from a previous (or future) snapshot would flag
-  // arbitrary character positions in the live content. Gating on
-  // `status !== "streaming" / "pending"` matches the cost-ticker gating
-  // below for the same reason: `displayContent === message.content`
-  // (the lint's input) is only guaranteed in terminal states.
-  const unverifiedClaims =
-    isAssistant && message.status !== "streaming" && message.status !== "pending"
-      ? message.unverifiedClaims
-      : undefined;
-  // Streamdown-ready string for assistant replies: `[A#]` tokens and any
-  // flagged-claim ranges are rewritten into `<citation>` / `<unverified>`
-  // tags before the markdown parse. User input is never rewritten — a
-  // user typing `[A1]` must not be able to render a fake citation.
-  const preparedMarkdown = useMemo(
-    () => (isAssistant ? prepareAssistantMarkdown(displayContent, unverifiedClaims) : ""),
-    [isAssistant, displayContent, unverifiedClaims],
-  );
+  const viewModel = buildMessageBubbleViewModel(message, activeMessageStream, showStatsForNerds);
   // Custom-tag renderers for the markdown pass, bound to *this* message's
   // citation map and the artifact-select handler. Memoized so streamdown's
   // per-block memo isn't busted on every unrelated re-render of the bubble.
@@ -151,113 +201,20 @@ export const MessageBubble = memo(function MessageBubble({
       unverified: ({ children }) => <UnverifiedMark>{children as ReactNode}</UnverifiedMark>,
     };
   }, [message.citationMap, onSelectArtifact]);
-  // Cost ticker for assistant messages: shows estimated cost
-  // and tokens / tool-call count so the user can correlate spend to a
-  // specific reply. Rendered only for *terminal* assistant states
-  // (`completed` / `failed` / `cancelled`) — streaming messages have
-  // partial usage that would tick visibly and distract from the
-  // streaming content. Built from the persisted message fields rather
-  // than re-derived from the model so unsupported models (`undefined`
-  // costUsd) gracefully render the token-only variant instead of a
-  // fake "$0.00".
-  const costTicker =
-    isAssistant && message.status !== "streaming" && message.status !== "pending"
-      ? buildCostTickerLabel(message)
-      : null;
-  const nerdStats =
-    isAssistant && showStatsForNerds ? buildNerdStats(message, displayContent, activeMessageStream) : null;
-  const tickerAriaLabel =
-    costTicker === null
-      ? "Cost information"
-      : message.estimatedCostUsd !== undefined
-        ? `Reply cost ${costTicker}`
-        : `Usage ${costTicker}`;
-  // Reasoning trace, when this is the in-flight assistant reply for a
-  // reasoning-capable model. While streaming we read the live tail from
-  // `activeMessageStream`; once the reply terminates the durable
-  // `messages.reasoning` field takes over (the stream row has been
-  // deleted by then). Both sources are optional — non-reasoning replies
-  // leave everything `null/undefined` and the `<Reasoning>` block stays
-  // unmounted.
-  const isLiveStream = isAssistant && activeMessageStream?.assistantMessageId === message._id;
-  const reasoningContent = isLiveStream ? (activeMessageStream.reasoning ?? null) : (message.reasoning ?? null);
-  const isReasoningStreaming = Boolean(
-    isLiveStream && activeMessageStream.reasoningStartedAt !== null && activeMessageStream.reasoningEndedAt === null,
-  );
-  const reasoningDurationSeconds = computeReasoningDurationSeconds(message, activeMessageStream, isLiveStream);
-  // Header (grounding chip + non-terminal status) sits ABOVE
-  // `MessageContent` so it stays outside the user-bubble background and
-  // aligns with the bubble edge. The role itself is conveyed by
-  // alignment + bubble styling — no explicit label needed. `Ready` is
-  // suppressed because "completed" is the boring default; only states
-  // that actually carry information (in-flight, failed, cancelled)
-  // surface a label. When neither the chip nor a status applies the
-  // header row collapses entirely so user messages don't leave an empty
-  // strip above the bubble.
-  const showStatus = statusLabel !== null;
-  const showHeader = groundingChip !== null || showStatus;
   return (
     // `Message` (ai-elements) handles the role-based alignment (user →
     // right, assistant → left) and constrains bubble width to max-w-95%.
     // Cost ticker sits BELOW `MessageContent` for the same reason.
-    <Message from={fromRole}>
-      {showHeader ? (
-        <div className="flex items-center justify-between gap-3 px-1">
-          <div className="flex items-center gap-2">
-            {groundingChip ? (
-              <Badge
-                variant="muted"
-                className="border-transparent px-1.5 py-0 text-[10px] font-medium uppercase tracking-wider"
-                data-testid="message-grounding-badge"
-              >
-                {groundingChip}
-              </Badge>
-            ) : null}
-          </div>
-          {showStatus ? (
-            isInFlight ? (
-              <Shimmer as="p" className="text-[10px]" duration={1.6}>
-                {statusLabel}
-              </Shimmer>
-            ) : (
-              <p className="text-[10px] text-muted-foreground">{statusLabel}</p>
-            )
-          ) : null}
-        </div>
-      ) : null}
-      {isAssistant && (reasoningContent || isReasoningStreaming) ? (
-        <div data-testid="message-reasoning" className="px-1">
-          <Reasoning isStreaming={isReasoningStreaming} duration={reasoningDurationSeconds} defaultOpen={false}>
-            <ReasoningTrigger />
-            <ReasoningContent>{reasoningContent ?? ""}</ReasoningContent>
-          </Reasoning>
-        </div>
-      ) : null}
+    <Message from={viewModel.fromRole}>
+      <MessageBubbleHeader
+        groundingChip={viewModel.groundingChip}
+        statusLabel={viewModel.statusLabel}
+        isInFlight={viewModel.isInFlight}
+      />
+      <MessageReasoningBlock reasoning={viewModel.reasoning} />
       <MessageContent>
-        {isSystemErrorOnly ? (
-          <SystemErrorNotice status={message.status} message={message.errorMessage ?? ""} />
-        ) : isAssistant ? (
-          displayContent ? (
-            <Markdown
-              className="text-sm leading-6"
-              isAnimating={message.status === "streaming"}
-              allowedTags={ASSISTANT_ALLOWED_TAGS}
-              components={markdownComponents}
-            >
-              {preparedMarkdown}
-            </Markdown>
-          ) : (
-            // Empty assistant content (queued / just-started reply): show a
-            // placeholder rather than hand streamdown an empty string.
-            <p className="text-sm leading-6">…</p>
-          )
-        ) : (
-          <p className="whitespace-pre-wrap text-sm leading-6">{displayContent || "…"}</p>
-        )}
-        {isTerminalSystemError && !isSystemErrorOnly ? (
-          <SystemErrorNotice status={message.status} message={message.errorMessage ?? ""} />
-        ) : null}
-        {isAssistant ? (
+        <MessageBodyContent viewModel={viewModel} message={message} markdownComponents={markdownComponents} />
+        {viewModel.isAssistant ? (
           <ToolCallTrace
             messageId={message._id}
             persistedToolCalls={message.toolCalls}
@@ -274,20 +231,108 @@ export const MessageBubble = memo(function MessageBubble({
        * even when streaming so no shift occurs when the action becomes
        * visible on completion.
        */}
-      {isAssistant ? (
-        <AssistantMessageFooter
-          isInFlight={isInFlight}
-          costTicker={costTicker}
-          nerdStats={nerdStats}
-          tickerAriaLabel={tickerAriaLabel}
-          content={displayContent}
+      {viewModel.isAssistant ? (
+        <MessageUsageFooter
+          isInFlight={viewModel.isInFlight}
+          costTicker={viewModel.usage.costTicker}
+          nerdStats={viewModel.usage.nerdStats}
+          tickerAriaLabel={viewModel.usage.tickerAriaLabel}
+          content={viewModel.displayContent}
         />
       ) : null}
     </Message>
   );
 });
 
-function AssistantMessageFooter({
+function MessageBubbleHeader({
+  groundingChip,
+  statusLabel,
+  isInFlight,
+}: {
+  groundingChip: string | null;
+  statusLabel: string | null;
+  isInFlight: boolean;
+}) {
+  if (groundingChip === null && statusLabel === null) {
+    return null;
+  }
+  return (
+    <div className="flex items-center justify-between gap-3 px-1">
+      <div className="flex items-center gap-2">
+        {groundingChip ? (
+          <Badge
+            variant="muted"
+            className="border-transparent px-1.5 py-0 text-[10px] font-medium uppercase tracking-wider"
+            data-testid="message-grounding-badge"
+          >
+            {groundingChip}
+          </Badge>
+        ) : null}
+      </div>
+      {statusLabel ? (
+        isInFlight ? (
+          <Shimmer as="p" className="text-[10px]" duration={1.6}>
+            {statusLabel}
+          </Shimmer>
+        ) : (
+          <p className="text-[10px] text-muted-foreground">{statusLabel}</p>
+        )
+      ) : null}
+    </div>
+  );
+}
+
+function MessageReasoningBlock({ reasoning }: { reasoning: MessageBubbleViewModel["reasoning"] }) {
+  if (!reasoning.content && !reasoning.isStreaming) {
+    return null;
+  }
+  return (
+    <div data-testid="message-reasoning" className="px-1">
+      <Reasoning isStreaming={reasoning.isStreaming} duration={reasoning.durationSeconds} defaultOpen={false}>
+        <ReasoningTrigger />
+        <ReasoningContent>{reasoning.content ?? ""}</ReasoningContent>
+      </Reasoning>
+    </div>
+  );
+}
+
+function MessageBodyContent({
+  viewModel,
+  message,
+  markdownComponents,
+}: {
+  viewModel: MessageBubbleViewModel;
+  message: Doc<"messages">;
+  markdownComponents: Components;
+}) {
+  return (
+    <>
+      {viewModel.isSystemErrorOnly ? (
+        <SystemErrorNotice status={message.status} message={viewModel.errorMessage ?? ""} />
+      ) : viewModel.isAssistant ? (
+        viewModel.displayContent ? (
+          <Markdown
+            className="text-sm leading-6"
+            isAnimating={message.status === "streaming"}
+            allowedTags={ASSISTANT_ALLOWED_TAGS}
+            components={markdownComponents}
+          >
+            {viewModel.markdown.prepared}
+          </Markdown>
+        ) : (
+          <p className="text-sm leading-6">…</p>
+        )
+      ) : (
+        <p className="whitespace-pre-wrap text-sm leading-6">{viewModel.displayContent || "…"}</p>
+      )}
+      {viewModel.isTerminalSystemError && !viewModel.isSystemErrorOnly ? (
+        <SystemErrorNotice status={message.status} message={viewModel.errorMessage ?? ""} />
+      ) : null}
+    </>
+  );
+}
+
+function MessageUsageFooter({
   isInFlight,
   costTicker,
   nerdStats,
@@ -296,12 +341,7 @@ function AssistantMessageFooter({
 }: {
   isInFlight: boolean;
   costTicker: string | null;
-  nerdStats: {
-    model: string;
-    tokensPerSecond: string;
-    messageTokens: string;
-    generationTime: string;
-  } | null;
+  nerdStats: ReactNode | null;
   tickerAriaLabel: string;
   content: string;
 }) {
@@ -311,36 +351,7 @@ function AssistantMessageFooter({
         <div className="flex min-h-8 w-full items-center justify-between gap-3 px-2 py-1">
           <div className="min-w-0 flex-1">
             {nerdStats ? (
-              <div
-                className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-muted-foreground/90 tabular-nums"
-                data-testid="message-nerd-stats"
-              >
-                {costTicker ? (
-                  <span
-                    className="truncate text-[13px] font-medium"
-                    data-testid="message-cost-ticker"
-                    aria-label={tickerAriaLabel}
-                  >
-                    {costTicker}
-                  </span>
-                ) : null}
-                <span className="inline-flex items-center gap-1">
-                  <CpuIcon size={14} />
-                  {nerdStats.model}
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <GaugeIcon size={14} />
-                  {nerdStats.tokensPerSecond}
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <HashIcon size={14} />
-                  {nerdStats.messageTokens}
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <ClockIcon size={14} />
-                  {nerdStats.generationTime}
-                </span>
-              </div>
+              nerdStats
             ) : costTicker ? (
               <p
                 className="truncate text-[13px] font-medium text-muted-foreground/90 tabular-nums"
@@ -351,14 +362,69 @@ function AssistantMessageFooter({
               </p>
             ) : null}
           </div>
-          {!isInFlight ? (
-            <MessageActions className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
-              <CopyMessageAction content={content} />
-            </MessageActions>
-          ) : null}
+          <MessageCopyActions isInFlight={isInFlight} content={content} />
         </div>
       </div>
     </div>
+  );
+}
+
+function MessageNerdStats({
+  stats,
+  costTicker,
+  tickerAriaLabel,
+}: {
+  stats: {
+    model: string;
+    tokensPerSecond: string;
+    messageTokens: string;
+    generationTime: string;
+  };
+  costTicker: string | null;
+  tickerAriaLabel: string;
+}) {
+  return (
+    <div
+      className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5 text-[12px] text-muted-foreground/90 tabular-nums"
+      data-testid="message-nerd-stats"
+    >
+      {costTicker ? (
+        <span
+          className="truncate text-[13px] font-medium"
+          data-testid="message-cost-ticker"
+          aria-label={tickerAriaLabel}
+        >
+          {costTicker}
+        </span>
+      ) : null}
+      <span className="inline-flex items-center gap-1">
+        <CpuIcon size={14} />
+        {stats.model}
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <GaugeIcon size={14} />
+        {stats.tokensPerSecond}
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <HashIcon size={14} />
+        {stats.messageTokens}
+      </span>
+      <span className="inline-flex items-center gap-1">
+        <ClockIcon size={14} />
+        {stats.generationTime}
+      </span>
+    </div>
+  );
+}
+
+function MessageCopyActions({ isInFlight, content }: { isInFlight: boolean; content: string }) {
+  if (isInFlight) {
+    return null;
+  }
+  return (
+    <MessageActions className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+      <CopyMessageAction content={content} />
+    </MessageActions>
   );
 }
 

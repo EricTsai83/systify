@@ -44,6 +44,24 @@ export type TopBarRepoDetail = {
   artifacts: Doc<"artifacts">[];
 };
 
+type TopBarStatusControl =
+  | { isVisible: false }
+  | {
+      isVisible: true;
+      isOpen: boolean;
+      onOpenChange: (open: boolean) => void;
+      repository: TopBarRepoDetail["repository"];
+      sandboxModeStatus: TopBarRepoDetail["sandboxModeStatus"];
+      sandbox: TopBarRepoDetail["sandbox"];
+      jobs: TopBarRepoDetail["jobs"];
+      artifacts: TopBarRepoDetail["artifacts"];
+      hasRemoteUpdates: boolean;
+      isSyncing: boolean;
+      onSync: () => void;
+      syncDisabledReason?: string;
+      onViewArtifact: (artifactId: ArtifactId) => void;
+    };
+
 /**
  * TopBar — minimal command surface above the chat. After the Surface 1
  * redesign (`background-operations-ux-redesign.md`) the bar holds only:
@@ -123,168 +141,220 @@ export function TopBar({
    */
   showSystemStatus: boolean;
 }) {
+  const statusControl: TopBarStatusControl =
+    repoDetail && showSystemStatus
+      ? {
+          isVisible: true,
+          isOpen: isStatusPanelOpen,
+          onOpenChange: onSetStatusPanelOpen,
+          repository: repoDetail.repository,
+          sandboxModeStatus: repoDetail.sandboxModeStatus,
+          sandbox: repoDetail.sandbox,
+          jobs: repoDetail.jobs,
+          artifacts: repoDetail.artifacts,
+          hasRemoteUpdates: repoDetail.hasRemoteUpdates,
+          isSyncing,
+          onSync,
+          syncDisabledReason,
+          onViewArtifact,
+        }
+      : { isVisible: false };
+
   return (
     <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
       <ChatModeControls onSearchThreads={onSearchThreads} onNewThread={onNewThread} />
-      {/*
-       * Title block renders only once `repoDetail` is fully resolved. Earlier
-       * versions surfaced the cached repo name through a `<h1>` fallback so
-       * the name appeared ~50–200ms sooner, but the fallback used the default
-       * `text-foreground` colour while the eventual `RepoInfoPopover` trigger
-       * is a ghost-variant Button (`text-muted-foreground`) — the swap caused
-       * a visible white-to-grey flash and a layout shift as the inner element
-       * went from `<h1>` (block) to `<Button>` (inline-flex) and the
-       * `RepoStatusIndicator` mounted alongside it. Waiting for `repoDetail`
-       * removes the swap entirely; the entire block fades in once with its
-       * final styling.
-       *
-       * Uses the codebase's `animate-fade-in` (opacity-only) rather than
-       * tw-animate-css's `animate-in fade-in`: the latter always applies
-       * `transform: translate3d(0,0,0)` and `filter: blur(0)` during the
-       * keyframe, which the default `fill-mode: none` then strips at the end
-       * — promoting and demoting the GPU layer can cause a sub-pixel snap
-       * after the fade. `animate-fade-in` only animates opacity, so the
-       * element stays on the same render layer throughout.
-       *
-       * Keyed on the repository `_id` so the entry animation fires on
-       * repository transitions (different repo → new key → React unmounts the
-       * old node and mounts a new one) but stays put on thread switches
-       * within the same repo (same key → same DOM node → CSS animation
-       * doesn't replay). The shell caches `repoDetail` across the brief
-       * capability-loading gap so this slot doesn't unmount transiently —
-       * see `displayedRepoDetail` in repository-shell.tsx.
-       */}
-      {repoDetail ? (
-        <div key={repoDetail.repository._id} className="flex min-w-0 flex-1 items-center gap-2 animate-fade-in">
-          <RepoInfoPopover repoDetail={repoDetail} title={repoDetail.repository.sourceRepoFullName} />
-          {showSystemStatus ? <RepoStatusIndicator sandbox={repoDetail.sandbox} /> : null}
-        </div>
-      ) : null}
-
-      {threadId !== null &&
-      attachedRepository !== null &&
-      availableRepositories.some((candidate) => candidate._id !== attachedRepository.id) ? (
-        <div className="hidden md:flex">
-          <SwapThreadRepositoryControl
-            threadId={threadId}
-            attachedRepositoryFullName={attachedRepository.fullName}
-            candidates={availableRepositories.filter((candidate) => candidate._id !== attachedRepository.id)}
-            onMovedToRepository={onThreadMovedToRepository}
-          />
-        </div>
-      ) : null}
+      <TopBarTitleArea repoDetail={repoDetail} showSystemStatus={showSystemStatus} />
+      <TopBarSwapRepositorySlot
+        threadId={threadId}
+        attachedRepository={attachedRepository}
+        availableRepositories={availableRepositories}
+        onThreadMovedToRepository={onThreadMovedToRepository}
+      />
 
       <div className="ml-auto flex items-center gap-1.5">
-        {repoDetail && showSystemStatus ? (
-          isDesktopLayout ? (
-            // Desktop: anchor a Popover to the pill so the StatusPanel
-            // overlays the chat surface only on demand. PopoverTrigger asChild
-            // composes with the pill's own TooltipTrigger via Radix Slot, so
-            // both behaviours (hover tooltip + click-to-toggle popover) coexist
-            // on the same Button without bespoke handler chaining.
-            <Popover open={isStatusPanelOpen} onOpenChange={onSetStatusPanelOpen}>
-              <PopoverTrigger asChild>
-                <StatusPill
-                  repository={repoDetail.repository}
-                  sandboxModeStatus={repoDetail.sandboxModeStatus}
-                  jobs={repoDetail.jobs}
-                  hasRemoteUpdates={repoDetail.hasRemoteUpdates}
-                  isSyncing={isSyncing}
-                  isOpen={isStatusPanelOpen}
-                />
-              </PopoverTrigger>
-              <PopoverContent
-                side="bottom"
-                align="end"
-                sideOffset={8}
-                collisionPadding={12}
-                // Width matches the previous inline column (22rem) so the panel
-                // density stays stable; max-height caps the overlay so a long
-                // activity timeline scrolls inside the popover instead of
-                // bleeding past the viewport.
-                className="w-88 max-h-[min(36rem,calc(100vh-5rem))] overflow-hidden p-0"
-              >
-                <StatusPanel
-                  repository={repoDetail.repository}
-                  sandboxModeStatus={repoDetail.sandboxModeStatus}
-                  sandbox={repoDetail.sandbox}
-                  jobs={repoDetail.jobs}
-                  artifacts={repoDetail.artifacts}
-                  hasRemoteUpdates={repoDetail.hasRemoteUpdates}
-                  isSyncing={isSyncing}
-                  onSync={onSync}
-                  syncDisabledReason={syncDisabledReason}
-                  onViewArtifact={onViewArtifact}
-                  onClose={() => onSetStatusPanelOpen(false)}
-                />
-              </PopoverContent>
-            </Popover>
-          ) : (
-            // Mobile: the panel renders as a bottom Sheet from the shell, so
-            // here we only render the pill and forward clicks back up. The
-            // shell-side onSetStatusPanelOpen handles the mutual-exclusion
-            // with the artifact sheet (only one bottom sheet at a time).
-            <StatusPill
-              repository={repoDetail.repository}
-              sandboxModeStatus={repoDetail.sandboxModeStatus}
-              jobs={repoDetail.jobs}
-              hasRemoteUpdates={repoDetail.hasRemoteUpdates}
-              isSyncing={isSyncing}
-              isOpen={isStatusPanelOpen}
-              onClick={() => onSetStatusPanelOpen(!isStatusPanelOpen)}
-            />
-          )
-        ) : null}
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              disabled={!repoDetail}
-              aria-label="Repository actions"
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <DotsThreeVerticalIcon weight="bold" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
-            {repoDetail?.isArchived ? (
-              <>
-                <DropdownMenuItem
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    onRestoreRepo();
-                  }}
-                >
-                  <ArrowCounterClockwiseIcon weight="bold" />
-                  Restore repository
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="text-destructive focus:text-destructive"
-                  onSelect={(e) => {
-                    e.preventDefault();
-                    onPermanentDeleteRepo();
-                  }}
-                >
-                  <TrashIcon weight="bold" />
-                  Delete permanently
-                </DropdownMenuItem>
-              </>
-            ) : (
-              <DropdownMenuItem
-                onSelect={(e) => {
-                  e.preventDefault();
-                  onArchiveRepo();
-                }}
-              >
-                <ArchiveIcon weight="bold" />
-                Archive repository
-              </DropdownMenuItem>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <TopBarStatusSlot statusControl={statusControl} isDesktopLayout={isDesktopLayout} />
+        <RepositoryActionsMenu
+          repoDetail={repoDetail}
+          onArchiveRepo={onArchiveRepo}
+          onRestoreRepo={onRestoreRepo}
+          onPermanentDeleteRepo={onPermanentDeleteRepo}
+        />
       </div>
     </div>
+  );
+}
+
+function TopBarTitleArea({
+  repoDetail,
+  showSystemStatus,
+}: {
+  repoDetail: TopBarRepoDetail | undefined;
+  showSystemStatus: boolean;
+}) {
+  if (!repoDetail) {
+    return null;
+  }
+  return (
+    <div key={repoDetail.repository._id} className="flex min-w-0 flex-1 items-center gap-2 animate-fade-in">
+      <RepoInfoPopover repoDetail={repoDetail} title={repoDetail.repository.sourceRepoFullName} />
+      {showSystemStatus ? <RepoStatusIndicator sandbox={repoDetail.sandbox} /> : null}
+    </div>
+  );
+}
+
+function TopBarSwapRepositorySlot({
+  threadId,
+  attachedRepository,
+  availableRepositories,
+  onThreadMovedToRepository,
+}: {
+  threadId: ThreadId | null;
+  attachedRepository: AttachedRepositorySummary | null;
+  availableRepositories: ReadonlyArray<Doc<"repositories">>;
+  onThreadMovedToRepository: (repositoryId: RepositoryId | null, mode: ThreadMode | null) => void;
+}) {
+  if (threadId === null || attachedRepository === null) {
+    return null;
+  }
+  const candidates = availableRepositories.filter((candidate) => candidate._id !== attachedRepository.id);
+  if (candidates.length === 0) {
+    return null;
+  }
+  return (
+    <div className="hidden md:flex">
+      <SwapThreadRepositoryControl
+        threadId={threadId}
+        attachedRepositoryFullName={attachedRepository.fullName}
+        candidates={candidates}
+        onMovedToRepository={onThreadMovedToRepository}
+      />
+    </div>
+  );
+}
+
+function TopBarStatusSlot({
+  statusControl,
+  isDesktopLayout,
+}: {
+  statusControl: TopBarStatusControl;
+  isDesktopLayout: boolean;
+}) {
+  if (!statusControl.isVisible) {
+    return null;
+  }
+  if (isDesktopLayout) {
+    return <DesktopStatusPopover statusControl={statusControl} />;
+  }
+  return (
+    <StatusPill
+      repository={statusControl.repository}
+      sandboxModeStatus={statusControl.sandboxModeStatus}
+      jobs={statusControl.jobs}
+      hasRemoteUpdates={statusControl.hasRemoteUpdates}
+      isSyncing={statusControl.isSyncing}
+      isOpen={statusControl.isOpen}
+      onClick={() => statusControl.onOpenChange(!statusControl.isOpen)}
+    />
+  );
+}
+
+function DesktopStatusPopover({ statusControl }: { statusControl: Extract<TopBarStatusControl, { isVisible: true }> }) {
+  return (
+    <Popover open={statusControl.isOpen} onOpenChange={statusControl.onOpenChange}>
+      <PopoverTrigger asChild>
+        <StatusPill
+          repository={statusControl.repository}
+          sandboxModeStatus={statusControl.sandboxModeStatus}
+          jobs={statusControl.jobs}
+          hasRemoteUpdates={statusControl.hasRemoteUpdates}
+          isSyncing={statusControl.isSyncing}
+          isOpen={statusControl.isOpen}
+        />
+      </PopoverTrigger>
+      <PopoverContent
+        side="bottom"
+        align="end"
+        sideOffset={8}
+        collisionPadding={12}
+        className="w-88 max-h-[min(36rem,calc(100vh-5rem))] overflow-hidden p-0"
+      >
+        <StatusPanel
+          repository={statusControl.repository}
+          sandboxModeStatus={statusControl.sandboxModeStatus}
+          sandbox={statusControl.sandbox}
+          jobs={statusControl.jobs}
+          artifacts={statusControl.artifacts}
+          hasRemoteUpdates={statusControl.hasRemoteUpdates}
+          isSyncing={statusControl.isSyncing}
+          onSync={statusControl.onSync}
+          syncDisabledReason={statusControl.syncDisabledReason}
+          onViewArtifact={statusControl.onViewArtifact}
+          onClose={() => statusControl.onOpenChange(false)}
+        />
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function RepositoryActionsMenu({
+  repoDetail,
+  onArchiveRepo,
+  onRestoreRepo,
+  onPermanentDeleteRepo,
+}: {
+  repoDetail: TopBarRepoDetail | undefined;
+  onArchiveRepo: () => void;
+  onRestoreRepo: () => void;
+  onPermanentDeleteRepo: () => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          disabled={!repoDetail}
+          aria-label="Repository actions"
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <DotsThreeVerticalIcon weight="bold" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        {repoDetail?.isArchived ? (
+          <>
+            <DropdownMenuItem
+              onSelect={(e) => {
+                e.preventDefault();
+                onRestoreRepo();
+              }}
+            >
+              <ArrowCounterClockwiseIcon weight="bold" />
+              Restore repository
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              className="text-destructive focus:text-destructive"
+              onSelect={(e) => {
+                e.preventDefault();
+                onPermanentDeleteRepo();
+              }}
+            >
+              <TrashIcon weight="bold" />
+              Delete permanently
+            </DropdownMenuItem>
+          </>
+        ) : (
+          <DropdownMenuItem
+            onSelect={(e) => {
+              e.preventDefault();
+              onArchiveRepo();
+            }}
+          >
+            <ArchiveIcon weight="bold" />
+            Archive repository
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }

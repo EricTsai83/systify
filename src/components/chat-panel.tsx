@@ -14,7 +14,7 @@ import {
 import { EmptyChatHint, EmptyNoRepoHint } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
 import { MODE_EXAMPLES } from "@/components/chat-modes";
-import { GroundingToggleBar } from "@/components/grounding-toggle-bar";
+import { GroundingToggleBar, createDiscussGroundingAxes } from "@/components/grounding-toggle-bar";
 import { ModeExamples } from "@/components/mode-examples";
 import { PromptInputModelPicker } from "@/components/ai-elements/prompt-input-model-picker";
 import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-input-reasoning-picker";
@@ -489,11 +489,13 @@ function ComposerGroundingToggles({ composer }: { composer: ChatComposerViewMode
 
   return (
     <GroundingToggleBar
-      groundLibrary={grounding.groundLibrary}
-      groundSandbox={grounding.groundSandbox}
-      setGroundLibrary={grounding.setGroundLibrary}
-      setGroundSandbox={grounding.setGroundSandbox}
-      grounding={grounding.grounding}
+      axes={createDiscussGroundingAxes({
+        groundLibrary: grounding.groundLibrary,
+        groundSandbox: grounding.groundSandbox,
+        setGroundLibrary: grounding.setGroundLibrary,
+        setGroundSandbox: grounding.setGroundSandbox,
+        grounding: grounding.grounding,
+      })}
       onOpenGenerateSystemDesign={grounding.onOpenGenerateSystemDesign}
       generateDisabledReason={grounding.generateDisabledReason}
     />
