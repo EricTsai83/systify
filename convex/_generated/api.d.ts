@@ -138,17 +138,21 @@ import type * as threadContext from "../threadContext.js";
 import type * as userPreferences from "../userPreferences.js";
 import type * as viewerAccess from "../viewerAccess.js";
 
-import type { ApiFromModules, FilterApi, FunctionReference } from "convex/server";
+import type {
+  ApiFromModules,
+  FilterApi,
+  FunctionReference,
+} from "convex/server";
 
 declare const fullApi: ApiFromModules<{
-  "artifactChunkStore": typeof artifactChunkStore;
-  "artifactFolders": typeof artifactFolders;
-  "artifactIndexing": typeof artifactIndexing;
-  "artifactMermaidRepair": typeof artifactMermaidRepair;
-  "artifactMermaidRepairNode": typeof artifactMermaidRepairNode;
-  "artifactStore": typeof artifactStore;
-  "artifactViews": typeof artifactViews;
-  "artifacts": typeof artifacts;
+  artifactChunkStore: typeof artifactChunkStore;
+  artifactFolders: typeof artifactFolders;
+  artifactIndexing: typeof artifactIndexing;
+  artifactMermaidRepair: typeof artifactMermaidRepair;
+  artifactMermaidRepairNode: typeof artifactMermaidRepairNode;
+  artifactStore: typeof artifactStore;
+  artifactViews: typeof artifactViews;
+  artifacts: typeof artifacts;
   "chat/archiveState": typeof chat_archiveState;
   "chat/cancel": typeof chat_cancel;
   "chat/chatTurnIntake": typeof chat_chatTurnIntake;
@@ -176,22 +180,22 @@ declare const fullApi: ApiFromModules<{
   "chat/titles": typeof chat_titles;
   "chat/titlesNode": typeof chat_titlesNode;
   "chat/toolCallEventStore": typeof chat_toolCallEventStore;
-  "crons": typeof crons;
-  "daytona": typeof daytona;
-  "daytonaWebhooks": typeof daytonaWebhooks;
-  "daytonaWebhooksNode": typeof daytonaWebhooksNode;
+  crons: typeof crons;
+  daytona: typeof daytona;
+  daytonaWebhooks: typeof daytonaWebhooks;
+  daytonaWebhooksNode: typeof daytonaWebhooksNode;
   "eval/systemDesign/aggregate": typeof eval_systemDesign_aggregate;
   "eval/systemDesign/corpus": typeof eval_systemDesign_corpus;
   "eval/systemDesign/judge": typeof eval_systemDesign_judge;
   "eval/systemDesign/report": typeof eval_systemDesign_report;
   "eval/systemDesign/runner": typeof eval_systemDesign_runner;
-  "github": typeof github;
-  "githubAppNode": typeof githubAppNode;
-  "githubCheck": typeof githubCheck;
-  "githubRepoFetcher": typeof githubRepoFetcher;
-  "http": typeof http;
-  "imports": typeof imports;
-  "importsNode": typeof importsNode;
+  github: typeof github;
+  githubAppNode: typeof githubAppNode;
+  githubCheck: typeof githubCheck;
+  githubRepoFetcher: typeof githubRepoFetcher;
+  http: typeof http;
+  imports: typeof imports;
+  importsNode: typeof importsNode;
   "lib/artifactChunking": typeof lib_artifactChunking;
   "lib/artifactDefaults": typeof lib_artifactDefaults;
   "lib/artifactFolderDefaults": typeof lib_artifactFolderDefaults;
@@ -252,24 +256,24 @@ declare const fullApi: ApiFromModules<{
   "lib/userCost": typeof lib_userCost;
   "lib/userPreferences": typeof lib_userPreferences;
   "lib/withLlmRetry": typeof lib_withLlmRetry;
-  "libraryArtifactDrafts": typeof libraryArtifactDrafts;
-  "libraryArtifactDraftsNode": typeof libraryArtifactDraftsNode;
-  "llmCatalog": typeof llmCatalog;
-  "ops": typeof ops;
-  "opsNode": typeof opsNode;
-  "repositories": typeof repositories;
-  "repositoryModeEligibility": typeof repositoryModeEligibility;
-  "repositoryPreferences": typeof repositoryPreferences;
-  "sandboxActivationNode": typeof sandboxActivationNode;
-  "sandboxProvisioning": typeof sandboxProvisioning;
-  "sandboxSessions": typeof sandboxSessions;
-  "sandboxSessionsNode": typeof sandboxSessionsNode;
-  "systemDesign": typeof systemDesign;
-  "systemDesignKindRun": typeof systemDesignKindRun;
-  "systemDesignNode": typeof systemDesignNode;
-  "threadContext": typeof threadContext;
-  "userPreferences": typeof userPreferences;
-  "viewerAccess": typeof viewerAccess;
+  libraryArtifactDrafts: typeof libraryArtifactDrafts;
+  libraryArtifactDraftsNode: typeof libraryArtifactDraftsNode;
+  llmCatalog: typeof llmCatalog;
+  ops: typeof ops;
+  opsNode: typeof opsNode;
+  repositories: typeof repositories;
+  repositoryModeEligibility: typeof repositoryModeEligibility;
+  repositoryPreferences: typeof repositoryPreferences;
+  sandboxActivationNode: typeof sandboxActivationNode;
+  sandboxProvisioning: typeof sandboxProvisioning;
+  sandboxSessions: typeof sandboxSessions;
+  sandboxSessionsNode: typeof sandboxSessionsNode;
+  systemDesign: typeof systemDesign;
+  systemDesignKindRun: typeof systemDesignKindRun;
+  systemDesignNode: typeof systemDesignNode;
+  threadContext: typeof threadContext;
+  userPreferences: typeof userPreferences;
+  viewerAccess: typeof viewerAccess;
 }>;
 
 /**
@@ -280,7 +284,10 @@ declare const fullApi: ApiFromModules<{
  * const myFunctionReference = api.myModule.myFunction;
  * ```
  */
-export declare const api: FilterApi<typeof fullApi, FunctionReference<any, "public">>;
+export declare const api: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "public">
+>;
 
 /**
  * A utility for referencing Convex functions in your app's internal API.
@@ -290,7 +297,10 @@ export declare const api: FilterApi<typeof fullApi, FunctionReference<any, "publ
  * const myFunctionReference = internal.myModule.myFunction;
  * ```
  */
-export declare const internal: FilterApi<typeof fullApi, FunctionReference<any, "internal">>;
+export declare const internal: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "internal">
+>;
 
 export declare const components: {
   rateLimiter: import("@convex-dev/rate-limiter/_generated/component.js").ComponentApi<"rateLimiter">;
