@@ -205,6 +205,9 @@ type LegacyChatPanelProps = Omit<React.ComponentProps<typeof RealChatPanel>, "co
   showGroundingToggles?: boolean;
   onOpenGenerateSystemDesign?: () => void;
   generateSystemDesignDisabledReason?: string;
+  isArtifactPanelOpen?: boolean;
+  onToggleArtifactPanel?: () => void;
+  showArtifactToggle?: boolean;
   isSending: boolean;
   onSendMessage: (event: React.FormEvent<HTMLFormElement>) => Promise<void> | void;
   sendDisabledReason?: string;
@@ -235,9 +238,14 @@ function ChatPanel(props: LegacyChatPanelProps) {
       isChatLoading={props.isChatLoading}
       composer={composer}
       chatMode={props.chatMode}
-      isArtifactPanelOpen={props.isArtifactPanelOpen}
-      onToggleArtifactPanel={props.onToggleArtifactPanel}
-      showArtifactToggle={props.showArtifactToggle}
+      artifactToggle={
+        props.showArtifactToggle && props.onToggleArtifactPanel
+          ? {
+              isOpen: props.isArtifactPanelOpen ?? false,
+              onToggle: props.onToggleArtifactPanel,
+            }
+          : null
+      }
       hasAttachedRepository={props.hasAttachedRepository}
       onSelectArtifact={props.onSelectArtifact}
       attachedRepositoryId={props.attachedRepositoryId}
@@ -255,9 +263,14 @@ function ChatContainer(props: LegacyChatContainerProps) {
       isShellLoading={props.isShellLoading}
       composer={composer}
       chatMode={props.chatMode}
-      isArtifactPanelOpen={props.isArtifactPanelOpen}
-      onToggleArtifactPanel={props.onToggleArtifactPanel}
-      showArtifactToggle={props.showArtifactToggle}
+      artifactToggle={
+        props.showArtifactToggle && props.onToggleArtifactPanel
+          ? {
+              isOpen: props.isArtifactPanelOpen ?? false,
+              onToggle: props.onToggleArtifactPanel,
+            }
+          : null
+      }
       hasAttachedRepository={props.hasAttachedRepository}
       onSelectArtifact={props.onSelectArtifact}
       attachedRepositoryId={props.attachedRepositoryId}

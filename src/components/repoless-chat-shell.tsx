@@ -239,7 +239,6 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
             isShellLoading={isChatShellLoading}
             composer={composer}
             chatMode={chatMode}
-            showArtifactToggle={false}
             hasAttachedRepository={false}
           />
         </div>

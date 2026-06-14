@@ -25,6 +25,11 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import type { ActiveMessageStream, ArtifactId, ChatMode, RepositoryId, ThreadId } from "@/lib/types";
 import type { ChatComposerViewModel } from "@/components/chat-shell-shared/chat-composer-types";
 
+type ArtifactToggleControl = {
+  isOpen: boolean;
+  onToggle: () => void;
+};
+
 type ChatPanelProps = {
   selectedThreadId: ThreadId | null;
   messages: Doc<"messages">[] | undefined;
@@ -38,9 +43,7 @@ type ChatPanelProps = {
    * shell) can drive it.
    */
   chatMode: ChatMode;
-  isArtifactPanelOpen?: boolean;
-  onToggleArtifactPanel?: () => void;
-  showArtifactToggle?: boolean;
+  artifactToggle?: ArtifactToggleControl | null;
   /** Whether the current thread has an attached repository. */
   hasAttachedRepository?: boolean;
   /**
@@ -111,9 +114,7 @@ export function ChatPanel({
   isChatLoading,
   composer,
   chatMode,
-  isArtifactPanelOpen = false,
-  onToggleArtifactPanel,
-  showArtifactToggle = false,
+  artifactToggle = null,
   hasAttachedRepository = true,
   onSelectArtifact,
   attachedRepositoryId,
@@ -190,240 +191,377 @@ export function ChatPanel({
   const sandboxPill =
     shouldShowSandboxPill && attachedRepositoryId ? <SandboxActivityPill repositoryId={attachedRepositoryId} /> : null;
 
-  const composerToolItems: ReactNode[] = [
-    showArtifactToggle && onToggleArtifactPanel ? (
-      <Button
-        type="button"
-        variant={isArtifactPanelOpen ? "secondary" : "ghost"}
-        size="sm"
-        onClick={onToggleArtifactPanel}
-        aria-label="Toggle artifacts panel"
-        aria-pressed={isArtifactPanelOpen}
-        className="h-8 shrink-0 gap-1.5 px-2 text-xs"
-      >
-        <FileTextIcon size={14} weight="bold" />
-        <span className="hidden sm:inline">Artifacts</span>
-      </Button>
-    ) : null,
-    composer.tools.modelPicker ? (
-      <PromptInputModelPicker
-        value={composer.tools.modelPicker.value}
-        onChange={composer.tools.modelPicker.onChange}
-        threadLockedProvider={composer.tools.modelPicker.threadLockedProvider}
-        capability={composer.tools.modelPicker.capability}
-        preferenceScope={composer.tools.modelPicker.preferenceScope}
-        disabled={composer.tools.modelPicker.disabled}
-        getDisabledReason={composer.tools.modelPicker.getDisabledReason}
-        catalogEntries={composer.tools.modelPicker.catalogEntries}
-      />
-    ) : null,
-    composer.tools.reasoningPicker ? (
-      <PromptInputReasoningPicker
-        value={composer.tools.reasoningPicker.value}
-        onChange={composer.tools.reasoningPicker.onChange}
-        provider={composer.tools.reasoningPicker.provider}
-        modelName={composer.tools.reasoningPicker.modelName}
-        preferenceScope={composer.tools.reasoningPicker.preferenceScope}
-        disabled={composer.tools.reasoningPicker.disabled}
-        disabledReasoningEfforts={composer.tools.reasoningPicker.disabledReasoningEfforts}
-        disabledReasoningEffortMessage={composer.tools.reasoningPicker.disabledReasoningEffortMessage}
-        catalogEntries={composer.tools.reasoningPicker.catalogEntries}
-      />
-    ) : null,
-    ...Children.toArray(composer.tools.extraControls),
-    composer.tools.grounding ? (
-      <GroundingToggleBar
-        groundLibrary={composer.tools.grounding.groundLibrary}
-        groundSandbox={composer.tools.grounding.groundSandbox}
-        setGroundLibrary={composer.tools.grounding.setGroundLibrary}
-        setGroundSandbox={composer.tools.grounding.setGroundSandbox}
-        grounding={composer.tools.grounding.grounding}
-        onOpenGenerateSystemDesign={composer.tools.grounding.onOpenGenerateSystemDesign}
-        generateDisabledReason={composer.tools.grounding.generateDisabledReason}
-      />
-    ) : null,
-  ].filter((item) => item !== null);
-
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {shouldShowEmptyState ? (
-        // The empty-state hint is rendered *outside* ScrollArea on purpose.
-        // Radix's ScrollArea.Viewport wraps its children in an internal
-        // `display: table` element, which silently breaks the percentage-
-        // height / `flex-1` chain — so `min-h-full` here and `flex-1` on
-        // the hint's own wrapper both collapse, parking the hint near the
-        // top instead of the vertical middle of the chat column. The
-        // empty state never needs to scroll, so dropping ScrollArea for
-        // this branch is the cleanest fix and lets `flex-1` actually
-        // reach the centered Card.
-        <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 animate-soft-enter flex-col gap-3 px-6 py-6">
-          {sandboxPill}
-          {hasAttachedRepository ? <EmptyChatHint /> : <EmptyNoRepoHint />}
-          {/*
-           * Example prompts for the active mode. Renders at the bottom
-           * of the empty-state column (the centered hint
-           * card has `flex-1` and pushes everything below toward the
-           * composer), giving the prompts a consistent "just above
-           * the input" anchor regardless of viewport height. Clicking
-           * a card seeds the composer input but does not auto-submit.
-           */}
-          <ModeExamples
-            mode={chatMode}
-            examples={MODE_EXAMPLES[chatMode]}
-            onUseExample={(prompt) => composer.input.setValue(prompt)}
-            disabled={composer.input.readOnly}
-          />
-        </div>
+        <EmptyChatPanelBody
+          chatMode={chatMode}
+          hasAttachedRepository={hasAttachedRepository}
+          sandboxPill={sandboxPill}
+          readOnly={composer.input.readOnly}
+          onUseExample={composer.input.setValue}
+        />
       ) : (
-        // `Conversation` (ai-elements) owns a custom scroll controller
-        // (`useChatScroll`) that handles stick-to-bottom on append,
-        // anchor preservation on prepend, the load-older top sentinel,
-        // and prefers-reduced-motion. The hook is invoked above so the
-        // chat panel can read `didPrependRef` synchronously alongside
-        // its entrance-animation decision. We override
-        // `ConversationContent`'s default gap-8 / p-4 because the chat
-        // column owns its own max-w-3xl gutter.
-        <Conversation scroll={conversationScroll} className="flex-1 min-h-0">
-          <ConversationContent
-            className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pb-6 pt-10"
-            showLoadOlderSentinel={canLoadOlderMessages}
-          >
-            {sandboxPill}
-            {messages && (
-              <div
-                className={skipEntrance ? "flex flex-col gap-0" : "flex flex-col gap-0 animate-soft-enter"}
-                onAnimationEnd={skipEntrance ? undefined : markCurrentThreadSeen}
-              >
-                {messages.map((message, index) => {
-                  const messageStream =
-                    activeMessageStream?.assistantMessageId === message._id ? activeMessageStream : null;
-                  const previousMessage = index > 0 ? messages[index - 1] : undefined;
-                  return (
-                    <div key={message._id} className={messageSpacingClassName(previousMessage, message)}>
-                      <MessageBubble
-                        message={message}
-                        activeMessageStream={messageStream}
-                        onSelectArtifact={onSelectArtifact}
-                        showStatsForNerds={showStatsForNerds}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </ConversationContent>
-          <ConversationScrollButton />
-        </Conversation>
+        <MessageChatPanelBody
+          messages={messages}
+          activeMessageStream={activeMessageStream}
+          conversationScroll={conversationScroll}
+          canLoadOlderMessages={canLoadOlderMessages}
+          skipEntrance={skipEntrance}
+          onEntranceAnimationEnd={markCurrentThreadSeen}
+          sandboxPill={sandboxPill}
+          onSelectArtifact={onSelectArtifact}
+          showStatsForNerds={showStatsForNerds}
+        />
       )}
 
-      <div className="border-t border-border bg-background">
-        {/*
-         * `PromptInput` (ai-elements) wraps the form in an `InputGroup`
-         * primitive that aligns the textarea + toolbar / submit as a
-         * single bordered control. Submitting routes through PromptInput's
-         * internal handler, which fires the composer submit callback with
-         * the captured form event. Per-message state stays controlled by
-         * the composer session so persisted draft behavior remains outside
-         * the rendering panel.
-         *
-         * `readonly-hint` lives OUTSIDE the PromptInput because InputGroup
-         * expects only textarea + addons as children; arbitrary `<p>`
-         * siblings would break its CSS-only layout selectors.
-         */}
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-6 py-3">
-          <PromptInput
-            onSubmit={(_, event) => {
-              if (isSendBlocked) return;
-              void composer.send.onSubmit(event);
-            }}
-          >
-            <PromptInputTextarea
-              name="message"
-              value={composer.input.value}
-              onChange={(e) => composer.input.setValue(e.target.value)}
-              placeholder={composer.input.placeholder}
-              className="min-h-20"
-              readOnly={composer.input.readOnly}
-              aria-describedby={composer.input.readOnly && composer.input.readOnlyHint ? "readonly-hint" : undefined}
+      <ChatComposer
+        composer={composer}
+        artifactToggle={artifactToggle}
+        canCancel={canCancel}
+        isSendBlocked={isSendBlocked}
+        sendButtonTitle={sendButtonTitle}
+      />
+    </div>
+  );
+}
+
+type EmptyChatPanelBodyProps = {
+  chatMode: ChatMode;
+  hasAttachedRepository: boolean;
+  sandboxPill: ReactNode;
+  readOnly: boolean;
+  onUseExample: (prompt: string) => void;
+};
+
+function EmptyChatPanelBody({
+  chatMode,
+  hasAttachedRepository,
+  sandboxPill,
+  readOnly,
+  onUseExample,
+}: EmptyChatPanelBodyProps) {
+  return (
+    // The empty-state hint is rendered outside ScrollArea on purpose:
+    // Radix's internal table wrapper breaks the percentage-height chain
+    // needed for vertical centering, and this branch never needs to scroll.
+    <div className="mx-auto flex w-full min-h-0 max-w-3xl flex-1 animate-soft-enter flex-col gap-3 px-6 py-6">
+      {sandboxPill}
+      {hasAttachedRepository ? <EmptyChatHint /> : <EmptyNoRepoHint />}
+      <ModeExamples
+        mode={chatMode}
+        examples={MODE_EXAMPLES[chatMode]}
+        onUseExample={onUseExample}
+        disabled={readOnly}
+      />
+    </div>
+  );
+}
+
+type MessageChatPanelBodyProps = {
+  messages: Doc<"messages">[] | undefined;
+  activeMessageStream: ActiveMessageStream | null | undefined;
+  conversationScroll: ReturnType<typeof useChatScroll>;
+  canLoadOlderMessages: boolean;
+  skipEntrance: boolean;
+  onEntranceAnimationEnd: (event: AnimationEvent<HTMLDivElement>) => void;
+  sandboxPill: ReactNode;
+  onSelectArtifact: ((artifactId: ArtifactId) => void) | undefined;
+  showStatsForNerds: boolean;
+};
+
+function MessageChatPanelBody({
+  messages,
+  activeMessageStream,
+  conversationScroll,
+  canLoadOlderMessages,
+  skipEntrance,
+  onEntranceAnimationEnd,
+  sandboxPill,
+  onSelectArtifact,
+  showStatsForNerds,
+}: MessageChatPanelBodyProps) {
+  return (
+    // `Conversation` owns stick-to-bottom, prepend anchor preservation,
+    // load-older sentinel wiring, and reduced-motion behavior.
+    <Conversation scroll={conversationScroll} className="flex-1 min-h-0">
+      <ConversationContent
+        className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pb-6 pt-10"
+        showLoadOlderSentinel={canLoadOlderMessages}
+      >
+        {sandboxPill}
+        {messages && (
+          <MessageList
+            messages={messages}
+            activeMessageStream={activeMessageStream}
+            skipEntrance={skipEntrance}
+            onEntranceAnimationEnd={onEntranceAnimationEnd}
+            onSelectArtifact={onSelectArtifact}
+            showStatsForNerds={showStatsForNerds}
+          />
+        )}
+      </ConversationContent>
+      <ConversationScrollButton />
+    </Conversation>
+  );
+}
+
+type MessageListProps = {
+  messages: Doc<"messages">[];
+  activeMessageStream: ActiveMessageStream | null | undefined;
+  skipEntrance: boolean;
+  onEntranceAnimationEnd: (event: AnimationEvent<HTMLDivElement>) => void;
+  onSelectArtifact: ((artifactId: ArtifactId) => void) | undefined;
+  showStatsForNerds: boolean;
+};
+
+function MessageList({
+  messages,
+  activeMessageStream,
+  skipEntrance,
+  onEntranceAnimationEnd,
+  onSelectArtifact,
+  showStatsForNerds,
+}: MessageListProps) {
+  return (
+    <div
+      className={skipEntrance ? "flex flex-col gap-0" : "flex flex-col gap-0 animate-soft-enter"}
+      onAnimationEnd={skipEntrance ? undefined : onEntranceAnimationEnd}
+    >
+      {messages.map((message, index) => {
+        const messageStream = activeMessageStream?.assistantMessageId === message._id ? activeMessageStream : null;
+        const previousMessage = index > 0 ? messages[index - 1] : undefined;
+        return (
+          <div key={message._id} className={messageSpacingClassName(previousMessage, message)}>
+            <MessageBubble
+              message={message}
+              activeMessageStream={messageStream}
+              onSelectArtifact={onSelectArtifact}
+              showStatsForNerds={showStatsForNerds}
             />
-            <PromptInputFooter>
-              {composer.tools.ready ? (
-                <PromptInputTools className="animate-enter-fade">
-                  {composerToolItems.map((item, index) => (
-                    <Fragment key={index}>
-                      {index > 0 ? <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" /> : null}
-                      {item}
-                    </Fragment>
-                  ))}
-                </PromptInputTools>
-              ) : (
-                <div
-                  aria-hidden="true"
-                  data-testid="chat-panel-composer-tools-placeholder"
-                  className="min-h-8 flex-1"
-                />
-              )}
-              {canCancel && !composer.input.readOnly ? (
-                /*
-                 * Stop button. `type="button"` so a stray Enter in
-                 * the textarea cannot accidentally submit a Stop click as if
-                 * it were Send. `aria-label` plus the visible "Stop" /
-                 * "Stopping…" label keep the affordance accessible to screen
-                 * readers throughout the cancellation cycle.
-                 *
-                 * Disabled during the "Stopping…" interval to prevent
-                 * double-cancels: the mutation is idempotent on the server,
-                 * but stacking clicks would still fire redundant requests.
-                 *
-                 * Shares the `min-w-30` floor with the Send button so
-                 * the composer's right edge doesn't snap horizontally when
-                 * the streaming → cancelled transition swaps which button is
-                 * mounted.
-                 */
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  disabled={composer.cancel.isCancelling}
-                  aria-label="Stop generating reply"
-                  data-testid="chat-panel-stop-button"
-                  className="min-w-30"
-                  onClick={() => {
-                    void composer.cancel.onCancel?.();
-                  }}
-                >
-                  <StopCircleIcon weight="bold" />
-                  <ButtonStateText
-                    current={composer.cancel.isCancelling ? "Stopping…" : "Stop"}
-                    states={["Stop", "Stopping…"]}
-                  />
-                </Button>
-              ) : (
-                <SendButtonWithOptionalTooltip disabledReason={sendButtonTitle}>
-                  <Button
-                    type="submit"
-                    variant="default"
-                    size="sm"
-                    disabled={isSendBlocked}
-                    title={sendButtonTitle}
-                    data-testid="chat-panel-send-button"
-                    className="min-w-30"
-                  >
-                    <PaperPlaneTiltIcon weight="bold" />
-                    <ButtonStateText current={composer.send.buttonState} states={["Send", "Sending…", "Syncing…"]} />
-                  </Button>
-                </SendButtonWithOptionalTooltip>
-              )}
-            </PromptInputFooter>
-          </PromptInput>
-          {composer.input.readOnly && composer.input.readOnlyHint ? (
-            <p id="readonly-hint" className="text-xs text-muted-foreground">
-              {composer.input.readOnlyHint}
-            </p>
-          ) : null}
-        </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+type ChatComposerProps = {
+  composer: ChatComposerViewModel;
+  artifactToggle: ArtifactToggleControl | null;
+  canCancel: boolean;
+  isSendBlocked: boolean;
+  sendButtonTitle: string | undefined;
+};
+
+function ChatComposer({ composer, artifactToggle, canCancel, isSendBlocked, sendButtonTitle }: ChatComposerProps) {
+  return (
+    <div className="border-t border-border bg-background">
+      {/*
+       * `readonly-hint` lives outside PromptInput because InputGroup expects
+       * only textarea + addons as children; arbitrary siblings break its
+       * CSS-only layout selectors.
+       */}
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-6 py-3">
+        <PromptInput
+          onSubmit={(_, event) => {
+            if (isSendBlocked) return;
+            void composer.send.onSubmit(event);
+          }}
+        >
+          <PromptInputTextarea
+            name="message"
+            value={composer.input.value}
+            onChange={(e) => composer.input.setValue(e.target.value)}
+            placeholder={composer.input.placeholder}
+            className="min-h-20"
+            readOnly={composer.input.readOnly}
+            aria-describedby={composer.input.readOnly && composer.input.readOnlyHint ? "readonly-hint" : undefined}
+          />
+          <PromptInputFooter>
+            <ComposerTools composer={composer} artifactToggle={artifactToggle} />
+            <ComposerAction
+              composer={composer}
+              canCancel={canCancel}
+              isSendBlocked={isSendBlocked}
+              sendButtonTitle={sendButtonTitle}
+            />
+          </PromptInputFooter>
+        </PromptInput>
+        {composer.input.readOnly && composer.input.readOnlyHint ? (
+          <p id="readonly-hint" className="text-xs text-muted-foreground">
+            {composer.input.readOnlyHint}
+          </p>
+        ) : null}
       </div>
     </div>
+  );
+}
+
+function ComposerTools({
+  composer,
+  artifactToggle,
+}: {
+  composer: ChatComposerViewModel;
+  artifactToggle: ArtifactToggleControl | null;
+}) {
+  if (!composer.tools.ready) {
+    return <div aria-hidden="true" data-testid="chat-panel-composer-tools-placeholder" className="min-h-8 flex-1" />;
+  }
+
+  const toolItems = [
+    artifactToggle ? <ArtifactPanelToggleButton control={artifactToggle} /> : null,
+    composer.tools.modelPicker ? <ComposerModelPicker composer={composer} /> : null,
+    composer.tools.reasoningPicker ? <ComposerReasoningPicker composer={composer} /> : null,
+    ...Children.toArray(composer.tools.extraControls),
+    composer.tools.grounding ? <ComposerGroundingToggles composer={composer} /> : null,
+  ].filter((item) => item !== null);
+
+  return (
+    <PromptInputTools className="animate-enter-fade">
+      {toolItems.map((item, index) => (
+        <Fragment key={index}>
+          {index > 0 ? <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" /> : null}
+          {item}
+        </Fragment>
+      ))}
+    </PromptInputTools>
+  );
+}
+
+function ArtifactPanelToggleButton({ control }: { control: ArtifactToggleControl }) {
+  return (
+    <Button
+      type="button"
+      variant={control.isOpen ? "secondary" : "ghost"}
+      size="sm"
+      onClick={control.onToggle}
+      aria-label="Toggle artifacts panel"
+      aria-pressed={control.isOpen}
+      className="h-8 shrink-0 gap-1.5 px-2 text-xs"
+    >
+      <FileTextIcon size={14} weight="bold" />
+      <span className="hidden sm:inline">Artifacts</span>
+    </Button>
+  );
+}
+
+function ComposerModelPicker({ composer }: { composer: ChatComposerViewModel }) {
+  const modelPicker = composer.tools.modelPicker;
+  if (!modelPicker) return null;
+
+  return (
+    <PromptInputModelPicker
+      value={modelPicker.value}
+      onChange={modelPicker.onChange}
+      threadLockedProvider={modelPicker.threadLockedProvider}
+      capability={modelPicker.capability}
+      preferenceScope={modelPicker.preferenceScope}
+      disabled={modelPicker.disabled}
+      getDisabledReason={modelPicker.getDisabledReason}
+      catalogEntries={modelPicker.catalogEntries}
+    />
+  );
+}
+
+function ComposerReasoningPicker({ composer }: { composer: ChatComposerViewModel }) {
+  const reasoningPicker = composer.tools.reasoningPicker;
+  if (!reasoningPicker) return null;
+
+  return (
+    <PromptInputReasoningPicker
+      value={reasoningPicker.value}
+      onChange={reasoningPicker.onChange}
+      provider={reasoningPicker.provider}
+      modelName={reasoningPicker.modelName}
+      preferenceScope={reasoningPicker.preferenceScope}
+      disabled={reasoningPicker.disabled}
+      disabledReasoningEfforts={reasoningPicker.disabledReasoningEfforts}
+      disabledReasoningEffortMessage={reasoningPicker.disabledReasoningEffortMessage}
+      catalogEntries={reasoningPicker.catalogEntries}
+    />
+  );
+}
+
+function ComposerGroundingToggles({ composer }: { composer: ChatComposerViewModel }) {
+  const grounding = composer.tools.grounding;
+  if (!grounding) return null;
+
+  return (
+    <GroundingToggleBar
+      groundLibrary={grounding.groundLibrary}
+      groundSandbox={grounding.groundSandbox}
+      setGroundLibrary={grounding.setGroundLibrary}
+      setGroundSandbox={grounding.setGroundSandbox}
+      grounding={grounding.grounding}
+      onOpenGenerateSystemDesign={grounding.onOpenGenerateSystemDesign}
+      generateDisabledReason={grounding.generateDisabledReason}
+    />
+  );
+}
+
+function ComposerAction({
+  composer,
+  canCancel,
+  isSendBlocked,
+  sendButtonTitle,
+}: {
+  composer: ChatComposerViewModel;
+  canCancel: boolean;
+  isSendBlocked: boolean;
+  sendButtonTitle: string | undefined;
+}) {
+  if (canCancel && !composer.input.readOnly) {
+    return <StopGenerationButton composer={composer} />;
+  }
+
+  return <SendMessageButton composer={composer} disabled={isSendBlocked} disabledReason={sendButtonTitle} />;
+}
+
+function StopGenerationButton({ composer }: { composer: ChatComposerViewModel }) {
+  return (
+    <Button
+      type="button"
+      variant="destructive"
+      size="sm"
+      disabled={composer.cancel.isCancelling}
+      aria-label="Stop generating reply"
+      data-testid="chat-panel-stop-button"
+      className="min-w-30"
+      onClick={() => {
+        void composer.cancel.onCancel?.();
+      }}
+    >
+      <StopCircleIcon weight="bold" />
+      <ButtonStateText current={composer.cancel.isCancelling ? "Stopping…" : "Stop"} states={["Stop", "Stopping…"]} />
+    </Button>
+  );
+}
+
+function SendMessageButton({
+  composer,
+  disabled,
+  disabledReason,
+}: {
+  composer: ChatComposerViewModel;
+  disabled: boolean;
+  disabledReason: string | undefined;
+}) {
+  return (
+    <SendButtonWithOptionalTooltip disabledReason={disabledReason}>
+      <Button
+        type="submit"
+        variant="default"
+        size="sm"
+        disabled={disabled}
+        title={disabledReason}
+        data-testid="chat-panel-send-button"
+        className="min-w-30"
+      >
+        <PaperPlaneTiltIcon weight="bold" />
+        <ButtonStateText current={composer.send.buttonState} states={["Send", "Sending…", "Syncing…"]} />
+      </Button>
+    </SendButtonWithOptionalTooltip>
   );
 }
 
