@@ -75,8 +75,10 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
   const [copied, setCopied] = useState(false);
   const [, runCopy] = useAsyncCallback(async () => {
     if (!artifact) return;
+    const copySource = selectedVersion !== null && selectedVersion !== artifact.version ? historicalVersion : artifact;
+    if (!copySource) return;
     try {
-      await navigator.clipboard.writeText((historicalVersion ?? artifact).contentMarkdown);
+      await navigator.clipboard.writeText(copySource.contentMarkdown);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
     } catch {
@@ -122,15 +124,21 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
     );
   }
 
-  const displayedArtifact = historicalVersion ?? artifact;
-  const displayedVersion = displayedArtifact.version;
+  const displayedVersion = selectedVersion ?? artifact.version;
   const isHistoricalVersion = displayedVersion !== artifact.version;
-  const isHtmlArtifact = displayedArtifact.renderFormat === "html";
+  const displayedArtifact = isHistoricalVersion ? historicalVersion : artifact;
+  const selectedVersionMetadata = versions?.find((version) => version.version === displayedVersion);
+  const selectedRenderFormat =
+    displayedArtifact?.renderFormat ?? selectedVersionMetadata?.renderFormat ?? artifact.renderFormat;
+  const isHtmlArtifact = selectedRenderFormat === "html";
+  const versionIsLoading = displayedArtifact === undefined;
+  const versionIsMissing = displayedArtifact === null;
+  const copyIsDisabled = versionIsLoading || versionIsMissing;
 
   return (
     <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur">
-        <LibraryBreadcrumb folderName={folder?.name ?? null} title={displayedArtifact.title} />
+        <LibraryBreadcrumb folderName={folder?.name ?? null} title={displayedArtifact?.title ?? artifact.title} />
         <div className="ml-auto flex items-center gap-1.5">
           <ArtifactVersionSelect
             versions={versions}
@@ -145,6 +153,7 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
             size="sm"
             className="gap-1.5"
             onClick={() => void runCopy()}
+            disabled={copyIsDisabled}
             aria-label="Copy markdown"
           >
             {copied ? <CheckIcon size={13} weight="bold" /> : <CopySimpleIcon size={13} weight="bold" />}
@@ -157,32 +166,42 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
         <article
           className={cn("mx-auto flex w-full flex-col gap-4 px-6 py-8", isHtmlArtifact ? "max-w-6xl" : "max-w-[68ch]")}
         >
-          <header className="flex flex-col gap-3 border-b border-border pb-5">
-            <div className="flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className="text-[10px] uppercase">
-                {formatArtifactKind(artifact.kind)}
-              </Badge>
-              <span className="text-[11px] text-muted-foreground">
-                {new Date(artifact._creationTime).toLocaleString()}
-              </span>
-              <span className="text-[11px] text-muted-foreground">·</span>
-              <FreshnessStatus freshness={artifact.freshness} lastVerifiedAt={artifact.lastVerifiedAt} />
-            </div>
-            <h1 className="text-2xl font-semibold leading-tight tracking-tight">{displayedArtifact.title}</h1>
-            <p className="text-[14px] text-muted-foreground">{displayedArtifact.summary}</p>
-          </header>
-
-          {isHtmlArtifact ? (
-            <ArtifactHtmlViewer
-              artifactId={artifact._id as ArtifactId}
-              version={isHistoricalVersion ? displayedVersion : undefined}
-            />
+          {versionIsLoading ? (
+            <Skeleton className="h-[50vh] w-full" />
+          ) : versionIsMissing ? (
+            <p className="border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm leading-6 text-destructive">
+              This artifact version is not available.
+            </p>
           ) : (
-            <div key={`${artifact._id}:${displayedVersion}`} style={{ zoom: fontSizeZoom(fontSize) }}>
-              <Markdown onRepairMermaid={isHistoricalVersion ? undefined : handleRepairMermaid}>
-                {displayedArtifact.contentMarkdown}
-              </Markdown>
-            </div>
+            <>
+              <header className="flex flex-col gap-3 border-b border-border pb-5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="text-[10px] uppercase">
+                    {formatArtifactKind(artifact.kind)}
+                  </Badge>
+                  <span className="text-[11px] text-muted-foreground">
+                    {new Date(artifact._creationTime).toLocaleString()}
+                  </span>
+                  <span className="text-[11px] text-muted-foreground">·</span>
+                  <FreshnessStatus freshness={artifact.freshness} lastVerifiedAt={artifact.lastVerifiedAt} />
+                </div>
+                <h1 className="text-2xl font-semibold leading-tight tracking-tight">{displayedArtifact.title}</h1>
+                <p className="text-[14px] text-muted-foreground">{displayedArtifact.summary}</p>
+              </header>
+
+              {isHtmlArtifact ? (
+                <ArtifactHtmlViewer
+                  artifactId={artifact._id as ArtifactId}
+                  version={isHistoricalVersion ? displayedVersion : undefined}
+                />
+              ) : (
+                <div key={`${artifact._id}:${displayedVersion}`} style={{ zoom: fontSizeZoom(fontSize) }}>
+                  <Markdown onRepairMermaid={isHistoricalVersion ? undefined : handleRepairMermaid}>
+                    {displayedArtifact.contentMarkdown}
+                  </Markdown>
+                </div>
+              )}
+            </>
           )}
         </article>
       </ScrollArea>

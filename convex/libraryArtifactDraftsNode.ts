@@ -265,6 +265,7 @@ export const runArtifactDraft = internalAction({
         sourceId,
       });
       if (!readyResult.ready) {
+        usageAccounting.handled = true;
         throw new Error("Artifact draft could not be marked ready.");
       }
       usageAccounting.handled = true;
@@ -419,32 +420,43 @@ async function runHtmlArtifactDraft(
   const sourceArtifacts = sourceArtifactsFromContext(context, retrievedChunks);
   const sourceChunkIds = retrievedChunks.map((chunk) => chunk.chunkId);
 
-  const readyResult: { ready: boolean } = await ctx.runMutation(internal.libraryArtifactDrafts.markDraftReady, {
-    draftId: args.draftId,
-    jobId: args.jobId,
-    title: output.title,
-    summary: output.summary,
-    contentMarkdown: output.contentMarkdown,
-    outputFormat: "html",
-    htmlStorageId: stored.storageId,
-    htmlHash: stored.htmlHash,
-    htmlByteLength: stored.htmlByteLength,
-    sourceArtifacts,
-    sourceChunkIds,
-    generatedByProvider: modelChoice.provider,
-    generatedByModel: modelChoice.modelName,
-    reasoningEffort: modelChoice.reasoningEffort,
-    promptVersion: ARTIFACT_DRAFT_PROMPT_VERSION,
-    inputTokens: usage.inputTokens,
-    outputTokens: usage.outputTokens,
-    cachedInputTokens: usage.cachedInputTokens,
-    cacheWriteTokens: usage.cacheWriteTokens,
-    reasoningTokens: usage.reasoningTokens,
-    totalCostUsd,
-    sourceId: usageAccounting.sourceId,
-    usageSandboxDailyCap: usageAccounting.sandboxDailyCap,
-  });
+  let readyResult: { ready: boolean };
+  try {
+    readyResult = await ctx.runMutation(internal.libraryArtifactDrafts.markDraftReady, {
+      draftId: args.draftId,
+      jobId: args.jobId,
+      title: output.title,
+      summary: output.summary,
+      contentMarkdown: output.contentMarkdown,
+      outputFormat: "html",
+      htmlStorageId: stored.storageId,
+      htmlHash: stored.htmlHash,
+      htmlByteLength: stored.htmlByteLength,
+      sourceArtifacts,
+      sourceChunkIds,
+      generatedByProvider: modelChoice.provider,
+      generatedByModel: modelChoice.modelName,
+      reasoningEffort: modelChoice.reasoningEffort,
+      promptVersion: ARTIFACT_DRAFT_PROMPT_VERSION,
+      inputTokens: usage.inputTokens,
+      outputTokens: usage.outputTokens,
+      cachedInputTokens: usage.cachedInputTokens,
+      cacheWriteTokens: usage.cacheWriteTokens,
+      reasoningTokens: usage.reasoningTokens,
+      totalCostUsd,
+      sourceId: usageAccounting.sourceId,
+      usageSandboxDailyCap: usageAccounting.sandboxDailyCap,
+    });
+  } catch (error) {
+    try {
+      await ctx.storage.delete(stored.storageId);
+    } catch {
+      // Preserve the mark-ready failure; storage cleanup is best-effort here.
+    }
+    throw error;
+  }
   if (!readyResult.ready) {
+    usageAccounting.handled = true;
     try {
       await ctx.storage.delete(stored.storageId);
     } catch {

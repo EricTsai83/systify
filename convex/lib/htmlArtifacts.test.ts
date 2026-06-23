@@ -80,6 +80,25 @@ describe("validateHtmlArtifact", () => {
     expect(result.errors.join("\n")).toMatch(expectedError);
   });
 
+  test.each([
+    [
+      "data src",
+      VALID_HTML.replace("</main>", '<img alt="Inline chart" src="data:image/gif;base64,R0lGODlhAQABAAAAACw="></main>'),
+    ],
+    [
+      "data srcset",
+      VALID_HTML.replace(
+        "</main>",
+        '<img alt="Inline chart" srcset="data:text/plain,alpha,beta 1x, data:text/plain,gamma,delta 2x"></main>',
+      ),
+    ],
+  ])("accepts %s attributes", (_label, html) => {
+    const result = validateHtmlArtifact(html);
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
   test("rejects oversized HTML", () => {
     const oversized = VALID_HTML.replace("Grounded in Library evidence.", "x".repeat(HTML_ARTIFACT_MAX_BYTES));
 

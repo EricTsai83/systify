@@ -52,7 +52,7 @@ export interface UpdateArtifactWriteArgs {
   sourceArtifacts?: ArtifactSourceReference[];
   sourceChunkIds?: Id<"artifactChunks">[];
   expectedVersion?: number;
-  lastVerifiedAt?: number;
+  lastVerifiedAt?: number | null;
   alignedImportCommitSha?: string;
   generatedByProvider?: LlmProvider;
   generatedByModel?: string;
@@ -117,7 +117,7 @@ export async function createArtifactWrite(ctx: MutationCtx, args: CreateArtifact
     htmlStorageId: args.htmlStorageId,
     htmlHash: args.htmlHash,
     htmlByteLength: args.htmlByteLength,
-    htmlValidationErrors: args.htmlValidationErrors,
+    htmlValidationErrors: args.renderFormat === "html" ? args.htmlValidationErrors : undefined,
     sourceArtifacts: args.sourceArtifacts,
     sourceChunkIds: args.sourceChunkIds,
     createdAt: now,
@@ -178,7 +178,7 @@ export async function updateArtifactWrite(
     changed = true;
   }
   if (args.lastVerifiedAt !== undefined) {
-    patch.lastVerifiedAt = args.lastVerifiedAt;
+    patch.lastVerifiedAt = args.lastVerifiedAt === null ? undefined : args.lastVerifiedAt;
     changed = true;
   }
   if (args.alignedImportCommitSha !== undefined) {

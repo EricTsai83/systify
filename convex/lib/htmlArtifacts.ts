@@ -27,7 +27,11 @@ const INLINE_HANDLER_RE = /<[^>]+(?:[\s/])on[a-z][a-z0-9_-]*\s*=/i;
 const JAVASCRIPT_URL_RE = /\b(?:href|src|xlink:href)\s*=\s*["']?\s*javascript:/i;
 const CSS_IMPORT_RE = /@import\b/i;
 const META_TAG_RE = /<meta\b[^>]*>/gi;
+const SRCSET_CANDIDATE_RE = /\s*((?:data:[^\s,]*,[^\s]+|#[^\s,]+)(?:\s+\d+(?:\.\d+)?[wx])?)\s*(?:,|$)/gy;
 
+// Regex validation here is defense-in-depth only. The security boundary is the
+// downstream CSP plus sandboxed iframe rendering; keep that intact even when
+// tightening these checks.
 export function validateHtmlArtifact(html: string): HtmlArtifactValidationResult {
   const normalized = injectCspMeta(html);
   const errors: string[] = [];
@@ -229,10 +233,28 @@ function validateCssUrls(html: string): string[] {
 }
 
 function srcsetUsesOnlyDataUrls(value: string): boolean {
-  return value
-    .split(",")
-    .map((candidate) => candidate.trim().split(/\s+/)[0] ?? "")
-    .every((url) => url.startsWith("data:"));
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return false;
+  }
+
+  const candidateRe = new RegExp(SRCSET_CANDIDATE_RE.source, SRCSET_CANDIDATE_RE.flags);
+  let offset = 0;
+  let matched = false;
+  let match: RegExpExecArray | null;
+  while ((match = candidateRe.exec(trimmed)) !== null) {
+    if (match.index !== offset) {
+      return false;
+    }
+    const url = match[1].trim().split(/\s+/)[0] ?? "";
+    if (!url.startsWith("data:") && !url.startsWith("#")) {
+      return false;
+    }
+    matched = true;
+    offset = candidateRe.lastIndex;
+  }
+
+  return matched && offset === trimmed.length;
 }
 
 function unquote(value: string): string {

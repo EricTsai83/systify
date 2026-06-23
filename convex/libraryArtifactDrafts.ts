@@ -340,7 +340,7 @@ export const applyDraft = mutation({
       renderFormat: outputFormat,
       ...htmlFields,
       expectedVersion: draft.targetArtifactVersion,
-      ...(outputFormat === "markdown" ? { lastVerifiedAt: now } : {}),
+      ...(outputFormat === "markdown" ? { lastVerifiedAt: now } : { lastVerifiedAt: null }),
       alignedImportCommitSha: draft.alignedImportCommitSha,
       generatedByProvider: draft.generatedByProvider,
       generatedByModel: draft.generatedByModel,
