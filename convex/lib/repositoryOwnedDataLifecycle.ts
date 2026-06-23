@@ -110,7 +110,13 @@ export const REPOSITORY_OWNED_DATA_LIFECYCLE_REGISTRY = [
     table: "artifacts",
     graph: "repositoryContentState",
     disposition: "delete",
-    cleanupPath: "drain thread-scoped rows by threadId, then repository rows by repositoryId",
+    cleanupPath: "drain through deleteArtifactWrite by threadId/repositoryId",
+  },
+  {
+    table: "artifactVersions",
+    graph: "repositoryContentState",
+    disposition: "delete",
+    cleanupPath: "drain by artifactId before deleting each artifact, including HTML storage blobs",
   },
   {
     table: "artifactFolders",

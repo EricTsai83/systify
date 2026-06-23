@@ -46,9 +46,24 @@ describe("validateHtmlArtifact", () => {
     expect(result.html).toContain(HTML_ARTIFACT_CSP_META);
   });
 
+  test("rejects CSP meta tags outside head and still injects the required head policy", () => {
+    const bodyCsp = VALID_HTML.replace(
+      "<main>",
+      `<meta http-equiv="Content-Security-Policy" content="${HTML_ARTIFACT_CSP}">
+      <main>`,
+    );
+
+    const result = validateHtmlArtifact(bodyCsp);
+
+    expect(result.valid).toBe(false);
+    expect(result.html).toContain(`<head>\n${HTML_ARTIFACT_CSP_META}`);
+    expect(result.errors.join("\n")).toMatch(/inside <head>/i);
+  });
+
   test.each([
     ["script tags", VALID_HTML.replace("</body>", "<script>alert(1)</script></body>"), /script/i],
     ["inline handlers", VALID_HTML.replace("<main>", '<main onclick="alert(1)">'), /event handlers/i],
+    ["slash-delimited inline handlers", VALID_HTML.replace("<body>", "<body/onload=alert(1)>"), /event handlers/i],
     ["external src", VALID_HTML.replace("</main>", '<img src="https://example.com/a.png"></main>'), /src/i],
     ["external srcset", VALID_HTML.replace("</main>", '<img srcset="https://example.com/a.png 1x"></main>'), /srcset/i],
     ["external css urls", VALID_HTML.replace('url("#local")', "url(https://example.com/a.png)"), /CSS url/i],

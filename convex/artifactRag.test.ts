@@ -63,7 +63,7 @@ describe("retrieveArtifactChunks", () => {
       runQueryCallIndex += 1;
       return result;
     });
-    const runMutation = vi.fn(async () => {
+    const runMutation = vi.fn(async (..._args: unknown[]) => {
       throw new Error("embedding budget unavailable");
     });
     const vectorSearch = vi.fn(async () => []);
@@ -94,6 +94,11 @@ describe("retrieveArtifactChunks", () => {
     expect(results[0]?.rrfScore).toBeGreaterThan(0);
     expect(runQuery).toHaveBeenCalledTimes(2);
     expect(runMutation).toHaveBeenCalled();
+    expect(runMutation.mock.calls[0]?.[1]).toMatchObject({
+      sourceId: expect.stringMatching(
+        /^libraryRetrieval:user\|artifact-rag-test:repositories_repo:messages_message:[a-f0-9]{64}$/,
+      ),
+    });
     expect(vectorSearch).not.toHaveBeenCalled();
   });
 });

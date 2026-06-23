@@ -23,7 +23,7 @@ const HTML_ENCODER = new TextEncoder();
 
 const FORBIDDEN_TAG_RE = /<\s*(script|iframe|object|embed|form|base)\b/i;
 const META_REFRESH_RE = /<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/i;
-const INLINE_HANDLER_RE = /<[^>]+\son[a-z][a-z0-9_-]*\s*=/i;
+const INLINE_HANDLER_RE = /<[^>]+(?:[\s/])on[a-z][a-z0-9_-]*\s*=/i;
 const JAVASCRIPT_URL_RE = /\b(?:href|src|xlink:href)\s*=\s*["']?\s*javascript:/i;
 const CSS_IMPORT_RE = /@import\b/i;
 const META_TAG_RE = /<meta\b[^>]*>/gi;
@@ -57,12 +57,15 @@ export function validateHtmlArtifact(html: string): HtmlArtifactValidationResult
   if (!hasNonEmptyBody(normalized)) {
     errors.push("HTML body must not be empty.");
   }
-  if (!hasRequiredCspMeta(normalized)) {
+  if (!hasRequiredCspMetaInHead(normalized)) {
     errors.push("HTML must include the required Content-Security-Policy meta tag.");
   }
 
   if (FORBIDDEN_TAG_RE.test(normalized)) {
     errors.push("HTML must not include script, iframe, object, embed, form, or base tags.");
+  }
+  if (hasCspMetaOutsideHead(normalized)) {
+    errors.push("HTML Content-Security-Policy meta tags must be inside <head>.");
   }
   if (META_REFRESH_RE.test(normalized)) {
     errors.push("HTML must not include meta refresh.");
@@ -87,21 +90,68 @@ export function validateHtmlArtifact(html: string): HtmlArtifactValidationResult
 }
 
 function injectCspMeta(html: string): string {
-  if (hasRequiredCspMeta(html)) {
+  if (firstHeadElementIsRequiredCspMeta(html)) {
     return html;
   }
   return html.replace(/<head\b[^>]*>/i, (match) => `${match}\n${HTML_ARTIFACT_CSP_META}`);
 }
 
-function hasRequiredCspMeta(html: string): boolean {
-  const metaTags = html.match(META_TAG_RE) ?? [];
-  return metaTags.some((tag) => {
-    const httpEquiv = readAttribute(tag, "http-equiv");
-    if (httpEquiv?.toLowerCase() !== "content-security-policy") {
-      return false;
+function hasRequiredCspMetaInHead(html: string): boolean {
+  const headRange = getHeadContentRange(html);
+  if (!headRange) {
+    return false;
+  }
+  return getMetaTags(html.slice(headRange.start, headRange.end)).some(isRequiredCspMetaTag);
+}
+
+function firstHeadElementIsRequiredCspMeta(html: string): boolean {
+  const headRange = getHeadContentRange(html);
+  if (!headRange) {
+    return false;
+  }
+  const headContent = html.slice(headRange.start, headRange.end).replace(/<!--[\s\S]*?-->/g, "");
+  const firstElement = /<\s*[a-z][a-z0-9:-]*\b[^>]*>/i.exec(headContent)?.[0];
+  return firstElement ? isRequiredCspMetaTag(firstElement) : false;
+}
+
+function hasCspMetaOutsideHead(html: string): boolean {
+  const headRange = getHeadContentRange(html);
+  const metaTagRe = new RegExp(META_TAG_RE.source, "gi");
+  let match: RegExpExecArray | null;
+  while ((match = metaTagRe.exec(html)) !== null) {
+    if (!isCspMetaTag(match[0])) {
+      continue;
     }
-    return readAttribute(tag, "content") === HTML_ARTIFACT_CSP;
-  });
+    if (!headRange || match.index < headRange.start || match.index >= headRange.end) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getHeadContentRange(html: string): { start: number; end: number } | null {
+  const open = /<head\b[^>]*>/i.exec(html);
+  if (!open) {
+    return null;
+  }
+  const start = open.index + open[0].length;
+  const close = /<\/head>/i.exec(html.slice(start));
+  if (!close) {
+    return null;
+  }
+  return { start, end: start + close.index };
+}
+
+function getMetaTags(html: string): string[] {
+  return html.match(META_TAG_RE) ?? [];
+}
+
+function isCspMetaTag(tag: string): boolean {
+  return readAttribute(tag, "http-equiv")?.toLowerCase() === "content-security-policy";
+}
+
+function isRequiredCspMetaTag(tag: string): boolean {
+  return isCspMetaTag(tag) && readAttribute(tag, "content") === HTML_ARTIFACT_CSP;
 }
 
 function hasElement(html: string, tag: string): boolean {

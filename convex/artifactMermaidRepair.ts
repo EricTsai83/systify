@@ -1,9 +1,9 @@
 import { v } from "convex/values";
-import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { extractMermaidCodeBlocks, replaceMermaidCodeBlocks } from "./lib/mermaidMarkdown";
 import { assertOwnedBy } from "./lib/ownedDocs";
+import { updateArtifactWrite } from "./lib/artifactWrites";
 import {
   reserveSandboxLibraryGenerationBudget,
   settleSandboxLibraryGenerationUsage,
@@ -215,30 +215,18 @@ export const applyRepairedBlock = internalMutation({
       };
     }
 
-    const patch: {
-      contentMarkdown: string;
-      version: number;
-      updatedAt: number;
-      chunkingStatus?: Doc<"artifacts">["chunkingStatus"];
-    } = {
+    const updateResult = await updateArtifactWrite(ctx, {
+      artifactId: artifact._id,
+      expectedVersion: args.expectedVersion,
       contentMarkdown: replacement.contentMarkdown,
-      version: artifact.version + 1,
-      updatedAt: Date.now(),
-    };
-    if (artifact.repositoryId) {
-      patch.chunkingStatus = "pending";
-    }
-
-    await ctx.db.patch(artifact._id, patch);
-    if (artifact.repositoryId) {
-      await ctx.scheduler.runAfter(0, internal.artifactIndexing.reindexArtifact, {
-        artifactId: artifact._id,
-      });
+    });
+    if (!updateResult.updated) {
+      throw new Error("This artifact changed while the diagram was being repaired. Reload and try again.");
     }
 
     return {
       updated: true,
-      version: patch.version,
+      version: artifact.version + 1,
       blockIndex: replacement.blockIndex,
     };
   },
