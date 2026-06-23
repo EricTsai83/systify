@@ -3,6 +3,7 @@ import type { MutationCtx } from "../_generated/server";
 import { drainArchivedThreadScopesByRepositoryId } from "../chat/archiveState";
 import { drainHistoryGroupsByRepositoryId, drainThreadSharesByRepositoryId } from "../chat/historyState";
 import { CASCADE_BATCH_SIZE, MAX_TOOL_CALL_EVENTS_PER_MESSAGE } from "./constants";
+import { deleteArtifactWrite } from "./artifactWrites";
 
 const STREAM_CHUNK_DRAIN_PASS_LIMIT = 8;
 const CASCADE_SAFE_READ_LIMIT = 30_000;
@@ -58,7 +59,7 @@ async function drainArtifactsByRepositoryId(ctx: MutationCtx, repositoryId: Id<"
     .query("artifacts")
     .withIndex("by_repositoryId", (q) => q.eq("repositoryId", repositoryId))
     .take(CASCADE_BATCH_SIZE);
-  for (const doc of docs) await ctx.db.delete(doc._id);
+  for (const doc of docs) await deleteArtifactWrite(ctx, doc._id);
   return docs.length === CASCADE_BATCH_SIZE;
 }
 
@@ -88,7 +89,12 @@ async function drainArtifactDraftsByRepositoryId(ctx: MutationCtx, repositoryId:
     .query("artifactDrafts")
     .withIndex("by_repositoryId_and_status", (q) => q.eq("repositoryId", repositoryId))
     .take(CASCADE_BATCH_SIZE);
-  for (const doc of docs) await ctx.db.delete(doc._id);
+  for (const doc of docs) {
+    if ((doc.outputFormat ?? "markdown") === "html" && doc.htmlStorageId) {
+      await ctx.storage.delete(doc.htmlStorageId);
+    }
+    await ctx.db.delete(doc._id);
+  }
   return docs.length === CASCADE_BATCH_SIZE;
 }
 
@@ -294,7 +300,7 @@ async function drainThreadsByRepositoryId(ctx: MutationCtx, repositoryId: Id<"re
         .take(CASCADE_BATCH_SIZE);
       budget.reads += artifacts.length;
       for (const artifact of artifacts) {
-        await ctx.db.delete(artifact._id);
+        await deleteArtifactWrite(ctx, artifact._id);
         budget.writes += 1;
       }
       if (artifacts.length === CASCADE_BATCH_SIZE) {

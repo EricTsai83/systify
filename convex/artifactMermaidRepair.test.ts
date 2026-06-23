@@ -147,3 +147,80 @@ describe("getRepairContext", () => {
     ).rejects.toThrow(/artifact not found/i);
   });
 });
+
+describe("applyRepairedBlock", () => {
+  test("creates a matching artifact version row for repaired content", async () => {
+    const t = createTestConvex();
+    const ownerTokenIdentifier = "user|mermaid-repair-version";
+    const { artifactId } = await t.run(async (ctx) => {
+      const repositoryId = await ctx.db.insert("repositories", {
+        ownerTokenIdentifier,
+        sourceHost: "github",
+        sourceUrl: "https://github.com/acme/mermaid-version",
+        sourceRepoFullName: "acme/mermaid-version",
+        sourceRepoOwner: "acme",
+        sourceRepoName: "mermaid-version",
+        visibility: "private",
+        accessMode: "private",
+        importStatus: "completed",
+        detectedLanguages: [],
+        packageManagers: [],
+        entrypoints: [],
+        fileCount: 1,
+        color: "blue",
+        lastAccessedAt: Date.now(),
+      });
+      const contentMarkdown = ["```mermaid", "flowchart TD", "  A --> B", "```"].join("\n");
+      const artifactId = await ctx.db.insert("artifacts", {
+        ownerTokenIdentifier,
+        repositoryId,
+        kind: "architecture_diagram",
+        title: "Diagram",
+        summary: "Summary",
+        contentMarkdown,
+        version: 1,
+        chunkingStatus: "failed",
+        chunkingFailureReason: "embedding_failed",
+      });
+      const versionId = await ctx.db.insert("artifactVersions", {
+        artifactId,
+        version: 1,
+        ownerTokenIdentifier,
+        repositoryId,
+        title: "Diagram",
+        summary: "Summary",
+        contentMarkdown,
+        renderFormat: "markdown",
+        createdAt: Date.now(),
+      });
+      await ctx.db.patch(artifactId, { currentVersionId: versionId });
+      return { artifactId };
+    });
+
+    const result = await t.mutation(internal.artifactMermaidRepair.applyRepairedBlock, {
+      artifactId,
+      ownerTokenIdentifier,
+      expectedVersion: 1,
+      originalChart: "flowchart TD\n  A --> B",
+      repairedChart: "flowchart TD\n  A[Start] --> B[Done]",
+    });
+
+    const state = await t.run(async (ctx) => {
+      const artifact = await ctx.db.get(artifactId);
+      const versions = await ctx.db
+        .query("artifactVersions")
+        .withIndex("by_artifactId", (q) => q.eq("artifactId", artifactId))
+        .collect();
+      const currentVersion = artifact?.currentVersionId ? await ctx.db.get(artifact.currentVersionId) : null;
+      return { artifact, versions, currentVersion };
+    });
+
+    expect(result).toMatchObject({ updated: true, version: 2, blockIndex: 0 });
+    expect(state.artifact?.version).toBe(2);
+    expect(state.artifact?.chunkingStatus).toBe("pending");
+    expect(state.artifact?.chunkingFailureReason).toBeUndefined();
+    expect(state.versions.map((version) => version.version).sort()).toEqual([1, 2]);
+    expect(state.currentVersion?.version).toBe(2);
+    expect(state.currentVersion?.contentMarkdown).toContain("A[Start] --> B[Done]");
+  });
+});

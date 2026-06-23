@@ -10,10 +10,12 @@
 
 import type * as artifactChunkStore from "../artifactChunkStore.js";
 import type * as artifactFolders from "../artifactFolders.js";
+import type * as artifactHtml from "../artifactHtml.js";
 import type * as artifactIndexing from "../artifactIndexing.js";
 import type * as artifactMermaidRepair from "../artifactMermaidRepair.js";
 import type * as artifactMermaidRepairNode from "../artifactMermaidRepairNode.js";
 import type * as artifactStore from "../artifactStore.js";
+import type * as artifactVersions from "../artifactVersions.js";
 import type * as artifactViews from "../artifactViews.js";
 import type * as artifacts from "../artifacts.js";
 import type * as chat_archiveState from "../chat/archiveState.js";
@@ -76,6 +78,7 @@ import type * as lib_entitlements from "../lib/entitlements.js";
 import type * as lib_functionResultSchemas from "../lib/functionResultSchemas.js";
 import type * as lib_github from "../lib/github.js";
 import type * as lib_githubAppAuthNode from "../lib/githubAppAuthNode.js";
+import type * as lib_htmlArtifacts from "../lib/htmlArtifacts.js";
 import type * as lib_importLifecycle from "../lib/importLifecycle.js";
 import type * as lib_importPipeline from "../lib/importPipeline.js";
 import type * as lib_importSnapshotPersistence from "../lib/importSnapshotPersistence.js";
@@ -147,10 +150,12 @@ import type {
 declare const fullApi: ApiFromModules<{
   artifactChunkStore: typeof artifactChunkStore;
   artifactFolders: typeof artifactFolders;
+  artifactHtml: typeof artifactHtml;
   artifactIndexing: typeof artifactIndexing;
   artifactMermaidRepair: typeof artifactMermaidRepair;
   artifactMermaidRepairNode: typeof artifactMermaidRepairNode;
   artifactStore: typeof artifactStore;
+  artifactVersions: typeof artifactVersions;
   artifactViews: typeof artifactViews;
   artifacts: typeof artifacts;
   "chat/archiveState": typeof chat_archiveState;
@@ -213,6 +218,7 @@ declare const fullApi: ApiFromModules<{
   "lib/functionResultSchemas": typeof lib_functionResultSchemas;
   "lib/github": typeof lib_github;
   "lib/githubAppAuthNode": typeof lib_githubAppAuthNode;
+  "lib/htmlArtifacts": typeof lib_htmlArtifacts;
   "lib/importLifecycle": typeof lib_importLifecycle;
   "lib/importPipeline": typeof lib_importPipeline;
   "lib/importSnapshotPersistence": typeof lib_importSnapshotPersistence;

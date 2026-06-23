@@ -236,13 +236,20 @@ describe("libraryArtifactDrafts", () => {
 
       const state = await t.run(async (ctx) => ({
         artifact: await ctx.db.get(result.artifactId),
+        version: await ctx.db
+          .query("artifactVersions")
+          .withIndex("by_artifactId_and_version", (q) => q.eq("artifactId", result.artifactId).eq("version", 1))
+          .unique(),
         draft: await ctx.db.get(draftId),
       }));
       expect(state.artifact?.kind).toBe("custom_document");
       expect(state.artifact?.folderId).toBe(folderId);
+      expect(state.artifact?.renderFormat ?? "markdown").toBe("markdown");
+      expect(state.artifact?.currentVersionId).toBe(state.version?._id);
       expect(state.artifact?.lastVerifiedAt).toEqual(expect.any(Number));
       expect(state.artifact?.alignedImportCommitSha).toBe("abc123");
       expect(state.artifact?.generatedByModel).toBe("gpt-5.5");
+      expect(state.version?.contentMarkdown).toContain("Codebase-backed content");
       expect(state.draft?.status).toBe("applied");
     });
   });
@@ -327,12 +334,18 @@ describe("libraryArtifactDrafts", () => {
 
       const state = await t.run(async (ctx) => ({
         artifact: await ctx.db.get(artifactId),
+        version: await ctx.db
+          .query("artifactVersions")
+          .withIndex("by_artifactId_and_version", (q) => q.eq("artifactId", artifactId).eq("version", 2))
+          .unique(),
         draft: await ctx.db.get(draftId),
       }));
       expect(result.artifactId).toBe(artifactId);
       expect(state.artifact?.title).toBe("Updated architecture");
       expect(state.artifact?.contentMarkdown).toContain("Codebase-backed content");
       expect(state.artifact?.version).toBe(2);
+      expect(state.artifact?.currentVersionId).toBe(state.version?._id);
+      expect(state.version?.title).toBe("Updated architecture");
       expect(state.artifact?.lastVerifiedAt).toEqual(expect.any(Number));
       expect(state.artifact?.chunkingStatus).toBe("pending");
       expect(state.draft?.status).toBe("applied");
@@ -454,6 +467,7 @@ describe("libraryArtifactDrafts", () => {
       title: "Generated runbook",
       summary: "Generated summary",
       contentMarkdown: "# Generated private content",
+      outputFormat: "markdown",
       sandboxId,
       generatedByProvider: "openai",
       generatedByModel: "gpt-5.5",

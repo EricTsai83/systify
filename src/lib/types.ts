@@ -50,6 +50,8 @@ export type ArtifactListItem = Pick<
   | "title"
   | "summary"
   | "version"
+  | "renderFormat"
+  | "currentVersionId"
   | "folderId"
   | "lastVerifiedAt"
   | "chunkingStatus"

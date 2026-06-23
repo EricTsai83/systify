@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { getFunctionName } from "convex/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
@@ -253,6 +253,7 @@ let queryState: {
   threadDrafts: DraftEntry[];
   threads: Doc<"threads">[];
   threadSummary: Pick<Doc<"threads">, "title" | "lockedProvider" | "defaultModelName"> | null;
+  draftHtmlPreview: { url: string; htmlHash?: string; htmlByteLength?: number } | null | undefined;
 };
 
 function functionName(reference: unknown): string {
@@ -357,6 +358,7 @@ beforeEach(() => {
     threadDrafts: [],
     threads: [],
     threadSummary: null,
+    draftHtmlPreview: { url: "https://storage.example/report.html", htmlHash: "abc123", htmlByteLength: 2048 },
   };
 
   mocks.archiveThread.mockReset().mockResolvedValue(null);
@@ -391,6 +393,7 @@ beforeEach(() => {
     if (name.endsWith("listByThread")) return queryState.threadDrafts;
     if (name.endsWith("listRecentByRepository")) return queryState.recentDrafts;
     if (name.endsWith("listPickableModels")) return catalogEntries;
+    if (name.endsWith("getDraftPreviewUrl")) return queryState.draftHtmlPreview;
     if (name.endsWith("getById")) return queryState.activeArtifact;
     return undefined;
   });
@@ -404,28 +407,31 @@ describe("LibraryAskPanel artifact drafts", () => {
   test("shows the document action confirmation before requesting a draft", () => {
     renderPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: /Create artifact/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Draft artifact/i }));
 
-    expect(screen.getByTestId("artifact-draft-confirm-card")).toBeInTheDocument();
+    const card = screen.getByTestId("artifact-draft-confirm-card");
+    expect(card).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Create artifact" })).toBeInTheDocument();
     expect(
       screen.getByText("Repository code is ready. The draft will treat the codebase as the source of truth."),
     ).toBeInTheDocument();
     expect(screen.getByText("Add a title for the new artifact.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Draft artifact/i })).toBeDisabled();
+    expect(within(card).getByRole("button", { name: /Draft artifact/i })).toBeDisabled();
     expect(mocks.requestDraft).not.toHaveBeenCalled();
   });
 
   test("allows updating the open artifact without custom instructions", async () => {
     renderPanel({ activeArtifactId });
 
-    fireEvent.click(screen.getByRole("button", { name: /Update open artifact/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Draft update/i }));
 
     expect(screen.getByTestId("artifact-draft-confirm-card")).toBeInTheDocument();
     expect(screen.getByText("Instructions (optional)")).toBeInTheDocument();
     expect(screen.getByText(/codebase source of truth/i)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Draft update/i }));
+    fireEvent.click(
+      within(screen.getByTestId("artifact-draft-confirm-card")).getByRole("button", { name: /Draft update/i }),
+    );
 
     await waitFor(() => {
       expect(mocks.requestDraft).toHaveBeenCalledWith(
@@ -439,6 +445,64 @@ describe("LibraryAskPanel artifact drafts", () => {
         }),
       );
     });
+  });
+
+  test("requests an explicit HTML report draft", async () => {
+    renderPanel();
+
+    fireEvent.click(screen.getByRole("button", { name: /Draft HTML report/i }));
+
+    const card = screen.getByTestId("artifact-draft-confirm-card");
+    expect(within(card).getByRole("heading", { name: "Draft HTML report" })).toBeInTheDocument();
+    expect(within(card).getByText("Uses Library knowledge by default, not live source.")).toBeInTheDocument();
+
+    fireEvent.change(within(card).getByLabelText("Title"), { target: { value: "Executive report" } });
+    fireEvent.change(within(card).getByLabelText("Instructions"), {
+      target: { value: "Create a polished architecture report." },
+    });
+    fireEvent.click(within(card).getByRole("button", { name: /Draft HTML report/i }));
+
+    await waitFor(() => {
+      expect(mocks.requestDraft).toHaveBeenCalledWith(
+        expect.objectContaining({
+          repositoryId,
+          operation: "create",
+          outputFormat: "html",
+          title: "Executive report",
+          prompt: "Create a polished architecture report.",
+          provider: "openai",
+          modelName: "gpt-5.5",
+        }),
+      );
+    });
+  });
+
+  test("renders ready HTML draft cards with an iframe preview", () => {
+    queryState.threadSummary = { title: "Library Ask", lockedProvider: undefined, defaultModelName: undefined };
+    queryState.threadDrafts = [
+      {
+        draft: makeDraft({
+          status: "ready",
+          operation: "create",
+          outputFormat: "html",
+          title: "Executive report",
+          contentMarkdown: "# Executive report\n\nSource-backed companion.",
+          htmlHash: "abcdef123456",
+          htmlByteLength: 2048,
+          sourceArtifacts: [{ artifactId: "artifact_source" as Id<"artifacts">, version: 2, title: "Source" }],
+          sourceChunkIds: ["chunk_source" as Id<"artifactChunks">],
+        }),
+        job: makeJob({ status: "completed", stage: "Ready to review", progress: 1 }),
+      },
+    ];
+
+    renderPanel({ threadId });
+
+    const iframe = screen.getByTitle("Executive report HTML preview");
+    expect(iframe).toHaveAttribute("sandbox", "");
+    expect(iframe).toHaveAttribute("referrerpolicy", "no-referrer");
+    expect(iframe).toHaveAttribute("src", "https://storage.example/report.html");
+    expect(screen.queryByText("# Executive report")).not.toBeInTheDocument();
   });
 
   test("renders an active draft job card with progress", () => {
@@ -581,7 +645,7 @@ describe("LibraryAskPanel artifact drafts", () => {
   test("disables update action until an artifact is open", () => {
     renderPanel({ activeArtifactId: null });
 
-    expect(screen.getByRole("button", { name: /Update open artifact/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Draft update/i })).toBeDisabled();
   });
 
   test("holds composer tools until the library model catalog is ready", () => {
@@ -599,7 +663,7 @@ describe("LibraryAskPanel artifact drafts", () => {
 
     renderPanel();
 
-    expect(screen.queryByRole("button", { name: /Create artifact/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Draft artifact/i })).not.toBeInTheDocument();
     expect(screen.queryByText("GPT-5.5")).not.toBeInTheDocument();
     expect(screen.getByTestId("library-ask-composer-tools-placeholder")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
@@ -610,7 +674,7 @@ describe("LibraryAskPanel artifact drafts", () => {
 
     renderPanel();
 
-    expect(screen.queryByRole("button", { name: /Create artifact/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Draft artifact/i })).not.toBeInTheDocument();
     expect(screen.queryByText("GPT-5.5")).not.toBeInTheDocument();
     expect(screen.getByTestId("library-ask-composer-tools-placeholder")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();

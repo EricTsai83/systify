@@ -7,6 +7,12 @@ import { assertOwnedBy } from "./ownedDocs";
 type ArtifactKind = Doc<"artifacts">["kind"];
 type ChunkingFailureReason = NonNullable<Doc<"artifacts">["chunkingFailureReason"]>;
 type ChunkingStatus = NonNullable<Doc<"artifacts">["chunkingStatus"]>;
+type ArtifactRenderFormat = "markdown" | "html";
+type ArtifactSourceReference = {
+  artifactId: Id<"artifacts">;
+  version: number;
+  title: string;
+};
 
 export interface CreateArtifactWriteArgs {
   threadId?: Id<"threads">;
@@ -17,8 +23,16 @@ export interface CreateArtifactWriteArgs {
   title: string;
   summary: string;
   contentMarkdown: string;
+  renderFormat?: ArtifactRenderFormat;
+  htmlStorageId?: Id<"_storage">;
+  htmlHash?: string;
+  htmlByteLength?: number;
+  htmlValidationErrors?: string[];
+  sourceArtifacts?: ArtifactSourceReference[];
+  sourceChunkIds?: Id<"artifactChunks">[];
   alignedImportCommitSha?: string;
   folderId?: Id<"artifactFolders">;
+  lastVerifiedAt?: number | null;
   generatedByProvider?: LlmProvider;
   generatedByModel?: string;
   promptVersion?: number;
@@ -30,8 +44,15 @@ export interface UpdateArtifactWriteArgs {
   title?: string;
   summary?: string;
   contentMarkdown?: string;
+  renderFormat?: ArtifactRenderFormat;
+  htmlStorageId?: Id<"_storage">;
+  htmlHash?: string;
+  htmlByteLength?: number;
+  htmlValidationErrors?: string[];
+  sourceArtifacts?: ArtifactSourceReference[];
+  sourceChunkIds?: Id<"artifactChunks">[];
   expectedVersion?: number;
-  lastVerifiedAt?: number;
+  lastVerifiedAt?: number | null;
   alignedImportCommitSha?: string;
   generatedByProvider?: LlmProvider;
   generatedByModel?: string;
@@ -62,6 +83,7 @@ export async function createArtifactWrite(ctx: MutationCtx, args: CreateArtifact
   });
 
   const now = Date.now();
+  const renderFormat = args.renderFormat ?? "markdown";
   const artifactId = await ctx.db.insert("artifacts", {
     threadId: args.threadId,
     repositoryId: args.repositoryId,
@@ -71,10 +93,11 @@ export async function createArtifactWrite(ctx: MutationCtx, args: CreateArtifact
     title: args.title,
     summary: args.summary,
     contentMarkdown: args.contentMarkdown,
+    renderFormat,
     version: 1,
     folderId: args.folderId,
     alignedImportCommitSha: args.alignedImportCommitSha,
-    lastVerifiedAt: now,
+    lastVerifiedAt: args.lastVerifiedAt === null ? undefined : (args.lastVerifiedAt ?? now),
     chunkingStatus: args.repositoryId ? "pending" : undefined,
     updatedAt: now,
     generatedByProvider: args.generatedByProvider,
@@ -82,6 +105,25 @@ export async function createArtifactWrite(ctx: MutationCtx, args: CreateArtifact
     promptVersion: args.promptVersion,
     kindRunId: args.kindRunId,
   });
+  const versionId = await createArtifactVersionWrite(ctx, {
+    artifactId,
+    version: 1,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    repositoryId: args.repositoryId,
+    title: args.title,
+    summary: args.summary,
+    contentMarkdown: args.contentMarkdown,
+    renderFormat,
+    htmlStorageId: args.htmlStorageId,
+    htmlHash: args.htmlHash,
+    htmlByteLength: args.htmlByteLength,
+    htmlValidationErrors: args.renderFormat === "html" ? args.htmlValidationErrors : undefined,
+    sourceArtifacts: args.sourceArtifacts,
+    sourceChunkIds: args.sourceChunkIds,
+    createdAt: now,
+    jobId: args.jobId,
+  });
+  await ctx.db.patch(artifactId, { currentVersionId: versionId });
   await scheduleArtifactReindex(ctx, { artifactId, repositoryId: args.repositoryId });
   return artifactId;
 }
@@ -102,6 +144,7 @@ export async function updateArtifactWrite(
     title?: string;
     summary?: string;
     contentMarkdown?: string;
+    renderFormat?: ArtifactRenderFormat;
     version?: number;
     chunkingStatus?: "pending";
     chunkingFailureReason?: undefined;
@@ -111,6 +154,7 @@ export async function updateArtifactWrite(
     generatedByProvider?: LlmProvider;
     generatedByModel?: string;
     promptVersion?: number;
+    currentVersionId?: Id<"artifactVersions">;
   } = {};
   let changed = false;
   if (args.title !== undefined) {
@@ -129,8 +173,12 @@ export async function updateArtifactWrite(
     }
     changed = true;
   }
+  if (args.renderFormat !== undefined) {
+    patch.renderFormat = args.renderFormat;
+    changed = true;
+  }
   if (args.lastVerifiedAt !== undefined) {
-    patch.lastVerifiedAt = args.lastVerifiedAt;
+    patch.lastVerifiedAt = args.lastVerifiedAt === null ? undefined : args.lastVerifiedAt;
     changed = true;
   }
   if (args.alignedImportCommitSha !== undefined) {
@@ -149,10 +197,48 @@ export async function updateArtifactWrite(
     patch.promptVersion = args.promptVersion;
     changed = true;
   }
+  const versionMetadataChanged =
+    args.htmlStorageId !== undefined ||
+    args.htmlHash !== undefined ||
+    args.htmlByteLength !== undefined ||
+    args.htmlValidationErrors !== undefined ||
+    args.sourceArtifacts !== undefined ||
+    args.sourceChunkIds !== undefined;
+  if (versionMetadataChanged) {
+    changed = true;
+  }
 
   if (changed) {
-    if (args.title !== undefined || args.summary !== undefined || args.contentMarkdown !== undefined) {
-      patch.version = artifact.version + 1;
+    if (
+      args.title !== undefined ||
+      args.summary !== undefined ||
+      args.contentMarkdown !== undefined ||
+      args.renderFormat !== undefined ||
+      versionMetadataChanged
+    ) {
+      const nextVersion = artifact.version + 1;
+      const renderFormat = args.renderFormat ?? artifact.renderFormat ?? "markdown";
+      const previousHtml = renderFormat === "html" ? await getCurrentVersionHtmlFields(ctx, artifact) : {};
+      const versionId = await createArtifactVersionWrite(ctx, {
+        artifactId: artifact._id,
+        version: nextVersion,
+        ownerTokenIdentifier: artifact.ownerTokenIdentifier,
+        repositoryId: artifact.repositoryId,
+        title: args.title ?? artifact.title,
+        summary: args.summary ?? artifact.summary,
+        contentMarkdown: args.contentMarkdown ?? artifact.contentMarkdown,
+        renderFormat,
+        htmlStorageId: args.htmlStorageId ?? previousHtml.htmlStorageId,
+        htmlHash: args.htmlHash ?? previousHtml.htmlHash,
+        htmlByteLength: args.htmlByteLength ?? previousHtml.htmlByteLength,
+        htmlValidationErrors: args.htmlValidationErrors ?? previousHtml.htmlValidationErrors,
+        sourceArtifacts: args.sourceArtifacts ?? previousHtml.sourceArtifacts,
+        sourceChunkIds: args.sourceChunkIds ?? previousHtml.sourceChunkIds,
+        createdAt: Date.now(),
+        jobId: artifact.jobId,
+      });
+      patch.version = nextVersion;
+      patch.currentVersionId = versionId;
     }
     patch.updatedAt = Date.now();
     await ctx.db.patch(args.artifactId, patch);
@@ -162,6 +248,48 @@ export async function updateArtifactWrite(
     });
   }
   return { updated: changed };
+}
+
+export async function createArtifactVersionWrite(
+  ctx: MutationCtx,
+  args: {
+    artifactId: Id<"artifacts">;
+    version: number;
+    ownerTokenIdentifier: string;
+    repositoryId?: Id<"repositories">;
+    title: string;
+    summary: string;
+    contentMarkdown: string;
+    renderFormat: ArtifactRenderFormat;
+    htmlStorageId?: Id<"_storage">;
+    htmlHash?: string;
+    htmlByteLength?: number;
+    htmlValidationErrors?: string[];
+    sourceArtifacts?: ArtifactSourceReference[];
+    sourceChunkIds?: Id<"artifactChunks">[];
+    createdAt: number;
+    jobId?: Id<"jobs">;
+  },
+): Promise<Id<"artifactVersions">> {
+  return await ctx.db.insert("artifactVersions", {
+    artifactId: args.artifactId,
+    version: args.version,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    repositoryId: args.repositoryId,
+    title: args.title,
+    summary: args.summary,
+    contentMarkdown: args.contentMarkdown,
+    renderFormat: args.renderFormat,
+    htmlStorageId: args.renderFormat === "html" ? args.htmlStorageId : undefined,
+    htmlHash: args.renderFormat === "html" ? args.htmlHash : undefined,
+    htmlByteLength: args.renderFormat === "html" ? args.htmlByteLength : undefined,
+    htmlValidationStatus: args.renderFormat === "html" ? "valid" : undefined,
+    htmlValidationErrors: args.htmlValidationErrors,
+    sourceArtifacts: args.sourceArtifacts,
+    sourceChunkIds: args.sourceChunkIds,
+    createdAt: args.createdAt,
+    jobId: args.jobId,
+  });
 }
 
 export async function replaceArtifactInFolderWrite(
@@ -225,7 +353,31 @@ export async function deleteArtifactWrite(ctx: MutationCtx, artifactId: Id<"arti
     }
     hasMoreViews = views.length === PAGE_SIZE;
   }
+  await deleteArtifactVersionsAndHtmlStorage(ctx, artifactId, PAGE_SIZE);
   await ctx.db.delete(artifactId);
+}
+
+async function deleteArtifactVersionsAndHtmlStorage(
+  ctx: MutationCtx,
+  artifactId: Id<"artifacts">,
+  pageSize: number,
+): Promise<void> {
+  const deletedStorageIds = new Set<Id<"_storage">>();
+  let hasMoreVersions = true;
+  while (hasMoreVersions) {
+    const versions = await ctx.db
+      .query("artifactVersions")
+      .withIndex("by_artifactId", (q) => q.eq("artifactId", artifactId))
+      .take(pageSize);
+    for (const version of versions) {
+      if (version.htmlStorageId && !deletedStorageIds.has(version.htmlStorageId)) {
+        await ctx.storage.delete(version.htmlStorageId);
+        deletedStorageIds.add(version.htmlStorageId);
+      }
+      await ctx.db.delete(version._id);
+    }
+    hasMoreVersions = versions.length === pageSize;
+  }
 }
 
 export async function markArtifactChunkingStatusWrite(
@@ -290,6 +442,34 @@ async function validateArtifactFolder(
   if (args.artifact && args.artifact.repositoryId && folder.repositoryId !== args.artifact.repositoryId) {
     throw new Error("Cannot move an artifact to a folder from a different repository.");
   }
+}
+
+async function getCurrentVersionHtmlFields(
+  ctx: MutationCtx,
+  artifact: Doc<"artifacts">,
+): Promise<{
+  htmlStorageId?: Id<"_storage">;
+  htmlHash?: string;
+  htmlByteLength?: number;
+  htmlValidationErrors?: string[];
+  sourceArtifacts?: ArtifactSourceReference[];
+  sourceChunkIds?: Id<"artifactChunks">[];
+}> {
+  if (!artifact.currentVersionId) {
+    return {};
+  }
+  const currentVersion = await ctx.db.get(artifact.currentVersionId);
+  if (!currentVersion || currentVersion.artifactId !== artifact._id || currentVersion.renderFormat !== "html") {
+    return {};
+  }
+  return {
+    htmlStorageId: currentVersion.htmlStorageId,
+    htmlHash: currentVersion.htmlHash,
+    htmlByteLength: currentVersion.htmlByteLength,
+    htmlValidationErrors: currentVersion.htmlValidationErrors,
+    sourceArtifacts: currentVersion.sourceArtifacts,
+    sourceChunkIds: currentVersion.sourceChunkIds,
+  };
 }
 
 async function scheduleArtifactReindex(

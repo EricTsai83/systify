@@ -3,6 +3,7 @@ import { useMutation, useQuery } from "convex/react";
 import {
   ArrowClockwiseIcon,
   CheckIcon,
+  FileHtmlIcon,
   FilePlusIcon,
   GitDiffIcon,
   ProhibitIcon,
@@ -38,6 +39,7 @@ export type LibraryArtifactDraftOperation = "create" | "update";
 
 export type LibraryArtifactDraftIntent = {
   operation: LibraryArtifactDraftOperation;
+  outputFormat: "markdown" | "html";
   title: string;
   folderId: FolderId | null;
   prompt: string;
@@ -77,9 +79,12 @@ export function LibraryArtifactDraftConfirmCard({
   isSubmitting: boolean;
 }) {
   const isCreate = intent.operation === "create";
+  const isHtml = intent.outputFormat === "html";
+  const modelCapability = isHtml ? "library" : "sandbox";
+  const preferenceScope = isHtml ? "library" : "sandbox";
   const missingTitle = isCreate && intent.title.trim().length === 0;
   const missingPrompt = isCreate && intent.prompt.trim().length === 0;
-  const submitLabel = isCreate ? "Draft artifact" : "Draft update";
+  const submitLabel = isHtml ? "Draft HTML report" : isCreate ? "Draft artifact" : "Draft update";
   const submitDisabledReason =
     disabledReason ??
     (modelPick ? undefined : "Loading models…") ??
@@ -87,24 +92,32 @@ export function LibraryArtifactDraftConfirmCard({
     (missingPrompt ? "Describe what to draft." : undefined);
   const helperText =
     submitDisabledReason ??
-    (isCreate
-      ? "The draft is only saved after you review and apply it."
-      : "Leave instructions blank to refresh this artifact from the codebase source of truth.");
+    (isHtml
+      ? "Uses Library knowledge by default, not live source."
+      : isCreate
+        ? "The draft is only saved after you review and apply it."
+        : "Leave instructions blank to refresh this artifact from the codebase source of truth.");
   const helperTone = disabledReason ? "text-destructive" : "text-muted-foreground";
 
   return (
     <div className="border border-border bg-card px-3 py-3 shadow-sm" data-testid="artifact-draft-confirm-card">
       <div className="flex items-start gap-2">
         <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-          {isCreate ? <FilePlusIcon size={15} weight="bold" /> : <GitDiffIcon size={15} weight="bold" />}
+          {isHtml ? (
+            <FileHtmlIcon size={15} weight="bold" />
+          ) : isCreate ? (
+            <FilePlusIcon size={15} weight="bold" />
+          ) : (
+            <GitDiffIcon size={15} weight="bold" />
+          )}
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
             <h3 className="truncate text-[13px] font-semibold text-foreground">
-              {isCreate ? "Create artifact" : "Update open artifact"}
+              {isHtml ? "Draft HTML report" : isCreate ? "Create artifact" : "Update open artifact"}
             </h3>
             <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-              Uses codebase
+              {isHtml ? "Uses Library" : "Uses codebase"}
             </span>
           </div>
           <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{repositoryCodeLabel}</p>
@@ -159,8 +172,8 @@ export function LibraryArtifactDraftConfirmCard({
             <PromptInputModelPicker
               value={modelPick}
               onChange={onModelPickChange}
-              capability="sandbox"
-              preferenceScope="sandbox"
+              capability={modelCapability}
+              preferenceScope={preferenceScope}
               disabled={isSubmitting}
               getDisabledReason={(entry) =>
                 premiumModelsDisabledReason && entry.capability === "sandbox" ? premiumModelsDisabledReason : null
@@ -171,7 +184,7 @@ export function LibraryArtifactDraftConfirmCard({
               onChange={onReasoningEffortChange}
               provider={modelPick?.provider}
               modelName={modelPick?.modelName}
-              preferenceScope="sandbox"
+              preferenceScope={preferenceScope}
               disabled={isSubmitting}
               disabledReasoningEfforts={highReasoningDisabledReason ? ["high", "xhigh"] : []}
               disabledReasoningEffortMessage={highReasoningDisabledReason}
@@ -216,6 +229,12 @@ export function LibraryArtifactDraftCard({
   const applyDraft = useMutation(api.libraryArtifactDrafts.applyDraft);
   const discardDraft = useMutation(api.libraryArtifactDrafts.discardDraft);
   const regenerateDraft = useMutation(api.libraryArtifactDrafts.regenerateDraft);
+  const status = entry.draft.status;
+  const isHtmlDraft = (entry.draft.outputFormat ?? "markdown") === "html";
+  const htmlPreview = useQuery(
+    api.artifactHtml.getDraftPreviewUrl,
+    isHtmlDraft && status === "ready" ? { draftId: entry.draft._id } : "skip",
+  );
   const targetArtifact = useQuery(
     api.artifacts.getById,
     entry.draft.targetArtifactId ? { artifactId: entry.draft.targetArtifactId } : "skip",
@@ -280,10 +299,13 @@ export function LibraryArtifactDraftCard({
     }
   });
 
-  const status = entry.draft.status;
   const isActive = status === "queued" || status === "running";
   const isReady = status === "ready";
-  const title = entry.draft.operation === "create" ? "New artifact draft" : "Artifact update draft";
+  const title = isHtmlDraft
+    ? "HTML report draft"
+    : entry.draft.operation === "create"
+      ? "New artifact draft"
+      : "Artifact update draft";
   const progress = Math.round((entry.job?.progress ?? (isActive ? 0.05 : 1)) * 100);
 
   return (
@@ -340,7 +362,9 @@ export function LibraryArtifactDraftCard({
               <p className="text-[11px] leading-4 text-muted-foreground">Changes: {entry.draft.changeSummary}</p>
             ) : null}
           </div>
-          {entry.draft.operation === "update" ? (
+          {isHtmlDraft ? (
+            <LibraryArtifactHtmlDraftPreview draft={entry.draft} preview={htmlPreview} />
+          ) : entry.draft.operation === "update" ? (
             targetArtifactPreviewReason ? (
               <p className="border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
                 {targetArtifactPreviewReason}
@@ -537,6 +561,65 @@ function buildLineDiff(beforeMarkdown: string, afterMarkdown: string): DiffLine[
   }
 
   return compactContext(lines, 3, 160);
+}
+
+function LibraryArtifactHtmlDraftPreview({
+  draft,
+  preview,
+}: {
+  draft: Doc<"artifactDrafts">;
+  preview:
+    | {
+        url: string;
+        htmlHash?: string;
+        htmlByteLength?: number;
+        validationErrors?: string[];
+      }
+    | null
+    | undefined;
+}) {
+  if (preview === undefined) {
+    return <p className="text-[11px] text-muted-foreground">Loading HTML preview…</p>;
+  }
+  if (preview === null) {
+    return (
+      <p className="border border-destructive/30 bg-destructive/10 px-3 py-2 text-[12px] leading-5 text-destructive">
+        HTML preview is not available.
+      </p>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="grid grid-cols-2 gap-2 text-[11px] text-muted-foreground">
+        <span>HTML {formatByteLength(preview.htmlByteLength ?? draft.htmlByteLength)}</span>
+        <span className="truncate text-right">
+          {(preview.htmlHash ?? draft.htmlHash)
+            ? `Hash ${(preview.htmlHash ?? draft.htmlHash)?.slice(0, 12)}`
+            : "Hash pending"}
+        </span>
+        <span>{draft.sourceArtifacts?.length ?? 0} source artifacts</span>
+        <span className="text-right">{draft.sourceChunkIds?.length ?? 0} source chunks</span>
+      </div>
+      <iframe
+        title={`${draft.title} HTML preview`}
+        sandbox=""
+        referrerPolicy="no-referrer"
+        src={preview.url}
+        className="h-96 w-full border border-border/70 bg-background"
+      />
+    </div>
+  );
+}
+
+function formatByteLength(value: number | undefined): string {
+  if (value === undefined) {
+    return "size pending";
+  }
+  if (value < 1024) {
+    return `${value} B`;
+  }
+  return `${(value / 1024).toFixed(1)} KB`;
 }
 
 function compactContext(lines: DiffLine[], radius: number, maxLines: number): DiffLine[] {

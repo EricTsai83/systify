@@ -15,6 +15,7 @@ const RRF_K = 60;
 export interface RetrievedChunk {
   chunkId: Id<"artifactChunks">;
   artifactId: Id<"artifacts">;
+  artifactVersion: number;
   artifactTitle: string;
   artifactKind: Doc<"artifacts">["kind"];
   headingPath: string[];
@@ -105,6 +106,7 @@ export async function retrieveArtifactChunks(ctx: ActionCtx, args: RetrieveArgs)
   return ranked.map((candidate) => ({
     chunkId: candidate.chunkId,
     artifactId: candidate.artifactId,
+    artifactVersion: candidate.artifactVersion,
     artifactTitle: candidate.artifactTitle,
     artifactKind: candidate.artifactKind,
     headingPath: candidate.headingPath,
@@ -145,10 +147,12 @@ async function retrieveLexical(
 }
 
 async function retrieveSemantic(ctx: ActionCtx, args: RetrieveArgs, candidateK: number): Promise<RetrievalHit[]> {
-  const sourceId = buildUsageSourceId.libraryRetrieval(
-    args.messageId ?? args.threadId ?? "unattributed",
-    stableHash(args.query),
-  );
+  const sourceId = buildUsageSourceId.libraryRetrieval({
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    repositoryId: args.repositoryId,
+    messageOrThreadId: args.messageId ?? args.threadId ?? "unattributed",
+    queryFingerprint: await stableQueryFingerprint(args.query),
+  });
   const { embeddings } = await embedWithAccounting(ctx, {
     values: [args.query],
     sourceId,
@@ -234,11 +238,7 @@ function normalizeLimit(value: number | undefined, fallback: number): number {
   return Math.floor(value);
 }
 
-function stableHash(value: string): string {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
+async function stableQueryFingerprint(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }

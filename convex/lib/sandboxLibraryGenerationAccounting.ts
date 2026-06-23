@@ -6,6 +6,7 @@ import {
   reserveUsageLifecycleInMutation,
   settleUsageLifecycleInMutation,
 } from "./usageAccountingMutations";
+import type { UsageAccountingPolicy } from "./usageAccounting";
 
 export async function reserveSandboxLibraryGenerationBudget(
   ctx: MutationCtx,
@@ -14,6 +15,7 @@ export async function reserveSandboxLibraryGenerationBudget(
     ownerTokenIdentifier: string;
     repositoryId: Id<"repositories"> | null | undefined;
     occurredAtMs: number;
+    sandboxDailyCap?: UsageAccountingPolicy["sandboxDailyCap"];
   },
 ) {
   await reserveUsageLifecycleInMutation(ctx, {
@@ -22,6 +24,7 @@ export async function reserveSandboxLibraryGenerationBudget(
     repositoryId: args.repositoryId ?? null,
     feature: "systemDesignGeneration",
     occurredAtMs: args.occurredAtMs,
+    sandboxDailyCap: args.sandboxDailyCap,
   });
 }
 

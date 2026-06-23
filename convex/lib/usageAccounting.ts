@@ -121,7 +121,12 @@ export const buildUsageSourceId = {
   artifactIndexing(artifactId: Id<"artifacts">, artifactVersion: number, batchIndex: number): string {
     return `artifactIndexing:${artifactId}:${artifactVersion}:${batchIndex}`;
   },
-  libraryRetrieval(messageOrThreadId: Id<"messages"> | Id<"threads"> | "unattributed", queryHash: string): string {
-    return `libraryRetrieval:${messageOrThreadId}:${queryHash}`;
+  libraryRetrieval(args: {
+    ownerTokenIdentifier: string;
+    repositoryId: Id<"repositories">;
+    messageOrThreadId: Id<"messages"> | Id<"threads"> | "unattributed";
+    queryFingerprint: string;
+  }): string {
+    return `libraryRetrieval:${args.ownerTokenIdentifier}:${args.repositoryId}:${args.messageOrThreadId}:${args.queryFingerprint}`;
   },
 };

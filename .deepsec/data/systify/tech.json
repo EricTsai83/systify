@@ -1,6 +1,6 @@
 {
   "tags": ["bun", "github-actions", "node", "react"],
   "sentinels": ["bun.lock", "package.json"],
-  "detectedAt": "2026-06-11T14:24:57.459Z",
+  "detectedAt": "2026-06-23T18:49:34.938Z",
   "rootPath": "/Users/eric/personal-project/systify"
 }

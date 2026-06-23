@@ -105,6 +105,7 @@ interface ArtifactViewOpts {
 export function toArtifactView(artifact: Doc<"artifacts">, opts: ArtifactViewOpts) {
   return {
     ...artifact,
+    renderFormat: artifact.renderFormat ?? ("markdown" as const),
     freshness: computeFreshness({ lastVerifiedAt: artifact.lastVerifiedAt, now: opts.now }),
     ...(hasImportSnapshotDrift(artifact, opts.latestImportSha) ? { importDriftFromLatestSync: true as const } : {}),
   };
@@ -131,6 +132,8 @@ export function toArtifactMetadataView(artifact: Doc<"artifacts">, opts: Artifac
     title: artifact.title,
     summary: artifact.summary,
     version: artifact.version,
+    renderFormat: artifact.renderFormat ?? ("markdown" as const),
+    currentVersionId: artifact.currentVersionId,
     folderId: artifact.folderId,
     lastVerifiedAt: artifact.lastVerifiedAt,
     chunkingStatus: artifact.chunkingStatus,

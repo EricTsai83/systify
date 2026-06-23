@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { BookOpenIcon, FilePlusIcon, GitDiffIcon, PaperPlaneTiltIcon, SparkleIcon } from "@phosphor-icons/react";
+import {
+  BookOpenIcon,
+  FileHtmlIcon,
+  FilePlusIcon,
+  GitDiffIcon,
+  PaperPlaneTiltIcon,
+  SparkleIcon,
+} from "@phosphor-icons/react";
 import { useMutation, useQuery } from "convex/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
@@ -393,12 +400,16 @@ export function LibraryAskPanel({
     premiumModelsDisabledReason,
     highReasoningDisabledReason,
   });
-  const draftDefaultPick = useDefaultModelPick({ capability: "sandbox", preferenceScope: "sandbox" });
-  const draftModelPick = draftUserPick ?? draftDefaultPick ?? null;
+  const markdownDraftDefaultPick = useDefaultModelPick({ capability: "sandbox", preferenceScope: "sandbox" });
+  const htmlDraftDefaultPick = useDefaultModelPick({ capability: "library", preferenceScope: "library" });
+  const draftOutputFormat = draftIntent?.outputFormat ?? "markdown";
+  const draftPreferenceScope = draftOutputFormat === "html" ? "library" : "sandbox";
+  const draftModelPick =
+    draftUserPick ?? (draftOutputFormat === "html" ? htmlDraftDefaultPick : markdownDraftDefaultPick) ?? null;
   const draftModelAccessDisabledReason = useModelAccessDisabledReason({
     modelPick: draftModelPick,
     reasoningEffort: draftReasoningEffort,
-    preferenceScope: "sandbox",
+    preferenceScope: draftPreferenceScope,
     premiumModelsDisabledReason,
     highReasoningDisabledReason,
   });
@@ -427,8 +438,11 @@ export function LibraryAskPanel({
   const repositoryCodeLabel = getRepositoryCodeDraftLabel(liveSourceStatus);
   const openCreateDraft = useCallback(() => {
     setError(null);
+    setDraftUserPick(null);
+    setDraftReasoningEffort(null);
     setDraftIntent({
       operation: "create",
+      outputFormat: "markdown",
       title: "",
       folderId: null,
       prompt: input.trim(),
@@ -437,13 +451,28 @@ export function LibraryAskPanel({
   const openUpdateDraft = useCallback(() => {
     if (!activeArtifactId) return;
     setError(null);
+    setDraftUserPick(null);
+    setDraftReasoningEffort(null);
     setDraftIntent({
       operation: "update",
+      outputFormat: "markdown",
       title: activeArtifact?.title ?? "",
       folderId: null,
       prompt: input.trim(),
     });
   }, [activeArtifact?.title, activeArtifactId, input]);
+  const openHtmlReportDraft = useCallback(() => {
+    setError(null);
+    setDraftUserPick(null);
+    setDraftReasoningEffort(null);
+    setDraftIntent({
+      operation: "create",
+      outputFormat: "html",
+      title: "",
+      folderId: null,
+      prompt: input.trim(),
+    });
+  }, [input]);
 
   const [isRequestingDraft, runRequestDraft] = useAsyncCallback(async () => {
     if (!draftIntent) return;
@@ -475,6 +504,7 @@ export function LibraryAskPanel({
         repositoryId,
         threadId: confirmedThreadId ? confirmedThreadId : undefined,
         operation: draftIntent.operation,
+        outputFormat: draftIntent.outputFormat,
         prompt: requestPrompt,
         title: draftIntent.operation === "create" ? draftIntent.title : undefined,
         folderId: draftIntent.operation === "create" ? (draftIntent.folderId ?? undefined) : undefined,
@@ -598,6 +628,7 @@ export function LibraryAskPanel({
           documentActionDisabledReason,
           openCreateDraft,
           openUpdateDraft,
+          openHtmlReportDraft,
           selectedModelPick,
           setSelectedModel,
           lockedProvider,
@@ -884,7 +915,11 @@ function LibraryAskDraftConfirmation({
         intent={draftState.draftIntent}
         activeArtifactTitle={draftState.activeArtifactTitle}
         disabledReason={draftState.disabledReason}
-        repositoryCodeLabel={repositoryCodeLabel}
+        repositoryCodeLabel={
+          draftState.draftIntent.outputFormat === "html"
+            ? "Uses Library knowledge by default, not live source."
+            : repositoryCodeLabel
+        }
         modelPick={draftState.draftModelPick}
         onModelPickChange={onModelPickChange}
         reasoningEffort={draftState.draftReasoningEffort}
@@ -906,6 +941,7 @@ type LibraryAskComposerToolsState = {
   documentActionDisabledReason: string | undefined;
   openCreateDraft: () => void;
   openUpdateDraft: () => void;
+  openHtmlReportDraft: () => void;
   selectedModelPick: PromptInputModelPickerValue | null;
   setSelectedModel: (value: ComposerModelPickValue) => void;
   lockedProvider: LlmProvider | null;
@@ -978,7 +1014,7 @@ function LibraryAskComposerTools({
         title={tools.documentActionDisabledReason}
       >
         <FilePlusIcon size={13} weight="bold" />
-        Create artifact
+        Draft artifact
       </Button>
       <Button
         type="button"
@@ -992,7 +1028,19 @@ function LibraryAskComposerTools({
         }
       >
         <GitDiffIcon size={13} weight="bold" />
-        Update open artifact
+        Draft update
+      </Button>
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        className="h-8 gap-1.5 px-2 text-[11px]"
+        onClick={tools.openHtmlReportDraft}
+        disabled={tools.documentActionDisabledReason !== undefined}
+        title={tools.documentActionDisabledReason}
+      >
+        <FileHtmlIcon size={13} weight="bold" />
+        Draft HTML report
       </Button>
       {!tools.isLocked ? (
         <PromptInputModelPicker

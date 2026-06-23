@@ -4,8 +4,10 @@ import { afterEach, describe, expect, test } from "vitest";
 import { register as registerRateLimiter } from "@convex-dev/rate-limiter/test";
 import { convexTest } from "convex-test";
 import { api, internal } from "../_generated/api";
+import type { Id } from "../_generated/dataModel";
 import schema from "../schema";
 import { peekSandboxDailyCostForUser } from "./rateLimit";
+import { buildUsageSourceId } from "./usageAccounting";
 
 const modules = import.meta.glob("/convex/**/*.ts");
 
@@ -21,6 +23,28 @@ afterEach(() => {
 });
 
 describe("usageAccounting lifecycle", () => {
+  test("library retrieval source ids are owner and repository scoped", () => {
+    const repositoryId = "repositories_usage_accounting_repo" as Id<"repositories">;
+    const queryFingerprint = "a".repeat(64);
+
+    const firstOwner = buildUsageSourceId.libraryRetrieval({
+      ownerTokenIdentifier: "user|usage-accounting-a",
+      repositoryId,
+      messageOrThreadId: "unattributed",
+      queryFingerprint,
+    });
+    const secondOwner = buildUsageSourceId.libraryRetrieval({
+      ownerTokenIdentifier: "user|usage-accounting-b",
+      repositoryId,
+      messageOrThreadId: "unattributed",
+      queryFingerprint,
+    });
+
+    expect(firstOwner).toContain("user|usage-accounting-a");
+    expect(firstOwner).toContain(repositoryId);
+    expect(firstOwner).not.toBe(secondOwner);
+  });
+
   test("empty sourceId throws", async () => {
     const t = createTestConvex();
 

@@ -25,15 +25,29 @@ import {
   consumeSystemDesignRateLimit,
   SYSTEM_DESIGN_JOB_LEASE_MS,
 } from "./lib/rateLimit";
-import { reasoningEffortValidator, type ReasoningEffort } from "./lib/llmCatalog";
-import { loadViewerModelPreferences } from "./lib/userPreferences";
+import {
+  getCatalogEntry,
+  isSupportedReasoningEffort,
+  isUserPickableModel,
+  listPickableModels,
+  reasoningEffortValidator,
+  ROLE_MODELS,
+  type ReasoningEffort,
+} from "./lib/llmCatalog";
+import {
+  applyModelPreferences,
+  isModelEnabledInPreferences,
+  loadViewerModelPreferences,
+  type UserModelPreferences,
+} from "./lib/userPreferences";
 import { resolveSystemDesignRequestModelChoice, SYSTEM_DESIGN_DEFAULT_MODEL_CHOICE } from "./lib/systemDesignPlanning";
 import { startedResultValidator } from "./lib/functionResultSchemas";
 import {
   reserveSandboxLibraryGenerationBudget,
   settleSandboxLibraryGenerationUsage,
 } from "./lib/sandboxLibraryGenerationAccounting";
-import { buildUsageSourceId } from "./lib/usageAccounting";
+import { buildUsageSourceId, usageAccountingSandboxDailyCapValidator } from "./lib/usageAccounting";
+import { settleUsageLifecycleInMutation } from "./lib/usageAccountingMutations";
 
 export const ARTIFACT_DRAFT_PROMPT_VERSION = 1;
 
@@ -47,6 +61,19 @@ const VERSION_MISMATCH_MESSAGE = "This artifact changed since the draft was gene
 const INACTIVE_DRAFT_REPOSITORY_MESSAGE = "Repository is no longer active.";
 
 const draftOperationValidator = v.union(v.literal("create"), v.literal("update"));
+const artifactDraftOutputFormatValidator = v.union(v.literal("markdown"), v.literal("html"));
+const sourceArtifactValidator = v.object({
+  artifactId: v.id("artifacts"),
+  version: v.number(),
+  title: v.string(),
+});
+
+type ArtifactDraftOutputFormat = "markdown" | "html";
+type ArtifactSourceReference = {
+  artifactId: Id<"artifacts">;
+  version: number;
+  title: string;
+};
 
 type DraftWithJob = {
   draft: Doc<"artifactDrafts">;
@@ -64,6 +91,104 @@ async function requireActiveRepositoryForDraft(ctx: QueryCtx | MutationCtx, draf
   return repository;
 }
 
+function resolveLibraryReportModelChoice(args: {
+  modelPreferences: UserModelPreferences;
+  picker: {
+    provider?: LlmProvider;
+    modelName?: string;
+    reasoningEffort?: ReasoningEffort;
+  };
+}): { provider: LlmProvider; modelName: string; reasoningEffort?: ReasoningEffort } {
+  assertCompleteModelPick(args.picker);
+
+  let provider = args.picker.provider ?? ROLE_MODELS.defaultLibrary.provider;
+  let modelName = args.picker.modelName ?? ROLE_MODELS.defaultLibrary.modelName;
+
+  if (
+    args.picker.provider === undefined &&
+    !isModelEnabledInPreferences(args.modelPreferences, { provider, modelName }, "library")
+  ) {
+    const firstEnabled = applyModelPreferences(
+      listPickableModels({ capability: "library" }),
+      args.modelPreferences,
+      "library",
+    )[0];
+    if (firstEnabled) {
+      provider = firstEnabled.provider;
+      modelName = firstEnabled.modelName;
+    }
+  }
+
+  if (
+    !isUserPickableModel(provider, modelName, "library") ||
+    !isModelEnabledInPreferences(args.modelPreferences, { provider, modelName }, "library")
+  ) {
+    throw new ConvexError({
+      code: "invalid_model_pick",
+      message: `Unsupported model selection: ${provider}:${modelName}`,
+    });
+  }
+  if (!isSupportedReasoningEffort(provider, modelName, args.picker.reasoningEffort)) {
+    throw new ConvexError({
+      code: "unsupported_reasoning_effort",
+      message: `Unsupported reasoning effort "${args.picker.reasoningEffort}" for ${provider}:${modelName}.`,
+    });
+  }
+
+  const catalogEntry = getCatalogEntry(provider, modelName);
+  const reasoningEffort = args.picker.reasoningEffort ?? catalogEntry?.reasoningEffort;
+  return {
+    provider,
+    modelName,
+    ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+  };
+}
+
+function assertCompleteModelPick(args: { provider?: LlmProvider; modelName?: string }): void {
+  if ((args.provider === undefined) !== (args.modelName === undefined)) {
+    throw new ConvexError({
+      code: "invalid_model_pick",
+      message: "provider and modelName must be supplied together.",
+    });
+  }
+}
+
+function requireHtmlFieldsForApply(
+  draft: Doc<"artifactDrafts">,
+  outputFormat: ArtifactDraftOutputFormat,
+):
+  | {
+      htmlStorageId: Id<"_storage">;
+      htmlHash: string;
+      htmlByteLength: number;
+      htmlValidationErrors?: string[];
+      sourceArtifacts?: ArtifactSourceReference[];
+      sourceChunkIds?: Id<"artifactChunks">[];
+    }
+  | Record<string, never> {
+  if (outputFormat !== "html") {
+    return {};
+  }
+  if (!draft.htmlStorageId || !draft.htmlHash || draft.htmlByteLength === undefined) {
+    throw new Error("HTML draft is missing its stored report.");
+  }
+  return {
+    htmlStorageId: draft.htmlStorageId,
+    htmlHash: draft.htmlHash,
+    htmlByteLength: draft.htmlByteLength,
+    htmlValidationErrors: draft.htmlValidationErrors,
+    sourceArtifacts: draft.sourceArtifacts,
+    sourceChunkIds: draft.sourceChunkIds,
+  };
+}
+
+async function deleteUnappliedDraftHtmlStorage(ctx: MutationCtx, draft: Doc<"artifactDrafts">): Promise<void> {
+  if ((draft.outputFormat ?? "markdown") !== "html" || !draft.htmlStorageId) {
+    return;
+  }
+  await ctx.storage.delete(draft.htmlStorageId);
+}
+
 export const requestDraft = mutation({
   args: {
     repositoryId: v.id("repositories"),
@@ -73,6 +198,7 @@ export const requestDraft = mutation({
     targetArtifactId: v.optional(v.id("artifacts")),
     title: v.optional(v.string()),
     folderId: v.optional(v.id("artifactFolders")),
+    outputFormat: v.optional(artifactDraftOutputFormatValidator),
     provider: v.optional(llmProviderValidator),
     modelName: v.optional(v.string()),
     reasoningEffort: v.optional(reasoningEffortValidator),
@@ -83,17 +209,21 @@ export const requestDraft = mutation({
     });
     await assertFeatureAccess(ctx, identity, "libraryAsk");
     await assertFeatureAccess(ctx, identity, "generateSystemDesign");
-    await assertFeatureAccess(ctx, identity, "sandboxGrounding");
+    const outputFormat = args.outputFormat ?? "markdown";
+    if (outputFormat === "markdown") {
+      await assertFeatureAccess(ctx, identity, "sandboxGrounding");
+    }
 
     const modelPreferences = await loadViewerModelPreferences(ctx, identity.tokenIdentifier);
-    const modelChoice = resolveSystemDesignRequestModelChoice({
-      modelPreferences,
-      picker: {
-        provider: args.provider,
-        modelName: args.modelName,
-        reasoningEffort: args.reasoningEffort,
-      },
-    });
+    const picker = {
+      provider: args.provider,
+      modelName: args.modelName,
+      reasoningEffort: args.reasoningEffort,
+    };
+    const modelChoice =
+      outputFormat === "html"
+        ? resolveLibraryReportModelChoice({ modelPreferences, picker })
+        : resolveSystemDesignRequestModelChoice({ modelPreferences, picker });
     if (requiresPremiumModelAccess(modelChoice.provider, modelChoice.modelName)) {
       await assertFeatureAccess(ctx, identity, "premiumModels");
     }
@@ -127,7 +257,9 @@ export const requestDraft = mutation({
     });
 
     await consumeSystemDesignRateLimit(ctx, identity.tokenIdentifier);
-    await consumeDaytonaGlobalRateLimit(ctx);
+    if (outputFormat === "markdown") {
+      await consumeDaytonaGlobalRateLimit(ctx);
+    }
 
     return await enqueueArtifactDraft(ctx, {
       ownerTokenIdentifier: identity.tokenIdentifier,
@@ -139,6 +271,7 @@ export const requestDraft = mutation({
       folderId: prepared.folderId,
       targetArtifactId: prepared.targetArtifactId,
       targetArtifactVersion: prepared.targetArtifactVersion,
+      outputFormat,
       provider: modelChoice.provider,
       modelName: modelChoice.modelName,
       reasoningEffort: modelChoice.reasoningEffort,
@@ -156,6 +289,8 @@ export const applyDraft = mutation({
     await requireActiveRepositoryForDraft(ctx, draft);
 
     const now = Date.now();
+    const outputFormat = draft.outputFormat ?? "markdown";
+    const htmlFields = requireHtmlFieldsForApply(draft, outputFormat);
     if (draft.operation === "create") {
       const artifactId = await createArtifactWrite(ctx, {
         repositoryId: draft.repositoryId,
@@ -166,7 +301,10 @@ export const applyDraft = mutation({
         title: draft.title,
         summary: draft.summary,
         contentMarkdown: draft.contentMarkdown,
+        renderFormat: outputFormat,
+        ...htmlFields,
         folderId: draft.folderId,
+        lastVerifiedAt: outputFormat === "html" ? null : now,
         alignedImportCommitSha: draft.alignedImportCommitSha,
         generatedByProvider: draft.generatedByProvider,
         generatedByModel: draft.generatedByModel,
@@ -199,8 +337,10 @@ export const applyDraft = mutation({
       title: draft.title,
       summary: draft.summary,
       contentMarkdown: draft.contentMarkdown,
+      renderFormat: outputFormat,
+      ...htmlFields,
       expectedVersion: draft.targetArtifactVersion,
-      lastVerifiedAt: now,
+      ...(outputFormat === "markdown" ? { lastVerifiedAt: now } : { lastVerifiedAt: null }),
       alignedImportCommitSha: draft.alignedImportCommitSha,
       generatedByProvider: draft.generatedByProvider,
       generatedByModel: draft.generatedByModel,
@@ -230,6 +370,7 @@ export const discardDraft = mutation({
       throw new ConvexError({ code: "DRAFT_NOT_DISCARDABLE", message: "This draft cannot be discarded yet." });
     }
     const now = Date.now();
+    await deleteUnappliedDraftHtmlStorage(ctx, draft);
     await ctx.db.patch(draft._id, {
       status: "discarded",
       discardedAt: now,
@@ -249,10 +390,14 @@ export const regenerateDraft = mutation({
     await requireActiveRepositoryForViewer(ctx, { repositoryId: draft.repositoryId });
     await assertFeatureAccess(ctx, identity, "libraryAsk");
     await assertFeatureAccess(ctx, identity, "generateSystemDesign");
-    await assertFeatureAccess(ctx, identity, "sandboxGrounding");
+    const outputFormat = draft.outputFormat ?? "markdown";
+    if (outputFormat === "markdown") {
+      await assertFeatureAccess(ctx, identity, "sandboxGrounding");
+    }
 
-    const provider = draft.generatedByProvider ?? SYSTEM_DESIGN_DEFAULT_MODEL_CHOICE.provider;
-    const modelName = draft.generatedByModel ?? SYSTEM_DESIGN_DEFAULT_MODEL_CHOICE.modelName;
+    const fallback = outputFormat === "html" ? ROLE_MODELS.defaultLibrary : SYSTEM_DESIGN_DEFAULT_MODEL_CHOICE;
+    const provider = draft.generatedByProvider ?? fallback.provider;
+    const modelName = draft.generatedByModel ?? fallback.modelName;
     if (requiresPremiumModelAccess(provider, modelName)) {
       await assertFeatureAccess(ctx, identity, "premiumModels");
     }
@@ -270,7 +415,9 @@ export const regenerateDraft = mutation({
     });
 
     await consumeSystemDesignRateLimit(ctx, identity.tokenIdentifier);
-    await consumeDaytonaGlobalRateLimit(ctx);
+    if (outputFormat === "markdown") {
+      await consumeDaytonaGlobalRateLimit(ctx);
+    }
 
     const replacement = await enqueueArtifactDraft(ctx, {
       ownerTokenIdentifier: identity.tokenIdentifier,
@@ -282,11 +429,13 @@ export const regenerateDraft = mutation({
       folderId: prepared.folderId,
       targetArtifactId: prepared.targetArtifactId,
       targetArtifactVersion: prepared.targetArtifactVersion,
+      outputFormat,
       provider,
       modelName,
       reasoningEffort: draft.reasoningEffort,
     });
     const now = Date.now();
+    await deleteUnappliedDraftHtmlStorage(ctx, draft);
     await ctx.db.patch(draft._id, {
       status: "discarded",
       discardedAt: now,
@@ -409,10 +558,12 @@ export const markDraftRunning = internalMutation({
   returns: startedResultValidator,
   handler: async (ctx, args): Promise<{ started: boolean }> => {
     const now = Date.now();
+    const draft = await ctx.db.get(args.draftId);
+    const outputFormat = draft?.outputFormat ?? "markdown";
     const running = await markQueuedJobRunning(ctx, {
       jobId: args.jobId,
       expectedKind: "artifact_draft",
-      stage: "Preparing code access…",
+      stage: outputFormat === "html" ? "Retrieving Library knowledge…" : "Preparing code access…",
       progress: 0.05,
       startedAt: now,
       leaseExpiresAt: now + SYSTEM_DESIGN_JOB_LEASE_MS,
@@ -420,7 +571,6 @@ export const markDraftRunning = internalMutation({
     if (!running) {
       return { started: false };
     }
-    const draft = await ctx.db.get(args.draftId);
     if (draft?.jobId !== args.jobId || draft.status !== "queued") {
       await failRunningJob(ctx, {
         jobId: args.jobId,
@@ -463,6 +613,7 @@ export const assertDraftCostBudget = internalMutation({
     repositoryId: v.id("repositories"),
     jobId: v.id("jobs"),
     startedAt: v.number(),
+    sandboxDailyCap: v.optional(usageAccountingSandboxDailyCapValidator),
   },
   handler: async (ctx, args): Promise<void> => {
     await reserveSandboxLibraryGenerationBudget(ctx, {
@@ -470,6 +621,7 @@ export const assertDraftCostBudget = internalMutation({
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId: args.repositoryId,
       occurredAtMs: args.startedAt,
+      sandboxDailyCap: args.sandboxDailyCap,
     });
   },
 });
@@ -482,7 +634,14 @@ export const markDraftReady = internalMutation({
     summary: v.string(),
     contentMarkdown: v.string(),
     changeSummary: v.optional(v.string()),
-    sandboxId: v.id("sandboxes"),
+    outputFormat: artifactDraftOutputFormatValidator,
+    sandboxId: v.optional(v.id("sandboxes")),
+    htmlStorageId: v.optional(v.id("_storage")),
+    htmlHash: v.optional(v.string()),
+    htmlByteLength: v.optional(v.number()),
+    htmlValidationErrors: v.optional(v.array(v.string())),
+    sourceArtifacts: v.optional(v.array(sourceArtifactValidator)),
+    sourceChunkIds: v.optional(v.array(v.id("artifactChunks"))),
     alignedImportCommitSha: v.optional(v.string()),
     generatedByProvider: llmProviderValidator,
     generatedByModel: v.string(),
@@ -494,17 +653,27 @@ export const markDraftReady = internalMutation({
     cacheWriteTokens: v.optional(v.number()),
     reasoningTokens: v.optional(v.number()),
     totalCostUsd: v.optional(v.number()),
-    sourceId: v.string(),
+    sourceId: v.optional(v.string()),
+    usageSandboxDailyCap: v.optional(usageAccountingSandboxDailyCapValidator),
   },
   handler: async (ctx, args): Promise<{ ready: boolean }> => {
     const draft = await ctx.db.get(args.draftId);
     if (!draft || draft.jobId !== args.jobId || draft.status !== "running") {
       return { ready: false };
     }
+    if (!args.sourceId) {
+      throw new Error("Artifact draft is missing its usage source.");
+    }
+    if (args.outputFormat === "html" && (!args.htmlStorageId || !args.htmlHash || args.htmlByteLength === undefined)) {
+      throw new Error("HTML draft is missing its stored report metadata.");
+    }
     const now = Date.now();
     const repository = await ctx.db.get(draft.repositoryId);
     if (!isOwnedBy(repository, draft.ownerTokenIdentifier) || !isActiveRepository(repository)) {
-      await settleSandboxLibraryGenerationUsage(ctx, {
+      if (args.htmlStorageId) {
+        await ctx.storage.delete(args.htmlStorageId);
+      }
+      await settleArtifactDraftUsage(ctx, {
         sourceId: args.sourceId,
         ownerTokenIdentifier: draft.ownerTokenIdentifier,
         repositoryId: draft.repositoryId,
@@ -517,6 +686,7 @@ export const markDraftReady = internalMutation({
           cacheWriteTokens: args.cacheWriteTokens,
           reasoningTokens: args.reasoningTokens,
         },
+        sandboxDailyCap: resolveDraftUsageSandboxDailyCap(args.outputFormat, args.usageSandboxDailyCap),
       });
       await ctx.db.patch(args.draftId, {
         status: "failed",
@@ -537,7 +707,14 @@ export const markDraftReady = internalMutation({
       summary: args.summary,
       contentMarkdown: args.contentMarkdown,
       changeSummary: args.changeSummary,
+      outputFormat: args.outputFormat,
       sandboxId: args.sandboxId,
+      htmlStorageId: args.htmlStorageId,
+      htmlHash: args.htmlHash,
+      htmlByteLength: args.htmlByteLength,
+      htmlValidationErrors: args.htmlValidationErrors,
+      sourceArtifacts: args.sourceArtifacts,
+      sourceChunkIds: args.sourceChunkIds,
       alignedImportCommitSha: args.alignedImportCommitSha,
       generatedByProvider: args.generatedByProvider,
       generatedByModel: args.generatedByModel,
@@ -547,7 +724,7 @@ export const markDraftReady = internalMutation({
       updatedAt: now,
       errorMessage: undefined,
     });
-    await settleSandboxLibraryGenerationUsage(ctx, {
+    await settleArtifactDraftUsage(ctx, {
       sourceId: args.sourceId,
       ownerTokenIdentifier: draft.ownerTokenIdentifier,
       repositoryId: draft.repositoryId,
@@ -560,9 +737,10 @@ export const markDraftReady = internalMutation({
         cacheWriteTokens: args.cacheWriteTokens,
         reasoningTokens: args.reasoningTokens,
       },
+      sandboxDailyCap: resolveDraftUsageSandboxDailyCap(args.outputFormat, args.usageSandboxDailyCap),
     });
     await ctx.db.patch(args.jobId, {
-      sandboxId: args.sandboxId,
+      ...(args.sandboxId !== undefined ? { sandboxId: args.sandboxId } : {}),
       estimatedInputTokens: args.inputTokens,
       estimatedOutputTokens: args.outputTokens,
       estimatedCostUsd: args.totalCostUsd,
@@ -572,7 +750,8 @@ export const markDraftReady = internalMutation({
       stage: "Ready to review",
       progress: 1,
       completedAt: now,
-      outputSummary: "Artifact draft ready to review.",
+      outputSummary:
+        args.outputFormat === "html" ? "HTML report draft ready to review." : "Artifact draft ready to review.",
       leaseExpiresAt: undefined,
     });
     return { ready: true };
@@ -683,6 +862,7 @@ async function enqueueArtifactDraft(
     folderId?: Id<"artifactFolders">;
     targetArtifactId?: Id<"artifacts">;
     targetArtifactVersion?: number;
+    outputFormat: ArtifactDraftOutputFormat;
     provider: LlmProvider;
     modelName: string;
     reasoningEffort?: ReasoningEffort;
@@ -695,8 +875,8 @@ async function enqueueArtifactDraft(
     ownerTokenIdentifier: args.ownerTokenIdentifier,
     costCategory: "system_design",
     triggerSource: "user",
-    stage: "Preparing code access…",
-    outputSummary: "Queued artifact draft.",
+    stage: args.outputFormat === "html" ? "Retrieving Library knowledge…" : "Preparing code access…",
+    outputSummary: args.outputFormat === "html" ? "Queued HTML report draft." : "Queued artifact draft.",
     leaseMs: SYSTEM_DESIGN_JOB_LEASE_MS,
   });
   await ctx.db.patch(jobId, {
@@ -720,6 +900,7 @@ async function enqueueArtifactDraft(
     title: args.title,
     summary: "",
     contentMarkdown: "",
+    outputFormat: args.outputFormat,
     generatedByProvider: args.provider,
     generatedByModel: args.modelName,
     reasoningEffort: args.reasoningEffort,
@@ -747,4 +928,54 @@ async function joinDraftJob(ctx: QueryCtx, draft: Doc<"artifactDrafts">): Promis
     draft,
     job: await ctx.db.get(draft.jobId),
   };
+}
+
+type DraftUsageSandboxDailyCap = "none" | "precheckAndSettle" | "settleOnly";
+
+function resolveDraftUsageSandboxDailyCap(
+  outputFormat: ArtifactDraftOutputFormat,
+  explicit: DraftUsageSandboxDailyCap | undefined,
+): DraftUsageSandboxDailyCap {
+  return explicit ?? (outputFormat === "html" ? "none" : "precheckAndSettle");
+}
+
+async function settleArtifactDraftUsage(
+  ctx: MutationCtx,
+  args: {
+    sourceId: string;
+    ownerTokenIdentifier: string;
+    repositoryId: Id<"repositories">;
+    occurredAtMs: number;
+    totalCostUsd: number | undefined;
+    usage: {
+      inputTokens?: number;
+      outputTokens?: number;
+      cachedInputTokens?: number;
+      cacheWriteTokens?: number;
+      reasoningTokens?: number;
+    };
+    sandboxDailyCap: DraftUsageSandboxDailyCap;
+  },
+) {
+  if (args.sandboxDailyCap === "precheckAndSettle") {
+    await settleSandboxLibraryGenerationUsage(ctx, args);
+    return;
+  }
+
+  await settleUsageLifecycleInMutation(ctx, {
+    sourceId: args.sourceId,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    repositoryId: args.repositoryId,
+    feature: "systemDesignGeneration",
+    sandboxDailyCap: args.sandboxDailyCap,
+    occurredAtMs: args.occurredAtMs,
+    usage: {
+      costUsd: args.totalCostUsd,
+      inputTokens: args.usage.inputTokens,
+      outputTokens: args.usage.outputTokens,
+      cachedInputTokens: args.usage.cachedInputTokens,
+      cacheWriteTokens: args.usage.cacheWriteTokens,
+      reasoningTokens: args.usage.reasoningTokens,
+    },
+  });
 }

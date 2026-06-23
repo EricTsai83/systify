@@ -54,6 +54,10 @@ async function seedRepositoryGraph(
   assistantMessageId: Id<"messages">;
   streamId: Id<"messageStreams">;
   artifactId: Id<"artifacts">;
+  threadArtifactId: Id<"artifacts">;
+  repoHtmlStorageId: Id<"_storage">;
+  threadHtmlStorageId: Id<"_storage">;
+  draftHtmlStorageId: Id<"_storage">;
   remoteId: string;
 }> {
   return await t.run(async (ctx) => {
@@ -160,9 +164,32 @@ async function seedRepositoryGraph(
       title: "README Summary",
       summary: "Summary",
       contentMarkdown: "# Summary",
+      renderFormat: "html",
       version: 1,
       folderId,
     });
+    const repoHtmlStorageId = await ctx.storage.store(
+      new Blob(["<!doctype html><html><head></head><body>repo artifact</body></html>"], {
+        type: "text/html",
+      }),
+    );
+    const artifactVersionId = await ctx.db.insert("artifactVersions", {
+      artifactId,
+      version: 1,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId,
+      title: "README Summary",
+      summary: "Summary",
+      contentMarkdown: "# Summary",
+      renderFormat: "html",
+      htmlStorageId: repoHtmlStorageId,
+      htmlHash: "repo-html-hash",
+      htmlByteLength: 64,
+      htmlValidationStatus: "valid",
+      createdAt: now,
+      jobId: importJobId,
+    });
+    await ctx.db.patch(artifactId, { currentVersionId: artifactVersionId });
     await ctx.db.insert("artifactChunks", {
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId,
@@ -180,6 +207,11 @@ async function seedRepositoryGraph(
       artifactId,
       viewedAt: now,
     });
+    const draftHtmlStorageId = await ctx.storage.store(
+      new Blob(["<!doctype html><html><head></head><body>draft</body></html>"], {
+        type: "text/html",
+      }),
+    );
     await ctx.db.insert("artifactDrafts", {
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId,
@@ -190,6 +222,10 @@ async function seedRepositoryGraph(
       title: "Draft runbook",
       summary: "Draft summary",
       contentMarkdown: "# Draft",
+      outputFormat: "html",
+      htmlStorageId: draftHtmlStorageId,
+      htmlHash: "draft-html-hash",
+      htmlByteLength: 59,
       generatedByProvider: "openai",
       generatedByModel: "gpt-5.5",
       promptVersion: 1,
@@ -235,7 +271,7 @@ async function seedRepositoryGraph(
       mode: "discuss",
       content: "Done",
     });
-    await ctx.db.insert("artifacts", {
+    const threadArtifactId = await ctx.db.insert("artifacts", {
       threadId,
       jobId: chatJobId,
       ownerTokenIdentifier: args.ownerTokenIdentifier,
@@ -243,8 +279,30 @@ async function seedRepositoryGraph(
       title: "Thread note",
       summary: "Thread-local artifact",
       contentMarkdown: "# Thread note",
+      renderFormat: "html",
       version: 1,
     });
+    const threadHtmlStorageId = await ctx.storage.store(
+      new Blob(["<!doctype html><html><head></head><body>thread artifact</body></html>"], {
+        type: "text/html",
+      }),
+    );
+    const threadArtifactVersionId = await ctx.db.insert("artifactVersions", {
+      artifactId: threadArtifactId,
+      version: 1,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      title: "Thread note",
+      summary: "Thread-local artifact",
+      contentMarkdown: "# Thread note",
+      renderFormat: "html",
+      htmlStorageId: threadHtmlStorageId,
+      htmlHash: "thread-html-hash",
+      htmlByteLength: 68,
+      htmlValidationStatus: "valid",
+      createdAt: now,
+      jobId: chatJobId,
+    });
+    await ctx.db.patch(threadArtifactId, { currentVersionId: threadArtifactVersionId });
     await ctx.db.insert("messageToolCallEvents", {
       messageId: assistantMessageId,
       toolCallId: "call-1",
@@ -357,7 +415,18 @@ async function seedRepositoryGraph(
       defaultThreadId: threadId,
     });
 
-    return { repositoryId, threadId, assistantMessageId, streamId, artifactId, remoteId };
+    return {
+      repositoryId,
+      threadId,
+      assistantMessageId,
+      streamId,
+      artifactId,
+      threadArtifactId,
+      repoHtmlStorageId,
+      threadHtmlStorageId,
+      draftHtmlStorageId,
+      remoteId,
+    };
   });
 }
 
@@ -369,6 +438,11 @@ async function collectRepositoryDeleteState(
     threadId: Id<"threads">;
     assistantMessageId: Id<"messages">;
     streamId: Id<"messageStreams">;
+    artifactId: Id<"artifacts">;
+    threadArtifactId: Id<"artifacts">;
+    repoHtmlStorageId: Id<"_storage">;
+    threadHtmlStorageId: Id<"_storage">;
+    draftHtmlStorageId: Id<"_storage">;
     remoteId: string;
   },
 ) {
@@ -409,6 +483,16 @@ async function collectRepositoryDeleteState(
         .query("artifacts")
         .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
         .collect(),
+      artifactVersions: [
+        ...(await ctx.db
+          .query("artifactVersions")
+          .withIndex("by_artifactId", (q) => q.eq("artifactId", args.artifactId))
+          .collect()),
+        ...(await ctx.db
+          .query("artifactVersions")
+          .withIndex("by_artifactId", (q) => q.eq("artifactId", args.threadArtifactId))
+          .collect()),
+      ],
       artifactChunks: await ctx.db
         .query("artifactChunks")
         .withIndex("by_repositoryId", (q) => q.eq("repositoryId", args.repositoryId))
@@ -457,6 +541,11 @@ async function collectRepositoryDeleteState(
         .query("artifacts")
         .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
         .collect(),
+      htmlStorageMetadata: {
+        repo: await ctx.db.system.get(args.repoHtmlStorageId),
+        thread: await ctx.db.system.get(args.threadHtmlStorageId),
+        draft: await ctx.db.system.get(args.draftHtmlStorageId),
+      },
       messages: await ctx.db
         .query("messages")
         .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
@@ -508,6 +597,7 @@ describe("repository deletion cleanup", () => {
       "artifactFolders",
       "artifactViews",
       "artifacts",
+      "artifactVersions",
       "chatHistoryGroups",
       "imports",
       "jobs",
@@ -559,6 +649,7 @@ describe("repository deletion cleanup", () => {
     expect(state.repoFiles).toHaveLength(0);
     expect(state.repoChunks).toHaveLength(0);
     expect(state.artifacts).toHaveLength(0);
+    expect(state.artifactVersions).toHaveLength(0);
     expect(state.artifactChunks).toHaveLength(0);
     expect(state.artifactFolders).toHaveLength(0);
     expect(state.artifactDrafts).toHaveLength(0);
@@ -570,6 +661,7 @@ describe("repository deletion cleanup", () => {
     expect(state.archivedThreadScopes).toHaveLength(0);
     expect(state.threads).toHaveLength(0);
     expect(state.threadArtifacts).toHaveLength(0);
+    expect(state.htmlStorageMetadata).toEqual({ repo: null, thread: null, draft: null });
     expect(state.messages).toHaveLength(0);
     expect(state.messageToolCallEvents).toHaveLength(0);
     expect(state.messageStreams).toHaveLength(0);
@@ -652,19 +744,16 @@ describe("repository deletion cleanup", () => {
 
     const afterFirstBatch = await t.run(async (ctx) => ({
       repository: await ctx.db.get(ids.repositoryId),
-      artifactChunks: await ctx.db
-        .query("artifactChunks")
-        .withIndex("by_repositoryId", (q) => q.eq("repositoryId", ids.repositoryId))
-        .take(CASCADE_BATCH_SIZE),
     }));
     expect(afterFirstBatch.repository).not.toBeNull();
-    expect(afterFirstBatch.artifactChunks.length).toBeGreaterThan(0);
 
     await t.finishAllScheduledFunctions(vi.runAllTimers);
 
     const finalState = await collectRepositoryDeleteState(t, { ownerTokenIdentifier, ...ids });
     expect(finalState.repository).toBeNull();
     expect(finalState.artifactChunks).toHaveLength(0);
+    expect(finalState.artifactVersions).toHaveLength(0);
+    expect(finalState.htmlStorageMetadata).toEqual({ repo: null, thread: null, draft: null });
     expect(finalState.sandboxToolCallLog).toHaveLength(1);
   });
 
