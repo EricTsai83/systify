@@ -15,6 +15,7 @@ const RRF_K = 60;
 export interface RetrievedChunk {
   chunkId: Id<"artifactChunks">;
   artifactId: Id<"artifacts">;
+  artifactVersion: number;
   artifactTitle: string;
   artifactKind: Doc<"artifacts">["kind"];
   headingPath: string[];
@@ -105,6 +106,7 @@ export async function retrieveArtifactChunks(ctx: ActionCtx, args: RetrieveArgs)
   return ranked.map((candidate) => ({
     chunkId: candidate.chunkId,
     artifactId: candidate.artifactId,
+    artifactVersion: candidate.artifactVersion,
     artifactTitle: candidate.artifactTitle,
     artifactKind: candidate.artifactKind,
     headingPath: candidate.headingPath,

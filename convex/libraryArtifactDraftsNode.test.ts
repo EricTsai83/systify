@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 
 import { describe, expect, test, vi, beforeEach } from "vitest";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { createRateLimitedTestConvex } from "../test/convex/harness";
 import { insertTestArtifact } from "../test/convex/fixtures";
 
@@ -25,6 +26,7 @@ const mocks = vi.hoisted(() => {
     createSandboxTools: vi.fn(),
     generateViaGateway: vi.fn(),
     generateObjectViaGateway: vi.fn(),
+    retrieveArtifactChunks: vi.fn(),
   };
 });
 
@@ -44,6 +46,10 @@ vi.mock("./chat/sandboxTools", () => ({
 vi.mock("./lib/llmGateway", () => ({
   generateViaGateway: mocks.generateViaGateway,
   generateObjectViaGateway: mocks.generateObjectViaGateway,
+}));
+
+vi.mock("./lib/artifactRag", () => ({
+  retrieveArtifactChunks: mocks.retrieveArtifactChunks,
 }));
 
 const OWNER = "user|artifact-draft-node";
@@ -150,6 +156,20 @@ beforeEach(() => {
     steps: [],
     rawResponseId: "response_1",
   });
+  mocks.retrieveArtifactChunks.mockReset().mockResolvedValue([
+    {
+      chunkId: "chunk_html_1" as Id<"artifactChunks">,
+      artifactId: "artifact_html_source" as Id<"artifacts">,
+      artifactVersion: 4,
+      artifactTitle: "Architecture overview",
+      artifactKind: "architecture_overview",
+      headingPath: ["Runtime"],
+      content: "Library evidence about the runtime architecture.",
+      lexicalScore: 1,
+      semanticScore: 0.9,
+      rrfScore: 0.03,
+    },
+  ]);
 });
 
 describe("runArtifactDraft", () => {
@@ -268,6 +288,158 @@ describe("runArtifactDraft", () => {
       system: expect.stringContaining("You convert a codebase-grounded artifact draft"),
       schemaDescription: "A codebase-grounded Library artifact draft for human review before applying.",
     });
+  });
+
+  test("generates HTML drafts from Library RAG without preparing a sandbox", async () => {
+    const t = createRateLimitedTestConvex();
+    const { repositoryId, jobId, draftId } = await seedDraftRun(t);
+    const sourceArtifactId = await insertTestArtifact(t, {
+      ownerTokenIdentifier: OWNER,
+      repositoryId,
+      title: "Architecture overview",
+      summary: "Architecture summary.",
+      contentMarkdown: "# Architecture\n\nRuntime evidence.",
+      version: 4,
+    });
+    const sourceChunkId = await t.run(async (ctx) =>
+      ctx.db.insert("artifactChunks", {
+        ownerTokenIdentifier: OWNER,
+        repositoryId,
+        artifactId: sourceArtifactId,
+        artifactVersion: 4,
+        chunkIndex: 0,
+        headingPath: ["Runtime"],
+        startOffset: 0,
+        endOffset: 17,
+        content: "Runtime evidence.",
+      }),
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(draftId, {
+        outputFormat: "html",
+        title: "Executive report",
+        prompt: "Create a polished executive report.",
+        generatedByProvider: "openai",
+        generatedByModel: "gpt-5.4-mini",
+      });
+    });
+    mocks.retrieveArtifactChunks.mockResolvedValue([
+      {
+        chunkId: sourceChunkId,
+        artifactId: sourceArtifactId,
+        artifactVersion: 4,
+        artifactTitle: "Architecture overview",
+        artifactKind: "architecture_overview",
+        headingPath: ["Runtime"],
+        content: "Runtime evidence.",
+        lexicalScore: 1,
+        semanticScore: 0.9,
+        rrfScore: 0.03,
+      },
+    ]);
+    mocks.generateObjectViaGateway.mockResolvedValueOnce({
+      object: {
+        title: "Executive report",
+        summary: "A Library-grounded executive report.",
+        contentMarkdown: "# Executive report\n\nRuntime evidence [S1].",
+        html: `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Executive report</title>
+</head>
+<body>
+  <main><h1>Executive report</h1><p>Runtime evidence.</p><a href="#sources">Sources</a></main>
+</body>
+</html>`,
+      },
+      usage: { inputTokens: 50, outputTokens: 70 },
+      costUsd: 0.03,
+      steps: [],
+      rawResponseId: "response_html",
+    });
+
+    await t.action(internal.libraryArtifactDraftsNode.runArtifactDraft, {
+      draftId,
+      jobId,
+      repositoryId,
+      ownerTokenIdentifier: OWNER,
+    });
+
+    const state = await t.run(async (ctx) => ({
+      draft: await ctx.db.get(draftId),
+      job: await ctx.db.get(jobId),
+    }));
+    expect(mocks.ensureSandboxReady).not.toHaveBeenCalled();
+    expect(mocks.getSandboxFsClient).not.toHaveBeenCalled();
+    expect(mocks.generateViaGateway).not.toHaveBeenCalled();
+    expect(mocks.retrieveArtifactChunks).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        ownerTokenIdentifier: OWNER,
+        repositoryId,
+        query: "Create a polished executive report.",
+      }),
+    );
+    expect(mocks.generateObjectViaGateway).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ capability: "library" }),
+      expect.objectContaining({ schemaName: "library_html_report_draft" }),
+    );
+    expect(state.draft?.status).toBe("ready");
+    expect(state.draft?.outputFormat).toBe("html");
+    expect(state.draft?.htmlStorageId).toBeDefined();
+    expect(state.draft?.htmlHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(state.draft?.htmlByteLength).toBeGreaterThan(0);
+    expect(state.draft?.sourceArtifacts).toEqual([
+      { artifactId: sourceArtifactId, version: 4, title: "Architecture overview" },
+    ]);
+    expect(state.draft?.sourceChunkIds).toEqual([sourceChunkId]);
+    expect(state.job?.status).toBe("completed");
+    expect(state.job?.sandboxId).toBeUndefined();
+
+    const applyResult = await t
+      .withIdentity({ tokenIdentifier: OWNER })
+      .mutation(api.libraryArtifactDrafts.applyDraft, {
+        draftId,
+      });
+    const applied = await t.run(async (ctx) => {
+      const artifact = await ctx.db.get(applyResult.artifactId);
+      const version = await ctx.db
+        .query("artifactVersions")
+        .withIndex("by_artifactId_and_version", (q) => q.eq("artifactId", applyResult.artifactId).eq("version", 1))
+        .unique();
+      return { artifact, version, draft: await ctx.db.get(draftId) };
+    });
+    expect(applied.artifact?.renderFormat).toBe("html");
+    expect(applied.artifact?.lastVerifiedAt).toBeUndefined();
+    expect(applied.artifact?.currentVersionId).toBe(applied.version?._id);
+    expect(applied.version?.htmlStorageId).toBe(state.draft?.htmlStorageId);
+    expect(applied.version?.sourceChunkIds).toEqual([sourceChunkId]);
+    expect(applied.draft?.status).toBe("applied");
+
+    const metadata = await t
+      .withIdentity({ tokenIdentifier: OWNER })
+      .query(api.artifacts.listMetadataByRepositoryWithFreshness, { repositoryId });
+    const htmlMetadata = metadata.find((artifact) => artifact._id === applyResult.artifactId);
+    expect(htmlMetadata?.renderFormat).toBe("html");
+    expect(htmlMetadata).not.toHaveProperty("contentMarkdown");
+
+    const storageId = applied.version?.htmlStorageId;
+    expect(storageId).toBeDefined();
+    await t.withIdentity({ tokenIdentifier: OWNER }).mutation(api.artifacts.remove, {
+      artifactId: applyResult.artifactId,
+    });
+    const cleanup = await t.run(async (ctx) => ({
+      versions: await ctx.db
+        .query("artifactVersions")
+        .withIndex("by_artifactId", (q) => q.eq("artifactId", applyResult.artifactId))
+        .collect(),
+      storageUrl: storageId ? await ctx.storage.getUrl(storageId) : "missing",
+    }));
+    expect(cleanup.versions).toHaveLength(0);
+    expect(cleanup.storageUrl).toBeNull();
   });
 
   test("fails the draft when repository code access preparation fails", async () => {

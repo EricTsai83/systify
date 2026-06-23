@@ -1,14 +1,18 @@
 "use node";
 
+import { createHash } from "node:crypto";
 import { stepCountIs } from "ai";
 import { z } from "zod";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { internalAction, type ActionCtx } from "./_generated/server";
 import { generateObjectViaGateway, generateViaGateway } from "./lib/llmGateway";
-import type { NormalizedUsage } from "./lib/llmProvider";
+import type { LlmProvider, NormalizedUsage } from "./lib/llmProvider";
+import { getCatalogEntry, isSupportedReasoningEffort, type ReasoningEffort } from "./lib/llmCatalog";
 import { logErrorWithId, logInfo } from "./lib/observability";
+import { retrieveArtifactChunks, type RetrievedChunk } from "./lib/artifactRag";
+import { validateHtmlArtifact } from "./lib/htmlArtifacts";
 import {
   ARTIFACT_DRAFT_SANDBOX_STAGE_LABELS,
   combineSandboxLibraryGenerationCost,
@@ -23,12 +27,24 @@ import { buildUsageSourceId } from "./lib/usageAccounting";
 import { ARTIFACT_DRAFT_PROMPT_VERSION } from "./libraryArtifactDrafts";
 
 const ARTIFACT_DRAFT_STEP_BUDGET = 12;
+const HTML_DRAFT_RETRIEVAL_TOP_N = 10;
+const HTML_DRAFT_RETRIEVAL_CANDIDATE_K = 24;
+const HTML_DRAFT_CONTEXT_CHAR_LIMIT = 60_000;
+const HTML_DRAFT_FULL_ARTIFACT_CHAR_LIMIT = 35_000;
+const HTML_DRAFT_REPAIR_ATTEMPTS = 2;
 
 const draftOutputSchema = z.object({
   title: z.string().min(1),
   summary: z.string().min(1),
   contentMarkdown: z.string().min(1),
   changeSummary: z.string().nullable(),
+});
+
+const htmlDraftOutputSchema = z.object({
+  title: z.string().min(1),
+  summary: z.string().min(1),
+  contentMarkdown: z.string().min(1),
+  html: z.string().min(1),
 });
 
 export const runArtifactDraft = internalAction({
@@ -69,6 +85,11 @@ export const runArtifactDraft = internalAction({
           jobId: args.jobId,
           errorMessage: "Repository or draft context was no longer available.",
         });
+        return;
+      }
+
+      if ((context.draft.outputFormat ?? "markdown") === "html") {
+        await runHtmlArtifactDraft(ctx, args, context);
         return;
       }
 
@@ -209,6 +230,7 @@ export const runArtifactDraft = internalAction({
         summary: output.summary.trim(),
         contentMarkdown: output.contentMarkdown.trim(),
         changeSummary: output.changeSummary?.trim() || undefined,
+        outputFormat: "markdown",
         sandboxId: prepared.sandboxId,
         alignedImportCommitSha: context.repository.lastSyncedCommitSha,
         generatedByProvider: modelChoice.provider,
@@ -257,6 +279,312 @@ export const runArtifactDraft = internalAction({
     }
   },
 });
+
+async function runHtmlArtifactDraft(
+  ctx: ActionCtx,
+  args: {
+    draftId: Id<"artifactDrafts">;
+    jobId: Id<"jobs">;
+    repositoryId: Id<"repositories">;
+    ownerTokenIdentifier: string;
+  },
+  context: {
+    draft: Doc<"artifactDrafts">;
+    repository: Doc<"repositories">;
+    targetArtifact: Doc<"artifacts"> | null;
+  },
+): Promise<void> {
+  const modelChoice = resolveHtmlDraftModelChoice({
+    provider: context.draft.generatedByProvider,
+    modelName: context.draft.generatedByModel,
+    reasoningEffort: context.draft.reasoningEffort,
+  });
+
+  await ctx.runMutation(internal.libraryArtifactDrafts.updateDraftProgress, {
+    jobId: args.jobId,
+    stage: "Retrieving Library knowledge…",
+    progress: 0.2,
+  });
+
+  const retrievedChunks = await retrieveArtifactChunks(ctx, {
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    repositoryId: args.repositoryId,
+    query: context.draft.prompt,
+    topN: HTML_DRAFT_RETRIEVAL_TOP_N,
+    candidateK: HTML_DRAFT_RETRIEVAL_CANDIDATE_K,
+    ...(context.draft.threadId !== undefined ? { threadId: context.draft.threadId } : {}),
+  });
+
+  await ctx.runMutation(internal.libraryArtifactDrafts.updateDraftProgress, {
+    jobId: args.jobId,
+    stage: "Drafting HTML report…",
+    progress: 0.55,
+  });
+
+  const prompt = buildHtmlReportPrompt(context, retrievedChunks);
+  const result = await generateObjectViaGateway(
+    ctx,
+    {
+      provider: modelChoice.provider,
+      modelName: modelChoice.modelName,
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      capability: "library",
+      feature: "system_design",
+      jobId: args.jobId,
+      threadId: context.draft.threadId,
+    },
+    {
+      system: buildHtmlSystemPrompt(),
+      prompt,
+      schema: htmlDraftOutputSchema,
+      schemaName: "library_html_report_draft",
+      schemaDescription: "A Library-grounded self-contained HTML report draft with a markdown companion.",
+      reasoningEffort: modelChoice.reasoningEffort,
+    },
+  );
+
+  let output = normalizeHtmlDraftObject(result.object);
+  let usage = result.usage;
+  let totalCostUsd = result.costUsd;
+
+  await ctx.runMutation(internal.libraryArtifactDrafts.updateDraftProgress, {
+    jobId: args.jobId,
+    stage: "Validating HTML report…",
+    progress: 0.78,
+  });
+
+  let validation = validateHtmlArtifact(output.html);
+  for (let attempt = 0; !validation.valid && attempt < HTML_DRAFT_REPAIR_ATTEMPTS; attempt += 1) {
+    const repair = await generateObjectViaGateway(
+      ctx,
+      {
+        provider: modelChoice.provider,
+        modelName: modelChoice.modelName,
+        ownerTokenIdentifier: args.ownerTokenIdentifier,
+        capability: "library",
+        feature: "system_design",
+        jobId: args.jobId,
+        threadId: context.draft.threadId,
+      },
+      {
+        system: buildHtmlRepairSystemPrompt(),
+        prompt: buildHtmlRepairPrompt(output, validation.errors),
+        schema: htmlDraftOutputSchema,
+        schemaName: "library_html_report_repair",
+        schemaDescription: "A fully corrected HTML report object that satisfies the validation policy.",
+        reasoningEffort: modelChoice.reasoningEffort,
+      },
+    );
+    usage = combineSandboxLibraryGenerationUsage(usage, repair.usage);
+    totalCostUsd = combineSandboxLibraryGenerationCost(totalCostUsd, repair.costUsd);
+    output = normalizeHtmlDraftObject(repair.object);
+    validation = validateHtmlArtifact(output.html);
+  }
+
+  if (!validation.valid) {
+    throw new Error(`HTML report failed validation: ${validation.errors.join("; ")}`);
+  }
+
+  await ctx.runMutation(internal.libraryArtifactDrafts.updateDraftProgress, {
+    jobId: args.jobId,
+    stage: "Storing HTML report…",
+    progress: 0.9,
+  });
+
+  const stored = await storeHtmlArtifactSource(ctx, validation.html);
+  const sourceArtifacts = sourceArtifactsFromContext(context, retrievedChunks);
+  const sourceChunkIds = retrievedChunks.map((chunk) => chunk.chunkId);
+
+  const readyResult: { ready: boolean } = await ctx.runMutation(internal.libraryArtifactDrafts.markDraftReady, {
+    draftId: args.draftId,
+    jobId: args.jobId,
+    title: output.title,
+    summary: output.summary,
+    contentMarkdown: output.contentMarkdown,
+    outputFormat: "html",
+    htmlStorageId: stored.storageId,
+    htmlHash: stored.htmlHash,
+    htmlByteLength: stored.htmlByteLength,
+    sourceArtifacts,
+    sourceChunkIds,
+    generatedByProvider: modelChoice.provider,
+    generatedByModel: modelChoice.modelName,
+    reasoningEffort: modelChoice.reasoningEffort,
+    promptVersion: ARTIFACT_DRAFT_PROMPT_VERSION,
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cachedInputTokens: usage.cachedInputTokens,
+    cacheWriteTokens: usage.cacheWriteTokens,
+    reasoningTokens: usage.reasoningTokens,
+    totalCostUsd,
+  });
+  if (!readyResult.ready) {
+    try {
+      await ctx.storage.delete(stored.storageId);
+    } catch {
+      // The ready mutation may already have deleted the blob if the repository became inactive.
+    }
+    throw new Error("HTML artifact draft could not be marked ready.");
+  }
+
+  logInfo("artifactDraft", "html_draft_ready", {
+    draftId: args.draftId,
+    jobId: args.jobId,
+    repositoryId: args.repositoryId,
+    provider: modelChoice.provider,
+    modelName: modelChoice.modelName,
+    sourceChunkCount: sourceChunkIds.length,
+    htmlByteLength: stored.htmlByteLength,
+  });
+}
+
+function resolveHtmlDraftModelChoice(args: {
+  provider: LlmProvider | undefined;
+  modelName: string | undefined;
+  reasoningEffort: ReasoningEffort | undefined;
+}): { provider: LlmProvider; modelName: string; reasoningEffort: ReasoningEffort | undefined } {
+  if (!args.provider || !args.modelName) {
+    throw new Error("HTML artifact draft job is missing its model selection.");
+  }
+  const catalogEntry = getCatalogEntry(args.provider, args.modelName);
+  const reasoningEffort = isSupportedReasoningEffort(args.provider, args.modelName, args.reasoningEffort)
+    ? (args.reasoningEffort ?? catalogEntry?.reasoningEffort)
+    : catalogEntry?.reasoningEffort;
+  return {
+    provider: args.provider,
+    modelName: args.modelName,
+    reasoningEffort,
+  };
+}
+
+function normalizeHtmlDraftObject(output: z.infer<typeof htmlDraftOutputSchema>) {
+  return {
+    title: output.title.trim(),
+    summary: output.summary.trim(),
+    contentMarkdown: output.contentMarkdown.trim(),
+    html: output.html.trim(),
+  };
+}
+
+async function storeHtmlArtifactSource(
+  ctx: ActionCtx,
+  html: string,
+): Promise<{ storageId: Id<"_storage">; htmlHash: string; htmlByteLength: number }> {
+  const htmlHash = createHash("sha256").update(html, "utf8").digest("hex");
+  const htmlByteLength = new TextEncoder().encode(html).byteLength;
+  const storageId = await ctx.storage.store(new Blob([html], { type: "text/html; charset=utf-8" }));
+  return { storageId, htmlHash, htmlByteLength };
+}
+
+function buildHtmlSystemPrompt() {
+  return [
+    "You draft Library HTML report artifacts for Systify.",
+    "Library markdown artifacts and retrieved chunks are the knowledge source. Do not claim you inspected live source code.",
+    "Return a full structured object with title, summary, contentMarkdown, and html.",
+    "contentMarkdown is the canonical searchable companion. Make it non-empty, source/provenance friendly, and include citations to the provided Library evidence labels.",
+    "html is a presentation artifact. It must be a complete self-contained HTML document.",
+    "HTML requirements: <!doctype html>, html/head/body, UTF-8 meta, responsive viewport meta, non-empty body, inline CSS only, no JavaScript, no forms, no iframes, no external network resources, no non-fragment links.",
+    "Use semantic HTML and polished inline CSS. Fragment-only anchors such as #section are allowed.",
+  ].join("\n");
+}
+
+function buildHtmlRepairSystemPrompt() {
+  return [
+    "You repair a Library HTML report artifact so it satisfies a strict validation policy.",
+    "Return a full corrected object with title, summary, contentMarkdown, and html.",
+    "Do not add new facts or external resources. Preserve the markdown companion unless the validation error requires a minimal correction.",
+    "The html field must be a complete self-contained HTML document with no JavaScript, no forms, no iframes, no external URLs, and no non-fragment links.",
+  ].join("\n");
+}
+
+function buildHtmlReportPrompt(
+  context: {
+    draft: Doc<"artifactDrafts">;
+    repository: Doc<"repositories">;
+    targetArtifact: Doc<"artifacts"> | null;
+  },
+  chunks: RetrievedChunk[],
+): string {
+  const sections: string[] = [
+    `Repository: ${context.repository.sourceRepoFullName}`,
+    `Operation: ${context.draft.operation}`,
+    `Requested title: ${context.draft.title}`,
+    `User instruction: ${context.draft.prompt}`,
+    "Use only the Library evidence below. If evidence is insufficient for a claim, omit the claim or qualify it.",
+    "Cite evidence in contentMarkdown with the provided source labels, such as [S1]. HTML may include a short Sources section using the same labels.",
+  ];
+
+  let budgetUsed = sections.join("\n\n").length;
+  if (context.targetArtifact && context.targetArtifact.contentMarkdown.length <= HTML_DRAFT_FULL_ARTIFACT_CHAR_LIMIT) {
+    const fullTarget = [
+      "Explicitly scoped artifact full markdown:",
+      `[TARGET] ${context.targetArtifact.title} v${context.targetArtifact.version}`,
+      context.targetArtifact.contentMarkdown,
+    ].join("\n");
+    if (budgetUsed + fullTarget.length <= HTML_DRAFT_CONTEXT_CHAR_LIMIT) {
+      sections.push(fullTarget);
+      budgetUsed += fullTarget.length;
+    }
+  }
+
+  const chunkSections: string[] = [];
+  for (const [index, chunk] of chunks.entries()) {
+    const label = `S${index + 1}`;
+    const heading = chunk.headingPath.length > 0 ? ` > ${chunk.headingPath.join(" > ")}` : "";
+    const content = [`[${label}] ${chunk.artifactTitle} v${chunk.artifactVersion}${heading}`, chunk.content].join("\n");
+    if (budgetUsed + content.length > HTML_DRAFT_CONTEXT_CHAR_LIMIT) {
+      break;
+    }
+    chunkSections.push(content);
+    budgetUsed += content.length;
+  }
+
+  if (chunkSections.length > 0) {
+    sections.push(["Retrieved Library chunks:", ...chunkSections].join("\n\n"));
+  } else {
+    sections.push(
+      "Retrieved Library chunks: none. Keep the report conservative and explain that no matching Library chunks were found.",
+    );
+  }
+
+  return sections.join("\n\n");
+}
+
+function buildHtmlRepairPrompt(output: ReturnType<typeof normalizeHtmlDraftObject>, errors: string[]): string {
+  return [
+    "Validation errors:",
+    ...errors.map((error) => `- ${error}`),
+    "",
+    "Previous full object:",
+    JSON.stringify(output),
+  ].join("\n");
+}
+
+function sourceArtifactsFromContext(
+  context: {
+    targetArtifact: Doc<"artifacts"> | null;
+  },
+  chunks: RetrievedChunk[],
+): Array<{ artifactId: Id<"artifacts">; version: number; title: string }> {
+  const sourceArtifacts = new Map<Id<"artifacts">, { artifactId: Id<"artifacts">; version: number; title: string }>();
+  if (context.targetArtifact) {
+    sourceArtifacts.set(context.targetArtifact._id, {
+      artifactId: context.targetArtifact._id,
+      version: context.targetArtifact.version,
+      title: context.targetArtifact.title,
+    });
+  }
+  for (const chunk of chunks) {
+    if (!sourceArtifacts.has(chunk.artifactId)) {
+      sourceArtifacts.set(chunk.artifactId, {
+        artifactId: chunk.artifactId,
+        version: chunk.artifactVersion,
+        title: chunk.artifactTitle,
+      });
+    }
+  }
+  return [...sourceArtifacts.values()];
+}
 
 async function settleFailedDraftUsage(
   ctx: ActionCtx,

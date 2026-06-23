@@ -147,6 +147,16 @@ const artifactKind = v.union(
   v.literal("custom_document"),
 );
 
+const artifactRenderFormat = v.union(v.literal("markdown"), v.literal("html"));
+
+const htmlValidationStatus = v.union(v.literal("valid"), v.literal("invalid"));
+
+const artifactSourceReference = v.object({
+  artifactId: v.id("artifacts"),
+  version: v.number(),
+  title: v.string(),
+});
+
 /**
  * Chat mode persisted on `threads.mode` and `messages.mode`. The enum mirrors
  * the UI's mode switcher and URL segment verbatim — DB literal, URL path, and
@@ -498,6 +508,8 @@ export default defineSchema({
     title: v.string(),
     summary: v.string(),
     contentMarkdown: v.string(),
+    renderFormat: v.optional(artifactRenderFormat),
+    currentVersionId: v.optional(v.id("artifactVersions")),
     version: v.number(),
     /**
      * `folderId` ties an artifact to a user-created `artifactFolders` row.
@@ -603,6 +615,28 @@ export default defineSchema({
     .index("by_jobId_and_kind", ["jobId", "kind"])
     .index("by_chunkingStatus", ["chunkingStatus"]),
 
+  artifactVersions: defineTable({
+    artifactId: v.id("artifacts"),
+    version: v.number(),
+    ownerTokenIdentifier: v.string(),
+    repositoryId: v.optional(v.id("repositories")),
+    title: v.string(),
+    summary: v.string(),
+    contentMarkdown: v.string(),
+    renderFormat: artifactRenderFormat,
+    htmlStorageId: v.optional(v.id("_storage")),
+    htmlHash: v.optional(v.string()),
+    htmlByteLength: v.optional(v.number()),
+    htmlValidationStatus: v.optional(htmlValidationStatus),
+    htmlValidationErrors: v.optional(v.array(v.string())),
+    sourceArtifacts: v.optional(v.array(artifactSourceReference)),
+    sourceChunkIds: v.optional(v.array(v.id("artifactChunks"))),
+    createdAt: v.number(),
+    jobId: v.optional(v.id("jobs")),
+  })
+    .index("by_artifactId", ["artifactId"])
+    .index("by_artifactId_and_version", ["artifactId", "version"]),
+
   artifactDrafts: defineTable({
     ownerTokenIdentifier: v.string(),
     repositoryId: v.id("repositories"),
@@ -627,6 +661,13 @@ export default defineSchema({
     title: v.string(),
     summary: v.string(),
     contentMarkdown: v.string(),
+    outputFormat: v.optional(artifactRenderFormat),
+    htmlStorageId: v.optional(v.id("_storage")),
+    htmlHash: v.optional(v.string()),
+    htmlByteLength: v.optional(v.number()),
+    htmlValidationErrors: v.optional(v.array(v.string())),
+    sourceArtifacts: v.optional(v.array(artifactSourceReference)),
+    sourceChunkIds: v.optional(v.array(v.id("artifactChunks"))),
     changeSummary: v.optional(v.string()),
 
     sandboxId: v.optional(v.id("sandboxes")),

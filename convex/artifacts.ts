@@ -3,7 +3,7 @@ import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 import { loadOwnedDoc, requireOwnedDoc } from "./lib/ownedDocs";
 import { MAX_ARTIFACT_TITLE_LENGTH } from "./lib/artifactDefaults";
-import { deleteArtifactWrite, replaceArtifactFolder } from "./lib/artifactWrites";
+import { deleteArtifactWrite, replaceArtifactFolder, updateArtifactWrite } from "./lib/artifactWrites";
 import { resolveLatestImportSha, toArtifactMetadataView, toArtifactView } from "./lib/artifactView";
 
 const ARTIFACTS_PER_THREAD_LIMIT = 40;
@@ -283,10 +283,9 @@ export const rename = mutation({
     if (artifact.title === trimmed) {
       return null;
     }
-    await ctx.db.patch(artifact._id, {
+    await updateArtifactWrite(ctx, {
+      artifactId: artifact._id,
       title: trimmed,
-      version: artifact.version + 1,
-      updatedAt: Date.now(),
     });
     return null;
   },

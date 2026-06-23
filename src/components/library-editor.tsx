@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAction, useQuery } from "convex/react";
 import { CaretRightIcon, CheckIcon, CopySimpleIcon, MinusIcon, PlusIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
@@ -7,6 +7,7 @@ import { Markdown, type MermaidRepairRequest } from "@/components/markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useLocalStorageEnum } from "@/hooks/use-persisted-state";
@@ -56,14 +57,26 @@ function fontSizeZoom(size: FontSize): number {
  */
 export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactId; className?: string }) {
   const artifact = useQuery(api.artifacts.getById, { artifactId });
+  const versions = useQuery(api.artifactVersions.listByArtifact, { artifactId });
+  const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
+  const historicalVersion = useQuery(
+    api.artifactVersions.getVersion,
+    selectedVersion !== null && artifact !== undefined && artifact !== null && selectedVersion !== artifact.version
+      ? { artifactId, version: selectedVersion }
+      : "skip",
+  );
   const folder = useQuery(api.artifactFolders.getById, artifact?.folderId ? { folderId: artifact.folderId } : "skip");
   const repairMermaidBlock = useAction(api.artifactMermaidRepairNode.repairArtifactMermaidBlock);
+
+  useEffect(() => {
+    setSelectedVersion(null);
+  }, [artifactId]);
 
   const [copied, setCopied] = useState(false);
   const [, runCopy] = useAsyncCallback(async () => {
     if (!artifact) return;
     try {
-      await navigator.clipboard.writeText(artifact.contentMarkdown);
+      await navigator.clipboard.writeText((historicalVersion ?? artifact).contentMarkdown);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1600);
     } catch {
@@ -109,12 +122,23 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
     );
   }
 
+  const displayedArtifact = historicalVersion ?? artifact;
+  const displayedVersion = displayedArtifact.version;
+  const isHistoricalVersion = displayedVersion !== artifact.version;
+  const isHtmlArtifact = displayedArtifact.renderFormat === "html";
+
   return (
     <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur">
-        <LibraryBreadcrumb folderName={folder?.name ?? null} title={artifact.title} />
+        <LibraryBreadcrumb folderName={folder?.name ?? null} title={displayedArtifact.title} />
         <div className="ml-auto flex items-center gap-1.5">
-          <FontSizeControl value={fontSize} onChange={setFontSize} />
+          <ArtifactVersionSelect
+            versions={versions}
+            currentVersion={artifact.version}
+            selectedVersion={displayedVersion}
+            onChange={(version) => setSelectedVersion(version === artifact.version ? null : version)}
+          />
+          {!isHtmlArtifact ? <FontSizeControl value={fontSize} onChange={setFontSize} /> : null}
           <Button
             type="button"
             variant="ghost"
@@ -130,7 +154,9 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
       </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <article className="mx-auto flex w-full max-w-[68ch] flex-col gap-4 px-6 py-8">
+        <article
+          className={cn("mx-auto flex w-full flex-col gap-4 px-6 py-8", isHtmlArtifact ? "max-w-6xl" : "max-w-[68ch]")}
+        >
           <header className="flex flex-col gap-3 border-b border-border pb-5">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="outline" className="text-[10px] uppercase">
@@ -142,16 +168,93 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
               <span className="text-[11px] text-muted-foreground">·</span>
               <FreshnessStatus freshness={artifact.freshness} lastVerifiedAt={artifact.lastVerifiedAt} />
             </div>
-            <h1 className="text-2xl font-semibold leading-tight tracking-tight">{artifact.title}</h1>
-            <p className="text-[14px] text-muted-foreground">{artifact.summary}</p>
+            <h1 className="text-2xl font-semibold leading-tight tracking-tight">{displayedArtifact.title}</h1>
+            <p className="text-[14px] text-muted-foreground">{displayedArtifact.summary}</p>
           </header>
 
-          <div key={`${artifact._id}:${artifact.version}`} style={{ zoom: fontSizeZoom(fontSize) }}>
-            <Markdown onRepairMermaid={handleRepairMermaid}>{artifact.contentMarkdown}</Markdown>
-          </div>
+          {isHtmlArtifact ? (
+            <ArtifactHtmlViewer
+              artifactId={artifact._id as ArtifactId}
+              version={isHistoricalVersion ? displayedVersion : undefined}
+            />
+          ) : (
+            <div key={`${artifact._id}:${displayedVersion}`} style={{ zoom: fontSizeZoom(fontSize) }}>
+              <Markdown onRepairMermaid={isHistoricalVersion ? undefined : handleRepairMermaid}>
+                {displayedArtifact.contentMarkdown}
+              </Markdown>
+            </div>
+          )}
         </article>
       </ScrollArea>
     </div>
+  );
+}
+
+function ArtifactVersionSelect({
+  versions,
+  currentVersion,
+  selectedVersion,
+  onChange,
+}: {
+  versions:
+    | Array<{
+        version: number;
+        renderFormat: "markdown" | "html";
+        createdAt: number;
+      }>
+    | undefined;
+  currentVersion: number;
+  selectedVersion: number;
+  onChange: (version: number) => void;
+}) {
+  if (!versions || versions.length <= 1) {
+    return null;
+  }
+
+  return (
+    <Select value={String(selectedVersion)} onValueChange={(value) => onChange(Number(value))}>
+      <SelectTrigger className="h-8 w-28 px-2 text-[11px]" aria-label="Artifact version">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectGroup>
+          {versions.map((version) => (
+            <SelectItem key={version.version} value={String(version.version)}>
+              v{version.version}
+              {version.version === currentVersion ? " current" : ""}
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
+  );
+}
+
+function ArtifactHtmlViewer({ artifactId, version }: { artifactId: ArtifactId; version?: number }) {
+  const preview = useQuery(
+    api.artifactHtml.getPreviewUrl,
+    version === undefined ? { artifactId } : { artifactId, version },
+  );
+
+  if (preview === undefined) {
+    return <Skeleton className="h-[70vh] w-full" />;
+  }
+  if (preview === null) {
+    return (
+      <p className="border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm leading-6 text-destructive">
+        HTML report preview is not available.
+      </p>
+    );
+  }
+
+  return (
+    <iframe
+      title="HTML report preview"
+      sandbox=""
+      referrerPolicy="no-referrer"
+      src={preview.url}
+      className="h-[70vh] w-full border border-border bg-background"
+    />
   );
 }
 
