@@ -236,14 +236,16 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
           </div>
         ) : null}
 
-        <ThreadSearchDialog
-          open={isThreadSearchOpen}
-          onOpenChange={setIsThreadSearchOpen}
-          repositoryId={null}
-          mode={chatMode}
-          selectedThreadId={urlThreadId}
-          onSelectThread={handleSelectThread}
-        />
+        {isThreadSearchOpen ? (
+          <ThreadSearchDialog
+            open={isThreadSearchOpen}
+            onOpenChange={setIsThreadSearchOpen}
+            repositoryId={null}
+            mode={chatMode}
+            selectedThreadId={urlThreadId}
+            onSelectThread={handleSelectThread}
+          />
+        ) : null}
 
         {actionError ? (
           <div className="border-b border-border px-6 py-3">
