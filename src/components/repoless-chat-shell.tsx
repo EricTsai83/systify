@@ -5,6 +5,7 @@ import { api } from "../../convex/_generated/api";
 import { SidebarInset } from "@/components/ui/sidebar";
 import { AppNotice } from "@/components/app-notice";
 import { AppSidebarLeft } from "@/components/app-sidebar";
+import { ChatModeControls } from "@/components/chat-mode-controls";
 import { ChatContainer } from "@/components/chat-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import {
@@ -12,9 +13,11 @@ import {
   RepolessSingleTurnToggle,
   type RepolessAgentProfileValue,
 } from "@/components/repoless-agent-profile-bar";
+import { ThreadSearchDialog } from "@/components/thread-search-dialog";
 import { useChatComposerSession } from "@/components/chat-shell-shared/use-chat-composer-session";
 import { useChatShellLifecycle } from "@/components/chat-shell-shared/use-chat-shell-lifecycle";
 import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-thread-deletion-recovery";
+import { useShouldShowChatModeControls } from "@/hooks/use-chat-mode-controls-visibility";
 import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
 import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
@@ -59,6 +62,8 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
   const [threadToArchive, setThreadToArchive] = useState<ThreadId | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [draftAgentProfile, setDraftAgentProfile] = useState<RepolessAgentProfileValue>(DEFAULT_REPOLESS_AGENT_PROFILE);
+  const [isThreadSearchOpen, setIsThreadSearchOpen] = useState(false);
+  const shouldShowChatNavigationControls = useShouldShowChatModeControls();
 
   const chatMode: ChatMode = "discuss";
 
@@ -221,6 +226,25 @@ export function RepolessChatShell({ urlThreadId }: { urlThreadId: ThreadId | nul
       />
 
       <SidebarInset>
+        {shouldShowChatNavigationControls ? (
+          <div className="pointer-events-none absolute top-3 left-3 z-20">
+            <ChatModeControls
+              className="pointer-events-auto bg-background"
+              onSearchThreads={() => setIsThreadSearchOpen(true)}
+              onNewThread={handleRequestNewThread}
+            />
+          </div>
+        ) : null}
+
+        <ThreadSearchDialog
+          open={isThreadSearchOpen}
+          onOpenChange={setIsThreadSearchOpen}
+          repositoryId={null}
+          mode={chatMode}
+          selectedThreadId={urlThreadId}
+          onSelectThread={handleSelectThread}
+        />
+
         {actionError ? (
           <div className="border-b border-border px-6 py-3">
             <AppNotice
