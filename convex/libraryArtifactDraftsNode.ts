@@ -23,7 +23,7 @@ import {
   type EnsureSandboxReadyResult,
 } from "./lib/sandboxLibraryGeneration";
 import { SandboxPreparationError } from "./lib/sandboxLiveness";
-import { buildUsageSourceId } from "./lib/usageAccounting";
+import { buildUsageSourceId, type UsageAccountingPolicy } from "./lib/usageAccounting";
 import { ARTIFACT_DRAFT_PROMPT_VERSION } from "./libraryArtifactDrafts";
 
 const ARTIFACT_DRAFT_STEP_BUDGET = 12;
@@ -47,6 +47,15 @@ const htmlDraftOutputSchema = z.object({
   html: z.string().min(1),
 });
 
+type DraftUsageAccounting = {
+  sourceId: string;
+  occurredAtMs: number;
+  usage: NormalizedUsage;
+  totalCostUsd: number | undefined;
+  sandboxDailyCap: UsageAccountingPolicy["sandboxDailyCap"];
+  handled: boolean;
+};
+
 export const runArtifactDraft = internalAction({
   args: {
     draftId: v.id("artifactDrafts"),
@@ -63,15 +72,7 @@ export const runArtifactDraft = internalAction({
       return;
     }
 
-    let usageAccounting:
-      | {
-          sourceId: string;
-          occurredAtMs: number;
-          usage: NormalizedUsage;
-          totalCostUsd: number | undefined;
-          handled: boolean;
-        }
-      | undefined;
+    let usageAccounting: DraftUsageAccounting | undefined;
 
     try {
       const context = await ctx.runQuery(internal.libraryArtifactDrafts.getDraftGenerationContext, {
@@ -89,7 +90,24 @@ export const runArtifactDraft = internalAction({
       }
 
       if ((context.draft.outputFormat ?? "markdown") === "html") {
-        await runHtmlArtifactDraft(ctx, args, context);
+        const startedAt = Date.now();
+        const sourceId = buildUsageSourceId.artifactDraft(args.jobId, startedAt);
+        usageAccounting = {
+          sourceId,
+          occurredAtMs: startedAt,
+          usage: {},
+          totalCostUsd: undefined,
+          sandboxDailyCap: "none",
+          handled: false,
+        };
+        await ctx.runMutation(internal.libraryArtifactDrafts.assertDraftCostBudget, {
+          ownerTokenIdentifier: args.ownerTokenIdentifier,
+          repositoryId: args.repositoryId,
+          jobId: args.jobId,
+          startedAt,
+          sandboxDailyCap: usageAccounting.sandboxDailyCap,
+        });
+        await runHtmlArtifactDraft(ctx, args, context, usageAccounting);
         return;
       }
 
@@ -141,6 +159,7 @@ export const runArtifactDraft = internalAction({
         occurredAtMs: startedAt,
         usage: {},
         totalCostUsd: undefined,
+        sandboxDailyCap: "precheckAndSettle",
         handled: false,
       };
       await ctx.runMutation(internal.libraryArtifactDrafts.assertDraftCostBudget, {
@@ -293,6 +312,7 @@ async function runHtmlArtifactDraft(
     repository: Doc<"repositories">;
     targetArtifact: Doc<"artifacts"> | null;
   },
+  usageAccounting: DraftUsageAccounting,
 ): Promise<void> {
   const modelChoice = resolveHtmlDraftModelChoice({
     provider: context.draft.generatedByProvider,
@@ -346,6 +366,8 @@ async function runHtmlArtifactDraft(
   let output = normalizeHtmlDraftObject(result.object);
   let usage = result.usage;
   let totalCostUsd = result.costUsd;
+  usageAccounting.usage = usage;
+  usageAccounting.totalCostUsd = totalCostUsd;
 
   await ctx.runMutation(internal.libraryArtifactDrafts.updateDraftProgress, {
     jobId: args.jobId,
@@ -377,6 +399,8 @@ async function runHtmlArtifactDraft(
     );
     usage = combineSandboxLibraryGenerationUsage(usage, repair.usage);
     totalCostUsd = combineSandboxLibraryGenerationCost(totalCostUsd, repair.costUsd);
+    usageAccounting.usage = usage;
+    usageAccounting.totalCostUsd = totalCostUsd;
     output = normalizeHtmlDraftObject(repair.object);
     validation = validateHtmlArtifact(output.html);
   }
@@ -417,6 +441,8 @@ async function runHtmlArtifactDraft(
     cacheWriteTokens: usage.cacheWriteTokens,
     reasoningTokens: usage.reasoningTokens,
     totalCostUsd,
+    sourceId: usageAccounting.sourceId,
+    usageSandboxDailyCap: usageAccounting.sandboxDailyCap,
   });
   if (!readyResult.ready) {
     try {
@@ -426,6 +452,7 @@ async function runHtmlArtifactDraft(
     }
     throw new Error("HTML artifact draft could not be marked ready.");
   }
+  usageAccounting.handled = true;
 
   logInfo("artifactDraft", "html_draft_ready", {
     draftId: args.draftId,
@@ -591,12 +618,7 @@ async function settleFailedDraftUsage(
   args: {
     ownerTokenIdentifier: string;
     repositoryId: Doc<"repositories">["_id"];
-    accounting: {
-      sourceId: string;
-      occurredAtMs: number;
-      usage: NormalizedUsage;
-      totalCostUsd: number | undefined;
-    };
+    accounting: DraftUsageAccounting;
   },
 ): Promise<void> {
   const hasUsage =
@@ -613,6 +635,7 @@ async function settleFailedDraftUsage(
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId: args.repositoryId,
       feature: "systemDesignGeneration",
+      sandboxDailyCap: args.accounting.sandboxDailyCap,
       occurredAtMs: args.accounting.occurredAtMs,
     });
     return;
@@ -623,6 +646,7 @@ async function settleFailedDraftUsage(
     ownerTokenIdentifier: args.ownerTokenIdentifier,
     repositoryId: args.repositoryId,
     feature: "systemDesignGeneration",
+    sandboxDailyCap: args.accounting.sandboxDailyCap,
     occurredAtMs: args.accounting.occurredAtMs,
     usage: {
       ...(args.accounting.totalCostUsd !== undefined ? { costUsd: args.accounting.totalCostUsd } : {}),

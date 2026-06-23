@@ -5,6 +5,8 @@ import { loadOwnedDoc } from "./lib/ownedDocs";
 
 export type ArtifactVersionMetadata = Omit<Doc<"artifactVersions">, "contentMarkdown">;
 
+const ARTIFACT_VERSION_LIST_LIMIT = 50;
+
 export const listByArtifact = query({
   args: { artifactId: v.id("artifacts") },
   handler: async (ctx, args): Promise<ArtifactVersionMetadata[]> => {
@@ -14,9 +16,9 @@ export const listByArtifact = query({
     }
     const versions = await ctx.db
       .query("artifactVersions")
-      .withIndex("by_artifactId", (q) => q.eq("artifactId", artifact._id))
+      .withIndex("by_artifactId_and_version", (q) => q.eq("artifactId", artifact._id))
       .order("desc")
-      .collect();
+      .take(ARTIFACT_VERSION_LIST_LIMIT);
     return versions.map(toVersionMetadata);
   },
 });

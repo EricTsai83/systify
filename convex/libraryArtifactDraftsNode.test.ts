@@ -197,6 +197,7 @@ describe("runArtifactDraft", () => {
     const state = await t.run(async (ctx) => ({
       draft: await ctx.db.get(draftId),
       job: await ctx.db.get(jobId),
+      usageEvents: await ctx.db.query("userUsageEvents").take(10),
     }));
     expect(mocks.ensureSandboxReady).toHaveBeenCalledWith(
       expect.anything(),
@@ -370,6 +371,7 @@ describe("runArtifactDraft", () => {
     const state = await t.run(async (ctx) => ({
       draft: await ctx.db.get(draftId),
       job: await ctx.db.get(jobId),
+      usageEvents: await ctx.db.query("userUsageEvents").take(10),
     }));
     expect(mocks.ensureSandboxReady).not.toHaveBeenCalled();
     expect(mocks.getSandboxFsClient).not.toHaveBeenCalled();
@@ -398,6 +400,15 @@ describe("runArtifactDraft", () => {
     expect(state.draft?.sourceChunkIds).toEqual([sourceChunkId]);
     expect(state.job?.status).toBe("completed");
     expect(state.job?.sandboxId).toBeUndefined();
+    expect(state.usageEvents).toHaveLength(1);
+    expect(state.usageEvents[0]).toMatchObject({
+      ownerTokenIdentifier: OWNER,
+      feature: "systemDesign",
+      costUsd: 0.03,
+      inputTokens: 50,
+      outputTokens: 70,
+    });
+    expect(state.usageEvents[0]?.sourceId).toMatch(new RegExp(`^artifactDraft:${jobId}:`));
 
     const applyResult = await t
       .withIdentity({ tokenIdentifier: OWNER })

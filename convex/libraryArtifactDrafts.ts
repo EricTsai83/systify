@@ -46,7 +46,8 @@ import {
   reserveSandboxLibraryGenerationBudget,
   settleSandboxLibraryGenerationUsage,
 } from "./lib/sandboxLibraryGenerationAccounting";
-import { buildUsageSourceId } from "./lib/usageAccounting";
+import { buildUsageSourceId, usageAccountingSandboxDailyCapValidator } from "./lib/usageAccounting";
+import { settleUsageLifecycleInMutation } from "./lib/usageAccountingMutations";
 
 export const ARTIFACT_DRAFT_PROMPT_VERSION = 1;
 
@@ -612,6 +613,7 @@ export const assertDraftCostBudget = internalMutation({
     repositoryId: v.id("repositories"),
     jobId: v.id("jobs"),
     startedAt: v.number(),
+    sandboxDailyCap: v.optional(usageAccountingSandboxDailyCapValidator),
   },
   handler: async (ctx, args): Promise<void> => {
     await reserveSandboxLibraryGenerationBudget(ctx, {
@@ -619,6 +621,7 @@ export const assertDraftCostBudget = internalMutation({
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       repositoryId: args.repositoryId,
       occurredAtMs: args.startedAt,
+      sandboxDailyCap: args.sandboxDailyCap,
     });
   },
 });
@@ -651,14 +654,15 @@ export const markDraftReady = internalMutation({
     reasoningTokens: v.optional(v.number()),
     totalCostUsd: v.optional(v.number()),
     sourceId: v.optional(v.string()),
+    usageSandboxDailyCap: v.optional(usageAccountingSandboxDailyCapValidator),
   },
   handler: async (ctx, args): Promise<{ ready: boolean }> => {
     const draft = await ctx.db.get(args.draftId);
     if (!draft || draft.jobId !== args.jobId || draft.status !== "running") {
       return { ready: false };
     }
-    if (args.outputFormat === "markdown" && !args.sourceId) {
-      throw new Error("Markdown draft is missing its usage source.");
+    if (!args.sourceId) {
+      throw new Error("Artifact draft is missing its usage source.");
     }
     if (args.outputFormat === "html" && (!args.htmlStorageId || !args.htmlHash || args.htmlByteLength === undefined)) {
       throw new Error("HTML draft is missing its stored report metadata.");
@@ -669,22 +673,21 @@ export const markDraftReady = internalMutation({
       if (args.htmlStorageId) {
         await ctx.storage.delete(args.htmlStorageId);
       }
-      if (args.outputFormat === "markdown" && args.sourceId) {
-        await settleSandboxLibraryGenerationUsage(ctx, {
-          sourceId: args.sourceId,
-          ownerTokenIdentifier: draft.ownerTokenIdentifier,
-          repositoryId: draft.repositoryId,
-          occurredAtMs: now,
-          totalCostUsd: args.totalCostUsd,
-          usage: {
-            inputTokens: args.inputTokens,
-            outputTokens: args.outputTokens,
-            cachedInputTokens: args.cachedInputTokens,
-            cacheWriteTokens: args.cacheWriteTokens,
-            reasoningTokens: args.reasoningTokens,
-          },
-        });
-      }
+      await settleArtifactDraftUsage(ctx, {
+        sourceId: args.sourceId,
+        ownerTokenIdentifier: draft.ownerTokenIdentifier,
+        repositoryId: draft.repositoryId,
+        occurredAtMs: now,
+        totalCostUsd: args.totalCostUsd,
+        usage: {
+          inputTokens: args.inputTokens,
+          outputTokens: args.outputTokens,
+          cachedInputTokens: args.cachedInputTokens,
+          cacheWriteTokens: args.cacheWriteTokens,
+          reasoningTokens: args.reasoningTokens,
+        },
+        sandboxDailyCap: resolveDraftUsageSandboxDailyCap(args.outputFormat, args.usageSandboxDailyCap),
+      });
       await ctx.db.patch(args.draftId, {
         status: "failed",
         errorMessage: INACTIVE_DRAFT_REPOSITORY_MESSAGE,
@@ -721,22 +724,21 @@ export const markDraftReady = internalMutation({
       updatedAt: now,
       errorMessage: undefined,
     });
-    if (args.outputFormat === "markdown" && args.sourceId) {
-      await settleSandboxLibraryGenerationUsage(ctx, {
-        sourceId: args.sourceId,
-        ownerTokenIdentifier: draft.ownerTokenIdentifier,
-        repositoryId: draft.repositoryId,
-        occurredAtMs: now,
-        totalCostUsd: args.totalCostUsd,
-        usage: {
-          inputTokens: args.inputTokens,
-          outputTokens: args.outputTokens,
-          cachedInputTokens: args.cachedInputTokens,
-          cacheWriteTokens: args.cacheWriteTokens,
-          reasoningTokens: args.reasoningTokens,
-        },
-      });
-    }
+    await settleArtifactDraftUsage(ctx, {
+      sourceId: args.sourceId,
+      ownerTokenIdentifier: draft.ownerTokenIdentifier,
+      repositoryId: draft.repositoryId,
+      occurredAtMs: now,
+      totalCostUsd: args.totalCostUsd,
+      usage: {
+        inputTokens: args.inputTokens,
+        outputTokens: args.outputTokens,
+        cachedInputTokens: args.cachedInputTokens,
+        cacheWriteTokens: args.cacheWriteTokens,
+        reasoningTokens: args.reasoningTokens,
+      },
+      sandboxDailyCap: resolveDraftUsageSandboxDailyCap(args.outputFormat, args.usageSandboxDailyCap),
+    });
     await ctx.db.patch(args.jobId, {
       ...(args.sandboxId !== undefined ? { sandboxId: args.sandboxId } : {}),
       estimatedInputTokens: args.inputTokens,
@@ -926,4 +928,54 @@ async function joinDraftJob(ctx: QueryCtx, draft: Doc<"artifactDrafts">): Promis
     draft,
     job: await ctx.db.get(draft.jobId),
   };
+}
+
+type DraftUsageSandboxDailyCap = "none" | "precheckAndSettle" | "settleOnly";
+
+function resolveDraftUsageSandboxDailyCap(
+  outputFormat: ArtifactDraftOutputFormat,
+  explicit: DraftUsageSandboxDailyCap | undefined,
+): DraftUsageSandboxDailyCap {
+  return explicit ?? (outputFormat === "html" ? "none" : "precheckAndSettle");
+}
+
+async function settleArtifactDraftUsage(
+  ctx: MutationCtx,
+  args: {
+    sourceId: string;
+    ownerTokenIdentifier: string;
+    repositoryId: Id<"repositories">;
+    occurredAtMs: number;
+    totalCostUsd: number | undefined;
+    usage: {
+      inputTokens?: number;
+      outputTokens?: number;
+      cachedInputTokens?: number;
+      cacheWriteTokens?: number;
+      reasoningTokens?: number;
+    };
+    sandboxDailyCap: DraftUsageSandboxDailyCap;
+  },
+) {
+  if (args.sandboxDailyCap === "precheckAndSettle") {
+    await settleSandboxLibraryGenerationUsage(ctx, args);
+    return;
+  }
+
+  await settleUsageLifecycleInMutation(ctx, {
+    sourceId: args.sourceId,
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    repositoryId: args.repositoryId,
+    feature: "systemDesignGeneration",
+    sandboxDailyCap: args.sandboxDailyCap,
+    occurredAtMs: args.occurredAtMs,
+    usage: {
+      costUsd: args.totalCostUsd,
+      inputTokens: args.usage.inputTokens,
+      outputTokens: args.usage.outputTokens,
+      cachedInputTokens: args.usage.cachedInputTokens,
+      cacheWriteTokens: args.usage.cacheWriteTokens,
+      reasoningTokens: args.usage.reasoningTokens,
+    },
+  });
 }

@@ -26,8 +26,7 @@ const META_REFRESH_RE = /<meta\b[^>]*http-equiv\s*=\s*["']?refresh["']?[^>]*>/i;
 const INLINE_HANDLER_RE = /<[^>]+\son[a-z][a-z0-9_-]*\s*=/i;
 const JAVASCRIPT_URL_RE = /\b(?:href|src|xlink:href)\s*=\s*["']?\s*javascript:/i;
 const CSS_IMPORT_RE = /@import\b/i;
-const CSP_META_RE = /<meta\b[^>]*http-equiv\s*=\s*["']?Content-Security-Policy["']?[^>]*>/i;
-const EXACT_CSP_RE = new RegExp(escapeRegExp(HTML_ARTIFACT_CSP), "i");
+const META_TAG_RE = /<meta\b[^>]*>/gi;
 
 export function validateHtmlArtifact(html: string): HtmlArtifactValidationResult {
   const normalized = injectCspMeta(html);
@@ -58,7 +57,7 @@ export function validateHtmlArtifact(html: string): HtmlArtifactValidationResult
   if (!hasNonEmptyBody(normalized)) {
     errors.push("HTML body must not be empty.");
   }
-  if (!CSP_META_RE.test(normalized) || !EXACT_CSP_RE.test(normalized)) {
+  if (!hasRequiredCspMeta(normalized)) {
     errors.push("HTML must include the required Content-Security-Policy meta tag.");
   }
 
@@ -88,10 +87,21 @@ export function validateHtmlArtifact(html: string): HtmlArtifactValidationResult
 }
 
 function injectCspMeta(html: string): string {
-  if (CSP_META_RE.test(html) && EXACT_CSP_RE.test(html)) {
+  if (hasRequiredCspMeta(html)) {
     return html;
   }
   return html.replace(/<head\b[^>]*>/i, (match) => `${match}\n${HTML_ARTIFACT_CSP_META}`);
+}
+
+function hasRequiredCspMeta(html: string): boolean {
+  const metaTags = html.match(META_TAG_RE) ?? [];
+  return metaTags.some((tag) => {
+    const httpEquiv = readAttribute(tag, "http-equiv");
+    if (httpEquiv?.toLowerCase() !== "content-security-policy") {
+      return false;
+    }
+    return readAttribute(tag, "content") === HTML_ARTIFACT_CSP;
+  });
 }
 
 function hasElement(html: string, tag: string): boolean {
@@ -180,6 +190,24 @@ function unquote(value: string): string {
     return value.slice(1, -1);
   }
   return value;
+}
+
+function readAttribute(tag: string, name: string): string | undefined {
+  const attributeRe = new RegExp(`\\b${escapeRegExp(name)}\\s*=\\s*("[^"]*"|'[^']*'|[^\\s>]+)`, "i");
+  const match = attributeRe.exec(tag);
+  if (!match) {
+    return undefined;
+  }
+  return decodeAttributeValue(unquote(match[1]).trim());
+}
+
+function decodeAttributeValue(value: string): string {
+  return value
+    .replace(/&quot;/gi, '"')
+    .replace(/&#34;/g, '"')
+    .replace(/&apos;/gi, "'")
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/gi, "&");
 }
 
 function uniqueErrors(errors: string[]): string[] {

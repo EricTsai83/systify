@@ -1,5 +1,10 @@
 import { describe, expect, test } from "vitest";
-import { HTML_ARTIFACT_MAX_BYTES, validateHtmlArtifact } from "./htmlArtifacts";
+import {
+  HTML_ARTIFACT_CSP,
+  HTML_ARTIFACT_CSP_META,
+  HTML_ARTIFACT_MAX_BYTES,
+  validateHtmlArtifact,
+} from "./htmlArtifacts";
 
 const VALID_HTML = `<!doctype html>
 <html>
@@ -25,6 +30,20 @@ describe("validateHtmlArtifact", () => {
     expect(result.valid).toBe(true);
     expect(result.html).toContain("Content-Security-Policy");
     expect(result.html).toContain("default-src 'none'");
+  });
+
+  test("does not accept required CSP text outside the CSP meta tag as satisfying policy", () => {
+    const weakCspWithPolicyComment = VALID_HTML.replace(
+      "<title>Report</title>",
+      `<meta http-equiv="Content-Security-Policy" content="default-src 'self'">
+      <!-- ${HTML_ARTIFACT_CSP} -->
+      <title>Report</title>`,
+    );
+
+    const result = validateHtmlArtifact(weakCspWithPolicyComment);
+
+    expect(result.valid).toBe(true);
+    expect(result.html).toContain(HTML_ARTIFACT_CSP_META);
   });
 
   test.each([

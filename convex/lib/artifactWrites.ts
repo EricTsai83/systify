@@ -353,37 +353,30 @@ export async function deleteArtifactWrite(ctx: MutationCtx, artifactId: Id<"arti
     }
     hasMoreViews = views.length === PAGE_SIZE;
   }
-  await deleteArtifactHtmlStorageForArtifact(ctx, artifactId);
+  await deleteArtifactVersionsAndHtmlStorage(ctx, artifactId, PAGE_SIZE);
+  await ctx.db.delete(artifactId);
+}
+
+async function deleteArtifactVersionsAndHtmlStorage(
+  ctx: MutationCtx,
+  artifactId: Id<"artifacts">,
+  pageSize: number,
+): Promise<void> {
+  const deletedStorageIds = new Set<Id<"_storage">>();
   let hasMoreVersions = true;
   while (hasMoreVersions) {
     const versions = await ctx.db
       .query("artifactVersions")
       .withIndex("by_artifactId", (q) => q.eq("artifactId", artifactId))
-      .take(PAGE_SIZE);
+      .take(pageSize);
     for (const version of versions) {
+      if (version.htmlStorageId && !deletedStorageIds.has(version.htmlStorageId)) {
+        await ctx.storage.delete(version.htmlStorageId);
+        deletedStorageIds.add(version.htmlStorageId);
+      }
       await ctx.db.delete(version._id);
     }
-    hasMoreVersions = versions.length === PAGE_SIZE;
-  }
-  await ctx.db.delete(artifactId);
-}
-
-export async function deleteArtifactHtmlStorageForArtifact(
-  ctx: MutationCtx,
-  artifactId: Id<"artifacts">,
-): Promise<void> {
-  const storageIds = new Set<Id<"_storage">>();
-  const versions = await ctx.db
-    .query("artifactVersions")
-    .withIndex("by_artifactId", (q) => q.eq("artifactId", artifactId))
-    .collect();
-  for (const version of versions) {
-    if (version.htmlStorageId) {
-      storageIds.add(version.htmlStorageId);
-    }
-  }
-  for (const storageId of storageIds) {
-    await ctx.storage.delete(storageId);
+    hasMoreVersions = versions.length === pageSize;
   }
 }
 
