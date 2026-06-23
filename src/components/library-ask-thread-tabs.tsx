@@ -57,7 +57,7 @@ export const LibraryAskThreadTabs = memo(function LibraryAskThreadTabs({
   const prewarmThread = usePrewarmThread();
 
   return (
-    <div className={cn("relative flex items-center border-b border-border bg-background", className)}>
+    <div className={cn("relative flex min-h-12 items-center border-b border-border bg-background", className)}>
       <ScrollArea className="min-w-0 flex-1">
         <ul
           role="tablist"
