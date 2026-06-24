@@ -325,7 +325,6 @@ export function LibraryAskPanel({
         provider: selectedProvider,
         modelName: selectedModelName,
         reasoningEffort: selectedReasoningEffort,
-        newThreadTitle: "Library Ask",
         newThreadArtifactContext,
       }),
     clearChatInput: clearInput,
