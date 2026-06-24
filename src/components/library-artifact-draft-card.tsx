@@ -100,7 +100,7 @@ export function LibraryArtifactDraftConfirmCard({
   const helperTone = disabledReason ? "text-destructive" : "text-muted-foreground";
 
   return (
-    <div className="border border-border bg-card px-3 py-3 shadow-sm" data-testid="artifact-draft-confirm-card">
+    <div className="space-y-3" data-testid="artifact-draft-confirm-card">
       <div className="flex items-start gap-2">
         <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
           {isHtml ? (
@@ -124,7 +124,7 @@ export function LibraryArtifactDraftConfirmCard({
         </div>
       </div>
 
-      <div className="mt-3 flex flex-col gap-2">
+      <div className="flex flex-col gap-2">
         {isCreate ? (
           <>
             <label className="flex flex-col gap-1 text-[11px] font-medium text-muted-foreground">

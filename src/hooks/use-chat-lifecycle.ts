@@ -32,10 +32,10 @@ export function useChatLifecycle({
 
   const [isSending, handleSendMessage] = useAsyncCallback(
     useCallback(
-      async (event: React.FormEvent<HTMLFormElement>) => {
+      async (event: React.FormEvent<HTMLFormElement>, contentOverride?: string) => {
         event.preventDefault();
         if (sendLockRef.current) return;
-        const content = readMessageContent(event);
+        const content = contentOverride ?? readMessageContent(event);
         if (!content.trim()) return;
         const request = buildSendRequest(content);
         if (request === null) return;

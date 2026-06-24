@@ -46,7 +46,6 @@ type RepositoryComposerSessionArgs = BaseComposerSessionArgs & {
   repositoryId: RepositoryId | null;
   mode: ChatMode;
   groundingAvailability: ComposerGroundingAvailability | null | undefined;
-  onOpenGenerateSystemDesign?: () => void;
 };
 
 type RepolessComposerSessionArgs = BaseComposerSessionArgs & {
@@ -290,8 +289,6 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
               setGroundLibrary,
               setGroundSandbox,
               grounding: composerSession.effectiveGrounding,
-              onOpenGenerateSystemDesign: args.onOpenGenerateSystemDesign,
-              generateDisabledReason: access.generateSystemDesignDisabledReason,
             }
           : null,
       extraControls: args.extraControls,

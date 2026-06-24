@@ -479,7 +479,6 @@ export function useRepositoryWorkspaceState({
     isReadOnly: isRepoArchived,
     readOnlyHint: chatReadOnlyHint,
     setActionError,
-    onOpenGenerateSystemDesign: () => setIsGenerateDialogOpen(true),
     onAfterCreateThread,
   });
 

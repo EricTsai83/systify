@@ -150,6 +150,7 @@ export function useChatScroll<TMessage extends Identifiable>({
   // sentinel just before `onLoadOlder` fires, so the layout effect can
   // restore the visual anchor against a known baseline.
   const pendingAnchorRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(null);
+  const resizeFollowFrameRef = useRef<number | null>(null);
 
   // Track `prefers-reduced-motion` reactively so users who flip the
   // OS setting mid-session immediately get non-animated scrolls.
@@ -346,13 +347,26 @@ export function useChatScroll<TMessage extends Identifiable>({
     const inner = contentEl;
     if (!el || !inner) return;
     if (typeof ResizeObserver === "undefined") return;
+    let lastScrollHeight = inner.scrollHeight;
     const observer = new ResizeObserver(() => {
-      if (isAtBottomRef.current) {
-        el.scrollTop = el.scrollHeight;
+      if (!isAtBottomRef.current || resizeFollowFrameRef.current !== null) {
+        return;
       }
+      resizeFollowFrameRef.current = requestAnimationFrame(() => {
+        resizeFollowFrameRef.current = null;
+        if (!isAtBottomRef.current) return;
+        const nextScrollHeight = inner.scrollHeight;
+        if (nextScrollHeight === lastScrollHeight) return;
+        lastScrollHeight = nextScrollHeight;
+        el.scrollTop = el.scrollHeight;
+      });
     });
     observer.observe(inner);
     return () => {
+      if (resizeFollowFrameRef.current !== null) {
+        cancelAnimationFrame(resizeFollowFrameRef.current);
+        resizeFollowFrameRef.current = null;
+      }
       observer.disconnect();
     };
   }, [scrollContainer, contentEl]);

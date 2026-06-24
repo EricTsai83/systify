@@ -1,8 +1,7 @@
 import { Fragment } from "react";
 import { BookOpenIcon, FlaskIcon } from "@phosphor-icons/react";
 import type { RepositoryModeDisabledReasonCode } from "../../convex/lib/chatEligibility";
-import { Button } from "@/components/ui/button";
-import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 /**
@@ -13,9 +12,7 @@ import { cn } from "@/lib/utils";
  * the disabled-reason enum surface as compile errors here (the `"loading"`
  * sentinel covers the placeholder verdict the bar renders while the
  * eligibility query is still in flight). The bar only branches on
- * `enabled`; specific disabled-code handling (e.g. "Generate System Design"
- * CTA on `library_no_artifact`) lives in the wiring layer that supplies
- * the `onOpenGenerateSystemDesign` callback.
+ * `enabled`; specific disabled-code handling stays in the wiring layer.
  */
 export type GroundingAxisLike =
   | { readonly enabled: true }
@@ -38,13 +35,6 @@ export type GroundingAxisControl = {
 
 export interface GroundingToggleBarProps {
   axes: readonly GroundingAxisControl[];
-  /**
-   * Fires when the user clicks the "Generate System Design" CTA inside
-   * the Library toggle's disabled tooltip. The caller opens the
-   * generate-system-design dialog.
-   */
-  onOpenGenerateSystemDesign?: () => void;
-  generateDisabledReason?: string;
   /** Hides the whole bar when true (e.g. on Library Mode where it does not apply). */
   hidden?: boolean;
   className?: string;
@@ -96,64 +86,29 @@ export function createDiscussGroundingAxes(input: {
  * reply is unbound LLM training-only chat; either or both can be on for
  * a grounded reply with the matching citation contract.
  *
- * Disabled toggles render with their tooltip-quality reason inline so a
- * glance is enough to tell *why* the option is locked. The Library
- * "no artifact" sub-state additionally renders a "Generate System
- * Design" CTA below the toggle; recoverable Sandbox liveness states
- * stay selectable and prepare on send.
+ * Disabled toggles expose their reason through a tooltip. Recoverable
+ * Sandbox liveness states stay selectable and prepare on send.
  */
-export function GroundingToggleBar({
-  axes,
-  onOpenGenerateSystemDesign,
-  generateDisabledReason,
-  hidden = false,
-  className,
-}: GroundingToggleBarProps) {
+export function GroundingToggleBar({ axes, hidden = false, className }: GroundingToggleBarProps) {
   if (hidden) {
     return null;
   }
 
-  const groundingItems = axes.flatMap((axis) => {
-    const pill = <GroundingAxisPill key={axis.id} axis={axis} />;
-    const showGenerateCta =
-      axis.id === "library" &&
-      !axis.verdict.enabled &&
-      axis.verdict.code === "library_no_artifact" &&
-      typeof onOpenGenerateSystemDesign === "function";
-    if (!showGenerateCta) {
-      return [pill];
-    }
-    return [
-      pill,
-      <Button
-        key="generate"
-        type="button"
-        variant="link"
-        size="sm"
-        className="h-7 px-2 text-xs"
-        disabled={generateDisabledReason !== undefined}
-        title={generateDisabledReason}
-        onClick={() => onOpenGenerateSystemDesign?.()}
-        data-testid="grounding-generate-cta"
-      >
-        {REPOSITORY_GUIDE_COPY.generateAction}
-      </Button>,
-    ];
-  });
-
   return (
-    <div
-      role="group"
-      aria-label="Discuss grounding toggles"
-      className={cn("flex flex-wrap items-center gap-2", className)}
-    >
-      {groundingItems.map((item, index) => (
-        <Fragment key={item.key ?? index}>
-          {index > 0 ? <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" /> : null}
-          {item}
-        </Fragment>
-      ))}
-    </div>
+    <TooltipProvider delayDuration={150}>
+      <div
+        role="group"
+        aria-label="Discuss grounding toggles"
+        className={cn("flex flex-wrap items-center gap-2", className)}
+      >
+        {axes.map((axis, index) => (
+          <Fragment key={axis.id}>
+            {index > 0 ? <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" /> : null}
+            <GroundingAxisPill axis={axis} />
+          </Fragment>
+        ))}
+      </div>
+    </TooltipProvider>
   );
 }
 
@@ -198,7 +153,7 @@ type GroundingPillProps = {
 
 function GroundingPill({ label, icon, active, available, reason, suffix, onToggle, testId }: GroundingPillProps) {
   const title = available ? (suffix ? `${label} grounding (${suffix})` : `${label} grounding`) : reason;
-  return (
+  const button = (
     <button
       type="button"
       aria-pressed={active}
@@ -225,4 +180,17 @@ function GroundingPill({ label, icon, active, available, reason, suffix, onToggl
       ) : null}
     </button>
   );
+
+  if (!available && reason) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent side="top" className="max-w-72">
+          {reason}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return button;
 }

@@ -159,6 +159,28 @@ describe("useChatLifecycle send", () => {
     expect(onAfterCreateThread).toHaveBeenCalledWith(createdThreadId, "library");
   });
 
+  test("uses captured PromptInput text when the form event has already been reset", async () => {
+    const { result } = renderHook(() =>
+      useChatLifecycle(
+        baseArgs({
+          mode: "library",
+          newThreadTitle: "Library Ask",
+        }),
+      ),
+    );
+
+    await act(async () => {
+      await result.current.handleSendMessage(submitEvent(""), "question from prompt input");
+    });
+
+    expect(sendMessageStartingNewThreadMock).toHaveBeenCalledWith({
+      repositoryId,
+      content: "question from prompt input",
+      mode: "library",
+      title: "Library Ask",
+    });
+  });
+
   test("Existing thread send does not forward new-thread title or artifact context", async () => {
     const { result } = renderHook(() =>
       useChatLifecycle(

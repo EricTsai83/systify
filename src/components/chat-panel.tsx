@@ -364,9 +364,9 @@ function ChatComposer({ composer, artifactToggle, canCancel, isSendBlocked, send
        */}
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-6 py-3">
         <PromptInput
-          onSubmit={(_, event) => {
+          onSubmit={(message, event) => {
             if (isSendBlocked) return;
-            void composer.send.onSubmit(event);
+            void composer.send.onSubmit(event, message.text);
           }}
         >
           <PromptInputTextarea
@@ -496,8 +496,6 @@ function ComposerGroundingToggles({ composer }: { composer: ChatComposerViewMode
         setGroundSandbox: grounding.setGroundSandbox,
         grounding: grounding.grounding,
       })}
-      onOpenGenerateSystemDesign={grounding.onOpenGenerateSystemDesign}
-      generateDisabledReason={grounding.generateDisabledReason}
     />
   );
 }

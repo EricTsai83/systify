@@ -388,17 +388,74 @@ function ZoomableViewport({
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const dragRef = useRef<{ pointerId: number; startX: number; startY: number; x: number; y: number } | null>(null);
+  const viewRef = useRef(view);
+  const pendingViewRef = useRef<typeof view | null>(null);
+  const viewFrameRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  useEffect(() => {
+    return () => {
+      if (viewFrameRef.current !== null) {
+        cancelAnimationFrame(viewFrameRef.current);
+        viewFrameRef.current = null;
+      }
+    };
+  }, []);
+
+  const clearScheduledView = useCallback(() => {
+    pendingViewRef.current = null;
+    if (viewFrameRef.current !== null) {
+      cancelAnimationFrame(viewFrameRef.current);
+      viewFrameRef.current = null;
+    }
+  }, []);
+
+  const commitView = useCallback(
+    (next: typeof view) => {
+      clearScheduledView();
+      viewRef.current = next;
+      setView(next);
+    },
+    [clearScheduledView],
+  );
+
+  const scheduleView = useCallback((next: typeof view) => {
+    viewRef.current = next;
+    pendingViewRef.current = next;
+    if (viewFrameRef.current !== null) return;
+
+    viewFrameRef.current = requestAnimationFrame(() => {
+      viewFrameRef.current = null;
+      const pending = pendingViewRef.current;
+      if (pending === null) return;
+      pendingViewRef.current = null;
+      viewRef.current = pending;
+      setView(pending);
+    });
+  }, []);
+
+  const flushScheduledView = useCallback(() => {
+    const pending = pendingViewRef.current;
+    if (pending === null) return;
+    clearScheduledView();
+    viewRef.current = pending;
+    setView(pending);
+  }, [clearScheduledView]);
 
   const clampScale = useCallback((scale: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, scale)), []);
 
   const zoomFromViewportCenter = useCallback(
     (nextScale: number) => {
-      setView((current) => ({
+      const current = viewRef.current;
+      commitView({
         ...current,
         scale: clampScale(nextScale),
-      }));
+      });
     },
-    [clampScale],
+    [clampScale, commitView],
   );
 
   const zoomFromCenter = useCallback(
@@ -408,7 +465,7 @@ function ZoomableViewport({
     [view.scale, zoomFromViewportCenter],
   );
 
-  const reset = useCallback(() => setView({ scale: 1, x: 0, y: 0 }), []);
+  const reset = useCallback(() => commitView({ scale: 1, x: 0, y: 0 }), [commitView]);
 
   useEffect(() => {
     actionsRef.current = {
@@ -442,33 +499,40 @@ function ZoomableViewport({
         pointerId: event.pointerId,
         startX: event.clientX,
         startY: event.clientY,
-        x: view.x,
-        y: view.y,
+        x: viewRef.current.x,
+        y: viewRef.current.y,
       };
       setIsDragging(true);
       event.currentTarget.setPointerCapture(event.pointerId);
     },
-    [interactive, view.x, view.y],
+    [interactive],
   );
 
-  const handlePointerMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag || drag.pointerId !== event.pointerId) {
-      return;
-    }
-    setView((current) => ({
-      ...current,
-      x: drag.x + event.clientX - drag.startX,
-      y: drag.y + event.clientY - drag.startY,
-    }));
-  }, []);
+  const handlePointerMove = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      const drag = dragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) {
+        return;
+      }
+      scheduleView({
+        ...viewRef.current,
+        x: drag.x + event.clientX - drag.startX,
+        y: drag.y + event.clientY - drag.startY,
+      });
+    },
+    [scheduleView],
+  );
 
-  const handlePointerUp = useCallback((event: PointerEvent<HTMLDivElement>) => {
-    if (dragRef.current?.pointerId === event.pointerId) {
-      dragRef.current = null;
-      setIsDragging(false);
-    }
-  }, []);
+  const handlePointerUp = useCallback(
+    (event: PointerEvent<HTMLDivElement>) => {
+      if (dragRef.current?.pointerId === event.pointerId) {
+        flushScheduledView();
+        dragRef.current = null;
+        setIsDragging(false);
+      }
+    },
+    [flushScheduledView],
+  );
 
   return (
     <div
