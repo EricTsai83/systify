@@ -96,6 +96,10 @@ type LibraryAskComposerState = {
   toolsReady: boolean;
 };
 
+type PromptInputSubmitMessage = {
+  text: string;
+};
+
 export function LibraryAskPanel({
   repositoryId,
   threadId,
@@ -427,12 +431,12 @@ export function LibraryAskPanel({
   const composerDisabledReason =
     askDisabledReason ?? threadConfirmationDisabledReason ?? (isLocked ? LOCKED_HINT : askModelAccessDisabledReason);
   const handleSubmit = useCallback(
-    async (event: FormEvent<HTMLFormElement>) => {
+    async (event: FormEvent<HTMLFormElement>, contentOverride?: string) => {
       if (composerDisabledReason != null || latestAssistantInFlight) {
         event.preventDefault();
         return;
       }
-      await handleLifecycleSendMessage(event);
+      await handleLifecycleSendMessage(event, contentOverride);
     },
     [composerDisabledReason, handleLifecycleSendMessage, latestAssistantInFlight],
   );
@@ -933,7 +937,7 @@ function LibraryAskComposer({
   premiumModelsDisabledReason?: string;
   highReasoningDisabledReason?: string;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
-  onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
+  onSubmit: (event: FormEvent<HTMLFormElement>, contentOverride?: string) => void | Promise<void>;
   tools: LibraryAskComposerToolsState;
 }) {
   if (draftState.draftIntent) {
@@ -969,8 +973,8 @@ function LibraryAskComposer({
     <div className="border-t border-border px-4 py-3">
       {state.error ? <p className="mb-2 text-xs text-destructive">{state.error}</p> : null}
       <PromptInput
-        onSubmit={(_, event) => {
-          void onSubmit(event);
+        onSubmit={(message: PromptInputSubmitMessage, event) => {
+          void onSubmit(event, message.text);
         }}
       >
         <PromptInputTextarea

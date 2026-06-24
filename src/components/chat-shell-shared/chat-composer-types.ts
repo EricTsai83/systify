@@ -72,7 +72,7 @@ export type ChatComposerViewModel = {
     isBlocked: boolean;
     disabledReason?: string;
     buttonState: "Send" | "Sending…" | "Syncing…";
-    onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+    onSubmit: (event: FormEvent<HTMLFormElement>, contentOverride?: string) => Promise<void>;
   };
   cancel: {
     canCancel: boolean;
