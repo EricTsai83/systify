@@ -14,6 +14,10 @@ type ArtifactSourceReference = {
   title: string;
 };
 
+// Keep at least the read cap (ARTIFACT_VERSION_LIST_LIMIT = 50 in
+// artifactVersions.ts) so nothing that is listable in the UI is ever pruned.
+const MAX_ARTIFACT_VERSIONS = 50;
+
 export interface CreateArtifactWriteArgs {
   threadId?: Id<"threads">;
   repositoryId?: Id<"repositories">;
@@ -242,6 +246,9 @@ export async function updateArtifactWrite(
     }
     patch.updatedAt = Date.now();
     await ctx.db.patch(args.artifactId, patch);
+    if (patch.version !== undefined) {
+      await pruneArtifactVersions(ctx, args.artifactId, patch.version);
+    }
     await scheduleArtifactReindex(ctx, {
       artifactId: args.artifactId,
       repositoryId: args.contentMarkdown !== undefined ? artifact.repositoryId : undefined,
@@ -355,6 +362,52 @@ export async function deleteArtifactWrite(ctx: MutationCtx, artifactId: Id<"arti
   }
   await deleteArtifactVersionsAndHtmlStorage(ctx, artifactId, PAGE_SIZE);
   await ctx.db.delete(artifactId);
+}
+
+async function pruneArtifactVersions(
+  ctx: MutationCtx,
+  artifactId: Id<"artifacts">,
+  latestVersion: number,
+): Promise<void> {
+  const threshold = latestVersion - MAX_ARTIFACT_VERSIONS; // delete versions with version <= threshold
+  if (threshold < 1) {
+    return; // fewer than the cap exist; nothing to prune
+  }
+
+  // Storage ids still referenced by retained versions (version > threshold).
+  // Retained set is bounded by MAX_ARTIFACT_VERSIONS rows.
+  const retainedStorageIds = new Set<Id<"_storage">>();
+  const retained = await ctx.db
+    .query("artifactVersions")
+    .withIndex("by_artifactId_and_version", (q) => q.eq("artifactId", artifactId).gt("version", threshold))
+    .collect();
+  for (const version of retained) {
+    if (version.htmlStorageId) {
+      retainedStorageIds.add(version.htmlStorageId);
+    }
+  }
+
+  const deletedStorageIds = new Set<Id<"_storage">>();
+  const PAGE_SIZE = 100;
+  let hasMore = true;
+  while (hasMore) {
+    const stale = await ctx.db
+      .query("artifactVersions")
+      .withIndex("by_artifactId_and_version", (q) => q.eq("artifactId", artifactId).lte("version", threshold))
+      .take(PAGE_SIZE);
+    for (const version of stale) {
+      if (
+        version.htmlStorageId &&
+        !retainedStorageIds.has(version.htmlStorageId) &&
+        !deletedStorageIds.has(version.htmlStorageId)
+      ) {
+        await ctx.storage.delete(version.htmlStorageId);
+        deletedStorageIds.add(version.htmlStorageId);
+      }
+      await ctx.db.delete(version._id);
+    }
+    hasMore = stale.length === PAGE_SIZE;
+  }
 }
 
 async function deleteArtifactVersionsAndHtmlStorage(

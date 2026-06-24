@@ -9,7 +9,7 @@ import {
   insertTestRepository,
   insertTestThread,
 } from "../test/convex/fixtures";
-import { replaceArtifactInFolderWrite } from "./lib/artifactWrites";
+import { replaceArtifactInFolderWrite, updateArtifactWrite } from "./lib/artifactWrites";
 import { createTestConvex, type SystifyTestConvex } from "../test/convex/harness";
 import { withPausedConvexScheduler } from "../test/convex/scheduler";
 
@@ -599,6 +599,171 @@ describe("ArtifactStore — update/delete", () => {
 
     const stored = await t.query(internal.artifactStore.getArtifact, { artifactId });
     expect(stored).toBeNull();
+  });
+});
+
+describe("ArtifactWrites — version pruning", () => {
+  test("prunes versions beyond the cap after exceeding MAX_ARTIFACT_VERSIONS", async () => {
+    const t = createTestConvex();
+    const threadId = await seedThread(t);
+
+    const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
+      threadId,
+      ownerTokenIdentifier: OWNER,
+      kind: "architecture_diagram",
+      title: "v1",
+      summary: "s",
+      contentMarkdown: "m v1",
+    });
+
+    // Perform 54 more updates so total versions created = 55 (1 original + 54 updates).
+    // After each update that pushes version > 50, pruning should fire.
+    for (let i = 2; i <= 55; i += 1) {
+      await t.mutation(internal.artifactStore.updateArtifact, {
+        artifactId,
+        title: `v${i}`,
+      });
+    }
+
+    const state = await t.run(async (ctx) => {
+      const artifact = await ctx.db.get(artifactId);
+      const versions = await ctx.db
+        .query("artifactVersions")
+        .withIndex("by_artifactId", (q) => q.eq("artifactId", artifactId))
+        .collect();
+      return { artifact, versions };
+    });
+
+    expect(state.artifact!.version).toBe(55);
+    expect(state.versions).toHaveLength(50);
+    const versionNumbers = state.versions.map((v) => v.version).sort((a, b) => a - b);
+    expect(versionNumbers[0]).toBe(6); // latestVersion(55) - MAX(50) + 1 = 6
+    expect(versionNumbers[versionNumbers.length - 1]).toBe(55);
+  });
+
+  test("retains all versions when under the cap", async () => {
+    const t = createTestConvex();
+    const threadId = await seedThread(t);
+
+    const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
+      threadId,
+      ownerTokenIdentifier: OWNER,
+      kind: "architecture_diagram",
+      title: "v1",
+      summary: "s",
+      contentMarkdown: "m v1",
+    });
+
+    for (let i = 2; i <= 10; i += 1) {
+      await t.mutation(internal.artifactStore.updateArtifact, {
+        artifactId,
+        title: `v${i}`,
+      });
+    }
+
+    const versions = await t.run(async (ctx) =>
+      ctx.db
+        .query("artifactVersions")
+        .withIndex("by_artifactId", (q) => q.eq("artifactId", artifactId))
+        .collect(),
+    );
+
+    expect(versions).toHaveLength(10);
+  });
+
+  test("currentVersionId always survives pruning and matches the artifact version", async () => {
+    const t = createTestConvex();
+    const threadId = await seedThread(t);
+
+    const artifactId = await t.mutation(internal.artifactStore.createArtifact, {
+      threadId,
+      ownerTokenIdentifier: OWNER,
+      kind: "architecture_diagram",
+      title: "v1",
+      summary: "s",
+      contentMarkdown: "m v1",
+    });
+
+    for (let i = 2; i <= 55; i += 1) {
+      await t.mutation(internal.artifactStore.updateArtifact, {
+        artifactId,
+        title: `v${i}`,
+      });
+    }
+
+    await t.run(async (ctx) => {
+      const artifact = await ctx.db.get(artifactId);
+      expect(artifact).not.toBeNull();
+      expect(artifact!.currentVersionId).toBeDefined();
+      const currentVersion = await ctx.db.get(artifact!.currentVersionId!);
+      expect(currentVersion).not.toBeNull();
+      expect(currentVersion!.version).toBe(artifact!.version);
+    });
+  });
+
+  test("shared HTML blob is not deleted when still referenced by a retained version", async () => {
+    const t = createTestConvex();
+    const threadId = await seedThread(t);
+
+    // Create an HTML artifact with an initial storage blob.
+    const htmlStorageId = await t.run(async (ctx) =>
+      ctx.storage.store(
+        new Blob(["<!doctype html><html><head></head><body>hello</body></html>"], { type: "text/html" }),
+      ),
+    );
+
+    const artifactId = await t.run(async (ctx) => {
+      const id = await ctx.db.insert("artifacts", {
+        threadId,
+        ownerTokenIdentifier: OWNER,
+        kind: "architecture_diagram",
+        title: "html artifact",
+        summary: "s",
+        contentMarkdown: "m",
+        renderFormat: "html",
+        version: 1,
+        updatedAt: Date.now(),
+      });
+      const versionId = await ctx.db.insert("artifactVersions", {
+        artifactId: id,
+        version: 1,
+        ownerTokenIdentifier: OWNER,
+        title: "html artifact",
+        summary: "s",
+        contentMarkdown: "m",
+        renderFormat: "html",
+        htmlStorageId,
+        htmlHash: "abc",
+        htmlByteLength: 64,
+        htmlValidationStatus: "valid",
+        createdAt: Date.now(),
+      });
+      await ctx.db.patch(id, { currentVersionId: versionId });
+      return id;
+    });
+
+    // Perform 54 title-only updates — these reuse the same htmlStorageId via
+    // the `?? previousHtml.htmlStorageId` path in updateArtifactWrite.
+    for (let i = 2; i <= 55; i += 1) {
+      await t.run(async (ctx) => {
+        await updateArtifactWrite(ctx, {
+          artifactId,
+          title: `html artifact v${i}`,
+        });
+      });
+    }
+
+    // The retained current version must still have a valid htmlStorageId.
+    await t.run(async (ctx) => {
+      const artifact = await ctx.db.get(artifactId);
+      expect(artifact).not.toBeNull();
+      const currentVersion = await ctx.db.get(artifact!.currentVersionId!);
+      expect(currentVersion).not.toBeNull();
+      expect(currentVersion!.htmlStorageId).toBeDefined();
+      // Storage blob must still be readable (was not deleted).
+      const url = await ctx.storage.getUrl(currentVersion!.htmlStorageId!);
+      expect(url).not.toBeNull();
+    });
   });
 });
 
