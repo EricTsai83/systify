@@ -33,6 +33,7 @@ import {
 import { LibraryAskThreadTabs } from "@/components/library-ask-thread-tabs";
 import { type PromptInputModelPickerValue } from "@/components/ai-elements/prompt-input-model-picker";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -984,7 +985,8 @@ function LibraryAskComposer({
           onChange={(event) => state.setInput(event.target.value)}
           placeholder={state.placeholder}
           className="min-h-24 text-sm"
-          disabled={state.isSending || state.latestAssistantInFlight || state.disabledReason != null}
+          readOnly={state.isSending || state.latestAssistantInFlight}
+          disabled={state.disabledReason != null}
           aria-describedby={state.hintId}
         />
         <PromptInputFooter>
@@ -1095,7 +1097,7 @@ function LibraryAskSendButton({ state }: { state: LibraryAskComposerState }) {
       title={state.disabledReason ?? undefined}
     >
       <PaperPlaneTiltIcon size={14} weight="fill" />
-      {state.isSending ? "Asking..." : "Ask"}
+      <ButtonStateText current={state.isSending ? "Asking..." : "Ask"} states={["Ask", "Asking..."]} />
     </Button>
   );
 }
