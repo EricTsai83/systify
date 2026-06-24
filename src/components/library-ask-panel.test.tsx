@@ -351,6 +351,16 @@ function renderPanel(overrides: Partial<React.ComponentProps<typeof LibraryAskPa
   );
 }
 
+function openDraftMenu() {
+  const trigger = screen.getByRole("button", { name: "Draft" });
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+}
+
+function selectDraftMenuItem(name: RegExp) {
+  openDraftMenu();
+  fireEvent.click(screen.getByRole("menuitem", { name }));
+}
+
 beforeEach(() => {
   queryState = {
     activeArtifact: makeArtifact(),
@@ -407,7 +417,7 @@ describe("LibraryAskPanel artifact drafts", () => {
   test("shows the document action confirmation before requesting a draft", () => {
     renderPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: /Draft artifact/i }));
+    selectDraftMenuItem(/New artifact/i);
 
     const card = screen.getByTestId("artifact-draft-confirm-card");
     expect(card).toBeInTheDocument();
@@ -423,7 +433,7 @@ describe("LibraryAskPanel artifact drafts", () => {
   test("allows updating the open artifact without custom instructions", async () => {
     renderPanel({ activeArtifactId });
 
-    fireEvent.click(screen.getByRole("button", { name: /Draft update/i }));
+    selectDraftMenuItem(/Update open artifact/i);
 
     expect(screen.getByTestId("artifact-draft-confirm-card")).toBeInTheDocument();
     expect(screen.getByText("Instructions (optional)")).toBeInTheDocument();
@@ -450,7 +460,7 @@ describe("LibraryAskPanel artifact drafts", () => {
   test("requests an explicit HTML report draft", async () => {
     renderPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: /Draft HTML report/i }));
+    selectDraftMenuItem(/HTML report/i);
 
     const card = screen.getByTestId("artifact-draft-confirm-card");
     expect(within(card).getByRole("heading", { name: "Draft HTML report" })).toBeInTheDocument();
@@ -645,7 +655,9 @@ describe("LibraryAskPanel artifact drafts", () => {
   test("disables update action until an artifact is open", () => {
     renderPanel({ activeArtifactId: null });
 
-    expect(screen.getByRole("button", { name: /Draft update/i })).toBeDisabled();
+    openDraftMenu();
+
+    expect(screen.getByRole("menuitem", { name: /Update open artifact/i })).toHaveAttribute("data-disabled");
   });
 
   test("holds composer tools until the library model catalog is ready", () => {
@@ -663,7 +675,7 @@ describe("LibraryAskPanel artifact drafts", () => {
 
     renderPanel();
 
-    expect(screen.queryByRole("button", { name: /Draft artifact/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Draft" })).not.toBeInTheDocument();
     expect(screen.queryByText("GPT-5.5")).not.toBeInTheDocument();
     expect(screen.getByTestId("library-ask-composer-tools-placeholder")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
@@ -674,7 +686,7 @@ describe("LibraryAskPanel artifact drafts", () => {
 
     renderPanel();
 
-    expect(screen.queryByRole("button", { name: /Draft artifact/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Draft" })).not.toBeInTheDocument();
     expect(screen.queryByText("GPT-5.5")).not.toBeInTheDocument();
     expect(screen.getByTestId("library-ask-composer-tools-placeholder")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();

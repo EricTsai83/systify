@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   BookOpenIcon,
+  CaretDownIcon,
   FileHtmlIcon,
   FilePlusIcon,
   GitDiffIcon,
@@ -32,6 +33,12 @@ import {
 import { LibraryAskThreadTabs } from "@/components/library-ask-thread-tabs";
 import { type PromptInputModelPickerValue } from "@/components/ai-elements/prompt-input-model-picker";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { useLibraryAskTabs } from "@/hooks/use-library-ask-tabs";
 import { useComposerModelPick, type ComposerModelPickValue } from "@/hooks/use-composer-model-pick";
 import { useChatLifecycle } from "@/hooks/use-chat-lifecycle";
@@ -605,21 +612,18 @@ export function LibraryAskPanel({
         onDraftRegenerated={handleRepositoryDraftRegenerated}
       />
 
-      <LibraryAskDraftConfirmation
+      <LibraryAskComposer
+        state={composerState}
         repositoryId={repositoryId}
         draftState={draftState}
         repositoryCodeLabel={repositoryCodeLabel}
-        onModelPickChange={setDraftUserPick}
-        onReasoningEffortChange={setDraftReasoningEffort}
+        onDraftModelPickChange={setDraftUserPick}
+        onDraftReasoningEffortChange={setDraftReasoningEffort}
+        onDraftIntentChange={setDraftIntent}
+        onCancelDraft={() => setDraftIntent(null)}
+        onSubmitDraft={() => void runRequestDraft()}
         premiumModelsDisabledReason={premiumModelsDisabledReason}
         highReasoningDisabledReason={highReasoningDisabledReason}
-        onChange={setDraftIntent}
-        onCancel={() => setDraftIntent(null)}
-        onSubmit={() => void runRequestDraft()}
-      />
-
-      <LibraryAskComposer
-        state={composerState}
         textareaRef={textareaRef}
         onSubmit={handleSubmit}
         tools={{
@@ -882,59 +886,6 @@ function LibraryAskDefaultEmptyState({
   );
 }
 
-function LibraryAskDraftConfirmation({
-  repositoryId,
-  draftState,
-  repositoryCodeLabel,
-  onModelPickChange,
-  onReasoningEffortChange,
-  premiumModelsDisabledReason,
-  highReasoningDisabledReason,
-  onChange,
-  onCancel,
-  onSubmit,
-}: {
-  repositoryId: RepositoryId;
-  draftState: LibraryAskDraftState;
-  repositoryCodeLabel: string;
-  onModelPickChange: (value: PromptInputModelPickerValue | null) => void;
-  onReasoningEffortChange: (value: ReasoningEffort | null) => void;
-  premiumModelsDisabledReason?: string;
-  highReasoningDisabledReason?: string;
-  onChange: (intent: LibraryArtifactDraftIntent) => void;
-  onCancel: () => void;
-  onSubmit: () => void;
-}) {
-  if (!draftState.draftIntent) {
-    return null;
-  }
-  return (
-    <div className="border-t border-border bg-muted/20 p-3">
-      <LibraryArtifactDraftConfirmCard
-        repositoryId={repositoryId}
-        intent={draftState.draftIntent}
-        activeArtifactTitle={draftState.activeArtifactTitle}
-        disabledReason={draftState.disabledReason}
-        repositoryCodeLabel={
-          draftState.draftIntent.outputFormat === "html"
-            ? "Uses Library knowledge by default, not live source."
-            : repositoryCodeLabel
-        }
-        modelPick={draftState.draftModelPick}
-        onModelPickChange={onModelPickChange}
-        reasoningEffort={draftState.draftReasoningEffort}
-        onReasoningEffortChange={onReasoningEffortChange}
-        premiumModelsDisabledReason={premiumModelsDisabledReason}
-        highReasoningDisabledReason={highReasoningDisabledReason}
-        onChange={onChange}
-        onCancel={onCancel}
-        onSubmit={onSubmit}
-        isSubmitting={draftState.isRequestingDraft}
-      />
-    </div>
-  );
-}
-
 type LibraryAskComposerToolsState = {
   isLocked: boolean;
   activeArtifactId: ArtifactId | null;
@@ -956,15 +907,64 @@ type LibraryAskComposerToolsState = {
 
 function LibraryAskComposer({
   state,
+  repositoryId,
+  draftState,
+  repositoryCodeLabel,
+  onDraftModelPickChange,
+  onDraftReasoningEffortChange,
+  onDraftIntentChange,
+  onCancelDraft,
+  onSubmitDraft,
+  premiumModelsDisabledReason,
+  highReasoningDisabledReason,
   textareaRef,
   onSubmit,
   tools,
 }: {
   state: LibraryAskComposerState;
+  repositoryId: RepositoryId;
+  draftState: LibraryAskDraftState;
+  repositoryCodeLabel: string;
+  onDraftModelPickChange: (value: PromptInputModelPickerValue | null) => void;
+  onDraftReasoningEffortChange: (value: ReasoningEffort | null) => void;
+  onDraftIntentChange: (intent: LibraryArtifactDraftIntent) => void;
+  onCancelDraft: () => void;
+  onSubmitDraft: () => void;
+  premiumModelsDisabledReason?: string;
+  highReasoningDisabledReason?: string;
   textareaRef: React.RefObject<HTMLTextAreaElement | null>;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void | Promise<void>;
   tools: LibraryAskComposerToolsState;
 }) {
+  if (draftState.draftIntent) {
+    return (
+      <div className="border-t border-border bg-background px-4 py-3">
+        {state.error ? <p className="mb-2 text-xs text-destructive">{state.error}</p> : null}
+        <LibraryArtifactDraftConfirmCard
+          repositoryId={repositoryId}
+          intent={draftState.draftIntent}
+          activeArtifactTitle={draftState.activeArtifactTitle}
+          disabledReason={draftState.disabledReason}
+          repositoryCodeLabel={
+            draftState.draftIntent.outputFormat === "html"
+              ? "Uses Library knowledge by default, not live source."
+              : repositoryCodeLabel
+          }
+          modelPick={draftState.draftModelPick}
+          onModelPickChange={onDraftModelPickChange}
+          reasoningEffort={draftState.draftReasoningEffort}
+          onReasoningEffortChange={onDraftReasoningEffortChange}
+          premiumModelsDisabledReason={premiumModelsDisabledReason}
+          highReasoningDisabledReason={highReasoningDisabledReason}
+          onChange={onDraftIntentChange}
+          onCancel={onCancelDraft}
+          onSubmit={onSubmitDraft}
+          isSubmitting={draftState.isRequestingDraft}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="border-t border-border px-4 py-3">
       {state.error ? <p className="mb-2 text-xs text-destructive">{state.error}</p> : null}
@@ -1004,44 +1004,54 @@ function LibraryAskComposerTools({
   }
   return (
     <PromptInputTools className="animate-soft-enter">
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-8 gap-1.5 px-2 text-[11px]"
-        onClick={tools.openCreateDraft}
-        disabled={tools.documentActionDisabledReason !== undefined}
-        title={tools.documentActionDisabledReason}
-      >
-        <FilePlusIcon size={13} weight="bold" />
-        Draft artifact
-      </Button>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-8 gap-1.5 px-2 text-[11px]"
-        onClick={tools.openUpdateDraft}
-        disabled={tools.documentActionDisabledReason !== undefined || tools.activeArtifactId === null}
-        title={
-          tools.activeArtifactId === null ? "Open an artifact to draft an update." : tools.documentActionDisabledReason
-        }
-      >
-        <GitDiffIcon size={13} weight="bold" />
-        Draft update
-      </Button>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="h-8 gap-1.5 px-2 text-[11px]"
-        onClick={tools.openHtmlReportDraft}
-        disabled={tools.documentActionDisabledReason !== undefined}
-        title={tools.documentActionDisabledReason}
-      >
-        <FileHtmlIcon size={13} weight="bold" />
-        Draft HTML report
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className={[
+              "inline-flex h-8 w-auto min-w-0 max-w-32 items-center justify-start gap-1.5 rounded-none border-none bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none transition-colors",
+              "hover:bg-accent hover:text-foreground",
+              "focus-visible:bg-transparent focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+              "aria-expanded:bg-accent aria-expanded:text-foreground",
+              "disabled:pointer-events-none disabled:opacity-50",
+              "[&_svg]:shrink-0",
+            ].join(" ")}
+            disabled={tools.documentActionDisabledReason !== undefined}
+            title={tools.documentActionDisabledReason}
+          >
+            <SparkleIcon size={13} weight="bold" />
+            <span className="truncate leading-none">Draft</span>
+            <CaretDownIcon size={11} weight="bold" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-56">
+          <DropdownMenuItem onSelect={tools.openCreateDraft}>
+            <FilePlusIcon size={14} weight="bold" />
+            <div className="min-w-0">
+              <div className="text-xs font-medium">New artifact</div>
+              <div className="text-[11px] text-muted-foreground">Choose title, folder, and instructions.</div>
+            </div>
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={tools.activeArtifactId === null}
+            onSelect={tools.openUpdateDraft}
+            title={tools.activeArtifactId === null ? "Open an artifact to draft an update." : undefined}
+          >
+            <GitDiffIcon size={14} weight="bold" />
+            <div className="min-w-0">
+              <div className="text-xs font-medium">Update open artifact</div>
+              <div className="text-[11px] text-muted-foreground">Refresh the current artifact in place.</div>
+            </div>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={tools.openHtmlReportDraft}>
+            <FileHtmlIcon size={14} weight="bold" />
+            <div className="min-w-0">
+              <div className="text-xs font-medium">HTML report</div>
+              <div className="text-[11px] text-muted-foreground">Create a Library-grounded report.</div>
+            </div>
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       {!tools.isLocked ? (
         <PromptInputModelPicker
           value={tools.selectedModelPick}
