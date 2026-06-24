@@ -175,7 +175,7 @@ function toPromptArtifactFallbackEvidence(artifact: Doc<"artifacts">): PromptArt
     kind: "artifact",
     artifactId: artifact._id,
     title: artifact.title,
-    summary: artifact.summary,
+    description: artifact.description,
     contentMarkdown: artifact.contentMarkdown,
   };
 }

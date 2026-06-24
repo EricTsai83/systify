@@ -3,6 +3,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
+import { SYSTEM_DESIGN_KIND_DESCRIPTIONS } from "./lib/systemDesign";
 import { runSystemDesignKind } from "./systemDesignKindRun";
 
 const mocks = vi.hoisted(() => ({
@@ -183,6 +184,7 @@ describe("runSystemDesignKind publication finalization", () => {
     expect(finalizeArgs.outcome).toMatchObject({
       kind: "generated",
       title: "README Summary",
+      description: SYSTEM_DESIGN_KIND_DESCRIPTIONS.readme_summary,
       contentMarkdown: validReadmeMarkdown,
       usage: { inputTokens: 100, outputTokens: 50 },
       totalCostUsd: 0.01,

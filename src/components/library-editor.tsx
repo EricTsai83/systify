@@ -4,7 +4,6 @@ import { CaretRightIcon, CheckIcon, CopySimpleIcon, MinusIcon, PlusIcon } from "
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import { Markdown, type MermaidRepairRequest } from "@/components/markdown";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -12,9 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useLocalStorageEnum } from "@/hooks/use-persisted-state";
 import { toUserErrorMessage } from "@/lib/errors";
-import { formatRelativeTime } from "@/lib/format";
-import { formatArtifactKind } from "@/lib/operations";
-import type { ArtifactFreshness, ArtifactId } from "@/lib/types";
+import type { ArtifactId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /**
@@ -174,21 +171,6 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
             </p>
           ) : (
             <>
-              <header className="flex flex-col gap-3 border-b border-border pb-5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline" className="text-[10px] uppercase">
-                    {formatArtifactKind(artifact.kind)}
-                  </Badge>
-                  <span className="text-[11px] text-muted-foreground">
-                    {new Date(artifact._creationTime).toLocaleString()}
-                  </span>
-                  <span className="text-[11px] text-muted-foreground">·</span>
-                  <FreshnessStatus freshness={artifact.freshness} lastVerifiedAt={artifact.lastVerifiedAt} />
-                </div>
-                <h1 className="text-2xl font-semibold leading-tight tracking-tight">{displayedArtifact.title}</h1>
-                <p className="text-[14px] text-muted-foreground">{displayedArtifact.summary}</p>
-              </header>
-
               {isHtmlArtifact ? (
                 <ArtifactHtmlViewer
                   artifactId={artifact._id as ArtifactId}
@@ -275,53 +257,6 @@ function ArtifactHtmlViewer({ artifactId, version }: { artifactId: ArtifactId; v
       className="h-[70vh] w-full border border-border bg-background"
     />
   );
-}
-
-/**
- * Inline verification status shown in the Reader header. Sits next to the
- * rest of the artifact metadata (kind, version, source) because
- * verification is a property of the artifact itself; the navigator stays
- * focused on finding artifacts, where the user is already
- * scanning for context. Colors mirror the canonical freshness ramp
- * (fresh = emerald, aging = amber, stale = red, unverified = muted).
- */
-function FreshnessStatus({
-  freshness,
-  lastVerifiedAt,
-}: {
-  freshness: ArtifactFreshness;
-  lastVerifiedAt: number | undefined;
-}) {
-  const verifiedAge = lastVerifiedAt ? formatRelativeTime(lastVerifiedAt) : null;
-
-  switch (freshness) {
-    case "fresh":
-      return (
-        <span className="text-[11px] text-emerald-600 dark:text-emerald-400">
-          {verifiedAge ? `Verified ${verifiedAge} · Fresh` : "Fresh"}
-        </span>
-      );
-    case "aging":
-      return (
-        <span className="text-[11px] text-amber-600 dark:text-amber-400">
-          {verifiedAge ? `Verified ${verifiedAge} · Aging` : "Aging"}
-        </span>
-      );
-    case "stale":
-      return (
-        <span className="text-[11px] text-red-600 dark:text-red-500">
-          {verifiedAge
-            ? `Verified ${verifiedAge} · Stale — re-verify with Live source`
-            : "Stale — re-verify with Live source"}
-        </span>
-      );
-    case "unverified":
-      return <span className="text-[11px] text-muted-foreground">Not verified against live code</span>;
-    default: {
-      const _exhaustive: never = freshness;
-      return _exhaustive;
-    }
-  }
 }
 
 export function LibraryBreadcrumb({ folderName, title }: { folderName: string | null; title: string }) {

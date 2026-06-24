@@ -401,7 +401,7 @@ describe("repository detail metadata", () => {
           jobId: importJobId,
           kind: "architecture_diagram",
           title: `import-artifact-${index}`,
-          summary: `Import artifact ${index}`,
+          description: `Import artifact ${index}`,
           contentMarkdown: "import content",
           version: 1,
         });

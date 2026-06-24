@@ -224,7 +224,7 @@ async function seedLibraryGroundedReply(t: SystifyTestConvex) {
       ownerTokenIdentifier: OWNER,
       kind: "architecture_overview",
       title: "Architecture overview",
-      summary: "Runtime boundaries.",
+      description: "Runtime boundaries.",
       contentMarkdown: "Fallback artifact body.",
       version: 1,
     });

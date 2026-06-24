@@ -403,14 +403,14 @@ describe("buildUserPrompt artifact numbering", () => {
           kind: "artifact",
           artifactId: makeArtifactId("alpha"),
           title: "Architecture diagram",
-          summary: "Module boundaries.",
+          description: "Module boundaries.",
           contentMarkdown: "graph TD\nA-->B",
         },
         {
           kind: "artifact",
           artifactId: makeArtifactId("beta"),
           title: "Risk hotspots",
-          summary: "Top 3 risks identified.",
+          description: "Top 3 risks identified.",
           contentMarkdown: "1. coupling\n2. flaky tests\n3. db migration",
         },
       ]),
@@ -465,7 +465,7 @@ describe("buildUserPrompt artifact numbering", () => {
           kind: "artifact",
           artifactId: makeArtifactId(`art-${index}`),
           title: `Artifact ${index}`,
-          summary: `Summary ${index}`,
+          description: `Summary ${index}`,
           contentMarkdown: `Body ${index}`,
         })),
       ),
@@ -488,8 +488,8 @@ describe("buildCitationMap", () => {
     const alphaId = makeArtifactId("alpha");
     const betaId = makeArtifactId("beta");
     const evidence = readyArtifacts([
-      { kind: "artifact", artifactId: alphaId, title: "Alpha", summary: "", contentMarkdown: "" },
-      { kind: "artifact", artifactId: betaId, title: "Beta", summary: "", contentMarkdown: "" },
+      { kind: "artifact", artifactId: alphaId, title: "Alpha", description: "", contentMarkdown: "" },
+      { kind: "artifact", artifactId: betaId, title: "Beta", description: "", contentMarkdown: "" },
     ]);
 
     const map = buildCitationMap(evidence);
@@ -539,7 +539,7 @@ describe("buildCitationMap", () => {
         kind: "artifact",
         artifactId: makeArtifactId(`art-${index}`),
         title: `Artifact ${index}`,
-        summary: "",
+        description: "",
         contentMarkdown: "",
       })),
     );

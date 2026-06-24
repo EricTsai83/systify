@@ -179,7 +179,7 @@ describe("import snapshot cleanup", () => {
         ownerTokenIdentifier,
         kind: "architecture_diagram",
         title: "Old Diagram",
-        summary: "Old summary",
+        description: "Old summary",
         contentMarkdown: "old",
         version: 1,
       });
@@ -236,7 +236,7 @@ describe("import snapshot cleanup", () => {
         ownerTokenIdentifier,
         kind: "architecture_diagram",
         title: "Current Diagram",
-        summary: "Current summary",
+        description: "Current summary",
         contentMarkdown: "current",
         version: 1,
       });
@@ -748,7 +748,7 @@ describe("repository deletion during import", () => {
         ownerTokenIdentifier,
         kind: "architecture_diagram",
         title: "Current Diagram",
-        summary: "Current summary",
+        description: "Current summary",
         contentMarkdown: "current",
         version: 1,
       });

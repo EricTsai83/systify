@@ -27,7 +27,7 @@ const artifact = {
   _creationTime: Date.now(),
   kind: "architecture_diagram",
   title: "System overview",
-  summary: "Generated diagram",
+  description: "Generated diagram",
   contentMarkdown: "graph TD;A-->B;",
   version: 1,
 } as unknown as Doc<"artifacts">;

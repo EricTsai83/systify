@@ -24,7 +24,7 @@ async function seedRepoArtifact(
     ownerTokenIdentifier: args.ownerTokenIdentifier ?? OWNER,
     kind: "architecture_diagram",
     title: "Diagram 001",
-    summary: "s",
+    description: "s",
     contentMarkdown: "m",
   });
 }
@@ -40,7 +40,7 @@ async function seedThreadArtifact(t: SystifyTestConvex): Promise<Id<"artifacts">
     ownerTokenIdentifier: OWNER,
     kind: "architecture_diagram",
     title: "Diagram thread",
-    summary: "s",
+    description: "s",
     contentMarkdown: "m",
   });
 }

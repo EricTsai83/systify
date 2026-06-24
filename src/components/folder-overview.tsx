@@ -256,7 +256,7 @@ function FolderArtifactCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <h4 className="truncate text-sm font-semibold">{artifact.title}</h4>
-          <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{artifact.summary}</p>
+          <p className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{artifact.description}</p>
         </div>
         <Badge variant="outline" className="shrink-0 text-[10px] uppercase">
           {formatArtifactKind(artifact.kind)}

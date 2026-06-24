@@ -96,7 +96,7 @@ export const createArtifact = internalMutation({
     jobId: v.optional(v.id("jobs")),
     kind: artifactKindValidator,
     title: v.string(),
-    summary: v.string(),
+    description: v.string(),
     contentMarkdown: v.string(),
     folderId: v.optional(v.id("artifactFolders")),
     generatedByProvider: v.optional(llmProviderValidator),
@@ -116,7 +116,7 @@ export const updateArtifact = internalMutation({
   args: {
     artifactId: v.id("artifacts"),
     title: v.optional(v.string()),
-    summary: v.optional(v.string()),
+    description: v.optional(v.string()),
     contentMarkdown: v.optional(v.string()),
     expectedVersion: v.optional(v.number()),
     lastVerifiedAt: v.optional(v.number()),

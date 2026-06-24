@@ -51,7 +51,7 @@ async function seedArtifact(
     ownerTokenIdentifier?: string;
     kind?: "architecture_diagram" | "design_review";
     title?: string;
-    summary?: string;
+    description?: string;
     contentMarkdown?: string;
     folderId?: Id<"artifactFolders">;
   },
@@ -62,7 +62,7 @@ async function seedArtifact(
     ownerTokenIdentifier: args.ownerTokenIdentifier ?? OWNER,
     kind: args.kind,
     title: args.title,
-    summary: args.summary,
+    description: args.description,
     contentMarkdown: args.contentMarkdown,
     folderId: args.folderId,
   });
@@ -77,7 +77,7 @@ describe("ArtifactStore — parent invariant", () => {
         ownerTokenIdentifier: OWNER,
         kind: "architecture_diagram",
         title: "orphan",
-        summary: "no parent",
+        description: "no parent",
         contentMarkdown: "# x",
       }),
     ).rejects.toThrow(/at least one parent/i);
@@ -92,7 +92,7 @@ describe("ArtifactStore — parent invariant", () => {
       ownerTokenIdentifier: OWNER,
       kind: "architecture_diagram",
       title: "Diagram 001",
-      summary: "pick A over B",
+      description: "pick A over B",
       contentMarkdown: "# Decision",
     });
 
@@ -114,7 +114,7 @@ describe("ArtifactStore — parent invariant", () => {
         ownerTokenIdentifier: OWNER,
         kind: "architecture_diagram",
         title: "Modules",
-        summary: "top-level modules",
+        description: "top-level modules",
         contentMarkdown: "graph TD; A --> B",
       });
 
@@ -138,7 +138,7 @@ describe("ArtifactStore — parent invariant", () => {
         ownerTokenIdentifier: OWNER,
         kind: "design_review",
         title: "risk",
-        summary: "design review",
+        description: "design review",
         contentMarkdown: "## Risk",
       });
 
@@ -161,7 +161,7 @@ describe("ArtifactStore — folder integrity", () => {
         ownerTokenIdentifier: OWNER,
         kind: "architecture_diagram",
         title: "Diagram 001",
-        summary: "s",
+        description: "s",
         contentMarkdown: "m",
         folderId,
       });
@@ -185,7 +185,7 @@ describe("ArtifactStore — folder integrity", () => {
         ownerTokenIdentifier: OWNER,
         kind: "architecture_diagram",
         title: "Diagram 001",
-        summary: "s",
+        description: "s",
         contentMarkdown: "m",
         folderId,
       }),
@@ -204,7 +204,7 @@ describe("ArtifactStore — folder integrity", () => {
         ownerTokenIdentifier: OWNER,
         kind: "architecture_diagram",
         title: "Diagram 001",
-        summary: "s",
+        description: "s",
         contentMarkdown: "m",
         folderId,
       }),
@@ -223,7 +223,7 @@ describe("ArtifactStore — folder integrity", () => {
         ownerTokenIdentifier: OWNER,
         kind: "architecture_diagram",
         title: "Diagram 001",
-        summary: "s",
+        description: "s",
         contentMarkdown: "m",
         folderId,
       }),
@@ -244,7 +244,7 @@ describe("ArtifactStore — folder integrity", () => {
         ownerTokenIdentifier: OWNER,
         kind: "architecture_diagram",
         title: "Diagram 001",
-        summary: "s",
+        description: "s",
         contentMarkdown: "m",
         folderId,
       }),
@@ -331,7 +331,7 @@ describe("ArtifactStore — folder integrity", () => {
           ownerTokenIdentifier: OWNER,
           kind: "architecture_diagram",
           title: `Seed ${index}`,
-          summary: "s",
+          description: "s",
           contentMarkdown: "m",
           version: 1,
           updatedAt: Date.now(),
@@ -538,7 +538,7 @@ describe("ArtifactStore — update/delete", () => {
       ownerTokenIdentifier: OWNER,
       kind: "architecture_diagram",
       title: "v1",
-      summary: "s",
+      description: "s",
       contentMarkdown: "m",
     });
 
@@ -554,7 +554,7 @@ describe("ArtifactStore — update/delete", () => {
     const stored = await t.query(internal.artifactStore.getArtifact, { artifactId });
     expect(stored!.title).toBe("v3");
     expect(stored!.version).toBe(3);
-    expect(stored!.summary).toBe("s");
+    expect(stored!.description).toBe("s");
     expect(stored!.contentMarkdown).toBe("m");
   });
 
@@ -570,7 +570,7 @@ describe("ArtifactStore — update/delete", () => {
         ownerTokenIdentifier: OWNER,
         kind: "architecture_diagram",
         title: "tombstone",
-        summary: "s",
+        description: "s",
         contentMarkdown: "m",
         version: 1,
       });
@@ -644,7 +644,7 @@ describe("ArtifactWrites — generated replacement", () => {
             ownerTokenIdentifier: OWNER,
             kind: "architecture_diagram",
             title: "New architecture",
-            summary: "New summary",
+            description: "New description",
             contentMarkdown: "# New",
             alignedImportCommitSha: "commit-1",
             generatedByProvider: "openai",

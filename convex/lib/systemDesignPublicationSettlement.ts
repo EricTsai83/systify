@@ -30,7 +30,7 @@ export const systemDesignKindPublicationOutcomeValidator = v.union(
   v.object({
     kind: v.literal("generated"),
     title: v.string(),
-    summary: v.string(),
+    description: v.string(),
     contentMarkdown: v.string(),
     outputCharLength: v.number(),
     usage: normalizedUsageValidator,
@@ -142,7 +142,7 @@ export async function finalizeSystemDesignKindPublication(
       ownerTokenIdentifier: args.ownerTokenIdentifier,
       kind: args.kind,
       title: args.outcome.title,
-      summary: args.outcome.summary,
+      description: args.outcome.description,
       contentMarkdown: args.outcome.contentMarkdown,
       folderId,
       alignedImportCommitSha: args.alignedImportCommitSha,

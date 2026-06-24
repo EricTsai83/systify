@@ -70,7 +70,7 @@ async function insertArtifact(
       repositoryId: args.repositoryId,
       kind: args.kind ?? "readme_summary",
       title: args.title ?? "README Summary",
-      summary: "Summary",
+      description: "Summary",
       contentMarkdown: args.contentMarkdown ?? "# Summary",
       version: 1,
       ...(args.folderId !== undefined ? { folderId: args.folderId } : {}),
@@ -257,7 +257,7 @@ describe("finalizeKindPublication", () => {
         ownerTokenIdentifier,
         repositoryId,
         folderId,
-        contentMarkdown: "# Old summary",
+        contentMarkdown: "# Old description",
       });
       const jobId = await insertRunningSystemDesignJob(t, { ownerTokenIdentifier, repositoryId, startedAt });
       const sourceId = `systemDesign:${jobId}:readme_summary:${startedAt}`;
@@ -278,8 +278,8 @@ describe("finalizeKindPublication", () => {
         outcome: {
           kind: "generated",
           title: "README Summary",
-          summary: "Fresh summary",
-          contentMarkdown: "# Fresh summary\n\nGenerated body.",
+          description: "Fresh description",
+          contentMarkdown: "# Fresh description\n\nGenerated body.",
           outputCharLength: 32,
           usage: {
             inputTokens: 2_000,
@@ -330,7 +330,7 @@ describe("finalizeKindPublication", () => {
         ownerTokenIdentifier,
         kind: "readme_summary",
         title: "README Summary",
-        summary: "Fresh summary",
+        description: "Fresh description",
         version: 1,
         chunkingStatus: "pending",
         alignedImportCommitSha: "commit-a",
@@ -369,7 +369,7 @@ describe("finalizeKindPublication", () => {
     const cachedArtifactId = await insertArtifact(t, {
       ownerTokenIdentifier,
       repositoryId,
-      contentMarkdown: "# Cached summary",
+      contentMarkdown: "# Cached description",
     });
     const sourceId = `systemDesign:${jobId}:readme_summary:${startedAt}`;
 
@@ -388,7 +388,7 @@ describe("finalizeKindPublication", () => {
       outcome: {
         kind: "cached_hit",
         cachedArtifactId,
-        outputCharLength: "# Cached summary".length,
+        outputCharLength: "# Cached description".length,
       },
     });
 
@@ -417,7 +417,7 @@ describe("finalizeKindPublication", () => {
       status: "cached_hit",
       artifactId: cachedArtifactId,
       actualSteps: 0,
-      outputCharLength: "# Cached summary".length,
+      outputCharLength: "# Cached description".length,
     });
     expect(state.artifact?.kindRunId).toBeUndefined();
     expect(state.events).toHaveLength(0);
@@ -603,7 +603,7 @@ describe("finalizeKindPublication", () => {
       outcome: {
         kind: "generated",
         title: "README Summary",
-        summary: "Summary",
+        description: "Summary",
         contentMarkdown: "# Summary",
         outputCharLength: 9,
         usage: {
@@ -783,7 +783,7 @@ describe("finalizeKindPublication", () => {
         outcome: {
           kind: "generated",
           title: "README Summary",
-          summary: "Summary",
+          description: "Summary",
           contentMarkdown: "# Summary",
           outputCharLength: 9,
           usage: {

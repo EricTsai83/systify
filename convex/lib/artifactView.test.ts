@@ -11,7 +11,7 @@ function makeArtifact(overrides: Partial<Doc<"artifacts">> = {}): Doc<"artifacts
     ownerTokenIdentifier: "user|fixture",
     kind: "architecture_diagram",
     title: "Sample",
-    summary: "Sample summary",
+    description: "Sample description",
     contentMarkdown: "# Sample",
     version: 1,
     ...overrides,
@@ -93,7 +93,7 @@ describe("toArtifactMetadataView", () => {
     const metadata = toArtifactMetadataView(artifact, { now: 0 });
     expect("contentMarkdown" in metadata).toBe(false);
     expect(metadata.title).toBe(artifact.title);
-    expect(metadata.summary).toBe(artifact.summary);
+    expect(metadata.description).toBe(artifact.description);
     expect(metadata.kind).toBe(artifact.kind);
     expect(metadata.freshness).toBe("unverified");
   });

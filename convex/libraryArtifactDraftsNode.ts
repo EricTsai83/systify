@@ -35,14 +35,14 @@ const HTML_DRAFT_REPAIR_ATTEMPTS = 2;
 
 const draftOutputSchema = z.object({
   title: z.string().min(1),
-  summary: z.string().min(1),
+  description: z.string().min(1),
   contentMarkdown: z.string().min(1),
   changeSummary: z.string().nullable(),
 });
 
 const htmlDraftOutputSchema = z.object({
   title: z.string().min(1),
-  summary: z.string().min(1),
+  description: z.string().min(1),
   contentMarkdown: z.string().min(1),
   html: z.string().min(1),
 });
@@ -246,7 +246,7 @@ export const runArtifactDraft = internalAction({
         draftId: args.draftId,
         jobId: args.jobId,
         title: output.title.trim(),
-        summary: output.summary.trim(),
+        description: output.description.trim(),
         contentMarkdown: output.contentMarkdown.trim(),
         changeSummary: output.changeSummary?.trim() || undefined,
         outputFormat: "markdown",
@@ -426,7 +426,7 @@ async function runHtmlArtifactDraft(
       draftId: args.draftId,
       jobId: args.jobId,
       title: output.title,
-      summary: output.summary,
+      description: output.description,
       contentMarkdown: output.contentMarkdown,
       outputFormat: "html",
       htmlStorageId: stored.storageId,
@@ -499,7 +499,7 @@ function resolveHtmlDraftModelChoice(args: {
 function normalizeHtmlDraftObject(output: z.infer<typeof htmlDraftOutputSchema>) {
   return {
     title: output.title.trim(),
-    summary: output.summary.trim(),
+    description: output.description.trim(),
     contentMarkdown: output.contentMarkdown.trim(),
     html: output.html.trim(),
   };
@@ -519,7 +519,8 @@ function buildHtmlSystemPrompt() {
   return [
     "You draft Library HTML report artifacts for Systify.",
     "Library markdown artifacts and retrieved chunks are the knowledge source. Do not claim you inspected live source code.",
-    "Return a full structured object with title, summary, contentMarkdown, and html.",
+    "Return a full structured object with title, description, contentMarkdown, and html.",
+    "description is one short sentence for Library navigation; do not copy the opening sentence of the document.",
     "contentMarkdown is the canonical searchable companion. Make it non-empty, source/provenance friendly, and include citations to the provided Library evidence labels.",
     "html is a presentation artifact. It must be a complete self-contained HTML document.",
     "HTML requirements: <!doctype html>, html/head/body, UTF-8 meta, responsive viewport meta, non-empty body, inline CSS only, no JavaScript, no forms, no iframes, no external network resources, no non-fragment links.",
@@ -530,7 +531,8 @@ function buildHtmlSystemPrompt() {
 function buildHtmlRepairSystemPrompt() {
   return [
     "You repair a Library HTML report artifact so it satisfies a strict validation policy.",
-    "Return a full corrected object with title, summary, contentMarkdown, and html.",
+    "Return a full corrected object with title, description, contentMarkdown, and html.",
+    "description is one short sentence for Library navigation; do not copy the opening sentence of the document.",
     "Do not add new facts or external resources. Preserve the markdown companion unless the validation error requires a minimal correction.",
     "The html field must be a complete self-contained HTML document with no JavaScript, no forms, no iframes, no external URLs, and no non-fragment links.",
   ].join("\n");
@@ -715,7 +717,7 @@ function buildUserPrompt(
       : [
           "\nTarget artifact to revise. Use this as structure and prior wording only; verify every factual claim against the repository code before keeping it:",
           `Title: ${context.targetArtifact.title}`,
-          `Summary: ${context.targetArtifact.summary}`,
+          `Description: ${context.targetArtifact.description}`,
           `Version: ${context.targetArtifact.version}`,
           "Current markdown:",
           context.targetArtifact.contentMarkdown,
@@ -745,7 +747,7 @@ function buildStructuringPrompt(draftText: string) {
   return [
     "Convert this draft into the schema fields:",
     "- title: concise artifact title",
-    "- summary: one short sentence describing the artifact",
+    "- description: one short sentence for Library navigation; do not copy the opening sentence of the document",
     "- contentMarkdown: the full markdown document",
     "- changeSummary: a short human-readable summary of what changed, or null if there is no useful change summary",
     "",

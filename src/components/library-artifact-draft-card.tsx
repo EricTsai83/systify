@@ -357,7 +357,7 @@ export function LibraryArtifactDraftCard({
         <div className="mt-3 space-y-3">
           <div className="space-y-1">
             <h4 className="text-[12px] font-semibold text-foreground">{entry.draft.title}</h4>
-            <p className="text-[11px] leading-4 text-muted-foreground">{entry.draft.summary}</p>
+            <p className="text-[11px] leading-4 text-muted-foreground">{entry.draft.description}</p>
             {entry.draft.changeSummary ? (
               <p className="text-[11px] leading-4 text-muted-foreground">Changes: {entry.draft.changeSummary}</p>
             ) : null}
