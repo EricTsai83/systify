@@ -67,7 +67,7 @@ function makeHtmlArtifact(): Doc<"artifacts"> & { freshness: ArtifactFreshness }
     repositoryId: "repo_1" as Id<"repositories">,
     kind: "custom_document",
     title: "Executive report",
-    summary: "A self-contained HTML report.",
+    description: "A self-contained HTML report.",
     contentMarkdown: "# Executive report\n\nSource-backed companion.",
     renderFormat: "html",
     version: 1,

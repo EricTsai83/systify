@@ -9,6 +9,7 @@ import {
   RouterHydrateFallback,
 } from "@/router-layouts";
 import { AUTH_CALLBACK_ROUTE_SEGMENT, PROTECTED_ROUTE_SEGMENTS, PUBLIC_ROUTE_SEGMENTS } from "@/route-paths";
+import { prefetchDiscussRoute, prefetchLibraryRoute } from "@/route-prefetch";
 import type { ThreadId } from "@/lib/types";
 
 // Validate that a URL param looks like a valid Convex ID (non-empty string with
@@ -59,12 +60,12 @@ async function loadSharedThreadRoute() {
  * separates the Library Read bundle from the Discuss chat bundle.
  */
 async function loadDiscussRoute() {
-  const module = await import("@/pages/discuss");
+  const module = await prefetchDiscussRoute();
   return { Component: module.DiscussPage };
 }
 
 async function loadLibraryRoute() {
-  const module = await import("@/pages/library");
+  const module = await prefetchLibraryRoute();
   return { Component: module.LibraryPage };
 }
 

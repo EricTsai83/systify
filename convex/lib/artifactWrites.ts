@@ -21,7 +21,7 @@ export interface CreateArtifactWriteArgs {
   jobId?: Id<"jobs">;
   kind: ArtifactKind;
   title: string;
-  summary: string;
+  description: string;
   contentMarkdown: string;
   renderFormat?: ArtifactRenderFormat;
   htmlStorageId?: Id<"_storage">;
@@ -42,7 +42,7 @@ export interface CreateArtifactWriteArgs {
 export interface UpdateArtifactWriteArgs {
   artifactId: Id<"artifacts">;
   title?: string;
-  summary?: string;
+  description?: string;
   contentMarkdown?: string;
   renderFormat?: ArtifactRenderFormat;
   htmlStorageId?: Id<"_storage">;
@@ -91,7 +91,7 @@ export async function createArtifactWrite(ctx: MutationCtx, args: CreateArtifact
     ownerTokenIdentifier: args.ownerTokenIdentifier,
     kind: args.kind,
     title: args.title,
-    summary: args.summary,
+    description: args.description,
     contentMarkdown: args.contentMarkdown,
     renderFormat,
     version: 1,
@@ -111,7 +111,7 @@ export async function createArtifactWrite(ctx: MutationCtx, args: CreateArtifact
     ownerTokenIdentifier: args.ownerTokenIdentifier,
     repositoryId: args.repositoryId,
     title: args.title,
-    summary: args.summary,
+    description: args.description,
     contentMarkdown: args.contentMarkdown,
     renderFormat,
     htmlStorageId: args.htmlStorageId,
@@ -142,7 +142,7 @@ export async function updateArtifactWrite(
 
   const patch: {
     title?: string;
-    summary?: string;
+    description?: string;
     contentMarkdown?: string;
     renderFormat?: ArtifactRenderFormat;
     version?: number;
@@ -161,8 +161,8 @@ export async function updateArtifactWrite(
     patch.title = args.title;
     changed = true;
   }
-  if (args.summary !== undefined) {
-    patch.summary = args.summary;
+  if (args.description !== undefined) {
+    patch.description = args.description;
     changed = true;
   }
   if (args.contentMarkdown !== undefined) {
@@ -211,7 +211,7 @@ export async function updateArtifactWrite(
   if (changed) {
     if (
       args.title !== undefined ||
-      args.summary !== undefined ||
+      args.description !== undefined ||
       args.contentMarkdown !== undefined ||
       args.renderFormat !== undefined ||
       versionMetadataChanged
@@ -225,7 +225,7 @@ export async function updateArtifactWrite(
         ownerTokenIdentifier: artifact.ownerTokenIdentifier,
         repositoryId: artifact.repositoryId,
         title: args.title ?? artifact.title,
-        summary: args.summary ?? artifact.summary,
+        description: args.description ?? artifact.description,
         contentMarkdown: args.contentMarkdown ?? artifact.contentMarkdown,
         renderFormat,
         htmlStorageId: args.htmlStorageId ?? previousHtml.htmlStorageId,
@@ -258,7 +258,7 @@ export async function createArtifactVersionWrite(
     ownerTokenIdentifier: string;
     repositoryId?: Id<"repositories">;
     title: string;
-    summary: string;
+    description: string;
     contentMarkdown: string;
     renderFormat: ArtifactRenderFormat;
     htmlStorageId?: Id<"_storage">;
@@ -277,7 +277,7 @@ export async function createArtifactVersionWrite(
     ownerTokenIdentifier: args.ownerTokenIdentifier,
     repositoryId: args.repositoryId,
     title: args.title,
-    summary: args.summary,
+    description: args.description,
     contentMarkdown: args.contentMarkdown,
     renderFormat: args.renderFormat,
     htmlStorageId: args.renderFormat === "html" ? args.htmlStorageId : undefined,

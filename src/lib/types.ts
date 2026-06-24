@@ -48,7 +48,7 @@ export type ArtifactListItem = Pick<
   | "jobId"
   | "kind"
   | "title"
-  | "summary"
+  | "description"
   | "version"
   | "renderFormat"
   | "currentVersionId"

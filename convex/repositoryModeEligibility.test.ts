@@ -50,7 +50,7 @@ async function seedArtifact(
       ownerTokenIdentifier,
       kind: "architecture_overview",
       title: "Architecture overview",
-      summary: "Module boundaries",
+      description: "Module boundaries",
       contentMarkdown: "## Modules",
       version: 1,
     });

@@ -130,7 +130,7 @@ export function toArtifactMetadataView(artifact: Doc<"artifacts">, opts: Artifac
     jobId: artifact.jobId,
     kind: artifact.kind,
     title: artifact.title,
-    summary: artifact.summary,
+    description: artifact.description,
     version: artifact.version,
     renderFormat: artifact.renderFormat ?? ("markdown" as const),
     currentVersionId: artifact.currentVersionId,

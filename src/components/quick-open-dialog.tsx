@@ -13,7 +13,7 @@ import { cn } from "@/lib/utils";
  *
  * Pure-frontend fuzzy filter: the dialog receives the repository's full
  * artifact list (already loaded by the Library shell for the tree, so
- * no extra subscription) and filters in memory by title / summary /
+ * no extra subscription) and filters in memory by title / description /
  * kind. Sorted hits scroll into view; arrow keys + Enter activate the
  * highlighted row.
  *
@@ -63,7 +63,7 @@ export function QuickOpenDialog({
       filterByQuery(
         artifacts,
         query,
-        (artifact) => `${artifact.title} ${artifact.summary} ${formatArtifactKind(artifact.kind)}`,
+        (artifact) => `${artifact.title} ${artifact.description} ${formatArtifactKind(artifact.kind)}`,
       ).slice(0, 50),
     [query, artifacts],
   );
@@ -113,7 +113,7 @@ export function QuickOpenDialog({
               setActiveIndex(0);
             }}
             onKeyDown={onKeyDown}
-            placeholder="Search artifacts by title, summary, or kind…"
+            placeholder="Search artifacts by title, description, or kind…"
             aria-activedescendant={filtered[activeIndex] ? `quick-open-row-${filtered[activeIndex]._id}` : undefined}
             className="h-9 border-0 bg-transparent text-sm focus-visible:ring-0 focus-visible:ring-offset-0"
           />
@@ -147,7 +147,7 @@ export function QuickOpenDialog({
                     </Badge>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[13px] font-medium text-foreground">{artifact.title}</div>
-                      <div className="truncate text-[11px] text-muted-foreground">{artifact.summary}</div>
+                      <div className="truncate text-[11px] text-muted-foreground">{artifact.description}</div>
                     </div>
                   </button>
                 </li>

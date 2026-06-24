@@ -630,7 +630,7 @@ describe("setThreadRepository", () => {
       ownerTokenIdentifier,
       kind: "architecture_overview",
       title: "Architecture",
-      summary: "s",
+      description: "s",
       contentMarkdown: "m",
     });
     const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });

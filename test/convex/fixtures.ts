@@ -86,7 +86,7 @@ export async function insertTestArtifact(
     jobId?: Id<"jobs">;
     kind?: ArtifactKind;
     title?: string;
-    summary?: string;
+    description?: string;
     contentMarkdown?: string;
     version?: number;
     folderId?: Id<"artifactFolders">;
@@ -112,7 +112,7 @@ export async function insertTestArtifact(
     jobId: args.jobId,
     kind: args.kind ?? "architecture_diagram",
     title: args.title ?? "Diagram 001",
-    summary: args.summary ?? "s",
+    description: args.description ?? "s",
     contentMarkdown: args.contentMarkdown ?? "m",
     version: args.version ?? 1,
     folderId: args.folderId,

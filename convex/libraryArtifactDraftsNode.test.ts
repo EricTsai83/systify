@@ -135,7 +135,7 @@ async function seedDraftRun(t: ReturnType<typeof createRateLimitedTestConvex>) {
       status: "queued",
       prompt: "Draft an operations runbook.",
       title: "Operations runbook",
-      summary: "",
+      description: "",
       contentMarkdown: "",
       generatedByProvider: "openai",
       generatedByModel: "gpt-5.5",
@@ -153,7 +153,7 @@ async function seedHtmlDraftRun(t: ReturnType<typeof createRateLimitedTestConvex
     ownerTokenIdentifier: OWNER,
     repositoryId,
     title: "Architecture overview",
-    summary: "Architecture summary.",
+    description: "Architecture description.",
     contentMarkdown: "# Architecture\n\nRuntime evidence.",
     version: 4,
   });
@@ -211,7 +211,7 @@ beforeEach(() => {
   mocks.generateObjectViaGateway.mockReset().mockResolvedValue({
     object: {
       title: "Generated runbook",
-      summary: "Codebase-backed operations notes.",
+      description: "Codebase-backed operations notes.",
       contentMarkdown: "# Generated runbook\n\nPrepared from the codebase.",
       changeSummary: "Created a new artifact.",
     },
@@ -280,7 +280,7 @@ describe("runArtifactDraft", () => {
     expect(
       gatewayArgs?.schema.safeParse({
         title: "Generated runbook",
-        summary: "Codebase-backed operations notes.",
+        description: "Codebase-backed operations notes.",
         contentMarkdown: "# Generated runbook",
         changeSummary: null,
       }).success,
@@ -288,7 +288,7 @@ describe("runArtifactDraft", () => {
     expect(
       gatewayArgs?.schema.safeParse({
         title: "Generated runbook",
-        summary: "Codebase-backed operations notes.",
+        description: "Codebase-backed operations notes.",
         contentMarkdown: "# Generated runbook",
       }).success,
     ).toBe(false);
@@ -309,7 +309,7 @@ describe("runArtifactDraft", () => {
       ownerTokenIdentifier: OWNER,
       repositoryId,
       title: "Architecture overview",
-      summary: "Old architecture summary.",
+      description: "Old architecture description.",
       contentMarkdown: "# Architecture overview\n\nOld statement that must be verified.",
       version: 3,
     });
@@ -362,7 +362,7 @@ describe("runArtifactDraft", () => {
       ownerTokenIdentifier: OWNER,
       repositoryId,
       title: "Architecture overview",
-      summary: "Architecture summary.",
+      description: "Architecture description.",
       contentMarkdown: "# Architecture\n\nRuntime evidence.",
       version: 4,
     });
@@ -405,7 +405,7 @@ describe("runArtifactDraft", () => {
     mocks.generateObjectViaGateway.mockResolvedValueOnce({
       object: {
         title: "Executive report",
-        summary: "A Library-grounded executive report.",
+        description: "A Library-grounded executive report.",
         contentMarkdown: "# Executive report\n\nRuntime evidence [S1].",
         html: `<!doctype html>
 <html>
@@ -524,7 +524,7 @@ describe("runArtifactDraft", () => {
       .mockResolvedValueOnce({
         object: {
           title: "Executive report",
-          summary: "A Library-grounded executive report.",
+          description: "A Library-grounded executive report.",
           contentMarkdown: "# Executive report\n\nRuntime evidence [S1].",
           html: INVALID_HTML_REPORT,
         },
@@ -536,7 +536,7 @@ describe("runArtifactDraft", () => {
       .mockResolvedValueOnce({
         object: {
           title: "Executive report",
-          summary: "A Library-grounded executive report.",
+          description: "A Library-grounded executive report.",
           contentMarkdown: "# Executive report\n\nRuntime evidence [S1].",
           html: VALID_HTML_REPORT,
         },
@@ -580,7 +580,7 @@ describe("runArtifactDraft", () => {
     mocks.generateObjectViaGateway.mockResolvedValue({
       object: {
         title: "Executive report",
-        summary: "A Library-grounded executive report.",
+        description: "A Library-grounded executive report.",
         contentMarkdown: "# Executive report\n\nRuntime evidence [S1].",
         html: INVALID_HTML_REPORT,
       },

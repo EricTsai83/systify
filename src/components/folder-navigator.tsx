@@ -217,7 +217,7 @@ export function FolderNavigator({
     const needle = search.trim().toLowerCase();
     if (!needle) return null;
     return (artifact: NavigatorArtifact) => {
-      const haystack = `${artifact.title} ${artifact.summary} ${formatArtifactKind(artifact.kind)}`.toLowerCase();
+      const haystack = `${artifact.title} ${artifact.description} ${formatArtifactKind(artifact.kind)}`.toLowerCase();
       return haystack.includes(needle);
     };
   }, [search]);

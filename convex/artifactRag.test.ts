@@ -24,7 +24,7 @@ function makeHit(args: {
     chunkIndex: 0,
     headingPath: ["Architecture"],
     content: `${args.artifactTitle} content`,
-    summary: `${args.artifactTitle} summary`,
+    summary: "Chunk summary",
     artifactTitle: args.artifactTitle,
     artifactKind: "architecture_overview",
     lexicalScore: args.lexicalScore,

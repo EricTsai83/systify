@@ -78,7 +78,7 @@ async function seedArtifact(
       repositoryId,
       kind: "readme_summary",
       title: "README Summary",
-      summary: "Summary",
+      description: "Summary",
       contentMarkdown: "# Summary\n\nThis is indexed content.",
       version: 1,
     });

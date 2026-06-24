@@ -23,7 +23,7 @@ export type PromptArtifactEvidence =
       kind: "artifact";
       artifactId: Id<"artifacts">;
       title: string;
-      summary: string;
+      description: string;
       contentMarkdown: string;
     }
   | {

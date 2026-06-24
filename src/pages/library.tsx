@@ -6,9 +6,18 @@ import { api } from "../../convex/_generated/api";
 import { AppSidebarLeft, AppSidebarRight } from "@/components/app-sidebar";
 import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
 import { LibraryShell } from "@/components/library-shell";
+import { Logo } from "@/components/logo";
 import { ScreenState } from "@/components/screen-state";
-import { SidebarInset, SidebarTrigger } from "@/components/ui/sidebar";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarHeader,
+  SidebarInset,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
 import { isViewerFeatureEnabled, useViewerAccess } from "@/hooks/use-viewer-access";
@@ -20,7 +29,7 @@ import {
   withLibraryAskParam,
 } from "@/route-paths";
 import type { ArtifactId, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
-import { writeString } from "@/lib/storage";
+import { readString, writeString } from "@/lib/storage";
 import { applyTouchRepositoryOptimistic } from "@/lib/repository-mutations";
 import { DEMO_MODE_COPY } from "@/lib/demo-content";
 import { cn } from "@/lib/utils";
@@ -101,6 +110,7 @@ function LibraryRepository({
     () => repositories?.find((repo) => repo._id === repositoryId) ?? null,
     [repositories, repositoryId],
   );
+  const hasLocalRepositoryIntent = readString(ACTIVE_REPOSITORY_STORAGE_KEY) === repositoryId;
 
   const tabs = useLibraryTabs(canLoadRepositoryData ? repositoryId : null, canLoadRepositoryData ? artifactId : null);
 
@@ -219,6 +229,9 @@ function LibraryRepository({
     }
   }, [askThreadId, askThreadProbe, handleSelectLibraryThread, repositoryId]);
 
+  if (isAuthorizedForRepository === null && (hasLocalRepositoryIntent || currentRepository)) {
+    return <PendingLibraryShell repositoryName={currentRepository?.sourceRepoFullName ?? "Library"} />;
+  }
   if (repositories === undefined || isAuthorizedForRepository === null) {
     return <ScreenState title="Loading…" description="Loading your repository." isLoading />;
   }
@@ -294,6 +307,70 @@ function LibraryRepository({
   );
 }
 
+function PendingLibraryShell({ repositoryName }: { repositoryName: string }) {
+  return (
+    <>
+      <Sidebar side="left">
+        <SidebarHeader>
+          <Logo size={26} />
+          <div className="min-w-0 leading-tight">
+            <div className="truncate text-lg font-semibold tracking-tight">Systify</div>
+          </div>
+        </SidebarHeader>
+        <div className="border-b border-border px-2 py-2">
+          <div className="flex h-9 gap-1 border border-border bg-muted/40 p-1">
+            <div className="h-full w-[30px] bg-transparent" />
+            <div className="min-w-0 flex-1 bg-background shadow-sm">
+              <div className="flex h-full items-center gap-2 px-2.5">
+                <Skeleton className="h-3.5 w-3.5" />
+                <span className="text-xs font-medium text-foreground">Library</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <SidebarContent className="min-h-0 flex-1">
+          <div className="flex flex-col gap-3 p-3">
+            <Skeleton className="h-8 w-full" />
+            <Skeleton className="h-4 w-24" />
+            <Skeleton className="h-7 w-full" />
+            <Skeleton className="h-7 w-4/5" />
+            <Skeleton className="h-7 w-11/12" />
+          </div>
+        </SidebarContent>
+        <SidebarFooter className="px-3 py-2">
+          <div className="flex items-center gap-2">
+            <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
+            <Skeleton className="h-8 min-w-0 flex-1" />
+          </div>
+        </SidebarFooter>
+      </Sidebar>
+      <SidebarInset>
+        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
+          <SidebarTrigger side="left" />
+          <h1 className="min-w-0 truncate text-sm font-semibold tracking-tight text-foreground md:text-base">
+            {repositoryName}
+          </h1>
+          <SidebarTrigger side="right" className="ml-auto" />
+        </header>
+        <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center px-6 py-10">
+          <div className="flex w-full max-w-md flex-col items-center text-center">
+            <Skeleton className="h-10 w-10 rounded-full" />
+            <Skeleton className="mt-5 h-5 w-44" />
+            <Skeleton className="mt-3 h-4 w-64 max-w-full" />
+          </div>
+        </div>
+      </SidebarInset>
+      <Sidebar side="right">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
+          <Skeleton className="h-8 w-36" />
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-9 w-full" />
+        </div>
+      </Sidebar>
+    </>
+  );
+}
+
 type LibrarySandboxActivityStatus = ReturnType<typeof useQuery<typeof api.repositories.getSandboxActivityStatus>>;
 
 export function LibraryLiveSourceBadge({ status }: { status: LibrarySandboxActivityStatus | undefined }) {
@@ -305,7 +382,7 @@ export function LibraryLiveSourceBadge({ status }: { status: LibrarySandboxActiv
       variant="outline"
       title={presentation.title}
       aria-label={presentation.title}
-      className={cn("h-6 shrink-0 gap-1.5 px-2 text-[11px] font-medium", presentation.className)}
+      className={cn("ml-2 h-6 shrink-0 gap-1.5 px-2 text-[11px] font-medium", presentation.className)}
     >
       <Icon size={10} weight="fill" className={presentation.iconClassName} aria-hidden="true" />
       <span>{presentation.label}</span>

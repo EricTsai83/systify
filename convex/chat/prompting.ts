@@ -264,7 +264,7 @@ function buildArtifactEvidenceSection(evidence: ArtifactGroundingEvidence): stri
       }
       return [
         `## [A${index + 1}] ${artifact.title}`,
-        artifact.summary,
+        `Description: ${artifact.description}`,
         artifact.contentMarkdown.slice(0, MAX_ARTIFACT_EXCERPT_CHARS),
       ].join("\n");
     })

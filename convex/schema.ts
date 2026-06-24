@@ -506,7 +506,7 @@ export default defineSchema({
     ownerTokenIdentifier: v.string(),
     kind: artifactKind,
     title: v.string(),
-    summary: v.string(),
+    description: v.string(),
     contentMarkdown: v.string(),
     renderFormat: v.optional(artifactRenderFormat),
     currentVersionId: v.optional(v.id("artifactVersions")),
@@ -562,7 +562,7 @@ export default defineSchema({
     alignedImportCommitSha: v.optional(v.string()),
     /**
      * Wall-clock ms epoch of the most recent user-facing content change
-     * (title / summary / contentMarkdown). Distinct from `_creationTime`
+     * (title / description / contentMarkdown). Distinct from `_creationTime`
      * so the navigator's "recently changed" pulse can light up for edits
      * to existing artifacts, not just new rows. Optional because rows
      * without a recorded edit timestamp fall back to `_creationTime`.
@@ -622,7 +622,7 @@ export default defineSchema({
     ownerTokenIdentifier: v.string(),
     repositoryId: v.optional(v.id("repositories")),
     title: v.string(),
-    summary: v.string(),
+    description: v.string(),
     contentMarkdown: v.string(),
     renderFormat: artifactRenderFormat,
     htmlStorageId: v.optional(v.id("_storage")),
@@ -660,7 +660,7 @@ export default defineSchema({
 
     folderId: v.optional(v.id("artifactFolders")),
     title: v.string(),
-    summary: v.string(),
+    description: v.string(),
     contentMarkdown: v.string(),
     outputFormat: v.optional(artifactRenderFormat),
     htmlStorageId: v.optional(v.id("_storage")),

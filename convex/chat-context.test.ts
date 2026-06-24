@@ -138,7 +138,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         kind: "architecture_diagram",
         title: "Diagram (excluded)",
-        summary: "Excluded by sandbox-mode artifact filter",
+        description: "Excluded by sandbox-mode artifact filter",
         contentMarkdown: "graph TD;A-->B;",
         version: 1,
       });
@@ -372,7 +372,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         kind: "architecture_diagram",
         title: "Architecture diagram",
-        summary: "Module boundaries",
+        description: "Module boundaries",
         contentMarkdown: "graph TD\nA-->B",
         version: 1,
       });
@@ -601,7 +601,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         kind: "architecture_diagram",
         title: "Architecture diagram",
-        summary: "Module boundaries",
+        description: "Module boundaries",
         contentMarkdown: "graph TD\nA-->B",
         version: 1,
       });
@@ -776,7 +776,7 @@ describe("chat reply context", () => {
         ownerTokenIdentifier,
         kind: "architecture_diagram",
         title: "Architecture diagram",
-        summary: "Module boundaries",
+        description: "Module boundaries",
         contentMarkdown: "graph TD\nA-->B",
         version: 1,
       });

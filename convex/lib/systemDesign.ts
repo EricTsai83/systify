@@ -144,3 +144,21 @@ export const SYSTEM_DESIGN_KIND_TITLES: Record<SystemDesignKind, string> = {
   security_overview: "Security Overview",
   operations_overview: "Operations Overview",
 };
+
+/**
+ * Stable navigation descriptions for generated System Design artifacts. These
+ * describe the artifact kind, not the generated markdown body.
+ */
+export const SYSTEM_DESIGN_KIND_DESCRIPTIONS: Record<SystemDesignKind, string> = {
+  readme_summary:
+    "Repository documentation summary covering purpose, capabilities, audience, operations, and constraints.",
+  architecture_overview: "Design-level overview of system shape, components, control flow, boundaries, and key files.",
+  architecture_diagram: "Mermaid diagram of major components, boundaries, flows, and source-backed reading guide.",
+  data_model_overview: "Overview of persistent stores, entities, relationships, read/write paths, and invariants.",
+  api_surface_overview: "Overview of public endpoints, authentication, request/response shapes, errors, and key files.",
+  deployment_overview:
+    "Overview of runtime targets, build/release pipeline, environment, secrets, and infrastructure dependencies.",
+  security_overview:
+    "Overview of authentication, authorization, validation, secrets, trust boundaries, and observed risks.",
+  operations_overview: "Overview of logging, metrics, tracing, alerts, dashboards, run-books, and operational gaps.",
+};
