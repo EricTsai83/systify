@@ -1,95 +1,37 @@
 import { ConvexError, v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
-import { internal } from "../_generated/api";
 import type { Id } from "../_generated/dataModel";
 import { internalMutation, mutation, query, type MutationCtx, type QueryCtx } from "../_generated/server";
 import { requireViewerIdentity } from "../lib/auth";
-import { chatModeValidator, getDefaultThreadMode } from "../lib/chatMode";
+import { chatModeValidator } from "../lib/chatMode";
 import { loadOwnedDoc, requireOwnedDoc } from "../lib/ownedDocs";
 import { requireActiveRepositoryForViewer } from "../lib/repositoryAccess";
-import { MAX_RENAME_TITLE_LENGTH, NEW_THREAD_DEFAULT_TITLE } from "../lib/threadDefaults";
-import { MAX_STREAM_CHUNKS_PER_PASS } from "../lib/constants";
-import { touchRepositoryLastAccessed } from "../lib/repositoryPalette";
-import { isRepolessAgentThread } from "../lib/repolessThreadKind";
-import { deleteMessageStreamState } from "./streamStore";
-import { drainMessageToolCallEvents } from "./toolCallEventStore";
+import { MAX_RENAME_TITLE_LENGTH } from "../lib/threadDefaults";
 import {
-  drainThreadSharesByThreadId,
-  patchThreadSharesRepositoryByThreadId,
-  recordThreadCreatedInHistory,
-  recordThreadMovedInHistory,
-  recordThreadRemovedFromHistory,
-} from "./historyState";
+  archiveThreadLifecycle,
+  cleanupOrphanedMessagesLifecycle,
+  cleanupOrphanedMessageStreamsLifecycle,
+  continueRepolessSingleTurnResetLifecycle,
+  continueThreadShareRepositoryScopeUpdateLifecycle,
+  createLibraryAskThreadLifecycle,
+  createThreadLifecycle,
+  deleteArchivedThreadLifecycle,
+  deleteArchivedThreadsForRepositoryScopeLifecycle,
+  deleteThreadLifecycle,
+  restoreArchivedThreadLifecycle,
+  restoreArchivedThreadsForRepositoryScopeLifecycle,
+  setThreadRepositoryLifecycle,
+  updateRepolessThreadAgentProfileLifecycle,
+} from "./threadLifecycle";
 import { loadActiveOwnedThread, requireActiveOwnedThread } from "./threadAccess";
-import { recordThreadArchivedInScope, recordThreadRemovedFromArchiveScope } from "./archiveState";
+import { listActiveThreadsForScope } from "./threadListing";
 
 type ArchivedThreadRepositorySummary = {
   _id: Id<"repositories">;
   sourceRepoFullName: string;
 } | null;
 
-type ThreadShareRepositoryScopeUpdateArgs = {
-  threadId: Id<"threads">;
-  fromRepositoryId?: Id<"repositories">;
-};
-
-/**
- * Upper bound on the per-thread Ask scope filter. 20 ids keeps the filter
- * lookup small (the scope filter is applied during RAG retrieval, where
- * each candidate chunk is filtered by `artifactId IN scope`). A repository
- * with more than 20 artifacts the user wants to scope the question to
- * almost certainly wants the unbounded "whole repository" variant (empty
- * array) instead.
- */
-const ASK_THREAD_MAX_ARTIFACT_CONTEXT = 20;
-const ARCHIVED_THREAD_BULK_MUTATION_BATCH_SIZE = 10;
 const OWNER_THREAD_ID_PROBE_LIMIT = 200;
-export const AGENT_ROLE_MAX_LENGTH = 120;
-export const AGENT_INSTRUCTIONS_MAX_LENGTH = 3000;
-const SINGLE_TURN_RESET_MESSAGE_BATCH_SIZE = 200;
-const SINGLE_TURN_RESET_STREAM_BATCH_SIZE = 200;
-
-type ThreadMessageArtifactDrainResult = {
-  messagesRemain: boolean;
-  streamsRemain: boolean;
-  streamBudgetExhausted: boolean;
-};
-
-function normalizeAgentProfileField(value: string | undefined, maxLength: number, label: string): string | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  const normalized = value.trim();
-  if (normalized.length === 0) {
-    return undefined;
-  }
-  if (normalized.length > maxLength) {
-    throw new Error(`${label} must be ${maxLength} characters or fewer.`);
-  }
-  return normalized;
-}
-
-export function normalizeAgentProfile(args: { agentRole?: string; agentInstructions?: string }): {
-  agentRole?: string;
-  agentInstructions?: string;
-} {
-  return {
-    agentRole: normalizeAgentProfileField(args.agentRole, AGENT_ROLE_MAX_LENGTH, "Agent name"),
-    agentInstructions: normalizeAgentProfileField(
-      args.agentInstructions,
-      AGENT_INSTRUCTIONS_MAX_LENGTH,
-      "Agent instructions",
-    ),
-  };
-}
-
-export function resolveRepolessAgentEnabled(args: {
-  agentEnabled?: boolean;
-  agentRole?: string;
-  agentInstructions?: string;
-}): boolean {
-  return isRepolessAgentThread(args);
-}
 
 export const listThreads = query({
   args: {
@@ -109,61 +51,11 @@ export const listThreads = query({
     if (!repository) {
       return [];
     }
-    const repositoryId = args.repositoryId;
-    const ownerTokenIdentifier = identity.tokenIdentifier;
-    const mode = args.mode;
-    const pinned = mode
-      ? await ctx.db
-          .query("threads")
-          .withIndex("by_owner_repo_mode_delete_archive_pinned", (q) =>
-            q
-              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
-              .eq("repositoryId", repositoryId)
-              .eq("mode", mode)
-              .eq("deletionRequestedAt", undefined)
-              .eq("archivedAt", undefined)
-              .gt("pinnedAt", 0),
-          )
-          .order("desc")
-          .take(20)
-      : await ctx.db
-          .query("threads")
-          .withIndex("by_owner_repo_delete_archive_pinned", (q) =>
-            q
-              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
-              .eq("repositoryId", repositoryId)
-              .eq("deletionRequestedAt", undefined)
-              .eq("archivedAt", undefined)
-              .gt("pinnedAt", 0),
-          )
-          .order("desc")
-          .take(20);
-    const recent = mode
-      ? await ctx.db
-          .query("threads")
-          .withIndex("by_owner_repo_mode_delete_archive_lastMsg", (q) =>
-            q
-              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
-              .eq("repositoryId", repositoryId)
-              .eq("mode", mode)
-              .eq("deletionRequestedAt", undefined)
-              .eq("archivedAt", undefined),
-          )
-          .order("desc")
-          .take(20)
-      : await ctx.db
-          .query("threads")
-          .withIndex("by_owner_repo_delete_archive_lastMsg", (q) =>
-            q
-              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
-              .eq("repositoryId", repositoryId)
-              .eq("deletionRequestedAt", undefined)
-              .eq("archivedAt", undefined),
-          )
-          .order("desc")
-          .take(20);
-    const pinnedIds = new Set(pinned.map((thread) => thread._id));
-    return [...pinned, ...recent.filter((thread) => !pinnedIds.has(thread._id))];
+    return await listActiveThreadsForScope(ctx, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      scope: { type: "repository", repositoryId: args.repositoryId },
+      mode: args.mode,
+    });
   },
 });
 
@@ -185,31 +77,10 @@ export const listRepolessThreads = query({
   args: {},
   handler: async (ctx) => {
     const identity = await requireViewerIdentity(ctx);
-    const pinned = await ctx.db
-      .query("threads")
-      .withIndex("by_owner_repo_delete_archive_pinned", (q) =>
-        q
-          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
-          .eq("repositoryId", undefined)
-          .eq("deletionRequestedAt", undefined)
-          .eq("archivedAt", undefined)
-          .gt("pinnedAt", 0),
-      )
-      .order("desc")
-      .take(20);
-    const recent = await ctx.db
-      .query("threads")
-      .withIndex("by_owner_repo_delete_archive_lastMsg", (q) =>
-        q
-          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
-          .eq("repositoryId", undefined)
-          .eq("deletionRequestedAt", undefined)
-          .eq("archivedAt", undefined),
-      )
-      .order("desc")
-      .take(20);
-    const pinnedIds = new Set(pinned.map((thread) => thread._id));
-    return [...pinned, ...recent.filter((thread) => !pinnedIds.has(thread._id))];
+    return await listActiveThreadsForScope(ctx, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      scope: { type: "repoless" },
+    });
   },
 });
 
@@ -314,46 +185,7 @@ export const updateRepolessThreadAgentProfile = mutation({
     const { doc: thread } = await requireActiveOwnedThread(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
-    if (thread.repositoryId !== undefined) {
-      throw new Error("Agent Profile is only supported for repoless chat threads.");
-    }
-
-    const profile = normalizeAgentProfile(args);
-    const nextAgentEnabled =
-      args.agentEnabled ?? (profile.agentRole !== undefined || profile.agentInstructions !== undefined);
-    const enablingSingleTurn = thread.singleTurnEnabled !== true && args.singleTurnEnabled === true;
-    const agentNameChanged = (thread.agentRole ?? undefined) !== profile.agentRole;
-    const agentModeChanged = resolveRepolessAgentEnabled(thread) !== nextAgentEnabled;
-    let resetPending = thread.singleTurnResetPending;
-    if (enablingSingleTurn) {
-      const result = await drainThreadMessageArtifacts(ctx, {
-        threadId: args.threadId,
-        maxMessages: SINGLE_TURN_RESET_MESSAGE_BATCH_SIZE,
-        maxStreams: SINGLE_TURN_RESET_STREAM_BATCH_SIZE,
-      });
-      resetPending = result.messagesRemain || result.streamsRemain || result.streamBudgetExhausted ? true : undefined;
-    }
-
-    await ctx.db.patch(args.threadId, {
-      agentEnabled: nextAgentEnabled,
-      singleTurnEnabled: args.singleTurnEnabled,
-      singleTurnResetPending: resetPending,
-      agentRole: profile.agentRole,
-      agentInstructions: profile.agentInstructions,
-      agentUpdatedAt: Date.now(),
-      ...(agentNameChanged || agentModeChanged
-        ? {
-            title: nextAgentEnabled ? (profile.agentRole ?? NEW_THREAD_DEFAULT_TITLE) : NEW_THREAD_DEFAULT_TITLE,
-            userEditedTitle: undefined,
-          }
-        : {}),
-    });
-
-    if (resetPending === true) {
-      await ctx.scheduler.runAfter(0, internal.chat.threads.continueRepolessSingleTurnReset, {
-        threadId: args.threadId,
-      });
-    }
+    await updateRepolessThreadAgentProfileLifecycle(ctx, { thread, ...args });
   },
 });
 
@@ -362,27 +194,7 @@ export const continueRepolessSingleTurnReset = internalMutation({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    const thread = await ctx.db.get(args.threadId);
-    if (!thread || thread.deletionRequestedAt !== undefined || thread.singleTurnResetPending !== true) {
-      return;
-    }
-    if (thread.repositoryId !== undefined || thread.singleTurnEnabled !== true) {
-      await ctx.db.patch(args.threadId, { singleTurnResetPending: undefined });
-      return;
-    }
-
-    const result = await drainThreadMessageArtifacts(ctx, {
-      threadId: args.threadId,
-      maxMessages: SINGLE_TURN_RESET_MESSAGE_BATCH_SIZE,
-      maxStreams: SINGLE_TURN_RESET_STREAM_BATCH_SIZE,
-    });
-    if (result.messagesRemain || result.streamsRemain || result.streamBudgetExhausted) {
-      await ctx.scheduler.runAfter(0, internal.chat.threads.continueRepolessSingleTurnReset, {
-        threadId: args.threadId,
-      });
-      return;
-    }
-    await ctx.db.patch(args.threadId, { singleTurnResetPending: undefined });
+    await continueRepolessSingleTurnResetLifecycle(ctx, args);
   },
 });
 
@@ -394,33 +206,12 @@ export const createThread = mutation({
   },
   handler: async (ctx, args) => {
     const identity = await requireViewerIdentity(ctx);
-
-    const repositoryId = args.repositoryId;
-    const mode = args.mode ?? getDefaultThreadMode(!!repositoryId);
-
-    if (mode === "library" && !repositoryId) {
-      throw new Error(`'${mode}' mode requires an attached repository.`);
-    }
-    if (repositoryId) {
-      await requireActiveRepositoryForViewer(ctx, {
-        repositoryId,
-        notFoundMessage: "Repository not found.",
-        archivedMessage: "This repository is archived. Restore it to continue chatting.",
-      });
-    }
-
-    const title = args.title ?? NEW_THREAD_DEFAULT_TITLE;
-
-    const threadId = await ctx.db.insert("threads", {
-      repositoryId,
+    return await createThreadLifecycle(ctx, {
+      repositoryId: args.repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
-      title,
-      mode,
-      lastMessageAt: Date.now(),
+      title: args.title,
+      mode: args.mode,
     });
-    const thread = (await ctx.db.get(threadId))!;
-    await recordThreadCreatedInHistory(ctx, thread);
-    return { _id: threadId, mode };
   },
 });
 
@@ -443,34 +234,12 @@ export const createLibraryAskThread = mutation({
       notFoundMessage: "Repository not found.",
       archivedMessage: "This repository is archived. Restore it to continue chatting.",
     });
-
-    const artifactContext = args.artifactContext ?? [];
-    if (artifactContext.length > ASK_THREAD_MAX_ARTIFACT_CONTEXT) {
-      throw new Error(
-        `Library Ask scope filter accepts at most ${ASK_THREAD_MAX_ARTIFACT_CONTEXT} artifacts (got ${artifactContext.length}).`,
-      );
-    }
-
-    for (const artifactId of artifactContext) {
-      const { doc: artifact } = await requireOwnedDoc(ctx, artifactId, {
-        notFoundMessage: "Artifact not found.",
-      });
-      if (artifact.repositoryId !== args.repositoryId) {
-        throw new Error("Artifact is not in this repository.");
-      }
-    }
-
-    const threadId = await ctx.db.insert("threads", {
+    return await createLibraryAskThreadLifecycle(ctx, {
       repositoryId: args.repositoryId,
       ownerTokenIdentifier: identity.tokenIdentifier,
-      title: args.title ?? NEW_THREAD_DEFAULT_TITLE,
-      mode: "library",
-      lastMessageAt: Date.now(),
-      artifactContext: artifactContext.length > 0 ? artifactContext : undefined,
+      artifactContext: args.artifactContext,
+      title: args.title,
     });
-    const thread = (await ctx.db.get(threadId))!;
-    await recordThreadCreatedInHistory(ctx, thread);
-    return { _id: threadId, mode: "library" as const };
   },
 });
 
@@ -507,86 +276,7 @@ export const setThreadRepository = mutation({
     const { doc: thread } = await requireActiveOwnedThread(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
-
-    if (args.repositoryId !== null) {
-      await requireActiveRepositoryForViewer(ctx, {
-        repositoryId: args.repositoryId,
-        notFoundMessage: "Repository not found.",
-        archivedMessage: "This repository is archived. Restore it to continue chatting.",
-      });
-      await touchRepositoryLastAccessed(ctx, { repositoryId: args.repositoryId });
-      // Two transitions land in this branch:
-      //   1. no-repo  → has-repo: the thread is in `discuss`. Attaching a
-      //      repo lifts the thread into the repo default (`library`).
-      //   2. repo-A   → repo-B: preserve the user's chosen mode.
-      const nextMode = thread.repositoryId ? thread.mode : getDefaultThreadMode(true);
-      const previousRepositoryId = thread.repositoryId;
-      const swappedFromRepositoryId =
-        previousRepositoryId && previousRepositoryId !== args.repositoryId ? previousRepositoryId : undefined;
-      await ctx.db.patch(args.threadId, {
-        repositoryId: args.repositoryId,
-        mode: nextMode,
-        singleTurnEnabled: undefined,
-        singleTurnResetPending: undefined,
-        agentEnabled: undefined,
-        agentRole: undefined,
-        agentInstructions: undefined,
-        agentUpdatedAt: undefined,
-        ...(swappedFromRepositoryId ? { artifactContext: undefined } : {}),
-      });
-      const updatedThread = (await ctx.db.get(args.threadId))!;
-      await recordThreadMovedInHistory(ctx, {
-        previousThread: thread,
-        updatedThread,
-      });
-      const shareRowsRemain = await patchThreadSharesRepositoryByThreadId(ctx, {
-        threadId: args.threadId,
-        fromRepositoryId: previousRepositoryId,
-        repositoryId: updatedThread.repositoryId,
-      });
-      if (shareRowsRemain) {
-        await scheduleThreadShareRepositoryScopeUpdate(ctx, {
-          threadId: args.threadId,
-          fromRepositoryId: previousRepositoryId,
-        });
-      }
-      return {
-        repositoryId: args.repositoryId,
-        mode: nextMode,
-        ...(swappedFromRepositoryId ? { swappedFromRepositoryId } : {}),
-      };
-    }
-
-    // Detach atomically: dropping the repository while resetting the
-    // persisted mode keeps the thread in the same repo-less default state
-    // as `createThread`. A detached thread lives under the repoless
-    // `/chat/:threadId` surface. Also clear the grounding defaults — a
-    // no-repo thread cannot satisfy Library or Sandbox grounding.
-    const detachedMode = getDefaultThreadMode(false);
-    await ctx.db.patch(args.threadId, {
-      repositoryId: undefined,
-      mode: detachedMode,
-      defaultGroundLibrary: false,
-      defaultGroundSandbox: false,
-      artifactContext: undefined,
-    });
-    const updatedThread = (await ctx.db.get(args.threadId))!;
-    await recordThreadMovedInHistory(ctx, {
-      previousThread: thread,
-      updatedThread,
-    });
-    const shareRowsRemain = await patchThreadSharesRepositoryByThreadId(ctx, {
-      threadId: args.threadId,
-      fromRepositoryId: thread.repositoryId,
-      repositoryId: updatedThread.repositoryId,
-    });
-    if (shareRowsRemain) {
-      await scheduleThreadShareRepositoryScopeUpdate(ctx, {
-        threadId: args.threadId,
-        fromRepositoryId: thread.repositoryId,
-      });
-    }
-    return { repositoryId: null as null, mode: detachedMode };
+    return await setThreadRepositoryLifecycle(ctx, { thread, repositoryId: args.repositoryId });
   },
 });
 
@@ -596,40 +286,9 @@ export const continueThreadShareRepositoryScopeUpdate = internalMutation({
     fromRepositoryId: v.optional(v.id("repositories")),
   },
   handler: async (ctx, args) => {
-    await continueThreadShareRepositoryScopeUpdateImpl(ctx, args);
+    await continueThreadShareRepositoryScopeUpdateLifecycle(ctx, args);
   },
 });
-
-async function scheduleThreadShareRepositoryScopeUpdate(
-  ctx: MutationCtx,
-  args: ThreadShareRepositoryScopeUpdateArgs,
-): Promise<void> {
-  await ctx.scheduler.runAfter(0, internal.chat.threads.continueThreadShareRepositoryScopeUpdate, {
-    threadId: args.threadId,
-    ...(args.fromRepositoryId !== undefined ? { fromRepositoryId: args.fromRepositoryId } : {}),
-  });
-}
-
-async function continueThreadShareRepositoryScopeUpdateImpl(
-  ctx: MutationCtx,
-  args: ThreadShareRepositoryScopeUpdateArgs,
-): Promise<void> {
-  const thread = await ctx.db.get(args.threadId);
-  if (!thread) {
-    return;
-  }
-  if (thread.repositoryId === args.fromRepositoryId) {
-    return;
-  }
-  const shareRowsRemain = await patchThreadSharesRepositoryByThreadId(ctx, {
-    threadId: args.threadId,
-    fromRepositoryId: args.fromRepositoryId,
-    repositoryId: thread.repositoryId,
-  });
-  if (shareRowsRemain) {
-    await scheduleThreadShareRepositoryScopeUpdate(ctx, args);
-  }
-}
 
 /**
  * Toggle a thread's pinned state. Pinning stamps `pinnedAt` with the
@@ -668,27 +327,6 @@ async function summarizeArchivedThreadRepository(
         sourceRepoFullName: repository.sourceRepoFullName,
       }
     : null;
-}
-
-async function loadArchivedThreadsForRepositoryScope(
-  ctx: QueryCtx,
-  args: {
-    ownerTokenIdentifier: string;
-    repositoryId: Id<"repositories"> | undefined;
-    limit: number;
-  },
-) {
-  return await ctx.db
-    .query("threads")
-    .withIndex("by_owner_repo_delete_archive_lastMsg", (q) =>
-      q
-        .eq("ownerTokenIdentifier", args.ownerTokenIdentifier)
-        .eq("repositoryId", args.repositoryId)
-        .eq("deletionRequestedAt", undefined)
-        .gt("archivedAt", 0),
-    )
-    .order("desc")
-    .take(args.limit);
 }
 
 async function requireArchivedThreadRepositoryScope(
@@ -834,24 +472,7 @@ async function restoreArchivedThreadsForRepositoryScope(
     repositoryId: Id<"repositories"> | undefined;
   },
 ) {
-  const threads = await loadArchivedThreadsForRepositoryScope(ctx, {
-    ...args,
-    limit: ARCHIVED_THREAD_BULK_MUTATION_BATCH_SIZE,
-  });
-
-  for (const thread of threads) {
-    await recordThreadRemovedFromArchiveScope(ctx, thread);
-    await ctx.db.patch(thread._id, { archivedAt: undefined });
-    const restored = (await ctx.db.get(thread._id))!;
-    await recordThreadCreatedInHistory(ctx, restored);
-  }
-
-  if (threads.length === ARCHIVED_THREAD_BULK_MUTATION_BATCH_SIZE) {
-    await ctx.scheduler.runAfter(0, internal.chat.threads.restoreArchivedThreadsForRepositoryContinuation, {
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      repositoryId: args.repositoryId ?? null,
-    });
-  }
+  await restoreArchivedThreadsForRepositoryScopeLifecycle(ctx, args);
 }
 
 export const deleteArchivedThreadsForRepository = mutation({
@@ -895,21 +516,7 @@ async function deleteArchivedThreadsForRepositoryScope(
     repositoryId: Id<"repositories"> | undefined;
   },
 ) {
-  const threads = await loadArchivedThreadsForRepositoryScope(ctx, {
-    ...args,
-    limit: ARCHIVED_THREAD_BULK_MUTATION_BATCH_SIZE,
-  });
-
-  for (const thread of threads) {
-    await deleteThreadImpl(ctx, { threadId: thread._id });
-  }
-
-  if (threads.length === ARCHIVED_THREAD_BULK_MUTATION_BATCH_SIZE) {
-    await ctx.scheduler.runAfter(0, internal.chat.threads.deleteArchivedThreadsForRepositoryContinuation, {
-      ownerTokenIdentifier: args.ownerTokenIdentifier,
-      repositoryId: args.repositoryId ?? null,
-    });
-  }
+  await deleteArchivedThreadsForRepositoryScopeLifecycle(ctx, args);
 }
 
 export const archiveThread = mutation({
@@ -923,13 +530,7 @@ export const archiveThread = mutation({
     if (thread.deletionRequestedAt !== undefined) {
       throw new Error("Thread not found.");
     }
-    if (thread.archivedAt !== undefined) {
-      return null;
-    }
-    await ctx.db.patch(args.threadId, { archivedAt: Date.now(), pinnedAt: undefined });
-    await recordThreadRemovedFromHistory(ctx, thread);
-    const archived = (await ctx.db.get(args.threadId))!;
-    await recordThreadArchivedInScope(ctx, archived);
+    await archiveThreadLifecycle(ctx, { thread });
     return null;
   },
 });
@@ -945,13 +546,7 @@ export const restoreThread = mutation({
     if (thread.deletionRequestedAt !== undefined) {
       throw new Error("Thread not found.");
     }
-    if (thread.archivedAt === undefined) {
-      return null;
-    }
-    await recordThreadRemovedFromArchiveScope(ctx, thread);
-    await ctx.db.patch(args.threadId, { archivedAt: undefined });
-    const restored = (await ctx.db.get(args.threadId))!;
-    await recordThreadCreatedInHistory(ctx, restored);
+    await restoreArchivedThreadLifecycle(ctx, { thread });
     return null;
   },
 });
@@ -964,13 +559,7 @@ export const deleteArchivedThread = mutation({
     const { doc: thread } = await requireOwnedDoc(ctx, args.threadId, {
       notFoundMessage: "Thread not found.",
     });
-    if (thread.archivedAt === undefined && thread.deletionRequestedAt === undefined) {
-      throw new Error("Archive the thread before permanently deleting it.");
-    }
-    if (thread.archivedAt !== undefined) {
-      await recordThreadRemovedFromArchiveScope(ctx, thread);
-    }
-    await deleteThreadImpl(ctx, args);
+    await deleteArchivedThreadLifecycle(ctx, { thread });
   },
 });
 
@@ -986,7 +575,7 @@ export const deleteThread = mutation({
     // backs `deleteThreadContinuation` (an internal mutation) so we can
     // reschedule across mutations when a single transaction can't fit
     // the full message + stream + tool-event delete budget.
-    await deleteThreadImpl(ctx, args);
+    await deleteThreadLifecycle(ctx, args);
   },
 });
 
@@ -1003,136 +592,16 @@ export const deleteThreadContinuation = internalMutation({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    await deleteThreadImpl(ctx, args);
+    await deleteThreadLifecycle(ctx, args);
   },
 });
-
-export async function drainThreadMessageArtifacts(
-  ctx: MutationCtx,
-  args: {
-    threadId: Id<"threads">;
-    maxMessages: number;
-    maxStreams: number;
-  },
-): Promise<ThreadMessageArtifactDrainResult> {
-  const messages = await ctx.db
-    .query("messages")
-    .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
-    .take(args.maxMessages);
-  for (const message of messages) {
-    await drainMessageToolCallEvents(ctx, message._id);
-    await ctx.db.delete(message._id);
-  }
-
-  if (messages.length === args.maxMessages) {
-    return {
-      messagesRemain: true,
-      streamsRemain: true,
-      streamBudgetExhausted: false,
-    };
-  }
-
-  const streams = await ctx.db
-    .query("messageStreams")
-    .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
-    .take(args.maxStreams);
-
-  let totalChunksProcessed = 0;
-  let streamBudgetExhausted = false;
-  for (const stream of streams) {
-    if (totalChunksProcessed >= MAX_STREAM_CHUNKS_PER_PASS) {
-      streamBudgetExhausted = true;
-      break;
-    }
-    totalChunksProcessed += await deleteMessageStreamState(ctx, stream._id);
-  }
-
-  return {
-    messagesRemain: false,
-    streamsRemain: streams.length === args.maxStreams || streamBudgetExhausted,
-    streamBudgetExhausted,
-  };
-}
-
-async function deleteThreadImpl(ctx: MutationCtx, args: { threadId: Id<"threads"> }): Promise<void> {
-  const thread = await ctx.db.get(args.threadId);
-  if (!thread) {
-    // Already deleted — either a concurrent caller finished the job or a
-    // continuation tick fired after the row went away. Nothing to do.
-    return;
-  }
-
-  if (thread.deletionRequestedAt === undefined) {
-    await ctx.db.patch(args.threadId, { deletionRequestedAt: Date.now() });
-    if (thread.archivedAt === undefined) {
-      await recordThreadRemovedFromHistory(ctx, thread);
-    } else {
-      await recordThreadRemovedFromArchiveScope(ctx, thread);
-    }
-  }
-
-  const sharesStillRemain = await drainThreadSharesByThreadId(ctx, args.threadId);
-  if (sharesStillRemain) {
-    await ctx.scheduler.runAfter(0, internal.chat.threads.deleteThreadContinuation, args);
-    return;
-  }
-
-  const drainResult = await drainThreadMessageArtifacts(ctx, {
-    threadId: args.threadId,
-    maxMessages: 500,
-    maxStreams: 500,
-  });
-
-  if (drainResult.messagesRemain) {
-    // Each iteration above can issue up to MAX_TOOL_CALL_EVENTS_PER_MESSAGE
-    // event-delete writes plus the message-row delete; 500 messages can
-    // exceed Convex's per-mutation write budget. Mirror the
-    // `cleanupOrphanedMessageStreams` checkpoint pattern: schedule a
-    // continuation on a fresh transaction and return early so we don't
-    // also try to delete streams + the thread row in this mutation.
-    await ctx.scheduler.runAfter(0, internal.chat.threads.deleteThreadContinuation, args);
-    return;
-  }
-
-  if (thread.repositoryId) {
-    const repository = await ctx.db.get(thread.repositoryId);
-    if (repository && repository.defaultThreadId === args.threadId) {
-      await ctx.db.patch(thread.repositoryId, { defaultThreadId: undefined });
-    }
-  }
-
-  await ctx.db.delete(args.threadId);
-
-  if (drainResult.streamBudgetExhausted || drainResult.streamsRemain) {
-    await ctx.scheduler.runAfter(0, internal.chat.threads.cleanupOrphanedMessageStreams, {
-      threadId: args.threadId,
-    });
-  }
-}
 
 export const cleanupOrphanedMessages = internalMutation({
   args: {
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    const messages = await ctx.db
-      .query("messages")
-      .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
-      .take(500);
-    for (const message of messages) {
-      // Same drain-then-delete order as `deleteThread` so the
-      // re-scheduled cleanup pass doesn't outlive the events table. Reversing
-      // this would leave orphaned `messageToolCallEvents` rows once the
-      // parent message is gone, which then can't be reached by the
-      // by_messageId drain on the next pass.
-      await drainMessageToolCallEvents(ctx, message._id);
-      await ctx.db.delete(message._id);
-    }
-    if (messages.length === 500) {
-      await ctx.scheduler.runAfter(0, internal.chat.threads.cleanupOrphanedMessages, {
-        threadId: args.threadId,
-      });
-    }
+    await cleanupOrphanedMessagesLifecycle(ctx, args);
   },
 });
 
@@ -1141,27 +610,7 @@ export const cleanupOrphanedMessageStreams = internalMutation({
     threadId: v.id("threads"),
   },
   handler: async (ctx, args) => {
-    const streams = await ctx.db
-      .query("messageStreams")
-      .withIndex("by_threadId", (q) => q.eq("threadId", args.threadId))
-      .take(500);
-
-    let totalChunksProcessed = 0;
-    for (const stream of streams) {
-      if (totalChunksProcessed >= MAX_STREAM_CHUNKS_PER_PASS) {
-        await ctx.scheduler.runAfter(0, internal.chat.threads.cleanupOrphanedMessageStreams, {
-          threadId: args.threadId,
-        });
-        return;
-      }
-      totalChunksProcessed += await deleteMessageStreamState(ctx, stream._id);
-    }
-
-    if (streams.length === 500) {
-      await ctx.scheduler.runAfter(0, internal.chat.threads.cleanupOrphanedMessageStreams, {
-        threadId: args.threadId,
-      });
-    }
+    await cleanupOrphanedMessageStreamsLifecycle(ctx, args);
   },
 });
 

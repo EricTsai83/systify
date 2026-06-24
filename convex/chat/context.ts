@@ -13,7 +13,7 @@ import {
   type ReplyGroundingPlan,
   type RepositoryGroundingSnapshot,
 } from "./replyGrounding";
-import { resolveRepolessAgentEnabled } from "./threads";
+import { resolveRepolessAgentEnabled } from "./threadLifecycle";
 
 export type ReplyTurnContext = {
   ownerTokenIdentifier: string;

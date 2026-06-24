@@ -1,5 +1,14 @@
 import { describe, expect, test } from "vitest";
-import { buildChatSendRequest, resolveComposerModelRoute, resolveEffectiveGrounding } from "./chat-composer-session";
+import {
+  buildChatSendRequest,
+  createComposerSessionState,
+  getComposerSessionSnapshot,
+  reduceComposerSession,
+  resolveComposerModelRoute,
+  resolveEffectiveGrounding,
+  type ComposerGroundingAvailability,
+  type ComposerSessionInputs,
+} from "./chat-composer-session";
 import type { ArtifactId, RepositoryId, ThreadId } from "@/lib/types";
 
 const repositoryId = "repo_1" as RepositoryId;
@@ -183,3 +192,150 @@ describe("resolveEffectiveGrounding", () => {
     });
   });
 });
+
+describe("composer session reducer", () => {
+  test("seeds existing-thread grounding defaults after capabilities settle", () => {
+    const loadingInputs = composerInputs({
+      threadId,
+      capabilitiesLoading: true,
+      defaultGroundLibrary: true,
+      defaultGroundSandbox: true,
+    });
+    const state = createComposerSessionState(loadingInputs);
+    expect(getComposerSessionSnapshot({ state, inputs: loadingInputs })).toMatchObject({
+      groundLibrary: false,
+      groundSandbox: false,
+    });
+
+    const settledInputs = composerInputs({
+      threadId,
+      defaultGroundLibrary: true,
+      defaultGroundSandbox: true,
+    });
+    const settled = reduceComposerSession(state, { type: "sync", inputs: settledInputs });
+    expect(getComposerSessionSnapshot({ state: settled, inputs: settledInputs })).toMatchObject({
+      groundLibrary: true,
+      groundSandbox: true,
+    });
+  });
+
+  test("does not carry new-thread grounding across repository switches", () => {
+    const firstRepositoryInputs = composerInputs({ threadId: null });
+    const selected = reduceComposerSession(
+      reduceComposerSession(createComposerSessionState(firstRepositoryInputs), {
+        type: "setGroundLibrary",
+        value: true,
+      }),
+      {
+        type: "setGroundSandbox",
+        value: true,
+      },
+    );
+    expect(getComposerSessionSnapshot({ state: selected, inputs: firstRepositoryInputs })).toMatchObject({
+      groundLibrary: true,
+      groundSandbox: true,
+    });
+
+    const nextRepositoryInputs = composerInputs({
+      threadId: null,
+      repositoryId: "repo_2" as RepositoryId,
+    });
+    const switched = reduceComposerSession(selected, { type: "sync", inputs: nextRepositoryInputs });
+    expect(getComposerSessionSnapshot({ state: switched, inputs: nextRepositoryInputs })).toMatchObject({
+      groundLibrary: false,
+      groundSandbox: false,
+    });
+  });
+
+  test("auto-clears disabled Library grounding", () => {
+    const inputs = composerInputs({ threadId });
+    const selected = reduceComposerSession(createComposerSessionState(inputs), {
+      type: "setGroundLibrary",
+      value: true,
+    });
+    const nextInputs = composerInputs({
+      threadId,
+      groundingAvailability: {
+        library: { enabled: false, code: "library_no_artifact", message: "Generate System Design first." },
+        sandbox: { enabled: true },
+      },
+    });
+
+    const state = reduceComposerSession(selected, { type: "sync", inputs: nextInputs });
+    expect(getComposerSessionSnapshot({ state, inputs: nextInputs }).groundLibrary).toBe(false);
+  });
+
+  test("keeps activatable Sandbox selected and routes to sandbox scope", () => {
+    const inputs = composerInputs({ threadId });
+    const selected = reduceComposerSession(createComposerSessionState(inputs), {
+      type: "setGroundSandbox",
+      value: true,
+    });
+    const nextInputs = composerInputs({
+      threadId,
+      groundingAvailability: {
+        library: { enabled: true },
+        sandbox: {
+          enabled: false,
+          code: "sandbox_missing",
+          message: "Sandbox will be prepared on send.",
+          isActivatable: true,
+        },
+      },
+    });
+
+    const state = reduceComposerSession(selected, { type: "sync", inputs: nextInputs });
+    expect(getComposerSessionSnapshot({ state, inputs: nextInputs })).toMatchObject({
+      groundSandbox: true,
+      route: { capability: "sandbox", preferenceScope: "sandbox" },
+    });
+  });
+
+  test("auto-clears Sandbox only after viewer access resolves", () => {
+    const inputs = composerInputs({ threadId });
+    const selected = reduceComposerSession(createComposerSessionState(inputs), {
+      type: "setGroundSandbox",
+      value: true,
+    });
+
+    const loadingAccess = reduceComposerSession(selected, {
+      type: "sync",
+      inputs: composerInputs({
+        threadId,
+        accessResolved: false,
+        sandboxGroundingDisabledReason: "Sandbox is not available.",
+      }),
+    });
+    expect(getComposerSessionSnapshot({ state: loadingAccess, inputs }).groundSandbox).toBe(true);
+
+    const resolvedInputs = composerInputs({
+      threadId,
+      accessResolved: true,
+      sandboxGroundingDisabledReason: "Sandbox is not available.",
+    });
+    const resolvedAccess = reduceComposerSession(loadingAccess, { type: "sync", inputs: resolvedInputs });
+    expect(getComposerSessionSnapshot({ state: resolvedAccess, inputs: resolvedInputs }).groundSandbox).toBe(false);
+  });
+});
+
+function composerInputs(overrides: Partial<ComposerSessionInputs> = {}): ComposerSessionInputs {
+  return {
+    threadId: null,
+    repositoryId,
+    surface: "repository",
+    mode: "discuss",
+    capabilitiesLoading: false,
+    defaultGroundLibrary: false,
+    defaultGroundSandbox: false,
+    groundingAvailability: enabledGrounding(),
+    accessResolved: true,
+    ...overrides,
+  };
+}
+
+function enabledGrounding(): ComposerGroundingAvailability {
+  return {
+    library: { enabled: true },
+    sandbox: { enabled: true },
+  };
+}

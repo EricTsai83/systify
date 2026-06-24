@@ -23,7 +23,7 @@ import { reserveUsageLifecycleInMutation } from "../lib/usageAccountingMutations
 import { loadViewerModelPreferences } from "../lib/userPreferences";
 import { recordThreadActivityInHistory, recordThreadCreatedInHistory } from "./historyState";
 import { requireActiveOwnedThread } from "./threadAccess";
-import { drainThreadMessageArtifacts, normalizeAgentProfile } from "./threads";
+import { normalizeAgentProfile, resetSingleTurnThreadForNextTurn } from "./threadLifecycle";
 import {
   assertChatTurnModeEligible,
   completeChatTurnPlan,
@@ -494,22 +494,13 @@ export async function startChatTurnInExistingThread(
     if (thread.singleTurnResetPending === true) {
       throw new Error("Previous messages are still being cleared for this single-turn thread.");
     }
-    const result = await drainThreadMessageArtifacts(ctx, {
-      threadId: args.threadId,
-      maxMessages: 500,
-      maxStreams: 500,
-    });
-    if (result.messagesRemain || result.streamsRemain || result.streamBudgetExhausted) {
-      await ctx.db.patch(args.threadId, { singleTurnResetPending: true });
-      await ctx.scheduler.runAfter(0, internal.chat.threads.continueRepolessSingleTurnReset, {
-        threadId: args.threadId,
-      });
+    const resetResult = await resetSingleTurnThreadForNextTurn(ctx, { threadId: args.threadId });
+    if (resetResult.resetPending) {
       return {
         status: "singleTurnResetPending",
         message: "Previous messages are being cleared in background; try again later.",
       };
     }
-    await ctx.db.patch(args.threadId, { lastAssistantMessageAt: undefined });
   }
 
   await assertChatTurnBudgetsAndRateLimits(ctx, {

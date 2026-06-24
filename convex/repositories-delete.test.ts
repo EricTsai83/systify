@@ -630,6 +630,15 @@ describe("repository deletion cleanup", () => {
         (entry) => entry.table,
       ),
     ).not.toContain("sandboxToolCallLog");
+    for (const entry of REPOSITORY_OWNED_DATA_LIFECYCLE_REGISTRY) {
+      expect(entry.order).toEqual(expect.any(Number));
+      expect(entry.retryPolicy).toMatch(/^(none|immediate|sandboxCleanup)$/);
+      if (entry.disposition === "retain") {
+        expect(entry.adapterKey).toBeUndefined();
+      } else {
+        expect(entry.adapterKey).toEqual(expect.any(String));
+      }
+    }
   });
 
   test("cascadeDeleteRepository removes the repository-scoped data graph when sandboxes are already archived", async () => {

@@ -4,6 +4,7 @@ import { drainArchivedThreadScopesByRepositoryId } from "../chat/archiveState";
 import { drainHistoryGroupsByRepositoryId, drainThreadSharesByRepositoryId } from "../chat/historyState";
 import { CASCADE_BATCH_SIZE, MAX_TOOL_CALL_EVENTS_PER_MESSAGE } from "./constants";
 import { deleteArtifactWrite } from "./artifactWrites";
+import { clearLastActiveRepositoryIfMatches } from "./userPreferences";
 
 const STREAM_CHUNK_DRAIN_PASS_LIMIT = 8;
 const CASCADE_SAFE_READ_LIMIT = 30_000;
@@ -18,6 +19,28 @@ export interface DrainRepositorySandboxesResult {
   more: boolean;
   nonArchivedSandboxCount: number;
   waitingOnSandboxCleanup: boolean;
+}
+
+export interface RepositoryOwnedDataDrainContext {
+  repositoryId: Id<"repositories">;
+  ownerTokenIdentifier: string | null;
+  sandboxCleanupRetryExhausted: boolean;
+  maxSandboxCleanupRetries: number;
+}
+
+export interface RepositoryOwnedDataDrainResult {
+  more: boolean;
+  nonArchivedSandboxCount?: number;
+  waitingOnSandboxCleanup?: boolean;
+}
+
+type RepositoryOwnedDataDrainAdapter = (
+  ctx: MutationCtx,
+  args: RepositoryOwnedDataDrainContext,
+) => Promise<RepositoryOwnedDataDrainResult>;
+
+function more(moreRemaining: boolean): RepositoryOwnedDataDrainResult {
+  return { more: moreRemaining };
 }
 
 function canReadBatch(budget: CascadeBudget, size = CASCADE_BATCH_SIZE): boolean {
@@ -335,7 +358,7 @@ async function drainThreadsByRepositoryId(ctx: MutationCtx, repositoryId: Id<"re
   return more || threads.length === CASCADE_BATCH_SIZE;
 }
 
-export async function drainRepositoryThreadGraph(
+async function drainRepositoryThreadGraph(
   ctx: MutationCtx,
   args: { repositoryId: Id<"repositories"> },
 ): Promise<boolean> {
@@ -347,7 +370,7 @@ export async function drainRepositoryThreadGraph(
   return more;
 }
 
-export async function drainRepositoryOwnerViewerState(
+async function drainRepositoryOwnerViewerState(
   ctx: MutationCtx,
   args: { ownerTokenIdentifier: string; repositoryId: Id<"repositories"> },
 ): Promise<boolean> {
@@ -357,7 +380,7 @@ export async function drainRepositoryOwnerViewerState(
   return more;
 }
 
-export async function drainRepositoryContentState(
+async function drainRepositoryContentState(
   ctx: MutationCtx,
   args: { repositoryId: Id<"repositories"> },
 ): Promise<boolean> {
@@ -373,14 +396,14 @@ export async function drainRepositoryContentState(
   return more;
 }
 
-export async function drainRepositorySandboxSessions(
+async function drainRepositorySandboxSessions(
   ctx: MutationCtx,
   args: { repositoryId: Id<"repositories"> },
 ): Promise<boolean> {
   return await drainSandboxSessionsByRepositoryId(ctx, args.repositoryId);
 }
 
-export async function drainRepositorySandboxes(
+async function drainRepositorySandboxes(
   ctx: MutationCtx,
   args: {
     repositoryId: Id<"repositories">;
@@ -418,9 +441,66 @@ export async function drainRepositorySandboxes(
   };
 }
 
-export async function drainRepositoryJobs(
-  ctx: MutationCtx,
-  args: { repositoryId: Id<"repositories"> },
-): Promise<boolean> {
+async function drainRepositoryJobs(ctx: MutationCtx, args: { repositoryId: Id<"repositories"> }): Promise<boolean> {
   return await drainJobsByRepositoryId(ctx, args.repositoryId);
 }
+
+async function drainRepositoryOwnerViewerStateIfOwnerKnown(
+  ctx: MutationCtx,
+  args: RepositoryOwnedDataDrainContext,
+): Promise<RepositoryOwnedDataDrainResult> {
+  if (!args.ownerTokenIdentifier) {
+    return more(false);
+  }
+  return more(
+    await drainRepositoryOwnerViewerState(ctx, {
+      ownerTokenIdentifier: args.ownerTokenIdentifier,
+      repositoryId: args.repositoryId,
+    }),
+  );
+}
+
+async function clearRepositoryOwnerViewerPreference(
+  ctx: MutationCtx,
+  args: RepositoryOwnedDataDrainContext,
+): Promise<RepositoryOwnedDataDrainResult> {
+  if (!args.ownerTokenIdentifier) {
+    return more(false);
+  }
+  await clearLastActiveRepositoryIfMatches(ctx, {
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    repositoryId: args.repositoryId,
+  });
+  return more(false);
+}
+
+async function deleteRepositoryRoot(
+  ctx: MutationCtx,
+  args: RepositoryOwnedDataDrainContext,
+): Promise<RepositoryOwnedDataDrainResult> {
+  const repository = await ctx.db.get(args.repositoryId);
+  if (repository) {
+    await ctx.db.delete(args.repositoryId);
+  }
+  return more(false);
+}
+
+export const REPOSITORY_OWNED_DATA_DRAIN_ADAPTERS = {
+  threadGraph: async (ctx, args) => more(await drainRepositoryThreadGraph(ctx, args)),
+  ownerViewerState: drainRepositoryOwnerViewerStateIfOwnerKnown,
+  clearOwnerViewerPreference: clearRepositoryOwnerViewerPreference,
+  repositoryContentState: async (ctx, args) => more(await drainRepositoryContentState(ctx, args)),
+  sandboxSessions: async (ctx, args) => more(await drainRepositorySandboxSessions(ctx, args)),
+  sandboxes: async (ctx, args) => {
+    const result = await drainRepositorySandboxes(ctx, {
+      repositoryId: args.repositoryId,
+      sandboxCleanupRetryExhausted: args.sandboxCleanupRetryExhausted,
+      maxSandboxCleanupRetries: args.maxSandboxCleanupRetries,
+    });
+    return result;
+  },
+  jobs: async (ctx, args) => more(await drainRepositoryJobs(ctx, args)),
+  repositoryRoot: deleteRepositoryRoot,
+} satisfies Record<string, RepositoryOwnedDataDrainAdapter>;
+
+export type RepositoryOwnedDataDrainAdapterKey = keyof typeof REPOSITORY_OWNED_DATA_DRAIN_ADAPTERS;

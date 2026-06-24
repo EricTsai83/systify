@@ -55,6 +55,45 @@ async function insertThreadMessage(
   });
 }
 
+async function seedThreadListingOrderingContract(
+  t: SystifyTestConvex,
+  args: {
+    ownerTokenIdentifier: string;
+    repositoryId?: Id<"repositories">;
+    mode?: "discuss" | "library";
+  },
+) {
+  const base = {
+    ownerTokenIdentifier: args.ownerTokenIdentifier,
+    repositoryId: args.repositoryId,
+    mode: args.mode ?? "discuss",
+  };
+  const pinnedNewest = await insertTestThread(t, {
+    ...base,
+    title: "Pinned newest",
+    pinnedAt: 500,
+    lastMessageAt: 1_000,
+  });
+  const unpinnedNewest = await insertTestThread(t, {
+    ...base,
+    title: "Unpinned newest",
+    lastMessageAt: 900,
+  });
+  const pinnedOlder = await insertTestThread(t, {
+    ...base,
+    title: "Pinned older",
+    pinnedAt: 400,
+    lastMessageAt: 800,
+  });
+  const unpinnedOlder = await insertTestThread(t, {
+    ...base,
+    title: "Unpinned older",
+    lastMessageAt: 700,
+  });
+
+  return [pinnedNewest, pinnedOlder, unpinnedNewest, unpinnedOlder];
+}
+
 describe("createThread", () => {
   test("repoless library mode is rejected — library requires an attached repository", async () => {
     const ownerTokenIdentifier = "user|create-thread-repoless-library";
@@ -429,6 +468,22 @@ describe("repoless Agent Profile", () => {
 });
 
 describe("listThreads", () => {
+  test("orders repository threads pinned first, then recent, without duplicates", async () => {
+    const ownerTokenIdentifier = "user|list-threads-ordering-contract";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier, "thread-ordering-contract");
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const expected = await seedThreadListingOrderingContract(t, {
+      ownerTokenIdentifier,
+      repositoryId,
+      mode: "library",
+    });
+
+    const threads = await viewer.query(api.chat.threads.listThreads, { repositoryId, mode: "library" });
+
+    expect(threads.map((thread) => thread._id)).toEqual(expected);
+  });
+
   test("repository thread list excludes owner-mismatched legacy rows", async () => {
     const ownerTokenIdentifier = "user|list-threads-owner";
     const intruderTokenIdentifier = "user|list-threads-intruder";
@@ -937,6 +992,19 @@ describe("listRepolessThreads", () => {
     const result = await viewer.query(api.chat.threads.listRepolessThreads, {});
     expect(result.map((thread) => thread._id)).toEqual([newestThreadId, middleThreadId, olderThreadId]);
     expect(result.every((thread) => thread.repositoryId === undefined)).toBe(true);
+  });
+
+  test("orders repoless threads pinned first, then recent, without duplicates", async () => {
+    const ownerTokenIdentifier = "user|list-repoless-ordering-contract";
+    const t = createTestConvex();
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const expected = await seedThreadListingOrderingContract(t, {
+      ownerTokenIdentifier,
+    });
+
+    const result = await viewer.query(api.chat.threads.listRepolessThreads, {});
+
+    expect(result.map((thread) => thread._id)).toEqual(expected);
   });
 
   test("owner isolation: viewer A never sees viewer B's repoless threads", async () => {
