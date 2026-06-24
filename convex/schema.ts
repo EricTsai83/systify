@@ -607,6 +607,7 @@ export default defineSchema({
       "promptVersion",
     ])
     .index("by_repositoryId_and_folderId", ["repositoryId", "folderId"])
+    .index("by_repositoryId_and_folderId_and_kind", ["repositoryId", "folderId", "kind"])
     .index("by_repositoryId_and_lastVerifiedAt", ["repositoryId", "lastVerifiedAt"])
     .index("by_folderId", ["folderId"])
     .index("by_threadId", ["threadId"])

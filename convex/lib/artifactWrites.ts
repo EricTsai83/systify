@@ -412,11 +412,11 @@ async function findArtifactInFolderByKind(
 ): Promise<Doc<"artifacts"> | null> {
   const existing = await ctx.db
     .query("artifacts")
-    .withIndex("by_repositoryId_and_folderId", (q) =>
-      q.eq("repositoryId", args.repositoryId).eq("folderId", args.folderId),
+    .withIndex("by_repositoryId_and_folderId_and_kind", (q) =>
+      q.eq("repositoryId", args.repositoryId).eq("folderId", args.folderId).eq("kind", args.kind),
     )
-    .collect();
-  return existing.find((row) => row.kind === args.kind) ?? null;
+    .first();
+  return existing ?? null;
 }
 
 async function validateArtifactFolder(
