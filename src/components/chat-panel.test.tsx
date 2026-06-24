@@ -203,8 +203,6 @@ type LegacyChatPanelProps = Omit<React.ComponentProps<typeof RealChatPanel>, "co
   threadLockedProvider?: LlmProvider | null;
   grounding?: ComposerGroundingViewModel["grounding"];
   showGroundingToggles?: boolean;
-  onOpenGenerateSystemDesign?: () => void;
-  generateSystemDesignDisabledReason?: string;
   isArtifactPanelOpen?: boolean;
   onToggleArtifactPanel?: () => void;
   showArtifactToggle?: boolean;
@@ -390,8 +388,6 @@ function useLegacyComposer(props: LegacyChatPanelProps | LegacyChatContainerProp
               setGroundLibrary: props.setGroundLibrary,
               setGroundSandbox: props.setGroundSandbox,
               grounding,
-              onOpenGenerateSystemDesign: props.onOpenGenerateSystemDesign,
-              generateDisabledReason: props.generateSystemDesignDisabledReason,
             }
           : null,
       extraControls: props.composerControls,

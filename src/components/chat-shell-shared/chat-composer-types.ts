@@ -48,8 +48,6 @@ export type ComposerGroundingViewModel = {
       }
     | null
     | undefined;
-  onOpenGenerateSystemDesign?: () => void;
-  generateDisabledReason?: string;
 };
 
 export type ChatComposerViewModel = {
