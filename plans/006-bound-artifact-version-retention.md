@@ -7,7 +7,7 @@
 > in `plans/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
-> **Drift check (run first)**: `git diff --stat c7b6aac..HEAD -- convex/lib/artifactWrites.ts convex/artifactVersions.ts convex/schema.ts`
+> **Drift check (run first)**: `git diff --stat 23c0a02..HEAD -- convex/lib/artifactWrites.ts convex/artifactVersions.ts convex/schema.ts convex/artifactStore.test.ts`
 > If any in-scope file changed since this plan was written, compare the
 > "Current state" excerpts against the live code before proceeding; on a
 > mismatch, treat it as a STOP condition.
@@ -19,7 +19,8 @@
 - **Risk**: MED
 - **Depends on**: none
 - **Category**: perf / tech-debt
-- **Planned at**: commit `c7b6aac`, 2026-06-24
+- **Planned at**: commit `23c0a02`, refreshed 2026-06-24
+- **Prior implementation**: commit `e9b6bc2` on branch `worktree-agent-a363a7c418dc16742` was reviewed and approved before 008/009 landed, but it is not merged into `main`. Reuse it only after confirming it preserves the already-merged folder-kind index lookup and truthful `htmlValidationStatus` changes.
 
 ## Why this matters
 
@@ -49,12 +50,14 @@ across an update — see the `?? previousHtml.htmlStorageId` reuse at
     version via `createArtifactVersionWrite` (line 222), then patches the
     artifact with `version` + `currentVersionId` and calls `ctx.db.patch` (line
     244). **No pruning happens.** This is where pruning must be invoked.
-  - `createArtifactVersionWrite` (lines 253–293): inserts one `artifactVersions`
-    row. For HTML it stores `htmlStorageId` (line 283).
-  - `deleteArtifactVersionsAndHtmlStorage` (lines 360–381): the existing
+  - `createArtifactVersionWrite` (lines 253–298): inserts one `artifactVersions`
+    row. For HTML it stores `htmlStorageId` (line 283) and now derives
+    `htmlValidationStatus` from validation errors (lines 286–291). Do not
+    regress that 009 change.
+  - `deleteArtifactVersionsAndHtmlStorage` (lines 365–386): the existing
     full-artifact cleanup. It pages through ALL versions of an artifact and
     deletes each blob once, deduping within the delete set via a
-    `Set<Id<"_storage">>` (line 365). **Use this as the structural pattern** for
+    `Set<Id<"_storage">>` (line 370). **Use this as the structural pattern** for
     blob-dedup, but note the key difference for pruning below.
   - HTML blobs can be shared across versions: when an update doesn't change the
     HTML, the new version reuses the prior `htmlStorageId`
@@ -64,9 +67,11 @@ across an update — see the `?? previousHtml.htmlStorageId` reuse at
 - `convex/artifactVersions.ts:8` — `ARTIFACT_VERSION_LIST_LIMIT = 50`, the read
   cap. Keep the retention cap consistent with (>= ) this so nothing listable is
   pruned.
-- `convex/schema.ts:618-639` — `artifactVersions` table. Existing indexes:
+- `convex/schema.ts:619-639` — `artifactVersions` table. Existing indexes:
   `by_artifactId` (line 637) and `by_artifactId_and_version` (line 638). Use
   `by_artifactId_and_version` for ranged pruning — no new index needed.
+- `convex/schema.ts:610` already includes the 008 index
+  `by_repositoryId_and_folderId_and_kind`; leave it in place.
 
 Excerpt — the write path to instrument (`convex/lib/artifactWrites.ts:240-244`):
 
@@ -76,9 +81,13 @@ Excerpt — the write path to instrument (`convex/lib/artifactWrites.ts:240-244`
     }
     patch.updatedAt = Date.now();
     await ctx.db.patch(args.artifactId, patch);
+    await scheduleArtifactReindex(ctx, {
+      artifactId: args.artifactId,
+      repositoryId: args.contentMarkdown !== undefined ? artifact.repositoryId : undefined,
+    });
 ```
 
-Excerpt — existing blob-dedup pattern to mirror (`convex/lib/artifactWrites.ts:360-381`):
+Excerpt — existing blob-dedup pattern to mirror (`convex/lib/artifactWrites.ts:365-386`):
 
 ```ts
 async function deleteArtifactVersionsAndHtmlStorage(
@@ -129,13 +138,15 @@ servers or builds.)
 
 **In scope** (the only files you should modify):
 - `convex/lib/artifactWrites.ts` — add the prune helper + a constant, call it from `updateArtifactWrite`.
-- `convex/lib/artifactWrites.test.ts` — create if absent; add pruning tests. (Confirm the filename first: run `ls convex/artifactStore.test.ts convex/lib/` — if version-write behavior is already tested in `convex/artifactStore.test.ts`, ADD the new tests there instead of creating a new file, matching where `updateArtifactWrite`/`createArtifactWrite` are currently exercised.)
+- `convex/artifactStore.test.ts` — add pruning tests beside the existing artifact-write / generated-replacement coverage.
 
 **Out of scope** (do NOT touch, even though they look related):
 - `convex/artifactVersions.ts` — the read cap is already correct; do not change the listing query.
 - `deleteArtifactVersionsAndHtmlStorage` and `deleteArtifactWrite` — full-artifact deletion already works; do not alter it.
 - The artifact `schema.ts` indexes — `by_artifactId_and_version` is sufficient; do NOT add an index.
 - Any change to `currentVersionId` semantics or the version-numbering scheme.
+- The 008 `findArtifactInFolderByKind` indexed lookup and 009
+  `htmlValidationStatus` derivation — preserve both.
 
 ## Git workflow
 
@@ -212,14 +223,19 @@ and safe.
 ### Step 2: Call the prune helper from `updateArtifactWrite`
 
 In `updateArtifactWrite`, immediately after the artifact patch at
-`convex/lib/artifactWrites.ts:244` (`await ctx.db.patch(args.artifactId, patch);`),
-prune only when a new version was actually created (i.e. `patch.version` was set):
+`convex/lib/artifactWrites.ts:244` (`await ctx.db.patch(args.artifactId, patch);`)
+and before `scheduleArtifactReindex`, prune only when a new version was actually
+created (i.e. `patch.version` was set):
 
 ```ts
     await ctx.db.patch(args.artifactId, patch);
     if (patch.version !== undefined) {
       await pruneArtifactVersions(ctx, args.artifactId, patch.version);
     }
+    await scheduleArtifactReindex(ctx, {
+      artifactId: args.artifactId,
+      repositoryId: args.contentMarkdown !== undefined ? artifact.repositoryId : undefined,
+    });
 ```
 
 Do NOT prune in `createArtifactWrite` (it only ever creates version 1).
@@ -234,10 +250,10 @@ Run `bun run format`, then the full gate.
 
 ## Test plan
 
-Add tests in the file identified in Scope (likely `convex/artifactStore.test.ts`
-or a new `convex/lib/artifactWrites.test.ts`), modeled after the existing
-`convex-test` (`convexTest`) usage in `convex/artifactVersions.test.ts` (it
-inserts versions 1..60 and asserts the listing). Cover:
+Add tests in `convex/artifactStore.test.ts`, modeled after the existing
+artifact-write tests in that file and the `convex-test` (`convexTest`) usage in
+`convex/artifactVersions.test.ts` (it inserts versions 1..60 and asserts the
+listing). Cover:
 
 1. **Prunes beyond the cap**: create an artifact, then update it enough times to
    exceed `MAX_ARTIFACT_VERSIONS` (e.g. 55 updates). Assert that querying
