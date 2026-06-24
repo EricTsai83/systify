@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AnimatePresence, motion, useReducedMotion, type Transition } from "motion/react";
 import { BookOpenIcon, ChatCircleIcon } from "@phosphor-icons/react";
+import { prefetchDiscussRoute, prefetchLibraryRoute } from "@/route-prefetch";
 import { discussPath, libraryPath } from "@/route-paths";
 import type { ChatMode, RepositoryId } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -74,6 +75,15 @@ export function RepositoryModeSwitcher({
       void navigate(libraryPath(repositoryId));
     }
   };
+  const handleIntent = (value: ChatMode, isAvailable: boolean) => {
+    if (!isAvailable) return;
+    if (value === mode) return;
+    if (value === "discuss") {
+      void prefetchDiscussRoute();
+    } else {
+      void prefetchLibraryRoute();
+    }
+  };
 
   return (
     <div className={cn("border-b border-border px-2 py-2", className)}>
@@ -99,6 +109,8 @@ export function RepositoryModeSwitcher({
               aria-label={entry.label}
               aria-disabled={!isAvailable}
               onClick={() => handleSelect(entry.value, isAvailable)}
+              onFocus={() => handleIntent(entry.value, isAvailable)}
+              onMouseEnter={() => handleIntent(entry.value, isAvailable)}
               initial={initialStyles}
               animate={animateStyles}
               transition={shouldReduceMotion ? { duration: 0 } : MORPH}
