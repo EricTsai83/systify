@@ -660,6 +660,15 @@ describe("LibraryAskPanel artifact drafts", () => {
     expect(screen.getByRole("menuitem", { name: /Update open artifact/i })).toHaveAttribute("data-disabled");
   });
 
+  test("keeps Draft selector enabled while the active thread is confirming", () => {
+    queryState.threadSummary = null;
+
+    renderPanel({ threadId });
+
+    expect(screen.getByRole("button", { name: "Draft" })).toBeEnabled();
+    expect(screen.queryByTestId("library-ask-composer-tools-placeholder")).not.toBeInTheDocument();
+  });
+
   test("holds composer tools until the library model catalog is ready", () => {
     mocks.useQuery.mockImplementation((reference: unknown, args: unknown) => {
       if (args === "skip") return undefined;
@@ -681,14 +690,14 @@ describe("LibraryAskPanel artifact drafts", () => {
     expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
   });
 
-  test("holds composer tools until recent repository drafts are ready", () => {
+  test("keeps composer tools visible while recent repository drafts are loading", () => {
     queryState.recentDrafts = undefined;
 
     renderPanel();
 
-    expect(screen.queryByRole("button", { name: "Draft" })).not.toBeInTheDocument();
-    expect(screen.queryByText("GPT-5.5")).not.toBeInTheDocument();
-    expect(screen.getByTestId("library-ask-composer-tools-placeholder")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Draft" })).toBeInTheDocument();
+    expect(screen.getByText("GPT-5.5")).toBeInTheDocument();
+    expect(screen.queryByTestId("library-ask-composer-tools-placeholder")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
   });
 });

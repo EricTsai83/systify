@@ -93,6 +93,7 @@ type LibraryAskComposerState = {
   disabledReason: string | undefined;
   isSending: boolean;
   latestAssistantInFlight: boolean;
+  isWaitingForThreadConfirmation: boolean;
   error: string | null;
   toolsReady: boolean;
 };
@@ -397,12 +398,7 @@ export function LibraryAskPanel({
   }, [archiveThread, closeTab, onSelectThread, pendingArchiveThreadId, threadId]);
 
   const isLocked = !hasArtifacts;
-  const draftListReady = threadId
-    ? activeThreadProbe === null || (activeThreadProbe !== undefined && threadDrafts !== undefined)
-    : recentDrafts !== undefined;
-  const composerToolsReady =
-    draftListReady &&
-    (isLocked ? true : selectedProvider !== null && selectedModelName !== null && Array.isArray(libraryCatalogEntries));
+  const composerToolsReady = isLocked || Array.isArray(libraryCatalogEntries);
   const selectedModelPick =
     selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null;
   const askModelAccessDisabledReason = useModelAccessDisabledReason({
@@ -429,6 +425,7 @@ export function LibraryAskPanel({
     threadId && confirmedThreadId === null ? "Waiting for thread confirmation…" : undefined;
   const documentActionDisabledReason =
     threadConfirmationDisabledReason ?? artifactDraftDisabledReason ?? draftModelAccessDisabledReason ?? undefined;
+  const draftMenuDisabledReason = artifactDraftDisabledReason;
   const composerDisabledReason =
     askDisabledReason ?? threadConfirmationDisabledReason ?? (isLocked ? LOCKED_HINT : askModelAccessDisabledReason);
   const handleSubmit = useCallback(
@@ -578,6 +575,7 @@ export function LibraryAskPanel({
     disabledReason: composerDisabledReason ?? undefined,
     isSending,
     latestAssistantInFlight,
+    isWaitingForThreadConfirmation: threadConfirmationDisabledReason !== undefined,
     error,
     toolsReady: composerToolsReady,
   };
@@ -635,6 +633,7 @@ export function LibraryAskPanel({
           isLocked,
           activeArtifactId,
           documentActionDisabledReason,
+          draftMenuDisabledReason,
           openCreateDraft,
           openUpdateDraft,
           openHtmlReportDraft,
@@ -895,6 +894,7 @@ type LibraryAskComposerToolsState = {
   isLocked: boolean;
   activeArtifactId: ArtifactId | null;
   documentActionDisabledReason: string | undefined;
+  draftMenuDisabledReason: string | undefined;
   openCreateDraft: () => void;
   openUpdateDraft: () => void;
   openHtmlReportDraft: () => void;
@@ -985,8 +985,8 @@ function LibraryAskComposer({
           onChange={(event) => state.setInput(event.target.value)}
           placeholder={state.placeholder}
           className="min-h-24 text-sm"
-          readOnly={state.isSending || state.latestAssistantInFlight}
-          disabled={state.disabledReason != null}
+          readOnly={state.isSending || state.latestAssistantInFlight || state.isWaitingForThreadConfirmation}
+          disabled={state.disabledReason != null && !state.isWaitingForThreadConfirmation}
           aria-describedby={state.hintId}
         />
         <PromptInputFooter>
@@ -1009,7 +1009,7 @@ function LibraryAskComposerTools({
     return <div aria-hidden="true" data-testid="library-ask-composer-tools-placeholder" className="min-h-8 flex-1" />;
   }
   return (
-    <PromptInputTools className="animate-soft-enter">
+    <PromptInputTools>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -1022,8 +1022,8 @@ function LibraryAskComposerTools({
               "disabled:pointer-events-none disabled:opacity-50",
               "[&_svg]:shrink-0",
             ].join(" ")}
-            disabled={tools.documentActionDisabledReason !== undefined}
-            title={tools.documentActionDisabledReason}
+            disabled={tools.draftMenuDisabledReason !== undefined}
+            title={tools.draftMenuDisabledReason}
           >
             <SparkleIcon size={13} weight="bold" />
             <span className="truncate leading-none">Draft</span>
