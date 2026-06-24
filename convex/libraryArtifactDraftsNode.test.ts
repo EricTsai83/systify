@@ -54,6 +54,20 @@ vi.mock("./lib/artifactRag", () => ({
 
 const OWNER = "user|artifact-draft-node";
 
+const VALID_HTML_REPORT = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Executive report</title>
+</head>
+<body>
+  <main><h1>Executive report</h1><p>Runtime evidence.</p><a href="#sources">Sources</a></main>
+</body>
+</html>`;
+
+const INVALID_HTML_REPORT = VALID_HTML_REPORT.replace("</body>", "<script>alert(1)</script></body>");
+
 async function seedDraftRun(t: ReturnType<typeof createRateLimitedTestConvex>) {
   return await t.run(async (ctx) => {
     await ctx.db.insert("userAccessProfiles", {
@@ -131,6 +145,56 @@ async function seedDraftRun(t: ReturnType<typeof createRateLimitedTestConvex>) {
     });
     return { repositoryId, sandboxId, jobId, draftId };
   });
+}
+
+async function seedHtmlDraftRun(t: ReturnType<typeof createRateLimitedTestConvex>) {
+  const { repositoryId, jobId, draftId } = await seedDraftRun(t);
+  const sourceArtifactId = await insertTestArtifact(t, {
+    ownerTokenIdentifier: OWNER,
+    repositoryId,
+    title: "Architecture overview",
+    summary: "Architecture summary.",
+    contentMarkdown: "# Architecture\n\nRuntime evidence.",
+    version: 4,
+  });
+  const sourceChunkId = await t.run(async (ctx) =>
+    ctx.db.insert("artifactChunks", {
+      ownerTokenIdentifier: OWNER,
+      repositoryId,
+      artifactId: sourceArtifactId,
+      artifactVersion: 4,
+      chunkIndex: 0,
+      headingPath: ["Runtime"],
+      startOffset: 0,
+      endOffset: 17,
+      content: "Runtime evidence.",
+    }),
+  );
+  await t.run(async (ctx) => {
+    await ctx.db.patch(draftId, {
+      outputFormat: "html",
+      title: "Executive report",
+      prompt: "Create a polished executive report.",
+      generatedByProvider: "openai",
+      generatedByModel: "gpt-5.4-mini",
+    });
+  });
+  mocks.retrieveArtifactChunks.mockResolvedValue([
+    {
+      chunkId: sourceChunkId,
+      artifactId: sourceArtifactId,
+      artifactVersion: 4,
+      artifactTitle: "Architecture overview",
+      artifactKind: "architecture_overview",
+      headingPath: ["Runtime"],
+      content: "Runtime evidence.",
+      lexicalScore: 1,
+      semanticScore: 0.9,
+      rrfScore: 0.03,
+    },
+  ]);
+
+  return { repositoryId, jobId, draftId, sourceArtifactId, sourceChunkId };
 }
 
 beforeEach(() => {
@@ -451,6 +515,107 @@ describe("runArtifactDraft", () => {
     }));
     expect(cleanup.versions).toHaveLength(0);
     expect(cleanup.storageUrl).toBeNull();
+  });
+
+  test("repairs invalid HTML and succeeds, accumulating repair usage", async () => {
+    const t = createRateLimitedTestConvex();
+    const { repositoryId, jobId, draftId } = await seedHtmlDraftRun(t);
+    mocks.generateObjectViaGateway
+      .mockResolvedValueOnce({
+        object: {
+          title: "Executive report",
+          summary: "A Library-grounded executive report.",
+          contentMarkdown: "# Executive report\n\nRuntime evidence [S1].",
+          html: INVALID_HTML_REPORT,
+        },
+        usage: { inputTokens: 50, outputTokens: 70 },
+        costUsd: 0.03,
+        steps: [],
+        rawResponseId: "response_html_invalid",
+      })
+      .mockResolvedValueOnce({
+        object: {
+          title: "Executive report",
+          summary: "A Library-grounded executive report.",
+          contentMarkdown: "# Executive report\n\nRuntime evidence [S1].",
+          html: VALID_HTML_REPORT,
+        },
+        usage: { inputTokens: 20, outputTokens: 30 },
+        costUsd: 0.02,
+        steps: [],
+        rawResponseId: "response_html_repaired",
+      });
+
+    await t.action(internal.libraryArtifactDraftsNode.runArtifactDraft, {
+      draftId,
+      jobId,
+      repositoryId,
+      ownerTokenIdentifier: OWNER,
+    });
+
+    const state = await t.run(async (ctx) => ({
+      draft: await ctx.db.get(draftId),
+      usageEvents: await ctx.db.query("userUsageEvents").take(10),
+    }));
+    expect(mocks.generateObjectViaGateway).toHaveBeenCalledTimes(2);
+    expect(mocks.generateObjectViaGateway.mock.calls[0]?.[2]).toMatchObject({
+      schemaName: "library_html_report_draft",
+    });
+    expect(mocks.generateObjectViaGateway.mock.calls[1]?.[2]).toMatchObject({
+      schemaName: "library_html_report_repair",
+    });
+    expect(state.draft?.status).toBe("ready");
+    expect(state.draft?.outputFormat).toBe("html");
+    expect(state.usageEvents).toHaveLength(1);
+    expect(state.usageEvents[0]?.costUsd).toBe(0.05);
+    expect(state.usageEvents[0]).toMatchObject({
+      inputTokens: 70,
+      outputTokens: 100,
+    });
+  });
+
+  test("fails the draft when HTML is still invalid after max repair attempts", async () => {
+    const t = createRateLimitedTestConvex();
+    const { repositoryId, jobId, draftId } = await seedHtmlDraftRun(t);
+    mocks.generateObjectViaGateway.mockResolvedValue({
+      object: {
+        title: "Executive report",
+        summary: "A Library-grounded executive report.",
+        contentMarkdown: "# Executive report\n\nRuntime evidence [S1].",
+        html: INVALID_HTML_REPORT,
+      },
+      usage: { inputTokens: 50, outputTokens: 70 },
+      costUsd: 0.03,
+      steps: [],
+      rawResponseId: "response_html_invalid",
+    });
+
+    await t.action(internal.libraryArtifactDraftsNode.runArtifactDraft, {
+      draftId,
+      jobId,
+      repositoryId,
+      ownerTokenIdentifier: OWNER,
+    });
+
+    const state = await t.run(async (ctx) => ({
+      draft: await ctx.db.get(draftId),
+      job: await ctx.db.get(jobId),
+    }));
+    expect(mocks.generateObjectViaGateway).toHaveBeenCalledTimes(3);
+    expect(mocks.generateObjectViaGateway.mock.calls[0]?.[2]).toMatchObject({
+      schemaName: "library_html_report_draft",
+    });
+    expect(mocks.generateObjectViaGateway.mock.calls[1]?.[2]).toMatchObject({
+      schemaName: "library_html_report_repair",
+    });
+    expect(mocks.generateObjectViaGateway.mock.calls[2]?.[2]).toMatchObject({
+      schemaName: "library_html_report_repair",
+    });
+    expect(state.draft?.status).toBe("failed");
+    expect(state.draft?.errorMessage).toMatch(
+      /^Artifact draft failed\. Regenerate to try again\. \(ref: artifactdraft_/,
+    );
+    expect(state.job?.status).toBe("failed");
   });
 
   test("fails the draft when repository code access preparation fails", async () => {
