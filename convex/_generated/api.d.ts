@@ -40,6 +40,8 @@ import type * as chat_sendPlanning from "../chat/sendPlanning.js";
 import type * as chat_streamStore from "../chat/streamStore.js";
 import type * as chat_streaming from "../chat/streaming.js";
 import type * as chat_threadAccess from "../chat/threadAccess.js";
+import type * as chat_threadLifecycle from "../chat/threadLifecycle.js";
+import type * as chat_threadListing from "../chat/threadListing.js";
 import type * as chat_threadShares from "../chat/threadShares.js";
 import type * as chat_threads from "../chat/threads.js";
 import type * as chat_titles from "../chat/titles.js";
@@ -180,6 +182,8 @@ declare const fullApi: ApiFromModules<{
   "chat/streamStore": typeof chat_streamStore;
   "chat/streaming": typeof chat_streaming;
   "chat/threadAccess": typeof chat_threadAccess;
+  "chat/threadLifecycle": typeof chat_threadLifecycle;
+  "chat/threadListing": typeof chat_threadListing;
   "chat/threadShares": typeof chat_threadShares;
   "chat/threads": typeof chat_threads;
   "chat/titles": typeof chat_titles;
