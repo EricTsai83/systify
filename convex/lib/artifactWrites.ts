@@ -283,7 +283,12 @@ export async function createArtifactVersionWrite(
     htmlStorageId: args.renderFormat === "html" ? args.htmlStorageId : undefined,
     htmlHash: args.renderFormat === "html" ? args.htmlHash : undefined,
     htmlByteLength: args.renderFormat === "html" ? args.htmlByteLength : undefined,
-    htmlValidationStatus: args.renderFormat === "html" ? "valid" : undefined,
+    htmlValidationStatus:
+      args.renderFormat === "html"
+        ? args.htmlValidationErrors && args.htmlValidationErrors.length > 0
+          ? "invalid"
+          : "valid"
+        : undefined,
     htmlValidationErrors: args.htmlValidationErrors,
     sourceArtifacts: args.sourceArtifacts,
     sourceChunkIds: args.sourceChunkIds,
