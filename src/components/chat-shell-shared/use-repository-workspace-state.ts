@@ -26,6 +26,7 @@ import {
   libraryPath,
   modeAwareThreadPath,
   newDiscussPath,
+  repolessThreadPath,
   repositoryPath,
 } from "@/route-paths";
 
@@ -40,6 +41,7 @@ export type RepositoryWorkspaceState = {
   repositories: Doc<"repositories">[] | undefined;
   activeRepositoryId: RepositoryId | null;
   selectedRepositoryId: RepositoryId | null;
+  artifactRepositoryId: RepositoryId | null;
   selectedThreadId: ThreadId | null;
   chatMode: ChatMode;
   capabilities: ThreadCapabilities;
@@ -179,14 +181,16 @@ export function useRepositoryWorkspaceState({
 
   const selectedRepositoryId: RepositoryId | null = currentRepositoryId;
   const selectedThreadId: ThreadId | null = urlThreadId;
+  const artifactRepositoryId: RepositoryId | null = capabilities.attachedRepository?.id ?? currentRepositoryId;
   const recentThreadIds = useRecentThreads(selectedThreadId);
   useWarmThreadSubscriptions(recentThreadIds);
 
   const repoDetail = useQuery(
     api.repositories.getRepositoryDetail,
-    selectedRepositoryId ? { repositoryId: selectedRepositoryId } : "skip",
+    artifactRepositoryId ? { repositoryId: artifactRepositoryId } : "skip",
   );
-  const isRepoMissing = selectedRepositoryId !== null && repoDetail === null;
+  const isRepoMissing =
+    selectedRepositoryId !== null && artifactRepositoryId === selectedRepositoryId && repoDetail === null;
   const isRepoArchived = repoDetail !== null && repoDetail !== undefined && repoDetail.isArchived;
   const isRepositorySyncing =
     !isRepoArchived &&
@@ -285,7 +289,7 @@ export function useRepositoryWorkspaceState({
       if (currentRepositoryId !== null) {
         void navigate(modeAwareThreadPath(currentRepositoryId, threadId, threadMode));
       } else {
-        void navigate(DEFAULT_AUTHENTICATED_PATH);
+        void navigate(repolessThreadPath(threadId));
       }
     },
     [navigate, currentRepositoryId],
@@ -325,12 +329,12 @@ export function useRepositoryWorkspaceState({
 
   const handleSelectArtifact = useCallback(
     (artifactId: ArtifactId) => {
-      if (currentRepositoryId === null) {
+      if (artifactRepositoryId === null) {
         return;
       }
-      void navigate(libraryArtifactPath(currentRepositoryId, artifactId));
+      void navigate(libraryArtifactPath(artifactRepositoryId, artifactId));
     },
-    [navigate, currentRepositoryId],
+    [navigate, artifactRepositoryId],
   );
 
   const handleSelectMobileArtifact = useCallback(
@@ -399,14 +403,20 @@ export function useRepositoryWorkspaceState({
 
   const onAfterCreateThread = useCallback(
     (threadId: ThreadId, threadMode: ChatMode) => {
-      if (currentRepositoryId === null) return;
+      if (currentRepositoryId === null) {
+        void navigate(repolessThreadPath(threadId), { replace: true });
+        return;
+      }
       void navigate(modeAwareThreadPath(currentRepositoryId, threadId, threadMode), { replace: true });
     },
     [currentRepositoryId, navigate],
   );
 
   const handleRequestNewThread = useCallback(() => {
-    if (currentRepositoryId === null) return;
+    if (currentRepositoryId === null) {
+      void navigate(DEFAULT_AUTHENTICATED_PATH);
+      return;
+    }
     void navigate(newDiscussPath(currentRepositoryId));
   }, [currentRepositoryId, navigate]);
 
@@ -477,6 +487,7 @@ export function useRepositoryWorkspaceState({
     repositories,
     activeRepositoryId,
     selectedRepositoryId,
+    artifactRepositoryId,
     selectedThreadId,
     chatMode,
     capabilities,

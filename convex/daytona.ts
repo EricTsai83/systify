@@ -172,25 +172,18 @@ export async function deleteSandbox(remoteId: string) {
 
 export async function listSandboxesByLabel(labels: Record<string, string>): Promise<ListedSandbox[]> {
   const daytona = createDaytonaClient();
-  // Listing is read-only and idempotent, so on a transient failure the
-  // retry can restart pagination from the first page.
+  // Listing is read-only and idempotent, so on a transient failure the retry
+  // can restart iteration from the first page.
   return withDaytonaRetry(
     async () => {
       const sandboxes: ListedSandbox[] = [];
-      let page = 1;
-      let totalPages = 1;
-      do {
-        const result = await daytona.list(labels, page, 100);
-        for (const sandbox of result.items) {
-          sandboxes.push({
-            remoteId: sandbox.id,
-            labels: sandbox.labels,
-            createdAt: sandbox.createdAt,
-          });
-        }
-        totalPages = result.totalPages;
-        page += 1;
-      } while (page <= totalPages);
+      for await (const sandbox of daytona.list({ labels, limit: 100 })) {
+        sandboxes.push({
+          remoteId: sandbox.id,
+          labels: sandbox.labels,
+          createdAt: sandbox.createdAt,
+        });
+      }
       return sandboxes;
     },
     {

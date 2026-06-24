@@ -166,7 +166,7 @@ export function RepositoryShell({
                 >
                   <div className="h-full xl:w-96 2xl:w-md">
                     <ArtifactPanel
-                      repositoryId={workspace.selectedRepositoryId}
+                      repositoryId={workspace.artifactRepositoryId}
                       artifacts={workspace.repoDetail?.artifacts}
                       isVisible={workspace.panels.artifact.isDesktopOpen}
                       className="flex h-full w-full border-l-0"
@@ -193,7 +193,7 @@ export function RepositoryShell({
             </DrawerDescription>
             <div className="flex min-h-0 flex-1 flex-col">
               <ArtifactPanel
-                repositoryId={workspace.selectedRepositoryId}
+                repositoryId={workspace.artifactRepositoryId}
                 artifacts={workspace.repoDetail?.artifacts}
                 isVisible={workspace.panels.artifact.isMobileOpen}
                 className="flex h-full w-full border-l-0"

@@ -300,6 +300,7 @@ export async function updateRepolessThreadAgentProfileLifecycle(
     agentEnabled: nextAgentEnabled,
     singleTurnEnabled: args.singleTurnEnabled,
     singleTurnResetPending: resetPending,
+    ...(enablingSingleTurn && resetPending !== true ? { lastAssistantMessageAt: undefined } : {}),
     agentRole: profile.agentRole,
     agentInstructions: profile.agentInstructions,
     agentUpdatedAt: Date.now(),
@@ -338,7 +339,7 @@ export async function continueRepolessSingleTurnResetLifecycle(
     await scheduleRepolessSingleTurnReset(ctx, args);
     return;
   }
-  await ctx.db.patch(args.threadId, { singleTurnResetPending: undefined });
+  await ctx.db.patch(args.threadId, { singleTurnResetPending: undefined, lastAssistantMessageAt: undefined });
 }
 
 export async function resetSingleTurnThreadForNextTurn(
@@ -443,10 +444,16 @@ export async function deleteArchivedThreadLifecycle(ctx: MutationCtx, args: { th
   if (args.thread.archivedAt !== undefined) {
     await recordThreadRemovedFromArchiveScope(ctx, args.thread);
   }
-  await deleteThreadLifecycle(ctx, { threadId: args.thread._id });
+  await deleteThreadLifecycle(ctx, {
+    threadId: args.thread._id,
+    archiveScopeAlreadyRemoved: args.thread.archivedAt !== undefined,
+  });
 }
 
-export async function deleteThreadLifecycle(ctx: MutationCtx, args: { threadId: Id<"threads"> }): Promise<void> {
+export async function deleteThreadLifecycle(
+  ctx: MutationCtx,
+  args: { threadId: Id<"threads">; archiveScopeAlreadyRemoved?: boolean },
+): Promise<void> {
   const thread = await ctx.db.get(args.threadId);
   if (!thread) {
     return;
@@ -456,7 +463,7 @@ export async function deleteThreadLifecycle(ctx: MutationCtx, args: { threadId: 
     await ctx.db.patch(args.threadId, { deletionRequestedAt: Date.now() });
     if (thread.archivedAt === undefined) {
       await recordThreadRemovedFromHistory(ctx, thread);
-    } else {
+    } else if (args.archiveScopeAlreadyRemoved !== true) {
       await recordThreadRemovedFromArchiveScope(ctx, thread);
     }
   }

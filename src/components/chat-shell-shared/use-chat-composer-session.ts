@@ -108,13 +108,17 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
     baseComposerSessionInputs,
     createComposerSessionState,
   );
+  const baseRenderComposerSessionState = useMemo(
+    () => reduceComposerSession(composerSessionState, { type: "sync", inputs: baseComposerSessionInputs }),
+    [baseComposerSessionInputs, composerSessionState],
+  );
   const baseComposerSession = useMemo(
     () =>
       getComposerSessionSnapshot({
-        state: composerSessionState,
+        state: baseRenderComposerSessionState,
         inputs: baseComposerSessionInputs,
       }),
-    [baseComposerSessionInputs, composerSessionState],
+    [baseComposerSessionInputs, baseRenderComposerSessionState],
   );
   const { route } = baseComposerSession;
   const setGroundLibrary = useCallback((next: boolean) => {
@@ -173,13 +177,17 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
     dispatchComposerSession({ type: "sync", inputs: composerSessionInputs });
   }, [composerSessionInputs]);
 
+  const renderComposerSessionState = useMemo(
+    () => reduceComposerSession(composerSessionState, { type: "sync", inputs: composerSessionInputs }),
+    [composerSessionInputs, composerSessionState],
+  );
   const composerSession = useMemo(
     () =>
       getComposerSessionSnapshot({
-        state: composerSessionState,
+        state: renderComposerSessionState,
         inputs: composerSessionInputs,
       }),
-    [composerSessionInputs, composerSessionState],
+    [composerSessionInputs, renderComposerSessionState],
   );
 
   const buildSendRequest = useCallback(
