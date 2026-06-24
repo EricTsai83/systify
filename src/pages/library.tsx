@@ -305,7 +305,7 @@ export function LibraryLiveSourceBadge({ status }: { status: LibrarySandboxActiv
       variant="outline"
       title={presentation.title}
       aria-label={presentation.title}
-      className={cn("h-6 shrink-0 gap-1.5 px-2 text-[11px] font-medium", presentation.className)}
+      className={cn("ml-2 h-6 shrink-0 gap-1.5 px-2 text-[11px] font-medium", presentation.className)}
     >
       <Icon size={10} weight="fill" className={presentation.iconClassName} aria-hidden="true" />
       <span>{presentation.label}</span>
