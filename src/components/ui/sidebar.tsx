@@ -203,6 +203,7 @@ export function Sidebar({
   const liveWidthRef = React.useRef(width);
   const pendingLiveWidthRef = React.useRef<number | null>(null);
   const resizeFrameRef = React.useRef<number | null>(null);
+  const activeResizeCleanupRef = React.useRef<(() => void) | null>(null);
 
   React.useEffect(() => {
     setWidth(readStoredSidebarWidth(widthStorageKey, defaultWidth, maxWidth));
@@ -216,6 +217,7 @@ export function Sidebar({
   // doesn't end up stuck with a col-resize cursor or text selection disabled.
   React.useEffect(() => {
     return () => {
+      activeResizeCleanupRef.current?.();
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
       if (resizeFrameRef.current !== null) {
@@ -252,6 +254,7 @@ export function Sidebar({
 
       const startX = event.clientX;
       const startWidth = liveWidthRef.current;
+      activeResizeCleanupRef.current?.();
       setIsResizing(true);
       // Anchor cursor + suppress selection globally so the user can drag past
       // the 4px hit strip without the cursor flipping back to default over
@@ -266,18 +269,24 @@ export function Sidebar({
         applyLiveWidth(next);
       };
 
+      const cleanupListeners = () => {
+        window.removeEventListener("pointermove", handleMove);
+        window.removeEventListener("pointerup", handleEnd);
+        window.removeEventListener("pointercancel", handleEnd);
+        activeResizeCleanupRef.current = null;
+      };
+
       const handleEnd = () => {
         const finalWidth = liveWidthRef.current;
         setIsResizing(false);
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
-        window.removeEventListener("pointermove", handleMove);
-        window.removeEventListener("pointerup", handleEnd);
-        window.removeEventListener("pointercancel", handleEnd);
+        cleanupListeners();
         persistSidebarWidth(widthStorageKey, finalWidth);
         setWidth(finalWidth);
       };
 
+      activeResizeCleanupRef.current = cleanupListeners;
       window.addEventListener("pointermove", handleMove);
       window.addEventListener("pointerup", handleEnd);
       window.addEventListener("pointercancel", handleEnd);

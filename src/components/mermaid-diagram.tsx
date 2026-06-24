@@ -405,10 +405,22 @@ function ZoomableViewport({
     };
   }, []);
 
-  const commitView = useCallback((next: typeof view) => {
-    viewRef.current = next;
-    setView(next);
+  const clearScheduledView = useCallback(() => {
+    pendingViewRef.current = null;
+    if (viewFrameRef.current !== null) {
+      cancelAnimationFrame(viewFrameRef.current);
+      viewFrameRef.current = null;
+    }
   }, []);
+
+  const commitView = useCallback(
+    (next: typeof view) => {
+      clearScheduledView();
+      viewRef.current = next;
+      setView(next);
+    },
+    [clearScheduledView],
+  );
 
   const scheduleView = useCallback((next: typeof view) => {
     viewRef.current = next;
@@ -420,6 +432,7 @@ function ZoomableViewport({
       const pending = pendingViewRef.current;
       if (pending === null) return;
       pendingViewRef.current = null;
+      viewRef.current = pending;
       setView(pending);
     });
   }, []);
@@ -427,13 +440,10 @@ function ZoomableViewport({
   const flushScheduledView = useCallback(() => {
     const pending = pendingViewRef.current;
     if (pending === null) return;
-    pendingViewRef.current = null;
-    if (viewFrameRef.current !== null) {
-      cancelAnimationFrame(viewFrameRef.current);
-      viewFrameRef.current = null;
-    }
+    clearScheduledView();
+    viewRef.current = pending;
     setView(pending);
-  }, []);
+  }, [clearScheduledView]);
 
   const clampScale = useCallback((scale: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, scale)), []);
 
