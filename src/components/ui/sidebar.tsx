@@ -198,10 +198,19 @@ export function Sidebar({
     readStoredSidebarWidth(widthStorageKey, defaultWidth, maxWidth),
   );
   const [isResizing, setIsResizing] = React.useState(false);
+  const sidebarRef = React.useRef<HTMLElement | null>(null);
+  const sidebarContentRef = React.useRef<HTMLDivElement | null>(null);
+  const liveWidthRef = React.useRef(width);
+  const pendingLiveWidthRef = React.useRef<number | null>(null);
+  const resizeFrameRef = React.useRef<number | null>(null);
 
   React.useEffect(() => {
     setWidth(readStoredSidebarWidth(widthStorageKey, defaultWidth, maxWidth));
   }, [widthStorageKey, defaultWidth, maxWidth]);
+
+  React.useEffect(() => {
+    liveWidthRef.current = width;
+  }, [width]);
 
   // Restore body cursor/select if the component unmounts mid-drag so the page
   // doesn't end up stuck with a col-resize cursor or text selection disabled.
@@ -209,7 +218,31 @@ export function Sidebar({
     return () => {
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
+      if (resizeFrameRef.current !== null) {
+        cancelAnimationFrame(resizeFrameRef.current);
+        resizeFrameRef.current = null;
+      }
     };
+  }, []);
+
+  const applyLiveWidth = React.useCallback((next: number) => {
+    liveWidthRef.current = next;
+    pendingLiveWidthRef.current = next;
+    if (resizeFrameRef.current !== null) return;
+
+    resizeFrameRef.current = requestAnimationFrame(() => {
+      resizeFrameRef.current = null;
+      const pending = pendingLiveWidthRef.current;
+      if (pending === null) return;
+      pendingLiveWidthRef.current = null;
+      const value = `${pending}px`;
+      if (sidebarRef.current) {
+        sidebarRef.current.style.width = value;
+      }
+      if (sidebarContentRef.current) {
+        sidebarContentRef.current.style.width = value;
+      }
+    });
   }, []);
 
   const handleResizePointerDown = React.useCallback(
@@ -218,7 +251,7 @@ export function Sidebar({
       event.preventDefault();
 
       const startX = event.clientX;
-      const startWidth = width;
+      const startWidth = liveWidthRef.current;
       setIsResizing(true);
       // Anchor cursor + suppress selection globally so the user can drag past
       // the 4px hit strip without the cursor flipping back to default over
@@ -230,27 +263,26 @@ export function Sidebar({
         // Right sidebar: dragging left (negative delta) grows the sidebar
         const delta = side === "right" ? -(moveEvent.clientX - startX) : moveEvent.clientX - startX;
         const next = clampSidebarWidth(startWidth + delta, maxWidth);
-        setWidth(next);
+        applyLiveWidth(next);
       };
 
       const handleEnd = () => {
+        const finalWidth = liveWidthRef.current;
         setIsResizing(false);
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
         window.removeEventListener("pointermove", handleMove);
         window.removeEventListener("pointerup", handleEnd);
         window.removeEventListener("pointercancel", handleEnd);
-        setWidth((current) => {
-          persistSidebarWidth(widthStorageKey, current);
-          return current;
-        });
+        persistSidebarWidth(widthStorageKey, finalWidth);
+        setWidth(finalWidth);
       };
 
       window.addEventListener("pointermove", handleMove);
       window.addEventListener("pointerup", handleEnd);
       window.addEventListener("pointercancel", handleEnd);
     },
-    [width, widthStorageKey, maxWidth, side],
+    [applyLiveWidth, widthStorageKey, maxWidth, side],
   );
 
   const handleResizeKeyDown = React.useCallback(
@@ -326,6 +358,7 @@ export function Sidebar({
     // Transition is suppressed during active drag so the right edge tracks
     // the cursor 1:1; open/close toggles still animate.
     <aside
+      ref={sidebarRef}
       data-state={open ? "open" : "closed"}
       data-side={side}
       style={{ width: open ? width : 0, [isLeftSide ? "left" : "right"]: 0 }}
@@ -338,7 +371,7 @@ export function Sidebar({
         className,
       )}
     >
-      <div className="flex h-full min-h-0 flex-col" style={{ width }}>
+      <div ref={sidebarContentRef} className="flex h-full min-h-0 flex-col" style={{ width }}>
         {children}
       </div>
       {open ? (
