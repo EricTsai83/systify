@@ -1,50 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { useQuery } from "convex/react";
 import { ArchiveIcon, ArrowCounterClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
-import { api } from "../../convex/_generated/api";
-import { SidebarInset } from "@/components/ui/sidebar";
-import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
-import { Button } from "@/components/ui/button";
-import { ButtonStateText } from "@/components/ui/button-state-text";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { AppNotice } from "@/components/app-notice";
 import { AppSidebarLeft } from "@/components/app-sidebar";
 import { ArtifactPanel } from "@/components/artifact-panel";
-import { TopBar } from "@/components/top-bar";
-import { ThreadSearchDialog } from "@/components/thread-search-dialog";
-import { ConfirmDialog } from "@/components/confirm-dialog";
-import { AppNotice } from "@/components/app-notice";
 import { ChatContainer } from "@/components/chat-panel";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
 import { StatusPanel } from "@/components/status-panel";
-import { useChatComposerSession } from "@/components/chat-shell-shared/use-chat-composer-session";
-import { useChatShellLifecycle } from "@/components/chat-shell-shared/use-chat-shell-lifecycle";
-import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-thread-deletion-recovery";
-import { useRepositoryLandingDecision } from "@/components/chat-shell-shared/use-repository-landing";
-import { useRepositoryPersistence } from "@/components/chat-shell-shared/use-repository-persistence";
-import { useCheckForUpdates } from "@/hooks/use-check-for-updates";
-import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
-import { useRecentThreads } from "@/hooks/use-recent-threads";
-import { useRepositoryLifecycle } from "@/hooks/use-repository-lifecycle";
-import { useChatMode } from "@/hooks/use-service-mode";
-import { useThreadCapabilities } from "@/hooks/use-thread-capabilities";
-import { useWarmThreadSubscriptions } from "@/hooks/use-warm-thread-subscriptions";
-import { isViewerFeatureEnabled, useViewerAccess } from "@/hooks/use-viewer-access";
-import type { ArtifactId, ChatMode, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
-import { DEMO_MODE_COPY } from "@/lib/demo-content";
+import { ThreadSearchDialog } from "@/components/thread-search-dialog";
+import { TopBar } from "@/components/top-bar";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
+import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
+import { SidebarInset } from "@/components/ui/sidebar";
+import { useRepositoryWorkspaceState } from "@/components/chat-shell-shared/use-repository-workspace-state";
+import type { RepositoryId, ThreadId } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import {
-  DEFAULT_AUTHENTICATED_PATH,
-  discussPath,
-  libraryArtifactPath,
-  libraryPath,
-  modeAwareThreadPath,
-  newDiscussPath,
-  repositoryPath,
-} from "@/route-paths";
-
-type RepositoryShellStatus = "initializing" | "ready";
-const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
 
 const MOBILE_DRAWER_HEIGHT_CLASS = "h-[95dvh] data-[vaul-drawer-direction=bottom]:max-h-[95dvh]";
 
@@ -57,415 +28,77 @@ export function RepositoryShell({
   urlThreadId: ThreadId | null;
   isNewThreadRoute?: boolean;
 }) {
-  const navigate = useNavigate();
-  const viewerAccess = useViewerAccess();
-  const suppressThreadAutoOpen = urlThreadId === null && isNewThreadRoute;
-
-  const {
-    repositories,
-    touchRepository,
-    activeRepositoryId,
-    currentRepositoryId,
-    currentRepository,
-    handleSwitchRepository,
-  } = useRepositoryPersistence({ urlRepositoryId, navigate });
-
-  const { mode, availability } = useChatMode(currentRepositoryId);
-  const landingDecision = useRepositoryLandingDecision({
-    urlRepositoryId,
-    urlThreadId,
-    currentRepositoryId,
-    currentRepository,
-    mode,
-    availability,
-    repositories,
-    suppressThreadAutoOpen,
-  });
-
-  const capabilities = useThreadCapabilities(urlThreadId);
-
-  const isArtifactPanelEnabled = mode === "library" || (mode === "discuss" && capabilities.attachedRepository !== null);
-
-  const [threadToArchive, setThreadToArchive] = useState<ThreadId | null>(null);
-  const [showArchiveDialog, setShowArchiveDialog] = useState(false);
-  const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] = useState(false);
-  const chatMode: ChatMode = landingDecision.intendedChatMode;
-
-  const [actionError, setActionError] = useState<string | null>(null);
-  const [actionNotice, setActionNotice] = useState<{ title: string; message: string } | null>(null);
-  useEffect(() => {
-    if (!actionNotice) return;
-    const timer = window.setTimeout(() => setActionNotice(null), 5000);
-    return () => window.clearTimeout(timer);
-  }, [actionNotice]);
-  const [isArtifactPanelOpen, setIsArtifactPanelOpen] = useLocalStorageBoolean("systify.artifactPanel.open", false);
-  const [isArtifactSheetOpen, setIsArtifactSheetOpen] = useState(false);
-  const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false);
-  const [isStatusOpen, setIsStatusOpen] = useState(false);
-  const [isThreadSearchOpen, setIsThreadSearchOpen] = useState(false);
-  const [isDesktopLayout, setIsDesktopLayout] = useState<boolean>(() => {
-    if (typeof window === "undefined") {
-      return true;
-    }
-    return window.matchMedia(DESKTOP_LAYOUT_QUERY).matches;
-  });
-
-  const isRepositoriesLoading = repositories === undefined;
-
-  useEffect(() => {
-    const mediaQuery = window.matchMedia(DESKTOP_LAYOUT_QUERY);
-    const handleChange = (event: MediaQueryListEvent) => {
-      setIsDesktopLayout(event.matches);
-      setIsStatusOpen(false);
-      if (event.matches) {
-        setIsArtifactSheetOpen(false);
-      }
-    };
-    mediaQuery.addEventListener("change", handleChange);
-    return () => mediaQuery.removeEventListener("change", handleChange);
-  }, []);
-
-  const effectiveSelectedRepositoryId: RepositoryId | null = currentRepositoryId;
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setIsGenerateDialogOpen(false);
-  }, [effectiveSelectedRepositoryId]);
-
-  const effectiveSelectedThreadId: ThreadId | null = urlThreadId;
-
-  const recentThreadIds = useRecentThreads(effectiveSelectedThreadId);
-  useWarmThreadSubscriptions(recentThreadIds);
-
-  const repoDetail = useQuery(
-    api.repositories.getRepositoryDetail,
-    effectiveSelectedRepositoryId ? { repositoryId: effectiveSelectedRepositoryId } : "skip",
-  );
-  const isRepoMissing = effectiveSelectedRepositoryId !== null && repoDetail === null;
-  const isRepoArchived = repoDetail !== null && repoDetail !== undefined && repoDetail.isArchived;
-  const isRepositorySyncing =
-    !isRepoArchived &&
-    (repoDetail?.repository.importStatus === "queued" || repoDetail?.repository.importStatus === "running");
-  const accessLoadingReason = viewerAccess === undefined ? "Loading access…" : undefined;
-  const importDisabledReason =
-    accessLoadingReason ??
-    (isViewerFeatureEnabled(viewerAccess, "repoImport") ? undefined : DEMO_MODE_COPY.importDisabled);
-  const syncDisabledReason =
-    accessLoadingReason ??
-    (isViewerFeatureEnabled(viewerAccess, "syncRepository") ? undefined : DEMO_MODE_COPY.syncDisabled);
-  const checkForUpdatesEnabled = isViewerFeatureEnabled(viewerAccess, "checkForUpdates");
-  let generateSystemDesignDisabledReason = accessLoadingReason;
-  if (!generateSystemDesignDisabledReason) {
-    if (!isViewerFeatureEnabled(viewerAccess, "generateSystemDesign")) {
-      generateSystemDesignDisabledReason = DEMO_MODE_COPY.generateDisabled;
-    } else if (!isViewerFeatureEnabled(viewerAccess, "sandboxGrounding")) {
-      generateSystemDesignDisabledReason = DEMO_MODE_COPY.sandboxDisabled;
-    }
-  }
-  const premiumModelsDisabledReason =
-    accessLoadingReason ??
-    (isViewerFeatureEnabled(viewerAccess, "premiumModels") ? undefined : DEMO_MODE_COPY.premiumModelsDisabled);
-  const highReasoningDisabledReason =
-    accessLoadingReason ??
-    (isViewerFeatureEnabled(viewerAccess, "highReasoning") ? undefined : DEMO_MODE_COPY.highReasoningDisabled);
-
-  useEffect(() => {
-    if (landingDecision.navigation === null) return;
-    void navigate(landingDecision.navigation.to, { replace: landingDecision.navigation.replace });
-  }, [landingDecision.navigation, navigate]);
-
-  useEffect(() => {
-    if (currentRepositoryId === null) return;
-    if (mode === null) return;
-    if (currentRepository === null) return;
-    if (currentRepository.lastMode === mode) return;
-    void touchRepository({ repositoryId: currentRepositoryId, mode }).catch(() => {});
-  }, [currentRepositoryId, currentRepository, mode, touchRepository]);
-
-  const onMissingThread = useCallback(() => {
-    if (urlRepositoryId !== null) {
-      void navigate(repositoryPath(urlRepositoryId), { replace: true });
-    } else {
-      void navigate(DEFAULT_AUTHENTICATED_PATH, { replace: true });
-    }
-  }, [navigate, urlRepositoryId]);
-  useThreadDeletionRecovery({
-    urlThreadId,
-    isMissingThread: capabilities.isMissingThread,
-    onMissingThread,
-  });
-
-  useCheckForUpdates(effectiveSelectedRepositoryId, checkForUpdatesEnabled);
-
-  const shellStatus: RepositoryShellStatus =
-    isRepositoriesLoading || repositories === undefined || landingDecision.status !== "ready"
-      ? "initializing"
-      : "ready";
-
-  const isChatShellLoading =
-    shellStatus === "initializing" || (effectiveSelectedThreadId !== null && capabilities.isLoading);
-
-  const handleSelectThread = useCallback(
-    (threadId: ThreadId | null, threadMode: ThreadMode) => {
-      setActionError(null);
-      if (threadId === null) {
-        if (currentRepositoryId !== null) {
-          void navigate(repositoryPath(currentRepositoryId));
-        } else {
-          void navigate(DEFAULT_AUTHENTICATED_PATH);
-        }
-        return;
-      }
-      if (currentRepositoryId !== null) {
-        void navigate(modeAwareThreadPath(currentRepositoryId, threadId, threadMode));
-      } else {
-        void navigate(DEFAULT_AUTHENTICATED_PATH);
-      }
-    },
-    [navigate, currentRepositoryId],
-  );
-
-  const handleToggleArtifactPanel = useCallback(() => {
-    if (!isArtifactPanelEnabled) {
-      return;
-    }
-    if (isDesktopLayout) {
-      setIsArtifactPanelOpen((open) => !open);
-      return;
-    }
-    setIsArtifactSheetOpen((open) => {
-      const next = !open;
-      if (next) {
-        setIsStatusOpen(false);
-      }
-      return next;
-    });
-  }, [isArtifactPanelEnabled, isDesktopLayout, setIsArtifactPanelOpen]);
-
-  const handleSetStatusOpen = useCallback(
-    (open: boolean) => {
-      if (!isArtifactPanelEnabled) {
-        if (open) return;
-        setIsStatusOpen(false);
-        return;
-      }
-      if (open && !isDesktopLayout) {
-        setIsArtifactSheetOpen(false);
-      }
-      setIsStatusOpen(open);
-    },
-    [isDesktopLayout, isArtifactPanelEnabled],
-  );
-
-  const handleSelectArtifact = useCallback(
-    (artifactId: ArtifactId) => {
-      if (currentRepositoryId === null) {
-        return;
-      }
-      void navigate(libraryArtifactPath(currentRepositoryId, artifactId));
-    },
-    [navigate, currentRepositoryId],
-  );
-
-  useEffect(() => {
-    if (!isArtifactPanelEnabled) {
-      return;
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229) {
-        return;
-      }
-      if (event.key !== "." || (!event.metaKey && !event.ctrlKey) || event.shiftKey || event.altKey) {
-        return;
-      }
-
-      const target = event.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        return;
-      }
-      if (target instanceof HTMLElement) {
-        if (target.isContentEditable || target.closest('[contenteditable="true"], [role="textbox"], .monaco-editor')) {
-          return;
-        }
-      }
-
-      event.preventDefault();
-      handleToggleArtifactPanel();
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleToggleArtifactPanel, isArtifactPanelEnabled]);
-
-  const handleImported = useCallback(
-    (repoId: RepositoryId, threadId: ThreadId | null, threadMode: ThreadMode | null) => {
-      setActionError(null);
-      if (threadId && threadMode) {
-        void navigate(modeAwareThreadPath(repoId, threadId, threadMode));
-      } else {
-        void navigate(repositoryPath(repoId));
-      }
-    },
-    [navigate],
-  );
-
-  const handleThreadMovedToRepository = useCallback(
-    (repositoryId: RepositoryId | null, threadMode: ThreadMode | null) => {
-      if (!repositoryId) {
-        return;
-      }
-      if (urlThreadId !== null && threadMode) {
-        void navigate(modeAwareThreadPath(repositoryId, urlThreadId, threadMode));
-      } else {
-        void navigate(repositoryPath(repositoryId));
-      }
-    },
-    [navigate, urlThreadId],
-  );
-
-  const onAfterCreateThread = useCallback(
-    (threadId: ThreadId, threadMode: ChatMode) => {
-      if (currentRepositoryId === null) return;
-      void navigate(modeAwareThreadPath(currentRepositoryId, threadId, threadMode), { replace: true });
-    },
-    [currentRepositoryId, navigate],
-  );
-
-  const handleRequestNewThread = useCallback(() => {
-    if (currentRepositoryId === null) return;
-    void navigate(newDiscussPath(currentRepositoryId));
-  }, [currentRepositoryId, navigate]);
-
-  const onAfterArchiveThread = useCallback(() => {
-    if (currentRepositoryId !== null) {
-      if (mode === "library") {
-        void navigate(libraryPath(currentRepositoryId));
-      } else if (mode === "discuss") {
-        void navigate(discussPath(currentRepositoryId));
-      } else {
-        void navigate(repositoryPath(currentRepositoryId));
-      }
-    } else {
-      void navigate(DEFAULT_AUTHENTICATED_PATH);
-    }
-  }, [currentRepositoryId, mode, navigate]);
-
-  const { isArchivingThread, handleArchiveThread } = useChatShellLifecycle({
-    selectedThreadId: effectiveSelectedThreadId,
-    threadToArchive,
-    setActionError,
-    setThreadToArchive,
-    onAfterArchiveThread,
-  });
-
-  const {
-    isSyncing,
-    handleSync,
-    isArchivingRepo,
-    handleArchiveRepo,
-    isRestoringRepo,
-    handleRestoreRepo,
-    isPermanentDeletingRepo,
-    handlePermanentDeleteRepo,
-  } = useRepositoryLifecycle({
-    selectedRepositoryId: effectiveSelectedRepositoryId,
-    setActionError,
-    setShowArchiveDialog,
-    setShowPermanentDeleteDialog,
-    syncDisabledReason,
-    onAfterArchiveRepo: () => {
-      void navigate(DEFAULT_AUTHENTICATED_PATH);
-    },
-    onAfterRestoreRepo: () => {},
-    onAfterPermanentDeleteRepo: () => {
-      void navigate(DEFAULT_AUTHENTICATED_PATH);
-    },
-  });
-
-  const chatReadOnlyHint = isRepoArchived ? "Restore this repository to send messages or run analyses." : undefined;
-  const composer = useChatComposerSession({
-    surface: "repository",
-    threadId: effectiveSelectedThreadId,
-    repositoryId: currentRepositoryId,
-    mode: chatMode,
-    capabilities,
-    groundingAvailability: availability?.grounding,
-    viewerAccess,
-    isSyncing: isSyncing || isRepositorySyncing,
-    isReadOnly: isRepoArchived,
-    readOnlyHint: chatReadOnlyHint,
-    setActionError,
-    onOpenGenerateSystemDesign: () => setIsGenerateDialogOpen(true),
-    onAfterCreateThread,
-  });
+  const workspace = useRepositoryWorkspaceState({ urlRepositoryId, urlThreadId, isNewThreadRoute });
 
   const chatContainerNode = (
     <ChatContainer
-      selectedThreadId={effectiveSelectedThreadId}
-      isShellLoading={isChatShellLoading}
-      composer={composer}
-      chatMode={chatMode}
+      selectedThreadId={workspace.selectedThreadId}
+      isShellLoading={workspace.isChatShellLoading}
+      composer={workspace.composer}
+      chatMode={workspace.chatMode}
       artifactToggle={
-        isArtifactPanelEnabled
+        workspace.isArtifactPanelEnabled
           ? {
-              isOpen: isDesktopLayout ? isArtifactPanelOpen : isArtifactSheetOpen,
-              onToggle: handleToggleArtifactPanel,
+              isOpen: workspace.isDesktopLayout
+                ? workspace.panels.artifact.isDesktopOpen
+                : workspace.panels.artifact.isMobileOpen,
+              onToggle: workspace.panels.artifact.toggle,
             }
           : null
       }
-      hasAttachedRepository={capabilities.attachedRepository !== null}
-      onSelectArtifact={handleSelectArtifact}
-      attachedRepositoryId={capabilities.attachedRepository?.id}
+      hasAttachedRepository={workspace.capabilities.attachedRepository !== null}
+      onSelectArtifact={workspace.panels.artifact.selectArtifact}
+      attachedRepositoryId={workspace.capabilities.attachedRepository?.id}
     />
   );
 
   return (
     <>
       <AppSidebarLeft
-        repositories={repositories}
-        activeRepositoryId={activeRepositoryId}
-        onSwitchRepository={handleSwitchRepository}
-        selectedThreadId={effectiveSelectedThreadId}
-        onSelectThread={handleSelectThread}
-        onDeleteThread={setThreadToArchive}
-        onRequestNewThread={handleRequestNewThread}
-        onImported={handleImported}
-        onError={setActionError}
-        importDisabledReason={importDisabledReason}
+        repositories={workspace.repositories}
+        activeRepositoryId={workspace.activeRepositoryId}
+        onSwitchRepository={workspace.handlers.switchRepository}
+        selectedThreadId={workspace.selectedThreadId}
+        onSelectThread={workspace.handlers.selectThread}
+        onDeleteThread={workspace.handlers.requestArchiveThread}
+        onRequestNewThread={workspace.handlers.requestNewThread}
+        onImported={workspace.handlers.imported}
+        onError={workspace.handlers.setActionError}
+        importDisabledReason={workspace.importDisabledReason}
       />
 
       <SidebarInset>
         <TopBar
-          repoDetail={repoDetail ?? undefined}
-          isSyncing={isSyncing || isRepositorySyncing}
-          isStatusPanelOpen={isStatusOpen}
-          onSetStatusPanelOpen={handleSetStatusOpen}
-          onArchiveRepo={() => setShowArchiveDialog(true)}
-          onRestoreRepo={() => void handleRestoreRepo()}
-          onPermanentDeleteRepo={() => setShowPermanentDeleteDialog(true)}
-          threadId={effectiveSelectedThreadId}
-          attachedRepository={capabilities.attachedRepository}
-          availableRepositories={repositories ?? []}
-          onThreadMovedToRepository={handleThreadMovedToRepository}
-          isDesktopLayout={isDesktopLayout}
-          onSearchThreads={() => setIsThreadSearchOpen(true)}
-          onNewThread={handleRequestNewThread}
-          onSync={() => void handleSync()}
-          syncDisabledReason={syncDisabledReason}
-          onViewArtifact={handleSelectArtifact}
-          showSystemStatus={isArtifactPanelEnabled}
+          repoDetail={workspace.repoDetail ?? undefined}
+          isSyncing={workspace.isSyncing}
+          isStatusPanelOpen={workspace.panels.status.isOpen}
+          onSetStatusPanelOpen={workspace.panels.status.setOpen}
+          onArchiveRepo={workspace.handlers.requestArchiveRepository}
+          onRestoreRepo={workspace.handlers.restoreRepository}
+          onPermanentDeleteRepo={workspace.handlers.requestPermanentDeleteRepository}
+          threadId={workspace.selectedThreadId}
+          attachedRepository={workspace.capabilities.attachedRepository}
+          availableRepositories={workspace.repositories ?? []}
+          onThreadMovedToRepository={workspace.handlers.threadMovedToRepository}
+          isDesktopLayout={workspace.isDesktopLayout}
+          onSearchThreads={workspace.panels.threadSearch.open}
+          onNewThread={workspace.handlers.requestNewThread}
+          onSync={workspace.handlers.sync}
+          syncDisabledReason={workspace.syncDisabledReason}
+          onViewArtifact={workspace.panels.artifact.selectArtifact}
+          showSystemStatus={workspace.isArtifactPanelEnabled}
         />
 
         <ThreadSearchDialog
-          open={isThreadSearchOpen}
-          onOpenChange={setIsThreadSearchOpen}
-          repositoryId={currentRepositoryId}
-          mode={chatMode}
-          selectedThreadId={effectiveSelectedThreadId}
-          onSelectThread={handleSelectThread}
+          open={workspace.panels.threadSearch.isOpen}
+          onOpenChange={workspace.panels.threadSearch.setOpen}
+          repositoryId={workspace.selectedRepositoryId}
+          mode={workspace.chatMode}
+          selectedThreadId={workspace.selectedThreadId}
+          onSelectThread={workspace.handlers.selectThread}
         />
 
-        {isRepoArchived ? (
+        {workspace.isRepoArchived ? (
           <div className="border-b border-border bg-muted/40 px-6 py-3">
             <div className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-start gap-2">
@@ -481,12 +114,12 @@ export function RepositoryShell({
                 type="button"
                 variant="default"
                 size="sm"
-                disabled={isRestoringRepo}
-                onClick={() => void handleRestoreRepo()}
+                disabled={workspace.isRestoringRepository}
+                onClick={workspace.handlers.restoreRepository}
               >
                 <ArrowCounterClockwiseIcon weight="bold" />
                 <ButtonStateText
-                  current={isRestoringRepo ? "Restoring…" : "Restore"}
+                  current={workspace.isRestoringRepository ? "Restoring…" : "Restore"}
                   states={["Restore", "Restoring…"]}
                 />
               </Button>
@@ -494,50 +127,50 @@ export function RepositoryShell({
           </div>
         ) : null}
 
-        {actionError ? (
+        {workspace.actionError ? (
           <div className="border-b border-border px-6 py-3">
             <AppNotice
               title="Action failed"
-              message={actionError}
+              message={workspace.actionError}
               tone="error"
-              onDismiss={() => setActionError(null)}
+              onDismiss={workspace.handlers.dismissActionError}
               dismissLabel="Dismiss action error"
             />
           </div>
-        ) : actionNotice ? (
+        ) : workspace.actionNotice ? (
           <div className="border-b border-border px-6 py-3">
-            <AppNotice title={actionNotice.title} message={actionNotice.message} tone="info" />
+            <AppNotice title={workspace.actionNotice.title} message={workspace.actionNotice.message} tone="info" />
           </div>
         ) : null}
 
-        {!isRepoArchived && repoDetail?.repository.importStatus === "failed" ? (
+        {!workspace.isRepoArchived && workspace.repoDetail?.repository.importStatus === "failed" ? (
           <ImportFailedBanner
-            errorMessage={repoDetail.latestFailedImportError}
-            isSyncing={isSyncing || isRepositorySyncing}
-            syncDisabledReason={syncDisabledReason}
-            onRetry={() => void handleSync()}
+            errorMessage={workspace.repoDetail.latestFailedImportError}
+            isSyncing={workspace.isSyncing}
+            syncDisabledReason={workspace.syncDisabledReason}
+            onRetry={workspace.handlers.sync}
           />
         ) : null}
 
         <div className="flex min-h-0 min-w-0 flex-1">
-          {isRepoMissing ? (
-            <RepositoryMissingState onBack={() => void navigate(DEFAULT_AUTHENTICATED_PATH)} />
+          {workspace.isRepoMissing ? (
+            <RepositoryMissingState onBack={workspace.handlers.backToDefault} />
           ) : (
             <>
               {chatContainerNode}
-              {isDesktopLayout && isArtifactPanelEnabled ? (
+              {workspace.isDesktopLayout && workspace.isArtifactPanelEnabled ? (
                 <div
-                  aria-hidden={!isArtifactPanelOpen}
-                  data-state={isArtifactPanelOpen ? "open" : "closed"}
+                  aria-hidden={!workspace.panels.artifact.isDesktopOpen}
+                  data-state={workspace.panels.artifact.isDesktopOpen ? "open" : "closed"}
                   className="shrink-0 overflow-hidden border-l border-border motion-safe:transition-[width] motion-safe:duration-200 motion-safe:ease-out motion-reduce:transition-none will-change-[width] data-[state=closed]:w-0 data-[state=closed]:border-l-0 xl:data-[state=open]:w-96 2xl:data-[state=open]:w-md"
                 >
                   <div className="h-full xl:w-96 2xl:w-md">
                     <ArtifactPanel
-                      repositoryId={effectiveSelectedRepositoryId}
-                      artifacts={repoDetail?.artifacts}
-                      isVisible={isArtifactPanelOpen}
+                      repositoryId={workspace.selectedRepositoryId}
+                      artifacts={workspace.repoDetail?.artifacts}
+                      isVisible={workspace.panels.artifact.isDesktopOpen}
                       className="flex h-full w-full border-l-0"
-                      onOpenInReader={handleSelectArtifact}
+                      onOpenInReader={workspace.panels.artifact.selectArtifact}
                     />
                   </div>
                 </div>
@@ -547,8 +180,12 @@ export function RepositoryShell({
         </div>
       </SidebarInset>
 
-      {!isDesktopLayout && isArtifactPanelEnabled ? (
-        <Drawer open={isArtifactSheetOpen} onOpenChange={setIsArtifactSheetOpen} aria-label="artifact-drawer">
+      {!workspace.isDesktopLayout && workspace.isArtifactPanelEnabled ? (
+        <Drawer
+          open={workspace.panels.artifact.isMobileOpen}
+          onOpenChange={workspace.panels.artifact.setMobileOpen}
+          aria-label="artifact-drawer"
+        >
           <DrawerContent className={cn(MOBILE_DRAWER_HEIGHT_CLASS, "rounded-t-2xl")}>
             <DrawerTitle className="sr-only">Results and artifacts</DrawerTitle>
             <DrawerDescription className="sr-only">
@@ -556,22 +193,23 @@ export function RepositoryShell({
             </DrawerDescription>
             <div className="flex min-h-0 flex-1 flex-col">
               <ArtifactPanel
-                repositoryId={effectiveSelectedRepositoryId}
-                artifacts={repoDetail?.artifacts}
-                isVisible={isArtifactSheetOpen}
+                repositoryId={workspace.selectedRepositoryId}
+                artifacts={workspace.repoDetail?.artifacts}
+                isVisible={workspace.panels.artifact.isMobileOpen}
                 className="flex h-full w-full border-l-0"
-                onOpenInReader={(artifactId) => {
-                  handleSelectArtifact(artifactId);
-                  setIsArtifactSheetOpen(false);
-                }}
+                onOpenInReader={workspace.panels.artifact.selectMobileArtifact}
               />
             </div>
           </DrawerContent>
         </Drawer>
       ) : null}
 
-      {!isDesktopLayout && repoDetail && isArtifactPanelEnabled ? (
-        <Drawer open={isStatusOpen} onOpenChange={handleSetStatusOpen} aria-label="status-drawer">
+      {!workspace.isDesktopLayout && workspace.repoDetail && workspace.isArtifactPanelEnabled ? (
+        <Drawer
+          open={workspace.panels.status.isOpen}
+          onOpenChange={workspace.panels.status.setOpen}
+          aria-label="status-drawer"
+        >
           <DrawerContent className={cn(MOBILE_DRAWER_HEIGHT_CLASS, "rounded-t-2xl")}>
             <DrawerTitle className="sr-only">Repository status</DrawerTitle>
             <DrawerDescription className="sr-only">
@@ -579,17 +217,17 @@ export function RepositoryShell({
             </DrawerDescription>
             <div className="flex min-h-0 flex-1 flex-col">
               <StatusPanel
-                repository={repoDetail.repository}
-                sandboxModeStatus={repoDetail.sandboxModeStatus}
-                sandbox={repoDetail.sandbox}
-                jobs={repoDetail.jobs}
-                artifacts={repoDetail.artifacts}
-                hasRemoteUpdates={repoDetail.hasRemoteUpdates}
-                isSyncing={isSyncing || isRepositorySyncing}
-                onSync={() => void handleSync()}
-                syncDisabledReason={syncDisabledReason}
-                onViewArtifact={handleSelectArtifact}
-                onClose={() => setIsStatusOpen(false)}
+                repository={workspace.repoDetail.repository}
+                sandboxModeStatus={workspace.repoDetail.sandboxModeStatus}
+                sandbox={workspace.repoDetail.sandbox}
+                jobs={workspace.repoDetail.jobs}
+                artifacts={workspace.repoDetail.artifacts}
+                hasRemoteUpdates={workspace.repoDetail.hasRemoteUpdates}
+                isSyncing={workspace.isSyncing}
+                onSync={workspace.handlers.sync}
+                syncDisabledReason={workspace.syncDisabledReason}
+                onViewArtifact={workspace.panels.artifact.selectArtifact}
+                onClose={workspace.panels.status.close}
               />
             </div>
           </DrawerContent>
@@ -597,46 +235,46 @@ export function RepositoryShell({
       ) : null}
 
       <ConfirmDialog
-        open={threadToArchive !== null}
-        onOpenChange={(open) => !open && setThreadToArchive(null)}
+        open={workspace.dialogs.threadArchive.isOpen}
+        onOpenChange={workspace.dialogs.threadArchive.setOpen}
         title="Archive thread"
         description="This removes the thread from active history. You can restore or permanently delete it from Archive."
         actionLabel="Archive thread"
         loadingLabel="Archiving…"
-        isPending={isArchivingThread}
-        onConfirm={() => void handleArchiveThread()}
+        isPending={workspace.dialogs.threadArchive.isPending}
+        onConfirm={workspace.dialogs.threadArchive.confirm}
       />
 
       <ConfirmDialog
-        open={showArchiveDialog}
-        onOpenChange={setShowArchiveDialog}
+        open={workspace.dialogs.repositoryArchive.isOpen}
+        onOpenChange={workspace.dialogs.repositoryArchive.setOpen}
         title="Archive repository"
         description="The repository disappears from your sidebar. Threads, messages, and artifacts are preserved — sandboxes are stopped to free resources. Restore any time from your archive."
         actionLabel="Archive repository"
         loadingLabel="Archiving…"
-        isPending={isArchivingRepo}
-        onConfirm={() => void handleArchiveRepo()}
+        isPending={workspace.dialogs.repositoryArchive.isPending}
+        onConfirm={workspace.dialogs.repositoryArchive.confirm}
       />
 
       <ConfirmDialog
-        open={showPermanentDeleteDialog}
-        onOpenChange={setShowPermanentDeleteDialog}
+        open={workspace.dialogs.permanentDelete.isOpen}
+        onOpenChange={workspace.dialogs.permanentDelete.setOpen}
         title="Permanently delete repository?"
         description="This will permanently delete this repository and all its threads, messages, analysis artifacts, jobs, and indexed files. This action cannot be undone."
         actionLabel="Delete permanently"
         loadingLabel="Deleting…"
-        isPending={isPermanentDeletingRepo}
-        onConfirm={() => void handlePermanentDeleteRepo()}
+        isPending={workspace.dialogs.permanentDelete.isPending}
+        onConfirm={workspace.dialogs.permanentDelete.confirm}
       />
 
-      {effectiveSelectedRepositoryId ? (
+      {workspace.selectedRepositoryId ? (
         <GenerateSystemDesignDialog
-          open={isGenerateDialogOpen}
-          onOpenChange={setIsGenerateDialogOpen}
-          repositoryId={effectiveSelectedRepositoryId}
-          disabledReason={generateSystemDesignDisabledReason}
-          premiumModelsDisabledReason={premiumModelsDisabledReason}
-          highReasoningDisabledReason={highReasoningDisabledReason}
+          open={workspace.dialogs.generateSystemDesign.isOpen}
+          onOpenChange={workspace.dialogs.generateSystemDesign.setOpen}
+          repositoryId={workspace.selectedRepositoryId}
+          disabledReason={workspace.generateSystemDesignDisabledReason}
+          premiumModelsDisabledReason={workspace.premiumModelsDisabledReason}
+          highReasoningDisabledReason={workspace.highReasoningDisabledReason}
         />
       ) : null}
     </>

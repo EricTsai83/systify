@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useState, type ReactNode } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -9,10 +9,12 @@ import { useComposerModelPick } from "@/hooks/use-composer-model-pick";
 import { useStorageGC } from "@/hooks/use-storage-gc";
 import {
   buildChatSendRequest,
+  createComposerSessionState,
+  getComposerSessionSnapshot,
+  reduceComposerSession,
   resolveComposerAccess,
-  resolveComposerModelRoute,
-  resolveEffectiveGrounding,
   type ComposerGroundingAvailability,
+  type ComposerSessionInputs,
 } from "@/lib/chat-composer-session";
 import type { ChatMode, RepositoryId, ThreadId } from "@/lib/types";
 import type { ViewerAccess } from "@/hooks/use-viewer-access";
@@ -58,15 +60,6 @@ type UseChatComposerSessionArgs = RepositoryComposerSessionArgs | RepolessCompos
 
 const DEFAULT_PLACEHOLDER = "Ask about architecture, module boundaries, data flow, risks…";
 
-type GroundingState = {
-  threadId: ThreadId | null;
-  repositoryId: RepositoryId | null;
-  surface: UseChatComposerSessionArgs["surface"];
-  defaultsSeeded: boolean;
-  library: boolean;
-  sandbox: boolean;
-};
-
 export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatComposerViewModel {
   useStorageGC();
   const { user, isLoading: isAuthLoading } = useAuth();
@@ -85,68 +78,51 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
     mode: args.mode,
   });
 
-  const [groundingByThread, setGroundingByThread] = useState<GroundingState>(() => ({
-    threadId: args.threadId,
-    repositoryId: args.repositoryId,
-    surface: args.surface,
-    defaultsSeeded: !args.capabilities.isLoading,
-    library: args.threadId === null || args.capabilities.isLoading ? false : args.capabilities.defaultGroundLibrary,
-    sandbox: args.threadId === null || args.capabilities.isLoading ? false : args.capabilities.defaultGroundSandbox,
-  }));
-
-  useEffect(() => {
-    const sameContext =
-      groundingByThread.threadId === args.threadId &&
-      groundingByThread.repositoryId === args.repositoryId &&
-      groundingByThread.surface === args.surface;
-    if (sameContext && groundingByThread.defaultsSeeded) return;
-    if (args.capabilities.isLoading) {
-      if (sameContext) return;
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setGroundingByThread({
-        threadId: args.threadId,
-        repositoryId: args.repositoryId,
-        surface: args.surface,
-        defaultsSeeded: false,
-        library: false,
-        sandbox: false,
-      });
-      return;
-    }
-    setGroundingByThread({
+  const rawGroundingAvailability = args.surface === "repository" ? args.groundingAvailability : null;
+  const accessResolved = args.viewerAccess !== undefined;
+  const baseComposerSessionInputs = useMemo<ComposerSessionInputs>(
+    () => ({
       threadId: args.threadId,
       repositoryId: args.repositoryId,
       surface: args.surface,
-      defaultsSeeded: true,
-      library: args.threadId === null ? false : args.capabilities.defaultGroundLibrary,
-      sandbox: args.threadId === null ? false : args.capabilities.defaultGroundSandbox,
-    });
-  }, [
-    args.capabilities.defaultGroundLibrary,
-    args.capabilities.defaultGroundSandbox,
-    args.capabilities.isLoading,
-    args.repositoryId,
-    args.surface,
-    args.threadId,
-    groundingByThread.defaultsSeeded,
-    groundingByThread.repositoryId,
-    groundingByThread.surface,
-    groundingByThread.threadId,
-  ]);
-
+      mode: args.mode,
+      capabilitiesLoading: args.capabilities.isLoading,
+      defaultGroundLibrary: args.capabilities.defaultGroundLibrary,
+      defaultGroundSandbox: args.capabilities.defaultGroundSandbox,
+      groundingAvailability: rawGroundingAvailability,
+      accessResolved: false,
+    }),
+    [
+      args.capabilities.defaultGroundLibrary,
+      args.capabilities.defaultGroundSandbox,
+      args.capabilities.isLoading,
+      args.mode,
+      args.repositoryId,
+      args.surface,
+      args.threadId,
+      rawGroundingAvailability,
+    ],
+  );
+  const [composerSessionState, dispatchComposerSession] = useReducer(
+    reduceComposerSession,
+    baseComposerSessionInputs,
+    createComposerSessionState,
+  );
+  const baseComposerSession = useMemo(
+    () =>
+      getComposerSessionSnapshot({
+        state: composerSessionState,
+        inputs: baseComposerSessionInputs,
+      }),
+    [baseComposerSessionInputs, composerSessionState],
+  );
+  const { route } = baseComposerSession;
   const setGroundLibrary = useCallback((next: boolean) => {
-    setGroundingByThread((prev) => ({ ...prev, library: next }));
+    dispatchComposerSession({ type: "setGroundLibrary", value: next });
   }, []);
   const setGroundSandbox = useCallback((next: boolean) => {
-    setGroundingByThread((prev) => ({ ...prev, sandbox: next }));
+    dispatchComposerSession({ type: "setGroundSandbox", value: next });
   }, []);
-
-  const rawGroundingAvailability = args.surface === "repository" ? args.groundingAvailability : null;
-  const route = resolveComposerModelRoute({
-    surface: args.surface,
-    mode: args.mode,
-    groundSandbox: groundingByThread.sandbox,
-  });
 
   const {
     selectedProvider,
@@ -178,7 +154,6 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
     api.llmCatalog.listPickableModels,
     shouldRenderReasoningPicker ? { preferenceScope: route.preferenceScope } : "skip",
   );
-
   const access = resolveComposerAccess({
     viewerAccess: args.viewerAccess,
     mode: args.mode,
@@ -186,41 +161,25 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
     reasoningEffort: selectedReasoningEffort,
     modelCatalogEntries: reasoningCatalogEntries,
   });
-  const accessResolved = args.viewerAccess !== undefined;
-
+  const composerSessionInputs = useMemo<ComposerSessionInputs>(
+    () => ({
+      ...baseComposerSessionInputs,
+      accessResolved,
+      sandboxGroundingDisabledReason: access.sandboxGroundingDisabledReason,
+    }),
+    [access.sandboxGroundingDisabledReason, accessResolved, baseComposerSessionInputs],
+  );
   useEffect(() => {
-    if (rawGroundingAvailability && !rawGroundingAvailability.library.enabled && groundingByThread.library) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setGroundLibrary(false);
-    }
-  }, [groundingByThread.library, rawGroundingAvailability, setGroundLibrary]);
+    dispatchComposerSession({ type: "sync", inputs: composerSessionInputs });
+  }, [composerSessionInputs]);
 
-  useEffect(() => {
-    if (
-      rawGroundingAvailability &&
-      !rawGroundingAvailability.sandbox.enabled &&
-      rawGroundingAvailability.sandbox.isActivatable !== true &&
-      groundingByThread.sandbox
-    ) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setGroundSandbox(false);
-    }
-  }, [groundingByThread.sandbox, rawGroundingAvailability, setGroundSandbox]);
-
-  useEffect(() => {
-    if (accessResolved && access.sandboxGroundingDisabledReason && groundingByThread.sandbox) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setGroundSandbox(false);
-    }
-  }, [access.sandboxGroundingDisabledReason, accessResolved, groundingByThread.sandbox, setGroundSandbox]);
-
-  const effectiveGrounding = useMemo(
+  const composerSession = useMemo(
     () =>
-      resolveEffectiveGrounding({
-        groundingAvailability: rawGroundingAvailability,
-        sandboxGroundingDisabledReason: access.sandboxGroundingDisabledReason,
+      getComposerSessionSnapshot({
+        state: composerSessionState,
+        inputs: composerSessionInputs,
       }),
-    [access.sandboxGroundingDisabledReason, rawGroundingAvailability],
+    [composerSessionInputs, composerSessionState],
   );
 
   const buildSendRequest = useCallback(
@@ -232,8 +191,8 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
         repositoryId: args.repositoryId,
         mode: args.mode,
         content,
-        groundLibrary: groundingByThread.library,
-        groundSandbox: groundingByThread.sandbox,
+        groundLibrary: composerSession.groundLibrary,
+        groundSandbox: composerSession.groundSandbox,
         provider: selectedProvider,
         modelName: selectedModelName,
         reasoningEffort: selectedReasoningEffort,
@@ -245,8 +204,8 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
     },
     [
       args,
-      groundingByThread.library,
-      groundingByThread.sandbox,
+      composerSession.groundLibrary,
+      composerSession.groundSandbox,
       selectedModelName,
       selectedProvider,
       selectedReasoningEffort,
@@ -318,11 +277,11 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
       grounding:
         args.surface === "repository" && args.mode === "discuss"
           ? {
-              groundLibrary: groundingByThread.library,
-              groundSandbox: groundingByThread.sandbox,
+              groundLibrary: composerSession.groundLibrary,
+              groundSandbox: composerSession.groundSandbox,
               setGroundLibrary,
               setGroundSandbox,
-              grounding: effectiveGrounding,
+              grounding: composerSession.effectiveGrounding,
               onOpenGenerateSystemDesign: args.onOpenGenerateSystemDesign,
               generateDisabledReason: access.generateSystemDesignDisabledReason,
             }

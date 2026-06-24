@@ -36,6 +36,46 @@ export type ComposerGroundingAvailability = {
   sandbox: GroundingAxisLike;
 };
 
+export type ComposerSessionGroundingState = {
+  threadId: ThreadId | null;
+  repositoryId: RepositoryId | null;
+  surface: ComposerSurface;
+  defaultsSeeded: boolean;
+  library: boolean;
+  sandbox: boolean;
+};
+
+export type ComposerSessionInputs = {
+  threadId: ThreadId | null;
+  repositoryId: RepositoryId | null;
+  surface: ComposerSurface;
+  mode: ChatMode;
+  capabilitiesLoading: boolean;
+  defaultGroundLibrary: boolean;
+  defaultGroundSandbox: boolean;
+  groundingAvailability: ComposerGroundingAvailability | null | undefined;
+  accessResolved: boolean;
+  sandboxGroundingDisabledReason?: string;
+};
+
+export type ComposerSessionState = {
+  grounding: ComposerSessionGroundingState;
+};
+
+export type ComposerSessionAction =
+  | {
+      type: "sync";
+      inputs: ComposerSessionInputs;
+    }
+  | {
+      type: "setGroundLibrary";
+      value: boolean;
+    }
+  | {
+      type: "setGroundSandbox";
+      value: boolean;
+    };
+
 export type ComposerAccessResolution = {
   chatSendDisabledReason?: string;
   sandboxGroundingDisabledReason?: string;
@@ -51,6 +91,130 @@ const GROUNDING_LOADING_AXIS = {
   code: "loading",
   message: "Loading grounding availability...",
 } as const;
+
+export function createComposerSessionState(inputs: ComposerSessionInputs): ComposerSessionState {
+  return {
+    grounding: seedComposerGroundingState(inputs),
+  };
+}
+
+export function reduceComposerSession(
+  state: ComposerSessionState,
+  action: ComposerSessionAction,
+): ComposerSessionState {
+  switch (action.type) {
+    case "sync":
+      return syncComposerSessionState(state, action.inputs);
+    case "setGroundLibrary":
+      return {
+        ...state,
+        grounding: { ...state.grounding, library: action.value },
+      };
+    case "setGroundSandbox":
+      return {
+        ...state,
+        grounding: { ...state.grounding, sandbox: action.value },
+      };
+  }
+}
+
+export function getComposerSessionSnapshot(args: { state: ComposerSessionState; inputs: ComposerSessionInputs }): {
+  route: ComposerModelRoute;
+  groundLibrary: boolean;
+  groundSandbox: boolean;
+  effectiveGrounding: ComposerGroundingAvailability;
+} {
+  const groundLibrary = args.state.grounding.library;
+  const groundSandbox = args.state.grounding.sandbox;
+  return {
+    route: resolveComposerModelRoute({
+      surface: args.inputs.surface,
+      mode: args.inputs.mode,
+      groundSandbox,
+    }),
+    groundLibrary,
+    groundSandbox,
+    effectiveGrounding: resolveEffectiveGrounding({
+      groundingAvailability: args.inputs.groundingAvailability,
+      sandboxGroundingDisabledReason: args.inputs.sandboxGroundingDisabledReason,
+    }),
+  };
+}
+
+function syncComposerSessionState(state: ComposerSessionState, inputs: ComposerSessionInputs): ComposerSessionState {
+  const nextGrounding = applyGroundingAutoRules(syncComposerGroundingState(state.grounding, inputs), inputs);
+  if (isSameGroundingState(state.grounding, nextGrounding)) {
+    return state;
+  }
+  return { ...state, grounding: nextGrounding };
+}
+
+function syncComposerGroundingState(
+  current: ComposerSessionGroundingState,
+  inputs: ComposerSessionInputs,
+): ComposerSessionGroundingState {
+  const sameContext =
+    current.threadId === inputs.threadId &&
+    current.repositoryId === inputs.repositoryId &&
+    current.surface === inputs.surface;
+  if (sameContext && current.defaultsSeeded) {
+    return current;
+  }
+  if (inputs.capabilitiesLoading && sameContext) {
+    return current;
+  }
+  return seedComposerGroundingState(inputs);
+}
+
+function seedComposerGroundingState(inputs: ComposerSessionInputs): ComposerSessionGroundingState {
+  if (inputs.capabilitiesLoading) {
+    return {
+      threadId: inputs.threadId,
+      repositoryId: inputs.repositoryId,
+      surface: inputs.surface,
+      defaultsSeeded: false,
+      library: false,
+      sandbox: false,
+    };
+  }
+  return {
+    threadId: inputs.threadId,
+    repositoryId: inputs.repositoryId,
+    surface: inputs.surface,
+    defaultsSeeded: true,
+    library: inputs.threadId === null ? false : inputs.defaultGroundLibrary,
+    sandbox: inputs.threadId === null ? false : inputs.defaultGroundSandbox,
+  };
+}
+
+function applyGroundingAutoRules(
+  grounding: ComposerSessionGroundingState,
+  inputs: ComposerSessionInputs,
+): ComposerSessionGroundingState {
+  let next = grounding;
+  const availability = inputs.groundingAvailability;
+  if (availability && !availability.library.enabled && next.library) {
+    next = { ...next, library: false };
+  }
+  if (availability && !availability.sandbox.enabled && availability.sandbox.isActivatable !== true && next.sandbox) {
+    next = { ...next, sandbox: false };
+  }
+  if (inputs.accessResolved && inputs.sandboxGroundingDisabledReason && next.sandbox) {
+    next = { ...next, sandbox: false };
+  }
+  return next;
+}
+
+function isSameGroundingState(left: ComposerSessionGroundingState, right: ComposerSessionGroundingState): boolean {
+  return (
+    left.threadId === right.threadId &&
+    left.repositoryId === right.repositoryId &&
+    left.surface === right.surface &&
+    left.defaultsSeeded === right.defaultsSeeded &&
+    left.library === right.library &&
+    left.sandbox === right.sandbox
+  );
+}
 
 export function resolveComposerModelRoute(args: {
   surface: ComposerSurface;

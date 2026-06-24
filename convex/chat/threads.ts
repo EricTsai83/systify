@@ -24,6 +24,7 @@ import {
   updateRepolessThreadAgentProfileLifecycle,
 } from "./threadLifecycle";
 import { loadActiveOwnedThread, requireActiveOwnedThread } from "./threadAccess";
+import { listActiveThreadsForScope } from "./threadListing";
 
 type ArchivedThreadRepositorySummary = {
   _id: Id<"repositories">;
@@ -50,61 +51,11 @@ export const listThreads = query({
     if (!repository) {
       return [];
     }
-    const repositoryId = args.repositoryId;
-    const ownerTokenIdentifier = identity.tokenIdentifier;
-    const mode = args.mode;
-    const pinned = mode
-      ? await ctx.db
-          .query("threads")
-          .withIndex("by_owner_repo_mode_delete_archive_pinned", (q) =>
-            q
-              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
-              .eq("repositoryId", repositoryId)
-              .eq("mode", mode)
-              .eq("deletionRequestedAt", undefined)
-              .eq("archivedAt", undefined)
-              .gt("pinnedAt", 0),
-          )
-          .order("desc")
-          .take(20)
-      : await ctx.db
-          .query("threads")
-          .withIndex("by_owner_repo_delete_archive_pinned", (q) =>
-            q
-              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
-              .eq("repositoryId", repositoryId)
-              .eq("deletionRequestedAt", undefined)
-              .eq("archivedAt", undefined)
-              .gt("pinnedAt", 0),
-          )
-          .order("desc")
-          .take(20);
-    const recent = mode
-      ? await ctx.db
-          .query("threads")
-          .withIndex("by_owner_repo_mode_delete_archive_lastMsg", (q) =>
-            q
-              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
-              .eq("repositoryId", repositoryId)
-              .eq("mode", mode)
-              .eq("deletionRequestedAt", undefined)
-              .eq("archivedAt", undefined),
-          )
-          .order("desc")
-          .take(20)
-      : await ctx.db
-          .query("threads")
-          .withIndex("by_owner_repo_delete_archive_lastMsg", (q) =>
-            q
-              .eq("ownerTokenIdentifier", ownerTokenIdentifier)
-              .eq("repositoryId", repositoryId)
-              .eq("deletionRequestedAt", undefined)
-              .eq("archivedAt", undefined),
-          )
-          .order("desc")
-          .take(20);
-    const pinnedIds = new Set(pinned.map((thread) => thread._id));
-    return [...pinned, ...recent.filter((thread) => !pinnedIds.has(thread._id))];
+    return await listActiveThreadsForScope(ctx, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      scope: { type: "repository", repositoryId: args.repositoryId },
+      mode: args.mode,
+    });
   },
 });
 
@@ -126,31 +77,10 @@ export const listRepolessThreads = query({
   args: {},
   handler: async (ctx) => {
     const identity = await requireViewerIdentity(ctx);
-    const pinned = await ctx.db
-      .query("threads")
-      .withIndex("by_owner_repo_delete_archive_pinned", (q) =>
-        q
-          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
-          .eq("repositoryId", undefined)
-          .eq("deletionRequestedAt", undefined)
-          .eq("archivedAt", undefined)
-          .gt("pinnedAt", 0),
-      )
-      .order("desc")
-      .take(20);
-    const recent = await ctx.db
-      .query("threads")
-      .withIndex("by_owner_repo_delete_archive_lastMsg", (q) =>
-        q
-          .eq("ownerTokenIdentifier", identity.tokenIdentifier)
-          .eq("repositoryId", undefined)
-          .eq("deletionRequestedAt", undefined)
-          .eq("archivedAt", undefined),
-      )
-      .order("desc")
-      .take(20);
-    const pinnedIds = new Set(pinned.map((thread) => thread._id));
-    return [...pinned, ...recent.filter((thread) => !pinnedIds.has(thread._id))];
+    return await listActiveThreadsForScope(ctx, {
+      ownerTokenIdentifier: identity.tokenIdentifier,
+      scope: { type: "repoless" },
+    });
   },
 });
 
