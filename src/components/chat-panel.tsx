@@ -496,8 +496,6 @@ function ComposerGroundingToggles({ composer }: { composer: ChatComposerViewMode
         setGroundSandbox: grounding.setGroundSandbox,
         grounding: grounding.grounding,
       })}
-      onOpenGenerateSystemDesign={grounding.onOpenGenerateSystemDesign}
-      generateDisabledReason={grounding.generateDisabledReason}
     />
   );
 }

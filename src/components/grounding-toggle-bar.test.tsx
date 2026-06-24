@@ -54,7 +54,7 @@ describe("GroundingToggleBar", () => {
     expect(axes[1]?.verdict).toMatchObject({ enabled: false, code: "loading" });
   });
 
-  test("library no-artifact verdict renders generate CTA", () => {
+  test("library no-artifact verdict keeps the reason on the disabled toggle", () => {
     render(
       <GroundingToggleBar
         axes={createDiscussGroundingAxes({
@@ -71,11 +71,12 @@ describe("GroundingToggleBar", () => {
             sandbox: { enabled: true },
           },
         })}
-        onOpenGenerateSystemDesign={vi.fn()}
       />,
     );
 
-    expect(screen.getByTestId("grounding-generate-cta")).toBeInTheDocument();
+    const libraryToggle = screen.getByTestId("grounding-toggle-library");
+    expect(screen.queryByTestId("grounding-generate-cta")).not.toBeInTheDocument();
+    expect(libraryToggle).toHaveAttribute("title", "Generate a guide first.");
   });
 
   test("disabled non-activatable axis does not call change handler", () => {
