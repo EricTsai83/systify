@@ -800,7 +800,7 @@ function LibraryAskTimeline({
   return (
     <Conversation scroll={conversationScroll} className="min-h-0 flex-1">
       <ConversationContent
-        className={`gap-0 px-4 py-3 ${isLocked ? "min-h-full" : ""}`}
+        className={`gap-0 px-5 py-3 sm:px-6 ${isLocked ? "min-h-full" : ""}`}
         showLoadOlderSentinel={canLoadOlderMessages}
       >
         {confirmedThreadId ? (
