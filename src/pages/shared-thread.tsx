@@ -12,6 +12,7 @@ import { Spinner } from "@/components/ui/spinner";
 import { formatExpiry } from "@/lib/format-expiry";
 import { formatTimestamp } from "@/lib/format";
 import { useStableLoadMoreState } from "@/hooks/use-stable-load-more-state";
+import { cn } from "@/lib/utils";
 import { LANDING_PATH } from "@/route-paths";
 
 const PUBLIC_MESSAGES_INITIAL_PAGE_SIZE = 40;
@@ -178,15 +179,30 @@ function SharedThreadUnavailable() {
   );
 }
 
+// Body-line counts per skeleton card. Real transcript messages vary from a
+// one-line user prompt to a multi-line assistant answer, so varying the line
+// count makes the placeholder approximate the resolved heights and keeps the
+// transcript from reflowing as messages replace it.
+const PUBLIC_MESSAGE_SKELETON_LINES = [3, 2, 4, 2, 3] as const;
+
 function PublicMessagesSkeleton() {
   return (
-    <div className="flex flex-col gap-4" aria-hidden="true">
-      {Array.from({ length: 4 }).map((_, index) => (
-        <div key={index} className="border border-border bg-card p-4">
+    <div className="flex flex-col gap-4" aria-hidden="true" data-testid="shared-thread-messages-skeleton">
+      {Array.from(
+        { length: PUBLIC_MESSAGES_INITIAL_PAGE_SIZE },
+        (_, index) => PUBLIC_MESSAGE_SKELETON_LINES[index % PUBLIC_MESSAGE_SKELETON_LINES.length],
+      ).map((lineCount, index) => (
+        <div key={index} className="border border-border bg-card p-4" data-testid="shared-thread-message-skeleton">
           <div className="flex flex-col gap-3">
-            <Skeleton className="h-3 w-24" />
-            <Skeleton className="h-4 w-full" />
-            <Skeleton className="h-4 w-3/4" />
+            <div className="flex items-center justify-between gap-2">
+              <Skeleton className="h-3 w-16" />
+              <Skeleton className="h-3 w-20" />
+            </div>
+            <div className="flex flex-col gap-2">
+              {Array.from({ length: lineCount }).map((_, lineIndex) => (
+                <Skeleton key={lineIndex} className={cn("h-4", lineIndex === lineCount - 1 ? "w-2/3" : "w-full")} />
+              ))}
+            </div>
           </div>
         </div>
       ))}

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -66,6 +66,28 @@ describe("SharedThreadPage", () => {
     expect(screen.getByText("acme/systify")).toBeInTheDocument();
     expect(screen.getByText("What changed?")).toBeInTheDocument();
     expect(screen.getByText("The API boundary moved.")).toBeInTheDocument();
+  });
+
+  test("reserves placeholders for the initial public message page", () => {
+    vi.mocked(useQuery).mockReturnValue({
+      _id: "share_1",
+      token: "token_1",
+      threadId: "thread_1",
+      title: "Architecture review",
+      repositoryLabel: "acme/systify",
+      createdAt: 100,
+      expiresAt: Date.now() + 2 * 24 * 60 * 60 * 1000,
+    });
+    vi.mocked(usePaginatedQuery).mockReturnValue({
+      ...paginated([]),
+      status: "LoadingFirstPage" as const,
+      isLoading: true as const,
+    });
+
+    renderSharedThread();
+
+    const skeleton = screen.getByTestId("shared-thread-messages-skeleton");
+    expect(within(skeleton).getAllByTestId("shared-thread-message-skeleton")).toHaveLength(40);
   });
 });
 

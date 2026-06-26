@@ -38,7 +38,7 @@ Because of that, orphan handling cannot depend on a single request path completi
 
 ```mermaid
 flowchart TD
-  A[On-demand provision starts: Sandbox activation or System Design] --> B[Reserve sandbox row in Convex]
+  A[On-demand provision starts: Sandbox activation or Design Docs] --> B[Reserve sandbox row in Convex]
   B --> C[Call Daytona create]
   C --> D{Did attachment back to Convex succeed?}
 
@@ -70,7 +70,7 @@ flowchart TD
 
 The system should create the Convex-side ownership record before creating the external resource whenever possible.
 
-For Daytona sandboxes, this means the on-demand sandbox path (`ensureSandboxReady` → `reserveOnDemandSandboxRow` → `provisionSandbox`) first writes a placeholder `sandboxes` row in Convex and only then calls Daytona create. This prevents the worst orphan class, where the provider has a live resource but the application has no durable record that it ever intended to own it. Repository import does not provision sandboxes, so the principle applies only to sandbox-grounded reply activation and System Design generation paths.
+For Daytona sandboxes, this means the on-demand sandbox path (`ensureSandboxReady` → `reserveOnDemandSandboxRow` → `provisionSandbox`) first writes a placeholder `sandboxes` row in Convex and only then calls Daytona create. This prevents the worst orphan class, where the provider has a live resource but the application has no durable record that it ever intended to own it. Repository import does not provision sandboxes, so the principle applies only to sandbox-grounded reply activation and Design Docs generation paths.
 
 ### 2. Treat Provider State As Real, Local State As A Projection
 
@@ -127,7 +127,7 @@ That matters because earlier awareness can mean:
 
 This is the classic orphan case:
 
-1. Convex starts on-demand sandbox orchestration (sandbox activation or System Design generation)
+1. Convex starts on-demand sandbox orchestration (sandbox activation or Design Docs generation)
 2. Daytona successfully creates a sandbox
 3. the action crashes before remote metadata is attached back to Convex
 
@@ -147,7 +147,7 @@ Daytona can move a sandbox through stopped, archived, or destroyed states due to
 
 ### Deletion And On-Demand Provisioning Can Race
 
-A repository may enter deletion while an on-demand sandbox provision (sandbox activation, System Design generation) is still in flight. The system must allow that flow to cancel cleanly while still ensuring any already-owned sandbox is discoverable and reclaimable. Repository import cannot race with deletion at the sandbox layer, because the import pipeline never owns one.
+A repository may enter deletion while an on-demand sandbox provision (sandbox activation, Design Docs generation) is still in flight. The system must allow that flow to cancel cleanly while still ensuring any already-owned sandbox is discoverable and reclaimable. Repository import cannot race with deletion at the sandbox layer, because the import pipeline never owns one.
 
 ## Current Architecture
 
@@ -170,7 +170,7 @@ When the system already knows a sandbox should be reclaimed, it creates a cleanu
 This happens on paths such as:
 
 - repository deletion
-- on-demand provisioning failure (sandbox activation, System Design generation) after a sandbox row has been reserved
+- on-demand provisioning failure (sandbox activation, Design Docs generation) after a sandbox row has been reserved
 
 `opsNode.runSandboxCleanup` then performs the operational delete step. If the sandbox row never received a Daytona `remoteId`, cleanup skips provider deletion gracefully and archives the local row. That keeps placeholder rows from becoming local orphan state.
 

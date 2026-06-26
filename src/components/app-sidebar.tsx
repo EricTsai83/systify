@@ -20,13 +20,13 @@ import { resolveEffectiveChatMode, useChatMode } from "@/hooks/use-service-mode"
 import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
 import type { ArtifactId, ArtifactListItem, OnImportedCallback, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 
-const LEFT_SIDEBAR_WIDTH_STORAGE_KEY = "systify.sidebar.width";
-const LEFT_SIDEBAR_DEFAULT_WIDTH = 380;
-const LEFT_SIDEBAR_MAX_WIDTH = 480;
+export const LEFT_SIDEBAR_WIDTH_STORAGE_KEY = "systify.sidebar.width";
+export const LEFT_SIDEBAR_DEFAULT_WIDTH = 380;
+export const LEFT_SIDEBAR_MAX_WIDTH = 480;
 
-const LIBRARY_ASK_WIDTH_STORAGE_KEY = "systify.sidebar.width.libraryAsk";
-const LIBRARY_ASK_DEFAULT_WIDTH = 400;
-const LIBRARY_ASK_MAX_WIDTH = 720;
+export const LIBRARY_ASK_WIDTH_STORAGE_KEY = "systify.sidebar.width.libraryAsk";
+export const LIBRARY_ASK_DEFAULT_WIDTH = 400;
+export const LIBRARY_ASK_MAX_WIDTH = 720;
 
 type AppSidebarLeftProps = {
   repositories: Doc<"repositories">[] | undefined;
@@ -52,9 +52,7 @@ type AppSidebarLeftProps = {
   libraryArtifacts?: ReadonlyArray<ArtifactListItem>;
   libraryActiveArtifactId?: ArtifactId | null;
   onSelectLibraryArtifact?: (id: ArtifactId) => void;
-  onGenerate?: () => void;
   importDisabledReason?: string;
-  generateDisabledReason?: string;
   isUnseen?: (artifact: ArtifactListItem) => boolean;
 };
 
@@ -76,9 +74,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
     libraryArtifacts,
     libraryActiveArtifactId,
     onSelectLibraryArtifact,
-    onGenerate,
     importDisabledReason,
-    generateDisabledReason,
     isUnseen,
   } = props;
   const navigate = useNavigate();
@@ -132,15 +128,13 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
         />
       ) : null}
 
-      {isLibraryMode && libraryRepositoryId && onSelectLibraryArtifact && onGenerate ? (
+      {isLibraryMode && libraryRepositoryId && onSelectLibraryArtifact ? (
         <SidebarContent className="min-h-0 flex-1">
           <LibraryTree
             repositoryId={libraryRepositoryId}
             artifacts={libraryArtifacts ?? []}
             selectedArtifactId={libraryActiveArtifactId ?? null}
             onSelectArtifact={onSelectLibraryArtifact}
-            onGenerate={onGenerate}
-            generateDisabledReason={generateDisabledReason}
             isUnseen={isUnseen}
             className="min-h-0 flex-1"
           />
@@ -197,16 +191,15 @@ type AppSidebarRightProps = {
   askThreadId: ThreadId | null;
   activeArtifactId: ArtifactId | null;
   /**
-   * Whether the repository has at least one indexed artifact. Forwarded
-   * to {@link LibraryAskPanel} so the composer locks (and the empty
-   * state surfaces a Generate CTA) instead of letting the user hit the
-   * `library_no_artifact` backend gate on submit.
+   * Whether the repository has at least one indexed artifact. `undefined`
+   * means the artifact metadata query is still loading, so the Ask panel
+   * must not render the no-document state yet.
    */
-  hasArtifacts: boolean;
+  hasArtifacts: boolean | undefined;
   onSelectArtifact: (id: ArtifactId) => void;
   onSelectAskThread: (id: ThreadId | null) => void;
   /**
-   * Open the Generate System Design dialog. The page owns the dialog state
+   * Open the Design Docs generation dialog. The page owns the dialog state
    * so the Ask panel and the editor empty state share one dialog instance.
    */
   onGenerate?: () => void;

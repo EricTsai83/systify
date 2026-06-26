@@ -152,8 +152,8 @@ export function newDiscussPath(repositoryId: RepositoryId): string {
 
 /**
  * Library mode landing. With an artifact id, opens the IDE-style reader
- * directly on that artifact; without one, the shell shows the folder
- * overview. The `open` option is the multi-tab list to restore
+ * directly on that artifact; without one, the shell shows the docs
+ * navigator. The `open` option is the multi-tab list to restore
  * (round-tripped through `?open=id1,id2`); empty / undefined means
  * "open just the active tab". An `?ask=:threadId` query param may also
  * be present — that one is owned by the page, not these builders.

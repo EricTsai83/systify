@@ -154,12 +154,12 @@ const ACCESS_PLAN_CARDS = [
   {
     id: "pro",
     title: "Pro",
-    description: "Expanded usage for repository chat and generated system design.",
+    description: "Expanded usage for repository chat and generated Design Docs.",
     badge: "Most Popular",
     features: [
       { icon: SparkleIcon, label: "Repository chat and Library Ask" },
       { icon: WrenchIcon, label: "Sandbox grounding" },
-      { icon: ChartLineUpIcon, label: "System Design generation" },
+      { icon: ChartLineUpIcon, label: "Design Docs generation" },
     ],
   },
   {
@@ -262,7 +262,7 @@ const MODEL_SETTINGS_SCOPE_COPY: Record<ModelPreferenceScope, { label: string; d
   },
   sandbox: {
     label: "Sandbox",
-    description: "Live source work, artifact drafts, and System Design generation.",
+    description: "Live source work, artifact drafts, and Design Docs generation.",
   },
 };
 
@@ -360,7 +360,7 @@ const USAGE_COPY = {
     },
     systemDesign: {
       label: REPOSITORY_GUIDE_COPY.name,
-      description: "LLM usage from generating Repository Guide sections for the Library.",
+      description: "LLM usage from generating Design Docs for the Library.",
       singularRecord: REPOSITORY_GUIDE_COPY.sectionName,
       pluralRecord: REPOSITORY_GUIDE_COPY.sectionNamePlural,
     },
@@ -2510,7 +2510,11 @@ function UsageMetric({
         <p className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
       )}
       {isLoading ? (
-        <Skeleton className="mt-1 h-3 w-32" aria-hidden="true" />
+        // Reserve the same `min-h-4` the loaded detail line occupies so the
+        // metric cell doesn't grow a few px taller when the value resolves.
+        <div className="mt-1 min-h-4" aria-hidden="true">
+          <Skeleton className="h-3 w-32" />
+        </div>
       ) : (
         <p className="mt-1 min-h-4 truncate text-xs text-muted-foreground">{detail ?? null}</p>
       )}

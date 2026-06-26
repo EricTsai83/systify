@@ -23,6 +23,7 @@ const artifactB = "artifact_b" as ArtifactId;
 
 beforeEach(() => {
   vi.useFakeTimers();
+  window.localStorage.clear();
   navigateMock.mockReset();
 });
 
@@ -98,5 +99,39 @@ describe("useLibraryTabs — URL writer", () => {
 
     const target = navigateMock.mock.calls[navigateMock.mock.calls.length - 1]?.[0] as string;
     expect(target).toBe(`/r/${repositoryId}/library`);
+  });
+
+  test("preserves a cached navigator selection when reseeding for a repository", () => {
+    const nextRepositoryId = "repo_libtabs_next" as RepositoryId;
+    const previousUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    window.localStorage.setItem(
+      `systify.library.tabs.${nextRepositoryId}`,
+      JSON.stringify({
+        openArtifactIds: [artifactB],
+        activeArtifactId: null,
+      }),
+    );
+
+    try {
+      window.history.replaceState({}, "", `/r/${repositoryId}/library/a/${artifactA}`);
+
+      const { result, rerender, unmount } = renderHook(({ repo, active }) => useLibraryTabs(repo, active), {
+        initialProps: {
+          repo: repositoryId,
+          active: artifactA as ArtifactId | null,
+        },
+      });
+
+      expect(result.current.activeArtifactId).toBe(artifactA);
+
+      window.history.replaceState({}, "", `/r/${nextRepositoryId}/library`);
+      rerender({ repo: nextRepositoryId, active: null });
+
+      expect(result.current.openArtifactIds).toEqual([artifactB]);
+      expect(result.current.activeArtifactId).toBe(null);
+      unmount();
+    } finally {
+      window.history.replaceState({}, "", previousUrl);
+    }
   });
 });

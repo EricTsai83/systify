@@ -748,7 +748,11 @@ function HistoryGroupSkeleton() {
 function ThreadRowsSkeleton() {
   return (
     <div className="flex flex-col" aria-hidden="true" data-history-thread-rows-skeleton="true">
-      {Array.from({ length: 3 }).map((_, index) => (
+      {/* One row per loaded thread (THREAD_INITIAL_PAGE_SIZE) so the skeleton
+          fills the same vertical space the first page occupies — the card's
+          `minHeight` already reserves it, and matching the count keeps the
+          rows from popping in shorter than the placeholder. */}
+      {Array.from({ length: THREAD_INITIAL_PAGE_SIZE }).map((_, index) => (
         <div
           key={index}
           className="flex min-w-0 flex-col gap-3 border-t border-border px-3 py-3 first:border-t-0 sm:flex-row sm:items-center sm:justify-between sm:px-4"
@@ -773,8 +777,13 @@ function ThreadRowsSkeleton() {
 
 function SharedRowsSkeleton() {
   return (
+    // Representative row count for the first screen of share links. This
+    // section is the last block on the page, so a length difference between
+    // the skeleton and the resolved list reflows nothing above it — we size
+    // for a typical first screen rather than the full SHARE_INITIAL_PAGE_SIZE
+    // (20) to avoid a visually heavy placeholder.
     <div className="border border-border bg-card" aria-hidden="true">
-      {Array.from({ length: 3 }).map((_, index) => (
+      {Array.from({ length: 6 }).map((_, index) => (
         <div key={index} className="border-t border-border px-4 py-3 first:border-t-0">
           <div className="flex flex-col gap-2">
             <Skeleton className="h-4 w-52 max-w-full" />

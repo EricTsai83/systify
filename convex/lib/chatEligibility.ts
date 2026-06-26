@@ -123,8 +123,7 @@ export interface RepositoryModeResolution {
 export const DISABLED_REASON_LIBRARY_NO_REPO = "Attach a repository to use Library mode.";
 
 export const GROUNDING_LIBRARY_REASON_NO_REPO = "Attach a repository to ground replies in your design artifacts.";
-export const GROUNDING_LIBRARY_REASON_NO_ARTIFACT =
-  "Generate at least one system design artifact to enable Library grounding.";
+export const GROUNDING_LIBRARY_REASON_NO_ARTIFACT = "Generate at least one Design Doc first.";
 
 export const GROUNDING_SANDBOX_REASON_NO_REPO = "Attach a repository to ground replies in live source.";
 export const GROUNDING_SANDBOX_REASON_NO_SANDBOX = "Live source will be prepared when a task needs it.";
@@ -134,7 +133,7 @@ export const GROUNDING_SANDBOX_REASON_EXPIRED = "Live source will be prepared wh
 export const GROUNDING_SANDBOX_REASON_FAILED = "Live source will be prepared when a task needs it.";
 
 const ASK_REASON_NO_REPO = "Attach a repository and produce at least one artifact before asking a question.";
-const ASK_REASON_NO_ARTIFACT = "Library Ask needs at least one artifact in this repository.";
+const ASK_REASON_NO_ARTIFACT = "Library Ask needs at least one Design Doc in this repository.";
 
 /**
  * Tooltips for the cost-cap gate. Promise "Resets at midnight UTC" verbatim

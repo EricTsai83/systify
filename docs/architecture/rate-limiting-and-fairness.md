@@ -94,7 +94,7 @@ Embedding calls (`embedViaGateway`) are not exempt: every batched
 `embedMany` invocation acquires the same per-user RPM token and the same
 per-user concurrency slot before the SDK call and releases the slot in
 `finally`. A burst of artifact-indexing embedding batches therefore counts
-against the same fairness buckets as chat / System Design generations,
+against the same fairness buckets as chat / Design Docs generations,
 preventing a runaway indexing job from starving interactive replies.
 
 For streaming, `streamViaGateway` returns four `final*` promises and an

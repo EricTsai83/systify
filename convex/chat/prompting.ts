@@ -376,7 +376,7 @@ const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
       "",
       artifactEvidenceLabels.length > 0
         ? `Most relevant artifact excerpts: ${artifactEvidenceLabels.join(", ")}`
-        : "Not enough artifact evidence was selected; consider running a system design first.",
+        : "Not enough artifact evidence was selected; consider generating Design Docs first.",
     ],
   },
   zh: {
@@ -405,7 +405,7 @@ const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
       "",
       artifactEvidenceLabels.length > 0
         ? `我目前最相關的 artifact 線索來自：${artifactEvidenceLabels.join("、")}`
-        : "目前沒有足夠的 artifact 線索被選中，建議先執行一次深度分析。",
+        : "目前沒有足夠的 artifact 線索被選中，建議先產生 Design Docs。",
     ],
   },
 };

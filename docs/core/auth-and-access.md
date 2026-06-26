@@ -173,7 +173,7 @@ Even if the user has already connected GitHub, the import flow still calls the G
 - whether the installation can access the target repository
 - whether the repository is actually public or private
 
-This check fails fast (one API round trip) when the repository is not actually accessible, so an unreachable repo never gets as far as the tree / blob fetches. The same probe is reused by the on-demand sandbox path (`ensureSandboxReady`) before any sandbox-grounded reply or System Design generation provisions a Daytona sandbox, so a user who lost access to a repository between import and sandbox activation gets the same actionable error without burning sandbox cost.
+This check fails fast (one API round trip) when the repository is not actually accessible, so an unreachable repo never gets as far as the tree / blob fetches. The same probe is reused by the on-demand sandbox path (`ensureSandboxReady`) before any sandbox-grounded reply or Design Docs generation provisions a Daytona sandbox, so a user who lost access to a repository between import and sandbox activation gets the same actionable error without burning sandbox cost.
 
 ## Sandbox grounding (per-message in Discuss)
 

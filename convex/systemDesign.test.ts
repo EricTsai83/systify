@@ -6,6 +6,7 @@ import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import schema from "./schema";
 import { SYSTEM_DESIGN_PROMPT_VERSIONS } from "./lib/systemDesignPrompts";
+import type { SystemDesignKind } from "./lib/systemDesign";
 import { peekSandboxDailyCostForUser } from "./lib/rateLimit";
 import { createRateLimitedTestConvex } from "../test/convex/harness";
 import { withPausedConvexScheduler } from "../test/convex/scheduler";
@@ -45,6 +46,18 @@ async function insertRepository(
       ...overrides,
       color: "blue",
       lastAccessedAt: Date.now(),
+    });
+  });
+}
+
+async function insertInternalAccessProfile(t: ReturnType<typeof createTestConvex>, ownerTokenIdentifier: string) {
+  await t.run(async (ctx) => {
+    await ctx.db.insert("userAccessProfiles", {
+      ownerTokenIdentifier,
+      plan: "internal",
+      billingStatus: "none",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
     });
   });
 }
@@ -107,7 +120,7 @@ async function insertRunningSystemDesignJob(
     ownerTokenIdentifier: string;
     repositoryId: Id<"repositories">;
     startedAt?: number;
-    selections?: Array<"readme_summary" | "security_overview">;
+    selections?: SystemDesignKind[];
     leaseExpiresAt?: number;
   },
 ) {
@@ -128,6 +141,119 @@ async function insertRunningSystemDesignJob(
     });
   });
 }
+
+describe("requestSystemDesignGeneration", () => {
+  test("appends new selections to an active repository job", async () => {
+    const ownerTokenIdentifier = "user|append-active-system-design";
+    const t = createTestConvex();
+    await insertInternalAccessProfile(t, ownerTokenIdentifier);
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await insertRunningSystemDesignJob(t, {
+      ownerTokenIdentifier,
+      repositoryId,
+      selections: ["readme_summary"],
+    });
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+
+    const result = await viewer.mutation(api.systemDesign.requestSystemDesignGeneration, {
+      repositoryId,
+      selections: ["readme_summary", "architecture_overview", "data_model_overview"],
+      provider: "openai",
+      modelName: "gpt-5.5",
+    });
+
+    expect(result.jobId).toBe(jobId);
+    const job = await t.run(async (ctx) => await ctx.db.get(jobId));
+    expect(job?.selections).toEqual(["readme_summary", "architecture_overview", "data_model_overview"]);
+  });
+});
+
+describe("markGenerationStarted", () => {
+  test("uses the latest job selections when building the running summary", async () => {
+    const ownerTokenIdentifier = "user|start-generation-merged-selections";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await t.run(async (ctx) => {
+      return await ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "system_design",
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+        costCategory: "system_design",
+        triggerSource: "user",
+        selections: ["readme_summary", "security_overview"],
+        outputSummary: "Queued README Summary",
+        leaseExpiresAt: Date.now() + 60_000,
+      });
+    });
+
+    const result = await t.mutation(internal.systemDesign.markGenerationStarted, {
+      jobId,
+      selections: ["readme_summary"],
+    });
+
+    expect(result).toEqual({ started: true });
+    const job = await t.run(async (ctx) => await ctx.db.get(jobId));
+    expect(job?.status).toBe("running");
+    expect(job?.outputSummary).toBe("Generating README Summary + Security Overview");
+  });
+});
+
+describe("completeGeneration", () => {
+  test("keeps a running job open when selections were appended before completion", async () => {
+    const ownerTokenIdentifier = "user|complete-generation-needs-more";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await insertRunningSystemDesignJob(t, {
+      ownerTokenIdentifier,
+      repositoryId,
+      selections: ["readme_summary", "security_overview"],
+    });
+
+    const result = await t.mutation(internal.systemDesign.completeGeneration, {
+      jobId,
+      completedSelections: ["readme_summary"],
+      succeededCount: 1,
+      failedCount: 0,
+    });
+
+    expect(result).toEqual({
+      status: "needs_more",
+      selections: ["readme_summary", "security_overview"],
+    });
+    const job = await t.run(async (ctx) => await ctx.db.get(jobId));
+    expect(job?.status).toBe("running");
+    expect(job?.progress).toBe(0.5);
+  });
+
+  test("completes a running job only after every current selection is processed", async () => {
+    const ownerTokenIdentifier = "user|complete-generation-all-processed";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await insertRunningSystemDesignJob(t, {
+      ownerTokenIdentifier,
+      repositoryId,
+      selections: ["readme_summary", "security_overview"],
+    });
+
+    const result = await t.mutation(internal.systemDesign.completeGeneration, {
+      jobId,
+      completedSelections: ["readme_summary", "security_overview"],
+      succeededCount: 2,
+      failedCount: 0,
+    });
+
+    expect(result).toEqual({
+      status: "completed",
+      selections: ["readme_summary", "security_overview"],
+    });
+    const job = await t.run(async (ctx) => await ctx.db.get(jobId));
+    expect(job?.status).toBe("completed");
+    expect(job?.outputSummary).toBe("Generated 2 of 2 documents.");
+  });
+});
 
 describe("findCachedArtifact", () => {
   test("returns an exact cache-key hit", async () => {

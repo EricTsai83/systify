@@ -45,7 +45,7 @@ function readPositiveIntEnv(name: string, fallback: number) {
 
 const RATE_LIMIT_MESSAGES: Record<RateLimitBucket, string> = {
   importRequests: "Too many repository import requests. Please retry later.",
-  systemDesignRequests: "Too many System Design generation requests. Please retry later.",
+  systemDesignRequests: "Too many Design Docs generation requests. Please retry later.",
   chatRequestsPerOwner: "Too many chat requests. Please retry later.",
   chatRequestsGlobal: "Chat capacity is temporarily full. Please retry later.",
   daytonaRequestsGlobal: "Analysis capacity is temporarily full. Please retry later.",

@@ -8,14 +8,23 @@ export { REPOSITORY_GUIDE_SECTION_TITLES } from "./repository-guide-catalog";
  * of exposing the implementation term "System Design" to users.
  */
 export const REPOSITORY_GUIDE_COPY = {
-  name: "Repository Guide",
-  sectionName: "guide section",
-  sectionNamePlural: "guide sections",
-  generateAction: "Generate Repository Guide",
+  name: "Design Docs",
+  sectionName: "design doc",
+  sectionNamePlural: "design docs",
+  // CTA + body copy drop the "Repository" qualifier: every surface that
+  // shows them already sits inside a single repository (the URL, the header,
+  // and the panel title all name it), so repeating it reads as boilerplate.
+  // The full `name` is reserved for the one place each view needs to stand on
+  // its own — the header menu, the generate dialog title, the docs navigator
+  // headline.
+  generateAction: "Generate design docs",
   generateSelectedAction: "Generate selected",
-  emptyLibraryDescription:
-    "This Library has no Repository Guide sections to read yet. Generate them from the Ask panel to get started.",
-  noArtifactsTitle: "No guide sections to ask about yet",
-  noArtifactsDescription:
-    "Library Ask cites indexed guide sections. Generate the Repository Guide so it has something to retrieve.",
+  // First-run / navigator hero, shown on the Library canvas before any section
+  // exists. Leads with the outcome (readable docs you can ask about) instead
+  // of the absence of content.
+  navigatorEmptyDescription:
+    "Use optional templates to create reference docs for this repository. Generate only what is useful.",
+  navigatorGeneratingDescription: "New docs open as soon as they finish.",
+  noArtifactsTitle: "No design docs to ask about yet",
+  noArtifactsDescription: "Library Ask cites indexed design docs. Generate them so it has something to retrieve.",
 } as const;

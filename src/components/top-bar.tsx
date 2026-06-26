@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { ArchiveIcon, ArrowCounterClockwiseIcon, DotsThreeVerticalIcon, TrashIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,7 @@ import { SwapThreadRepositoryControl } from "@/components/swap-thread-repository
 import { StatusPill } from "@/components/status-pill";
 import { StatusPanel } from "@/components/status-panel";
 import { ChatModeControls } from "@/components/chat-mode-controls";
+import { Skeleton } from "@/components/ui/skeleton";
 import type { AttachedRepositorySummary } from "@/hooks/use-thread-capabilities";
 import type { ArtifactId, RepositoryId, SandboxModeStatus, ThreadId, ThreadMode } from "@/lib/types";
 
@@ -83,6 +85,7 @@ type TopBarStatusControl =
  */
 export function TopBar({
   repoDetail,
+  isRepoDetailLoading,
   threadId,
   attachedRepository,
   availableRepositories,
@@ -102,6 +105,13 @@ export function TopBar({
   showSystemStatus,
 }: {
   repoDetail?: TopBarRepoDetail;
+  /**
+   * Whether a repository-detail query is in flight (a repo is selected but its
+   * detail hasn't resolved yet). Distinguishes "loading a repo title" from the
+   * repoless `/chat` surface — only the former reserves a title skeleton, so
+   * the repoless surface doesn't show a perpetual placeholder.
+   */
+  isRepoDetailLoading: boolean;
   threadId: ThreadId | null;
   attachedRepository: AttachedRepositorySummary | null;
   availableRepositories: ReadonlyArray<Doc<"repositories">>;
@@ -163,7 +173,11 @@ export function TopBar({
   return (
     <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
       <ChatModeControls onSearchThreads={onSearchThreads} onNewThread={onNewThread} />
-      <TopBarTitleArea repoDetail={repoDetail} showSystemStatus={showSystemStatus} />
+      <TopBarTitleArea
+        repoDetail={repoDetail}
+        isRepoDetailLoading={isRepoDetailLoading}
+        showSystemStatus={showSystemStatus}
+      />
       <TopBarSwapRepositorySlot
         threadId={threadId}
         attachedRepository={attachedRepository}
@@ -186,20 +200,48 @@ export function TopBar({
 
 function TopBarTitleArea({
   repoDetail,
+  isRepoDetailLoading,
   showSystemStatus,
 }: {
   repoDetail: TopBarRepoDetail | undefined;
+  isRepoDetailLoading: boolean;
   showSystemStatus: boolean;
 }) {
   if (!repoDetail) {
-    return null;
+    // Repoless `/chat` (or a missing repo) has no title to show — collapse the
+    // slot entirely. Only reserve a placeholder while a real title is loading,
+    // so the swap-repo slot and status pill don't jump when it arrives.
+    if (!isRepoDetailLoading) {
+      return null;
+    }
+    return (
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <Skeleton className="h-5 w-40" />
+        {showSystemStatus ? <RepoStatusIndicatorSlot /> : null}
+      </div>
+    );
   }
   return (
     <div key={repoDetail.repository._id} className="flex min-w-0 flex-1 items-center gap-2 animate-fade-in">
       <RepoInfoPopover repoDetail={repoDetail} title={repoDetail.repository.sourceRepoFullName} />
-      {showSystemStatus ? <RepoStatusIndicator sandbox={repoDetail.sandbox} /> : null}
+      {showSystemStatus ? (
+        <RepoStatusIndicatorSlot>
+          <RepoStatusIndicator sandbox={repoDetail.sandbox} />
+        </RepoStatusIndicatorSlot>
+      ) : null}
     </div>
   );
+}
+
+/**
+ * Fixed-width holder for the sandbox status badge. The badge only renders for
+ * `failed` / `provisioning` states, so a bare `RepoStatusIndicator` pops in
+ * from zero width (e.g. when lazy sandbox provisioning starts) and shoves the
+ * title. Reserving the width here means the badge fades in within space that
+ * was always there.
+ */
+function RepoStatusIndicatorSlot({ children }: { children?: ReactNode }) {
+  return <div className="flex min-w-[88px] shrink-0 items-center">{children}</div>;
 }
 
 function TopBarSwapRepositorySlot({

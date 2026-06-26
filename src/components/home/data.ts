@@ -108,7 +108,7 @@ export const MODES: ReadonlyArray<Mode> = [
     pitch: "grounded · always sourced",
     depth: 2,
     scenarios: [
-      "Architecture & onboarding from the generated Repository Guide",
+      "Architecture & onboarding from generated Design Docs",
       "Concept traces with file citations",
       "Best CP for grounded answers — no live-source cost",
     ],

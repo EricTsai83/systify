@@ -12,7 +12,7 @@ import {
   type SandboxLibraryGenerationModelChoice,
 } from "./lib/sandboxLibraryGeneration";
 import { SandboxPreparationError, type EnsureSandboxReadyResult } from "./lib/sandboxLiveness";
-import { isSystemDesignKind, systemDesignKindValidator } from "./lib/systemDesign";
+import { isSystemDesignKind, systemDesignKindValidator, type SystemDesignKind } from "./lib/systemDesign";
 import { runSystemDesignKind } from "./systemDesignKindRun";
 
 /**
@@ -93,13 +93,19 @@ export const runSystemDesignGeneration = internalAction({
       return;
     }
 
-    const selections = args.selections.filter(isSystemDesignKind);
-    const totalCount = selections.length;
+    const initialSelections = args.selections.filter(isSystemDesignKind);
+    let selections = await ctx.runQuery(internal.systemDesign.getGenerationJobSelections, {
+      jobId: args.jobId,
+    });
+    if (selections.length === 0) {
+      selections = initialSelections;
+    }
+    let totalCount = selections.length;
 
     if (totalCount === 0) {
       await ctx.runMutation(internal.systemDesign.failGeneration, {
         jobId: args.jobId,
-        errorMessage: "No valid system design kinds selected.",
+        errorMessage: "Select at least one Design Docs template.",
       });
       return;
     }
@@ -158,14 +164,43 @@ export const runSystemDesignGeneration = internalAction({
     const commitSha = context.repository.lastSyncedCommitSha;
     const forceRegenerate = args.forceRegenerate ?? false;
 
-    let completedCount = 0;
+    const completedKinds = new Set<SystemDesignKind>();
     let succeeded = 0;
     let failed = 0;
+    let finalSelections = selections;
 
     // Kinds run serially: each one is a sandbox-backed LLM session, so running
     // them in parallel would contend on the per-sandbox tool budget and the
     // gateway's per-user concurrency cap.
-    for (const kind of selections) {
+    while (true) {
+      selections = await ctx.runQuery(internal.systemDesign.getGenerationJobSelections, {
+        jobId: args.jobId,
+      });
+      if (selections.length === 0) {
+        selections = initialSelections;
+      }
+      totalCount = selections.length;
+
+      const kind = selections.find((selection) => !completedKinds.has(selection));
+      if (!kind) {
+        const completion = await ctx.runMutation(internal.systemDesign.completeGeneration, {
+          jobId: args.jobId,
+          completedSelections: Array.from(completedKinds),
+          succeededCount: succeeded,
+          failedCount: failed,
+        });
+        if (completion.status === "completed") {
+          finalSelections = completion.selections;
+          break;
+        }
+        if (completion.status === "needs_more") {
+          selections = completion.selections;
+          totalCount = selections.length;
+          continue;
+        }
+        return;
+      }
+
       // Refresh the running job's lease before each kind so a long multi-kind
       // publication does not overrun the lease window and trigger a spurious
       // stale-recovery while progress is still happening.
@@ -186,7 +221,7 @@ export const runSystemDesignGeneration = internalAction({
       if (outcome.aborted) {
         await ctx.runMutation(internal.systemDesign.failGeneration, {
           jobId: args.jobId,
-          errorMessage: "System Design generation stopped because the repository is no longer active.",
+          errorMessage: "Design Docs generation stopped because the repository is no longer active.",
         });
         return;
       }
@@ -196,21 +231,19 @@ export const runSystemDesignGeneration = internalAction({
       } else {
         failed += 1;
       }
-      completedCount += 1;
+      completedKinds.add(kind);
+      const progressSelections = await ctx.runQuery(internal.systemDesign.getGenerationJobSelections, {
+        jobId: args.jobId,
+      });
+      selections = progressSelections.length === 0 ? initialSelections : progressSelections;
+      totalCount = selections.length;
       await ctx.runMutation(internal.systemDesign.updateGenerationProgress, {
         jobId: args.jobId,
-        completedCount,
+        completedCount: completedKinds.size,
         totalCount,
-        stage: `Generated ${completedCount} of ${totalCount}: ${outcome.title}`,
+        stage: `Generated ${completedKinds.size} of ${totalCount}: ${outcome.title}`,
       });
     }
-
-    await ctx.runMutation(internal.systemDesign.completeGeneration, {
-      jobId: args.jobId,
-      selections: args.selections,
-      succeededCount: succeeded,
-      failedCount: failed,
-    });
 
     logInfo("systemDesign", "generation_complete", {
       jobId: args.jobId,
@@ -219,7 +252,7 @@ export const runSystemDesignGeneration = internalAction({
       modelName: resolvedModelChoice.modelName,
       succeeded,
       failed,
-      total: totalCount,
+      total: finalSelections.length,
     });
   },
 });

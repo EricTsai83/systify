@@ -1,4 +1,4 @@
-# Service Modes: Discuss, Library, and System Design
+# Service Modes: Discuss, Library, and Design Docs
 
 ## Purpose
 
@@ -9,7 +9,7 @@ Systify exposes two top-level chat modes plus a background generator:
   - **Sandbox grounding** reads the live source tree through Daytona-hosted tools and produces `[path:line-line]` citations.
   - Both off → the reply is unbound LLM training-only chat.
 - **`library`** — read-mostly artifact reader with an always-visible **Ask** panel running chunked-RAG over the repository's artifacts.
-- **System Design generation** — background sandbox-backed job that writes the starter set of 8 System Design artifacts (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`) into the Library for later citation. Every kind is LLM-backed — the generator opens a Daytona sandbox for every kind, including `architecture_diagram`, which carries an additional `validateMermaidBlock` quality gate so the published markdown is guaranteed to contain a parseable Mermaid block.
+- **Design Docs generation** (implemented internally as System Design generation) — background sandbox-backed job that writes selected optional templates, up to 8 (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`), into the Library for later citation. Every selected template is LLM-backed — the generator opens a Daytona sandbox for every selected kind, including `architecture_diagram`, which carries an additional `validateMermaidBlock` quality gate so the published markdown is guaranteed to contain a parseable Mermaid block.
 
 When a repository is attached, `library` becomes the default mode; otherwise `discuss` is the default.
 
@@ -52,7 +52,7 @@ The Ask thread strip is an *open set*, mirroring how the document column works: 
 
 ## Library Access and the Empty State
 
-Library is reachable whenever a repository is attached to the thread. It is **not** gated on the repository having at least one artifact: a freshly imported repository can open Library immediately. When no artifact bodies exist yet, the page renders a **Generate System Design** CTA button. Clicking it confirms and then calls `requestSystemDesignGeneration`, which queues a sandbox-backed job that writes the starter set of System Design artifacts into the default folders seeded at import time.
+Library is reachable whenever a repository is attached to the thread. It is **not** gated on the repository having at least one artifact: a freshly imported repository can open Library immediately. When no generated docs exist yet, the Design Docs overview presents optional templates. Selecting templates calls `requestSystemDesignGeneration`, which queues or appends to a sandbox-backed job that writes generated docs into the default folders seeded at import time.
 
 The Discuss composer surfaces the same CTA in its grounding toggle bar: when Library grounding is closed because the repository has zero artifacts (`library_no_artifact`), the toggle bar renders the dialog opener directly.
 
@@ -66,7 +66,7 @@ Per-thread defaults live on `threads.defaultGroundLibrary` and `threads.defaultG
 
 Discuss composer state is assembled by a shared Composer Session Module rather than by the repository shell or the rendering panel. The pure helper `src/lib/chat-composer-session.ts` resolves model route, access-disabled reasons, effective grounding availability, and send-request payloads. The React adapter `src/components/chat-shell-shared/use-chat-composer-session.ts` owns draft persistence, thread-keyed grounding state, model picker state, catalog readiness, send/cancel lifecycle, and the final `ChatComposerViewModel`.
 
-`RepositoryShell` and `RepolessChatShell` provide surface-specific inputs to the same module. The repository adapter supplies repository id, active mode, grounding availability, viewer access, sync/read-only state, and the Generate System Design dialog opener. The repoless adapter fixes the surface to Discuss, disables grounding by construction, and supplies draft Agent Profile fields only for lazy first-send repoless thread creation.
+`RepositoryShell` and `RepolessChatShell` provide surface-specific inputs to the same module. The repository adapter supplies repository id, active mode, grounding availability, viewer access, sync/read-only state, and the Design Docs generation dialog opener. The repoless adapter fixes the surface to Discuss, disables grounding by construction, and supplies draft Agent Profile fields only for lazy first-send repoless thread creation.
 
 `ChatPanel` consumes the resolved composer view model. It no longer decides model preference scope, model access disabled reason, grounding effective state, catalog readiness, or send payload shape. Its remaining responsibilities are rendering the conversation, scroll/older-message behavior, in-flight reply presentation, empty state, and laying out toolbar controls supplied by the composer.
 
@@ -93,7 +93,7 @@ Each chat thread is locked to a single LLM provider for the lifetime of the conv
 
 Forking — letting a user branch a locked thread into a new thread that picks a different provider while keeping a back-pointer to the original — is reserved on `threads.forkedFromThreadId` for a future workflow; the column lands schema-side today so the addition is non-breaking when it ships.
 
-System Design generation jobs (`jobs.provider` / `jobs.modelName`) snapshot the same `(provider, model)` pair at job creation and bake it onto the row. A stale-recovery auto-resume re-enqueues with the same pair so the per-kind artifact cache key (`{commitSha, provider, model, promptVersion}`) stays consistent across resume boundaries.
+Design Docs generation jobs (`jobs.provider` / `jobs.modelName`) snapshot the same `(provider, model)` pair at job creation and bake it onto the row. A stale-recovery auto-resume re-enqueues with the same pair so the per-kind artifact cache key (`{commitSha, provider, model, promptVersion}`) stays consistent across resume boundaries.
 
 ## Data Model
 
@@ -115,7 +115,7 @@ flowchart TD
   Availability[getRepositorySandboxStatus]
   ChatSend[chat.sendMessage]
   ThreadContext[threadContext]
-  SystemDesignJob[system design generation]
+  SystemDesignJob[Design Docs generation]
 
   SandboxRow --> Availability
   Availability --> ChatSend
@@ -133,7 +133,7 @@ The pure resolver lives in `convex/lib/chatEligibility.ts`; `repositoryModeEligi
 
 ## Job Lifecycle
 
-System Design generation and other sandbox-backed jobs must re-check repository liveness before writing durable artifacts. If a repository is archived or deletion has started, the job fails instead of publishing new knowledge.
+Design Docs generation and other sandbox-backed jobs must re-check repository liveness before writing durable artifacts. If a repository is archived or deletion has started, the job fails instead of publishing new knowledge.
 
 Long-running jobs use leases. The contract for any `system_design`-kind Library generation job is:
 
@@ -144,7 +144,7 @@ Long-running jobs use leases. The contract for any `system_design`-kind Library 
 
 ## Artifact Provenance
 
-The Library freshness UI reads the optional `lastVerifiedAt` timestamp on each artifact. Every artifact is produced by a sandbox-grounded Library System Design generator, so `createArtifactInMutation` stamps `lastVerifiedAt: now` at creation, which gates the "verified against current source" badge.
+The Library freshness UI reads the optional `lastVerifiedAt` timestamp on each artifact. Every generated doc is produced by the sandbox-grounded Design Docs generator, so `createArtifactInMutation` stamps `lastVerifiedAt: now` at creation, which gates the "verified against current source" badge.
 
 `lastVerifiedAt` is the single signal the freshness UI consults — an artifact is "verified" iff this field is set. Sandbox-grounded Discuss sessions can re-stamp it on a re-read so a re-verified artifact transitions from "unverified" back to "verified".
 

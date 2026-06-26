@@ -70,6 +70,7 @@ export function RepositoryShell({
       <SidebarInset>
         <TopBar
           repoDetail={workspace.repoDetail ?? undefined}
+          isRepoDetailLoading={workspace.selectedRepositoryId !== null && workspace.repoDetail === undefined}
           isSyncing={workspace.isSyncing}
           isStatusPanelOpen={workspace.panels.status.isOpen}
           onSetStatusPanelOpen={workspace.panels.status.setOpen}

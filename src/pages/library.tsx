@@ -1,12 +1,32 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import { CircleIcon, LightningIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import {
+  BookOpenIcon,
+  CaretDownIcon,
+  CircleIcon,
+  FoldersIcon,
+  LightningIcon,
+  PaperPlaneTiltIcon,
+  SparkleIcon,
+  WarningCircleIcon,
+} from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
-import { AppSidebarLeft, AppSidebarRight } from "@/components/app-sidebar";
+import {
+  AppSidebarLeft,
+  AppSidebarRight,
+  LEFT_SIDEBAR_DEFAULT_WIDTH,
+  LEFT_SIDEBAR_MAX_WIDTH,
+  LEFT_SIDEBAR_WIDTH_STORAGE_KEY,
+  LIBRARY_ASK_DEFAULT_WIDTH,
+  LIBRARY_ASK_MAX_WIDTH,
+  LIBRARY_ASK_WIDTH_STORAGE_KEY,
+} from "@/components/app-sidebar";
 import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
 import { LibraryShell } from "@/components/library-shell";
+import { LibraryTree } from "@/components/library-tree";
 import { Logo } from "@/components/logo";
+import { RepositoryModeSwitcher } from "@/components/repository-mode-switcher";
 import { ScreenState } from "@/components/screen-state";
 import {
   Sidebar,
@@ -17,6 +37,15 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { InputGroup, InputGroupAddon, InputGroupTextarea } from "@/components/ui/input-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
@@ -32,16 +61,18 @@ import type { ArtifactId, RepositoryId, ThreadId, ThreadMode } from "@/lib/types
 import { readString, writeString } from "@/lib/storage";
 import { applyTouchRepositoryOptimistic } from "@/lib/repository-mutations";
 import { DEMO_MODE_COPY } from "@/lib/demo-content";
+import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 const ACTIVE_REPOSITORY_STORAGE_KEY = "systify.activeRepositoryId";
+const PENDING_LIBRARY_ASK_SEND_BUTTON_STATES = ["Ask", "Asking..."] as const;
 
 /**
  * Library service mode entry point.
  *
  * Mounted at:
- *   - `/r/:repositoryId/library`               → folder overview.
+ *   - `/r/:repositoryId/library`               → docs navigator.
  *   - `/r/:repositoryId/library/a/:artifactId` → shell with the artifact
  *                                                open in the active tab.
  *
@@ -124,7 +155,7 @@ function LibraryRepository({
   );
   const { isUnseen, markViewed } = useArtifactViewState(canLoadRepositoryData ? repositoryId : null);
 
-  const hasArtifacts = (allArtifacts?.length ?? 0) > 0;
+  const hasArtifacts = allArtifacts === undefined ? undefined : allArtifacts.length > 0;
 
   useEffect(() => {
     if (!canLoadRepositoryData) return;
@@ -230,7 +261,12 @@ function LibraryRepository({
   }, [askThreadId, askThreadProbe, handleSelectLibraryThread, repositoryId]);
 
   if (isAuthorizedForRepository === null && (hasLocalRepositoryIntent || currentRepository)) {
-    return <PendingLibraryShell repositoryName={currentRepository?.sourceRepoFullName ?? "Library"} />;
+    return (
+      <PendingLibraryShell
+        repositoryId={repositoryId}
+        repositoryName={currentRepository?.sourceRepoFullName ?? "Library"}
+      />
+    );
   }
   if (repositories === undefined || isAuthorizedForRepository === null) {
     return <ScreenState title="Loading…" description="Loading your repository." isLoading />;
@@ -258,8 +294,6 @@ function LibraryRepository({
         libraryArtifacts={allArtifacts}
         libraryActiveArtifactId={tabs.activeArtifactId}
         onSelectLibraryArtifact={tabs.openTab}
-        onGenerate={openGenerateDialog}
-        generateDisabledReason={generateSystemDesignDisabledReason}
         isUnseen={isUnseen}
       />
       <SidebarInset>
@@ -269,14 +303,21 @@ function LibraryRepository({
             {currentRepository?.sourceRepoFullName ?? "Library"}
           </h1>
           <LibraryLiveSourceBadge status={sandboxActivityStatus} />
-          <SidebarTrigger side="right" className="ml-auto" />
+          <LibraryDesignDocsMenu
+            className="ml-auto"
+            onShowNavigator={tabs.showNavigator}
+            onGenerate={openGenerateDialog}
+            generateDisabledReason={generateSystemDesignDisabledReason}
+          />
+          <SidebarTrigger side="right" />
         </header>
         <div className="flex min-h-0 min-w-0 flex-1">
           <LibraryShell
             repositoryId={repositoryId}
             tabs={tabs}
             allArtifacts={allArtifacts}
-            hasArtifacts={hasArtifacts}
+            onGenerate={openGenerateDialog}
+            generateDisabledReason={generateSystemDesignDisabledReason}
           />
         </div>
       </SidebarInset>
@@ -307,35 +348,69 @@ function LibraryRepository({
   );
 }
 
-function PendingLibraryShell({ repositoryName }: { repositoryName: string }) {
+function LibraryDesignDocsMenu({
+  className,
+  onShowNavigator,
+  onGenerate,
+  generateDisabledReason,
+}: {
+  className?: string;
+  onShowNavigator: () => void;
+  onGenerate: () => void;
+  generateDisabledReason?: string;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="outline" size="sm" className={cn("h-8 gap-1.5 px-2.5", className)}>
+          <BookOpenIcon size={14} weight="bold" />
+          <span className="hidden sm:inline">{REPOSITORY_GUIDE_COPY.name}</span>
+          <CaretDownIcon size={12} weight="bold" className="text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuItem onSelect={onShowNavigator}>
+          <FoldersIcon weight="bold" />
+          Open navigator
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={onGenerate}
+          disabled={generateDisabledReason !== undefined}
+          title={generateDisabledReason}
+        >
+          <SparkleIcon weight="bold" />
+          {REPOSITORY_GUIDE_COPY.generateAction}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function PendingLibraryShell({ repositoryId, repositoryName }: { repositoryId: RepositoryId; repositoryName: string }) {
   return (
     <>
-      <Sidebar side="left">
+      <Sidebar
+        side="left"
+        widthStorageKey={LEFT_SIDEBAR_WIDTH_STORAGE_KEY}
+        defaultWidth={LEFT_SIDEBAR_DEFAULT_WIDTH}
+        maxWidth={LEFT_SIDEBAR_MAX_WIDTH}
+      >
         <SidebarHeader>
           <Logo size={26} />
           <div className="min-w-0 leading-tight">
             <div className="truncate text-lg font-semibold tracking-tight">Systify</div>
           </div>
         </SidebarHeader>
-        <div className="border-b border-border px-2 py-2">
-          <div className="flex h-9 gap-1 border border-border bg-muted/40 p-1">
-            <div className="h-full w-[30px] bg-transparent" />
-            <div className="min-w-0 flex-1 bg-background shadow-sm">
-              <div className="flex h-full items-center gap-2 px-2.5">
-                <Skeleton className="h-3.5 w-3.5" />
-                <span className="text-xs font-medium text-foreground">Library</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <RepositoryModeSwitcher repositoryId={repositoryId} mode="library" availability={undefined} />
         <SidebarContent className="min-h-0 flex-1">
-          <div className="flex flex-col gap-3 p-3">
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-4 w-24" />
-            <Skeleton className="h-7 w-full" />
-            <Skeleton className="h-7 w-4/5" />
-            <Skeleton className="h-7 w-11/12" />
-          </div>
+          <LibraryTree
+            repositoryId={repositoryId}
+            selectedArtifactId={null}
+            onSelectArtifact={() => {}}
+            loadFolders={false}
+            canCreateFolders={false}
+            className="min-h-0 flex-1"
+          />
         </SidebarContent>
         <SidebarFooter className="px-3 py-2">
           <div className="flex items-center gap-2">
@@ -352,22 +427,46 @@ function PendingLibraryShell({ repositoryName }: { repositoryName: string }) {
           </h1>
           <SidebarTrigger side="right" className="ml-auto" />
         </header>
-        <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center px-6 py-10">
-          <div className="flex w-full max-w-md flex-col items-center text-center">
-            <Skeleton className="h-10 w-10 rounded-full" />
-            <Skeleton className="mt-5 h-5 w-44" />
-            <Skeleton className="mt-3 h-4 w-64 max-w-full" />
-          </div>
-        </div>
+        <div className="min-h-0 min-w-0 flex-1" />
       </SidebarInset>
-      <Sidebar side="right">
-        <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
-          <Skeleton className="h-8 w-36" />
-          <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-9 w-full" />
-        </div>
+      <Sidebar
+        side="right"
+        widthStorageKey={LIBRARY_ASK_WIDTH_STORAGE_KEY}
+        defaultWidth={LIBRARY_ASK_DEFAULT_WIDTH}
+        maxWidth={LIBRARY_ASK_MAX_WIDTH}
+      >
+        <PendingLibraryAskShell />
       </Sidebar>
     </>
+  );
+}
+
+export function PendingLibraryAskShell() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-background">
+      <div className="min-h-0 flex-1" />
+      <div className="border-t border-border px-4 py-3">
+        <InputGroup className="min-h-[9rem] overflow-hidden">
+          <InputGroupTextarea
+            value=""
+            readOnly
+            placeholder="Question about this library..."
+            className="min-h-24 text-sm"
+            aria-label="Library Ask input loading"
+          />
+          <InputGroupAddon
+            align="block-end"
+            className="h-11 min-h-11 flex-nowrap items-center justify-between gap-1 overflow-hidden"
+          >
+            <div aria-hidden="true" className="h-8 min-h-8 min-w-0 flex-1" />
+            <Button type="button" size="sm" disabled title="Loading library data.">
+              <PaperPlaneTiltIcon size={14} weight="fill" />
+              <ButtonStateText current="Asking..." states={PENDING_LIBRARY_ASK_SEND_BUTTON_STATES} />
+            </Button>
+          </InputGroupAddon>
+        </InputGroup>
+      </div>
+    </div>
   );
 }
 

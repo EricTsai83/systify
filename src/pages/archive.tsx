@@ -30,9 +30,15 @@ import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
 const REPOSITORY_ARCHIVE_PAGE_SIZE = 7;
 const NO_REPOSITORY_ARCHIVE_SCOPE_VALUE = "no_repository";
 const DEFAULT_ARCHIVE_SCOPE_LABEL = "Choose repository / workspace";
-const THREAD_ARCHIVE_LIST_HEIGHT_CLASS = "h-[45.5rem] sm:h-[29.75rem]";
+// Lists reserve a stable minimum (one full page of rows) so the skeleton, a
+// full page, and a partial last page all hold the same height — keeping the
+// pagination controls below from jumping. `min-h` (rather than a hard `h`)
+// also lets a row that renders taller than its nominal height grow into
+// internal scroll instead of being clipped. Row heights stay fixed so the
+// skeleton rows line up 1:1 with real rows.
+const THREAD_ARCHIVE_LIST_HEIGHT_CLASS = "min-h-[45.5rem] sm:min-h-[29.75rem]";
 const THREAD_ARCHIVE_ROW_HEIGHT_CLASS = "h-[6.5rem] sm:h-[4.25rem]";
-const REPOSITORY_ARCHIVE_LIST_HEIGHT_CLASS = "h-[59.75rem] sm:h-[42.25rem]";
+const REPOSITORY_ARCHIVE_LIST_HEIGHT_CLASS = "min-h-[59.75rem] sm:min-h-[42.25rem]";
 const REPOSITORY_ARCHIVE_ROW_HEIGHT_CLASS = "h-32 sm:h-[5.5rem]";
 
 export function ArchivePage() {
@@ -321,7 +327,7 @@ function ArchivedThreadsSection({
               No archived threads for this repository.
             </div>
           ) : (
-            <div className={`overflow-hidden border border-border bg-card ${THREAD_ARCHIVE_LIST_HEIGHT_CLASS}`}>
+            <div className={`overflow-y-auto border border-border bg-card ${THREAD_ARCHIVE_LIST_HEIGHT_CLASS}`}>
               {rows.map((thread) => (
                 <ArchivedThreadRow
                   key={thread._id}
@@ -519,7 +525,7 @@ function ArchiveList({
 }) {
   return (
     <>
-      <ul className={`mt-4 flex flex-col gap-2.5 overflow-hidden ${REPOSITORY_ARCHIVE_LIST_HEIGHT_CLASS}`}>
+      <ul className={`mt-4 flex flex-col gap-2.5 overflow-y-auto ${REPOSITORY_ARCHIVE_LIST_HEIGHT_CLASS}`}>
         {archived.map((repo) => (
           <li key={repo._id}>
             <ArchiveRow repo={repo} onRequestPermanentDelete={onRequestPermanentDelete} />

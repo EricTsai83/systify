@@ -12,7 +12,7 @@ import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import { describeRepositoryGuideFailure, getRepositoryGuideKindTitle } from "@/lib/repository-guide-failures";
 
 /**
- * Inline banner for System Design generation status. Subscribes to
+ * Inline banner for Design Docs generation status. Subscribes to
  * `getLatestSystemDesignJob`, which surfaces the latest job for the repo
  * while it is active or for ~10 minutes after a terminal state.
  *
@@ -107,8 +107,8 @@ function FailureBanner({ repositoryId, job }: { repositoryId: Id<"repositories">
       // Preserve the original job's (provider, model) so the retry runs
       // against the same pair the user picked the first time. Both
       // fields travel together — when either is missing on a legacy job
-      // row, omit both and let the mutation fall back to the System
-      // Design defaults.
+      // row, omit both and let the mutation fall back to the internal
+      // System Design defaults.
       const samePick = job.provider !== undefined && job.modelName !== undefined;
       await requestGeneration({
         repositoryId,

@@ -47,9 +47,9 @@ instead of mixing provider cost with customer price.
 | WorkOS | AuthKit browser sign-in | Active users for User Management; optional connection / add-on pricing for enterprise features | User sign-up, sign-in, profile updates, and any future SSO / Directory Sync / Audit Logs usage | Keep WorkOS usage limited to AuthKit unless enterprise features are explicitly added |
 | GitHub | GitHub App install, repository metadata, repository snapshot fetching, webhooks | GitHub App API access is quota-limited rather than directly metered by request in this app; customer GitHub plan costs are outside Systify | Install verification, repo list, permission probe, tree / content fetches during import and sync, freshness checks | GitHub App installation tokens, bounded import fan-out, on-attention freshness checks instead of background polling |
 | Convex | Database, functions, actions, HTTP endpoints, crons, scheduler | Plan fee plus metered resource usage: function calls, action compute, storage, I/O, search, egress | Every app request, subscription, mutation, import batch, chat stream persistence, cron, and background action | Bounded queries, indexed access, sharded usage rollups, batching, no separate always-on API server |
-| Daytona | Repository sandboxes for Sandbox-grounded Discuss and System Design | Pay-as-you-go resource consumption for sandboxes; per-sandbox usage is broken down by CPU, RAM, and disk | Sandbox creation, running sandboxes, stopped sandboxes retaining disk, file reads, shell execution, sandbox lifecycle operations | Lazy provisioning only, auto-stop / auto-archive / auto-delete, webhook + cron reconciliation, per-user / per-repo daily cost caps |
-| OpenAI | LLM generation and embeddings | Per-token pricing by model, with separate input, cached-input, output, and sometimes tool / modality rates | Chat replies, System Design generation, artifact indexing embeddings, Library Ask query embeddings, evals | LLM gateway, model catalog, pricing table coverage tests, daily caps, per-message cost ticker, usage rollups |
-| Anthropic | LLM generation | Per-token pricing by model, with input, output, prompt-cache write, and prompt-cache read rates | Chat replies, System Design generation, evals when Anthropic model is selected | Same LLM gateway, catalog, pricing table, daily caps, and usage rollups as OpenAI |
+| Daytona | Repository sandboxes for Sandbox-grounded Discuss and Design Docs generation | Pay-as-you-go resource consumption for sandboxes; per-sandbox usage is broken down by CPU, RAM, and disk | Sandbox creation, running sandboxes, stopped sandboxes retaining disk, file reads, shell execution, sandbox lifecycle operations | Lazy provisioning only, auto-stop / auto-archive / auto-delete, webhook + cron reconciliation, per-user / per-repo daily cost caps |
+| OpenAI | LLM generation and embeddings | Per-token pricing by model, with separate input, cached-input, output, and sometimes tool / modality rates | Chat replies, Design Docs generation, artifact indexing embeddings, Library Ask query embeddings, evals | LLM gateway, model catalog, pricing table coverage tests, daily caps, per-message cost ticker, usage rollups |
+| Anthropic | LLM generation | Per-token pricing by model, with input, output, prompt-cache write, and prompt-cache read rates | Chat replies, Design Docs generation, evals when Anthropic model is selected | Same LLM gateway, catalog, pricing table, daily caps, and usage rollups as OpenAI |
 | Vercel | Frontend hosting and deployment | Plan fee plus managed infrastructure usage and fixed monthly DX add-ons | Static frontend delivery, preview / production deployments, edge requests, data transfer, build / deployment activity | Static Vite frontend, SPA rewrites only, Convex-hosted backend, no Vercel serverless API layer in front of Convex |
 
 ## WorkOS
@@ -159,7 +159,7 @@ Official source: <https://www.convex.dev/pricing>
 ## Daytona
 
 Daytona provides the repository sandbox used by Sandbox-grounded Discuss and
-System Design generation. Repository import never provisions a sandbox. See
+Design Docs generation. Repository import never provisions a sandbox. See
 [`sandbox-mode-system-design.md`](../sandbox/sandbox-mode-system-design.md),
 [`sandbox-provisioning-cleanup-system-design.md`](../sandbox/sandbox-provisioning-cleanup-system-design.md),
 and [`orphan-resource-handling.md`](../sandbox/orphan-resource-handling.md).
@@ -178,7 +178,7 @@ Provider cost model:
 Systify cost drivers:
 
 - first Sandbox grounding activation for a repository;
-- System Design generation when selected kinds need sandbox-backed inspection;
+- Design Docs generation when selected templates need sandbox-backed inspection;
 - sandbox running time;
 - stopped sandbox disk retention;
 - sandbox file reads and shell commands through Daytona control plane;
@@ -222,7 +222,7 @@ Provider cost model:
 Systify cost drivers:
 
 - chat replies;
-- System Design generation;
+- Design Docs generation;
 - Library Ask query embeddings;
 - artifact indexing embeddings;
 - eval runs.

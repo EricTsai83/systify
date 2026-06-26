@@ -1,7 +1,4 @@
-import { SparkleIcon } from "@phosphor-icons/react";
 import { FolderNavigator } from "@/components/folder-navigator";
-import { Button } from "@/components/ui/button";
-import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import type { ArtifactId, ArtifactListItem, FolderId, RepositoryId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -9,10 +6,8 @@ import { cn } from "@/lib/utils";
  * Library Tree.
  *
  * Wraps {@link FolderNavigator} so the Library shell has a single import
- * surface for the right rail. Adds a header bar above the navigator carrying
- * the **Generate System Design** action — the publication flow that drops a
- * starter set of artifacts into the seeded System Design folders. The dialog
- * itself is hoisted to {@link LibraryShell} so the empty-state CTA can share it.
+ * surface for the left rail. Generation actions live in the Library navigator
+ * and blocked Ask states; this rail stays focused on artifact navigation.
  */
 export function LibraryTree({
   repositoryId,
@@ -21,9 +16,9 @@ export function LibraryTree({
   onSelectArtifact,
   onSelectFolder,
   selectedFolderId,
-  onGenerate,
-  generateDisabledReason,
   isUnseen,
+  loadFolders,
+  canCreateFolders,
   className,
 }: {
   repositoryId: RepositoryId;
@@ -32,29 +27,13 @@ export function LibraryTree({
   onSelectArtifact: (artifactId: ArtifactId) => void;
   onSelectFolder?: (folderId: FolderId | null) => void;
   selectedFolderId?: FolderId | null;
-  onGenerate: () => void;
-  generateDisabledReason?: string;
   isUnseen?: (artifact: ArtifactListItem) => boolean;
+  loadFolders?: boolean;
+  canCreateFolders?: boolean;
   className?: string;
 }) {
   return (
     <div className={cn("flex h-full min-h-0 flex-col", className)}>
-      <div className="flex items-center justify-between border-b border-border px-3 py-2">
-        <span className="text-sm font-semibold">{REPOSITORY_GUIDE_COPY.name}</span>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="gap-1.5"
-          disabled={generateDisabledReason !== undefined}
-          title={generateDisabledReason}
-          onClick={onGenerate}
-        >
-          <SparkleIcon size={12} weight="bold" />
-          Generate
-        </Button>
-      </div>
-
       <FolderNavigator
         repositoryId={repositoryId}
         artifacts={artifacts}
@@ -63,6 +42,8 @@ export function LibraryTree({
         onSelectArtifact={onSelectArtifact}
         onSelectFolder={onSelectFolder}
         isUnseen={isUnseen}
+        loadFolders={loadFolders}
+        canCreateFolders={canCreateFolders}
         className="min-h-0 flex-1 border-0"
       />
     </div>

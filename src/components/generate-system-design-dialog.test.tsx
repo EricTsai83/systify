@@ -55,23 +55,20 @@ const sandboxCatalogEntry = {
 };
 
 describe("GenerateSystemDesignDialog", () => {
-  test("checks every document by default", () => {
+  test("starts with no templates selected by default", () => {
     useQueryMock.mockReturnValue(null);
     useMutationMock.mockReturnValue(vi.fn());
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // The publication opts the user in to the full set — all eight documents
-    // start checked. We filter by the catalog id prefix so the
-    // "Regenerate even if cached" toggle (a separate checkbox in the same
-    // dialog) doesn't get folded into the assertion.
     const selectionCheckboxes = screen
       .getAllByRole("checkbox")
       .filter((checkbox) => checkbox.id.startsWith("gen-") && checkbox.id !== "gen-force-regenerate");
     expect(selectionCheckboxes).toHaveLength(8);
     for (const checkbox of selectionCheckboxes) {
-      expect(checkbox).toBeChecked();
+      expect(checkbox).not.toBeChecked();
     }
+    expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 0 design docs.");
   });
 
   test("toggles selection when clicking checkboxes", () => {
@@ -81,13 +78,13 @@ describe("GenerateSystemDesignDialog", () => {
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
     const dataModelCheckbox = screen.getByRole("checkbox", { name: /Data Model Overview/i });
-    expect(dataModelCheckbox).toBeChecked();
-
-    fireEvent.click(dataModelCheckbox);
     expect(dataModelCheckbox).not.toBeChecked();
 
     fireEvent.click(dataModelCheckbox);
     expect(dataModelCheckbox).toBeChecked();
+
+    fireEvent.click(dataModelCheckbox);
+    expect(dataModelCheckbox).not.toBeChecked();
   });
 
   test("updates the selected count when selections change", async () => {
@@ -96,40 +93,64 @@ describe("GenerateSystemDesignDialog", () => {
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // Default: all 8 guide sections selected.
-    expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 8 of 8 guide sections.");
+    expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 0 design docs.");
 
-    // Toggle two documents off.
     fireEvent.click(screen.getByRole("checkbox", { name: /README Summary/i }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Security Overview/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 6 of 8 guide sections.");
+      expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 2 design docs.");
     });
   });
 
-  test("shows alert and disables inputs when a job is in progress", () => {
-    const mockJob = { _id: "job_1", status: "running" };
-    useQueryMock.mockReturnValue(mockJob);
+  test("starter set selects the two recommended templates", () => {
+    useQueryMock.mockReturnValue(null);
     useMutationMock.mockReturnValue(vi.fn());
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // Check that the alert is displayed
-    expect(screen.getByText(/A Repository Guide run is already in progress/i)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Starter set/i }));
 
-    // Check that checkboxes are disabled
-    const checkboxes = screen.getAllByRole("checkbox");
-    for (const checkbox of checkboxes) {
-      expect(checkbox).toBeDisabled();
-    }
-
-    // Check that Generate button is disabled
-    const generateBtn = screen.getByRole("button", { name: /Generate selected/i });
-    expect(generateBtn).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /README Summary/i })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Architecture Overview/i })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: /Data Model Overview/i })).not.toBeChecked();
+    expect(screen.getByText(/Selected:/i)).toHaveTextContent("Selected: 2 design docs.");
   });
 
-  test("submits the full default selection with the default model pick and closes dialog on success", async () => {
+  test("allows adding more sections when a job is in progress", () => {
+    const mockJob = { _id: "job_1", status: "running", selections: ["readme_summary"] };
+    useQueryMock.mockImplementation((query: unknown) => {
+      const name = queryName(query);
+      if (name.endsWith("getActiveSystemDesignJob")) {
+        return mockJob;
+      }
+      if (name.endsWith("getDefaultModelPick")) {
+        return { provider: "openai", modelName: "gpt-5.5" };
+      }
+      if (name.endsWith("listPickableModels")) {
+        return [sandboxCatalogEntry];
+      }
+      return null;
+    });
+    useMutationMock.mockReturnValue(vi.fn());
+
+    render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
+
+    expect(screen.getByText(/Design Docs generation is already running/i)).toBeInTheDocument();
+
+    expect(screen.getByRole("checkbox", { name: /README Summary/i })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /Data Model Overview/i })).toBeEnabled();
+
+    let generateBtn = screen.getByRole("button", { name: /Generate selected/i });
+    expect(generateBtn).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: /Data Model Overview/i }));
+
+    generateBtn = screen.getByRole("button", { name: /Generate selected/i });
+    expect(generateBtn).toBeEnabled();
+  });
+
+  test("submits the selected templates with the default model pick and closes dialog on success", async () => {
     // The dialog's default model now resolves through
     // `useDefaultModelPick(api.llmCatalog.getDefaultModelPick)` rather
     // than a hardcoded literal. Stub that query so the submit button
@@ -148,6 +169,7 @@ describe("GenerateSystemDesignDialog", () => {
     const onOpenChange = vi.fn();
     render(<GenerateSystemDesignDialog open={true} onOpenChange={onOpenChange} repositoryId={repositoryId} />);
 
+    fireEvent.click(screen.getByRole("button", { name: /Select all/i }));
     const generateBtn = screen.getByRole("button", { name: /Generate selected/i });
     fireEvent.click(generateBtn);
 
@@ -187,6 +209,7 @@ describe("GenerateSystemDesignDialog", () => {
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
+    fireEvent.click(screen.getByRole("checkbox", { name: /README Summary/i }));
     fireEvent.click(screen.getByRole("checkbox", { name: /Regenerate even if cached/i }));
     fireEvent.click(screen.getByRole("button", { name: /Generate selected/i }));
 
@@ -265,9 +288,9 @@ describe("GenerateSystemDesignDialog", () => {
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    expect(
-      screen.getByText(/3 of 8 selected guide sections already exist for this commit and model/i),
-    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Select all/i }));
+
+    expect(screen.getByText(/3 selected design docs already exist for this commit and model/i)).toBeInTheDocument();
   });
 
   test("shows error message on submission failure", async () => {
@@ -284,6 +307,7 @@ describe("GenerateSystemDesignDialog", () => {
     const onOpenChange = vi.fn();
     render(<GenerateSystemDesignDialog open={true} onOpenChange={onOpenChange} repositoryId={repositoryId} />);
 
+    fireEvent.click(screen.getByRole("checkbox", { name: /README Summary/i }));
     const generateBtn = screen.getByRole("button", { name: /Generate selected/i });
     fireEvent.click(generateBtn);
 
@@ -311,6 +335,7 @@ describe("GenerateSystemDesignDialog", () => {
       <GenerateSystemDesignDialog open={true} onOpenChange={onOpenChange} repositoryId={repositoryId} />,
     );
 
+    fireEvent.click(screen.getByRole("checkbox", { name: /README Summary/i }));
     const generateBtn = screen.getByRole("button", { name: /Generate selected/i });
     fireEvent.click(generateBtn);
 
@@ -332,12 +357,6 @@ describe("GenerateSystemDesignDialog", () => {
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // Uncheck every document.
-    for (const checkbox of screen.getAllByRole("checkbox")) {
-      fireEvent.click(checkbox);
-    }
-
-    // Generate button should be disabled
     const generateBtn = screen.getByRole("button", { name: /Generate selected/i });
     expect(generateBtn).toBeDisabled();
   });

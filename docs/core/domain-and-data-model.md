@@ -99,7 +99,7 @@ Its responsibilities include:
 - pointing to the associated `job`
 - storing the commit SHA and completion time for that import
 
-Import never provisions a Daytona sandbox — repository metadata and knowledge are pulled through the GitHub API directly into Convex. Sandboxes are provisioned lazily by the Discuss-mode sandbox grounding toggle and by LLM-backed System Design kinds.
+Import never provisions a Daytona sandbox — repository metadata and knowledge are pulled through the GitHub API directly into Convex. Sandboxes are provisioned lazily by the Discuss-mode sandbox grounding toggle and by LLM-backed Design Docs templates.
 
 In other words, `repositories` is the long-lived entity, while `imports` is a one-off process snapshot.
 
@@ -113,7 +113,7 @@ In other words, `repositories` is the long-lived entity, while `imports` is a on
 - `ttlExpiresAt`
 - auto-stop, auto-archive, and auto-delete intervals
 
-Its existence lets the system distinguish between a live sandbox that can support System Design generation or sandbox-grounded Discuss and a repository that has only been indexed into static data.
+Its existence lets the system distinguish between a live sandbox that can support Design Docs generation or sandbox-grounded Discuss and a repository that has only been indexed into static data.
 
 ### `jobs`
 
@@ -158,7 +158,7 @@ Because of this, the UI does not need to know the internal implementation of eve
 
 This table plays two roles:
 
-1. Reusable knowledge produced by **System Design generation**: the user opts into this from the empty Library page, and the sandbox-backed job writes user-selected artifact kinds (defaults: `readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`). Import itself no longer seeds artifact bodies — it only seeds the default folder tree so the Library has a place to put them.
+1. Reusable knowledge produced by **Design Docs generation** (implemented internally as System Design generation): the user opts into optional templates, and the sandbox-backed job writes user-selected artifact kinds (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`). Import itself no longer seeds artifact bodies — it only seeds the default folder tree so the Library has a place to put them.
 2. Additional prose authored later by the user as Library notes, or produced by future per-folder generation jobs.
 
 Artifacts may optionally carry **`alignedImportCommitSha`**: best-effort record of which import revision the prose was authored against—used alongside sandbox verification timestamps to distinguish "checked against sandbox" freshness from **import snapshot drift**.

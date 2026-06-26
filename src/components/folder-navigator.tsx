@@ -72,6 +72,12 @@ type FolderNavigatorProps = {
    * state survives the navigator unmounting; omit to disable the dot.
    */
   isUnseen?: (artifact: NavigatorArtifact) => boolean;
+  /**
+   * Keep the navigator chrome mounted while deferring repo-scoped data reads.
+   * Used by the Library pending shell while auth is still being probed.
+   */
+  loadFolders?: boolean;
+  canCreateFolders?: boolean;
   className?: string;
 };
 
@@ -118,9 +124,11 @@ export function FolderNavigator({
   onSelectFolder,
   selectedFolderId: selectedFolderIdProp,
   isUnseen,
+  loadFolders = true,
+  canCreateFolders = loadFolders,
   className,
 }: FolderNavigatorProps) {
-  const folders = useQuery(api.artifactFolders.listByRepository, { repositoryId });
+  const folders = useQuery(api.artifactFolders.listByRepository, loadFolders ? { repositoryId } : "skip");
   const createFolder = useMutation(api.artifactFolders.create);
 
   // Selection is controllable: omit `selectedFolderId` to let the navigator
@@ -238,6 +246,7 @@ export function FolderNavigator({
   };
 
   const [isCreating, runCreateFolder] = useAsyncCallback(async () => {
+    if (!canCreateFolders) return;
     const baseName = "New folder";
     const parentFolderId = selectedFolderId ?? undefined;
     setCreateError(null);
@@ -277,7 +286,7 @@ export function FolderNavigator({
           className="h-8 w-8 shrink-0"
           aria-label={createButtonLabel}
           title={createButtonLabel}
-          disabled={isCreating}
+          disabled={isCreating || !canCreateFolders}
           onClick={() => void runCreateFolder()}
         >
           <FolderPlusIcon size={16} weight="bold" />
@@ -299,42 +308,19 @@ export function FolderNavigator({
       ) : null}
 
       <SidebarScrollViewport className="flex-1" viewportClassName="pb-12">
-        <div className="flex flex-col gap-3 p-3">
-          {pinnedRoots.length > 0 ? (
-            <NavigatorSection title="Pinned" icon={<PushPinSimpleIcon size={12} weight="fill" />}>
-              {pinnedRoots
-                .filter((node) => folderMatchesSearch(node))
-                .map((node) => (
-                  <FolderTreeBranch
-                    key={node.id}
-                    repositoryId={repositoryId}
-                    node={node}
-                    artifactsByFolder={artifactsByFolder}
-                    indent={0}
-                    selectedArtifactId={effectiveSelectedArtifactId}
-                    selectedFolderId={selectedFolderId}
-                    onSelectArtifact={handleSelectArtifact}
-                    onSelectFolder={setSelectedFolderId}
-                    filterArtifact={filterPredicate}
-                    folderMatchesSearch={folderMatchesSearch}
-                    isUnseen={isUnseen}
-                    pendingExpandFolderId={pendingExpandFolderId}
-                    pendingRenameFolderId={pendingRenameFolderId}
-                    onConsumePendingExpand={consumePendingExpand}
-                    onConsumePendingRename={consumePendingRename}
-                  />
-                ))}
-            </NavigatorSection>
-          ) : null}
-
-          {tree.length === 0 || unpinnedRoots.length > 0 ? (
-            <NavigatorSection title="Folders" icon={<FoldersIcon size={12} weight="fill" />}>
-              {tree.length === 0 ? (
-                <p className="px-1 text-[11px] text-muted-foreground/80">
-                  No folders yet. Click the folder-plus icon above to create one.
-                </p>
-              ) : (
-                unpinnedRoots
+        {/*
+         * `folders === undefined` is the loading state. Render an empty
+         * frame (the search header above already stands), not the tree —
+         * the "No folders yet" empty state below would otherwise flash
+         * prematurely before the query resolves. Once loaded, the rows
+         * fade in via `animate-enter-fade` (CSS-level reduced-motion
+         * handling), matching the threads rail's frame-then-content feel.
+         */}
+        {folders === undefined ? null : (
+          <div className="flex animate-enter-fade flex-col gap-3 p-3">
+            {pinnedRoots.length > 0 ? (
+              <NavigatorSection title="Pinned" icon={<PushPinSimpleIcon size={12} weight="fill" />}>
+                {pinnedRoots
                   .filter((node) => folderMatchesSearch(node))
                   .map((node) => (
                     <FolderTreeBranch
@@ -355,32 +341,65 @@ export function FolderNavigator({
                       onConsumePendingExpand={consumePendingExpand}
                       onConsumePendingRename={consumePendingRename}
                     />
-                  ))
-              )}
-            </NavigatorSection>
-          ) : null}
+                  ))}
+              </NavigatorSection>
+            ) : null}
 
-          {uncategorizedArtifacts.length > 0 ? (
-            <NavigatorSection
-              title="Repository root"
-              description="Artifacts left at root (no folder). Move them into a folder via the kebab menu."
-            >
-              {uncategorizedArtifacts.map((artifact) => {
-                if (filterPredicate && !filterPredicate(artifact)) return null;
-                return (
-                  <ArtifactRow
-                    key={artifact._id}
-                    artifact={artifact}
-                    isSelected={effectiveSelectedArtifactId === artifact._id}
-                    onSelect={handleSelectArtifact}
-                    indent={0}
-                    isUnseen={isUnseen ? isUnseen(artifact) : false}
-                  />
-                );
-              })}
-            </NavigatorSection>
-          ) : null}
-        </div>
+            {tree.length === 0 || unpinnedRoots.length > 0 ? (
+              <NavigatorSection title="Folders" icon={<FoldersIcon size={12} weight="fill" />}>
+                {tree.length === 0 ? (
+                  <p className="px-1 text-[11px] text-muted-foreground/80">
+                    No folders yet. Click the folder-plus icon above to create one.
+                  </p>
+                ) : (
+                  unpinnedRoots
+                    .filter((node) => folderMatchesSearch(node))
+                    .map((node) => (
+                      <FolderTreeBranch
+                        key={node.id}
+                        repositoryId={repositoryId}
+                        node={node}
+                        artifactsByFolder={artifactsByFolder}
+                        indent={0}
+                        selectedArtifactId={effectiveSelectedArtifactId}
+                        selectedFolderId={selectedFolderId}
+                        onSelectArtifact={handleSelectArtifact}
+                        onSelectFolder={setSelectedFolderId}
+                        filterArtifact={filterPredicate}
+                        folderMatchesSearch={folderMatchesSearch}
+                        isUnseen={isUnseen}
+                        pendingExpandFolderId={pendingExpandFolderId}
+                        pendingRenameFolderId={pendingRenameFolderId}
+                        onConsumePendingExpand={consumePendingExpand}
+                        onConsumePendingRename={consumePendingRename}
+                      />
+                    ))
+                )}
+              </NavigatorSection>
+            ) : null}
+
+            {uncategorizedArtifacts.length > 0 ? (
+              <NavigatorSection
+                title="Repository root"
+                description="Artifacts left at root (no folder). Move them into a folder via the kebab menu."
+              >
+                {uncategorizedArtifacts.map((artifact) => {
+                  if (filterPredicate && !filterPredicate(artifact)) return null;
+                  return (
+                    <ArtifactRow
+                      key={artifact._id}
+                      artifact={artifact}
+                      isSelected={effectiveSelectedArtifactId === artifact._id}
+                      onSelect={handleSelectArtifact}
+                      indent={0}
+                      isUnseen={isUnseen ? isUnseen(artifact) : false}
+                    />
+                  );
+                })}
+              </NavigatorSection>
+            ) : null}
+          </div>
+        )}
       </SidebarScrollViewport>
     </div>
   );

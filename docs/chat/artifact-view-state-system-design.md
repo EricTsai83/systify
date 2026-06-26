@@ -24,7 +24,7 @@ content — the list looks the same as the last time they saw it.
 The dot has to satisfy four shape-of-the-world requirements:
 
 1. **Appears when an artifact is created or edited after the viewer last
-   opened it.** A System Design generation that produces five new
+   opened it.** A Design Docs generation that produces five new
    documents should light up five dots; editing one of them later should
    light its dot again.
 2. **Disappears on activation.** Clicking the row, switching to its tab,
@@ -116,7 +116,7 @@ their `lastChanged ≤ bootstrap` and no dots show.
 
 It collapses on rollout. A repository imported six months before the
 feature ships has many artifacts whose `lastChanged > _creationTime` —
-the viewer generated them through chat or Generate System Design over
+the viewer generated them through chat or Design Docs generation over
 those six months. On first load after rollout, every one of them
 satisfies the dot condition, and the navigator drowns the user in
 false unread signals. The viewer has, in fact, "seen" all of them

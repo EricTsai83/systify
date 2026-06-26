@@ -22,7 +22,7 @@ The GitHub App integration owns:
 - storing a local installation projection in Convex
 - minting installation access tokens
 - listing and searching repositories visible to the installation
-- verifying repository access before import, sync, sandbox activation, or System Design generation
+- verifying repository access before import, sync, sandbox activation, or Design Docs generation
 - fetching repository metadata and selected file contents through the GitHub API
 - receiving installation lifecycle webhooks
 
@@ -417,7 +417,7 @@ This probe is used in two forms:
 - `verifyRepoAccess` is a public action for early UI feedback before import records are created.
 - `checkRepoAccess` is an internal action used by import and sandbox-backed flows before they spend more resources.
 
-The same GitHub probe protects import, sync, sandbox-grounded Discuss, and System Design generation. Losing GitHub access after import does not grant later sandbox-backed access.
+The same GitHub probe protects import, sync, sandbox-grounded Discuss, and Design Docs generation. Losing GitHub access after import does not grant later sandbox-backed access.
 
 ## Import And Sync GitHub API Flow
 

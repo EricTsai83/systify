@@ -326,7 +326,13 @@ export function LibraryArtifactDraftCard({
       </div>
 
       {isActive ? (
-        <div className="mt-3 space-y-2">
+        // Pre-allocate vertical room for the result. Without this the card is a
+        // thin progress strip while queued/running, then jumps ~10rem+ when the
+        // ready preview mounts — shoving the sibling cards in the ask panel's
+        // `space-y-5` list. Reserving here means the result fills space that was
+        // already there. The reserved area reads as "result loading below the
+        // progress bar", which is the expected shape for a generating card.
+        <div className="mt-3 min-h-40 space-y-2">
           <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
             <span className="truncate">{entry.job?.stage ?? "Preparing code access…"}</span>
             <span className="shrink-0 tabular-nums">{progress}%</span>

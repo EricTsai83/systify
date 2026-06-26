@@ -37,8 +37,8 @@ describe("describeRepositoryGuideFailure", () => {
     });
 
     expect(descriptor).toMatchObject({
-      title: "Couldn't generate 2 guide sections",
-      buttonLabel: "Generate 2 guide sections",
+      title: "Couldn't generate 2 design docs",
+      buttonLabel: "Generate 2 design docs",
       selections: ["readme_summary", "security_overview"],
     });
     expect(descriptor?.reasonText).toMatch(/model didn't produce/i);
@@ -53,7 +53,7 @@ describe("describeRepositoryGuideFailure", () => {
     });
 
     expect(descriptor?.reasonText).toBe(
-      "Some guide sections couldn't be generated. The next attempt will retry the failed ones.",
+      "Some design docs couldn't be generated. The next attempt will retry the failed ones.",
     );
   });
 
@@ -74,9 +74,9 @@ describe("describeRepositoryGuideFailure", () => {
     });
 
     expect(descriptor).toEqual({
-      title: "Couldn't generate 2 guide sections",
+      title: "Couldn't generate 2 design docs",
       reasonText: "Live access to the repository wasn't available.",
-      buttonLabel: "Generate 2 guide sections",
+      buttonLabel: "Generate 2 design docs",
       selections: ["readme_summary", "data_model_overview"],
     });
   });

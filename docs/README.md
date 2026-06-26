@@ -2,7 +2,7 @@
 
 This folder contains the system design documentation for the current Systify codebase. The documents focus on the current state and are meant to help engineers quickly understand the system boundaries, core data model, key workflows, and external integrations.
 
-For cross-cutting infrastructure concerns (LLM gateway, multi-provider strategy, rate limiting and fairness, System Design generation, cost tracking, and the eval harness), see [`architecture/`](./architecture/README.md) as the source of truth. The docs in this folder focus on product flows and reference the architecture docs where needed. For provider-level cost surfaces across WorkOS, GitHub, Convex, Daytona, LLM providers, and Vercel, see [`integrations/external-service-pricing.md`](./integrations/external-service-pricing.md).
+For cross-cutting infrastructure concerns (LLM gateway, multi-provider strategy, rate limiting and fairness, Design Docs generation / internal System Design generation, cost tracking, and the eval harness), see [`architecture/`](./architecture/README.md) as the source of truth. The docs in this folder focus on product flows and reference the architecture docs where needed. For provider-level cost surfaces across WorkOS, GitHub, Convex, Daytona, LLM providers, and Vercel, see [`integrations/external-service-pricing.md`](./integrations/external-service-pricing.md).
 
 ## Document Structure
 
@@ -150,7 +150,7 @@ this folder and add it to the appropriate group.
 
 ## Topic Index
 
-Use this as a guided reading order for finding the doc that answers a specific topic. For cross-cutting infrastructure (LLM gateway, multi-provider strategy, rate limiting and fairness, System Design generation, cost tracking, eval harness), see the sibling [`architecture/`](./architecture/README.md) index — those docs are the source of truth for those areas, and the entries below cross-link rather than duplicate them.
+Use this as a guided reading order for finding the doc that answers a specific topic. For cross-cutting infrastructure (LLM gateway, multi-provider strategy, rate limiting and fairness, Design Docs generation / internal System Design generation, cost tracking, eval harness), see the sibling [`architecture/`](./architecture/README.md) index — those docs are the source of truth for those areas, and the entries below cross-link rather than duplicate them.
 
 - Rate limiting and lease recovery: `integrations/integrations-and-operations.md` (see also `architecture/rate-limiting-and-fairness.md` for the gateway-side fairness model)
 - External service pricing and cost triggers: `integrations/external-service-pricing.md` (see also `architecture/cost-tracking.md` for LLM token math)
@@ -159,7 +159,7 @@ Use this as a guided reading order for finding the doc that answers a specific t
 - Daytona webhook reconciliation path: `sandbox/daytona-webhook-reconciliation-system-design.md`
 - Import persistence idempotency and finalize boundary: `repository/import-persistence-system-design.md`
 - Chat context retrieval strategy: `chat/chat-context-retrieval-system-design.md`
-- Service Modes: Discuss, Library, and System Design: `chat/service-modes-discuss-library-system-design.md`
+- Service Modes: Discuss, Library, and Design Docs: `chat/service-modes-discuss-library-system-design.md`
 - Repository file-count denormalization: `repository/repository-filecount-rollout-system-design.md`
 - Chat streaming architecture: `chat/streaming-reply-optimization-system-design.md`
 - Vercel + Convex deployment model: `integrations/vercel-convex-deployment-system-design.md`
@@ -198,9 +198,9 @@ Use this as a guided reading order for finding the doc that answers a specific t
 
 ### `chat/chat-and-analysis-pipeline.md`
 
-- What data sources do Discuss (ungrounded and sandbox-grounded), Library Ask, and System Design generation depend on, and how do they differ?
+- What data sources do Discuss (ungrounded and sandbox-grounded), Library Ask, and Design Docs generation depend on, and how do they differ?
 - How is an assistant reply created, streamed, completed, or failed?
-- Why can sandbox-grounded Discuss and System Design generation become unavailable because of sandbox state?
+- Why can sandbox-grounded Discuss and Design Docs generation become unavailable because of sandbox state?
 
 ### `integrations/integrations-and-operations.md`
 

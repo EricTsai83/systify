@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { internalMutation, internalQuery, mutation, query, type QueryCtx } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
 import { isActiveRepository, requireActiveRepositoryForViewer } from "./lib/repositoryAccess";
 import { assertFeatureAccess, requiresHighReasoningAccess, requiresPremiumModelAccess } from "./lib/entitlements";
 import { isOwnedBy, loadOwnedDoc } from "./lib/ownedDocs";
@@ -71,9 +71,9 @@ const KIND_RUN_TERMINAL_STATUSES = new Set<Doc<"systemDesignKindRuns">["status"]
 ]);
 
 /**
- * Library System Design generation entry point.
+ * Library Design Docs generation entry point.
  *
- * The user opens the Generate System Design dialog from the Library panel,
+ * The user opens the Design Docs generation dialog from the Library panel,
  * ticks the kinds they want, and submits — this mutation validates the
  * request, ensures the default folder tree exists, creates a tracking job,
  * and schedules the Node action that performs the actual generation.
@@ -143,14 +143,15 @@ export const requestSystemDesignGeneration = mutation({
     const sandboxId: Id<"sandboxes"> | undefined = repository.latestSandboxId ?? undefined;
 
     // Per-repository dedup: only one active System Design job per
-    // repository at a time. Two concurrent triggers against the same
-    // repo (e.g. two browser tabs) collapse to the first job's id.
-    // Cross-user collisions are not possible today — each repository
-    // belongs to exactly one owner — but the scope key uses
-    // repository rather than user so a future shared-repo model
-    // inherits this dedup automatically.
+    // repository at a time. If the viewer submits additional sections while
+    // one is already queued/running, merge those sections into the active
+    // job instead of spawning a parallel sandbox-backed generation.
     const activeJob = await findActiveLibrarySystemDesignJob(ctx, repository._id, now);
     if (activeJob) {
+      await appendSelectionsToActiveSystemDesignJob(ctx, {
+        job: activeJob,
+        selections: generationPlan.selections,
+      });
       return { jobId: activeJob._id };
     }
 
@@ -201,6 +202,26 @@ export const requestSystemDesignGeneration = mutation({
   },
 });
 
+async function appendSelectionsToActiveSystemDesignJob(
+  ctx: MutationCtx,
+  args: {
+    job: Doc<"jobs">;
+    selections: readonly SystemDesignKind[];
+  },
+): Promise<void> {
+  const currentSelections = normalizeSystemDesignSelections(args.job.selections ?? []);
+  const currentSet = new Set<SystemDesignKind>(currentSelections);
+  const additions = args.selections.filter((kind) => !currentSet.has(kind));
+  if (additions.length === 0) {
+    return;
+  }
+  const mergedSelections = [...currentSelections, ...additions];
+  await ctx.db.patch(args.job._id, {
+    selections: mergedSelections,
+    outputSummary: buildSystemDesignJobSummary(mergedSelections, args.job.status === "queued" ? "queued" : "running"),
+  });
+}
+
 async function findActiveLibrarySystemDesignJob(
   ctx: QueryCtx,
   repositoryId: Id<"repositories">,
@@ -226,6 +247,17 @@ export const getActiveSystemDesignJob = query({
       return null;
     }
     return await findActiveLibrarySystemDesignJob(ctx, args.repositoryId, Date.now());
+  },
+});
+
+export const getGenerationJobSelections = internalQuery({
+  args: { jobId: v.id("jobs") },
+  handler: async (ctx, args): Promise<SystemDesignKind[]> => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job || job.kind !== "system_design") {
+      return [];
+    }
+    return normalizeSystemDesignSelections(job.selections ?? []);
   },
 });
 
@@ -297,8 +329,9 @@ export const markGenerationStarted = internalMutation({
       leaseExpiresAt: now + SYSTEM_DESIGN_JOB_LEASE_MS,
     });
     if (result) {
+      const selections = normalizeSystemDesignSelections(result.selections ?? args.selections);
       await ctx.db.patch(args.jobId, {
-        outputSummary: buildSystemDesignJobSummary(args.selections as SystemDesignKind[], "running"),
+        outputSummary: buildSystemDesignJobSummary(selections, "running"),
       });
     }
     return { started: result !== null };
@@ -344,24 +377,48 @@ export const updateGenerationProgress = internalMutation({
 export const completeGeneration = internalMutation({
   args: {
     jobId: v.id("jobs"),
-    selections: v.array(systemDesignKindValidator),
+    completedSelections: v.array(systemDesignKindValidator),
     succeededCount: v.number(),
     failedCount: v.number(),
   },
+  returns: v.object({
+    status: v.union(v.literal("completed"), v.literal("needs_more"), v.literal("not_running")),
+    selections: v.array(systemDesignKindValidator),
+  }),
   handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job || job.kind !== "system_design" || job.status !== "running") {
+      return { status: "not_running" as const, selections: [] };
+    }
+
+    const jobSelections = normalizeSystemDesignSelections(job.selections ?? []);
+    const completedSelections = normalizeSystemDesignSelections(args.completedSelections);
+    const selections = jobSelections.length > 0 ? jobSelections : completedSelections;
+    const completedSet = new Set<SystemDesignKind>(completedSelections);
+    const remaining = selections.filter((kind) => !completedSet.has(kind));
+
+    if (remaining.length > 0) {
+      await updateRunningJobProgress(ctx, {
+        jobId: args.jobId,
+        expectedKind: "system_design",
+        stage: `Generated ${completedSelections.length} of ${selections.length}; continuing with new selections`,
+        progress: selections.length === 0 ? 0 : completedSelections.length / selections.length,
+      });
+      return { status: "needs_more" as const, selections };
+    }
+
     const summary =
       args.failedCount === 0
-        ? `Generated ${args.succeededCount} of ${args.selections.length} document${
-            args.selections.length === 1 ? "" : "s"
-          }.`
-        : `Generated ${args.succeededCount} of ${args.selections.length}; ${args.failedCount} failed.`;
-    await completeRunningJob(ctx, {
+        ? `Generated ${args.succeededCount} of ${selections.length} document${selections.length === 1 ? "" : "s"}.`
+        : `Generated ${args.succeededCount} of ${selections.length}; ${args.failedCount} failed.`;
+    const completed = await completeRunningJob(ctx, {
       jobId: args.jobId,
       expectedKind: "system_design",
       completedAt: Date.now(),
       outputSummary: summary,
       progress: 1,
     });
+    return { status: completed ? ("completed" as const) : ("not_running" as const), selections };
   },
 });
 
@@ -377,14 +434,13 @@ export const failGeneration = internalMutation({
   },
 });
 
-const STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE =
-  "The System Design generation stalled and was automatically marked as failed.";
+const STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE = "Design Docs generation stalled and was automatically marked as failed.";
 
 const STALE_SYSTEM_DESIGN_RESUME_EXHAUSTED_MESSAGE =
-  "The System Design generation stalled repeatedly and was marked as failed after exhausting resume attempts.";
+  "Design Docs generation stalled repeatedly and was marked as failed after exhausting resume attempts.";
 
 /**
- * Background stale-job recovery for System Design generation. Called by
+ * Background stale-job recovery for internal System Design generation. Called by
  * `opsNode.recoverStaleInteractiveJobs` when a `system_design`-kind job
  * has overrun its lease.
  *

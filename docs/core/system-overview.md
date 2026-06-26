@@ -6,7 +6,7 @@ This document describes the overall system boundaries of Systify. Its goal is to
 
 ## Product Positioning
 
-Systify is an architecture analysis app that treats **live imported code as the eventual source of truth (SSOT)**: indexing reads the GitHub API directly, while sandbox-grounded chat and System Design tooling operate on Daytona-hosted clones provisioned on demand. Users may **begin without attaching a repository** (repoless Discuss threads under /chat/:threadId) and later bind a repo so import, Library, and RAG surfaces come online. **`artifacts`** are markdown (and optionally structured traces) alongside the codebase: explanatory, citable outputs—not a substitute for the tree chunks in `repoFiles` / `repoChunks`. Over time artifacts can expose **minimal import-level drift cues** (`alignedImportCommitSha` vs the repository's latest import SHA) separate from sandbox-grounded "verification" freshness (`lastVerifiedAt`).
+Systify is an architecture analysis app that treats **live imported code as the eventual source of truth (SSOT)**: indexing reads the GitHub API directly, while sandbox-grounded chat and Design Docs generation operate on Daytona-hosted clones provisioned on demand. Users may **begin without attaching a repository** (repoless Discuss threads under /chat/:threadId) and later bind a repo so import, Library, and RAG surfaces come online. **`artifacts`** are markdown (and optionally structured traces) alongside the codebase: explanatory, citable outputs—not a substitute for the tree chunks in `repoFiles` / `repoChunks`. Over time artifacts can expose **minimal import-level drift cues** (`alignedImportCommitSha` vs the repository's latest import SHA) separate from sandbox-grounded "verification" freshness (`lastVerifiedAt`).
 
 The product separates **Discuss** from **Library** by task:
 
@@ -15,13 +15,13 @@ The product separates **Discuss** from **Library** by task:
 | **Discuss** | Open-ended exploration; per-message **Library** and **Sandbox** grounding toggles let a single reply pull in artifact RAG, live-source tools, both, or neither. Long-form reading still biases toward Library. |
 | **Library** | Artifact-first: the **opened artifact** anchors context; Ask chat is chunked-RAG against artifacts for that repo. Threads for Library Ask stay next to Ask in layout. |
 
-**Attach repository** sets `threads.repositoryId` on the thread (a repoless thread is upgraded in place); sandbox-grounded Discuss and System Design generation reuse that repository binding for sandbox sessions, indexed code, and artifacts—they are **not** "thread-only decoration." Attaching **does not rewrite** historical messages; only newer replies gain the new grounding via `getReplyContext`. Swapping the bound repo mid-thread is discouraged; UI may expose it behind an explicit confirmation that scrollback stays on the older context unless the user forks to a new thread.
+**Attach repository** sets `threads.repositoryId` on the thread (a repoless thread is upgraded in place); sandbox-grounded Discuss and Design Docs generation reuse that repository binding for sandbox sessions, indexed code, and artifacts—they are **not** "thread-only decoration." Attaching **does not rewrite** historical messages; only newer replies gain the new grounding via `getReplyContext`. Swapping the bound repo mid-thread is discouraged; UI may expose it behind an explicit confirmation that scrollback stays on the older context unless the user forks to a new thread.
 
-After GitHub authorization, the system imports repositories directly through the GitHub API (no sandbox involved), extracts files and chunks into Convex, and offers two foreground service modes plus background analysis. Sandboxes are provisioned lazily — only when a sandbox-grounded Discuss reply or System Design generation actually needs a live filesystem:
+After GitHub authorization, the system imports repositories directly through the GitHub API (no sandbox involved), extracts files and chunks into Convex, and offers two foreground service modes plus background analysis. Sandboxes are provisioned lazily — only when a sandbox-grounded Discuss reply or Design Docs generation actually needs a live filesystem:
 
 - **Discuss**: free-form chat with per-message Library / Sandbox grounding toggles; defaults to **no repo** until the user attaches one to the thread.
 - **Library**: read and edit artifact markdown plus **Ask** (hybrid retrieval over artifact chunks), with layout favoring documents on one side and thread + Ask on the other.
-- **System Design generation**: a sandbox-backed job kicked off from the **Generate System Design** button on an empty Library page (or from the Discuss composer's grounding toggle bar when Library grounding is closed for lack of artifacts). It inspects the repository and emits a starter set of 8 System Design artifacts (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`) for Library Ask and sandbox-grounded Discuss citations.
+- **Design Docs generation**: a sandbox-backed job kicked off from the Design Docs menu / overview (or from the Discuss composer's grounding toggle bar when Library grounding is closed for lack of artifacts). It inspects the repository and emits selected optional templates, up to 8 (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`), as generated docs for Library Ask and sandbox-grounded Discuss citations.
 
 ## Main Runtime Boundaries
 
@@ -87,7 +87,7 @@ The main application shell is still centered on `src/components/repository-shell
 The backend is built entirely on Convex, with no separate Express or Nest API layer. The logic is split across five entry types:
 
 - `query`: reads frontend-facing data such as repositories, threads, messages, and artifacts
-- `mutation`: creates imports, sends messages, requests System Design generation, and deletes data
+- `mutation`: creates imports, sends messages, requests Design Docs generation, and deletes data
 - `action` / `internalAction`: runs Node-runtime work such as GitHub App, Daytona, and LLM gateway streaming (OpenAI + Anthropic via `convex/lib/llmGateway.ts`)
 - `httpAction`: handles GitHub callbacks plus GitHub and Daytona webhooks
 - `cron`: periodically cleans up sandboxes and repairs webhook backlog
@@ -111,10 +111,10 @@ That means Convex simultaneously serves as the application database, application
 - `importsNode.runImportPipeline` then runs in the Node runtime to:
   - validate repository access via the GitHub App installation
   - fetch the repository snapshot through the GitHub API (`fetchRepositorySnapshot` in `githubRepoFetcher.ts`) — metadata, recursive tree, README, package manifests, important file contents
-  - seed the default System Design folder tree for the repository
+  - seed the default internal System Design folder tree for the repository
   - write `repoFiles` and `repoChunks` for retrieval
-- Import is **sandbox-free**. The Daytona SDK is not touched at all by the pipeline; `repositories.latestSandboxId` is left unchanged so any sandbox previously provisioned by sandbox-grounded Discuss or System Design stays put.
-- Import does **not** generate any artifact bodies on its own. The user later opts into artifact creation by clicking **Generate System Design** from the empty Library page.
+- Import is **sandbox-free**. The Daytona SDK is not touched at all by the pipeline; `repositories.latestSandboxId` is left unchanged so any sandbox previously provisioned by sandbox-grounded Discuss or Design Docs generation stays put.
+- Import does **not** generate any artifact bodies on its own. The user later opts into artifact creation by choosing optional Design Docs templates.
 
 ### 3. Chat and analysis
 
@@ -124,7 +124,7 @@ That means Convex simultaneously serves as the application database, application
 - Durable chat history lives in `messages`, while active in-flight stream state lives in `messageStreams` and `messageStreamChunks`.
 - When provider usage is available, chat finalization also writes token counts to `messages` and `jobs`, plus an estimated job cost.
 - Library Ask retrieves artifact chunks from `artifactChunks`; sandbox-grounded Discuss replies use the repository sandbox through guarded tools (`read_file`, `list_dir`, `run_shell`).
-- System Design generation creates a `system_design` job and runs focused inspection against the sandbox to produce a starter set of 8 System Design artifacts (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`).
+- Design Docs generation creates a `system_design` job and runs focused inspection against the sandbox to produce selected generated docs.
 
 ### 4. GitHub integration
 
@@ -137,9 +137,9 @@ That means Convex simultaneously serves as the application database, application
 ### 5. Sandbox lifecycle
 
 - Sandboxes are provisioned **lazily**. Repository import never touches Daytona; users who only use ungrounded Discuss or Library never incur sandbox cost.
-- A sandbox is provisioned on the first activation of the Discuss composer's Sandbox grounding toggle on a repository (`requestSandboxActivation` → `sandboxActivationNode.runSandboxActivation`), or when System Design generation includes at least one LLM-backed kind (`systemDesignNode.runSystemDesignGeneration`, gated by `ensureSandboxReady`).
+- A sandbox is provisioned on the first activation of the Discuss composer's Sandbox grounding toggle on a repository (`requestSandboxActivation` → `sandboxActivationNode.runSandboxActivation`), or when Design Docs generation includes at least one LLM-backed template (`systemDesignNode.runSystemDesignGeneration`, gated by `ensureSandboxReady`).
 - `ensureSandboxReady` (in `convex/lib/sandboxLiveness.ts`) is the single orchestrator for "make a sandbox usable for this repository right now". It probes Daytona, wakes a stopped sandbox, or provisions a fresh one and patches `repositories.latestSandboxId` to the result.
-- Cost-control affordances live on the on-demand path: the repository-level sandbox-session row in `sandboxSessions` carries `spentCents` for per-session running cost, the chat-bubble cost ticker renders the per-message estimate, and the per-user / per-repository daily caps in `rateLimit.ts` close the Sandbox grounding toggle when exhausted. Every System Design kind is LLM-backed and opens a sandbox — no kind skips Daytona (`convex/systemDesignNode.ts:140-156`).
+- Cost-control affordances live on the on-demand path: the repository-level sandbox-session row in `sandboxSessions` carries `spentCents` for per-session running cost, the chat-bubble cost ticker renders the per-message estimate, and the per-user / per-repository daily caps in `rateLimit.ts` close the Sandbox grounding toggle when exhausted. Every selected Design Docs template is LLM-backed and opens a sandbox — no selected template skips Daytona (`convex/systemDesignNode.ts:140-156`).
 - Daytona webhook ingestion writes a durable event inbox plus a remote-observation projection so Convex can converge faster when Daytona state changes.
 - Cron-based reconciliation still handles expired sandboxes, Daytona-side orphan resources, and stuck webhook backlog, making sandbox cleanup a core reliability concern rather than a best-effort background task.
 
@@ -152,14 +152,14 @@ flowchart TD
   ImportRepo[ImportRepository]
   IndexRepo[IndexAndPersist]
   ChatQuick[QuickChat]
-  GenerateSystemDesign[GenerateSystemDesign]
+  GenerateDesignDocs[GenerateDesignDocs]
   SyncRepo[SyncRepository]
 
   SignIn --> ConnectGitHub
   ConnectGitHub --> ImportRepo
   ImportRepo --> IndexRepo
   IndexRepo --> ChatQuick
-  IndexRepo --> GenerateSystemDesign
+  IndexRepo --> GenerateDesignDocs
   IndexRepo --> SyncRepo
 ```
 
@@ -184,7 +184,7 @@ flowchart TD
 ### Trade-Offs
 
 - `RepositoryShell` still carries a large amount of UI orchestration even after the hook extraction, so frontend state boundaries remain fairly centralized.
-- Library depends on artifact indexing quality; sandbox-grounded Discuss and System Design generation depend on sandbox availability.
+- Library depends on artifact indexing quality; sandbox-grounded Discuss and Design Docs generation depend on sandbox availability.
 - The system still relies mainly on table status fields plus the scheduler; only Daytona webhook handling currently uses an explicit inbox-and-projection pattern.
 
 ## Further Reading

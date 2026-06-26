@@ -61,8 +61,9 @@ import type {
 import { toast } from "sonner";
 
 const LOCKED_PLACEHOLDER = `${REPOSITORY_GUIDE_COPY.generateAction} to unlock Library Ask.`;
-const LOCKED_HINT = "Library Ask needs at least one guide section in this repository before you can send a question.";
+const LOCKED_HINT = "Library Ask needs at least one design doc in this repository before you can send a question.";
 const DEFAULT_UPDATE_DRAFT_PROMPT = "Refresh this artifact using the codebase as the source of truth.";
+const LIBRARY_ASK_SEND_BUTTON_STATES = ["Ask", "Asking..."] as const;
 
 type LibraryAskTimelineEntry =
   | { kind: "message"; _id: Doc<"messages">["_id"]; createdAt: number; message: Doc<"messages"> }
@@ -123,11 +124,11 @@ export function LibraryAskPanel({
   /**
    * Whether the repository has at least one indexed artifact. Library Ask
    * runs RAG over those artifacts, so when this is `false` the composer
-   * is locked and the empty state surfaces a "Generate System Design"
-   * CTA — the same gate the backend's `assertRepositoryModeEligible`
-   * enforces with `library_no_artifact`.
+   * is locked and the empty state surfaces a "Generate design docs" CTA.
+   * `undefined` means the artifact list is still loading; keep the panel in
+   * a pending state until the backend-backed gate has a real verdict.
    */
-  hasArtifacts: boolean;
+  hasArtifacts: boolean | undefined;
   onSelectArtifact: (artifactId: ArtifactId) => void;
   /**
    * Set or clear the active Ask thread (`?ask=`). Used for tab clicks, the
@@ -136,7 +137,7 @@ export function LibraryAskPanel({
    */
   onSelectThread: (threadId: ThreadId | null) => void;
   /**
-   * Open the Generate System Design dialog. Surfaced in the no-artifacts
+   * Open the Design Docs generation dialog. Surfaced in the no-artifacts
    * empty state and inline lock hint so the user can act on the gate
    * without leaving the Ask panel.
    */
@@ -396,8 +397,11 @@ export function LibraryAskPanel({
     }
   }, [archiveThread, closeTab, onSelectThread, pendingArchiveThreadId, threadId]);
 
-  const isLocked = !hasArtifacts;
-  const composerToolsReady = isLocked || Array.isArray(libraryCatalogEntries);
+  const artifactStatusDisabledReason = hasArtifacts === undefined ? "Checking Library documents…" : undefined;
+  const isLocked = hasArtifacts === false;
+  const composerToolsReady =
+    artifactStatusDisabledReason === undefined && (isLocked || Array.isArray(libraryCatalogEntries));
+  const composerToolsDisabledReason = composerToolsReady ? undefined : "Loading composer controls…";
   const selectedModelPick =
     selectedProvider && selectedModelName ? { provider: selectedProvider, modelName: selectedModelName } : null;
   const askModelAccessDisabledReason = useModelAccessDisabledReason({
@@ -423,10 +427,18 @@ export function LibraryAskPanel({
   const threadConfirmationDisabledReason =
     threadId && confirmedThreadId === null ? "Waiting for thread confirmation…" : undefined;
   const documentActionDisabledReason =
-    threadConfirmationDisabledReason ?? artifactDraftDisabledReason ?? draftModelAccessDisabledReason ?? undefined;
+    artifactStatusDisabledReason ??
+    threadConfirmationDisabledReason ??
+    artifactDraftDisabledReason ??
+    draftModelAccessDisabledReason ??
+    undefined;
   const draftMenuDisabledReason = artifactDraftDisabledReason;
   const composerDisabledReason =
-    askDisabledReason ?? threadConfirmationDisabledReason ?? (isLocked ? LOCKED_HINT : askModelAccessDisabledReason);
+    askDisabledReason ??
+    artifactStatusDisabledReason ??
+    threadConfirmationDisabledReason ??
+    composerToolsDisabledReason ??
+    (isLocked ? LOCKED_HINT : askModelAccessDisabledReason);
   const handleSubmit = useCallback(
     async (event: FormEvent<HTMLFormElement>, contentOverride?: string) => {
       if (composerDisabledReason != null || latestAssistantInFlight) {
@@ -438,11 +450,14 @@ export function LibraryAskPanel({
     [composerDisabledReason, handleLifecycleSendMessage, latestAssistantInFlight],
   );
   const composerHintId = isLocked && threadId ? "library-ask-locked-hint" : undefined;
-  const composerPlaceholder = isLocked
-    ? LOCKED_PLACEHOLDER
-    : activeArtifactId
-      ? "Question about the open artifact..."
-      : "Question about this library...";
+  const composerPlaceholder =
+    artifactStatusDisabledReason !== undefined
+      ? "Question about this library..."
+      : isLocked
+        ? LOCKED_PLACEHOLDER
+        : activeArtifactId
+          ? "Question about the open artifact..."
+          : "Question about this library...";
   const repositoryCodeLabel = getRepositoryCodeDraftLabel(liveSourceStatus);
   const openCreateDraft = useCallback(() => {
     setError(null);
@@ -599,6 +614,7 @@ export function LibraryAskPanel({
       <LibraryAskBody
         threadId={threadState.threadId}
         confirmedThreadId={threadState.confirmedThreadId}
+        isArtifactStatusLoading={artifactStatusDisabledReason !== undefined}
         isLocked={isLocked}
         draftCards={draftCards}
         conversationScroll={conversationScroll}
@@ -705,6 +721,7 @@ function LibraryAskThreadChrome({
 function LibraryAskBody({
   threadId,
   confirmedThreadId,
+  isArtifactStatusLoading,
   isLocked,
   draftCards,
   conversationScroll,
@@ -721,6 +738,7 @@ function LibraryAskBody({
 }: {
   threadId: ThreadId | null;
   confirmedThreadId: ThreadId | null;
+  isArtifactStatusLoading: boolean;
   isLocked: boolean;
   draftCards: ReactNode;
   conversationScroll: ReturnType<typeof useChatScroll>;
@@ -751,6 +769,9 @@ function LibraryAskBody({
         onDraftRegenerated={onDraftRegenerated}
       />
     );
+  }
+  if (isArtifactStatusLoading) {
+    return <div aria-hidden="true" data-testid="library-ask-artifacts-loading" className="min-h-0 flex-1" />;
   }
   if (isLocked) {
     return (
@@ -973,6 +994,7 @@ function LibraryAskComposer({
     <div className="border-t border-border px-4 py-3">
       {state.error ? <p className="mb-2 text-xs text-destructive">{state.error}</p> : null}
       <PromptInput
+        className="[&_[data-slot=input-group]]:min-h-[9rem]"
         onSubmit={(message: PromptInputSubmitMessage, event) => {
           void onSubmit(event, message.text);
         }}
@@ -985,11 +1007,18 @@ function LibraryAskComposer({
           placeholder={state.placeholder}
           className="min-h-24 text-sm"
           readOnly={state.isSending || state.latestAssistantInFlight || state.isWaitingForThreadConfirmation}
-          disabled={state.disabledReason != null && !state.isWaitingForThreadConfirmation}
           aria-describedby={state.hintId}
         />
-        <PromptInputFooter>
-          <LibraryAskComposerTools state={state} tools={tools} />
+        <PromptInputFooter className="h-11 min-h-11 flex-nowrap items-center overflow-hidden">
+          {state.toolsReady ? (
+            <LibraryAskComposerTools tools={tools} />
+          ) : (
+            <div
+              aria-hidden="true"
+              data-testid="library-ask-composer-tools-placeholder"
+              className="h-8 min-h-8 min-w-0 flex-1"
+            />
+          )}
           <LibraryAskSendButton state={state} />
         </PromptInputFooter>
       </PromptInput>
@@ -997,24 +1026,18 @@ function LibraryAskComposer({
   );
 }
 
-function LibraryAskComposerTools({
-  state,
-  tools,
-}: {
-  state: LibraryAskComposerState;
-  tools: LibraryAskComposerToolsState;
-}) {
-  if (!state.toolsReady) {
-    return <div aria-hidden="true" data-testid="library-ask-composer-tools-placeholder" className="min-h-8 flex-1" />;
-  }
+function LibraryAskComposerTools({ tools }: { tools: LibraryAskComposerToolsState }) {
   return (
-    <PromptInputTools>
+    <PromptInputTools
+      data-testid="library-ask-composer-tools"
+      className="h-8 min-h-8 min-w-0 flex-1 animate-soft-enter overflow-hidden"
+    >
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
             type="button"
             className={[
-              "inline-flex h-8 w-auto min-w-0 max-w-32 items-center justify-start gap-1.5 rounded-none border-none bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none transition-colors",
+              "inline-flex h-8 w-auto min-w-0 max-w-32 shrink-0 items-center justify-start gap-1.5 rounded-none border-none bg-transparent px-2 py-0 text-xs font-medium text-muted-foreground shadow-none transition-colors",
               "hover:bg-accent hover:text-foreground",
               "focus-visible:bg-transparent focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
               "aria-expanded:bg-accent aria-expanded:text-foreground",
@@ -1068,6 +1091,7 @@ function LibraryAskComposerTools({
               ? tools.premiumModelsDisabledReason
               : null
           }
+          triggerClassName="h-8 w-32 max-w-32 py-0"
           catalogEntries={tools.libraryCatalogEntries}
         />
       ) : null}
@@ -1080,6 +1104,7 @@ function LibraryAskComposerTools({
           preferenceScope="library"
           disabledReasoningEfforts={tools.highReasoningDisabledReason ? ["high", "xhigh"] : []}
           disabledReasoningEffortMessage={tools.highReasoningDisabledReason}
+          triggerClassName="h-8 w-24 max-w-24 py-0"
           catalogEntries={tools.libraryCatalogEntries}
         />
       ) : null}
@@ -1096,7 +1121,7 @@ function LibraryAskSendButton({ state }: { state: LibraryAskComposerState }) {
       title={state.disabledReason ?? undefined}
     >
       <PaperPlaneTiltIcon size={14} weight="fill" />
-      <ButtonStateText current={state.isSending ? "Asking..." : "Ask"} states={["Ask", "Asking..."]} />
+      <ButtonStateText current={state.isSending ? "Asking..." : "Ask"} states={LIBRARY_ASK_SEND_BUTTON_STATES} />
     </Button>
   );
 }
@@ -1142,7 +1167,7 @@ function timelineEntrySender(entry: LibraryAskTimelineEntry): "user" | "assistan
 
 /**
  * Empty-state shown when the repository has no artifacts yet. The Ask panel
- * is the single home for the Generate System Design CTA — the Library
+ * is the single home for the Generate design docs CTA — the Library
  * main canvas only narrates the missing-document state and points users
  * here. Centering the hero + button together keeps the action immediately
  * below the description text, instead of stranded at the bottom of the

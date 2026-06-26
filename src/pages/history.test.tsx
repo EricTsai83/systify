@@ -208,7 +208,8 @@ describe("HistoryPage", () => {
     expect(groupSkeleton).not.toBeNull();
     expect(rowSkeleton).not.toBeNull();
     expect(historyCard.contains(groupSkeleton)).toBe(true);
-    expect(groupSkeleton?.querySelectorAll('[data-history-button-skeleton="true"]')).toHaveLength(9);
+    // 8 skeleton rows (THREAD_INITIAL_PAGE_SIZE) × 3 action buttons each.
+    expect(groupSkeleton?.querySelectorAll('[data-history-button-skeleton="true"]')).toHaveLength(24);
   });
 
   test("opens repository threads on their canonical routes", () => {

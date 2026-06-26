@@ -131,12 +131,12 @@ export function buildSystemDesignJobSummary(
   const titles = selections.map((kind) => SYSTEM_DESIGN_KIND_TITLES[kind]);
   const verb = state === "queued" ? "Queued" : "Generating";
   if (titles.length === 0) {
-    return `${verb} System Design documents`;
+    return `${verb} design docs`;
   }
   if (titles.length <= 2) {
     return `${verb} ${titles.join(" + ")}`;
   }
-  return `${verb} ${titles.length} System Design documents`;
+  return `${verb} ${titles.length} design docs`;
 }
 
 function assertCompleteSystemDesignModelPick(args: { provider?: LlmProvider; modelName?: string }): void {

@@ -23,7 +23,7 @@ still has in memory.
 In scope:
 
 - On-demand sandbox provisioning through `ensureSandboxReady`.
-- Sandbox activation and System Design generation, which both depend on
+- Sandbox activation and Design Docs generation, which both depend on
   on-demand Daytona sandboxes.
 - Failure cleanup after `provisionSandbox` has returned a Daytona `remoteId`.
 

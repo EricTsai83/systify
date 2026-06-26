@@ -81,7 +81,9 @@ vi.mock("@/components/ai-elements/prompt-input", async () => {
     ),
     PromptInputTextarea,
     PromptInputFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-    PromptInputTools: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+    PromptInputTools: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
+      <div {...props}>{children}</div>
+    ),
   };
 });
 
@@ -669,7 +671,7 @@ describe("LibraryAskPanel artifact drafts", () => {
     expect(screen.queryByTestId("library-ask-composer-tools-placeholder")).not.toBeInTheDocument();
   });
 
-  test("holds composer tools until the library model catalog is ready", () => {
+  test("reserves composer tool space while the library model catalog is loading", () => {
     mocks.useQuery.mockImplementation((reference: unknown, args: unknown) => {
       if (args === "skip") return undefined;
       const name = functionName(reference);
@@ -687,7 +689,7 @@ describe("LibraryAskPanel artifact drafts", () => {
     expect(screen.queryByRole("button", { name: "Draft" })).not.toBeInTheDocument();
     expect(screen.queryByText("GPT-5.5")).not.toBeInTheDocument();
     expect(screen.getByTestId("library-ask-composer-tools-placeholder")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask" })).toBeDisabled();
   });
 
   test("keeps composer tools visible while recent repository drafts are loading", () => {
@@ -697,7 +699,33 @@ describe("LibraryAskPanel artifact drafts", () => {
 
     expect(screen.getByRole("button", { name: "Draft" })).toBeInTheDocument();
     expect(screen.getByText("GPT-5.5")).toBeInTheDocument();
+    expect(screen.getByTestId("library-ask-composer-tools")).toHaveClass("animate-soft-enter");
     expect(screen.queryByTestId("library-ask-composer-tools-placeholder")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask" })).toBeInTheDocument();
+  });
+
+  test("waits for artifact metadata before choosing the Library Ask empty state", () => {
+    renderPanel({ hasArtifacts: undefined, onGenerate: vi.fn() });
+
+    expect(screen.getByTestId("library-ask-artifacts-loading")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Ask the Library" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "No design docs to ask about yet" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Generate design docs" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Draft" })).not.toBeInTheDocument();
+    expect(screen.getByTestId("library-ask-composer-tools-placeholder")).toBeInTheDocument();
+    expect(screen.getByRole("textbox")).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Ask" })).toBeDisabled();
+  });
+
+  test("keeps the composer editable when Library Ask sending is unavailable", () => {
+    renderPanel({ hasArtifacts: false, onGenerate: vi.fn() });
+
+    const textbox = screen.getByRole("textbox");
+    fireEvent.change(textbox, { target: { value: "What should I read first?" } });
+
+    expect(textbox).toBeEnabled();
+    expect(textbox).toHaveValue("What should I read first?");
+    expect(screen.getByRole("button", { name: "Generate design docs" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ask" })).toBeDisabled();
   });
 });
