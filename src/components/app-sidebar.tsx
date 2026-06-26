@@ -52,9 +52,7 @@ type AppSidebarLeftProps = {
   libraryArtifacts?: ReadonlyArray<ArtifactListItem>;
   libraryActiveArtifactId?: ArtifactId | null;
   onSelectLibraryArtifact?: (id: ArtifactId) => void;
-  onGenerate?: () => void;
   importDisabledReason?: string;
-  generateDisabledReason?: string;
   isUnseen?: (artifact: ArtifactListItem) => boolean;
 };
 
@@ -76,9 +74,7 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
     libraryArtifacts,
     libraryActiveArtifactId,
     onSelectLibraryArtifact,
-    onGenerate,
     importDisabledReason,
-    generateDisabledReason,
     isUnseen,
   } = props;
   const navigate = useNavigate();
@@ -132,15 +128,13 @@ export function AppSidebarLeft(props: AppSidebarLeftProps) {
         />
       ) : null}
 
-      {isLibraryMode && libraryRepositoryId && onSelectLibraryArtifact && onGenerate ? (
+      {isLibraryMode && libraryRepositoryId && onSelectLibraryArtifact ? (
         <SidebarContent className="min-h-0 flex-1">
           <LibraryTree
             repositoryId={libraryRepositoryId}
             artifacts={libraryArtifacts ?? []}
             selectedArtifactId={libraryActiveArtifactId ?? null}
             onSelectArtifact={onSelectLibraryArtifact}
-            onGenerate={onGenerate}
-            generateDisabledReason={generateDisabledReason}
             isUnseen={isUnseen}
             className="min-h-0 flex-1"
           />

@@ -72,23 +72,27 @@ describe("RepositoryGuideOverview", () => {
     expect(onSelectArtifact).toHaveBeenCalledWith("art_readme");
   });
 
-  test("disables the CTA and reflects per-section progress while a job runs", () => {
+  test("keeps the CTA available for adding sections while a job runs", () => {
     useQueryMock.mockReturnValue({
       status: "running",
       selections: ["architecture_overview"],
     });
 
+    const onGenerate = vi.fn();
     render(
       <RepositoryGuideOverview
         repositoryId={repositoryId}
         artifacts={[]}
         onSelectArtifact={vi.fn()}
-        onGenerate={vi.fn()}
+        onGenerate={onGenerate}
       />,
     );
 
     expect(screen.getByRole("heading", { name: /Generating your Repository Guide/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Generating/i })).toBeDisabled();
+    const cta = screen.getByRole("button", { name: /Add sections/i });
+    expect(cta).toBeEnabled();
+    fireEvent.click(cta);
+    expect(onGenerate).toHaveBeenCalledTimes(1);
     // The kind the job is producing shows the live "generating" affordance.
     expect(screen.getAllByText(/Generating…/i).length).toBeGreaterThan(0);
   });

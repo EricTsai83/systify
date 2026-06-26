@@ -113,6 +113,10 @@ export function GenerateSystemDesignDialog({
       setError(`Select at least one ${REPOSITORY_GUIDE_COPY.sectionName} to generate.`);
       return;
     }
+    if (jobInProgress && selectedAdditionsCount === 0) {
+      setError(`Select at least one new ${REPOSITORY_GUIDE_COPY.sectionName} to add.`);
+      return;
+    }
     if (!modelPick) {
       // `useDefaultModelPick` returns undefined until the catalog
       // query resolves. The submit button is disabled in that
@@ -137,6 +141,8 @@ export function GenerateSystemDesignDialog({
   });
 
   const jobInProgress = activeJob != null;
+  const queuedKinds = new Set<string>(activeJob?.selections ?? []);
+  const selectedAdditionsCount = Array.from(selected).filter((kind) => !queuedKinds.has(kind)).length;
   // Defensive reads: guard each field independently. The same `useQuery`
   // mock is shared across multiple queries in the test harness, so the
   // route that returns a non-cached-status payload (e.g. a `Doc<"jobs">`
@@ -231,8 +237,8 @@ export function GenerateSystemDesignDialog({
         {jobInProgress ? (
           <Alert>
             <AlertDescription className="text-[12px]">
-              A Repository Guide run is already in progress. Close this dialog and watch the folder navigator — new
-              guide sections will appear as they complete.
+              A Repository Guide run is already in progress. Sections already in this run are locked; select more to add
+              them to the same queued work.
             </AlertDescription>
           </Alert>
         ) : null}
@@ -245,7 +251,8 @@ export function GenerateSystemDesignDialog({
 
         <ul className="flex max-h-[60vh] flex-col gap-1 overflow-y-auto py-1">
           {REPOSITORY_GUIDE_SECTIONS.map((item) => {
-            const checked = selected.has(item.kind);
+            const alreadyQueued = queuedKinds.has(item.kind);
+            const checked = alreadyQueued || selected.has(item.kind);
             const SectionIcon = item.icon;
             return (
               <li key={item.kind}>
@@ -259,7 +266,7 @@ export function GenerateSystemDesignDialog({
                     className="mt-1 h-4 w-4 accent-primary"
                     checked={checked}
                     onChange={() => toggle(item.kind)}
-                    disabled={isSubmitting || jobInProgress}
+                    disabled={isSubmitting || alreadyQueued}
                   />
                   <div className="flex flex-1 flex-col gap-0.5">
                     <div className="flex items-center gap-2">
@@ -330,7 +337,11 @@ export function GenerateSystemDesignDialog({
               type="button"
               size="sm"
               onClick={() => void runSubmit()}
-              disabled={submitDisabledReason !== undefined || isSubmitting || jobInProgress || selected.size === 0}
+              disabled={
+                submitDisabledReason !== undefined ||
+                isSubmitting ||
+                (jobInProgress ? selectedAdditionsCount === 0 : selected.size === 0)
+              }
               title={submitDisabledReason}
             >
               {isSubmitting ? (
@@ -338,6 +349,8 @@ export function GenerateSystemDesignDialog({
                   <Spinner size={14} className="mr-2" />
                   Starting…
                 </>
+              ) : jobInProgress ? (
+                "Add selected"
               ) : (
                 REPOSITORY_GUIDE_COPY.generateSelectedAction
               )}

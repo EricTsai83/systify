@@ -108,25 +108,32 @@ describe("GenerateSystemDesignDialog", () => {
     });
   });
 
-  test("shows alert and disables inputs when a job is in progress", () => {
-    const mockJob = { _id: "job_1", status: "running" };
-    useQueryMock.mockReturnValue(mockJob);
+  test("allows adding more sections when a job is in progress", () => {
+    const mockJob = { _id: "job_1", status: "running", selections: ["readme_summary"] };
+    useQueryMock.mockImplementation((query: unknown) => {
+      const name = queryName(query);
+      if (name.endsWith("getActiveSystemDesignJob")) {
+        return mockJob;
+      }
+      if (name.endsWith("getDefaultModelPick")) {
+        return { provider: "openai", modelName: "gpt-5.5" };
+      }
+      if (name.endsWith("listPickableModels")) {
+        return [sandboxCatalogEntry];
+      }
+      return null;
+    });
     useMutationMock.mockReturnValue(vi.fn());
 
     render(<GenerateSystemDesignDialog open={true} onOpenChange={vi.fn()} repositoryId={repositoryId} />);
 
-    // Check that the alert is displayed
     expect(screen.getByText(/A Repository Guide run is already in progress/i)).toBeInTheDocument();
 
-    // Check that checkboxes are disabled
-    const checkboxes = screen.getAllByRole("checkbox");
-    for (const checkbox of checkboxes) {
-      expect(checkbox).toBeDisabled();
-    }
+    expect(screen.getByRole("checkbox", { name: /README Summary/i })).toBeDisabled();
+    expect(screen.getByRole("checkbox", { name: /Data Model Overview/i })).toBeEnabled();
 
-    // Check that Generate button is disabled
-    const generateBtn = screen.getByRole("button", { name: /Generate selected/i });
-    expect(generateBtn).toBeDisabled();
+    const generateBtn = screen.getByRole("button", { name: /Add selected/i });
+    expect(generateBtn).toBeEnabled();
   });
 
   test("submits the full default selection with the default model pick and closes dialog on success", async () => {

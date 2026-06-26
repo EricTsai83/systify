@@ -93,8 +93,14 @@ export const runSystemDesignGeneration = internalAction({
       return;
     }
 
-    const selections = args.selections.filter(isSystemDesignKind);
-    const totalCount = selections.length;
+    const initialSelections = args.selections.filter(isSystemDesignKind);
+    let selections = await ctx.runQuery(internal.systemDesign.getGenerationJobSelections, {
+      jobId: args.jobId,
+    });
+    if (selections.length === 0) {
+      selections = initialSelections;
+    }
+    let totalCount = selections.length;
 
     if (totalCount === 0) {
       await ctx.runMutation(internal.systemDesign.failGeneration, {
@@ -158,14 +164,27 @@ export const runSystemDesignGeneration = internalAction({
     const commitSha = context.repository.lastSyncedCommitSha;
     const forceRegenerate = args.forceRegenerate ?? false;
 
-    let completedCount = 0;
+    const completedKinds = new Set<string>();
     let succeeded = 0;
     let failed = 0;
 
     // Kinds run serially: each one is a sandbox-backed LLM session, so running
     // them in parallel would contend on the per-sandbox tool budget and the
     // gateway's per-user concurrency cap.
-    for (const kind of selections) {
+    while (true) {
+      selections = await ctx.runQuery(internal.systemDesign.getGenerationJobSelections, {
+        jobId: args.jobId,
+      });
+      if (selections.length === 0) {
+        selections = initialSelections;
+      }
+      totalCount = selections.length;
+
+      const kind = selections.find((selection) => !completedKinds.has(selection));
+      if (!kind) {
+        break;
+      }
+
       // Refresh the running job's lease before each kind so a long multi-kind
       // publication does not overrun the lease window and trigger a spurious
       // stale-recovery while progress is still happening.
@@ -196,18 +215,18 @@ export const runSystemDesignGeneration = internalAction({
       } else {
         failed += 1;
       }
-      completedCount += 1;
+      completedKinds.add(kind);
       await ctx.runMutation(internal.systemDesign.updateGenerationProgress, {
         jobId: args.jobId,
-        completedCount,
+        completedCount: completedKinds.size,
         totalCount,
-        stage: `Generated ${completedCount} of ${totalCount}: ${outcome.title}`,
+        stage: `Generated ${completedKinds.size} of ${totalCount}: ${outcome.title}`,
       });
     }
 
     await ctx.runMutation(internal.systemDesign.completeGeneration, {
       jobId: args.jobId,
-      selections: args.selections,
+      selections,
       succeededCount: succeeded,
       failedCount: failed,
     });

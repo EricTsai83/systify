@@ -102,13 +102,13 @@ export function RepositoryGuideOverview({
             size="lg"
             className="mt-1 gap-2"
             onClick={onGenerate}
-            disabled={generateDisabledReason !== undefined || isGenerating}
+            disabled={generateDisabledReason !== undefined}
             title={generateDisabledReason}
           >
             {isGenerating ? (
               <>
-                <Spinner size={16} />
-                Generating…
+                <SparkleIcon size={16} weight="bold" />
+                Add sections
               </>
             ) : (
               <>

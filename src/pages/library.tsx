@@ -274,8 +274,6 @@ function LibraryRepository({
         libraryArtifacts={allArtifacts}
         libraryActiveArtifactId={tabs.activeArtifactId}
         onSelectLibraryArtifact={tabs.openTab}
-        onGenerate={openGenerateDialog}
-        generateDisabledReason={generateSystemDesignDisabledReason}
         isUnseen={isUnseen}
       />
       <SidebarInset>
