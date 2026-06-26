@@ -19,6 +19,7 @@ export default defineConfig([
       "vite.config.ts",
       ".deepsec/**",
       ".claude/worktrees/**",
+      ".codex-worktrees/**",
     ],
   },
   {

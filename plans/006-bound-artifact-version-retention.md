@@ -7,7 +7,7 @@
 > in `plans/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
-> **Drift check (run first)**: `git diff --stat 23c0a02..HEAD -- convex/lib/artifactWrites.ts convex/artifactVersions.ts convex/schema.ts convex/artifactStore.test.ts`
+> **Drift check (run first)**: `git diff --stat 86121ff..HEAD -- convex/lib/artifactWrites.ts convex/artifactVersions.ts convex/schema.ts convex/artifactStore.test.ts`
 > If any in-scope file changed since this plan was written, compare the
 > "Current state" excerpts against the live code before proceeding; on a
 > mismatch, treat it as a STOP condition.
@@ -19,8 +19,8 @@
 - **Risk**: MED
 - **Depends on**: none
 - **Category**: perf / tech-debt
-- **Planned at**: commit `23c0a02`, refreshed 2026-06-24
-- **Prior implementation**: commit `e9b6bc2` on branch `worktree-agent-a363a7c418dc16742` was reviewed and approved before 008/009 landed, but it is not merged into `main`. Reuse it only after confirming it preserves the already-merged folder-kind index lookup and truthful `htmlValidationStatus` changes.
+- **Planned at**: commit `86121ff`, refreshed 2026-06-27
+- **Prior implementation**: commit `e9b6bc2` on branch `worktree-agent-a363a7c418dc16742` was reviewed and approved before the artifact `summary` field was renamed to `description`, and it is not merged into the current branch. Reuse it only by rebasing or manually reapplying the approach against the current `description` API, and confirm it preserves the already-merged folder-kind index lookup and truthful `htmlValidationStatus` changes.
 
 ## Why this matters
 

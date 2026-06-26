@@ -26,6 +26,7 @@ dist-ssr
 
 .claude/settings.local.json
 .claude/worktrees/
+.codex-worktrees/
 
 # Local eval harness output (System Design eval JSONL records).
 # Operator-only; never committed.
