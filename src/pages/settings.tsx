@@ -360,7 +360,7 @@ const USAGE_COPY = {
     },
     systemDesign: {
       label: REPOSITORY_GUIDE_COPY.name,
-      description: "LLM usage from generating Repository Guide sections for the Library.",
+      description: "LLM usage from generating Design Docs for the Library.",
       singularRecord: REPOSITORY_GUIDE_COPY.sectionName,
       pluralRecord: REPOSITORY_GUIDE_COPY.sectionNamePlural,
     },

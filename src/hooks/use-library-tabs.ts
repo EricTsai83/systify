@@ -292,6 +292,13 @@ export function useLibraryTabs(repositoryId: RepositoryId | null, activeFromRout
     });
   }, []);
 
+  const showOverview = useCallback(() => {
+    setState((current) => {
+      if (current.activeArtifactId === null) return current;
+      return { ...current, activeArtifactId: null };
+    });
+  }, []);
+
   return useMemo(
     () => ({
       openArtifactIds: state.openArtifactIds,
@@ -300,8 +307,9 @@ export function useLibraryTabs(repositoryId: RepositoryId | null, activeFromRout
       activateTab,
       closeTab,
       reorderTabs,
+      showOverview,
     }),
-    [state.activeArtifactId, state.openArtifactIds, openTab, activateTab, closeTab, reorderTabs],
+    [state.activeArtifactId, state.openArtifactIds, openTab, activateTab, closeTab, reorderTabs, showOverview],
   );
 }
 

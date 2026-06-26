@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useQuery } from "convex/react";
 import { CheckCircleIcon, SparkleIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
@@ -9,23 +9,12 @@ import { REPOSITORY_GUIDE_SECTIONS } from "@/lib/repository-guide-catalog";
 import type { ArtifactId, ArtifactListItem, RepositoryId } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type SectionStatus = "ready" | "generating" | "pending";
+type SectionStatus = "generated" | "generating" | "template";
 
 /**
- * Library canvas surface for the Repository Guide. It unifies three states
- * that used to be separate (or missing) screens into one self-explaining
- * board:
- *
- *   - **Empty** — every section is previewed as a ghost card so a first-run
- *     user can *see* what the guide will contain before committing, with the
- *     primary "Generate guide" CTA front-and-centre. This replaces the old
- *     dead-end "No sections yet — generate from the Ask panel" message that
- *     pointed users away from the largest, most attention-grabbing region.
- *   - **Generating** — cards flip to a live "generating" state and resolve to
- *     "ready" one-by-one as artifacts land, mirroring the per-kind nature of
- *     the backend job. The board fills in instead of staring at a thin banner.
- *   - **Populated** — ready cards become a launcher: clicking one opens it in
- *     a tab, so this also serves as the "no tab open" landing.
+ * Library canvas surface for Design Docs. It presents generated documents as
+ * launchers and ungenerated kinds as optional templates, avoiding checklist
+ * language that would imply every repository must produce every template.
  *
  * Section presentation (icon/title/description) comes from
  * {@link REPOSITORY_GUIDE_SECTIONS}; per-section status is derived from the
@@ -62,7 +51,6 @@ export function RepositoryGuideOverview({
   // Kinds the in-flight job is producing. `null` job → nothing generating.
   const generatingKinds = useMemo(() => new Set<string>(activeJob?.selections ?? []), [activeJob]);
 
-  const total = REPOSITORY_GUIDE_SECTIONS.length;
   const readyCount = useMemo(
     () => REPOSITORY_GUIDE_SECTIONS.filter((section) => artifactByKind.has(section.kind)).length,
     [artifactByKind],
@@ -70,18 +58,19 @@ export function RepositoryGuideOverview({
   const isGenerating = activeJob != null;
 
   const heading = isGenerating
-    ? `Generating your ${REPOSITORY_GUIDE_COPY.name}…`
+    ? `Generating ${REPOSITORY_GUIDE_COPY.name}…`
     : readyCount === 0
-      ? `Generate your ${REPOSITORY_GUIDE_COPY.name}`
+      ? `Start with ${REPOSITORY_GUIDE_COPY.name.toLowerCase()}`
       : REPOSITORY_GUIDE_COPY.name;
 
   const description = isGenerating
-    ? `${readyCount} of ${total} ready — ${REPOSITORY_GUIDE_COPY.overviewGeneratingDescription}`
+    ? `${REPOSITORY_GUIDE_COPY.overviewGeneratingDescription} You can generate more templates anytime.`
     : readyCount === 0
       ? REPOSITORY_GUIDE_COPY.overviewEmptyDescription
-      : readyCount === total
-        ? `All ${total} ${REPOSITORY_GUIDE_COPY.sectionNamePlural} are ready. Open one to read it, or regenerate to refresh against the latest code.`
-        : `${readyCount} of ${total} ${REPOSITORY_GUIDE_COPY.sectionNamePlural} ready. Generate the rest to complete the guide.`;
+      : `${readyCount} ${readyCount === 1 ? REPOSITORY_GUIDE_COPY.sectionName : REPOSITORY_GUIDE_COPY.sectionNamePlural} generated. Start from another template only if it helps this repository.`;
+
+  const generatedSections = REPOSITORY_GUIDE_SECTIONS.filter((section) => artifactByKind.has(section.kind));
+  const templateSections = REPOSITORY_GUIDE_SECTIONS.filter((section) => !artifactByKind.has(section.kind));
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -108,7 +97,7 @@ export function RepositoryGuideOverview({
             {isGenerating ? (
               <>
                 <SparkleIcon size={16} weight="bold" />
-                Add sections
+                {REPOSITORY_GUIDE_COPY.generateAction}
               </>
             ) : (
               <>
@@ -119,28 +108,52 @@ export function RepositoryGuideOverview({
           </Button>
         </header>
 
-        <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          {REPOSITORY_GUIDE_SECTIONS.map((section) => {
-            const artifact = artifactByKind.get(section.kind);
-            const status: SectionStatus = artifact
-              ? "ready"
-              : generatingKinds.has(section.kind)
-                ? "generating"
-                : "pending";
-            return (
-              <li key={section.kind}>
-                <SectionCard
-                  icon={section.icon}
-                  title={section.title}
-                  description={section.description}
-                  status={status}
-                  onOpen={artifact ? () => onSelectArtifact(artifact._id as ArtifactId) : undefined}
-                />
-              </li>
-            );
-          })}
-        </ul>
+        {generatedSections.length > 0 ? (
+          <TemplateGroup title="Generated docs">
+            {generatedSections.map((section) => {
+              const artifact = artifactByKind.get(section.kind);
+              return (
+                <li key={section.kind}>
+                  <SectionCard
+                    icon={section.icon}
+                    title={section.title}
+                    description={section.description}
+                    status="generated"
+                    onOpen={artifact ? () => onSelectArtifact(artifact._id as ArtifactId) : undefined}
+                  />
+                </li>
+              );
+            })}
+          </TemplateGroup>
+        ) : null}
+
+        {templateSections.length > 0 ? (
+          <TemplateGroup title={generatedSections.length > 0 ? "Templates" : "Optional templates"}>
+            {templateSections.map((section) => {
+              const status: SectionStatus = generatingKinds.has(section.kind) ? "generating" : "template";
+              return (
+                <li key={section.kind}>
+                  <SectionCard
+                    icon={section.icon}
+                    title={section.title}
+                    description={section.description}
+                    status={status}
+                  />
+                </li>
+              );
+            })}
+          </TemplateGroup>
+        ) : null}
       </section>
+    </div>
+  );
+}
+
+function TemplateGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="space-y-2">
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h3>
+      <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">{children}</ul>
     </div>
   );
 }
@@ -158,7 +171,7 @@ function SectionCard({
   status: SectionStatus;
   onOpen?: () => void;
 }) {
-  const isReady = status === "ready";
+  const isGenerated = status === "generated";
   const isGenerating = status === "generating";
 
   const body = (
@@ -166,7 +179,7 @@ function SectionCard({
       <span
         className={cn(
           "flex h-8 w-8 shrink-0 items-center justify-center rounded-md border transition-colors",
-          isReady
+          isGenerated
             ? "border-border bg-muted text-foreground group-hover:border-foreground/30"
             : "border-border/60 bg-muted/40 text-muted-foreground",
         )}
@@ -176,7 +189,10 @@ function SectionCard({
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div className="flex items-center gap-2">
           <span
-            className={cn("truncate text-[13px] font-semibold", isReady ? "text-foreground" : "text-muted-foreground")}
+            className={cn(
+              "truncate text-[13px] font-semibold",
+              isGenerated ? "text-foreground" : "text-muted-foreground",
+            )}
           >
             {title}
           </span>
@@ -187,12 +203,11 @@ function SectionCard({
     </>
   );
 
-  // Ready sections are real navigation targets → a button. Generating and
-  // pending sections are previews, not actions, so they render as inert
+  // Generated sections are real navigation targets → a button. Generating and
+  // template sections are previews, not actions, so they render as inert
   // containers (no focus stop, no hover affordance). A generating card carries
-  // `aria-busy` so assistive tech announces it as updating; the per-section
-  // text badge ("Generating…" / "Not yet") states the rest in plain words.
-  if (isReady && onOpen) {
+  // `aria-busy` so assistive tech announces it as updating.
+  if (isGenerated && onOpen) {
     return (
       <button
         type="button"
@@ -219,8 +234,13 @@ function SectionCard({
 }
 
 function StatusBadge({ status }: { status: SectionStatus }) {
-  if (status === "ready") {
-    return <CheckCircleIcon size={14} weight="fill" className="ml-auto shrink-0 text-success" aria-hidden />;
+  if (status === "generated") {
+    return (
+      <span className="ml-auto flex shrink-0 items-center gap-1 text-[10px] font-medium text-success">
+        <CheckCircleIcon size={12} weight="fill" aria-hidden />
+        Generated
+      </span>
+    );
   }
   if (status === "generating") {
     return (
@@ -232,7 +252,7 @@ function StatusBadge({ status }: { status: SectionStatus }) {
   }
   return (
     <span className="ml-auto shrink-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground/60">
-      Not yet
+      Template
     </span>
   );
 }

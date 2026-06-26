@@ -41,13 +41,14 @@ describe("RepositoryGuideOverview", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: /Generate your Repository Guide/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Start with design docs/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /Optional templates/i })).toBeInTheDocument();
     for (const section of REPOSITORY_GUIDE_SECTIONS) {
       expect(screen.getByText(section.title)).toBeInTheDocument();
     }
     // No artifact exists yet → every card is an inert preview, so the only
     // button on the surface is the primary CTA.
-    const cta = screen.getByRole("button", { name: /Generate guide/i });
+    const cta = screen.getByRole("button", { name: /Generate design docs/i });
     expect(cta).toBeEnabled();
     fireEvent.click(cta);
     expect(onGenerate).toHaveBeenCalledTimes(1);
@@ -66,7 +67,7 @@ describe("RepositoryGuideOverview", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: /^Repository Guide$/i })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: /^Design Docs$/i })).toBeInTheDocument();
     const openButton = screen.getByRole("button", { name: /Open README Summary/i });
     fireEvent.click(openButton);
     expect(onSelectArtifact).toHaveBeenCalledWith("art_readme");
@@ -88,8 +89,8 @@ describe("RepositoryGuideOverview", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: /Generating your Repository Guide/i })).toBeInTheDocument();
-    const cta = screen.getByRole("button", { name: /Add sections/i });
+    expect(screen.getByRole("heading", { name: /Generating Design Docs/i })).toBeInTheDocument();
+    const cta = screen.getByRole("button", { name: /Generate design docs/i });
     expect(cta).toBeEnabled();
     fireEvent.click(cta);
     expect(onGenerate).toHaveBeenCalledTimes(1);
@@ -110,6 +111,6 @@ describe("RepositoryGuideOverview", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: /Generate guide/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Generate design docs/i })).toBeDisabled();
   });
 });

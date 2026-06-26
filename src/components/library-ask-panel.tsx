@@ -61,7 +61,7 @@ import type {
 import { toast } from "sonner";
 
 const LOCKED_PLACEHOLDER = `${REPOSITORY_GUIDE_COPY.generateAction} to unlock Library Ask.`;
-const LOCKED_HINT = "Library Ask needs at least one guide section in this repository before you can send a question.";
+const LOCKED_HINT = "Library Ask needs at least one design doc in this repository before you can send a question.";
 const DEFAULT_UPDATE_DRAFT_PROMPT = "Refresh this artifact using the codebase as the source of truth.";
 
 type LibraryAskTimelineEntry =

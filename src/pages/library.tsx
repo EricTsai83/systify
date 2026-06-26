@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import { CircleIcon, LightningIcon, WarningCircleIcon } from "@phosphor-icons/react";
+import {
+  BookOpenIcon,
+  CaretDownIcon,
+  CircleIcon,
+  LightningIcon,
+  SparkleIcon,
+  WarningCircleIcon,
+} from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import {
   AppSidebarLeft,
@@ -27,6 +34,13 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { InputGroup, InputGroupAddon, InputGroupTextarea } from "@/components/ui/input-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
@@ -43,6 +57,7 @@ import type { ArtifactId, RepositoryId, ThreadId, ThreadMode } from "@/lib/types
 import { readString, writeString } from "@/lib/storage";
 import { applyTouchRepositoryOptimistic } from "@/lib/repository-mutations";
 import { DEMO_MODE_COPY } from "@/lib/demo-content";
+import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -283,7 +298,13 @@ function LibraryRepository({
             {currentRepository?.sourceRepoFullName ?? "Library"}
           </h1>
           <LibraryLiveSourceBadge status={sandboxActivityStatus} />
-          <SidebarTrigger side="right" className="ml-auto" />
+          <LibraryDesignDocsMenu
+            className="ml-auto"
+            onShowOverview={tabs.showOverview}
+            onGenerate={openGenerateDialog}
+            generateDisabledReason={generateSystemDesignDisabledReason}
+          />
+          <SidebarTrigger side="right" />
         </header>
         <div className="flex min-h-0 min-w-0 flex-1">
           <LibraryShell
@@ -319,6 +340,44 @@ function LibraryRepository({
         highReasoningDisabledReason={highReasoningDisabledReason}
       />
     </>
+  );
+}
+
+function LibraryDesignDocsMenu({
+  className,
+  onShowOverview,
+  onGenerate,
+  generateDisabledReason,
+}: {
+  className?: string;
+  onShowOverview: () => void;
+  onGenerate: () => void;
+  generateDisabledReason?: string;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button type="button" variant="outline" size="sm" className={cn("h-8 gap-1.5 px-2.5", className)}>
+          <BookOpenIcon size={14} weight="bold" />
+          <span className="hidden sm:inline">{REPOSITORY_GUIDE_COPY.name}</span>
+          <CaretDownIcon size={12} weight="bold" className="text-muted-foreground" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-56">
+        <DropdownMenuItem onSelect={onShowOverview}>
+          <BookOpenIcon weight="bold" />
+          View overview
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          onSelect={onGenerate}
+          disabled={generateDisabledReason !== undefined}
+          title={generateDisabledReason}
+        >
+          <SparkleIcon weight="bold" />
+          {REPOSITORY_GUIDE_COPY.generateAction}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
