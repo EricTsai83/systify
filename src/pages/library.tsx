@@ -328,15 +328,14 @@ function PendingLibraryShell({ repositoryName }: { repositoryName: string }) {
             </div>
           </div>
         </div>
-        <SidebarContent className="min-h-0 flex-1">
-          <div className="flex flex-col gap-3 p-3">
-            <Skeleton className="h-8 w-full" />
-            <Skeleton className="h-4 w-24" />
-            <Skeleton className="h-7 w-full" />
-            <Skeleton className="h-7 w-4/5" />
-            <Skeleton className="h-7 w-11/12" />
-          </div>
-        </SidebarContent>
+        {/*
+         * Content stays an empty frame during the auth probe. The folder
+         * tree's shape (count + depth) is unknown, so a fake skeleton tree
+         * would only pop and self-correct once the real rows arrive. The
+         * real navigator (mounted once authorized) fades its rows in
+         * instead — same frame-then-content pattern as the Discuss rail.
+         */}
+        <SidebarContent className="min-h-0 flex-1">{null}</SidebarContent>
         <SidebarFooter className="px-3 py-2">
           <div className="flex items-center gap-2">
             <Skeleton className="h-8 w-8 shrink-0 rounded-full" />

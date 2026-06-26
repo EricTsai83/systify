@@ -299,42 +299,19 @@ export function FolderNavigator({
       ) : null}
 
       <SidebarScrollViewport className="flex-1" viewportClassName="pb-12">
-        <div className="flex flex-col gap-3 p-3">
-          {pinnedRoots.length > 0 ? (
-            <NavigatorSection title="Pinned" icon={<PushPinSimpleIcon size={12} weight="fill" />}>
-              {pinnedRoots
-                .filter((node) => folderMatchesSearch(node))
-                .map((node) => (
-                  <FolderTreeBranch
-                    key={node.id}
-                    repositoryId={repositoryId}
-                    node={node}
-                    artifactsByFolder={artifactsByFolder}
-                    indent={0}
-                    selectedArtifactId={effectiveSelectedArtifactId}
-                    selectedFolderId={selectedFolderId}
-                    onSelectArtifact={handleSelectArtifact}
-                    onSelectFolder={setSelectedFolderId}
-                    filterArtifact={filterPredicate}
-                    folderMatchesSearch={folderMatchesSearch}
-                    isUnseen={isUnseen}
-                    pendingExpandFolderId={pendingExpandFolderId}
-                    pendingRenameFolderId={pendingRenameFolderId}
-                    onConsumePendingExpand={consumePendingExpand}
-                    onConsumePendingRename={consumePendingRename}
-                  />
-                ))}
-            </NavigatorSection>
-          ) : null}
-
-          {tree.length === 0 || unpinnedRoots.length > 0 ? (
-            <NavigatorSection title="Folders" icon={<FoldersIcon size={12} weight="fill" />}>
-              {tree.length === 0 ? (
-                <p className="px-1 text-[11px] text-muted-foreground/80">
-                  No folders yet. Click the folder-plus icon above to create one.
-                </p>
-              ) : (
-                unpinnedRoots
+        {/*
+         * `folders === undefined` is the loading state. Render an empty
+         * frame (the search header above already stands), not the tree —
+         * the "No folders yet" empty state below would otherwise flash
+         * prematurely before the query resolves. Once loaded, the rows
+         * fade in via `animate-enter-fade` (CSS-level reduced-motion
+         * handling), matching the threads rail's frame-then-content feel.
+         */}
+        {folders === undefined ? null : (
+          <div className="flex animate-enter-fade flex-col gap-3 p-3">
+            {pinnedRoots.length > 0 ? (
+              <NavigatorSection title="Pinned" icon={<PushPinSimpleIcon size={12} weight="fill" />}>
+                {pinnedRoots
                   .filter((node) => folderMatchesSearch(node))
                   .map((node) => (
                     <FolderTreeBranch
@@ -355,32 +332,65 @@ export function FolderNavigator({
                       onConsumePendingExpand={consumePendingExpand}
                       onConsumePendingRename={consumePendingRename}
                     />
-                  ))
-              )}
-            </NavigatorSection>
-          ) : null}
+                  ))}
+              </NavigatorSection>
+            ) : null}
 
-          {uncategorizedArtifacts.length > 0 ? (
-            <NavigatorSection
-              title="Repository root"
-              description="Artifacts left at root (no folder). Move them into a folder via the kebab menu."
-            >
-              {uncategorizedArtifacts.map((artifact) => {
-                if (filterPredicate && !filterPredicate(artifact)) return null;
-                return (
-                  <ArtifactRow
-                    key={artifact._id}
-                    artifact={artifact}
-                    isSelected={effectiveSelectedArtifactId === artifact._id}
-                    onSelect={handleSelectArtifact}
-                    indent={0}
-                    isUnseen={isUnseen ? isUnseen(artifact) : false}
-                  />
-                );
-              })}
-            </NavigatorSection>
-          ) : null}
-        </div>
+            {tree.length === 0 || unpinnedRoots.length > 0 ? (
+              <NavigatorSection title="Folders" icon={<FoldersIcon size={12} weight="fill" />}>
+                {tree.length === 0 ? (
+                  <p className="px-1 text-[11px] text-muted-foreground/80">
+                    No folders yet. Click the folder-plus icon above to create one.
+                  </p>
+                ) : (
+                  unpinnedRoots
+                    .filter((node) => folderMatchesSearch(node))
+                    .map((node) => (
+                      <FolderTreeBranch
+                        key={node.id}
+                        repositoryId={repositoryId}
+                        node={node}
+                        artifactsByFolder={artifactsByFolder}
+                        indent={0}
+                        selectedArtifactId={effectiveSelectedArtifactId}
+                        selectedFolderId={selectedFolderId}
+                        onSelectArtifact={handleSelectArtifact}
+                        onSelectFolder={setSelectedFolderId}
+                        filterArtifact={filterPredicate}
+                        folderMatchesSearch={folderMatchesSearch}
+                        isUnseen={isUnseen}
+                        pendingExpandFolderId={pendingExpandFolderId}
+                        pendingRenameFolderId={pendingRenameFolderId}
+                        onConsumePendingExpand={consumePendingExpand}
+                        onConsumePendingRename={consumePendingRename}
+                      />
+                    ))
+                )}
+              </NavigatorSection>
+            ) : null}
+
+            {uncategorizedArtifacts.length > 0 ? (
+              <NavigatorSection
+                title="Repository root"
+                description="Artifacts left at root (no folder). Move them into a folder via the kebab menu."
+              >
+                {uncategorizedArtifacts.map((artifact) => {
+                  if (filterPredicate && !filterPredicate(artifact)) return null;
+                  return (
+                    <ArtifactRow
+                      key={artifact._id}
+                      artifact={artifact}
+                      isSelected={effectiveSelectedArtifactId === artifact._id}
+                      onSelect={handleSelectArtifact}
+                      indent={0}
+                      isUnseen={isUnseen ? isUnseen(artifact) : false}
+                    />
+                  );
+                })}
+              </NavigatorSection>
+            ) : null}
+          </div>
+        )}
       </SidebarScrollViewport>
     </div>
   );
