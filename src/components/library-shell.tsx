@@ -2,8 +2,8 @@ import { useCallback, useMemo, useState } from "react";
 import { LibraryEditor } from "@/components/library-editor";
 import { LibraryTabs } from "@/components/library-tabs";
 import { QuickOpenDialog } from "@/components/quick-open-dialog";
+import { RepositoryGuideOverview } from "@/components/repository-guide-overview";
 import { SystemDesignStatusBanner } from "@/components/system-design-status-banner";
-import { REPOSITORY_GUIDE_COPY } from "@/lib/product-copy";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useLibraryShortcuts } from "@/hooks/use-library-shortcuts";
 import type { LibraryTabsApi } from "@/hooks/use-library-tabs";
@@ -23,12 +23,14 @@ export function LibraryShell({
   repositoryId,
   tabs,
   allArtifacts,
-  hasArtifacts,
+  onGenerate,
+  generateDisabledReason,
 }: {
   repositoryId: RepositoryId;
   tabs: LibraryTabsApi;
   allArtifacts: ReadonlyArray<ArtifactListItem> | undefined;
-  hasArtifacts: boolean;
+  onGenerate: () => void;
+  generateDisabledReason?: string;
 }) {
   const artifactsById = useMemo(() => {
     const map = new Map<ArtifactId, ArtifactListItem>();
@@ -93,7 +95,13 @@ export function LibraryShell({
       {tabs.activeArtifactId ? (
         <LibraryEditor artifactId={tabs.activeArtifactId} />
       ) : allArtifacts === undefined ? null : (
-        <LibraryEmptyState hasArtifacts={hasArtifacts} />
+        <RepositoryGuideOverview
+          repositoryId={repositoryId}
+          artifacts={allArtifacts}
+          onSelectArtifact={handleSelectArtifact}
+          onGenerate={onGenerate}
+          generateDisabledReason={generateDisabledReason}
+        />
       )}
 
       <QuickOpenDialog
@@ -104,29 +112,6 @@ export function LibraryShell({
           handleSelectArtifact(artifactId);
         }}
       />
-    </div>
-  );
-}
-
-function LibraryEmptyState({ hasArtifacts }: { hasArtifacts: boolean }) {
-  if (!hasArtifacts) {
-    return (
-      <div className="flex flex-1 items-center justify-center px-6 py-10">
-        <div className="w-full max-w-md text-center">
-          <h2 className="text-base font-semibold text-foreground">No Repository Guide sections yet</h2>
-          <p className="mt-2 text-sm text-muted-foreground">{REPOSITORY_GUIDE_COPY.emptyLibraryDescription}</p>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-1 items-center justify-center px-6 py-10">
-      <div className="w-full max-w-md text-center">
-        <h2 className="text-base font-semibold text-foreground">No artifact open</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Pick an artifact from the folder tree, or press <kbd className="font-mono text-[11px]">⌘ P</kbd> to search.
-        </p>
-      </div>
     </div>
   );
 }

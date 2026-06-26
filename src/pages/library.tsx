@@ -276,7 +276,8 @@ function LibraryRepository({
             repositoryId={repositoryId}
             tabs={tabs}
             allArtifacts={allArtifacts}
-            hasArtifacts={hasArtifacts}
+            onGenerate={openGenerateDialog}
+            generateDisabledReason={generateSystemDesignDisabledReason}
           />
         </div>
       </SidebarInset>

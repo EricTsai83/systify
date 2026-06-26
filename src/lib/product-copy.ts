@@ -11,11 +11,21 @@ export const REPOSITORY_GUIDE_COPY = {
   name: "Repository Guide",
   sectionName: "guide section",
   sectionNamePlural: "guide sections",
-  generateAction: "Generate Repository Guide",
+  // CTA + body copy drop the "Repository" qualifier: every surface that
+  // shows them already sits inside a single repository (the URL, the header,
+  // and the panel title all name it), so repeating it reads as boilerplate.
+  // The full `name` is reserved for the one place each view needs to stand on
+  // its own — the panel header, the generate dialog title, the guide overview
+  // headline.
+  generateAction: "Generate guide",
   generateSelectedAction: "Generate selected",
-  emptyLibraryDescription:
-    "This Library has no Repository Guide sections to read yet. Generate them from the Ask panel to get started.",
+  // First-run / overview hero, shown on the Library canvas before any section
+  // exists. Leads with the outcome (readable docs you can ask about) instead
+  // of the absence of content.
+  overviewEmptyDescription:
+    "Claude reads this repository's live source and writes a set of reference docs you can open and ask questions about.",
+  overviewGeneratingDescription: "New sections open as soon as they finish.",
   noArtifactsTitle: "No guide sections to ask about yet",
   noArtifactsDescription:
-    "Library Ask cites indexed guide sections. Generate the Repository Guide so it has something to retrieve.",
+    "Library Ask cites indexed guide sections. Generate the guide so it has something to retrieve.",
 } as const;
