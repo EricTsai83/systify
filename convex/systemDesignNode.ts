@@ -12,7 +12,7 @@ import {
   type SandboxLibraryGenerationModelChoice,
 } from "./lib/sandboxLibraryGeneration";
 import { SandboxPreparationError, type EnsureSandboxReadyResult } from "./lib/sandboxLiveness";
-import { isSystemDesignKind, systemDesignKindValidator } from "./lib/systemDesign";
+import { isSystemDesignKind, systemDesignKindValidator, type SystemDesignKind } from "./lib/systemDesign";
 import { runSystemDesignKind } from "./systemDesignKindRun";
 
 /**
@@ -164,9 +164,10 @@ export const runSystemDesignGeneration = internalAction({
     const commitSha = context.repository.lastSyncedCommitSha;
     const forceRegenerate = args.forceRegenerate ?? false;
 
-    const completedKinds = new Set<string>();
+    const completedKinds = new Set<SystemDesignKind>();
     let succeeded = 0;
     let failed = 0;
+    let finalSelections = selections;
 
     // Kinds run serially: each one is a sandbox-backed LLM session, so running
     // them in parallel would contend on the per-sandbox tool budget and the
@@ -182,7 +183,22 @@ export const runSystemDesignGeneration = internalAction({
 
       const kind = selections.find((selection) => !completedKinds.has(selection));
       if (!kind) {
-        break;
+        const completion = await ctx.runMutation(internal.systemDesign.completeGeneration, {
+          jobId: args.jobId,
+          completedSelections: Array.from(completedKinds),
+          succeededCount: succeeded,
+          failedCount: failed,
+        });
+        if (completion.status === "completed") {
+          finalSelections = completion.selections;
+          break;
+        }
+        if (completion.status === "needs_more") {
+          selections = completion.selections;
+          totalCount = selections.length;
+          continue;
+        }
+        return;
       }
 
       // Refresh the running job's lease before each kind so a long multi-kind
@@ -224,13 +240,6 @@ export const runSystemDesignGeneration = internalAction({
       });
     }
 
-    await ctx.runMutation(internal.systemDesign.completeGeneration, {
-      jobId: args.jobId,
-      selections,
-      succeededCount: succeeded,
-      failedCount: failed,
-    });
-
     logInfo("systemDesign", "generation_complete", {
       jobId: args.jobId,
       repositoryId: args.repositoryId,
@@ -238,7 +247,7 @@ export const runSystemDesignGeneration = internalAction({
       modelName: resolvedModelChoice.modelName,
       succeeded,
       failed,
-      total: totalCount,
+      total: finalSelections.length,
     });
   },
 });

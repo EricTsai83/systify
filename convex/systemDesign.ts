@@ -376,24 +376,48 @@ export const updateGenerationProgress = internalMutation({
 export const completeGeneration = internalMutation({
   args: {
     jobId: v.id("jobs"),
-    selections: v.array(systemDesignKindValidator),
+    completedSelections: v.array(systemDesignKindValidator),
     succeededCount: v.number(),
     failedCount: v.number(),
   },
+  returns: v.object({
+    status: v.union(v.literal("completed"), v.literal("needs_more"), v.literal("not_running")),
+    selections: v.array(systemDesignKindValidator),
+  }),
   handler: async (ctx, args) => {
+    const job = await ctx.db.get(args.jobId);
+    if (!job || job.kind !== "system_design" || job.status !== "running") {
+      return { status: "not_running" as const, selections: [] };
+    }
+
+    const jobSelections = normalizeSystemDesignSelections(job.selections ?? []);
+    const completedSelections = normalizeSystemDesignSelections(args.completedSelections);
+    const selections = jobSelections.length > 0 ? jobSelections : completedSelections;
+    const completedSet = new Set<SystemDesignKind>(completedSelections);
+    const remaining = selections.filter((kind) => !completedSet.has(kind));
+
+    if (remaining.length > 0) {
+      await updateRunningJobProgress(ctx, {
+        jobId: args.jobId,
+        expectedKind: "system_design",
+        stage: `Generated ${completedSelections.length} of ${selections.length}; continuing with new selections`,
+        progress: selections.length === 0 ? 0 : completedSelections.length / selections.length,
+      });
+      return { status: "needs_more" as const, selections };
+    }
+
     const summary =
       args.failedCount === 0
-        ? `Generated ${args.succeededCount} of ${args.selections.length} document${
-            args.selections.length === 1 ? "" : "s"
-          }.`
-        : `Generated ${args.succeededCount} of ${args.selections.length}; ${args.failedCount} failed.`;
-    await completeRunningJob(ctx, {
+        ? `Generated ${args.succeededCount} of ${selections.length} document${selections.length === 1 ? "" : "s"}.`
+        : `Generated ${args.succeededCount} of ${selections.length}; ${args.failedCount} failed.`;
+    const completed = await completeRunningJob(ctx, {
       jobId: args.jobId,
       expectedKind: "system_design",
       completedAt: Date.now(),
       outputSummary: summary,
       progress: 1,
     });
+    return { status: completed ? ("completed" as const) : ("not_running" as const), selections };
   },
 });
 

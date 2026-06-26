@@ -168,6 +168,60 @@ describe("requestSystemDesignGeneration", () => {
   });
 });
 
+describe("completeGeneration", () => {
+  test("keeps a running job open when selections were appended before completion", async () => {
+    const ownerTokenIdentifier = "user|complete-generation-needs-more";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await insertRunningSystemDesignJob(t, {
+      ownerTokenIdentifier,
+      repositoryId,
+      selections: ["readme_summary", "security_overview"],
+    });
+
+    const result = await t.mutation(internal.systemDesign.completeGeneration, {
+      jobId,
+      completedSelections: ["readme_summary"],
+      succeededCount: 1,
+      failedCount: 0,
+    });
+
+    expect(result).toEqual({
+      status: "needs_more",
+      selections: ["readme_summary", "security_overview"],
+    });
+    const job = await t.run(async (ctx) => await ctx.db.get(jobId));
+    expect(job?.status).toBe("running");
+    expect(job?.progress).toBe(0.5);
+  });
+
+  test("completes a running job only after every current selection is processed", async () => {
+    const ownerTokenIdentifier = "user|complete-generation-all-processed";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await insertRunningSystemDesignJob(t, {
+      ownerTokenIdentifier,
+      repositoryId,
+      selections: ["readme_summary", "security_overview"],
+    });
+
+    const result = await t.mutation(internal.systemDesign.completeGeneration, {
+      jobId,
+      completedSelections: ["readme_summary", "security_overview"],
+      succeededCount: 2,
+      failedCount: 0,
+    });
+
+    expect(result).toEqual({
+      status: "completed",
+      selections: ["readme_summary", "security_overview"],
+    });
+    const job = await t.run(async (ctx) => await ctx.db.get(jobId));
+    expect(job?.status).toBe("completed");
+    expect(job?.outputSummary).toBe("Generated 2 of 2 documents.");
+  });
+});
+
 describe("findCachedArtifact", () => {
   test("returns an exact cache-key hit", async () => {
     const ownerTokenIdentifier = "user|cached-artifact-hit";
