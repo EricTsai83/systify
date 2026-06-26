@@ -23,14 +23,10 @@ export function LibraryShell({
   repositoryId,
   tabs,
   allArtifacts,
-  onGenerate,
-  generateDisabledReason,
 }: {
   repositoryId: RepositoryId;
   tabs: LibraryTabsApi;
   allArtifacts: ReadonlyArray<ArtifactListItem> | undefined;
-  onGenerate: () => void;
-  generateDisabledReason?: string;
 }) {
   const artifactsById = useMemo(() => {
     const map = new Map<ArtifactId, ArtifactListItem>();
@@ -99,8 +95,6 @@ export function LibraryShell({
           repositoryId={repositoryId}
           artifacts={allArtifacts}
           onSelectArtifact={handleSelectArtifact}
-          onGenerate={onGenerate}
-          generateDisabledReason={generateDisabledReason}
         />
       )}
 

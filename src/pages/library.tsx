@@ -312,13 +312,7 @@ function LibraryRepository({
           <SidebarTrigger side="right" />
         </header>
         <div className="flex min-h-0 min-w-0 flex-1">
-          <LibraryShell
-            repositoryId={repositoryId}
-            tabs={tabs}
-            allArtifacts={allArtifacts}
-            onGenerate={openGenerateDialog}
-            generateDisabledReason={generateSystemDesignDisabledReason}
-          />
+          <LibraryShell repositoryId={repositoryId} tabs={tabs} allArtifacts={allArtifacts} />
         </div>
       </SidebarInset>
       <AppSidebarRight
@@ -362,7 +356,7 @@ function LibraryDesignDocsMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button type="button" variant="outline" size="sm" className={cn("h-8 gap-1.5 px-2.5", className)}>
+        <Button type="button" variant="ghost" size="sm" className={cn("h-8 gap-1.5 px-2.5", className)}>
           <BookOpenIcon size={14} weight="bold" />
           <span className="hidden sm:inline">{REPOSITORY_GUIDE_COPY.name}</span>
           <CaretDownIcon size={12} weight="bold" className="text-muted-foreground" />
@@ -371,7 +365,7 @@ function LibraryDesignDocsMenu({
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuItem onSelect={onShowNavigator}>
           <FoldersIcon weight="bold" />
-          Open navigator
+          Open library overview
         </DropdownMenuItem>
         <DropdownMenuItem
           onSelect={onGenerate}
