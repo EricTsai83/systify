@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { LibraryEditor } from "@/components/library-editor";
 import { LibraryTabs } from "@/components/library-tabs";
 import { QuickOpenDialog } from "@/components/quick-open-dialog";
-import { RepositoryGuideOverview } from "@/components/repository-guide-overview";
+import { RepositoryGuideNavigator } from "@/components/repository-guide-navigator";
 import { SystemDesignStatusBanner } from "@/components/system-design-status-banner";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useLibraryShortcuts } from "@/hooks/use-library-shortcuts";
@@ -95,7 +95,7 @@ export function LibraryShell({
       {tabs.activeArtifactId ? (
         <LibraryEditor artifactId={tabs.activeArtifactId} />
       ) : allArtifacts === undefined ? null : (
-        <RepositoryGuideOverview
+        <RepositoryGuideNavigator
           repositoryId={repositoryId}
           artifacts={allArtifacts}
           onSelectArtifact={handleSelectArtifact}

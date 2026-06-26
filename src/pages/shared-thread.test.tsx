@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { usePaginatedQuery, useQuery } from "convex/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -84,9 +84,10 @@ describe("SharedThreadPage", () => {
       isLoading: true as const,
     });
 
-    const { container } = renderSharedThread();
+    renderSharedThread();
 
-    expect(container.querySelectorAll('[aria-hidden="true"] > div')).toHaveLength(40);
+    const skeleton = screen.getByTestId("shared-thread-messages-skeleton");
+    expect(within(skeleton).getAllByTestId("shared-thread-message-skeleton")).toHaveLength(40);
   });
 });
 

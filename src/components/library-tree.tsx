@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils";
  * Library Tree.
  *
  * Wraps {@link FolderNavigator} so the Library shell has a single import
- * surface for the left rail. Generation actions live in the Library overview
+ * surface for the left rail. Generation actions live in the Library navigator
  * and blocked Ask states; this rail stays focused on artifact navigation.
  */
 export function LibraryTree({

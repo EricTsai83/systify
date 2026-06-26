@@ -5,6 +5,7 @@ import {
   BookOpenIcon,
   CaretDownIcon,
   CircleIcon,
+  FoldersIcon,
   LightningIcon,
   PaperPlaneTiltIcon,
   SparkleIcon,
@@ -71,7 +72,7 @@ const PENDING_LIBRARY_ASK_SEND_BUTTON_STATES = ["Ask", "Asking..."] as const;
  * Library service mode entry point.
  *
  * Mounted at:
- *   - `/r/:repositoryId/library`               → folder overview.
+ *   - `/r/:repositoryId/library`               → docs navigator.
  *   - `/r/:repositoryId/library/a/:artifactId` → shell with the artifact
  *                                                open in the active tab.
  *
@@ -304,7 +305,7 @@ function LibraryRepository({
           <LibraryLiveSourceBadge status={sandboxActivityStatus} />
           <LibraryDesignDocsMenu
             className="ml-auto"
-            onShowOverview={tabs.showOverview}
+            onShowNavigator={tabs.showNavigator}
             onGenerate={openGenerateDialog}
             generateDisabledReason={generateSystemDesignDisabledReason}
           />
@@ -349,12 +350,12 @@ function LibraryRepository({
 
 function LibraryDesignDocsMenu({
   className,
-  onShowOverview,
+  onShowNavigator,
   onGenerate,
   generateDisabledReason,
 }: {
   className?: string;
-  onShowOverview: () => void;
+  onShowNavigator: () => void;
   onGenerate: () => void;
   generateDisabledReason?: string;
 }) {
@@ -368,9 +369,9 @@ function LibraryDesignDocsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
-        <DropdownMenuItem onSelect={onShowOverview}>
-          <BookOpenIcon weight="bold" />
-          View overview
+        <DropdownMenuItem onSelect={onShowNavigator}>
+          <FoldersIcon weight="bold" />
+          Open navigator
         </DropdownMenuItem>
         <DropdownMenuItem
           onSelect={onGenerate}
@@ -460,7 +461,7 @@ export function PendingLibraryAskShell() {
             <div aria-hidden="true" className="h-8 min-h-8 min-w-0 flex-1" />
             <Button type="button" size="sm" disabled title="Loading library data.">
               <PaperPlaneTiltIcon size={14} weight="fill" />
-              <ButtonStateText current="Ask" states={PENDING_LIBRARY_ASK_SEND_BUTTON_STATES} />
+              <ButtonStateText current="Asking..." states={PENDING_LIBRARY_ASK_SEND_BUTTON_STATES} />
             </Button>
           </InputGroupAddon>
         </InputGroup>

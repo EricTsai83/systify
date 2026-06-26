@@ -12,9 +12,10 @@ import { cn } from "@/lib/utils";
 type SectionStatus = "generated" | "generating" | "template";
 
 /**
- * Library canvas surface for Design Docs. It presents generated documents as
- * launchers and ungenerated kinds as optional templates, avoiding checklist
- * language that would imply every repository must produce every template.
+ * Library landing/navigation surface for Design Docs. It presents generated
+ * documents as launchers and ungenerated kinds as optional templates,
+ * avoiding checklist language that would imply every repository must produce
+ * every template.
  *
  * Section presentation (icon/title/description) comes from
  * {@link REPOSITORY_GUIDE_SECTIONS}; per-section status is derived from the
@@ -22,7 +23,7 @@ type SectionStatus = "generated" | "generating" | "template";
  * generation job. The component owns only the lightweight active-job
  * subscription — Convex dedupes it against the dialog's identical query.
  */
-export function RepositoryGuideOverview({
+export function RepositoryGuideNavigator({
   repositoryId,
   artifacts,
   onSelectArtifact,
@@ -64,9 +65,9 @@ export function RepositoryGuideOverview({
       : REPOSITORY_GUIDE_COPY.name;
 
   const description = isGenerating
-    ? `${REPOSITORY_GUIDE_COPY.overviewGeneratingDescription} You can generate more templates anytime.`
+    ? `${REPOSITORY_GUIDE_COPY.navigatorGeneratingDescription} You can generate more templates anytime.`
     : readyCount === 0
-      ? REPOSITORY_GUIDE_COPY.overviewEmptyDescription
+      ? REPOSITORY_GUIDE_COPY.navigatorEmptyDescription
       : `${readyCount} ${readyCount === 1 ? REPOSITORY_GUIDE_COPY.sectionName : REPOSITORY_GUIDE_COPY.sectionNamePlural} generated. Start from another template only if it helps this repository.`;
 
   const generatedSections = REPOSITORY_GUIDE_SECTIONS.filter((section) => artifactByKind.has(section.kind));

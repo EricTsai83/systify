@@ -14,7 +14,7 @@ function artifact(id: string, title: string): ArtifactListItem {
 }
 
 describe("LibraryTabs", () => {
-  test("keeps a selected focusable tab when the overview is active with open artifacts", () => {
+  test("does not create a pseudo-tab when the navigator is active with open artifacts", () => {
     const artifactId = "artifact_a" as ArtifactId;
     render(
       <LibraryTabs
@@ -28,9 +28,9 @@ describe("LibraryTabs", () => {
     );
 
     const tabs = screen.getAllByRole("tab");
-    expect(tabs).toHaveLength(2);
-    expect(screen.getByRole("tab", { selected: true })).toHaveTextContent("Overview");
-    expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("tabindex", "0");
-    expect(screen.getByRole("tab", { name: "README Summary" })).toHaveAttribute("tabindex", "-1");
+    expect(tabs).toHaveLength(1);
+    expect(screen.queryByRole("tab", { name: "Overview" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { selected: true })).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "README Summary" })).toHaveAttribute("tabindex", "0");
   });
 });

@@ -187,12 +187,12 @@ const PUBLIC_MESSAGE_SKELETON_LINES = [3, 2, 4, 2, 3] as const;
 
 function PublicMessagesSkeleton() {
   return (
-    <div className="flex flex-col gap-4" aria-hidden="true">
+    <div className="flex flex-col gap-4" aria-hidden="true" data-testid="shared-thread-messages-skeleton">
       {Array.from(
         { length: PUBLIC_MESSAGES_INITIAL_PAGE_SIZE },
         (_, index) => PUBLIC_MESSAGE_SKELETON_LINES[index % PUBLIC_MESSAGE_SKELETON_LINES.length],
       ).map((lineCount, index) => (
-        <div key={index} className="border border-border bg-card p-4">
+        <div key={index} className="border border-border bg-card p-4" data-testid="shared-thread-message-skeleton">
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between gap-2">
               <Skeleton className="h-3 w-16" />

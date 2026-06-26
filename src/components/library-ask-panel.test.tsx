@@ -705,7 +705,7 @@ describe("LibraryAskPanel artifact drafts", () => {
   });
 
   test("waits for artifact metadata before choosing the Library Ask empty state", () => {
-    renderPanel({ hasArtifacts: undefined });
+    renderPanel({ hasArtifacts: undefined, onGenerate: vi.fn() });
 
     expect(screen.getByTestId("library-ask-artifacts-loading")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Ask the Library" })).not.toBeInTheDocument();
@@ -718,13 +718,14 @@ describe("LibraryAskPanel artifact drafts", () => {
   });
 
   test("keeps the composer editable when Library Ask sending is unavailable", () => {
-    renderPanel({ hasArtifacts: false });
+    renderPanel({ hasArtifacts: false, onGenerate: vi.fn() });
 
     const textbox = screen.getByRole("textbox");
     fireEvent.change(textbox, { target: { value: "What should I read first?" } });
 
     expect(textbox).toBeEnabled();
     expect(textbox).toHaveValue("What should I read first?");
+    expect(screen.getByRole("button", { name: "Generate design docs" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Ask" })).toBeDisabled();
   });
 });

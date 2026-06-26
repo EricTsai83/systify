@@ -101,8 +101,9 @@ describe("useLibraryTabs — URL writer", () => {
     expect(target).toBe(`/r/${repositoryId}/library`);
   });
 
-  test("preserves a cached overview selection when reseeding for a repository", () => {
+  test("preserves a cached navigator selection when reseeding for a repository", () => {
     const nextRepositoryId = "repo_libtabs_next" as RepositoryId;
+    const previousUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
     window.localStorage.setItem(
       `systify.library.tabs.${nextRepositoryId}`,
       JSON.stringify({
@@ -110,21 +111,27 @@ describe("useLibraryTabs — URL writer", () => {
         activeArtifactId: null,
       }),
     );
-    window.history.replaceState({}, "", `/r/${repositoryId}/library/a/${artifactA}`);
 
-    const { result, rerender } = renderHook(({ repo, active }) => useLibraryTabs(repo, active), {
-      initialProps: {
-        repo: repositoryId,
-        active: artifactA as ArtifactId | null,
-      },
-    });
+    try {
+      window.history.replaceState({}, "", `/r/${repositoryId}/library/a/${artifactA}`);
 
-    expect(result.current.activeArtifactId).toBe(artifactA);
+      const { result, rerender, unmount } = renderHook(({ repo, active }) => useLibraryTabs(repo, active), {
+        initialProps: {
+          repo: repositoryId,
+          active: artifactA as ArtifactId | null,
+        },
+      });
 
-    window.history.replaceState({}, "", `/r/${nextRepositoryId}/library`);
-    rerender({ repo: nextRepositoryId, active: null });
+      expect(result.current.activeArtifactId).toBe(artifactA);
 
-    expect(result.current.openArtifactIds).toEqual([artifactB]);
-    expect(result.current.activeArtifactId).toBe(null);
+      window.history.replaceState({}, "", `/r/${nextRepositoryId}/library`);
+      rerender({ repo: nextRepositoryId, active: null });
+
+      expect(result.current.openArtifactIds).toEqual([artifactB]);
+      expect(result.current.activeArtifactId).toBe(null);
+      unmount();
+    } finally {
+      window.history.replaceState({}, "", previousUrl);
+    }
   });
 });

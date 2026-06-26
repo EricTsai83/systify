@@ -120,33 +120,20 @@ export const LibraryTabs = memo(function LibraryTabs({
     dragSourceRef.current = null;
     setDragOverId(null);
   };
-  const isOverviewActive = activeArtifactId === null;
-
   return (
     <div className={cn("relative flex items-center border-b border-border bg-background", className)}>
       <ScrollArea className="min-w-0 flex-1">
         <ul role="tablist" aria-label="Open artifacts" className="flex items-center divide-x divide-border px-1 py-1">
-          {isOverviewActive ? (
-            <li role="presentation" className="shrink-0">
-              <div
-                role="tab"
-                tabIndex={0}
-                aria-selected={true}
-                className="flex max-w-[220px] items-center gap-1.5 border-t-2 border-primary bg-muted/60 px-2.5 py-1.5 text-xs text-foreground"
-              >
-                <span className="min-w-0 truncate">Overview</span>
-              </div>
-            </li>
-          ) : null}
-          {openArtifactIds.map((artifactId) => {
+          {openArtifactIds.map((artifactId, index) => {
             const artifact = artifactsById.get(artifactId);
             const isActive = activeArtifactId === artifactId;
+            const isFallbackFocusable = activeArtifactId === null && index === 0;
             const isDropTarget = dragOverId === artifactId;
             return (
               <li key={artifactId} role="presentation" className="shrink-0">
                 <div
                   role="tab"
-                  tabIndex={isActive ? 0 : -1}
+                  tabIndex={isActive || isFallbackFocusable ? 0 : -1}
                   aria-selected={isActive}
                   draggable
                   onDragStart={handleDragStart(artifactId)}

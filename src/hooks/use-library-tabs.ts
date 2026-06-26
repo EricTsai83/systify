@@ -28,6 +28,8 @@ import { readJSON, writeJSON } from "@/lib/storage";
  *     "evict on cap" branch; only valid when the tab is already open.
  *   - `reorderTabs(nextOrder)` — replace the open list with a permutation.
  *     Used by HTML5 native drag-and-drop.
+ *   - `showNavigator()` — returns to the Library landing/navigation surface.
+ *     The landing is not part of the tab strip; tabs represent open docs only.
  *
  * URL writes are debounced ({@link URL_WRITE_DEBOUNCE_MS}) so a
  * keyboard-driven multi-tab close doesn't spam history. The active tab
@@ -40,7 +42,7 @@ export const MAX_OPEN_TABS = 10;
 const URL_WRITE_DEBOUNCE_MS = 200;
 
 interface LibraryTabsState {
-  /** Active tab — `null` when no tab is open (`/library` landing). */
+  /** Active document tab; `null` when the Library landing/navigator is active. */
   activeArtifactId: ArtifactId | null;
   /**
    * Open tab order, left-to-right. The active tab is always in this list
@@ -306,7 +308,7 @@ export function useLibraryTabs(repositoryId: RepositoryId | null, activeFromRout
     });
   }, []);
 
-  const showOverview = useCallback(() => {
+  const showNavigator = useCallback(() => {
     setState((current) => {
       if (current.activeArtifactId === null) return current;
       return { ...current, activeArtifactId: null };
@@ -321,9 +323,9 @@ export function useLibraryTabs(repositoryId: RepositoryId | null, activeFromRout
       activateTab,
       closeTab,
       reorderTabs,
-      showOverview,
+      showNavigator,
     }),
-    [state.activeArtifactId, state.openArtifactIds, openTab, activateTab, closeTab, reorderTabs, showOverview],
+    [state.activeArtifactId, state.openArtifactIds, openTab, activateTab, closeTab, reorderTabs, showNavigator],
   );
 }
 

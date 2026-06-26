@@ -2,7 +2,7 @@
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { RepositoryGuideOverview } from "./repository-guide-overview";
+import { RepositoryGuideNavigator } from "./repository-guide-navigator";
 import { REPOSITORY_GUIDE_SECTIONS } from "@/lib/repository-guide-catalog";
 import type { ArtifactListItem, RepositoryId } from "@/lib/types";
 
@@ -22,18 +22,18 @@ afterEach(() => {
 
 const repositoryId = "repo_1" as RepositoryId;
 
-/** Minimal artifact stub — the overview only reads `_id` and `kind`. */
+/** Minimal artifact stub — the navigator only reads `_id` and `kind`. */
 function artifact(id: string, kind: string): ArtifactListItem {
   return { _id: id, kind, title: kind } as unknown as ArtifactListItem;
 }
 
-describe("RepositoryGuideOverview", () => {
+describe("RepositoryGuideNavigator", () => {
   test("empty state previews every section and leads with the generate CTA", () => {
     useQueryMock.mockReturnValue(null); // no active job
 
     const onGenerate = vi.fn();
     render(
-      <RepositoryGuideOverview
+      <RepositoryGuideNavigator
         repositoryId={repositoryId}
         artifacts={[]}
         onSelectArtifact={vi.fn()}
@@ -59,7 +59,7 @@ describe("RepositoryGuideOverview", () => {
 
     const onSelectArtifact = vi.fn();
     render(
-      <RepositoryGuideOverview
+      <RepositoryGuideNavigator
         repositoryId={repositoryId}
         artifacts={[artifact("art_readme", "readme_summary")]}
         onSelectArtifact={onSelectArtifact}
@@ -81,7 +81,7 @@ describe("RepositoryGuideOverview", () => {
 
     const onGenerate = vi.fn();
     render(
-      <RepositoryGuideOverview
+      <RepositoryGuideNavigator
         repositoryId={repositoryId}
         artifacts={[]}
         onSelectArtifact={vi.fn()}
@@ -102,7 +102,7 @@ describe("RepositoryGuideOverview", () => {
     useQueryMock.mockReturnValue(null);
 
     render(
-      <RepositoryGuideOverview
+      <RepositoryGuideNavigator
         repositoryId={repositoryId}
         artifacts={[]}
         onSelectArtifact={vi.fn()}
