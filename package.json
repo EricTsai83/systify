@@ -34,14 +34,14 @@
   },
   "overrides": {
     "shell-quote": "^1.8.4",
-    "mermaid": "^11.15.0"
+    "mermaid": "^11.16.0"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.81",
     "@ai-sdk/openai": "^3.0.53",
     "@base-ui/react": "^1.5.0",
     "@convex-dev/rate-limiter": "^0.3.2",
-    "@daytona/sdk": "0.187.0",
+    "@daytona/sdk": "^0.191.0",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@phosphor-icons/react": "^2.1.10",
     "@radix-ui/react-use-controllable-state": "^1.2.2",
@@ -54,10 +54,10 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
-    "convex": "^1.39.1",
+    "convex": "^1.42.0",
     "embla-carousel-react": "^8.6.0",
     "lucide-react": "^1.17.0",
-    "mermaid": "^11.15.0",
+    "mermaid": "^11.16.0",
     "motion": "^12.40.0",
     "nanoid": "^5.1.11",
     "radix-ui": "^1.4.3",
