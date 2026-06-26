@@ -208,13 +208,17 @@ on attempt N still has a shot on attempt N+1.
 
 ### Per-kind failure taxonomy
 
-`classifySystemDesignKindRunError`
-(`convex/lib/systemDesignFailureClassification.ts`) translates exceptions
-into the `SystemDesignFailureReason` literals owned by
-`convex/lib/systemDesignFailures.ts`. The same taxonomy Module exports the
+`convex/lib/systemDesignFailures.ts` owns the persisted
+`SystemDesignFailureReason` literals. The same taxonomy Module exports the
 schema-safe validator used by `jobs.kindFailures[].reason` and
 `systemDesignKindRuns.failureReason`, so adding a new reason has one schema
-seam instead of separate schema / mutation copies:
+seam instead of separate schema / mutation copies.
+
+Runtime reasons come from two paths. `classifySystemDesignKindRunError`
+(`convex/lib/systemDesignFailureClassification.ts`) translates exceptions into
+transport/source/infra reasons, while the quality gate records
+`output_quality` directly when generated text fails required-section or Mermaid
+validation. The active persisted reasons are:
 
 - `live_source_unavailable` — `SandboxPreparationError` reached the per-kind
   catch (the sandbox or repository data was missing or unreachable). Should
@@ -228,9 +232,10 @@ seam instead of separate schema / mutation copies:
   bucket so the banner copy works without sniffing the error class.
 - `transport_other` — non-429 `APICallError` (5xx, network without status,
   other 4xx).
-- `output_quality` — text came back but `validateRequiredSections` or
-  `validateMermaidBlock` rejected it. The rejected sections are persisted on
-  the kindRun row's `missingSections` field.
+- `output_quality` — not returned by `classifySystemDesignKindRunError`; set by
+  the explicit quality-gate branch when `validateRequiredSections` or
+  `validateMermaidBlock` rejects otherwise non-empty model text. The rejected
+  sections are persisted on the kindRun row's `missingSections` field.
 - `infra` — the catch-all for anything else (Convex mutation crash, schema
   validation, our-side bug). Engineering is paged through the standard
   `logErrorWithId` path.

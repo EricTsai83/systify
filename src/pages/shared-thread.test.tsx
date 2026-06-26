@@ -67,6 +67,27 @@ describe("SharedThreadPage", () => {
     expect(screen.getByText("What changed?")).toBeInTheDocument();
     expect(screen.getByText("The API boundary moved.")).toBeInTheDocument();
   });
+
+  test("reserves placeholders for the initial public message page", () => {
+    vi.mocked(useQuery).mockReturnValue({
+      _id: "share_1",
+      token: "token_1",
+      threadId: "thread_1",
+      title: "Architecture review",
+      repositoryLabel: "acme/systify",
+      createdAt: 100,
+      expiresAt: Date.now() + 2 * 24 * 60 * 60 * 1000,
+    });
+    vi.mocked(usePaginatedQuery).mockReturnValue({
+      ...paginated([]),
+      status: "LoadingFirstPage" as const,
+      isLoading: true as const,
+    });
+
+    const { container } = renderSharedThread();
+
+    expect(container.querySelectorAll('[aria-hidden="true"] > div')).toHaveLength(40);
+  });
 });
 
 function renderSharedThread() {

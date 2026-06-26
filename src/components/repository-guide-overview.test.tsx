@@ -112,5 +112,6 @@ describe("RepositoryGuideOverview", () => {
     );
 
     expect(screen.getByRole("button", { name: /Generate design docs/i })).toBeDisabled();
+    expect(screen.getByText("Generation is disabled in demo mode.")).toBeInTheDocument();
   });
 });

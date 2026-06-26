@@ -191,12 +191,11 @@ type AppSidebarRightProps = {
   askThreadId: ThreadId | null;
   activeArtifactId: ArtifactId | null;
   /**
-   * Whether the repository has at least one indexed artifact. Forwarded
-   * to {@link LibraryAskPanel} so the composer locks (and the empty
-   * state surfaces a Generate CTA) instead of letting the user hit the
-   * `library_no_artifact` backend gate on submit.
+   * Whether the repository has at least one indexed artifact. `undefined`
+   * means the artifact metadata query is still loading, so the Ask panel
+   * must not render the no-document state yet.
    */
-  hasArtifacts: boolean;
+  hasArtifacts: boolean | undefined;
   onSelectArtifact: (id: ArtifactId) => void;
   onSelectAskThread: (id: ThreadId | null) => void;
   /**

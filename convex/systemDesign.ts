@@ -329,8 +329,9 @@ export const markGenerationStarted = internalMutation({
       leaseExpiresAt: now + SYSTEM_DESIGN_JOB_LEASE_MS,
     });
     if (result) {
+      const selections = normalizeSystemDesignSelections(result.selections ?? args.selections);
       await ctx.db.patch(args.jobId, {
-        outputSummary: buildSystemDesignJobSummary(args.selections as SystemDesignKind[], "running"),
+        outputSummary: buildSystemDesignJobSummary(selections, "running"),
       });
     }
     return { started: result !== null };

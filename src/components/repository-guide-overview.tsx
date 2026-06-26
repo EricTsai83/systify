@@ -71,6 +71,7 @@ export function RepositoryGuideOverview({
 
   const generatedSections = REPOSITORY_GUIDE_SECTIONS.filter((section) => artifactByKind.has(section.kind));
   const templateSections = REPOSITORY_GUIDE_SECTIONS.filter((section) => !artifactByKind.has(section.kind));
+  const isGenerateDisabled = generateDisabledReason !== undefined;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -91,8 +92,8 @@ export function RepositoryGuideOverview({
             size="lg"
             className="mt-1 gap-2"
             onClick={onGenerate}
-            disabled={generateDisabledReason !== undefined}
-            title={generateDisabledReason}
+            disabled={isGenerateDisabled}
+            aria-describedby={isGenerateDisabled ? "repository-guide-generate-disabled-reason" : undefined}
           >
             {isGenerating ? (
               <>
@@ -106,6 +107,14 @@ export function RepositoryGuideOverview({
               </>
             )}
           </Button>
+          {generateDisabledReason ? (
+            <p
+              id="repository-guide-generate-disabled-reason"
+              className="max-w-md text-xs leading-5 text-muted-foreground"
+            >
+              {generateDisabledReason}
+            </p>
+          ) : null}
         </header>
 
         {generatedSections.length > 0 ? (

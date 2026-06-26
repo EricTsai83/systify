@@ -72,6 +72,12 @@ type FolderNavigatorProps = {
    * state survives the navigator unmounting; omit to disable the dot.
    */
   isUnseen?: (artifact: NavigatorArtifact) => boolean;
+  /**
+   * Keep the navigator chrome mounted while deferring repo-scoped data reads.
+   * Used by the Library pending shell while auth is still being probed.
+   */
+  loadFolders?: boolean;
+  canCreateFolders?: boolean;
   className?: string;
 };
 
@@ -118,9 +124,11 @@ export function FolderNavigator({
   onSelectFolder,
   selectedFolderId: selectedFolderIdProp,
   isUnseen,
+  loadFolders = true,
+  canCreateFolders = loadFolders,
   className,
 }: FolderNavigatorProps) {
-  const folders = useQuery(api.artifactFolders.listByRepository, { repositoryId });
+  const folders = useQuery(api.artifactFolders.listByRepository, loadFolders ? { repositoryId } : "skip");
   const createFolder = useMutation(api.artifactFolders.create);
 
   // Selection is controllable: omit `selectedFolderId` to let the navigator
@@ -238,6 +246,7 @@ export function FolderNavigator({
   };
 
   const [isCreating, runCreateFolder] = useAsyncCallback(async () => {
+    if (!canCreateFolders) return;
     const baseName = "New folder";
     const parentFolderId = selectedFolderId ?? undefined;
     setCreateError(null);
@@ -277,7 +286,7 @@ export function FolderNavigator({
           className="h-8 w-8 shrink-0"
           aria-label={createButtonLabel}
           title={createButtonLabel}
-          disabled={isCreating}
+          disabled={isCreating || !canCreateFolders}
           onClick={() => void runCreateFolder()}
         >
           <FolderPlusIcon size={16} weight="bold" />

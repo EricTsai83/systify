@@ -6,6 +6,7 @@ import {
   CaretDownIcon,
   CircleIcon,
   LightningIcon,
+  PaperPlaneTiltIcon,
   SparkleIcon,
   WarningCircleIcon,
 } from "@phosphor-icons/react";
@@ -22,6 +23,7 @@ import {
 } from "@/components/app-sidebar";
 import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
 import { LibraryShell } from "@/components/library-shell";
+import { LibraryTree } from "@/components/library-tree";
 import { Logo } from "@/components/logo";
 import { RepositoryModeSwitcher } from "@/components/repository-mode-switcher";
 import { ScreenState } from "@/components/screen-state";
@@ -35,6 +37,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ButtonStateText } from "@/components/ui/button-state-text";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -150,7 +153,7 @@ function LibraryRepository({
   );
   const { isUnseen, markViewed } = useArtifactViewState(canLoadRepositoryData ? repositoryId : null);
 
-  const hasArtifacts = (allArtifacts?.length ?? 0) > 0;
+  const hasArtifacts = allArtifacts === undefined ? undefined : allArtifacts.length > 0;
 
   useEffect(() => {
     if (!canLoadRepositoryData) return;
@@ -397,14 +400,16 @@ function PendingLibraryShell({ repositoryId, repositoryName }: { repositoryId: R
           </div>
         </SidebarHeader>
         <RepositoryModeSwitcher repositoryId={repositoryId} mode="library" availability={undefined} />
-        {/*
-         * Content stays an empty frame during the auth probe. The folder
-         * tree's shape (count + depth) is unknown, so a fake skeleton tree
-         * would only pop and self-correct once the real rows arrive. The
-         * real navigator (mounted once authorized) fades its rows in
-         * instead — same frame-then-content pattern as the Discuss rail.
-         */}
-        <SidebarContent className="min-h-0 flex-1">{null}</SidebarContent>
+        <SidebarContent className="min-h-0 flex-1">
+          <LibraryTree
+            repositoryId={repositoryId}
+            selectedArtifactId={null}
+            onSelectArtifact={() => {}}
+            loadFolders={false}
+            canCreateFolders={false}
+            className="min-h-0 flex-1"
+          />
+        </SidebarContent>
         <SidebarFooter className="px-3 py-2">
           <div className="flex items-center gap-2">
             <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
@@ -434,21 +439,29 @@ function PendingLibraryShell({ repositoryId, repositoryName }: { repositoryId: R
   );
 }
 
-function PendingLibraryAskShell() {
+export function PendingLibraryAskShell() {
   return (
     <div className="flex min-h-0 flex-1 flex-col bg-background">
       <div className="min-h-0 flex-1" />
       <div className="border-t border-border px-4 py-3">
-        <InputGroup className="overflow-hidden opacity-80">
+        <InputGroup className="min-h-[9rem] overflow-hidden">
           <InputGroupTextarea
             value=""
             readOnly
-            disabled
             placeholder="Question about this library..."
             className="min-h-24 text-sm"
             aria-label="Library Ask input loading"
           />
-          <InputGroupAddon align="block-end" className="min-h-8 justify-between gap-1" />
+          <InputGroupAddon
+            align="block-end"
+            className="h-11 min-h-11 flex-nowrap items-center justify-between gap-1 overflow-hidden"
+          >
+            <div aria-hidden="true" className="h-8 min-h-8 min-w-0 flex-1" />
+            <Button type="button" size="sm" disabled title="Loading library data.">
+              <PaperPlaneTiltIcon size={14} weight="fill" />
+              <ButtonStateText current="Ask" states={["Ask"]} />
+            </Button>
+          </InputGroupAddon>
         </InputGroup>
       </div>
     </div>

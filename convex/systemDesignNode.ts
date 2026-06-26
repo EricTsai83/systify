@@ -232,6 +232,11 @@ export const runSystemDesignGeneration = internalAction({
         failed += 1;
       }
       completedKinds.add(kind);
+      const progressSelections = await ctx.runQuery(internal.systemDesign.getGenerationJobSelections, {
+        jobId: args.jobId,
+      });
+      selections = progressSelections.length === 0 ? initialSelections : progressSelections;
+      totalCount = selections.length;
       await ctx.runMutation(internal.systemDesign.updateGenerationProgress, {
         jobId: args.jobId,
         completedCount: completedKinds.size,

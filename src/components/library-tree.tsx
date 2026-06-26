@@ -17,6 +17,8 @@ export function LibraryTree({
   onSelectFolder,
   selectedFolderId,
   isUnseen,
+  loadFolders,
+  canCreateFolders,
   className,
 }: {
   repositoryId: RepositoryId;
@@ -26,6 +28,8 @@ export function LibraryTree({
   onSelectFolder?: (folderId: FolderId | null) => void;
   selectedFolderId?: FolderId | null;
   isUnseen?: (artifact: ArtifactListItem) => boolean;
+  loadFolders?: boolean;
+  canCreateFolders?: boolean;
   className?: string;
 }) {
   return (
@@ -38,6 +42,8 @@ export function LibraryTree({
         onSelectArtifact={onSelectArtifact}
         onSelectFolder={onSelectFolder}
         isUnseen={isUnseen}
+        loadFolders={loadFolders}
+        canCreateFolders={canCreateFolders}
         className="min-h-0 flex-1 border-0"
       />
     </div>

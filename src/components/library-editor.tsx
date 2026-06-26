@@ -106,7 +106,13 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
   );
 
   if (artifact === undefined) {
-    return <EditorSkeleton className={className} />;
+    return (
+      <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
+        <ScrollArea className="min-h-0 flex-1">
+          <EditorSkeleton className="mx-auto min-h-[60vh] w-full max-w-[68ch]" />
+        </ScrollArea>
+      </div>
+    );
   }
   if (artifact === null) {
     return (

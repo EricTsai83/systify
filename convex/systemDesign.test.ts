@@ -168,6 +168,39 @@ describe("requestSystemDesignGeneration", () => {
   });
 });
 
+describe("markGenerationStarted", () => {
+  test("uses the latest job selections when building the running summary", async () => {
+    const ownerTokenIdentifier = "user|start-generation-merged-selections";
+    const t = createTestConvex();
+    const repositoryId = await insertRepository(t, ownerTokenIdentifier);
+    const jobId = await t.run(async (ctx) => {
+      return await ctx.db.insert("jobs", {
+        repositoryId,
+        ownerTokenIdentifier,
+        kind: "system_design",
+        status: "queued",
+        stage: "queued",
+        progress: 0,
+        costCategory: "system_design",
+        triggerSource: "user",
+        selections: ["readme_summary", "security_overview"],
+        outputSummary: "Queued README Summary",
+        leaseExpiresAt: Date.now() + 60_000,
+      });
+    });
+
+    const result = await t.mutation(internal.systemDesign.markGenerationStarted, {
+      jobId,
+      selections: ["readme_summary"],
+    });
+
+    expect(result).toEqual({ started: true });
+    const job = await t.run(async (ctx) => await ctx.db.get(jobId));
+    expect(job?.status).toBe("running");
+    expect(job?.outputSummary).toBe("Generating README Summary + Security Overview");
+  });
+});
+
 describe("completeGeneration", () => {
   test("keeps a running job open when selections were appended before completion", async () => {
     const ownerTokenIdentifier = "user|complete-generation-needs-more";

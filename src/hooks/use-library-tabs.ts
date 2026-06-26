@@ -88,6 +88,20 @@ function writeCachedTabs(repositoryId: RepositoryId | null, state: LibraryTabsSt
   });
 }
 
+function seedActiveArtifactId(
+  activeFromRoute: ArtifactId | null,
+  cached: LibraryTabsState | null,
+  openArtifactIds: ReadonlyArray<ArtifactId>,
+): ArtifactId | null {
+  if (activeFromRoute !== null) {
+    return activeFromRoute;
+  }
+  if (cached !== null) {
+    return cached.activeArtifactId;
+  }
+  return openArtifactIds[0] ?? null;
+}
+
 function parseOpenParam(value: string | null): ArtifactId[] {
   if (!value) return [];
   return value
@@ -120,7 +134,7 @@ export function useLibraryTabs(repositoryId: RepositoryId | null, activeFromRout
     const open = dedupe([...openFromUrl, ...(cached?.openArtifactIds ?? [])]).slice(0, MAX_OPEN_TABS);
     return {
       openArtifactIds: open,
-      activeArtifactId: activeFromRoute ?? cached?.activeArtifactId ?? open[0] ?? null,
+      activeArtifactId: seedActiveArtifactId(activeFromRoute, cached, open),
     };
   });
 
@@ -142,7 +156,7 @@ export function useLibraryTabs(repositoryId: RepositoryId | null, activeFromRout
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setState({
       openArtifactIds: open,
-      activeArtifactId: activeFromRoute ?? cached?.activeArtifactId ?? open[0] ?? null,
+      activeArtifactId: seedActiveArtifactId(activeFromRoute, cached, open),
     });
   }, [repositoryId, activeFromRoute, searchParams]);
 
