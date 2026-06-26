@@ -63,6 +63,7 @@ import { toast } from "sonner";
 const LOCKED_PLACEHOLDER = `${REPOSITORY_GUIDE_COPY.generateAction} to unlock Library Ask.`;
 const LOCKED_HINT = "Library Ask needs at least one design doc in this repository before you can send a question.";
 const DEFAULT_UPDATE_DRAFT_PROMPT = "Refresh this artifact using the codebase as the source of truth.";
+const LIBRARY_ASK_SEND_BUTTON_STATES = ["Ask", "Asking..."] as const;
 
 type LibraryAskTimelineEntry =
   | { kind: "message"; _id: Doc<"messages">["_id"]; createdAt: number; message: Doc<"messages"> }
@@ -1120,7 +1121,7 @@ function LibraryAskSendButton({ state }: { state: LibraryAskComposerState }) {
       title={state.disabledReason ?? undefined}
     >
       <PaperPlaneTiltIcon size={14} weight="fill" />
-      <ButtonStateText current={state.isSending ? "Asking..." : "Ask"} states={["Ask", "Asking..."]} />
+      <ButtonStateText current={state.isSending ? "Asking..." : "Ask"} states={LIBRARY_ASK_SEND_BUTTON_STATES} />
     </Button>
   );
 }

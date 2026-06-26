@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, test } from "vitest";
 import { LibraryLiveSourceBadge, PendingLibraryAskShell } from "./library";
 
@@ -60,6 +60,8 @@ describe("PendingLibraryAskShell", () => {
     expect(screen.queryByText("Draft")).not.toBeInTheDocument();
     expect(screen.queryByText("GPT-5.4 Mini")).not.toBeInTheDocument();
     expect(screen.queryByText("Low")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ask" })).toBeDisabled();
+    const askButton = screen.getByRole("button", { name: "Ask" });
+    expect(askButton).toBeDisabled();
+    expect(within(askButton).getByText("Asking...")).toBeInTheDocument();
   });
 });

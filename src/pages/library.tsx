@@ -65,6 +65,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 const ACTIVE_REPOSITORY_STORAGE_KEY = "systify.activeRepositoryId";
+const PENDING_LIBRARY_ASK_SEND_BUTTON_STATES = ["Ask", "Asking..."] as const;
 
 /**
  * Library service mode entry point.
@@ -459,7 +460,7 @@ export function PendingLibraryAskShell() {
             <div aria-hidden="true" className="h-8 min-h-8 min-w-0 flex-1" />
             <Button type="button" size="sm" disabled title="Loading library data.">
               <PaperPlaneTiltIcon size={14} weight="fill" />
-              <ButtonStateText current="Ask" states={["Ask"]} />
+              <ButtonStateText current="Ask" states={PENDING_LIBRARY_ASK_SEND_BUTTON_STATES} />
             </Button>
           </InputGroupAddon>
         </InputGroup>
