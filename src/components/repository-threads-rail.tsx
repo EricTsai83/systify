@@ -29,6 +29,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { SidebarMenuButton } from "@/components/ui/sidebar";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useInlineRename } from "@/hooks/use-inline-rename";
 import { usePrewarmThread } from "@/hooks/use-prewarm-thread";
@@ -221,6 +222,35 @@ function EditableRowFrame({ children, className }: { children: React.ReactNode; 
  */
 function threadTitleTextClass(compact?: boolean): string {
   return compact ? "text-[11px] leading-[14px]" : "text-xs leading-4";
+}
+
+// Title-line widths cycled across skeleton rows so the placeholder reads as a
+// list of varied conversation titles rather than identical bars.
+const THREAD_SKELETON_TITLE_WIDTHS = ["w-3/4", "w-2/3", "w-4/5", "w-1/2", "w-3/5"] as const;
+
+/**
+ * Loading placeholder for a thread list. Each row mirrors a real thread row's
+ * padding (`px-3 py-1.5`, or `py-1` when compact) and its title line height so
+ * the list doesn't reflow when `listThreads` resolves and the rows replace it.
+ * `withBadge` adds the second (repository name) line that repo-bound rows
+ * carry; repoless rows are single-line.
+ */
+function ThreadListSkeleton({ rows, withBadge, compact }: { rows: number; withBadge: boolean; compact?: boolean }) {
+  return (
+    <div className="flex flex-col" aria-hidden="true">
+      {Array.from({ length: rows }).map((_, index) => (
+        <div key={index} className={cn("flex flex-col gap-1 px-3 py-1.5", compact && "py-1")}>
+          <Skeleton
+            className={cn(
+              compact ? "h-3.5" : "h-4",
+              THREAD_SKELETON_TITLE_WIDTHS[index % THREAD_SKELETON_TITLE_WIDTHS.length],
+            )}
+          />
+          {withBadge ? <Skeleton className="h-2.5 w-1/2" /> : null}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export function RepositoryThreadsRail({
@@ -422,7 +452,9 @@ function ThreadsSection({
   return (
     <div className="flex flex-col">
       <span ref={liveRegionRef} className="sr-only" role="status" aria-live="polite" />
-      {threads === undefined ? null : (
+      {threads === undefined ? (
+        <ThreadListSkeleton rows={6} withBadge compact={compact} />
+      ) : (
         <div className="flex animate-enter-fade flex-col">
           {pinnedThreads.length > 0 && (
             <CollapsibleThreadSection label="Pinned" className="pb-3">
@@ -1043,7 +1075,9 @@ export function RepolessChatsRail({
       </div>
 
       <SidebarScrollViewport className="flex-1" topFade viewportClassName="px-3 pb-12 pt-4">
-        {threads === undefined ? null : (
+        {threads === undefined ? (
+          <ThreadListSkeleton rows={6} withBadge={false} />
+        ) : (
           <div className="flex animate-enter-fade flex-col">
             {pinnedThreads.length > 0 && (
               <CollapsibleThreadSection label="Pinned" className="pb-3">

@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/x-icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      // Apply the persisted theme before the first paint so dark-mode users
+      // never see a light → dark flash (FOET). Runs synchronously, ahead of
+      // both the stylesheet and the React bundle. Keep the storage key in sync
+      // with ThemeProvider's `storageKey` default ("vite-ui-theme"); the value
+      // is read by `src/lib/storage.ts:readString`, which stores no prefix.
+      // theme-provider.tsx's mount effect remains the source of truth and
+      // re-applies the same class, so this is a no-op once React hydrates.
+      try {
+        var t = localStorage.getItem("vite-ui-theme");
+        var dark = t === "dark" || ((!t || t === "system") && matchMedia("(prefers-color-scheme: dark)").matches);
+        var root = document.documentElement;
+        root.classList.add(dark ? "dark" : "light");
+        root.style.colorScheme = dark ? "dark" : "light";
+      } catch (e) {}
+    </script>
     <link rel="stylesheet" href="/src/index.css" />
     <title>Systify</title>
   </head>

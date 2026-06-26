@@ -161,7 +161,15 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
 
       <ScrollArea className="min-h-0 flex-1">
         <article
-          className={cn("mx-auto flex w-full flex-col gap-4 px-6 py-8", isHtmlArtifact ? "max-w-6xl" : "max-w-[68ch]")}
+          // `min-h` gives the reader a stable floor so the loading skeleton, a
+          // short artifact, and the missing-version notice all occupy roughly
+          // the same height — the body no longer snaps shorter when a brief
+          // artifact resolves. HTML artifacts render their own `h-[70vh]`
+          // viewer, which already exceeds this floor.
+          className={cn(
+            "mx-auto flex min-h-[60vh] w-full flex-col gap-4 px-6 py-8",
+            isHtmlArtifact ? "max-w-6xl" : "max-w-[68ch]",
+          )}
         >
           {versionIsLoading ? (
             <Skeleton className="h-[50vh] w-full" />

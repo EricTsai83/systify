@@ -20,13 +20,13 @@ import { resolveEffectiveChatMode, useChatMode } from "@/hooks/use-service-mode"
 import { DEFAULT_AUTHENTICATED_PATH } from "@/route-paths";
 import type { ArtifactId, ArtifactListItem, OnImportedCallback, RepositoryId, ThreadId, ThreadMode } from "@/lib/types";
 
-const LEFT_SIDEBAR_WIDTH_STORAGE_KEY = "systify.sidebar.width";
-const LEFT_SIDEBAR_DEFAULT_WIDTH = 380;
-const LEFT_SIDEBAR_MAX_WIDTH = 480;
+export const LEFT_SIDEBAR_WIDTH_STORAGE_KEY = "systify.sidebar.width";
+export const LEFT_SIDEBAR_DEFAULT_WIDTH = 380;
+export const LEFT_SIDEBAR_MAX_WIDTH = 480;
 
-const LIBRARY_ASK_WIDTH_STORAGE_KEY = "systify.sidebar.width.libraryAsk";
-const LIBRARY_ASK_DEFAULT_WIDTH = 400;
-const LIBRARY_ASK_MAX_WIDTH = 720;
+export const LIBRARY_ASK_WIDTH_STORAGE_KEY = "systify.sidebar.width.libraryAsk";
+export const LIBRARY_ASK_DEFAULT_WIDTH = 400;
+export const LIBRARY_ASK_MAX_WIDTH = 720;
 
 type AppSidebarLeftProps = {
   repositories: Doc<"repositories">[] | undefined;

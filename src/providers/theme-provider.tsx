@@ -44,13 +44,14 @@ export function ThemeProvider({
 
     root.classList.remove("light", "dark");
 
-    if (theme === "system") {
-      const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    const resolvedTheme =
+      theme === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : theme;
 
-      root.classList.add(systemTheme);
-    } else {
-      root.classList.add(theme);
-    }
+    root.classList.add(resolvedTheme);
+    // Keep native UI (scrollbars, form controls) in sync with the theme. The
+    // pre-paint script in index.html sets this on first load; mirror it here
+    // so runtime theme switches don't leave it stale.
+    root.style.colorScheme = resolvedTheme;
 
     // Force a synchronous style/layout recompute so the new theme variables
     // are committed while transitions are still suppressed.

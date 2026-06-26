@@ -1,4 +1,4 @@
-import { Suspense, forwardRef, useEffect, useRef, useState, type RefObject } from "react";
+import { Suspense, forwardRef, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useConvexConnectionState } from "convex/react";
 import {
@@ -175,7 +175,12 @@ export function ProtectedLayout() {
 }
 
 function useDemoBannerViewportOffset(isActive: boolean, bannerRef: RefObject<HTMLElement | null>) {
-  useEffect(() => {
+  // useLayoutEffect (not useEffect) so the banner-height CSS var is committed
+  // before the browser paints the first frame. With useEffect the offset was
+  // applied one frame late, so demo-mode content rendered at the wrong vertical
+  // position for a frame and then shifted down once the var landed. Safe in
+  // this SPA — there is no SSR pass to warn about.
+  useLayoutEffect(() => {
     const root = document.documentElement;
     if (!isActive) {
       root.style.removeProperty(DEMO_BANNER_HEIGHT_CSS_VAR);

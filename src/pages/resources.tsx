@@ -180,7 +180,7 @@ function ResourceSummaryBadge({
 }) {
   return (
     <Badge variant="outline" className={cn("h-7 gap-1.5", toneTextClassName(tone))}>
-      <span className="min-w-[2ch] text-right font-mono tabular-nums">{formatCount(value)}</span>
+      <span className="min-w-[3ch] text-right font-mono tabular-nums">{formatCount(value)}</span>
       <span className="font-medium">{label}</span>
     </Badge>
   );
@@ -196,7 +196,7 @@ function ResourceSummarySkeleton() {
           data-resource-summary-skeleton-badge="true"
           className="h-7 gap-1.5 border-transparent bg-muted/70 text-transparent"
         >
-          <span className="min-w-[2ch] text-right font-mono tabular-nums">00</span>
+          <span className="min-w-[3ch] text-right font-mono tabular-nums">00</span>
           <span className="font-medium">{label}</span>
         </Badge>
       ))}

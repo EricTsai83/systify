@@ -2510,7 +2510,11 @@ function UsageMetric({
         <p className="mt-2 text-2xl font-semibold tracking-tight tabular-nums">{value}</p>
       )}
       {isLoading ? (
-        <Skeleton className="mt-1 h-3 w-32" aria-hidden="true" />
+        // Reserve the same `min-h-4` the loaded detail line occupies so the
+        // metric cell doesn't grow a few px taller when the value resolves.
+        <div className="mt-1 min-h-4" aria-hidden="true">
+          <Skeleton className="h-3 w-32" />
+        </div>
       ) : (
         <p className="mt-1 min-h-4 truncate text-xs text-muted-foreground">{detail ?? null}</p>
       )}

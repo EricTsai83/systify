@@ -59,7 +59,9 @@ export const RepositorySelector = memo(function RepositorySelector({
   if (repositories === undefined) {
     return (
       <div className="min-w-0 flex-1">
-        <Skeleton className="h-4 w-20" />
+        {/* Match the loaded trigger's footprint (Button size="sm" → h-8, full width)
+            so the footer row keeps the same height before and after load. */}
+        <Skeleton className="h-8 w-full" />
       </div>
     );
   }

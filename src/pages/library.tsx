@@ -3,7 +3,16 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
 import { CircleIcon, LightningIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
-import { AppSidebarLeft, AppSidebarRight } from "@/components/app-sidebar";
+import {
+  AppSidebarLeft,
+  AppSidebarRight,
+  LEFT_SIDEBAR_DEFAULT_WIDTH,
+  LEFT_SIDEBAR_MAX_WIDTH,
+  LEFT_SIDEBAR_WIDTH_STORAGE_KEY,
+  LIBRARY_ASK_DEFAULT_WIDTH,
+  LIBRARY_ASK_MAX_WIDTH,
+  LIBRARY_ASK_WIDTH_STORAGE_KEY,
+} from "@/components/app-sidebar";
 import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
 import { LibraryShell } from "@/components/library-shell";
 import { Logo } from "@/components/logo";
@@ -17,6 +26,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
+import { InputGroup, InputGroupAddon, InputGroupTextarea } from "@/components/ui/input-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
@@ -311,7 +321,12 @@ function LibraryRepository({
 function PendingLibraryShell({ repositoryName }: { repositoryName: string }) {
   return (
     <>
-      <Sidebar side="left">
+      <Sidebar
+        side="left"
+        widthStorageKey={LEFT_SIDEBAR_WIDTH_STORAGE_KEY}
+        defaultWidth={LEFT_SIDEBAR_DEFAULT_WIDTH}
+        maxWidth={LEFT_SIDEBAR_MAX_WIDTH}
+      >
         <SidebarHeader>
           <Logo size={26} />
           <div className="min-w-0 leading-tight">
@@ -352,22 +367,38 @@ function PendingLibraryShell({ repositoryName }: { repositoryName: string }) {
           </h1>
           <SidebarTrigger side="right" className="ml-auto" />
         </header>
-        <div className="flex min-h-0 min-w-0 flex-1 items-center justify-center px-6 py-10">
-          <div className="flex w-full max-w-md flex-col items-center text-center">
-            <Skeleton className="h-10 w-10 rounded-full" />
-            <Skeleton className="mt-5 h-5 w-44" />
-            <Skeleton className="mt-3 h-4 w-64 max-w-full" />
-          </div>
-        </div>
+        <div className="min-h-0 min-w-0 flex-1" />
       </SidebarInset>
-      <Sidebar side="right">
-        <div className="flex min-h-0 flex-1 flex-col gap-3 p-3">
-          <Skeleton className="h-8 w-36" />
-          <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-9 w-full" />
-        </div>
+      <Sidebar
+        side="right"
+        widthStorageKey={LIBRARY_ASK_WIDTH_STORAGE_KEY}
+        defaultWidth={LIBRARY_ASK_DEFAULT_WIDTH}
+        maxWidth={LIBRARY_ASK_MAX_WIDTH}
+      >
+        <PendingLibraryAskShell />
       </Sidebar>
     </>
+  );
+}
+
+function PendingLibraryAskShell() {
+  return (
+    <div className="flex min-h-0 flex-1 flex-col bg-background">
+      <div className="min-h-0 flex-1" />
+      <div className="border-t border-border px-4 py-3">
+        <InputGroup className="overflow-hidden opacity-80">
+          <InputGroupTextarea
+            value=""
+            readOnly
+            disabled
+            placeholder="Question about this library..."
+            className="min-h-24 text-sm"
+            aria-label="Library Ask input loading"
+          />
+          <InputGroupAddon align="block-end" className="min-h-8 justify-between gap-1" />
+        </InputGroup>
+      </div>
+    </div>
   );
 }
 
