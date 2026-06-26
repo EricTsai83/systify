@@ -16,6 +16,7 @@ import {
 import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
 import { LibraryShell } from "@/components/library-shell";
 import { Logo } from "@/components/logo";
+import { RepositoryModeSwitcher } from "@/components/repository-mode-switcher";
 import { ScreenState } from "@/components/screen-state";
 import {
   Sidebar,
@@ -240,7 +241,12 @@ function LibraryRepository({
   }, [askThreadId, askThreadProbe, handleSelectLibraryThread, repositoryId]);
 
   if (isAuthorizedForRepository === null && (hasLocalRepositoryIntent || currentRepository)) {
-    return <PendingLibraryShell repositoryName={currentRepository?.sourceRepoFullName ?? "Library"} />;
+    return (
+      <PendingLibraryShell
+        repositoryId={repositoryId}
+        repositoryName={currentRepository?.sourceRepoFullName ?? "Library"}
+      />
+    );
   }
   if (repositories === undefined || isAuthorizedForRepository === null) {
     return <ScreenState title="Loading…" description="Loading your repository." isLoading />;
@@ -318,7 +324,7 @@ function LibraryRepository({
   );
 }
 
-function PendingLibraryShell({ repositoryName }: { repositoryName: string }) {
+function PendingLibraryShell({ repositoryId, repositoryName }: { repositoryId: RepositoryId; repositoryName: string }) {
   return (
     <>
       <Sidebar
@@ -333,17 +339,7 @@ function PendingLibraryShell({ repositoryName }: { repositoryName: string }) {
             <div className="truncate text-lg font-semibold tracking-tight">Systify</div>
           </div>
         </SidebarHeader>
-        <div className="border-b border-border px-2 py-2">
-          <div className="flex h-9 gap-1 border border-border bg-muted/40 p-1">
-            <div className="h-full w-[30px] bg-transparent" />
-            <div className="min-w-0 flex-1 bg-background shadow-sm">
-              <div className="flex h-full items-center gap-2 px-2.5">
-                <Skeleton className="h-3.5 w-3.5" />
-                <span className="text-xs font-medium text-foreground">Library</span>
-              </div>
-            </div>
-          </div>
-        </div>
+        <RepositoryModeSwitcher repositoryId={repositoryId} mode="library" availability={undefined} />
         {/*
          * Content stays an empty frame during the auth probe. The folder
          * tree's shape (count + depth) is unknown, so a fake skeleton tree
