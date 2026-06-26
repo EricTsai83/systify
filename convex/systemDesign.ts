@@ -71,9 +71,9 @@ const KIND_RUN_TERMINAL_STATUSES = new Set<Doc<"systemDesignKindRuns">["status"]
 ]);
 
 /**
- * Library System Design generation entry point.
+ * Library Design Docs generation entry point.
  *
- * The user opens the Generate System Design dialog from the Library panel,
+ * The user opens the Design Docs generation dialog from the Library panel,
  * ticks the kinds they want, and submits — this mutation validates the
  * request, ensures the default folder tree exists, creates a tracking job,
  * and schedules the Node action that performs the actual generation.
@@ -409,14 +409,13 @@ export const failGeneration = internalMutation({
   },
 });
 
-const STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE =
-  "The System Design generation stalled and was automatically marked as failed.";
+const STALE_SYSTEM_DESIGN_JOB_ERROR_MESSAGE = "Design Docs generation stalled and was automatically marked as failed.";
 
 const STALE_SYSTEM_DESIGN_RESUME_EXHAUSTED_MESSAGE =
-  "The System Design generation stalled repeatedly and was marked as failed after exhausting resume attempts.";
+  "Design Docs generation stalled repeatedly and was marked as failed after exhausting resume attempts.";
 
 /**
- * Background stale-job recovery for System Design generation. Called by
+ * Background stale-job recovery for internal System Design generation. Called by
  * `opsNode.recoverStaleInteractiveJobs` when a `system_design`-kind job
  * has overrun its lease.
  *

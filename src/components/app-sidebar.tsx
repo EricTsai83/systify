@@ -200,7 +200,7 @@ type AppSidebarRightProps = {
   onSelectArtifact: (id: ArtifactId) => void;
   onSelectAskThread: (id: ThreadId | null) => void;
   /**
-   * Open the Generate System Design dialog. The page owns the dialog state
+   * Open the Design Docs generation dialog. The page owns the dialog state
    * so the Ask panel and the editor empty state share one dialog instance.
    */
   onGenerate?: () => void;

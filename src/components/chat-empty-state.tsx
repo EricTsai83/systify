@@ -179,7 +179,7 @@ export function PromptSuggestionList({
 
 /**
  * Empty-state hint for repo-attached threads with no messages yet. Users
- * generate System Design artifacts from the Library page; the chat shell
+ * generate Design Docs from the Library page; the chat shell
  * stays focused on conversation-starter affordances.
  */
 export function EmptyChatHint() {

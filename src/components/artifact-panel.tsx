@@ -15,7 +15,7 @@ const EMPTY_ARTIFACTS: Doc<"artifacts">[] = [];
  * clicks from chat route through the same callback so the Reader is the
  * canonical long-form reading experience.
  *
- * Generation entry points for repository-scoped artifacts (System Design,
+ * Generation entry points for repository-scoped artifacts (Design Docs,
  * failure-mode analysis) live in the top bar / chat composer, not here —
  * the panel exists purely to navigate what already exists.
  */

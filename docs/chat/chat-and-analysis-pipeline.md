@@ -9,19 +9,19 @@ This document describes the two AI interaction paths currently available in Syst
   - `discuss` with **Library grounding** (`messages.groundLibrary`) — artifact-grounded reply with `[A#]` citations against the repository's design artifacts
   - `discuss` with **Sandbox grounding** (`messages.groundSandbox`) — sandbox-backed answers grounded in the live source tree via guarded tools
   - `library` — Library Ask, an artifact-reader thread with chunked-RAG retrieval
-- System Design generation — a sandbox-backed background job, triggered by the user clicking **Generate System Design** from the empty Library page, that writes a starter set of System Design artifacts (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`).
+- Design Docs generation (implemented internally as System Design generation) — a sandbox-backed background job, triggered from the Library's Design Docs menu / overview, that writes selected optional templates (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`) as generated docs.
 
-Both are repository-centered, but they depend on different data sources and execution models. Chat and System Design generation are also complementary: System Design generation writes artifacts that later Library Ask and sandbox-grounded Discuss replies can cite.
+Both are repository-centered, but they depend on different data sources and execution models. Chat and Design Docs generation are also complementary: generated docs become Library artifacts that later Library Ask and sandbox-grounded Discuss replies can cite.
 
 ## Differences Between the Two Paths
 
 
-| Capability               | Chat (per mode + grounding)                                                                                                                                                              | System Design generation                                              |
+| Capability               | Chat (per mode + grounding)                                                                                                                                                              | Design Docs generation                                                |
 | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | Main entry point         | `chat.sendMessage`                                                                                                                                                                       | `systemDesign.requestSystemDesignGeneration`                          |
 | Primary data source      | `discuss` ungrounded: none · `discuss` + Library grounding: `artifactChunks` + artifact metadata · `discuss` + Sandbox grounding: live sandbox tools plus durable artifacts · `library`: `artifactChunks` + artifact metadata | live sandbox                                                          |
 | Execution location       | Convex action                                                                                                                                                                            | Convex Node action + Daytona                                          |
-| UI presentation          | stable history + active stream merge                                                                                                                                                     | a starter set of System Design artifacts plus job state               |
+| UI presentation          | stable history + active stream merge                                                                                                                                                     | selected generated docs plus job state                                |
 | Availability requirement | `discuss` ungrounded: always · Library grounding: repository has artifacts and indexed chunks · Sandbox grounding: repository has a usable sandbox · `library`: repository has artifacts | repository has a usable sandbox                                       |
 
 
@@ -208,28 +208,26 @@ flowchart TD
 
 This state model lets the UI faithfully represent four different states: created-but-not-yet-answered, answering, answered, and failed.
 
-## System Design Generation Flow
+## Design Docs Generation Flow
 
 ```mermaid
 flowchart TD
-  Click[ClickGenerateSystemDesign]
-  Dialog[PickKindsInDialog]
+  Click[OpenDesignDocsMenuOrOverview]
+  Dialog[PickOptionalTemplates]
   Request[RequestSystemDesignGeneration]
-  Preflight[SandboxPreflightIfLlmKindsSelected]
-  Dedup[DedupAgainstActiveLibraryJob]
+  Append[AppendNewSelectionsToActiveJobIfPresent]
   RateLimit[ConsumeSystemDesignAndDaytonaBuckets]
   SeedFolders[EnsureSystemDesignFolders]
   CreateJob[CreateSystemDesignJobWithLease]
   Schedule[ScheduleNodeAction]
-  Generate[SerialLlmGeneratorsWithLeaseRefresh]
+  Generate[SerialLlmGeneratorsWithDynamicSelectionReads]
   Persist[PersistEachArtifactInItsFolder]
   Finish[CompleteOrFailJob]
 
   Click --> Dialog
   Dialog --> Request
-  Request --> Preflight
-  Preflight --> Dedup
-  Dedup --> RateLimit
+  Request --> Append
+  Append --> RateLimit
   RateLimit --> SeedFolders
   SeedFolders --> CreateJob
   CreateJob --> Schedule
@@ -238,11 +236,11 @@ flowchart TD
   Persist --> Finish
 ```
 
-System Design generation is **user-initiated, not import-driven**. Imports no longer auto-trigger any analysis; they only seed the default System Design folders inside `artifactFolders`. When the user navigates to Library on a repository that has no artifact bodies yet, the empty Library page renders a **Generate System Design** CTA button. Clicking it opens a dialog that lets the user pick which kinds to publish; on submit, the dialog calls `requestSystemDesignGeneration` with the selected subset.
+Design Docs generation is **user-initiated, not import-driven**. Imports no longer auto-trigger any analysis; they only seed the default internal System Design folders inside `artifactFolders`. The user opens the Design Docs menu / overview, picks optional templates, and submits the dialog. The dialog calls `requestSystemDesignGeneration` with the selected subset.
 
 ### Kinds and dispatch
 
-Library System Design produces up to eight LLM-backed artifact kinds: `readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`. Every kind is LLM-backed — no kind skips Daytona. Each spins a `generateViaGateway` call against the sandbox-backed model with the same `read_file` / `list_dir` / `run_shell` tool factory the sandbox-grounded chat path uses.
+Design Docs generation can produce up to eight LLM-backed templates: `readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`. Users choose the templates they need; no template is mandatory. Every selected template is LLM-backed — no selected template skips Daytona. Each spins a `generateViaGateway` call against the sandbox-backed model with the same `read_file` / `list_dir` / `run_shell` tool factory the sandbox-grounded chat path uses.
 
 ### 1. Request validation
 
@@ -250,7 +248,7 @@ Library System Design produces up to eight LLM-backed artifact kinds: `readme_su
 
 1. **Identity + repository ownership** — `requireViewerIdentity` + `requireActiveRepositoryForViewer` reject archived, deleted, or non-owned repos with the standard error messages.
 2. **Non-empty selection** — at least one kind must be checked.
-3. **Idempotency dedup** — scans `jobs` by the `by_repositoryId_and_kind_and_status_and_leaseExpiresAt` index for an active (`queued` or `running`, lease still alive) `system_design` job. If one is found, the mutation returns that existing `jobId` instead of creating a duplicate.
+3. **Active-job merge** — scans `jobs` by the `by_repositoryId_and_kind_and_status_and_leaseExpiresAt` index for an active (`queued` or `running`, lease still alive) `system_design` job. If one is found, newly selected templates are appended to that existing job instead of creating a duplicate.
 4. **Rate limiting** — consumes the per-owner `systemDesignRequests` bucket (10/hour by default) and the global `daytonaRequestsGlobal` bucket.
 5. **Folder seeding** — `ensureSystemDesignFolders` is idempotent and creates the default System Design folder tree if it does not already exist.
 
@@ -264,7 +262,7 @@ The lease is set **at insert time** rather than only at the `queued → running`
 
 ### 3. Run the generators
 
-`runSystemDesignGeneration` (in `convex/systemDesignNode.ts`) transitions the job to `running` via `markGenerationStarted`, which refreshes the lease for a fresh window, then runs the selected kinds serially in their submission order, refreshing the job lease via `refreshGenerationLease` *before each kind*. Serial execution is intentional: it honours both the per-sandbox tool budget and OpenAI rate limits.
+`runSystemDesignGeneration` (in `convex/systemDesignNode.ts`) transitions the job to `running` via `markGenerationStarted`, which refreshes the lease for a fresh window, then runs the selected kinds serially in their submission order, refreshing the job lease via `refreshGenerationLease` *before each kind*. The runner re-reads the job's selections between generated docs so templates added while the job is active can be picked up by the same job. Serial execution is intentional: it honours both the per-sandbox tool budget and OpenAI rate limits.
 
 Per-kind failures are isolated in a `try/catch`; the failing kind is logged with an `errorId` and skipped without affecting later kinds. After every kind completes (success or failure) the action updates `jobs.stage` / `jobs.progress` via `updateGenerationProgress`.
 
@@ -282,33 +280,33 @@ If the action dies (process restart, panic) before `completeGeneration`, the 5-m
 
 ## Sandbox Availability
 
-Two distinct surfaces depend on a live Daytona sandbox: sandbox-grounded Discuss replies and the LLM-backed kinds of the System Design generation background job. Both gate themselves through `convex/lib/repositorySandbox.ts`. If the sandbox:
+Two distinct surfaces depend on a live Daytona sandbox: sandbox-grounded Discuss replies and the LLM-backed templates of Design Docs generation. Both gate themselves through `convex/lib/repositorySandbox.ts`. If the sandbox:
 
 - has passed its TTL
 - is archived
 - has failed
 - is missing required remote path information
 
-then Sandbox grounding is unavailable for chat. `getRepositorySandboxStatus` / `requireRepositorySandbox` report the latest sandbox row but do **not** provision — they only describe state. System Design generation does not pre-check sandbox readiness in `requestSystemDesignGeneration`; provisioning happens lazily inside the Node action via `ensureSandboxReady`, and a `SandboxPreparationError` there fails the queued job with the helper's user-facing message rather than rejecting at insert.
+then Sandbox grounding is unavailable for chat. `getRepositorySandboxStatus` / `requireRepositorySandbox` report the latest sandbox row but do **not** provision — they only describe state. Design Docs generation does not pre-check sandbox readiness in `requestSystemDesignGeneration`; provisioning happens lazily inside the Node action via `ensureSandboxReady`, and a `SandboxPreparationError` there fails the queued job with the helper's user-facing message rather than rejecting at insert.
 
 The frontend uses this state to tell the user to:
 
 - sync the repository to provision a new sandbox, or
 - turn off Sandbox grounding and continue with ungrounded Discuss or Library for degraded but still useful work
 
-Library mode is **not** gated on having artifacts. Any repository with a valid attached repo can open Library; if no artifacts exist yet, the page shows the **Generate System Design** CTA.
+Library mode is **not** gated on having artifacts. Any repository with a valid attached repo can open Library; if no generated docs exist yet, the Design Docs overview presents optional templates.
 
 ## How The Two Pipelines Complement Each Other
 
-Chat and System Design generation are not mutually exclusive. They form layered capabilities:
+Chat and Design Docs generation are not mutually exclusive. They form layered capabilities:
 
 - Chat (`discuss` / `library`, with optional per-message Library / Sandbox grounding on Discuss): fast, interactive, with cost and grounding scaling per toggle
-- System Design generation: slower and sandbox-dependent, but produces durable, repository-grounded prose covering the main system surfaces in one pass
+- Design Docs generation: slower and sandbox-dependent for selected templates, but produces durable, repository-grounded prose for the system surfaces the user chooses
 
-Artifacts produced by System Design generation flow back into later Library Ask and sandbox-grounded Discuss context, so the overall system forms a cumulative knowledge loop.
+Generated docs flow back into later Library Ask and sandbox-grounded Discuss context, so the overall system forms a cumulative knowledge loop.
 
 ## Known Limitations
 
 - Sandbox tooling (`read_file`, `list_dir`, `run_shell`) is gated only by daily cost cap (per-user and per-repository) and the repo / sandbox lifecycle. `run_shell` is gated by a deny list of obviously destructive patterns, a 32 KiB output cap, a 60 s timeout ceiling, and a workdir pinned inside the repository.
-- Chat and System Design generation are both AI features, but their outputs and tracking models are still split between thread replies and artifacts.
-- The current System Design generation pass is a fixed starter set of overviews. Per-folder regeneration, additional artifact kinds, and partial re-runs are future work.
+- Chat and Design Docs generation are both AI features, but their outputs and tracking models are still split between thread replies and artifacts.
+- Additional Design Docs templates and per-folder regeneration are future work.

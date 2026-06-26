@@ -128,14 +128,14 @@ describe("enqueueJob defaults and lease", () => {
       costCategory: "system_design",
       triggerSource: "user",
       requestedCommand: "library_generation:architecture_overview",
-      outputSummary: "Queued System Design generation",
+      outputSummary: "Queued Design Docs generation",
       selections: ["architecture_overview"],
     });
 
     expect(job?.sandboxId).toBe(sandboxId);
     expect(job?.threadId).toBe(threadId);
     expect(job?.requestedCommand).toBe("library_generation:architecture_overview");
-    expect(job?.outputSummary).toBe("Queued System Design generation");
+    expect(job?.outputSummary).toBe("Queued Design Docs generation");
     expect(job?.selections).toEqual(["architecture_overview"]);
   });
 

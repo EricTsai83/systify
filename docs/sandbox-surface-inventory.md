@@ -15,7 +15,7 @@ historical grounding marker.
 - `jobs.kind`
   - `sandbox_activation`: explicit Activate/Wake/Retry live source work.
   - `chat` with `messages.groundSandbox === true`: historical Discuss answer used Sandbox grounding.
-  - `system_design`: Repository Guide generation used Live source.
+  - `system_design`: Design Docs generation used Live source.
   - `artifact_draft`: Library Ask artifact draft generation used Live source.
 
 ## UI Surfaces
@@ -73,7 +73,7 @@ historical grounding marker.
 - `src/pages/settings.tsx`
   - Sandbox model preference scope.
   - Data source: model catalog and user preferences.
-  - Keeps `Sandbox` as a technical model-scope label; description says Live source work, artifact drafts, and System Design generation.
+  - Keeps `Sandbox` as a technical model-scope label; description says Live source work, artifact drafts, and Design Docs generation.
 
 ## Normalization Rules
 

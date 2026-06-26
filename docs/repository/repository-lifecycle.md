@@ -39,9 +39,9 @@ Repository import is intentionally **sandbox-free**. The pipeline never provisio
 A Daytona sandbox is only provisioned on demand by features that genuinely need a live filesystem:
 
 - **Sandbox-grounded Discuss** — provisioned the first time the user activates the Sandbox grounding toggle on a repository (via `requestSandboxActivation` → `sandboxActivationNode.runSandboxActivation`).
-- **System Design generation** — every kind is LLM-backed and runs through `ensureSandboxReady` inside `systemDesignNode.runSystemDesignGeneration`.
+- **Design Docs generation** — every selected template is LLM-backed and runs through `ensureSandboxReady` inside `systemDesignNode.runSystemDesignGeneration`.
 
-`ensureSandboxReady` (in `convex/lib/sandboxLiveness.ts`) is the single source of truth for "make a sandbox usable for this repository right now". It probes Daytona, wakes a stopped sandbox, or provisions a fresh one as needed, and patches `repositories.latestSandboxId` to the result. Import never sets that pointer — whatever sandbox the previous sandbox-grounded reply or System Design run left there stays there.
+`ensureSandboxReady` (in `convex/lib/sandboxLiveness.ts`) is the single source of truth for "make a sandbox usable for this repository right now". It probes Daytona, wakes a stopped sandbox, or provisions a fresh one as needed, and patches `repositories.latestSandboxId` to the result. Import never sets that pointer — whatever sandbox the previous sandbox-grounded reply or Design Docs run left there stays there.
 
 ## Entry Points
 
@@ -110,7 +110,7 @@ The fetched snapshot is converted into three durable outputs:
 - `repoFiles` — one row per tree entry, with `language`, `isEntryPoint`, `isConfig`, `isImportant` annotations
 - `repoChunks` — line-bounded chunks of the README and important files for retrieval / dependency detection
 
-Artifacts (System Design, failure-mode analyses) are populated separately via the `Generate System Design` flow, not by import.
+Artifacts (Design Docs, failure-mode analyses) are populated separately via Design Docs generation, not by import.
 
 ### 6. Persist the new snapshot in staged batches
 
@@ -132,7 +132,7 @@ Only the finalize step is allowed to switch the repository to the new snapshot. 
 - writes `lastImportedAt`, `lastIndexedAt`, and `lastSyncedCommitSha`
 - promotes `latestImportId` / `latestImportJobId` to the new import
 
-Finalize does **not** touch `repositories.latestSandboxId`. Any sandbox previously provisioned by sandbox-grounded Discuss or System Design keeps pointing where it was, and its cleanup is driven by those features' own lifecycles, not by the import.
+Finalize does **not** touch `repositories.latestSandboxId`. Any sandbox previously provisioned by sandbox-grounded Discuss or Design Docs generation keeps pointing where it was, and its cleanup is driven by those features' own lifecycles, not by the import.
 
 ### 8. Clean up superseded or partial snapshots
 
@@ -169,7 +169,7 @@ They share most of the same pipeline, but their meaning is different:
 - sync rebuilds the import snapshot for an existing repository
 - sync clears `latestRemoteSha` first so the UI's update indicator disappears immediately
 
-In other words, sync is not a patch to the repository. It is a controlled re-run of the import process. Because the pipeline is GitHub-API-only, a sync never disturbs a sandbox that sandbox-grounded Discuss or System Design previously provisioned.
+In other words, sync is not a patch to the repository. It is a controlled re-run of the import process. Because the pipeline is GitHub-API-only, a sync never disturbs a sandbox that sandbox-grounded Discuss or Design Docs generation previously provisioned.
 
 ## Deletion Flow
 
@@ -186,7 +186,7 @@ When deleting a repository, the system schedules cleanup jobs for all sandboxes 
 - remote Daytona sandboxes must be explicitly deleted
 - cleanup jobs need enough database context to execute correctly
 
-These sandboxes originate from sandbox-grounded Discuss / System Design / `ensureSandboxReady`, not from the import pipeline — but they are still scoped to the repository and must be released on deletion.
+These sandboxes originate from sandbox-grounded Discuss / Design Docs generation / `ensureSandboxReady`, not from the import pipeline — but they are still scoped to the repository and must be released on deletion.
 
 ### 3. Cascade delete
 
@@ -241,4 +241,4 @@ This distinction tells the UI and later workflows that:
 - The import pipeline is currently a centralized orchestration action and may need to be split into clearer domain services as it grows.
 - Although `index` exists as a job kind in the schema, indexing is still mostly embedded inside the import pipeline rather than operating as a separate workflow.
 - `repositories.fileCount` and per-file annotations come from a single GitHub Trees API call; very large monorepos that exceed the API's truncation threshold land a partial tree (logged, not fatal).
-- Sandbox-grounded Discuss and System Design availability depend on sandbox state and TTL, so the user experience for those features is affected by the resource reclamation cycle — but ungrounded Discuss and Library remain available regardless.
+- Sandbox-grounded Discuss and Design Docs generation availability depend on sandbox state and TTL, so the user experience for those features is affected by the resource reclamation cycle — but ungrounded Discuss and Library remain available regardless.

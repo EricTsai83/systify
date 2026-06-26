@@ -236,7 +236,7 @@ describe("useChatComposerSession", () => {
 
     rerender({
       groundingAvailability: {
-        library: { enabled: false, code: "library_no_artifact", message: "Generate System Design first." },
+        library: { enabled: false, code: "library_no_artifact", message: "Generate at least one Design Doc first." },
         sandbox: { enabled: true },
       },
     });

@@ -376,7 +376,7 @@ const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
       "",
       artifactEvidenceLabels.length > 0
         ? `Most relevant artifact excerpts: ${artifactEvidenceLabels.join(", ")}`
-        : "Not enough artifact evidence was selected; consider running a system design first.",
+        : "Not enough artifact evidence was selected; consider generating Design Docs first.",
     ],
   },
   zh: {

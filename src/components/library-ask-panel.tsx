@@ -123,7 +123,7 @@ export function LibraryAskPanel({
   /**
    * Whether the repository has at least one indexed artifact. Library Ask
    * runs RAG over those artifacts, so when this is `false` the composer
-   * is locked and the empty state surfaces a "Generate System Design"
+   * is locked and the empty state surfaces a "Generate design docs"
    * CTA — the same gate the backend's `assertRepositoryModeEligible`
    * enforces with `library_no_artifact`.
    */
@@ -136,7 +136,7 @@ export function LibraryAskPanel({
    */
   onSelectThread: (threadId: ThreadId | null) => void;
   /**
-   * Open the Generate System Design dialog. Surfaced in the no-artifacts
+   * Open the Design Docs generation dialog. Surfaced in the no-artifacts
    * empty state and inline lock hint so the user can act on the gate
    * without leaving the Ask panel.
    */
@@ -1142,7 +1142,7 @@ function timelineEntrySender(entry: LibraryAskTimelineEntry): "user" | "assistan
 
 /**
  * Empty-state shown when the repository has no artifacts yet. The Ask panel
- * is the single home for the Generate System Design CTA — the Library
+ * is the single home for the Generate design docs CTA — the Library
  * main canvas only narrates the missing-document state and points users
  * here. Centering the hero + button together keeps the action immediately
  * below the description text, instead of stranded at the bottom of the

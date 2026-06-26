@@ -64,7 +64,7 @@ export interface PromptInputModelPickerProps {
   /**
    * Capability filter forwarded to `listPickableModels`. Chat composers omit
    * it so every user-pickable model is visible; tool-specific surfaces such
-   * as Generate System Design pass `"sandbox"`.
+   * as Design Docs generation pass `"sandbox"`.
    */
   capability?: UserPickableCapability;
   /** Settings scope used for enabled/favorite/default filtering. */

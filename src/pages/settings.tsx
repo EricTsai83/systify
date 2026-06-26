@@ -154,12 +154,12 @@ const ACCESS_PLAN_CARDS = [
   {
     id: "pro",
     title: "Pro",
-    description: "Expanded usage for repository chat and generated system design.",
+    description: "Expanded usage for repository chat and generated Design Docs.",
     badge: "Most Popular",
     features: [
       { icon: SparkleIcon, label: "Repository chat and Library Ask" },
       { icon: WrenchIcon, label: "Sandbox grounding" },
-      { icon: ChartLineUpIcon, label: "System Design generation" },
+      { icon: ChartLineUpIcon, label: "Design Docs generation" },
     ],
   },
   {
@@ -262,7 +262,7 @@ const MODEL_SETTINGS_SCOPE_COPY: Record<ModelPreferenceScope, { label: string; d
   },
   sandbox: {
     label: "Sandbox",
-    description: "Live source work, artifact drafts, and System Design generation.",
+    description: "Live source work, artifact drafts, and Design Docs generation.",
   },
 };
 

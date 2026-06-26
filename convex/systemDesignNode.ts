@@ -105,7 +105,7 @@ export const runSystemDesignGeneration = internalAction({
     if (totalCount === 0) {
       await ctx.runMutation(internal.systemDesign.failGeneration, {
         jobId: args.jobId,
-        errorMessage: "No valid system design kinds selected.",
+        errorMessage: "Select at least one Design Docs template.",
       });
       return;
     }
@@ -205,7 +205,7 @@ export const runSystemDesignGeneration = internalAction({
       if (outcome.aborted) {
         await ctx.runMutation(internal.systemDesign.failGeneration, {
           jobId: args.jobId,
-          errorMessage: "System Design generation stopped because the repository is no longer active.",
+          errorMessage: "Design Docs generation stopped because the repository is no longer active.",
         });
         return;
       }

@@ -11,7 +11,7 @@ import { runRepositoryImportPipeline } from "./lib/importPipeline";
  * sandbox. The pipeline fetches metadata, the recursive tree, README, and
  * package manifest contents directly from the GitHub API using the user's
  * GitHub App installation token. Sandbox-backed features (Sandbox Mode chat,
- * Generate System Design) own their own sandbox lifecycle through
+ * Design Docs generation) own their own sandbox lifecycle through
  * `ensureSandboxReady` and run on demand.
  *
  * Failure modes:

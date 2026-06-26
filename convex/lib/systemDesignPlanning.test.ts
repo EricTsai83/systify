@@ -163,13 +163,13 @@ describe("resolveSystemDesignCachePreviewModel", () => {
 
 describe("buildSystemDesignJobSummary", () => {
   test("summarizes zero, one, two, and many selections", () => {
-    expect(buildSystemDesignJobSummary([], "queued")).toBe("Queued System Design documents");
+    expect(buildSystemDesignJobSummary([], "queued")).toBe("Queued design docs");
     expect(buildSystemDesignJobSummary(["readme_summary"], "queued")).toBe("Queued README Summary");
     expect(buildSystemDesignJobSummary(["readme_summary", "security_overview"], "running")).toBe(
       "Generating README Summary + Security Overview",
     );
     expect(buildSystemDesignJobSummary(["readme_summary", "security_overview", "operations_overview"], "running")).toBe(
-      "Generating 3 System Design documents",
+      "Generating 3 design docs",
     );
   });
 });

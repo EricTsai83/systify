@@ -2,8 +2,9 @@
 
 ## Why this exists
 
-`Generate System Design` is a background job that writes roughly eight reusable
-Markdown artifacts (`readme_summary`, `architecture_overview`,
+Design Docs generation (implemented internally as System Design generation) is a
+background job that writes selected reusable Markdown artifacts
+(`readme_summary`, `architecture_overview`,
 `architecture_diagram`, `data_model_overview`, `api_surface_overview`,
 `deployment_overview`, `security_overview`, `operations_overview`) into the
 repository's Library so later Library Ask and Discuss replies can cite them.
@@ -11,7 +12,7 @@ Each artifact is produced by a sandbox-grounded LLM session — the prompt list
 lives in `convex/lib/systemDesignPrompts.ts` and the matching folder tree is
 seeded at repository import time.
 
-A full publication runs roughly seven to ten minutes end-to-end. That is long
+A full eight-template publication runs roughly seven to ten minutes end-to-end. That is long
 enough to bump against the Convex action timeout, expensive enough that
 identical re-runs must not re-charge the user, and varied enough that failures
 can come from the sandbox, the provider transport, the model output itself, or
@@ -22,8 +23,8 @@ our own backend. The design therefore needs three properties up front:
 off without losing the kinds that already finished).
 
 A separate per-repository dedup keeps two callers from racing the same
-publication — the second caller gets the first job's id back rather than
-spawning a parallel run.
+publication — the second caller appends any newly selected templates to the
+active job rather than spawning a parallel run.
 
 ## How it works
 
@@ -31,26 +32,28 @@ The entry-point mutation is
 `requestSystemDesignGeneration` (`convex/systemDesign.ts:93`). It validates the
 selection set and the optional `(provider, modelName)` pair against
 `isValidPick`, consumes the per-user System Design rate limit and the
-Daytona global rate limit, ensures the default System Design folder tree
+Daytona global rate limit, ensures the default internal System Design folder tree
 exists, then `enqueueJob`s a `system_design`-kind job and patches the chosen
 `provider`/`modelName` onto the row (`convex/systemDesign.ts:197-200`). The
 job carries `selections` so a resume can recover the original request.
 
 Before insert, the mutation checks
 `findActiveLibrarySystemDesignJob` (`convex/systemDesign.ts:165`). If a
-queued/running `system_design` job already exists for the repository, the new
-caller gets that job's id back unchanged. Per-repository dedup is intentional:
+queued/running `system_design` job already exists for the repository, the
+mutation appends newly selected templates that are not already queued/generated
+and returns that job's id. Per-repository dedup is intentional:
 the scope key is the repository, not the user, so a future shared-repository
 model inherits the behaviour automatically.
 
 The action `runSystemDesignGeneration` (`convex/systemDesignNode.ts:68`)
 performs the actual work. After a one-time `ensureSandboxReady` call (which
 reports each stage back through `updateGenerationProgress`), it iterates the
-`selections` array serially.
+selected templates serially and re-reads the job selections between generated
+docs so new selections appended to the active job can be picked up.
 
 ### Per-kind lifecycle
 
-For each kind in `selections`, the action runs the following steps inside the
+For each selected kind, the action runs the following steps inside the
 main for-loop (`convex/systemDesignNode.ts:183-423`):
 
 1. **Refresh the lease.** `refreshGenerationLease`
@@ -120,7 +123,8 @@ main for-loop (`convex/systemDesignNode.ts:183-423`):
    `systemdesign_kind_failed` so the observability stream carries the same
    shape per kind. Cache hits emit `systemdesign_kind_cache_hit` separately.
 
-After each kind finishes (success, cache hit, or fail), the action calls
+After each kind finishes (success, cache hit, or fail), the action re-reads the
+current job selections, then calls
 `updateGenerationProgress` to push the `n/total` stage label and
 `completedCount/totalCount` ratio to the UI subscription.
 
@@ -250,14 +254,14 @@ calls `describeRepositoryGuideFailure`
 
 - `transport_rate_limit` → "The provider rate-limited the run. Wait a couple
   of minutes…"
-- `output_quality` → "Some guide sections came back without the required content.
+- `output_quality` → "Some design docs came back without the required content.
   Retrying usually fixes this — open the details if it persists."
 - `transport_other` → generic transport / 5xx copy with an error-id pointer.
 - `infra` → "An internal error stopped the run. Engineering has been
   notified…"
 - `live_source_unavailable` → "Live access to the repository wasn't available
   when this ran. The next attempt will prepare it first."
-- `model_empty_output` → "The model didn't produce a complete guide section. The
+- `model_empty_output` → "The model didn't produce a complete design doc. The
   next attempt may succeed."
 
 When multiple reasons appear, the banner falls back to `REASON_TEXT_MIXED`.
@@ -269,8 +273,8 @@ pair the original attempt used — important for cache continuity.
 
 Cross-user races against the same repository are eliminated by the
 per-repository dedup in `requestSystemDesignGeneration` — a second
-in-flight call returns the existing job's id instead of starting a second
-publication.
+in-flight call appends newly selected templates to the existing job instead of
+starting a second publication.
 
 ## Future evolution
 
