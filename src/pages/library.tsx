@@ -356,11 +356,22 @@ function LibraryDesignDocsMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button type="button" variant="ghost" size="sm" className={cn("h-8 gap-1.5 px-2.5", className)}>
+        <button
+          type="button"
+          className={cn(
+            "inline-flex h-8 items-center justify-center gap-1.5 border border-transparent bg-transparent px-2.5 text-xs font-semibold text-muted-foreground transition-colors",
+            "hover:bg-muted hover:text-foreground",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+            "aria-expanded:bg-accent aria-expanded:text-foreground",
+            "disabled:pointer-events-none disabled:opacity-50",
+            "[&_svg]:pointer-events-none [&_svg]:shrink-0",
+            className,
+          )}
+        >
           <BookOpenIcon size={14} weight="bold" />
           <span className="hidden sm:inline">{REPOSITORY_GUIDE_COPY.name}</span>
           <CaretDownIcon size={12} weight="bold" className="text-muted-foreground" />
-        </Button>
+        </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuItem onSelect={onShowNavigator}>
