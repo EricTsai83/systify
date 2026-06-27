@@ -13,7 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { REPOLESS_SINGLE_TURN_TOOLTIP } from "@/components/repoless-single-turn-copy";
+import { getRepolessChatTypeTooltip, getRepolessSingleTurnTooltip } from "@/components/repoless-agent-profile-copy";
 import { Toggle } from "@/components/ui/toggle";
 import { cn } from "@/lib/utils";
 
@@ -48,6 +48,7 @@ export function RepolessChatTypeToggle({
   const ModeIcon = isAgent ? RobotIcon : ChatCircleIcon;
   const label = isAgent ? "Agent" : "Conversation";
   const ariaLabel = isAgent ? "Switch to Conversation" : "Switch to Agent";
+  const tooltip = getRepolessChatTypeTooltip({ isAgent });
   const hasProfile = value.agentRole.trim().length > 0 || value.agentInstructions.trim().length > 0;
   const profileLabel = hasProfile ? "Edit Agent settings" : "Set up Agent";
 
@@ -91,23 +92,34 @@ export function RepolessChatTypeToggle({
         className,
       )}
     >
-      <Button
-        type="button"
-        variant="ghost"
-        size="sm"
-        disabled={isDisabled}
-        aria-label={ariaLabel}
-        data-testid="repoless-chat-type-toggle"
-        className={cn(
-          "h-8 w-auto min-w-0 max-w-32 justify-start gap-1.5 rounded-none border-none bg-transparent px-2 text-xs font-medium shadow-none",
-          "hover:bg-accent hover:text-foreground focus-visible:bg-transparent focus-visible:text-foreground",
-          "[&_svg]:size-3.5",
-        )}
-        onClick={() => void handleToggle()}
-      >
-        <ModeIcon className={COMPOSER_CONTROL_ICON_CLASS} weight={isAgent ? "fill" : "regular"} />
-        <span className="hidden min-w-0 truncate sm:inline">{label}</span>
-      </Button>
+      <TooltipProvider delayDuration={150}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="inline-flex min-w-0 shrink-0">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={isDisabled}
+                aria-label={ariaLabel}
+                data-testid="repoless-chat-type-toggle"
+                className={cn(
+                  "h-8 w-auto min-w-0 max-w-32 justify-start gap-1.5 rounded-none border-none bg-transparent px-2 text-xs font-medium shadow-none",
+                  "hover:bg-accent hover:text-foreground focus-visible:bg-transparent focus-visible:text-foreground",
+                  "[&_svg]:size-3.5",
+                )}
+                onClick={() => void handleToggle()}
+              >
+                <ModeIcon className={COMPOSER_CONTROL_ICON_CLASS} weight={isAgent ? "fill" : "regular"} />
+                <span className="composer-repoless-control-label">{label}</span>
+              </Button>
+            </span>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="max-w-72">
+            {tooltip}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
 
       {isAgent ? (
         <TooltipProvider delayDuration={150}>
@@ -204,14 +216,14 @@ export function RepolessSingleTurnToggle({
   const [isSaving, setIsSaving] = useState(false);
   const isOn = value.singleTurnEnabled;
   const isDisabled = disabled || resetPending || isSaving;
-  const label = resetPending ? "Clearing" : isOn ? "Single reply" : "Conversation";
+  const label = resetPending ? "Clearing" : isOn ? "Single reply" : "Threaded";
   const ModeIcon = isOn || resetPending ? RepeatOnceIcon : RepeatIcon;
-  const showLabel = isOn || resetPending;
   const ariaLabel = resetPending
     ? "Single reply is clearing previous messages"
     : isOn
-      ? "Switch to Conversation mode"
+      ? "Switch to Threaded replies"
       : "Switch to Single reply mode";
+  const tooltip = getRepolessSingleTurnTooltip({ isOn, resetPending });
 
   async function handleToggle() {
     if (isDisabled) return;
@@ -246,12 +258,12 @@ export function RepolessSingleTurnToggle({
               onPressedChange={() => void handleToggle()}
             >
               <ModeIcon className={COMPOSER_CONTROL_ICON_CLASS} weight={isOn ? "bold" : "regular"} />
-              {showLabel ? <span className="min-w-0 truncate">{label}</span> : null}
+              <span className="composer-repoless-control-label">{label}</span>
             </Toggle>
           </span>
         </TooltipTrigger>
         <TooltipContent side="top" className="max-w-72">
-          {REPOLESS_SINGLE_TURN_TOOLTIP}
+          {tooltip}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

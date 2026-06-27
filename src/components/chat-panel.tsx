@@ -419,7 +419,7 @@ function ComposerTools({
   ].filter((item) => item !== null);
 
   return (
-    <PromptInputTools className="composer-model-settings-query animate-enter-fade">
+    <PromptInputTools className="composer-model-settings-query min-w-0 flex-1 animate-enter-fade">
       {toolItems.map((item, index) => (
         <Fragment key={index}>
           {index > 0 ? <PromptInputToolSeparator /> : null}

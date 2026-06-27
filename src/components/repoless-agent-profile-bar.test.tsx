@@ -3,12 +3,22 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { RepolessChatTypeToggle, RepolessSingleTurnToggle } from "./repoless-agent-profile-bar";
+import { getRepolessChatTypeTooltip, getRepolessSingleTurnTooltip } from "./repoless-agent-profile-copy";
 
 afterEach(() => {
   cleanup();
 });
 
 describe("RepolessChatTypeToggle", () => {
+  test("uses state-specific chat type tooltip copy", () => {
+    expect(getRepolessChatTypeTooltip({ isAgent: false })).toBe(
+      "Conversation mode replies directly without an agent profile.",
+    );
+    expect(getRepolessChatTypeTooltip({ isAgent: true })).toBe(
+      "Agent mode follows the saved agent profile for this repoless chat.",
+    );
+  });
+
   test("renders Conversation with the conversation icon and switches to Agent", async () => {
     const onSave = vi.fn();
     render(
@@ -136,6 +146,18 @@ describe("RepolessChatTypeToggle", () => {
 });
 
 describe("RepolessSingleTurnToggle", () => {
+  test("uses state-specific tooltip copy", () => {
+    expect(getRepolessSingleTurnTooltip({ isOn: false, resetPending: false })).toBe(
+      "Threaded replies include earlier messages from this thread.",
+    );
+    expect(getRepolessSingleTurnTooltip({ isOn: true, resetPending: false })).toBe(
+      "Single reply uses only the latest prompt, without earlier thread messages.",
+    );
+    expect(getRepolessSingleTurnTooltip({ isOn: true, resetPending: true })).toBe(
+      "Clearing previous messages before the next single reply starts.",
+    );
+  });
+
   test("toggles Single-turn with one click", async () => {
     const onSave = vi.fn();
     render(
@@ -158,7 +180,7 @@ describe("RepolessSingleTurnToggle", () => {
     });
   });
 
-  test("renders the current chat history mode with a compact icon-only Conversation state", () => {
+  test("renders the current chat history mode label", () => {
     const { rerender } = render(
       <RepolessSingleTurnToggle
         value={{ agentEnabled: true, singleTurnEnabled: false, agentRole: "Translation agent", agentInstructions: "" }}
@@ -169,7 +191,7 @@ describe("RepolessSingleTurnToggle", () => {
 
     const conversationToggle = screen.getByTestId("repoless-single-turn-toggle");
     expect(conversationToggle).toHaveAccessibleName("Switch to Single reply mode");
-    expect(conversationToggle).not.toHaveTextContent("Conversation");
+    expect(conversationToggle).toHaveTextContent("Threaded");
     expect(conversationToggle.querySelector("svg")).toBeInTheDocument();
 
     rerender(

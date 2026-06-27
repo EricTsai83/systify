@@ -186,6 +186,13 @@
   gap: 0.25rem;
 }
 
+.composer-repoless-control-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @container (min-width: 24rem) {
   .composer-model-settings-compact {
     display: none;
@@ -193,5 +200,11 @@
 
   .composer-model-settings-desktop {
     display: flex;
+  }
+}
+
+@container (max-width: 30rem) {
+  .composer-repoless-control-label {
+    display: none;
   }
 }
