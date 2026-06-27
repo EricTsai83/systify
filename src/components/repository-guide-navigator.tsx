@@ -25,9 +25,9 @@ const updatedFormatter = new Intl.DateTimeFormat(undefined, {
 });
 
 /**
- * Library landing/navigation surface. It presents existing repository
- * documents as launchers and keeps template generation as a secondary action,
- * so the overview never implies that missing templates are real content.
+ * Library landing/navigation surface. It presents existing repository documents
+ * as launchers, so the overview never implies that missing documents are real
+ * content.
  *
  * Artifact metadata is hoisted by the shell; this component owns only the
  * lightweight active-job subscription — Convex dedupes it against the

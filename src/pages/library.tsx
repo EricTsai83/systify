@@ -358,6 +358,7 @@ function LibraryDesignDocsMenu({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
+          aria-label={REPOSITORY_GUIDE_COPY.name}
           className={cn(
             "inline-flex h-8 items-center justify-center gap-1.5 border border-transparent bg-transparent px-2.5 text-xs font-semibold text-muted-foreground transition-colors",
             "hover:bg-muted hover:text-foreground",
