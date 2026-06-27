@@ -25,6 +25,28 @@ const initialState: ThemeProviderState = {
 
 const ThemeProviderContext = createContext<ThemeProviderState>(initialState);
 
+function resolveTheme(theme: Theme): "dark" | "light" {
+  return theme === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : theme;
+}
+
+function isTypingTarget(target: EventTarget | null): boolean {
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  ) {
+    return true;
+  }
+
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return (
+    target.isContentEditable || Boolean(target.closest('[contenteditable="true"], [role="textbox"], .monaco-editor'))
+  );
+}
+
 export function ThemeProvider({
   children,
   defaultTheme = "system",
@@ -44,8 +66,7 @@ export function ThemeProvider({
 
     root.classList.remove("light", "dark");
 
-    const resolvedTheme =
-      theme === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : theme;
+    const resolvedTheme = resolveTheme(theme);
 
     root.classList.add(resolvedTheme);
     // Keep native UI (scrollbars, form controls) in sync with the theme. The
@@ -81,6 +102,31 @@ export function ThemeProvider({
       root.classList.remove("disable-transitions");
     };
   }, [theme]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.isComposing) {
+        return;
+      }
+      if (
+        (event.key !== "d" && event.key !== "D") ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        isTypingTarget(event.target)
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      const nextTheme = resolveTheme(theme) === "dark" ? "light" : "dark";
+      writeString(storageKey, nextTheme);
+      setTheme(nextTheme);
+    };
+
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [storageKey, theme]);
 
   const value = {
     theme,
