@@ -38,14 +38,17 @@ import {
 } from "@/components/ui/sidebar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ButtonStateText } from "@/components/ui/button-state-text";
+import {
+  PromptInputComposerFrame,
+  PromptInputFooter,
+  PromptInputTextarea,
+} from "@/components/ai-elements/prompt-input";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { InputGroup, InputGroupAddon, InputGroupTextarea } from "@/components/ui/input-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
@@ -66,7 +69,6 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 const ACTIVE_REPOSITORY_STORAGE_KEY = "systify.activeRepositoryId";
-const PENDING_LIBRARY_ASK_SEND_BUTTON_STATES = ["Ask", "Asking..."] as const;
 
 /**
  * Library service mode entry point.
@@ -452,25 +454,28 @@ export function PendingLibraryAskShell() {
     <div className="flex min-h-0 flex-1 flex-col bg-background">
       <div className="min-h-0 flex-1" />
       <div className="border-t border-border px-4 py-3">
-        <InputGroup className="min-h-[9rem] overflow-hidden">
-          <InputGroupTextarea
+        <PromptInputComposerFrame promptInputClassName="[&_[data-slot=input-group]]:min-h-[9rem]" onSubmit={() => {}}>
+          <PromptInputTextarea
             value=""
             readOnly
             placeholder="Question about this library..."
             className="min-h-24 text-sm"
             aria-label="Library Ask input loading"
           />
-          <InputGroupAddon
-            align="block-end"
-            className="h-11 min-h-11 flex-nowrap items-center justify-between gap-1 overflow-hidden"
-          >
+          <PromptInputFooter className="h-11 min-h-11 flex-nowrap items-center overflow-hidden">
             <div aria-hidden="true" className="h-8 min-h-8 min-w-0 flex-1" />
-            <Button type="button" size="sm" disabled title="Loading library data.">
+            <Button
+              type="button"
+              size="icon"
+              disabled
+              aria-label="Asking..."
+              title="Loading library data."
+              className="h-8 w-8 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground"
+            >
               <PaperPlaneTiltIcon size={14} weight="fill" />
-              <ButtonStateText current="Asking..." states={PENDING_LIBRARY_ASK_SEND_BUTTON_STATES} />
             </Button>
-          </InputGroupAddon>
-        </InputGroup>
+          </PromptInputFooter>
+        </PromptInputComposerFrame>
       </div>
     </div>
   );

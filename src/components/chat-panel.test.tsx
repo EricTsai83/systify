@@ -55,7 +55,16 @@ vi.mock("@/components/import-repo-dialog", () => ({
 vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DropdownMenuItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DropdownMenuItem: ({
+    children,
+    onSelect,
+    ...props
+  }: React.HTMLAttributes<HTMLButtonElement> & { onSelect?: () => void }) => (
+    <button type="button" onClick={onSelect} {...props}>
+      {children}
+    </button>
+  ),
+  DropdownMenuLabel: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   DropdownMenuSeparator: () => <div />,
   DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
@@ -567,6 +576,60 @@ describe("ChatPanel streaming rendering", () => {
     expect(screen.queryByTestId("prompt-input-model-picker-trigger")).not.toBeInTheDocument();
     expect(screen.getByTestId("chat-panel-composer-tools-placeholder")).toBeInTheDocument();
     expect(screen.getByTestId("chat-panel-send-button")).toBeInTheDocument();
+  });
+
+  test("compact model settings menu reuses model and reasoning callbacks", () => {
+    const setSelectedModel = vi.fn();
+    const setSelectedReasoningEffort = vi.fn();
+    const anthropicCatalogEntry = {
+      ...sandboxCatalogEntry,
+      provider: "anthropic" as const,
+      modelName: "claude-sonnet-4-6",
+      displayName: "Claude Sonnet 4.6",
+    };
+    vi.mocked(useQuery).mockImplementation((...callArgs) => {
+      const [query, args] = callArgs;
+      if (args !== "skip" && queryName(query)?.endsWith("llmCatalog:listPickableModels")) {
+        return [sandboxCatalogEntry, anthropicCatalogEntry];
+      }
+      return [];
+    });
+
+    render(
+      <ChatPanel
+        selectedThreadId={null}
+        messages={undefined}
+        activeMessageStream={undefined}
+        isChatLoading={false}
+        chatInput="Explain this repo"
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        selectedProvider="openai"
+        selectedModelName="gpt-5.5"
+        setSelectedModel={setSelectedModel}
+        selectedReasoningEffort={null}
+        setSelectedReasoningEffort={setSelectedReasoningEffort}
+        grounding={{ library: { enabled: true }, sandbox: { enabled: true } }}
+        showGroundingToggles={false}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={null}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("compact-model-settings-trigger")).toHaveTextContent("GPT-5.5 / Instant");
+
+    fireEvent.click(screen.getByRole("button", { name: "Claude Sonnet 4.6" }));
+    fireEvent.click(screen.getByRole("button", { name: "Medium" }));
+
+    expect(setSelectedModel).toHaveBeenCalledWith({ provider: "anthropic", modelName: "claude-sonnet-4-6" });
+    expect(setSelectedReasoningEffort).toHaveBeenCalledWith("medium");
   });
 
   test("disables send when the selected model is locked by premium model access", () => {

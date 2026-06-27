@@ -13,11 +13,12 @@ import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { useChatScroll } from "@/components/ai-elements/use-chat-scroll";
+import { CompactModelSettingsMenu } from "@/components/compact-model-settings-menu";
 import {
-  PromptInput,
+  PromptInputComposerFrame,
   PromptInputFooter,
   PromptInputTextarea,
-  PromptInputTools,
+  PromptInputToolList,
 } from "@/components/ai-elements/prompt-input";
 import { PromptInputModelPicker } from "@/components/ai-elements/prompt-input-model-picker";
 import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-input-reasoning-picker";
@@ -33,7 +34,6 @@ import {
 import { LibraryAskThreadTabs } from "@/components/library-ask-thread-tabs";
 import { type PromptInputModelPickerValue } from "@/components/ai-elements/prompt-input-model-picker";
 import { Button } from "@/components/ui/button";
-import { ButtonStateText } from "@/components/ui/button-state-text";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -63,7 +63,6 @@ import { toast } from "sonner";
 const LOCKED_PLACEHOLDER = `${REPOSITORY_GUIDE_COPY.generateAction} to unlock Library Ask.`;
 const LOCKED_HINT = "Library Ask needs at least one design doc in this repository before you can send a question.";
 const DEFAULT_UPDATE_DRAFT_PROMPT = "Refresh this artifact using the codebase as the source of truth.";
-const LIBRARY_ASK_SEND_BUTTON_STATES = ["Ask", "Asking..."] as const;
 
 type LibraryAskTimelineEntry =
   | { kind: "message"; _id: Doc<"messages">["_id"]; createdAt: number; message: Doc<"messages"> }
@@ -992,9 +991,9 @@ function LibraryAskComposer({
 
   return (
     <div className="border-t border-border px-4 py-3">
-      {state.error ? <p className="mb-2 text-xs text-destructive">{state.error}</p> : null}
-      <PromptInput
-        className="[&_[data-slot=input-group]]:min-h-[9rem]"
+      <PromptInputComposerFrame
+        error={state.error}
+        promptInputClassName="[&_[data-slot=input-group]]:min-h-[9rem]"
         onSubmit={(message: PromptInputSubmitMessage, event) => {
           void onSubmit(event, message.text);
         }}
@@ -1021,16 +1020,16 @@ function LibraryAskComposer({
           )}
           <LibraryAskSendButton state={state} />
         </PromptInputFooter>
-      </PromptInput>
+      </PromptInputComposerFrame>
     </div>
   );
 }
 
 function LibraryAskComposerTools({ tools }: { tools: LibraryAskComposerToolsState }) {
   return (
-    <PromptInputTools
+    <PromptInputToolList
       data-testid="library-ask-composer-tools"
-      className="h-8 min-h-8 min-w-0 flex-1 animate-soft-enter overflow-hidden"
+      className="composer-model-settings-query h-8 min-h-8 min-w-0 flex-1 animate-soft-enter overflow-hidden"
     >
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -1080,22 +1079,47 @@ function LibraryAskComposerTools({ tools }: { tools: LibraryAskComposerToolsStat
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-      {!tools.isLocked ? (
+      {!tools.isLocked ? <LibraryAskModelSettings tools={tools} /> : null}
+    </PromptInputToolList>
+  );
+}
+
+function LibraryAskModelSettings({ tools }: { tools: LibraryAskComposerToolsState }) {
+  const getDisabledReason = (entry: NonNullable<LibraryAskComposerToolsState["libraryCatalogEntries"]>[number]) =>
+    tools.premiumModelsDisabledReason && entry.capability === "sandbox" ? tools.premiumModelsDisabledReason : null;
+
+  return (
+    <>
+      <div className="composer-model-settings-compact">
+        <CompactModelSettingsMenu
+          modelPicker={{
+            value: tools.selectedModelPick,
+            onChange: tools.setSelectedModel,
+            threadLockedProvider: tools.lockedProvider,
+            getDisabledReason,
+            catalogEntries: tools.libraryCatalogEntries,
+          }}
+          reasoningPicker={{
+            value: tools.selectedReasoningEffort,
+            onChange: tools.setSelectedReasoningEffort,
+            provider: tools.selectedProvider ?? undefined,
+            modelName: tools.selectedModelName ?? undefined,
+            disabledReasoningEfforts: tools.highReasoningDisabledReason ? ["high", "xhigh"] : [],
+            disabledReasoningEffortMessage: tools.highReasoningDisabledReason,
+            catalogEntries: tools.libraryCatalogEntries,
+          }}
+        />
+      </div>
+      <div className="composer-model-settings-desktop">
         <PromptInputModelPicker
           value={tools.selectedModelPick}
           onChange={tools.setSelectedModel}
           threadLockedProvider={tools.lockedProvider}
           preferenceScope="library"
-          getDisabledReason={(entry) =>
-            tools.premiumModelsDisabledReason && entry.capability === "sandbox"
-              ? tools.premiumModelsDisabledReason
-              : null
-          }
-          triggerClassName="h-8 w-32 max-w-32 py-0"
+          getDisabledReason={getDisabledReason}
+          triggerClassName="h-8 max-w-[48vw] py-0"
           catalogEntries={tools.libraryCatalogEntries}
         />
-      ) : null}
-      {!tools.isLocked ? (
         <PromptInputReasoningPicker
           value={tools.selectedReasoningEffort}
           onChange={tools.setSelectedReasoningEffort}
@@ -1107,8 +1131,8 @@ function LibraryAskComposerTools({ tools }: { tools: LibraryAskComposerToolsStat
           triggerClassName="h-8 w-24 max-w-24 py-0"
           catalogEntries={tools.libraryCatalogEntries}
         />
-      ) : null}
-    </PromptInputTools>
+      </div>
+    </>
   );
 }
 
@@ -1116,12 +1140,13 @@ function LibraryAskSendButton({ state }: { state: LibraryAskComposerState }) {
   return (
     <Button
       type="submit"
-      size="sm"
+      size="icon"
       disabled={!state.input.trim() || state.isSending || state.latestAssistantInFlight || state.disabledReason != null}
-      title={state.disabledReason ?? undefined}
+      aria-label={state.isSending ? "Asking..." : "Ask"}
+      title={state.disabledReason ?? (state.isSending ? "Asking..." : "Ask")}
+      className="h-8 w-8 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground"
     >
       <PaperPlaneTiltIcon size={14} weight="fill" />
-      <ButtonStateText current={state.isSending ? "Asking..." : "Ask"} states={LIBRARY_ASK_SEND_BUTTON_STATES} />
     </Button>
   );
 }

@@ -6,15 +6,17 @@ import { useStatsForNerdsPreference } from "@/hooks/use-user-preferences";
 import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
 import { useChatScroll } from "@/components/ai-elements/use-chat-scroll";
 import {
-  PromptInput,
+  PromptInputComposerFrame,
   PromptInputFooter,
   PromptInputTextarea,
+  PromptInputToolSeparator,
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input";
 import { EmptyChatHint, EmptyNoRepoHint } from "@/components/chat-empty-state";
 import { MessageBubble } from "@/components/chat-message";
 import { MODE_EXAMPLES } from "@/components/chat-modes";
 import { GroundingToggleBar, createDiscussGroundingAxes } from "@/components/grounding-toggle-bar";
+import { CompactModelSettingsMenu } from "@/components/compact-model-settings-menu";
 import { ModeExamples } from "@/components/mode-examples";
 import { PromptInputModelPicker } from "@/components/ai-elements/prompt-input-model-picker";
 import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-input-reasoning-picker";
@@ -355,45 +357,38 @@ type ChatComposerProps = {
 };
 
 function ChatComposer({ composer, artifactToggle, canCancel, isSendBlocked, sendButtonTitle }: ChatComposerProps) {
+  const readOnlyHint = composer.input.readOnly ? composer.input.readOnlyHint : null;
+
   return (
     <div className="border-t border-border bg-background">
-      {/*
-       * `readonly-hint` lives outside PromptInput because InputGroup expects
-       * only textarea + addons as children; arbitrary siblings break its
-       * CSS-only layout selectors.
-       */}
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-2 px-6 py-3">
-        <PromptInput
-          onSubmit={(message, event) => {
-            if (isSendBlocked) return;
-            void composer.send.onSubmit(event, message.text);
-          }}
-        >
-          <PromptInputTextarea
-            name="message"
-            value={composer.input.value}
-            onChange={(e) => composer.input.setValue(e.target.value)}
-            placeholder={composer.input.placeholder}
-            className="min-h-20"
-            readOnly={composer.input.readOnly}
-            aria-describedby={composer.input.readOnly && composer.input.readOnlyHint ? "readonly-hint" : undefined}
+      <PromptInputComposerFrame
+        className="mx-auto max-w-3xl px-6 py-3"
+        hint={readOnlyHint}
+        hintId="readonly-hint"
+        onSubmit={(message, event) => {
+          if (isSendBlocked) return;
+          void composer.send.onSubmit(event, message.text);
+        }}
+      >
+        <PromptInputTextarea
+          name="message"
+          value={composer.input.value}
+          onChange={(e) => composer.input.setValue(e.target.value)}
+          placeholder={composer.input.placeholder}
+          className="min-h-20"
+          readOnly={composer.input.readOnly}
+          aria-describedby={readOnlyHint ? "readonly-hint" : undefined}
+        />
+        <PromptInputFooter>
+          <ComposerTools composer={composer} artifactToggle={artifactToggle} />
+          <ComposerAction
+            composer={composer}
+            canCancel={canCancel}
+            isSendBlocked={isSendBlocked}
+            sendButtonTitle={sendButtonTitle}
           />
-          <PromptInputFooter>
-            <ComposerTools composer={composer} artifactToggle={artifactToggle} />
-            <ComposerAction
-              composer={composer}
-              canCancel={canCancel}
-              isSendBlocked={isSendBlocked}
-              sendButtonTitle={sendButtonTitle}
-            />
-          </PromptInputFooter>
-        </PromptInput>
-        {composer.input.readOnly && composer.input.readOnlyHint ? (
-          <p id="readonly-hint" className="text-xs text-muted-foreground">
-            {composer.input.readOnlyHint}
-          </p>
-        ) : null}
-      </div>
+        </PromptInputFooter>
+      </PromptInputComposerFrame>
     </div>
   );
 }
@@ -409,19 +404,25 @@ function ComposerTools({
     return <div aria-hidden="true" data-testid="chat-panel-composer-tools-placeholder" className="min-h-8 flex-1" />;
   }
 
+  const modelSettings = composer.tools.modelPicker ? (
+    <ResponsiveComposerModelSettings composer={composer} />
+  ) : composer.tools.reasoningPicker ? (
+    <div className="hidden sm:flex">
+      <ComposerReasoningPicker composer={composer} />
+    </div>
+  ) : null;
   const toolItems = [
     artifactToggle ? <ArtifactPanelToggleButton control={artifactToggle} /> : null,
-    composer.tools.modelPicker ? <ComposerModelPicker composer={composer} /> : null,
-    composer.tools.reasoningPicker ? <ComposerReasoningPicker composer={composer} /> : null,
+    modelSettings,
     ...Children.toArray(composer.tools.extraControls),
     composer.tools.grounding ? <ComposerGroundingToggles composer={composer} /> : null,
   ].filter((item) => item !== null);
 
   return (
-    <PromptInputTools className="animate-enter-fade">
+    <PromptInputTools className="composer-model-settings-query animate-enter-fade">
       {toolItems.map((item, index) => (
         <Fragment key={index}>
-          {index > 0 ? <span aria-hidden="true" className="h-5 w-px shrink-0 bg-border" /> : null}
+          {index > 0 ? <PromptInputToolSeparator /> : null}
           {item}
         </Fragment>
       ))}
@@ -480,6 +481,28 @@ function ComposerReasoningPicker({ composer }: { composer: ChatComposerViewModel
       disabledReasoningEffortMessage={reasoningPicker.disabledReasoningEffortMessage}
       catalogEntries={reasoningPicker.catalogEntries}
     />
+  );
+}
+
+function ResponsiveComposerModelSettings({ composer }: { composer: ChatComposerViewModel }) {
+  return (
+    <>
+      <div className="composer-model-settings-compact">
+        <CompactModelSettingsMenu
+          modelPicker={composer.tools.modelPicker}
+          reasoningPicker={composer.tools.reasoningPicker}
+        />
+      </div>
+      <div className="composer-model-settings-desktop">
+        <ComposerModelPicker composer={composer} />
+        {composer.tools.reasoningPicker ? (
+          <>
+            <PromptInputToolSeparator />
+            <ComposerReasoningPicker composer={composer} />
+          </>
+        ) : null}
+      </div>
+    </>
   );
 }
 
@@ -552,14 +575,14 @@ function SendMessageButton({
       <Button
         type="submit"
         variant="default"
-        size="sm"
+        size="icon"
         disabled={disabled}
-        title={disabledReason}
+        aria-label={composer.send.buttonState === "Send" ? "Send message" : composer.send.buttonState}
+        title={disabledReason ?? (composer.send.buttonState === "Send" ? "Send message" : composer.send.buttonState)}
         data-testid="chat-panel-send-button"
-        className="min-w-30"
+        className="h-8 w-8 shrink-0 bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground"
       >
         <PaperPlaneTiltIcon weight="bold" />
-        <ButtonStateText current={composer.send.buttonState} states={["Send", "Sending…", "Syncing…"]} />
       </Button>
     </SendButtonWithOptionalTooltip>
   );

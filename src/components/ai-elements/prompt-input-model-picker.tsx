@@ -19,7 +19,7 @@
  * `(provider, modelName)` separately.
  */
 
-import { useMemo, type ReactElement, type SVGProps } from "react";
+import { useMemo, type CSSProperties, type ReactElement, type SVGProps } from "react";
 import { LockSimpleIcon } from "@phosphor-icons/react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -110,7 +110,7 @@ const PROVIDER_ICON: Record<LlmProvider, (props: SVGProps<SVGSVGElement>) => Rea
   anthropic: AnthropicIcon,
 };
 
-const MODEL_PICKER_TRIGGER_CLASS_NAME = "h-8 w-auto min-w-0 max-w-40 justify-start gap-1.5 px-2 text-xs";
+const MODEL_PICKER_TRIGGER_CLASS_NAME = "h-8 min-w-0 max-w-[56vw] justify-start gap-1.5 px-2 text-xs";
 
 export function PromptInputModelPicker({
   value,
@@ -163,6 +163,7 @@ export function PromptInputModelPicker({
     const entry = safeCatalog.find((e) => e.provider === value.provider && e.modelName === value.modelName);
     return entry?.displayName ?? value.modelName;
   }, [safeCatalog, value]);
+  const triggerStyle = getDynamicTriggerStyle(currentDisplayName, triggerClassName);
 
   const handleValueChange = (next: string) => {
     const picked = fromCompositeKey(next);
@@ -180,6 +181,7 @@ export function PromptInputModelPicker({
           aria-label="Pick model"
           data-testid="prompt-input-model-picker-trigger"
           className={cn(MODEL_PICKER_TRIGGER_CLASS_NAME, triggerClassName)}
+          style={triggerStyle}
         >
           {value ? <ProviderIcon provider={value.provider} /> : null}
           <PromptInputSelectValue className="truncate" placeholder="Pick model">
@@ -222,6 +224,20 @@ export function PromptInputModelPicker({
       </PromptInputSelect>
     </div>
   );
+}
+
+function getDynamicTriggerStyle(label: string | undefined, triggerClassName: string | undefined): CSSProperties {
+  if (hasExplicitWidthClass(triggerClassName)) {
+    return {};
+  }
+
+  const displayLength = Array.from(label ?? "Pick model").length;
+  const widthCh = Math.min(Math.max(displayLength + 6, 12), 30);
+  return { width: `${widthCh}ch` };
+}
+
+function hasExplicitWidthClass(className: string | undefined): boolean {
+  return className !== undefined && /(?:^|\s)(?:w-|basis-|flex-1|flex-auto|flex-none)/.test(className);
 }
 
 interface ProviderGroup {

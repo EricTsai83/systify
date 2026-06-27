@@ -708,6 +708,47 @@ export const PromptInput = ({
   );
 };
 
+export type PromptInputComposerFrameProps = Omit<PromptInputProps, "children" | "className"> & {
+  children: ReactNode;
+  className?: string;
+  promptInputClassName?: string;
+  error?: ReactNode;
+  errorId?: string;
+  errorClassName?: string;
+  hint?: ReactNode;
+  hintId?: string;
+  hintClassName?: string;
+};
+
+export const PromptInputComposerFrame = ({
+  children,
+  className,
+  promptInputClassName,
+  error,
+  errorId,
+  errorClassName,
+  hint,
+  hintId,
+  hintClassName,
+  ...props
+}: PromptInputComposerFrameProps) => (
+  <div className={cn("flex w-full flex-col gap-2", className)}>
+    {error ? (
+      <p id={errorId} className={cn("text-xs text-destructive", errorClassName)}>
+        {error}
+      </p>
+    ) : null}
+    <PromptInput className={promptInputClassName} {...props}>
+      {children}
+    </PromptInput>
+    {hint ? (
+      <p id={hintId} className={cn("text-xs text-muted-foreground", hintClassName)}>
+        {hint}
+      </p>
+    ) : null}
+  </div>
+);
+
 export type PromptInputBodyProps = HTMLAttributes<HTMLDivElement>;
 
 export const PromptInputBody = ({ className, ...props }: PromptInputBodyProps) => (
@@ -810,7 +851,7 @@ export const PromptInputTextarea = ({
 export type PromptInputHeaderProps = Omit<ComponentProps<typeof InputGroupAddon>, "align">;
 
 export const PromptInputHeader = ({ className, ...props }: PromptInputHeaderProps) => (
-  <InputGroupAddon align="block-end" className={cn("order-first flex-wrap gap-1", className)} {...props} />
+  <InputGroupAddon align="block-start" className={cn("flex-wrap gap-1", className)} {...props} />
 );
 
 export type PromptInputFooterProps = Omit<ComponentProps<typeof InputGroupAddon>, "align">;
@@ -824,6 +865,31 @@ export type PromptInputToolsProps = HTMLAttributes<HTMLDivElement>;
 export const PromptInputTools = ({ className, ...props }: PromptInputToolsProps) => (
   <div className={cn("flex items-center gap-1", className)} {...props} />
 );
+
+export type PromptInputToolSeparatorProps = HTMLAttributes<HTMLSpanElement>;
+
+export const PromptInputToolSeparator = ({ className, ...props }: PromptInputToolSeparatorProps) => (
+  <span aria-hidden="true" className={cn("h-5 w-px shrink-0 bg-border", className)} {...props} />
+);
+
+export type PromptInputToolListProps = PromptInputToolsProps & {
+  separatorClassName?: string;
+};
+
+export const PromptInputToolList = ({ children, separatorClassName, ...props }: PromptInputToolListProps) => {
+  const items = Children.toArray(children);
+
+  return (
+    <PromptInputTools {...props}>
+      {items.map((item, index) => (
+        <Fragment key={index}>
+          {index > 0 ? <PromptInputToolSeparator className={separatorClassName} /> : null}
+          {item}
+        </Fragment>
+      ))}
+    </PromptInputTools>
+  );
+};
 
 export type PromptInputButtonProps = ComponentProps<typeof InputGroupButton>;
 

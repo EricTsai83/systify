@@ -169,3 +169,29 @@
   width: 0 !important;
   height: 0 !important;
 }
+
+.composer-model-settings-query {
+  container-type: inline-size;
+}
+
+.composer-model-settings-compact {
+  display: flex;
+  min-width: 0;
+}
+
+.composer-model-settings-desktop {
+  display: none;
+  min-width: 0;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+@container (min-width: 24rem) {
+  .composer-model-settings-compact {
+    display: none;
+  }
+
+  .composer-model-settings-desktop {
+    display: flex;
+  }
+}

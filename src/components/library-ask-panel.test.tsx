@@ -61,27 +61,48 @@ vi.mock("@/components/ai-elements/prompt-input", async () => {
     React.TextareaHTMLAttributes<HTMLTextAreaElement>
   >((props, ref) => <textarea ref={ref} {...props} />);
   PromptInputTextarea.displayName = "PromptInputTextarea";
+  const PromptInput = ({
+    children,
+    onSubmit,
+  }: {
+    children: React.ReactNode;
+    onSubmit?: (message: unknown, event: React.FormEvent<HTMLFormElement>) => void;
+  }) => (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        onSubmit?.({}, event);
+      }}
+    >
+      {children}
+    </form>
+  );
 
   return {
-    PromptInput: ({
+    PromptInput,
+    PromptInputComposerFrame: ({
       children,
+      error,
+      hint,
       onSubmit,
     }: {
       children: React.ReactNode;
+      error?: React.ReactNode;
+      hint?: React.ReactNode;
       onSubmit?: (message: unknown, event: React.FormEvent<HTMLFormElement>) => void;
     }) => (
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          onSubmit?.({}, event);
-        }}
-      >
-        {children}
-      </form>
+      <div>
+        {error ? <p>{error}</p> : null}
+        <PromptInput onSubmit={onSubmit}>{children}</PromptInput>
+        {hint ? <p>{hint}</p> : null}
+      </div>
     ),
     PromptInputTextarea,
     PromptInputFooter: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
     PromptInputTools: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
+      <div {...props}>{children}</div>
+    ),
+    PromptInputToolList: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => (
       <div {...props}>{children}</div>
     ),
   };

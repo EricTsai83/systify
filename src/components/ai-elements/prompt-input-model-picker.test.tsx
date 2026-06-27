@@ -132,4 +132,42 @@ describe("PromptInputModelPicker", () => {
     expect(within(trigger).getByTestId(`prompt-input-model-picker-provider-icon-${provider}`)).toBeInTheDocument();
     expect(trigger).toHaveTextContent(displayName);
   });
+
+  test("sizes the trigger from the selected model label unless width is overridden", () => {
+    vi.mocked(useQuery).mockReturnValue(catalogEntries);
+
+    const { rerender } = render(
+      <PromptInputModelPicker
+        value={{ provider: "openai", modelName: "gpt-5-mini" }}
+        onChange={vi.fn()}
+        threadLockedProvider={null}
+        preferenceScope="discuss"
+      />,
+    );
+
+    expect(screen.getByTestId("prompt-input-model-picker-trigger")).toHaveStyle({ width: "16ch" });
+
+    rerender(
+      <PromptInputModelPicker
+        value={{ provider: "anthropic", modelName: "claude-sonnet-4-5" }}
+        onChange={vi.fn()}
+        threadLockedProvider={null}
+        preferenceScope="discuss"
+      />,
+    );
+
+    expect(screen.getByTestId("prompt-input-model-picker-trigger")).toHaveStyle({ width: "23ch" });
+
+    rerender(
+      <PromptInputModelPicker
+        value={{ provider: "anthropic", modelName: "claude-sonnet-4-5" }}
+        onChange={vi.fn()}
+        threadLockedProvider={null}
+        preferenceScope="discuss"
+        triggerClassName="w-full"
+      />,
+    );
+
+    expect(screen.getByTestId("prompt-input-model-picker-trigger")).not.toHaveStyle({ width: "23ch" });
+  });
 });
