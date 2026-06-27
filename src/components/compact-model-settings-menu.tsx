@@ -1,4 +1,9 @@
 import { CheckIcon, SlidersHorizontalIcon } from "@phosphor-icons/react";
+import {
+  REASONING_EFFORT_META,
+  resolveReasoningPickerState,
+  type ReasoningPickerState,
+} from "@/components/ai-elements/reasoning-effort-options";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -129,17 +134,6 @@ function CompactCheck({ selected }: { selected: boolean }) {
   );
 }
 
-const REASONING_EFFORTS: readonly ReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh"];
-
-const REASONING_EFFORT_META: Record<ReasoningEffort, { label: string }> = {
-  none: { label: "Instant" },
-  minimal: { label: "Minimal" },
-  low: { label: "Low" },
-  medium: { label: "Medium" },
-  high: { label: "High" },
-  xhigh: { label: "XHigh" },
-};
-
 function getModelDisplayName(
   value: CompactModelSettingsValue | null,
   catalogEntries: ReadonlyArray<PickableModelEntry>,
@@ -151,33 +145,14 @@ function getModelDisplayName(
   return entry?.displayName ?? value.modelName;
 }
 
-function getCompactReasoningState(reasoningPicker: CompactReasoningPickerState | null): {
-  effectiveValue: ReasoningEffort;
-  label: string;
-  selectableEfforts: readonly ReasoningEffort[];
-  disabledEfforts: ReadonlySet<ReasoningEffort>;
-} | null {
+function getCompactReasoningState(reasoningPicker: CompactReasoningPickerState | null): ReasoningPickerState | null {
   if (!reasoningPicker) return null;
   const catalogEntries = Array.isArray(reasoningPicker.catalogEntries) ? reasoningPicker.catalogEntries : [];
-  const selectedEntry =
-    reasoningPicker.provider === undefined || reasoningPicker.modelName === undefined
-      ? undefined
-      : catalogEntries.find(
-          (entry) => entry.provider === reasoningPicker.provider && entry.modelName === reasoningPicker.modelName,
-        );
-  if (!selectedEntry?.supportsReasoning) return null;
-
-  const supportedEfforts: readonly ReasoningEffort[] = selectedEntry.supportedReasoningEfforts ?? [];
-  const fallbackEffort: ReasoningEffort = selectedEntry.reasoningEffort ?? supportedEfforts[0] ?? "none";
-  const effectiveValue =
-    reasoningPicker.value !== null && supportedEfforts.includes(reasoningPicker.value)
-      ? reasoningPicker.value
-      : fallbackEffort;
-
-  return {
-    effectiveValue,
-    label: REASONING_EFFORT_META[effectiveValue].label,
-    selectableEfforts: supportedEfforts.length > 0 ? supportedEfforts : REASONING_EFFORTS,
-    disabledEfforts: new Set(reasoningPicker.disabledReasoningEfforts ?? []),
-  };
+  return resolveReasoningPickerState({
+    catalogEntries,
+    provider: reasoningPicker.provider,
+    modelName: reasoningPicker.modelName,
+    value: reasoningPicker.value,
+    disabledReasoningEfforts: reasoningPicker.disabledReasoningEfforts,
+  });
 }

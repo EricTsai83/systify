@@ -133,7 +133,7 @@ describe("PromptInputModelPicker", () => {
     expect(trigger).toHaveTextContent(displayName);
   });
 
-  test("sizes the trigger from the selected model label unless width is overridden", () => {
+  test("lets the trigger size to its content unless width is overridden", () => {
     vi.mocked(useQuery).mockReturnValue(catalogEntries);
 
     const { rerender } = render(
@@ -145,7 +145,8 @@ describe("PromptInputModelPicker", () => {
       />,
     );
 
-    expect(screen.getByTestId("prompt-input-model-picker-trigger")).toHaveStyle({ width: "16ch" });
+    expect(screen.getByTestId("prompt-input-model-picker-trigger")).toHaveClass("w-auto");
+    expect(screen.getByTestId("prompt-input-model-picker-trigger")).not.toHaveAttribute("style");
 
     rerender(
       <PromptInputModelPicker
@@ -156,7 +157,8 @@ describe("PromptInputModelPicker", () => {
       />,
     );
 
-    expect(screen.getByTestId("prompt-input-model-picker-trigger")).toHaveStyle({ width: "23ch" });
+    expect(screen.getByTestId("prompt-input-model-picker-trigger")).toHaveClass("w-auto");
+    expect(screen.getByTestId("prompt-input-model-picker-trigger")).not.toHaveAttribute("style");
 
     rerender(
       <PromptInputModelPicker
@@ -168,6 +170,7 @@ describe("PromptInputModelPicker", () => {
       />,
     );
 
-    expect(screen.getByTestId("prompt-input-model-picker-trigger")).not.toHaveStyle({ width: "23ch" });
+    expect(screen.getByTestId("prompt-input-model-picker-trigger")).toHaveClass("w-full");
+    expect(screen.getByTestId("prompt-input-model-picker-trigger")).not.toHaveAttribute("style");
   });
 });

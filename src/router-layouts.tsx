@@ -12,9 +12,11 @@ import {
 } from "react-router-dom";
 import { ArrowsClockwiseIcon, HouseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { AppNotice } from "@/components/app-notice";
+import { Logo } from "@/components/logo";
 import { ScreenState } from "@/components/screen-state";
 import { Button } from "@/components/ui/button";
 import { SidebarProvider } from "@/components/ui/sidebar";
+import { Spinner } from "@/components/ui/spinner";
 import { isDemoMode, useViewerAccess } from "@/hooks/use-viewer-access";
 import { hasWorkOSSessionHint } from "@/lib/auth-session-hint";
 import { readString, removeKey, writeString } from "@/lib/storage";
@@ -25,6 +27,7 @@ import { HomePage } from "@/pages/home";
 const MAX_CALLBACK_ERROR_DESCRIPTION_LENGTH = 240;
 const DEMO_BANNER_HEIGHT_CSS_VAR = "--systify-demo-banner-height";
 const CONVEX_CONNECTION_NOTICE_DELAY_MS = 4_000;
+const AUTH_LOADING_RETRY_DELAY_MS = 8_000;
 
 /**
  * sessionStorage key used to remember the protected URL an unauthenticated
@@ -385,7 +388,43 @@ export function NotFoundRoute() {
 }
 
 function AuthLoadingScreen() {
-  return <RouteLoadingScreen description="Reconnecting your session and loading your account." />;
+  const [showRetry, setShowRetry] = useState(false);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setShowRetry(true);
+    }, AUTH_LOADING_RETRY_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  return (
+    <div className="flex min-h-dvh w-full flex-1 items-center justify-center bg-background px-6">
+      <section aria-labelledby="auth-loading-title" className="flex w-full max-w-sm flex-col items-center text-center">
+        <div role="status" aria-live="polite" className="flex flex-col items-center">
+          <Logo size={42} className="mb-5" />
+          <div className="mb-4 flex h-5 items-center justify-center text-primary">
+            <Spinner size={18} />
+          </div>
+          <h1 id="auth-loading-title" className="text-base font-semibold leading-6 text-foreground">
+            Restoring workspace
+          </h1>
+          <p className="mt-2 max-w-xs text-sm leading-6 text-muted-foreground">
+            Checking your session, account access, and workspace permissions.
+          </p>
+        </div>
+        {showRetry ? (
+          <div className="mt-5 flex flex-col items-center gap-3">
+            <p className="max-w-xs text-xs leading-5 text-muted-foreground">
+              This is taking longer than expected. Refresh to retry the session check.
+            </p>
+            <Button size="sm" onClick={() => window.location.reload()}>
+              Refresh page
+            </Button>
+          </div>
+        ) : null}
+      </section>
+    </div>
+  );
 }
 
 function RouteLoadingScreen({ description }: { description: string }) {

@@ -1128,7 +1128,7 @@ function LibraryAskModelSettings({ tools }: { tools: LibraryAskComposerToolsStat
           preferenceScope="library"
           disabledReasoningEfforts={tools.highReasoningDisabledReason ? ["high", "xhigh"] : []}
           disabledReasoningEffortMessage={tools.highReasoningDisabledReason}
-          triggerClassName="h-8 w-24 max-w-24 py-0"
+          triggerClassName="h-8 py-0"
           catalogEntries={tools.libraryCatalogEntries}
         />
       </div>

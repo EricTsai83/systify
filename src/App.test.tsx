@@ -336,7 +336,7 @@ describe("App auth token failures", () => {
 
     renderWithAuth(useAuth, ["/"]);
 
-    expect(await screen.findByText("Reconnecting your session and loading your account.")).toBeInTheDocument();
+    expect(await screen.findByText("Restoring workspace")).toBeInTheDocument();
     expect(screen.queryByText("home page")).not.toBeInTheDocument();
   });
 
@@ -355,7 +355,7 @@ describe("App auth token failures", () => {
     renderWithAuth(useAuth, ["/"]);
 
     expect(await screen.findByText("home page")).toBeInTheDocument();
-    expect(screen.queryByText("Reconnecting your session and loading your account.")).not.toBeInTheDocument();
+    expect(screen.queryByText("Restoring workspace")).not.toBeInTheDocument();
   });
 
   test("redirects signed-in users from /callback to /chat", async () => {

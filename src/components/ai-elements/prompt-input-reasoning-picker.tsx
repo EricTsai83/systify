@@ -30,18 +30,14 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  AtomIcon,
-  BrainIcon,
-  BracketsCurlyIcon,
-  CircuitryIcon,
-  GaugeIcon,
-  LightningIcon,
-  type Icon,
-} from "@phosphor-icons/react";
 import { useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import type { LlmProvider, ModelPreferenceScope, PickableModelEntry, ReasoningEffort } from "@/lib/types";
+import {
+  REASONING_EFFORT_META,
+  REASONING_EFFORTS,
+  resolveReasoningPickerState,
+} from "@/components/ai-elements/reasoning-effort-options";
 import {
   PromptInputSelect,
   PromptInputSelectContent,
@@ -85,16 +81,7 @@ export interface PromptInputReasoningPickerProps {
   catalogEntries?: ReadonlyArray<PickableModelEntry> | undefined;
 }
 
-const EFFORTS: readonly ReasoningEffort[] = ["none", "minimal", "low", "medium", "high", "xhigh"];
-
-const EFFORT_META: Record<ReasoningEffort, { label: string; Icon: Icon }> = {
-  none: { label: "Instant", Icon: LightningIcon },
-  minimal: { label: "Minimal", Icon: GaugeIcon },
-  low: { label: "Low", Icon: CircuitryIcon },
-  medium: { label: "Medium", Icon: BracketsCurlyIcon },
-  high: { label: "High", Icon: BrainIcon },
-  xhigh: { label: "XHigh", Icon: AtomIcon },
-};
+const EMPTY_REASONING_EFFORTS: readonly ReasoningEffort[] = [];
 
 export function PromptInputReasoningPicker({
   value,
@@ -102,7 +89,7 @@ export function PromptInputReasoningPicker({
   provider,
   modelName,
   disabled = false,
-  disabledReasoningEfforts = [],
+  disabledReasoningEfforts = EMPTY_REASONING_EFFORTS,
   disabledReasoningEffortMessage,
   preferenceScope = "discuss",
   className,
@@ -120,10 +107,17 @@ export function PromptInputReasoningPicker({
     [catalogEntries],
   );
 
-  const selectedEntry = useMemo(() => {
-    if (provider === undefined || modelName === undefined) return undefined;
-    return safeCatalog.find((entry) => entry.provider === provider && entry.modelName === modelName);
-  }, [safeCatalog, provider, modelName]);
+  const pickerState = useMemo(
+    () =>
+      resolveReasoningPickerState({
+        catalogEntries: safeCatalog,
+        provider,
+        modelName,
+        value,
+        disabledReasoningEfforts,
+      }),
+    [disabledReasoningEfforts, modelName, provider, safeCatalog, value],
+  );
 
   const tooltipTimerRef = useRef<number | null>(null);
   const [isTooltipOpen, setIsTooltipOpen] = useState(false);
@@ -142,37 +136,28 @@ export function PromptInputReasoningPicker({
 
   useEffect(() => closeTooltip, [closeTooltip]);
 
-  const supportedEfforts = useMemo(
-    () => selectedEntry?.supportedReasoningEfforts ?? [],
-    [selectedEntry?.supportedReasoningEfforts],
-  );
-  const fallbackEffort = selectedEntry?.reasoningEffort ?? supportedEfforts[0] ?? "none";
-
   useEffect(() => {
-    if (!selectedEntry?.supportsReasoning || value === null) {
+    if (pickerState === null || value === null) {
       return;
     }
-    if (!supportedEfforts.includes(value)) {
-      onChange(fallbackEffort);
+    if (!pickerState.supportedEfforts.includes(value)) {
+      onChange(pickerState.effectiveValue);
     }
-  }, [fallbackEffort, onChange, selectedEntry?.supportsReasoning, supportedEfforts, value]);
+  }, [onChange, pickerState, value]);
 
   // Hide entirely on non-reasoning models. The picker re-renders into
   // the row whenever the user picks a reasoning-capable model, so the
   // hide / show flip is transparent to the surrounding layout.
   // We also short-circuit until the catalog finishes loading so the
   // control doesn't flash in for a tick on a non-reasoning model.
-  if (!selectedEntry || !selectedEntry.supportsReasoning) {
+  if (pickerState === null) {
     return null;
   }
 
-  const selectableEfforts = supportedEfforts.length > 0 ? supportedEfforts : EFFORTS;
-  const disabledEffortSet = new Set(disabledReasoningEfforts);
-  const effectiveValue = value !== null && supportedEfforts.includes(value) ? value : fallbackEffort;
-  const currentMeta = EFFORT_META[effectiveValue];
+  const currentMeta = REASONING_EFFORT_META[pickerState.effectiveValue];
 
   const handleValueChange = (next: string) => {
-    if ((EFFORTS as ReadonlyArray<string>).includes(next)) {
+    if ((REASONING_EFFORTS as ReadonlyArray<string>).includes(next)) {
       onChange(next as ReasoningEffort);
     }
   };
@@ -184,7 +169,7 @@ export function PromptInputReasoningPicker({
 
   return (
     <div className={cn("flex items-center gap-1", className)}>
-      <PromptInputSelect value={effectiveValue} onValueChange={handleValueChange} disabled={disabled}>
+      <PromptInputSelect value={pickerState.effectiveValue} onValueChange={handleValueChange} disabled={disabled}>
         <TooltipProvider>
           <Tooltip open={isTooltipOpen}>
             <TooltipTrigger asChild>
@@ -214,9 +199,9 @@ export function PromptInputReasoningPicker({
           </Tooltip>
         </TooltipProvider>
         <PromptInputSelectContent className="min-w-36 border-border bg-popover p-1 text-popover-foreground shadow-lg">
-          {selectableEfforts.map((effort) => {
-            const meta = EFFORT_META[effort];
-            const effortDisabled = disabledEffortSet.has(effort);
+          {pickerState.selectableEfforts.map((effort) => {
+            const meta = REASONING_EFFORT_META[effort];
+            const effortDisabled = pickerState.disabledEfforts.has(effort);
             return (
               <PromptInputSelectItem
                 key={effort}
