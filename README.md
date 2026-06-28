@@ -2,7 +2,7 @@
 
 Every answer points to its source.
 
-Systify is an open source repository analysis app for understanding unfamiliar codebases through grounded, repository-specific context. A user signs in with WorkOS, connects a GitHub App installation, imports a repository's metadata, README, and key files directly through the GitHub API into Convex, and then explores it through two AI surfaces. Daytona sandboxes are provisioned lazily — only when the user sends a Discuss-mode Sandbox-grounded message or generates Design Docs — so the rest of the app works without ever paying sandbox cost:
+Systify is an open-source repository analysis app for understanding unfamiliar codebases through grounded, repository-specific context. A user signs in with WorkOS, connects a GitHub App installation, imports a repository's metadata, README, and key files directly through the GitHub API into Convex, and then explores it through two AI surfaces. Daytona sandboxes are provisioned lazily — only when the user sends a Discuss-mode Sandbox-grounded message or generates Design Docs — so the rest of the app works without ever paying sandbox cost:
 
 - **Chat** with two top-level modes:
   - `discuss` (UI label "Discuss") — free-form chat with two independent per-message grounding toggles the composer surfaces:

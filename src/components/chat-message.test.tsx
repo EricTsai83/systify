@@ -77,6 +77,26 @@ describe("MessageBubble", () => {
     expect(screen.getAllByText(errorMessage)).toHaveLength(1);
   });
 
+  test("lets wrapped nerd stats define the usage footer height", () => {
+    render(
+      <MessageBubble
+        message={makeAssistantMessage({
+          estimatedInputTokens: 1800,
+          estimatedOutputTokens: 900,
+          estimatedCostUsd: 0.01,
+          modelName: "gpt-5.4-mini",
+        })}
+        activeMessageStream={null}
+        showStatsForNerds
+      />,
+    );
+
+    const footer = screen.getByTestId("message-usage-footer");
+    expect(footer).toHaveClass("min-h-8");
+    expect(footer.querySelector(".absolute")).toBeNull();
+    expect(screen.getByTestId("message-nerd-stats")).toHaveTextContent("Generation time unavailable");
+  });
+
   test("keeps a system alert when failed content contains useful partial output", () => {
     render(
       <MessageBubble

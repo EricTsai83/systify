@@ -53,7 +53,7 @@ historical grounding marker.
 - `src/pages/library.tsx`
   - `LibraryLiveSourceBadge`.
   - Data source: `api.repositories.getSandboxActivityStatus`.
-  - Shows active, preparing, inactive, and loading in the Library header.
+  - Maps `getSandboxActivityStatus` for the Library header through `LibraryLiveSourceBadge`: `ready` and `expiring_soon` show active, `preparing` shows starting, `idle` shows idle, and `null`/loading query results show loading.
 - `src/components/library-ask-panel.tsx`
   - Library Ask document actions and artifact draft cards.
   - Data source: `api.libraryArtifactDrafts.*`, `api.repositories.getSandboxActivityStatus` passed from `src/pages/library.tsx`.
