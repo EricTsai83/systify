@@ -189,7 +189,7 @@ describe("MessageBubble", () => {
     expect(screen.getByText("source-citations.ts")).toBeInTheDocument();
   });
 
-  test("opens a configured local editor from the code source actions", async () => {
+  test("opens a configured local editor directly from the code source", async () => {
     const source = repositorySource();
     writeLocalEditorConfig(source.repositoryId, {
       editor: "cursor",
@@ -209,19 +209,22 @@ describe("MessageBubble", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /chat-message.tsx/i }));
-    fireEvent.click(await screen.findByRole("button", { name: /Open locally/i }));
 
     expect(openEditorUrl).toHaveBeenCalledWith(
       "cursor://file//Users/eric/personal-project/systify/src/components/chat-message.tsx:190",
     );
+    expect(screen.queryByRole("button", { name: /Open locally/i })).not.toBeInTheDocument();
   });
 
-  test("prefills and can forget a configured local editor path", async () => {
+  test("falls back to source actions when a configured local editor cannot open", async () => {
     const source = repositorySource();
     writeLocalEditorConfig(source.repositoryId, {
       editor: "vscode",
       rootPath: "/Users/eric/personal-project/systify",
       updatedAt: 1790000000000,
+    });
+    vi.mocked(openEditorUrl).mockImplementation(() => {
+      throw new Error("Blocked by browser");
     });
 
     render(

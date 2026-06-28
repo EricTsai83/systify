@@ -32,7 +32,7 @@ export function RepositoryShell({
     ? {
         repositoryId: workspace.repoDetail.repository._id,
         sourceRepoFullName: workspace.repoDetail.repository.sourceRepoFullName,
-        defaultBranch: workspace.repoDetail.repository.defaultBranch ?? "main",
+        defaultBranch: workspace.repoDetail.repository.defaultBranch,
         lastSyncedCommitSha: workspace.repoDetail.repository.lastSyncedCommitSha,
       }
     : undefined;

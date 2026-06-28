@@ -218,6 +218,13 @@ export function useRepositoryWorkspaceState({
   }, [actionNotice]);
 
   useEffect(() => {
+    if (artifactRepositoryId === null) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setIsStatusOpen(false);
+    }
+  }, [artifactRepositoryId]);
+
+  useEffect(() => {
     const mediaQuery = window.matchMedia(DESKTOP_LAYOUT_QUERY);
     const handleChange = (event: MediaQueryListEvent) => {
       setIsDesktopLayout(event.matches);

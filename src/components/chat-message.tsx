@@ -425,9 +425,15 @@ function MessageSources({
     [],
   );
 
-  const handleCodeSourceClick = useCallback((source: CodeFileSource) => {
-    setActionSource(source);
-  }, []);
+  const handleCodeSourceClick = useCallback(
+    (source: CodeFileSource) => {
+      if (localEditorConfig && openCodeSourceWithConfig(source, localEditorConfig)) {
+        return;
+      }
+      setActionSource(source);
+    },
+    [localEditorConfig, openCodeSourceWithConfig],
+  );
 
   const handleClearLocalPath = useCallback(() => {
     if (!repositorySource) {
@@ -581,11 +587,12 @@ function CodeSourceActionsDialog({
 }) {
   const { copied, copy } = useClipboard({ resetAfterMs: 1500 });
   const firstRange = source?.ranges[0];
+  const gitHubRef = repositorySource?.lastSyncedCommitSha ?? repositorySource?.defaultBranch ?? null;
   const gitHubUrl =
-    source && firstRange && repositorySource
+    source && firstRange && repositorySource && gitHubRef
       ? buildGitHubSourceUrl({
           sourceRepoFullName: repositorySource.sourceRepoFullName,
-          ref: repositorySource.lastSyncedCommitSha ?? repositorySource.defaultBranch,
+          ref: gitHubRef,
           path: source.path,
           startLine: firstRange.startLine,
           endLine: firstRange.endLine,

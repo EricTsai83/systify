@@ -74,6 +74,42 @@ describe("parseCodeFileSources", () => {
       },
     ]);
   });
+
+  test("skips longer backtick code spans and fences", () => {
+    expect(
+      parseCodeFileSources(
+        [
+          "Keep [src/live.ts:9].",
+          "``const example = `[src/inline.ts:4]`;``",
+          "````ts",
+          "const example = '[src/fenced.ts:8]';",
+          "````",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      {
+        path: "src/live.ts",
+        basename: "live.ts",
+        ranges: [{ startLine: 9, endLine: 9 }],
+        rawTokens: ["[src/live.ts:9]"],
+      },
+    ]);
+  });
+
+  test("skips tilde fenced code blocks", () => {
+    expect(
+      parseCodeFileSources(
+        ["Keep [src/live.ts:9].", "~~~ts", "const example = '[src/tilde-fenced.ts:8]';", "~~~"].join("\n"),
+      ),
+    ).toEqual([
+      {
+        path: "src/live.ts",
+        basename: "live.ts",
+        ranges: [{ startLine: 9, endLine: 9 }],
+        rawTokens: ["[src/live.ts:9]"],
+      },
+    ]);
+  });
 });
 
 describe("buildGitHubSourceUrl", () => {

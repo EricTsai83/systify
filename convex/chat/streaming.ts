@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { type MutationCtx, internalMutation, internalQuery, query } from "../_generated/server";
+import { artifactKindValidator } from "../schema";
 import { loadOwnedDoc } from "../lib/ownedDocs";
 import { CHAT_JOB_LEASE_MS } from "../lib/rateLimit";
 import { jobCancellationStatusValidator, startedResultValidator } from "../lib/functionResultSchemas";
@@ -42,24 +43,6 @@ import {
 } from "./toolCallEventStore";
 import { recordThreadActivityInHistory } from "./historyState";
 import { loadActiveOwnedThread } from "./threadAccess";
-
-const citationArtifactKindValidator = v.union(
-  v.literal("readme_summary"),
-  v.literal("architecture_overview"),
-  v.literal("architecture_diagram"),
-  v.literal("entrypoints"),
-  v.literal("dependency_overview"),
-  v.literal("trade_off_matrix"),
-  v.literal("migration_plan"),
-  v.literal("capacity_estimate"),
-  v.literal("design_review"),
-  v.literal("data_model_overview"),
-  v.literal("api_surface_overview"),
-  v.literal("deployment_overview"),
-  v.literal("security_overview"),
-  v.literal("operations_overview"),
-  v.literal("custom_document"),
-);
 
 const STALE_CHAT_JOB_ERROR_MESSAGE =
   "This reply stopped before it could finish. Try sending your message again. If it keeps happening, choose another model or check the provider configuration.";
@@ -1206,7 +1189,7 @@ export const finalizeAssistantReply = internalMutation({
           index: v.number(),
           artifactId: v.id("artifacts"),
           artifactTitle: v.optional(v.string()),
-          artifactKind: v.optional(citationArtifactKindValidator),
+          artifactKind: v.optional(artifactKindValidator),
           artifactVersion: v.optional(v.number()),
           chunkId: v.optional(v.id("artifactChunks")),
           headingPath: v.optional(v.array(v.string())),

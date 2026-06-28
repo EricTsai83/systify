@@ -21,22 +21,84 @@ export type RepositorySourceLinkArgs = {
 };
 
 const CODE_FILE_CITATION_REGEX = /\[([^[\]\s]+):(\d+)(?:-(\d+))?\]/g;
-const CODE_SPAN_REGEX = /```[\s\S]*?(?:```|$)|`[^`\n]+`/g;
 
 export function parseCodeFileCitations(content: string): CodeFileCitation[] {
   const citations: CodeFileCitation[] = [];
-  const codeRe = new RegExp(CODE_SPAN_REGEX.source, "g");
-
   let cursor = 0;
-  let codeSpan: RegExpExecArray | null = codeRe.exec(content);
-  while (codeSpan !== null) {
-    parseCodeFileCitationsInProse(content.slice(cursor, codeSpan.index), citations);
-    cursor = codeSpan.index + codeSpan[0].length;
-    codeSpan = codeRe.exec(content);
+  for (const codeRange of findMarkdownCodeRanges(content)) {
+    parseCodeFileCitationsInProse(content.slice(cursor, codeRange.start), citations);
+    cursor = codeRange.end;
   }
   parseCodeFileCitationsInProse(content.slice(cursor), citations);
 
   return citations;
+}
+
+function findMarkdownCodeRanges(content: string): Array<{ start: number; end: number }> {
+  const ranges: Array<{ start: number; end: number }> = [];
+  let index = 0;
+
+  while (index < content.length) {
+    const fencedRange = readFencedCodeRange(content, index);
+    if (fencedRange) {
+      ranges.push(fencedRange);
+      index = fencedRange.end;
+      continue;
+    }
+
+    const inlineRange = readBacktickCodeSpanRange(content, index);
+    if (inlineRange) {
+      ranges.push(inlineRange);
+      index = inlineRange.end;
+      continue;
+    }
+
+    index += 1;
+  }
+
+  return ranges;
+}
+
+function readFencedCodeRange(content: string, index: number): { start: number; end: number } | null {
+  const lineStart = content.lastIndexOf("\n", index - 1) + 1;
+  if (lineStart !== index) {
+    return null;
+  }
+
+  const openerMatch = /^( {0,3})(`{3,}|~{3,})[^\n]*(?:\n|$)/.exec(content.slice(index));
+  if (!openerMatch) {
+    return null;
+  }
+
+  const delimiter = openerMatch[2] ?? "";
+  const marker = delimiter[0] ?? "";
+  const minLength = delimiter.length;
+  const searchStart = index + openerMatch[0].length;
+  const closerRegex = new RegExp(`^ {0,3}\\${marker}{${minLength},}[^\\n]*(?:\\n|$)`, "gm");
+  closerRegex.lastIndex = searchStart;
+  const closerMatch = closerRegex.exec(content);
+  if (!closerMatch) {
+    return { start: index, end: content.length };
+  }
+  return { start: index, end: closerMatch.index + closerMatch[0].length };
+}
+
+function readBacktickCodeSpanRange(content: string, index: number): { start: number; end: number } | null {
+  if (content[index] !== "`") {
+    return null;
+  }
+
+  const openerMatch = /^`+/.exec(content.slice(index));
+  const delimiter = openerMatch?.[0] ?? "";
+  if (!delimiter) {
+    return null;
+  }
+
+  const closeIndex = content.indexOf(delimiter, index + delimiter.length);
+  if (closeIndex === -1) {
+    return null;
+  }
+  return { start: index, end: closeIndex + delimiter.length };
 }
 
 function parseCodeFileCitationsInProse(content: string, citations: CodeFileCitation[]): void {

@@ -14,7 +14,7 @@ export type ThreadId = Id<"threads">;
 export type RepositorySource = {
   repositoryId: RepositoryId;
   sourceRepoFullName: string;
-  defaultBranch: string;
+  defaultBranch?: string | null;
   lastSyncedCommitSha?: string;
 };
 /**

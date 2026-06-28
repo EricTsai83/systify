@@ -95,6 +95,10 @@ export function useStorageGC(): void {
   const liveThreadIds = useQuery(api.chat.threads.listOwnedThreadIdsById, hasThreadIds ? { threadIds } : "skip");
 
   useEffect(() => {
+    removeKey(LEGACY_ARTIFACT_PANEL_OPEN_KEY);
+  }, []);
+
+  useEffect(() => {
     if (!hasRepositoryIds) return;
     if (liveRepositoryIds === undefined) return;
     sweepRepositoryStorage(new Set(repositoryIds), new Set(liveRepositoryIds));

@@ -129,7 +129,7 @@ const sandboxRemoteDiscoveryStatus = v.union(
  * BEFORE deploying this schema. The same assumption applies to
  * `systemDesignKindValidator` (`jobs.selections`, `jobs.kindFailures`).
  */
-const artifactKind = v.union(
+export const artifactKindValidator = v.union(
   v.literal("readme_summary"),
   v.literal("architecture_overview"),
   v.literal("architecture_diagram"),
@@ -504,7 +504,7 @@ export default defineSchema({
     threadId: v.optional(v.id("threads")),
     jobId: v.optional(v.id("jobs")),
     ownerTokenIdentifier: v.string(),
-    kind: artifactKind,
+    kind: artifactKindValidator,
     title: v.string(),
     description: v.string(),
     contentMarkdown: v.string(),
@@ -1177,7 +1177,7 @@ export default defineSchema({
           index: v.number(),
           artifactId: v.id("artifacts"),
           artifactTitle: v.optional(v.string()),
-          artifactKind: v.optional(artifactKind),
+          artifactKind: v.optional(artifactKindValidator),
           artifactVersion: v.optional(v.number()),
           /**
            * Chunk-level citation. The Library Ask flow writes one entry per

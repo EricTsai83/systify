@@ -37,14 +37,14 @@ export function LocalEditorSetupDialog({
         setError("Repository information is not available for this citation.");
         return;
       }
-      const trimmedRootPath = rootPath.trim();
-      if (!trimmedRootPath.startsWith("/")) {
-        setError("Enter an absolute local path that starts with /.");
+      const normalizedRootPath = normalizeLocalRootPath(rootPath);
+      if (!isAbsoluteLocalPath(normalizedRootPath)) {
+        setError("Enter an absolute local path.");
         return;
       }
       const config: LocalEditorRepositoryConfig = {
         editor,
-        rootPath: trimmedRootPath,
+        rootPath: normalizedRootPath,
         updatedAt: Date.now(),
       };
       writeLocalEditorConfig(repositoryId, config);
@@ -114,4 +114,12 @@ export function LocalEditorSetupDialog({
       </DialogContent>
     </Dialog>
   );
+}
+
+function normalizeLocalRootPath(path: string): string {
+  return path.trim().replace(/\\/g, "/");
+}
+
+function isAbsoluteLocalPath(path: string): boolean {
+  return path.startsWith("/") || /^[A-Za-z]:\//.test(path);
 }
