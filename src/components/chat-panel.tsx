@@ -3,7 +3,12 @@ import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icon
 import type { Doc } from "../../convex/_generated/dataModel";
 import { findInFlightAssistantMessage, useConversationThread } from "@/hooks/use-conversation-thread";
 import { useStatsForNerdsPreference } from "@/hooks/use-user-preferences";
-import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
+import {
+  Conversation,
+  ConversationContent,
+  ConversationItem,
+  ConversationScrollButton,
+} from "@/components/ai-elements/conversation";
 import { useChatScroll } from "@/components/ai-elements/use-chat-scroll";
 import {
   PromptInputComposerFrame,
@@ -205,6 +210,7 @@ export function ChatPanel({
         />
       ) : (
         <MessageChatPanelBody
+          selectedThreadId={selectedThreadId}
           messages={messages}
           activeMessageStream={activeMessageStream}
           conversationScroll={conversationScroll}
@@ -261,6 +267,7 @@ function EmptyChatPanelBody({
 }
 
 type MessageChatPanelBodyProps = {
+  selectedThreadId: ThreadId | null;
   messages: Doc<"messages">[] | undefined;
   activeMessageStream: ActiveMessageStream | null | undefined;
   conversationScroll: ReturnType<typeof useChatScroll>;
@@ -273,6 +280,7 @@ type MessageChatPanelBodyProps = {
 };
 
 function MessageChatPanelBody({
+  selectedThreadId,
   messages,
   activeMessageStream,
   conversationScroll,
@@ -286,18 +294,22 @@ function MessageChatPanelBody({
   return (
     // `Conversation` owns stick-to-bottom, prepend anchor preservation,
     // load-older sentinel wiring, and reduced-motion behavior.
-    <Conversation scroll={conversationScroll} className="flex-1 min-h-0">
+    <Conversation key={selectedThreadId ?? "no-thread"} scroll={conversationScroll} className="flex-1 min-h-0">
       <ConversationContent
-        className="mx-auto flex w-full max-w-3xl flex-col gap-3 px-6 pb-6 pt-10"
+        className={
+          skipEntrance
+            ? "mx-auto flex w-full max-w-3xl flex-col gap-0 px-6 pb-6 pt-10"
+            : "mx-auto flex w-full max-w-3xl flex-col gap-0 px-6 pb-6 pt-10 animate-soft-enter"
+        }
         showLoadOlderSentinel={canLoadOlderMessages}
+        aria-busy={activeMessageStream !== null && activeMessageStream !== undefined}
+        onAnimationEnd={skipEntrance ? undefined : onEntranceAnimationEnd}
       >
-        {sandboxPill}
+        {sandboxPill ? <ConversationItem messageId="sandbox-activity-pill">{sandboxPill}</ConversationItem> : null}
         {messages && (
           <MessageList
             messages={messages}
             activeMessageStream={activeMessageStream}
-            skipEntrance={skipEntrance}
-            onEntranceAnimationEnd={onEntranceAnimationEnd}
             onSelectArtifact={onSelectArtifact}
             showStatsForNerds={showStatsForNerds}
           />
@@ -311,40 +323,33 @@ function MessageChatPanelBody({
 type MessageListProps = {
   messages: Doc<"messages">[];
   activeMessageStream: ActiveMessageStream | null | undefined;
-  skipEntrance: boolean;
-  onEntranceAnimationEnd: (event: AnimationEvent<HTMLDivElement>) => void;
   onSelectArtifact: ((artifactId: ArtifactId) => void) | undefined;
   showStatsForNerds: boolean;
 };
 
-function MessageList({
-  messages,
-  activeMessageStream,
-  skipEntrance,
-  onEntranceAnimationEnd,
-  onSelectArtifact,
-  showStatsForNerds,
-}: MessageListProps) {
+function MessageList({ messages, activeMessageStream, onSelectArtifact, showStatsForNerds }: MessageListProps) {
   return (
-    <div
-      className={skipEntrance ? "flex flex-col gap-0" : "flex flex-col gap-0 animate-soft-enter"}
-      onAnimationEnd={skipEntrance ? undefined : onEntranceAnimationEnd}
-    >
+    <>
       {messages.map((message, index) => {
         const messageStream = activeMessageStream?.assistantMessageId === message._id ? activeMessageStream : null;
         const previousMessage = index > 0 ? messages[index - 1] : undefined;
         return (
-          <div key={message._id} className={messageSpacingClassName(previousMessage, message)}>
+          <ConversationItem
+            key={message._id}
+            messageId={message._id}
+            scrollAnchor={message.role === "user"}
+            className={messageSpacingClassName(previousMessage, message)}
+          >
             <MessageBubble
               message={message}
               activeMessageStream={messageStream}
               onSelectArtifact={onSelectArtifact}
               showStatsForNerds={showStatsForNerds}
             />
-          </div>
+          </ConversationItem>
         );
       })}
-    </div>
+    </>
   );
 }
 

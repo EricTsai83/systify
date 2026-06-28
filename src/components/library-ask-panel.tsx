@@ -11,7 +11,12 @@ import {
 import { useMutation, useQuery } from "convex/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
-import { Conversation, ConversationContent, ConversationScrollButton } from "@/components/ai-elements/conversation";
+import {
+  Conversation,
+  ConversationContent,
+  ConversationItem,
+  ConversationScrollButton,
+} from "@/components/ai-elements/conversation";
 import { useChatScroll } from "@/components/ai-elements/use-chat-scroll";
 import { CompactModelSettingsMenu } from "@/components/compact-model-settings-menu";
 import {
@@ -816,15 +821,27 @@ function LibraryAskTimeline({
   onDraftRegenerated: (draftId: Doc<"artifactDrafts">["_id"]) => void;
 }) {
   return (
-    <Conversation scroll={conversationScroll} className="min-h-0 flex-1">
+    <Conversation
+      key={confirmedThreadId ?? "pending-library-ask-thread"}
+      scroll={conversationScroll}
+      className="min-h-0 flex-1"
+    >
       <ConversationContent
-        className={`gap-0 px-5 py-3 sm:px-6 ${isLocked ? "min-h-full" : ""}`}
+        className={`gap-0 px-5 py-3 sm:px-6 ${isLocked ? "min-h-full" : ""} ${
+          conversationScroll.didPrepend ? "" : "animate-soft-enter"
+        }`}
         showLoadOlderSentinel={canLoadOlderMessages}
+        aria-busy={activeMessageStream !== null}
       >
         {confirmedThreadId ? (
-          <div key={confirmedThreadId} className={conversationScroll.didPrepend ? undefined : "animate-soft-enter"}>
+          <>
             {timelineEntries.map((entry, index) => (
-              <div key={entry._id} className={timelineSpacingClassName(timelineEntries[index - 1], entry)}>
+              <ConversationItem
+                key={entry._id}
+                messageId={entry._id}
+                scrollAnchor={entry.kind === "message" && entry.message.role === "user"}
+                className={timelineSpacingClassName(timelineEntries[index - 1], entry)}
+              >
                 {entry.kind === "message" ? (
                   <MessageBubble
                     message={entry.message}
@@ -838,17 +855,18 @@ function LibraryAskTimeline({
                     onRegenerated={onDraftRegenerated}
                   />
                 )}
-              </div>
+              </ConversationItem>
             ))}
-          </div>
+          </>
         ) : null}
         {isLocked ? (
-          <NoArtifactsHint
-            className={confirmedThreadId ? "mt-4" : undefined}
-            descriptionId={composerHintId}
-            onGenerate={onGenerate}
-            generateDisabledReason={generateDisabledReason}
-          />
+          <ConversationItem messageId="library-ask-no-artifacts" className={confirmedThreadId ? "mt-4" : undefined}>
+            <NoArtifactsHint
+              descriptionId={composerHintId}
+              onGenerate={onGenerate}
+              generateDisabledReason={generateDisabledReason}
+            />
+          </ConversationItem>
         ) : null}
       </ConversationContent>
       <ConversationScrollButton />
