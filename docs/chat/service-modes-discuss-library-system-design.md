@@ -103,7 +103,7 @@ Artifact organization is represented by `artifactFolders`; the frontend computes
 
 Library Ask retrieves from `artifactChunks`, which are separate rows so chunking and embedding churn does not rewrite the parent artifact document. Missing embeddings degrade to lexical retrieval instead of blocking Ask.
 
-Sandbox sessions are stored in `sandboxSessions`, scoped to a repository, and linked to a repository sandbox when active. A repository has one reusable sandbox session shared across every Discuss thread that uses sandbox grounding, so thread switching never reprovisions compute. The `threads.sandboxSessionId` pointer is written lazily — only when a Discuss thread actually flips the Sandbox toggle on for the first time.
+Sandbox sessions are stored in `sandboxSessions`, scoped to a repository, and linked to a repository sandbox when active. A repository has one reusable sandbox session shared across every Discuss thread that uses sandbox grounding, so thread switching never reprovisions compute. The `threads.sandboxSessionId` pointer is written lazily — only when a Discuss message is actually sent with Sandbox grounding.
 
 ## Availability
 
@@ -127,7 +127,7 @@ flowchart TD
 
 - `modes` — per-mode `{ discuss, library }` verdicts the top-level switcher consumes. The accompanying `defaultMode` is `library` whenever a repository is attached (only `discuss` for repoless threads), so opening a repository lands the user on the artifact reader rather than an empty Discuss thread.
 - `grounding.library` / `grounding.sandbox` — the per-axis verdict the Discuss composer's toggle bar consumes. Each axis carries a structured `reason.code` (e.g. `library_no_artifact`, `sandbox_provisioning`, `sandbox_user_cap_exceeded`) so the UI can branch on it without regex-matching tooltip strings.
-- `grounding.sandbox.isActivatable` — true when the sandbox is recoverable by a click (`missing` / `expired` / `failed`) and the cost-cap gate is open.
+- `grounding.sandbox.isActivatable` — true when the sandbox is in a recoverable liveness state (`missing` / `expired` / `failed`) and the cost-cap gate is open. The composer can keep Sandbox selected in this state; live-source preparation happens on the send path.
 
 The pure resolver lives in `convex/lib/chatEligibility.ts`; `repositoryModeEligibility.ts` augments the resolver's string reasons with structured `{ code, message, retryAfterMs? }` objects so write-path callers can throw structured `ConvexError`s.
 
@@ -139,7 +139,7 @@ Long-running jobs use leases. The contract for any `system_design`-kind Library 
 
 - `leaseExpiresAt` is set at job-insert time, not only at the `queued → running` transition. This keeps the stale-job sweep (`by_status_and_kind_and_leaseExpiresAt` + `lt(leaseExpiresAt, now)`) able to recover a job that died before the Node action ran.
 - The `queued → running` mutation refreshes the lease for a fresh window.
-- Long actions refresh the lease *between* internally-serialised steps — for Library generation, this happens before each LLM-backed kind via `refreshGenerationLease` so a 5-kind publication does not overrun a single lease window.
+- Long actions refresh the lease *between* internally-serialised steps — for Library generation, this happens before each selected LLM-backed kind via `refreshGenerationLease` so a multi-template publication does not overrun a single lease window.
 - `recoverStaleSystemDesignJob` only fires when both `leaseExpiresAt` is set *and* has passed `now`, so a lease-less job (which is now impossible by construction) would not be falsely failed.
 
 ## Artifact Provenance

@@ -25,15 +25,15 @@ record as a job failure.
 
 Three entry points live in `convex/lib/llmGateway.ts`:
 
-- `generateViaGateway` at `convex/lib/llmGateway.ts:310` — non-streaming. Awaits the full
+- `generateViaGateway` — non-streaming. Awaits the full
   result and returns an `LlmGenerateResult` (`text`, `steps`, `usage`, `costUsd`,
-  `rawResponseId`). Used by `convex/systemDesignNode.ts:240` for the System Design generator
-  and by the eval judge.
-- `streamViaGateway` at `convex/lib/llmGateway.ts:384` — streaming. Returns synchronously
+  `rawResponseId`). Used by the per-kind System Design runner
+  (`convex/systemDesignKindRun.ts`), artifact draft / repair actions, titles, and evals.
+- `streamViaGateway` — streaming. Returns synchronously
   with an `LlmStreamResult` containing `fullStream` plus four `final*` promises (`finalText`,
   `finalUsage`, `finalCostUsd`, `finalSteps`) and `abort()`. Used by
-  `convex/chat/generation.ts:652` for chat replies.
-- `embedViaGateway` at `convex/lib/llmGateway.ts:241` — batch embedding. Always goes
+  `convex/chat/replyStreamController.ts` for chat replies.
+- `embedViaGateway` — batch embedding. Always goes
   through the AI SDK's `embedMany` (even for a single value) so per-batch usage settles
   once per gateway invocation. Returns an `LlmEmbedResult` (`embeddings` preserving input
   order, `usage` with `inputTokens` only, `costUsd`). The `callCtx.capability` MUST be

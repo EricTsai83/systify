@@ -10,10 +10,10 @@ historical grounding marker.
   - `sandboxModeStatus.reasonCode`: `available`, `missing_sandbox`, `sandbox_provisioning`, `sandbox_expired`, `sandbox_unavailable`
   - Drives lifecycle availability and disabled-reason copy.
 - `convex/repositories.ts:getSandboxActivityStatus`
-  - `kind`: `idle`, `activating`, `ready`, `expiring_soon`
+  - `kind`: `idle`, `preparing`, `ready`, `expiring_soon`
   - Drives compact active/wake/progress badges.
 - `jobs.kind`
-  - `sandbox_activation`: explicit Activate/Wake/Retry live source work.
+  - `sandbox_activation`: compatibility/debug explicit activation work. Active user flows prepare Live source inside the chat or Design Docs action that needs it.
   - `chat` with `messages.groundSandbox === true`: historical Discuss answer used Sandbox grounding.
   - `system_design`: Design Docs generation used Live source.
   - `artifact_draft`: Library Ask artifact draft generation used Live source.
@@ -31,7 +31,7 @@ historical grounding marker.
 - `src/components/sandbox-activity-pill.tsx`
   - Chat-side Live source pill.
   - Data source: `api.repositories.getSandboxActivityStatus`.
-  - Shows inactive, activating, ready, expiring soon, and Activate action.
+  - Shows inactive, preparing, ready, and expiring soon states.
 - `src/components/chat-message.tsx`
   - Assistant grounding chips: `Sandbox`, `Library + Sandbox`.
   - Data source: persisted `messages.groundSandbox` / `messages.groundLibrary`.
@@ -52,8 +52,8 @@ historical grounding marker.
   - Activity includes `sandbox_activation`, `system_design`, and `artifact_draft`.
 - `src/pages/library.tsx`
   - `LibraryLiveSourceBadge`.
-  - Data source: `api.repositories.getSandboxActivityStatus` plus pending activation signal.
-  - Shows active, starting, inactive, and loading in the Library header.
+  - Data source: `api.repositories.getSandboxActivityStatus`.
+  - Shows active, preparing, inactive, and loading in the Library header.
 - `src/components/library-ask-panel.tsx`
   - Library Ask document actions and artifact draft cards.
   - Data source: `api.libraryArtifactDrafts.*`, `api.repositories.getSandboxActivityStatus` passed from `src/pages/library.tsx`.

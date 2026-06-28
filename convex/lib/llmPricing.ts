@@ -102,8 +102,8 @@ const PRICING: Record<string, LlmPricing> = {
     outputPerMillion: 0.4,
     cacheReadPerMillion: 0.025,
   },
-  // GPT-4 family fallbacks. Kept so existing fixtures and any operator
-  // who pins `OPENAI_MODEL=gpt-4o` continues to bill correctly.
+  // GPT-4 family fallbacks. Kept so existing fixtures and historical
+  // artifact provenance rows continue to bill correctly.
   "openai:gpt-4o-mini": {
     inputPerMillion: 0.15,
     outputPerMillion: 0.6,

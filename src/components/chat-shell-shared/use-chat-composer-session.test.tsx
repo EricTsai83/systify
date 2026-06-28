@@ -396,7 +396,6 @@ function capabilities(overrides: Partial<ThreadCapabilities> = {}): ThreadCapabi
       library: { enabled: true },
     },
     defaultMode: "discuss",
-    sandboxIsActivatable: false,
     sandboxCostBudget: null,
     defaultGroundLibrary: false,
     defaultGroundSandbox: false,

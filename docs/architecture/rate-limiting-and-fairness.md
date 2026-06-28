@@ -157,9 +157,9 @@ distinct entry points before any LLM call lands:
   composer renders.
 - **Metered lifecycle pre-check** uses
   `usageAccountingMutations.reserveUsageLifecycle`. For features with
-  `sandboxDailyCap: "precheckAndSettle"` (sandbox chat replies and System
-  Design generation), the lifecycle calls `assertSandboxDailyCostBudget` before
-  reserving user budget. On denial it throws a `ConvexError` with
+  `sandboxDailyCap: "precheckAndSettle"` (sandbox chat replies and per-kind
+  Design Docs generation), the lifecycle calls `assertSandboxDailyCostBudget`
+  before reserving user budget. On denial it throws a `ConvexError` with
   `code: "SANDBOX_DAILY_CAP_EXCEEDED"` (or
   `"SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED"`); the per-kind action catches it and
   records the kind as failed with `failureReason: "transport_rate_limit"`.

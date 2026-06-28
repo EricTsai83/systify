@@ -40,7 +40,7 @@ import type { ActionCtx } from "../_generated/server";
 import { getSandboxFsClient } from "../daytona";
 import { SandboxPreparationError } from "../lib/sandboxLiveness";
 import { emitMetric, logInfo } from "../lib/observability";
-import { hasProviderApiKey } from "../lib/providerEnv";
+import { hasProviderApiKey, providerApiKeyEnvVar } from "../lib/providerEnv";
 import type { ReplyTurnContext } from "./context";
 import { resolveModelForReply } from "./modelSelection";
 import {
@@ -409,7 +409,11 @@ export async function runAssistantReplySession(ctx: ActionCtx, args: ReplySessio
       if (await exitIfCancellationSettled()) {
         return;
       }
-      const heuristicAnswer = buildHeuristicAnswer(finalPromptInput, userPrompt);
+      const heuristicAnswer = buildHeuristicAnswer(
+        finalPromptInput,
+        userPrompt,
+        providerApiKeyEnvVar(modelChoice.provider),
+      );
       await ctx.runMutation(internal.chat.streaming.finalizeAssistantReply, {
         threadId: args.threadId,
         assistantMessageId: args.assistantMessageId,

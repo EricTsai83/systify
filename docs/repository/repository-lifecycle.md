@@ -38,7 +38,7 @@ Repository import is intentionally **sandbox-free**. The pipeline never provisio
 
 A Daytona sandbox is only provisioned on demand by features that genuinely need a live filesystem:
 
-- **Sandbox-grounded Discuss** — provisioned the first time the user activates the Sandbox grounding toggle on a repository (via `requestSandboxActivation` → `sandboxActivationNode.runSandboxActivation`).
+- **Sandbox-grounded Discuss** — prepared inside the reply action when a queued message is generated with Sandbox grounding.
 - **Design Docs generation** — every selected template is LLM-backed and runs through `ensureSandboxReady` inside `systemDesignNode.runSystemDesignGeneration`.
 
 `ensureSandboxReady` (in `convex/lib/sandboxLiveness.ts`) is the single source of truth for "make a sandbox usable for this repository right now". It probes Daytona, wakes a stopped sandbox, or provisions a fresh one as needed, and patches `repositories.latestSandboxId` to the result. Import never sets that pointer — whatever sandbox the previous sandbox-grounded reply or Design Docs run left there stays there.

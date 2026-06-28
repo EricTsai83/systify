@@ -307,7 +307,12 @@ The `auto pause idle sandbox sessions` cron (`crons.ts`) runs every minute and p
 
 ### Sandbox activation flow
 
-When a user enables Sandbox grounding on a Discuss thread (or reactivates after archive), `repositories.requestSandboxActivation` enqueues a `sandbox_activation` job and schedules `sandboxActivationNode.runSandboxActivation`. The Node action runs `ensureSandboxReady` (in `convex/lib/sandboxLiveness.ts`) — the single orchestrator for "make a sandbox usable for this repository right now" — which probes Daytona, wakes a stopped sandbox where possible, or provisions a fresh one. The same `sandbox_activation` job kind is what the in-flight guard above uses to dedupe duplicate activation triggers.
+Sandbox preparation is now driven by the work that actually needs a live source:
+
+- **Sandbox-grounded Discuss** keeps the composer toggle as a grounding choice. The reply action prepares the live source inside `prepareLiveSourceGrounding` / `ensureSandboxReady` only when the queued message is actually generated with Sandbox grounding.
+- **Design Docs generation** prepares the live source inside `systemDesignNode.runSystemDesignGeneration` before selected templates run, then delegates each template to the per-kind runner.
+
+`repositories.requestSandboxActivation` and the `sandbox_activation` job kind remain as a compatibility / debug entry point for explicit activation, and still use the same in-flight guard for duplicate requests. They are no longer the primary UI path for the Discuss composer.
 
 ### Audit log retention sweep
 
@@ -329,7 +334,7 @@ Buckets are fixed windows aligned to UTC midnight and are denominated internally
 There are two flavors of cap interaction:
 
 - **Pre-check (peek-only)** — `computeSandboxCostCapEvaluation` in `convex/lib/chatEligibility.ts` peeks the bucket without consuming it. Used by the chat composer / mode switcher to render disabled CTAs with structured reason codes (`sandbox_user_cap_exceeded`, `sandbox_repository_cap_exceeded`).
-- **Hard pre-check (assert)** — `convex/systemDesign.ts:756` (`assertSandboxDailyCostBudget`) blocks `requestSystemDesignGeneration` outright when the projected estimate would push the bucket over the cap.
+- **Reservation pre-check** — each Design Docs kind reserves estimated sandbox generation budget through `reserveSandboxLibraryGenerationBudget` before it calls the LLM gateway. If the projected estimate would exceed the cap, that kind fails with the same structured cap reason instead of spending first and discovering the overage later.
 
 Actual spend is settled post-hoc by `consumeSandboxDailyCost` once the gateway returns the real `totalCostUsd`, so the cap reflects observed cost rather than the upfront estimate.
 
@@ -372,6 +377,8 @@ flowchart TD
 
 This sequence is intentional: the system rejects the cheapest failure paths first, protects shared provider capacity second, and only creates database side effects after both checks have passed.
 
+Design Docs generation is the one merge-oriented exception: if an active `system_design` job already exists, `requestSystemDesignGeneration` appends newly selected templates to that job before consuming request-rate buckets. Only a new job path consumes `systemDesignRequests` and `daytonaRequestsGlobal`.
+
 ### Request buckets
 
 - `importRequests`
@@ -396,7 +403,7 @@ This sequence is intentional: the system rejects the cheapest failure paths firs
   - error: `RATE_LIMIT_EXCEEDED`
 - `daytonaRequestsGlobal`
   - default: `30 / hour`, sharded
-  - mutations: `requestSandboxActivation` and `requestSystemDesignGeneration` — both **always** consume this bucket because every selected Design Docs template is LLM-backed and opens a Daytona sandbox (see `convex/systemDesign.ts:171` and `convex/lib/systemDesign.ts:74-89`). `createRepositoryImport` / `syncRepository` do **not** consume this bucket — import runs against the GitHub API only.
+  - mutations: `requestSystemDesignGeneration` for new jobs, plus the compatibility/debug `requestSandboxActivation` entry point. Active Discuss sends do not call `requestSandboxActivation`; their reply action prepares the live source only when Sandbox grounding is selected. `createRepositoryImport` / `syncRepository` do **not** consume this bucket — import runs against the GitHub API only.
   - override: `RATE_LIMIT_DAYTONA_GLOBAL_PER_HOUR`
   - error: `RATE_LIMIT_EXCEEDED`
 
@@ -410,7 +417,7 @@ The shared helper is `findActiveJob` in `convex/lib/jobs.ts`. It indexes by `(sc
 - Sandbox grounding activation
   - guard source: active `jobs` rows where `kind === 'sandbox_activation'`, `status in ('queued', 'running')`, and `leaseExpiresAt >= now`
   - lease override: `SANDBOX_ACTIVATION_JOB_LEASE_MS`
-  - behavior: **idempotent** — `requestSandboxActivation` returns the existing `jobId` when one is in flight.
+  - behavior: **idempotent compatibility path** — `requestSandboxActivation` returns the existing `jobId` when one is in flight. The main Discuss path prepares the live source inside the reply action instead of creating this job.
 - Library Design Docs generation
   - guard source: active `jobs` rows where `kind === 'system_design'`, `status in ('queued', 'running')`, and `leaseExpiresAt >= now`.
   - lease override: `SYSTEM_DESIGN_JOB_LEASE_MS`
@@ -426,7 +433,7 @@ The `system_design` job kind is used exclusively by Library generation. The row 
 
 - `crons.ts` runs `reconcileStaleInteractiveJobs` every 5 minutes
 - expired chat leases mark both the `jobs` row and assistant `messages` row as `failed`
-- expired Design Docs generation leases mark the `jobs` row as `failed`
+- expired Design Docs generation leases requeue while the job still has resume attempts remaining. Completed or terminal per-kind runs are skipped on resume, and the job is marked `failed` only after the retry budget is exhausted or a terminal failure remains.
 - structured Convex errors include `code`, `bucket`, `retryAfterMs`, and `message` so the frontend can show stable user-facing text
 
 ## Environment Variable Layers
@@ -449,7 +456,6 @@ These values must exist in the Convex environment, not frontend `.env.local`:
 - `GITHUB_APP_WEBHOOK_SECRET`
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
-- `OPENAI_MODEL` *(listed but unused — legacy; model defaults live in `convex/chat/modelSelection.ts`)*
 - `SANDBOX_DAILY_CAP_PER_USER_USD`
 - `SANDBOX_DAILY_CAP_PER_REPOSITORY_USD`
 - `DAYTONA_API_KEY`

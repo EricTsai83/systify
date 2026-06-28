@@ -28,40 +28,49 @@ active job rather than spawning a parallel run.
 
 ## How it works
 
-The entry-point mutation is
-`requestSystemDesignGeneration` (`convex/systemDesign.ts:93`). It validates the
-selection set and the optional `(provider, modelName)` pair against
-`isValidPick`, consumes the per-user System Design rate limit and the
-Daytona global rate limit, ensures the default internal System Design folder tree
-exists, then `enqueueJob`s a `system_design`-kind job and patches the chosen
-`provider`/`modelName` onto the row (`convex/systemDesign.ts:197-200`). The
-job carries `selections` so a resume can recover the original request.
+The entry-point mutation is `requestSystemDesignGeneration`
+(`convex/systemDesign.ts`). It validates repository ownership, feature
+entitlements, the selected kind set, the optional `(provider, modelName)` pair,
+and the optional reasoning-effort override through the System Design planning
+helpers in `convex/lib/systemDesignPlanning.ts`. New jobs bake
+`provider`/`modelName`/`reasoningEffort` onto the `jobs` row so resumes and
+cache probes use the same model fingerprint as the original request. The job
+carries `selections` so a resume can recover the original request.
 
-Before insert, the mutation checks
-`findActiveLibrarySystemDesignJob` (`convex/systemDesign.ts:165`). If a
+Before consuming request-rate buckets or inserting a new row, the mutation
+checks `findActiveLibrarySystemDesignJob` (`convex/systemDesign.ts`). If a
 queued/running `system_design` job already exists for the repository, the
 mutation appends newly selected templates that are not already queued/generated
-and returns that job's id. Per-repository dedup is intentional:
-the scope key is the repository, not the user, so a future shared-repository
-model inherits the behaviour automatically.
+and returns that job's id. Per-repository dedup is intentional: the scope key
+is the repository, not the user, so a future shared-repository model inherits
+the behaviour automatically.
 
-The action `runSystemDesignGeneration` (`convex/systemDesignNode.ts:68`)
-performs the actual work. After a one-time `ensureSandboxReady` call (which
-reports each stage back through `updateGenerationProgress`), it iterates the
-selected templates serially and re-reads the job selections between generated
-docs so new selections appended to the active job can be picked up.
+Only a new job consumes the per-user System Design request bucket and the
+Daytona global request bucket. It then ensures the default internal System
+Design folder tree exists, enqueues a `system_design` job with an initial lease,
+patches the locked model choice onto the row, and schedules
+`systemDesignNode.runSystemDesignGeneration`.
+
+The action `runSystemDesignGeneration` (`convex/systemDesignNode.ts`) performs
+the orchestration. After a one-time sandbox preparation through
+`prepareSandboxLibraryGeneration` / `ensureSandboxReady` (which reports each
+stage back through `updateGenerationProgress`), it iterates the selected
+templates serially and re-reads the job selections between generated docs so
+new selections appended to the active job can be picked up. Each selected kind
+is delegated to `runSystemDesignKind` in `convex/systemDesignKindRun.ts`.
 
 ### Per-kind lifecycle
 
-For each selected kind, the action runs the following steps inside the
-main for-loop (`convex/systemDesignNode.ts:183-423`):
+For each selected kind, `runSystemDesignGeneration` refreshes the job lease and
+then calls `runSystemDesignKind`. The kind-run module owns the following
+per-kind lifecycle:
 
 1. **Refresh the lease.** `refreshGenerationLease`
-   (`convex/systemDesign.ts:324`) extends `leaseExpiresAt` by
+   (`convex/systemDesign.ts`) extends `leaseExpiresAt` by
    `SYSTEM_DESIGN_JOB_LEASE_MS` so the stale-job sweep does not preempt the
    action while it is still making progress.
 2. **Cache probe.** When `forceRegenerate` is `false` and the repository has a
-   `lastSyncedCommitSha`, the action calls `findCachedArtifact`
+   `lastSyncedCommitSha`, the kind runner calls `findCachedArtifact`
    (`convex/systemDesign.ts`) with the full tuple `(repositoryId, kind,
    alignedImportCommitSha, generatedByProvider, generatedByModel,
    promptVersion)`. The lookup uses the exact compound
@@ -71,23 +80,25 @@ main for-loop (`convex/systemDesignNode.ts:183-423`):
    artifact id flows into the same Publication Settlement seam used by
    generated output. There is no separate cache table — the artifact itself is
    the cache.
-3. **Cost pre-check.** `assertKindCostBudget`
-   (`convex/systemDesign.ts:750`) throws `SANDBOX_DAILY_CAP_EXCEEDED` or
-   `SANDBOX_REPOSITORY_DAILY_CAP_EXCEEDED` when the per-user or
-   per-repository daily cap has no headroom. The catch below classifies the
-   throw as `transport_rate_limit`.
+3. **Usage reservation and cost pre-check.** `assertKindCostBudget`
+   (`convex/systemDesign.ts`) calls
+   `reserveSandboxLibraryGenerationBudget`, which performs the sandbox daily
+   cap pre-check and reserves the viewer's usage-budget estimate when that
+   policy is active. Cap denials are classified as `transport_rate_limit` by
+   the kind-run failure classifier so the banner can reuse the provider
+   rate-limit copy.
 4. **Gateway call.** `generateViaGateway` is invoked with the locked
    `(provider, modelName)` from `getJobModelChoice`
-   (`convex/systemDesign.ts:716`), the kind's prompt suffixed with the step
-   budget reminder (`budgetSuffix` in `convex/lib/systemDesignPrompts.ts:330`),
+   (`convex/systemDesign.ts`), the kind's prompt suffixed with the step
+   budget reminder (`budgetSuffix` in `convex/lib/systemDesignPrompts.ts`),
    and `stopWhen: stepCountIs(config.stepBudget)`. Tools are the same
    `read_file`/`list_dir`/`run_shell` factory the chat path uses, bound to the
    sandbox returned by `ensureSandboxReady` so per-kind LLM passes consume
    `prepared` directly with no extra DB hit.
 5. **Quality gate.** `validateRequiredSections`
-   (`convex/lib/systemDesignPrompts.ts:352`) checks the markdown contains every
+   (`convex/lib/systemDesignPrompts.ts`) checks the markdown contains every
    H2 section listed in `EXPECTED_SECTIONS` for the kind. For
-   `architecture_diagram` the action additionally runs `validateMermaidBlock`
+   `architecture_diagram` the kind runner additionally runs `validateMermaidBlock`
    to confirm at least one fenced ` ```mermaid ` block. Failure sets
    `runStatus = "quality_rejected"` and records the missing sections.
 6. **Publication Settlement.** `finalizeKindPublication`
