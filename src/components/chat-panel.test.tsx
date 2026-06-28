@@ -212,9 +212,6 @@ type LegacyChatPanelProps = Omit<React.ComponentProps<typeof RealChatPanel>, "co
   threadLockedProvider?: LlmProvider | null;
   grounding?: ComposerGroundingViewModel["grounding"];
   showGroundingToggles?: boolean;
-  isArtifactPanelOpen?: boolean;
-  onToggleArtifactPanel?: () => void;
-  showArtifactToggle?: boolean;
   isSending: boolean;
   onSendMessage: (event: React.FormEvent<HTMLFormElement>) => Promise<void> | void;
   sendDisabledReason?: string;
@@ -245,16 +242,9 @@ function ChatPanel(props: LegacyChatPanelProps) {
       isChatLoading={props.isChatLoading}
       composer={composer}
       chatMode={props.chatMode}
-      artifactToggle={
-        props.showArtifactToggle && props.onToggleArtifactPanel
-          ? {
-              isOpen: props.isArtifactPanelOpen ?? false,
-              onToggle: props.onToggleArtifactPanel,
-            }
-          : null
-      }
       hasAttachedRepository={props.hasAttachedRepository}
       onSelectArtifact={props.onSelectArtifact}
+      repositorySource={props.repositorySource}
       attachedRepositoryId={props.attachedRepositoryId}
       canLoadOlderMessages={props.canLoadOlderMessages}
       onLoadOlderMessages={props.onLoadOlderMessages}
@@ -270,16 +260,9 @@ function ChatContainer(props: LegacyChatContainerProps) {
       isShellLoading={props.isShellLoading}
       composer={composer}
       chatMode={props.chatMode}
-      artifactToggle={
-        props.showArtifactToggle && props.onToggleArtifactPanel
-          ? {
-              isOpen: props.isArtifactPanelOpen ?? false,
-              onToggle: props.onToggleArtifactPanel,
-            }
-          : null
-      }
       hasAttachedRepository={props.hasAttachedRepository}
       onSelectArtifact={props.onSelectArtifact}
+      repositorySource={props.repositorySource}
       attachedRepositoryId={props.attachedRepositoryId}
       canLoadOlderMessages={props.canLoadOlderMessages}
       onLoadOlderMessages={props.onLoadOlderMessages}
@@ -489,6 +472,35 @@ describe("ChatPanel streaming rendering", () => {
       .filter((args) => args !== "skip");
 
     expect(listPickableModelArgs).toEqual([{ preferenceScope: "discuss" }]);
+  });
+
+  test("does not render the removed Artifacts composer toggle", () => {
+    render(
+      <ChatPanel
+        selectedThreadId={null}
+        messages={undefined}
+        activeMessageStream={undefined}
+        isChatLoading={false}
+        chatInput=""
+        setChatInput={vi.fn()}
+        chatMode="discuss"
+        groundLibrary={false}
+        groundSandbox={false}
+        setGroundLibrary={vi.fn()}
+        setGroundSandbox={vi.fn()}
+        grounding={{
+          library: { enabled: true },
+          sandbox: { enabled: true },
+        }}
+        isSending={false}
+        onSendMessage={vi.fn()}
+        sandboxModeStatus={null}
+        isSyncing={false}
+        onSync={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /artifacts/i })).not.toBeInTheDocument();
   });
 
   test("holds the composer tools until the model catalog is ready", () => {

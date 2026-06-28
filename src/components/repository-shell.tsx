@@ -1,7 +1,6 @@
 import { ArchiveIcon, ArrowCounterClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 import { AppNotice } from "@/components/app-notice";
 import { AppSidebarLeft } from "@/components/app-sidebar";
-import { ArtifactPanel } from "@/components/artifact-panel";
 import { ChatContainer } from "@/components/chat-panel";
 import { ConfirmDialog } from "@/components/confirm-dialog";
 import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
@@ -29,6 +28,14 @@ export function RepositoryShell({
   isNewThreadRoute?: boolean;
 }) {
   const workspace = useRepositoryWorkspaceState({ urlRepositoryId, urlThreadId, isNewThreadRoute });
+  const repositorySource = workspace.repoDetail?.repository
+    ? {
+        repositoryId: workspace.repoDetail.repository._id,
+        sourceRepoFullName: workspace.repoDetail.repository.sourceRepoFullName,
+        defaultBranch: workspace.repoDetail.repository.defaultBranch ?? "main",
+        lastSyncedCommitSha: workspace.repoDetail.repository.lastSyncedCommitSha,
+      }
+    : undefined;
 
   const chatContainerNode = (
     <ChatContainer
@@ -36,18 +43,9 @@ export function RepositoryShell({
       isShellLoading={workspace.isChatShellLoading}
       composer={workspace.composer}
       chatMode={workspace.chatMode}
-      artifactToggle={
-        workspace.isArtifactPanelEnabled
-          ? {
-              isOpen: workspace.isDesktopLayout
-                ? workspace.panels.artifact.isDesktopOpen
-                : workspace.panels.artifact.isMobileOpen,
-              onToggle: workspace.panels.artifact.toggle,
-            }
-          : null
-      }
       hasAttachedRepository={workspace.capabilities.attachedRepository !== null}
       onSelectArtifact={workspace.panels.artifact.selectArtifact}
+      repositorySource={repositorySource}
       attachedRepositoryId={workspace.capabilities.attachedRepository?.id}
     />
   );
@@ -87,7 +85,7 @@ export function RepositoryShell({
           onSync={workspace.handlers.sync}
           syncDisabledReason={workspace.syncDisabledReason}
           onViewArtifact={workspace.panels.artifact.selectArtifact}
-          showSystemStatus={workspace.isArtifactPanelEnabled}
+          showSystemStatus={workspace.isRepositoryStatusEnabled}
         />
 
         <ThreadSearchDialog
@@ -157,55 +155,12 @@ export function RepositoryShell({
           {workspace.isRepoMissing ? (
             <RepositoryMissingState onBack={workspace.handlers.backToDefault} />
           ) : (
-            <>
-              {chatContainerNode}
-              {workspace.isDesktopLayout && workspace.isArtifactPanelEnabled ? (
-                <div
-                  aria-hidden={!workspace.panels.artifact.isDesktopOpen}
-                  data-state={workspace.panels.artifact.isDesktopOpen ? "open" : "closed"}
-                  className="shrink-0 overflow-hidden border-l border-border motion-safe:transition-[width] motion-safe:duration-200 motion-safe:ease-out motion-reduce:transition-none will-change-[width] data-[state=closed]:w-0 data-[state=closed]:border-l-0 xl:data-[state=open]:w-96 2xl:data-[state=open]:w-md"
-                >
-                  <div className="h-full xl:w-96 2xl:w-md">
-                    <ArtifactPanel
-                      repositoryId={workspace.artifactRepositoryId}
-                      artifacts={workspace.repoDetail?.artifacts}
-                      isVisible={workspace.panels.artifact.isDesktopOpen}
-                      className="flex h-full w-full border-l-0"
-                      onOpenInReader={workspace.panels.artifact.selectArtifact}
-                    />
-                  </div>
-                </div>
-              ) : null}
-            </>
+            chatContainerNode
           )}
         </div>
       </SidebarInset>
 
-      {!workspace.isDesktopLayout && workspace.isArtifactPanelEnabled ? (
-        <Drawer
-          open={workspace.panels.artifact.isMobileOpen}
-          onOpenChange={workspace.panels.artifact.setMobileOpen}
-          aria-label="artifact-drawer"
-        >
-          <DrawerContent className={cn(MOBILE_DRAWER_HEIGHT_CLASS, "rounded-t-2xl")}>
-            <DrawerTitle className="sr-only">Results and artifacts</DrawerTitle>
-            <DrawerDescription className="sr-only">
-              Persistent results and artifacts for the current conversation and attached repository.
-            </DrawerDescription>
-            <div className="flex min-h-0 flex-1 flex-col">
-              <ArtifactPanel
-                repositoryId={workspace.artifactRepositoryId}
-                artifacts={workspace.repoDetail?.artifacts}
-                isVisible={workspace.panels.artifact.isMobileOpen}
-                className="flex h-full w-full border-l-0"
-                onOpenInReader={workspace.panels.artifact.selectMobileArtifact}
-              />
-            </div>
-          </DrawerContent>
-        </Drawer>
-      ) : null}
-
-      {!workspace.isDesktopLayout && workspace.repoDetail && workspace.isArtifactPanelEnabled ? (
+      {!workspace.isDesktopLayout && workspace.repoDetail && workspace.isRepositoryStatusEnabled ? (
         <Drawer
           open={workspace.panels.status.isOpen}
           onOpenChange={workspace.panels.status.setOpen}

@@ -43,6 +43,24 @@ import {
 import { recordThreadActivityInHistory } from "./historyState";
 import { loadActiveOwnedThread } from "./threadAccess";
 
+const citationArtifactKindValidator = v.union(
+  v.literal("readme_summary"),
+  v.literal("architecture_overview"),
+  v.literal("architecture_diagram"),
+  v.literal("entrypoints"),
+  v.literal("dependency_overview"),
+  v.literal("trade_off_matrix"),
+  v.literal("migration_plan"),
+  v.literal("capacity_estimate"),
+  v.literal("design_review"),
+  v.literal("data_model_overview"),
+  v.literal("api_surface_overview"),
+  v.literal("deployment_overview"),
+  v.literal("security_overview"),
+  v.literal("operations_overview"),
+  v.literal("custom_document"),
+);
+
 const STALE_CHAT_JOB_ERROR_MESSAGE =
   "This reply stopped before it could finish. Try sending your message again. If it keeps happening, choose another model or check the provider configuration.";
 
@@ -300,6 +318,9 @@ type TerminalOutcome =
       citationMap?: Array<{
         index: number;
         artifactId: Id<"artifacts">;
+        artifactTitle?: string;
+        artifactKind?: Doc<"artifacts">["kind"];
+        artifactVersion?: number;
         chunkId?: Id<"artifactChunks">;
         headingPath?: string[];
       }>;
@@ -1184,6 +1205,9 @@ export const finalizeAssistantReply = internalMutation({
         v.object({
           index: v.number(),
           artifactId: v.id("artifacts"),
+          artifactTitle: v.optional(v.string()),
+          artifactKind: v.optional(citationArtifactKindValidator),
+          artifactVersion: v.optional(v.number()),
           chunkId: v.optional(v.id("artifactChunks")),
           headingPath: v.optional(v.array(v.string())),
         }),

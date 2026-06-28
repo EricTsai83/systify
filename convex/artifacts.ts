@@ -13,9 +13,9 @@ const ARTIFACTS_PER_REPOSITORY_LIMIT = 200;
 /**
  * Public, owner-scoped list of artifacts attached to a thread.
  *
- * Drives the right-rail ArtifactPanel. The internal
- * `artifactStore.listByThread` is kept private because it skips ownership
- * checks; this query is the public-facing entry point.
+ * Supports owner-scoped artifact lookups for artifact-aware surfaces. The
+ * internal `artifactStore.listByThread` is kept private because it skips
+ * ownership checks; this query is the public-facing entry point.
  *
  * The repository-scoped artifact list still lives on
  * `repositories.getRepositoryDetail` and is used by the repository overview

@@ -10,7 +10,6 @@ import { useRepositoryPersistence } from "@/components/chat-shell-shared/use-rep
 import { useThreadDeletionRecovery } from "@/components/chat-shell-shared/use-thread-deletion-recovery";
 import type { ChatComposerViewModel } from "@/components/chat-shell-shared/chat-composer-types";
 import { useCheckForUpdates } from "@/hooks/use-check-for-updates";
-import { useLocalStorageBoolean } from "@/hooks/use-persisted-state";
 import { useRecentThreads } from "@/hooks/use-recent-threads";
 import { useRepositoryLifecycle } from "@/hooks/use-repository-lifecycle";
 import { useChatMode } from "@/hooks/use-service-mode";
@@ -53,7 +52,7 @@ export type RepositoryWorkspaceState = {
   isRepoArchived: boolean;
   isSyncing: boolean;
   isRestoringRepository: boolean;
-  isArtifactPanelEnabled: boolean;
+  isRepositoryStatusEnabled: boolean;
   isDesktopLayout: boolean;
   actionError: string | null;
   actionNotice: RepositoryActionNotice | null;
@@ -65,12 +64,7 @@ export type RepositoryWorkspaceState = {
   composer: ChatComposerViewModel;
   panels: {
     artifact: {
-      isDesktopOpen: boolean;
-      isMobileOpen: boolean;
-      setMobileOpen: (open: boolean) => void;
-      toggle: () => void;
       selectArtifact: (artifactId: ArtifactId) => void;
-      selectMobileArtifact: (artifactId: ArtifactId) => void;
     };
     status: {
       isOpen: boolean;
@@ -159,7 +153,6 @@ export function useRepositoryWorkspaceState({
   });
 
   const capabilities = useThreadCapabilities(urlThreadId);
-  const isArtifactPanelEnabled = mode === "library" || (mode === "discuss" && capabilities.attachedRepository !== null);
   const chatMode: ChatMode = landingDecision.intendedChatMode;
 
   const [threadToArchive, setThreadToArchive] = useState<ThreadId | null>(null);
@@ -167,8 +160,6 @@ export function useRepositoryWorkspaceState({
   const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<RepositoryActionNotice | null>(null);
-  const [isArtifactPanelOpen, setIsArtifactPanelOpen] = useLocalStorageBoolean("systify.artifactPanel.open", false);
-  const [isArtifactSheetOpen, setIsArtifactSheetOpen] = useState(false);
   const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false);
   const [isStatusOpen, setIsStatusOpen] = useState(false);
   const [isThreadSearchOpen, setIsThreadSearchOpen] = useState(false);
@@ -182,6 +173,7 @@ export function useRepositoryWorkspaceState({
   const selectedRepositoryId: RepositoryId | null = currentRepositoryId;
   const selectedThreadId: ThreadId | null = urlThreadId;
   const artifactRepositoryId: RepositoryId | null = capabilities.attachedRepository?.id ?? currentRepositoryId;
+  const isRepositoryStatusEnabled = artifactRepositoryId !== null;
   const recentThreadIds = useRecentThreads(selectedThreadId);
   useWarmThreadSubscriptions(recentThreadIds);
 
@@ -230,9 +222,6 @@ export function useRepositoryWorkspaceState({
     const handleChange = (event: MediaQueryListEvent) => {
       setIsDesktopLayout(event.matches);
       setIsStatusOpen(false);
-      if (event.matches) {
-        setIsArtifactSheetOpen(false);
-      }
     };
     mediaQuery.addEventListener("change", handleChange);
     return () => mediaQuery.removeEventListener("change", handleChange);
@@ -295,36 +284,16 @@ export function useRepositoryWorkspaceState({
     [navigate, currentRepositoryId],
   );
 
-  const handleToggleArtifactPanel = useCallback(() => {
-    if (!isArtifactPanelEnabled) {
-      return;
-    }
-    if (isDesktopLayout) {
-      setIsArtifactPanelOpen((open) => !open);
-      return;
-    }
-    setIsArtifactSheetOpen((open) => {
-      const next = !open;
-      if (next) {
-        setIsStatusOpen(false);
-      }
-      return next;
-    });
-  }, [isArtifactPanelEnabled, isDesktopLayout, setIsArtifactPanelOpen]);
-
   const handleSetStatusOpen = useCallback(
     (open: boolean) => {
-      if (!isArtifactPanelEnabled) {
+      if (!isRepositoryStatusEnabled) {
         if (open) return;
         setIsStatusOpen(false);
         return;
       }
-      if (open && !isDesktopLayout) {
-        setIsArtifactSheetOpen(false);
-      }
       setIsStatusOpen(open);
     },
-    [isDesktopLayout, isArtifactPanelEnabled],
+    [isRepositoryStatusEnabled],
   );
 
   const handleSelectArtifact = useCallback(
@@ -336,44 +305,6 @@ export function useRepositoryWorkspaceState({
     },
     [navigate, artifactRepositoryId],
   );
-
-  const handleSelectMobileArtifact = useCallback(
-    (artifactId: ArtifactId) => {
-      handleSelectArtifact(artifactId);
-      setIsArtifactSheetOpen(false);
-    },
-    [handleSelectArtifact],
-  );
-
-  useEffect(() => {
-    if (!isArtifactPanelEnabled) {
-      return;
-    }
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.isComposing || event.keyCode === 229) {
-        return;
-      }
-      if (event.key !== "." || (!event.metaKey && !event.ctrlKey) || event.shiftKey || event.altKey) {
-        return;
-      }
-
-      const target = event.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        return;
-      }
-      if (target instanceof HTMLElement) {
-        if (target.isContentEditable || target.closest('[contenteditable="true"], [role="textbox"], .monaco-editor')) {
-          return;
-        }
-      }
-
-      event.preventDefault();
-      handleToggleArtifactPanel();
-    };
-
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [handleToggleArtifactPanel, isArtifactPanelEnabled]);
 
   const handleImported = useCallback(
     (repoId: RepositoryId, threadId: ThreadId | null, threadMode: ThreadMode | null) => {
@@ -498,7 +429,7 @@ export function useRepositoryWorkspaceState({
     isRepoArchived,
     isSyncing: isSyncing || isRepositorySyncing,
     isRestoringRepository: isRestoringRepo,
-    isArtifactPanelEnabled,
+    isRepositoryStatusEnabled,
     isDesktopLayout,
     actionError,
     actionNotice,
@@ -510,12 +441,7 @@ export function useRepositoryWorkspaceState({
     composer,
     panels: {
       artifact: {
-        isDesktopOpen: isArtifactPanelOpen,
-        isMobileOpen: isArtifactSheetOpen,
-        setMobileOpen: setIsArtifactSheetOpen,
-        toggle: handleToggleArtifactPanel,
         selectArtifact: handleSelectArtifact,
-        selectMobileArtifact: handleSelectMobileArtifact,
       },
       status: {
         isOpen: isStatusOpen,

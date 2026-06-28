@@ -1167,14 +1167,18 @@ export default defineSchema({
      * the array is the artifact the prompt rendered as `## [A1] …`, index 2
      * the `[A2]` artifact, and so on. The frontend uses this to turn `[A#]`
      * tokens in the assistant's content into links that jump to the right
-     * artifact in the side panel. Optional and only written when the reply
-     * actually had artifacts in scope (library mode).
+     * artifact in the Library Reader. Optional and only written when the
+     * reply actually had artifacts in scope (library mode or Library-grounded
+     * Discuss).
      */
     citationMap: v.optional(
       v.array(
         v.object({
           index: v.number(),
           artifactId: v.id("artifacts"),
+          artifactTitle: v.optional(v.string()),
+          artifactKind: v.optional(artifactKind),
+          artifactVersion: v.optional(v.number()),
           /**
            * Chunk-level citation. The Library Ask flow writes one entry per
            * retrieved chunk so `[A1#section]` deep-links jump to the

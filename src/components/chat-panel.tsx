@@ -9,7 +9,7 @@ import {
   type RefObject,
   type ReactNode,
 } from "react";
-import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
+import { PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { findInFlightAssistantMessage, useConversationThread } from "@/hooks/use-conversation-thread";
 import { useStatsForNerdsPreference } from "@/hooks/use-user-preferences";
@@ -39,13 +39,8 @@ import { SandboxActivityPill } from "@/components/sandbox-activity-pill";
 import { Button } from "@/components/ui/button";
 import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import type { ActiveMessageStream, ArtifactId, ChatMode, RepositoryId, ThreadId } from "@/lib/types";
+import type { ActiveMessageStream, ArtifactId, ChatMode, RepositoryId, RepositorySource, ThreadId } from "@/lib/types";
 import type { ChatComposerViewModel } from "@/components/chat-shell-shared/chat-composer-types";
-
-type ArtifactToggleControl = {
-  isOpen: boolean;
-  onToggle: () => void;
-};
 
 type ChatPanelProps = {
   selectedThreadId: ThreadId | null;
@@ -60,16 +55,16 @@ type ChatPanelProps = {
    * shell) can drive it.
    */
   chatMode: ChatMode;
-  artifactToggle?: ArtifactToggleControl | null;
   /** Whether the current thread has an attached repository. */
   hasAttachedRepository?: boolean;
   /**
    * Clicking an inline `[A#]` citation in an assistant reply forwards
    * the resolved artifact id to this callback. The shell uses it to open
-   * the artifact panel and scroll/highlight the matching artifact card.
+   * the Library Reader for that artifact.
    * Optional so unit tests and headless renders can omit it.
    */
   onSelectArtifact?: (artifactId: ArtifactId) => void;
+  repositorySource?: RepositorySource;
   /**
    * Repository attached to the current thread, if any. Used to mount
    * the passive `SandboxActivityPill` in sandbox-tooled modes. Optional
@@ -131,9 +126,9 @@ export function ChatPanel({
   isChatLoading,
   composer,
   chatMode,
-  artifactToggle = null,
   hasAttachedRepository = true,
   onSelectArtifact,
+  repositorySource,
   attachedRepositoryId,
   canLoadOlderMessages = false,
   onLoadOlderMessages = NOOP_LOAD_OLDER,
@@ -238,6 +233,7 @@ export function ChatPanel({
           onEntranceAnimationEnd={markCurrentThreadSeen}
           sandboxPill={sandboxPill}
           onSelectArtifact={onSelectArtifact}
+          repositorySource={repositorySource}
           showStatsForNerds={showStatsForNerds}
         />
       )}
@@ -245,7 +241,6 @@ export function ChatPanel({
       <ChatComposer
         composer={composer}
         inputRef={composerInputRef}
-        artifactToggle={artifactToggle}
         canCancel={canCancel}
         isSendBlocked={isSendBlocked}
         sendButtonTitle={sendButtonTitle}
@@ -296,6 +291,7 @@ type MessageChatPanelBodyProps = {
   onEntranceAnimationEnd: (event: AnimationEvent<HTMLDivElement>) => void;
   sandboxPill: ReactNode;
   onSelectArtifact: ((artifactId: ArtifactId) => void) | undefined;
+  repositorySource: RepositorySource | undefined;
   showStatsForNerds: boolean;
 };
 
@@ -309,6 +305,7 @@ function MessageChatPanelBody({
   onEntranceAnimationEnd,
   sandboxPill,
   onSelectArtifact,
+  repositorySource,
   showStatsForNerds,
 }: MessageChatPanelBodyProps) {
   return (
@@ -331,6 +328,7 @@ function MessageChatPanelBody({
             messages={messages}
             activeMessageStream={activeMessageStream}
             onSelectArtifact={onSelectArtifact}
+            repositorySource={repositorySource}
             showStatsForNerds={showStatsForNerds}
           />
         )}
@@ -344,10 +342,17 @@ type MessageListProps = {
   messages: Doc<"messages">[];
   activeMessageStream: ActiveMessageStream | null | undefined;
   onSelectArtifact: ((artifactId: ArtifactId) => void) | undefined;
+  repositorySource: RepositorySource | undefined;
   showStatsForNerds: boolean;
 };
 
-function MessageList({ messages, activeMessageStream, onSelectArtifact, showStatsForNerds }: MessageListProps) {
+function MessageList({
+  messages,
+  activeMessageStream,
+  onSelectArtifact,
+  repositorySource,
+  showStatsForNerds,
+}: MessageListProps) {
   return (
     <>
       {messages.map((message, index) => {
@@ -364,6 +369,7 @@ function MessageList({ messages, activeMessageStream, onSelectArtifact, showStat
               message={message}
               activeMessageStream={messageStream}
               onSelectArtifact={onSelectArtifact}
+              repositorySource={repositorySource}
               showStatsForNerds={showStatsForNerds}
             />
           </ConversationItem>
@@ -376,20 +382,12 @@ function MessageList({ messages, activeMessageStream, onSelectArtifact, showStat
 type ChatComposerProps = {
   composer: ChatComposerViewModel;
   inputRef: RefObject<HTMLTextAreaElement | null>;
-  artifactToggle: ArtifactToggleControl | null;
   canCancel: boolean;
   isSendBlocked: boolean;
   sendButtonTitle: string | undefined;
 };
 
-function ChatComposer({
-  composer,
-  inputRef,
-  artifactToggle,
-  canCancel,
-  isSendBlocked,
-  sendButtonTitle,
-}: ChatComposerProps) {
+function ChatComposer({ composer, inputRef, canCancel, isSendBlocked, sendButtonTitle }: ChatComposerProps) {
   const readOnlyHint = composer.input.readOnly ? composer.input.readOnlyHint : null;
 
   return (
@@ -414,7 +412,7 @@ function ChatComposer({
           aria-describedby={readOnlyHint ? "readonly-hint" : undefined}
         />
         <PromptInputFooter>
-          <ComposerTools composer={composer} artifactToggle={artifactToggle} />
+          <ComposerTools composer={composer} />
           <ComposerAction
             composer={composer}
             canCancel={canCancel}
@@ -427,13 +425,7 @@ function ChatComposer({
   );
 }
 
-function ComposerTools({
-  composer,
-  artifactToggle,
-}: {
-  composer: ChatComposerViewModel;
-  artifactToggle: ArtifactToggleControl | null;
-}) {
+function ComposerTools({ composer }: { composer: ChatComposerViewModel }) {
   if (!composer.tools.ready) {
     return <div aria-hidden="true" data-testid="chat-panel-composer-tools-placeholder" className="min-h-8 flex-1" />;
   }
@@ -446,7 +438,6 @@ function ComposerTools({
     </div>
   ) : null;
   const toolItems = [
-    artifactToggle ? <ArtifactPanelToggleButton control={artifactToggle} /> : null,
     modelSettings,
     ...Children.toArray(composer.tools.extraControls),
     composer.tools.grounding ? <ComposerGroundingToggles composer={composer} /> : null,
@@ -461,23 +452,6 @@ function ComposerTools({
         </Fragment>
       ))}
     </PromptInputTools>
-  );
-}
-
-function ArtifactPanelToggleButton({ control }: { control: ArtifactToggleControl }) {
-  return (
-    <Button
-      type="button"
-      variant={control.isOpen ? "secondary" : "ghost"}
-      size="sm"
-      onClick={control.onToggle}
-      aria-label="Toggle artifacts panel"
-      aria-pressed={control.isOpen}
-      className="h-8 shrink-0 gap-1.5 px-2 text-xs"
-    >
-      <FileTextIcon size={14} weight="bold" />
-      <span className="hidden sm:inline">Artifacts</span>
-    </Button>
   );
 }
 

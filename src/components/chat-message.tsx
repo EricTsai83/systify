@@ -1,17 +1,44 @@
-import { memo, isValidElement, useCallback, useMemo, type ReactNode } from "react";
+import { memo, isValidElement, useCallback, useMemo, useState, type ReactNode } from "react";
 import type { AllowedTags, Components } from "streamdown";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { Message, MessageContent, MessageActions, MessageAction } from "@/components/ai-elements/message";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { Shimmer } from "@/components/ai-elements/shimmer";
+import { LocalEditorSetupDialog } from "@/components/local-editor-setup-dialog";
 import { ToolCallTrace } from "@/components/tool-call-trace";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Markdown } from "@/components/markdown";
 import { useClipboard } from "@/hooks/use-clipboard";
 import { CITATION_TOKEN_REGEX, prepareAssistantMarkdown } from "@/lib/assistant-markdown";
-import type { ActiveMessageStream, ArtifactId } from "@/lib/types";
-import { CopyIcon, CheckIcon, WarningCircleIcon, GaugeIcon, ClockIcon, CpuIcon, HashIcon } from "@phosphor-icons/react";
+import {
+  buildEditorUrl,
+  openEditorUrl,
+  readLocalEditorConfig,
+  type LocalEditorRepositoryConfig,
+} from "@/lib/local-editor";
+import {
+  buildGitHubSourceUrl,
+  formatCodeFileRanges,
+  parseCodeFileSources,
+  type CodeFileSource,
+} from "@/lib/source-citations";
+import type { ActiveMessageStream, ArtifactId, RepositorySource } from "@/lib/types";
+import {
+  CheckIcon,
+  ClockIcon,
+  CopyIcon,
+  CpuIcon,
+  FileCodeIcon,
+  FileTextIcon,
+  GaugeIcon,
+  GearSixIcon,
+  GithubLogoIcon,
+  HashIcon,
+  WarningCircleIcon,
+} from "@phosphor-icons/react";
 
 /**
  * Derive the grounding chip label from a persisted assistant message.
@@ -176,14 +203,20 @@ export const MessageBubble = memo(function MessageBubble({
   message,
   activeMessageStream,
   onSelectArtifact,
+  repositorySource,
   showStatsForNerds = false,
 }: {
   message: Doc<"messages">;
   activeMessageStream: ActiveMessageStream | null;
   onSelectArtifact?: (artifactId: ArtifactId) => void;
+  repositorySource?: RepositorySource;
   showStatsForNerds?: boolean;
 }) {
   const viewModel = buildMessageBubbleViewModel(message, activeMessageStream, showStatsForNerds);
+  const codeSources = useMemo(
+    () => (viewModel.isAssistant ? parseCodeFileSources(viewModel.displayContent) : []),
+    [viewModel.displayContent, viewModel.isAssistant],
+  );
   // Custom-tag renderers for the markdown pass, bound to *this* message's
   // citation map and the artifact-select handler. Memoized so streamdown's
   // per-block memo isn't busted on every unrelated re-render of the bubble.
@@ -214,6 +247,14 @@ export const MessageBubble = memo(function MessageBubble({
       <MessageReasoningBlock reasoning={viewModel.reasoning} />
       <MessageContent>
         <MessageBodyContent viewModel={viewModel} message={message} markdownComponents={markdownComponents} />
+        {viewModel.isAssistant ? (
+          <MessageSources
+            citationMap={message.citationMap}
+            codeSources={codeSources}
+            onSelectArtifact={onSelectArtifact}
+            repositorySource={repositorySource}
+          />
+        ) : null}
         {viewModel.isAssistant ? (
           <ToolCallTrace
             messageId={message._id}
@@ -330,6 +371,293 @@ function MessageBodyContent({
       ) : null}
     </>
   );
+}
+
+type CitationMapEntry = NonNullable<Doc<"messages">["citationMap"]>[number];
+
+type LibraryDocumentSource = {
+  artifactId: ArtifactId;
+  title: string;
+  indexesLabel: string;
+  secondary: string | null;
+};
+
+function MessageSources({
+  citationMap,
+  codeSources,
+  onSelectArtifact,
+  repositorySource,
+}: {
+  citationMap: Doc<"messages">["citationMap"] | undefined;
+  codeSources: CodeFileSource[];
+  onSelectArtifact?: (artifactId: ArtifactId) => void;
+  repositorySource?: RepositorySource;
+}) {
+  const librarySources = useMemo(() => buildLibraryDocumentSources(citationMap), [citationMap]);
+  const [actionSource, setActionSource] = useState<CodeFileSource | null>(null);
+  const [setupSource, setSetupSource] = useState<CodeFileSource | null>(null);
+
+  const openCodeSourceWithConfig = useCallback((source: CodeFileSource, config: LocalEditorRepositoryConfig) => {
+    const firstRange = source.ranges[0];
+    if (!firstRange) {
+      return;
+    }
+    try {
+      openEditorUrl(
+        buildEditorUrl({
+          editor: config.editor,
+          rootPath: config.rootPath,
+          relativePath: source.path,
+          line: firstRange.startLine,
+        }),
+      );
+    } catch {
+      setActionSource(source);
+    }
+  }, []);
+
+  const handleCodeSourceClick = useCallback(
+    (source: CodeFileSource) => {
+      if (!repositorySource) {
+        setActionSource(source);
+        return;
+      }
+      const config = readLocalEditorConfig(repositorySource.repositoryId);
+      if (!config) {
+        setActionSource(source);
+        return;
+      }
+      openCodeSourceWithConfig(source, config);
+    },
+    [openCodeSourceWithConfig, repositorySource],
+  );
+
+  if (librarySources.length === 0 && codeSources.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-4 border-t border-border/70 pt-3" data-testid="message-sources">
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Sources</p>
+      <div className="grid gap-3">
+        {librarySources.length > 0 ? (
+          <SourceSection title="Library documents">
+            {librarySources.map((source) => (
+              <LibrarySourceButton key={source.artifactId} source={source} onSelectArtifact={onSelectArtifact} />
+            ))}
+          </SourceSection>
+        ) : null}
+        {codeSources.length > 0 ? (
+          <SourceSection title="Code files">
+            {codeSources.map((source) => (
+              <CodeSourceButton key={source.path} source={source} onOpen={handleCodeSourceClick} />
+            ))}
+          </SourceSection>
+        ) : null}
+      </div>
+      <CodeSourceActionsDialog
+        source={actionSource}
+        repositorySource={repositorySource}
+        onOpenChange={(open) => {
+          if (!open) setActionSource(null);
+        }}
+        onSetLocalPath={() => {
+          setSetupSource(actionSource);
+          setActionSource(null);
+        }}
+      />
+      <LocalEditorSetupDialog
+        open={setupSource !== null}
+        onOpenChange={(open) => {
+          if (!open) setSetupSource(null);
+        }}
+        repositoryId={repositorySource?.repositoryId ?? null}
+        onSaved={(config) => {
+          if (setupSource) {
+            openCodeSourceWithConfig(setupSource, config);
+          }
+          setSetupSource(null);
+        }}
+      />
+    </div>
+  );
+}
+
+function SourceSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="grid gap-1.5" aria-label={title}>
+      <p className="text-xs font-medium text-foreground">{title}</p>
+      <div className="flex flex-wrap gap-2">{children}</div>
+    </section>
+  );
+}
+
+function LibrarySourceButton({
+  source,
+  onSelectArtifact,
+}: {
+  source: LibraryDocumentSource;
+  onSelectArtifact?: (artifactId: ArtifactId) => void;
+}) {
+  const content = (
+    <>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <FileTextIcon size={14} weight="bold" className="shrink-0 text-primary" />
+        <span className="truncate font-medium">{source.title}</span>
+      </span>
+      <span className="shrink-0 text-[11px] text-muted-foreground">{source.indexesLabel}</span>
+      {source.secondary ? (
+        <span className="basis-full truncate text-left text-[11px] text-muted-foreground">{source.secondary}</span>
+      ) : null}
+    </>
+  );
+
+  const className =
+    "inline-flex max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 border border-border bg-background px-2 py-1.5 text-left text-xs text-foreground";
+
+  if (!onSelectArtifact) {
+    return <div className={className}>{content}</div>;
+  }
+  return (
+    <button
+      type="button"
+      className={`${className} transition-colors hover:border-primary/40 hover:bg-primary/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary`}
+      onClick={() => onSelectArtifact(source.artifactId)}
+    >
+      {content}
+    </button>
+  );
+}
+
+function CodeSourceButton({ source, onOpen }: { source: CodeFileSource; onOpen: (source: CodeFileSource) => void }) {
+  return (
+    <button
+      type="button"
+      className="inline-flex max-w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 border border-border bg-background px-2 py-1.5 text-left text-xs text-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      onClick={() => onOpen(source)}
+    >
+      <span className="flex min-w-0 items-center gap-1.5">
+        <FileCodeIcon size={14} weight="bold" className="shrink-0 text-primary" />
+        <span className="truncate font-medium">{source.basename}</span>
+      </span>
+      <span className="shrink-0 text-[11px] text-muted-foreground">{formatCodeFileRanges(source.ranges)}</span>
+      <span className="basis-full truncate text-left text-[11px] text-muted-foreground">{source.path}</span>
+    </button>
+  );
+}
+
+function CodeSourceActionsDialog({
+  source,
+  repositorySource,
+  onOpenChange,
+  onSetLocalPath,
+}: {
+  source: CodeFileSource | null;
+  repositorySource: RepositorySource | undefined;
+  onOpenChange: (open: boolean) => void;
+  onSetLocalPath: () => void;
+}) {
+  const { copied, copy } = useClipboard({ resetAfterMs: 1500 });
+  const firstRange = source?.ranges[0];
+  const gitHubUrl =
+    source && firstRange && repositorySource
+      ? buildGitHubSourceUrl({
+          sourceRepoFullName: repositorySource.sourceRepoFullName,
+          ref: repositorySource.lastSyncedCommitSha ?? repositorySource.defaultBranch,
+          path: source.path,
+          startLine: firstRange.startLine,
+          endLine: firstRange.endLine,
+        })
+      : null;
+
+  return (
+    <Dialog open={source !== null} onOpenChange={onOpenChange}>
+      {source ? (
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Open code source</DialogTitle>
+            <DialogDescription className="break-all">{source.path}</DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-2">
+            {repositorySource ? (
+              <Button type="button" variant="secondary" className="justify-start" onClick={onSetLocalPath}>
+                <GearSixIcon weight="bold" />
+                Set local path
+              </Button>
+            ) : null}
+            {gitHubUrl ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="justify-start"
+                onClick={() => {
+                  window.open(gitHubUrl, "_blank", "noopener,noreferrer");
+                  onOpenChange(false);
+                }}
+              >
+                <GithubLogoIcon weight="bold" />
+                Open on GitHub
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="ghost"
+              className="justify-start"
+              onClick={() => {
+                void copy(source.path);
+              }}
+            >
+              {copied ? <CheckIcon weight="bold" /> : <CopyIcon weight="bold" />}
+              {copied ? "Copied" : "Copy path"}
+            </Button>
+          </div>
+        </DialogContent>
+      ) : null}
+    </Dialog>
+  );
+}
+
+function buildLibraryDocumentSources(citationMap: Doc<"messages">["citationMap"] | undefined): LibraryDocumentSource[] {
+  const groups = new Map<ArtifactId, { entries: CitationMapEntry[] }>();
+  for (const entry of citationMap ?? []) {
+    const artifactId = entry.artifactId;
+    const group = groups.get(artifactId) ?? { entries: [] };
+    group.entries.push(entry);
+    groups.set(artifactId, group);
+  }
+
+  return [...groups.entries()].map(([artifactId, group]) => {
+    const first = group.entries[0];
+    const title = first?.artifactTitle?.trim() || "Referenced artifact";
+    const headingPath = group.entries.find((entry) => entry.headingPath && entry.headingPath.length > 0)?.headingPath;
+    const kind = group.entries.find((entry) => entry.artifactKind !== undefined)?.artifactKind;
+    const kindLabel = kind ? formatArtifactKindLabel(kind) : null;
+    const secondary =
+      headingPath && headingPath.length > 0
+        ? headingPath.join(" > ")
+        : kindLabel && kindLabel !== title
+          ? kindLabel
+          : null;
+    return {
+      artifactId,
+      title,
+      indexesLabel: `[${group.entries.map((entry) => `A${entry.index}`).join(", ")}]`,
+      secondary,
+    };
+  });
+}
+
+function formatArtifactKindLabel(kind: string): string {
+  return kind
+    .split("_")
+    .map((word) => {
+      const upper = word.toUpperCase();
+      if (upper === "API" || upper === "README") {
+        return upper;
+      }
+      return `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`;
+    })
+    .join(" ");
 }
 
 function MessageUsageFooter({

@@ -40,9 +40,8 @@ type StatusPanelProps = {
   onSync: () => void;
   syncDisabledReason?: string;
   /**
-   * Opens the artifact panel and scrolls/highlights the given artifact card.
-   * Closes this status panel as part of mutual exclusion (see the shell
-   * `handleSelectArtifact`); we do not need to dismiss here.
+   * Opens the generated artifact in the Library Reader. The shell owns route
+   * changes, so the status panel does not need to dismiss itself first.
    */
   onViewArtifact: (artifactId: ArtifactId) => void;
   /** Hides the panel close affordance on mobile where the parent Sheet owns it. */
@@ -51,10 +50,8 @@ type StatusPanelProps = {
 };
 
 /**
- * StatusPanel — the on-demand right-side surface that replaces the always-
- * visible Repository Status Deck. Surfaced via the top-bar status pill so the
- * chat surface stays uncluttered; opened and closed as a peer of the artifact
- * panel under mutual exclusion (only one of the two can be open at a time).
+ * StatusPanel — the on-demand repository operations surface. Surfaced via
+ * the top-bar status pill so the chat surface stays uncluttered.
  *
  * Two sections, top-to-bottom:
  *   1. Status cards — Repository intelligence and Live source. Same
