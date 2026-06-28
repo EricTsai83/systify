@@ -859,14 +859,21 @@ function LibraryAskTimeline({
             ))}
           </>
         ) : null}
-        {isLocked ? (
-          <ConversationItem messageId="library-ask-no-artifacts" className={confirmedThreadId ? "mt-4" : undefined}>
+        {isLocked && confirmedThreadId ? (
+          <ConversationItem messageId="library-ask-no-artifacts" className="mt-4">
             <NoArtifactsHint
               descriptionId={composerHintId}
               onGenerate={onGenerate}
               generateDisabledReason={generateDisabledReason}
             />
           </ConversationItem>
+        ) : null}
+        {isLocked && !confirmedThreadId ? (
+          <NoArtifactsHint
+            descriptionId={composerHintId}
+            onGenerate={onGenerate}
+            generateDisabledReason={generateDisabledReason}
+          />
         ) : null}
       </ConversationContent>
       <ConversationScrollButton />

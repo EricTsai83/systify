@@ -117,7 +117,7 @@ export function useChatScroll<TMessage extends Identifiable>({
       return;
     }
 
-    if (length > prev.length && firstId !== prev.firstId) {
+    if (prev.length > 0 && length > prev.length && firstId !== prev.firstId) {
       setDidPrepend(true);
     }
 

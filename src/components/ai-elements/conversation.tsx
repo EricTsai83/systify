@@ -46,11 +46,25 @@ export type ConversationProps = ComponentProps<"div"> & {
   scroll: UseChatScrollResult;
 };
 
-export const Conversation = ({ className, scroll, children, ...props }: ConversationProps) => {
+export const Conversation = ({
+  className,
+  scroll,
+  children,
+  role = "log",
+  "aria-live": ariaLive = "polite",
+  "aria-relevant": ariaRelevant = "additions text",
+  ...props
+}: ConversationProps) => {
   return (
     <ConversationScrollContext.Provider value={scroll}>
       <MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor">
-        <MessageScroller className={cn("min-h-0 flex-1", className)} {...props}>
+        <MessageScroller
+          role={role}
+          aria-live={ariaLive}
+          aria-relevant={ariaRelevant}
+          className={cn("min-h-0 flex-1", className)}
+          {...props}
+        >
           {children}
         </MessageScroller>
       </MessageScrollerProvider>
@@ -143,7 +157,7 @@ export const ConversationScrollButton = ({ className, ...props }: ConversationSc
   const prefersReducedMotion = usePrefersReducedMotion();
   return (
     <MessageScrollerButton
-      className={cn("absolute bottom-2 left-[50%] translate-x-[-50%]", className)}
+      className={cn("absolute bottom-2", className)}
       behavior={prefersReducedMotion ? "auto" : "smooth"}
       size="xs"
       type="button"
