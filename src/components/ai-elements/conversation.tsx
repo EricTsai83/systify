@@ -52,7 +52,7 @@ export const Conversation = ({
   children,
   role = "log",
   "aria-live": ariaLive = "polite",
-  "aria-relevant": ariaRelevant = "additions text",
+  "aria-relevant": ariaRelevant = "additions",
   ...props
 }: ConversationProps) => {
   return (
