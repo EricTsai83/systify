@@ -20,9 +20,10 @@ describe("useStorageGC", () => {
     window.localStorage.setItem("systify.composer.draft.repository.repo_c.discuss", "draft");
     window.localStorage.setItem("systify.folderNav.open.repo_d.node", "true");
     window.localStorage.setItem("systify.activeRepositoryId", "repo_e");
+    window.localStorage.setItem("systify.localEditor.repo.repo_f", "{}");
     window.localStorage.setItem("vite-ui-theme", "dark");
 
-    expect(collectStorageGCRepositoryIds()).toEqual(["repo_a", "repo_b", "repo_c", "repo_d", "repo_e"]);
+    expect(collectStorageGCRepositoryIds()).toEqual(["repo_a", "repo_b", "repo_c", "repo_d", "repo_e", "repo_f"]);
   });
 
   test("collects only thread ids present in localStorage cache keys", () => {
@@ -97,6 +98,16 @@ describe("useStorageGC", () => {
     expect(window.localStorage.getItem("systify.folderNav.open.repo_gone.nodeY")).toBeNull();
   });
 
+  test("removes orphan local editor repository config keys and preserves live repo config", () => {
+    window.localStorage.setItem("systify.localEditor.repo.repo_alive", '{"editor":"cursor"}');
+    window.localStorage.setItem("systify.localEditor.repo.repo_gone", '{"editor":"vscode"}');
+
+    sweepRepositoryStorage(new Set(["repo_alive", "repo_gone"]), new Set(["repo_alive"]));
+
+    expect(window.localStorage.getItem("systify.localEditor.repo.repo_alive")).toBe('{"editor":"cursor"}');
+    expect(window.localStorage.getItem("systify.localEditor.repo.repo_gone")).toBeNull();
+  });
+
   test("removes orphan thread-scoped composer draft keys when the thread is no longer live", () => {
     window.localStorage.setItem("systify.composer.draft.thread.tid_alive", "live draft");
     window.localStorage.setItem("systify.composer.draft.thread.tid_gone", "gone draft");
@@ -122,7 +133,7 @@ describe("useStorageGC", () => {
     expect(window.localStorage.getItem("systify.library.tabs.repo_b")).toBeNull();
   });
 
-  test("clears stale active repository cache and leaves unrelated keys untouched", () => {
+  test("clears stale active repository cache, removes legacy artifact panel state, and leaves unrelated keys untouched", () => {
     window.localStorage.setItem("systify.activeRepositoryId", "repo_active");
     window.localStorage.setItem("systify.artifactPanel.open", "true");
     window.localStorage.setItem("vite-ui-theme", "dark");
@@ -131,7 +142,7 @@ describe("useStorageGC", () => {
     sweepRepositoryStorage(new Set(["repo_active", "repo_gone"]), new Set<string>());
 
     expect(window.localStorage.getItem("systify.activeRepositoryId")).toBeNull();
-    expect(window.localStorage.getItem("systify.artifactPanel.open")).toBe("true");
+    expect(window.localStorage.getItem("systify.artifactPanel.open")).toBeNull();
     expect(window.localStorage.getItem("vite-ui-theme")).toBe("dark");
     expect(window.localStorage.getItem("systify.library.tabs.repo_gone")).toBeNull();
   });

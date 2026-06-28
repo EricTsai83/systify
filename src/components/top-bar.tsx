@@ -78,10 +78,8 @@ type TopBarStatusControl =
  *     Delete repository)
  *
  * Why a Popover (instead of an inline right-side column): the StatusPanel
- * carries on-demand reference data; pinning it permanently to the right rail
- * forced a mutual-exclusion design with the always-on ArtifactPanel. Hosting
- * status as a Popover lets both panels coexist — Artifacts stays inline, and
- * Status overlays only when the user explicitly asks for it.
+ * carries on-demand reference data, but chat should remain the primary
+ * surface. Status overlays only when the user explicitly asks for it.
  */
 export function TopBar({
   repoDetail,
@@ -133,21 +131,8 @@ export function TopBar({
   onViewArtifact: (artifactId: ArtifactId) => void;
   /**
    * Whether the system-status chrome (StatusPill + sandbox badge next to the
-   * title) is allowed to render. Driven from the repository shell's
-   * `mode !== "discuss"` derivation — the same gate
-   * `isArtifactPanelEnabled` uses, so all repo-aware chrome (artifact panel,
-   * sandbox pill, sandbox badge) appears and disappears together when the
-   * user toggles between Discuss and Library. Discuss is captioned "no
-   * repo context"; surfacing sync or sandbox state there would be a constant
-   * nag for signals the mode does not touch. Errors are not lost — the moment
-   * the user enters a repo-bound mode the pill repaints with whatever was
-   * suppressed.
-   *
-   * Driven by URL (`useChatMode`), not by the per-thread `chatMode`, so
-   * the gate survives the Tier 2 redirect from `/r/:rid/discuss` to
-   * `/r/:rid/discuss/:tid` — once redirected, `chatMode` falls back to the
-   * repository default ("library" when a repo is attached) and would no longer
-   * read as "discuss", but the user's intent is still Discuss.
+   * title) is allowed to render. The repository shell drives this from the
+   * repository actually backing the current surface or attached thread.
    */
   showSystemStatus: boolean;
 }) {

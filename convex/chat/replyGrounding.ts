@@ -22,6 +22,8 @@ export type PromptArtifactEvidence =
   | {
       kind: "artifact";
       artifactId: Id<"artifacts">;
+      artifactKind: Doc<"artifacts">["kind"];
+      artifactVersion: number;
       title: string;
       description: string;
       contentMarkdown: string;
@@ -32,6 +34,7 @@ export type PromptArtifactEvidence =
       artifactId: Id<"artifacts">;
       artifactTitle: string;
       artifactKind: Doc<"artifacts">["kind"];
+      artifactVersion: number;
       headingPath: string[];
       content: string;
       lexicalScore: number;
@@ -42,6 +45,9 @@ export type PromptArtifactEvidence =
 export type CitationMapEntry = {
   index: number;
   artifactId: Id<"artifacts">;
+  artifactTitle?: string;
+  artifactKind?: Doc<"artifacts">["kind"];
+  artifactVersion?: number;
   chunkId?: Id<"artifactChunks">;
   headingPath?: string[];
 };
@@ -162,6 +168,9 @@ function buildCitationMapFromPromptArtifacts(promptArtifacts: PromptArtifactEvid
       return {
         index: index + 1,
         artifactId: artifact.artifactId,
+        artifactTitle: artifact.artifactTitle,
+        artifactKind: artifact.artifactKind,
+        artifactVersion: artifact.artifactVersion,
         chunkId: artifact.chunkId,
         headingPath: artifact.headingPath,
       };
@@ -169,6 +178,9 @@ function buildCitationMapFromPromptArtifacts(promptArtifacts: PromptArtifactEvid
     return {
       index: index + 1,
       artifactId: artifact.artifactId,
+      artifactTitle: artifact.title,
+      artifactKind: artifact.artifactKind,
+      artifactVersion: artifact.artifactVersion,
     };
   });
 }

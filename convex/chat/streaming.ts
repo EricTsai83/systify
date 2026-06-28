@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "../_generated/dataModel";
 import { type MutationCtx, internalMutation, internalQuery, query } from "../_generated/server";
+import { artifactKindValidator } from "../schema";
 import { loadOwnedDoc } from "../lib/ownedDocs";
 import { CHAT_JOB_LEASE_MS } from "../lib/rateLimit";
 import { jobCancellationStatusValidator, startedResultValidator } from "../lib/functionResultSchemas";
@@ -300,6 +301,9 @@ type TerminalOutcome =
       citationMap?: Array<{
         index: number;
         artifactId: Id<"artifacts">;
+        artifactTitle?: string;
+        artifactKind?: Doc<"artifacts">["kind"];
+        artifactVersion?: number;
         chunkId?: Id<"artifactChunks">;
         headingPath?: string[];
       }>;
@@ -1184,6 +1188,9 @@ export const finalizeAssistantReply = internalMutation({
         v.object({
           index: v.number(),
           artifactId: v.id("artifacts"),
+          artifactTitle: v.optional(v.string()),
+          artifactKind: v.optional(artifactKindValidator),
+          artifactVersion: v.optional(v.number()),
           chunkId: v.optional(v.id("artifactChunks")),
           headingPath: v.optional(v.array(v.string())),
         }),

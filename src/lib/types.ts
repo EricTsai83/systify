@@ -11,6 +11,12 @@ import type { ModelPreferenceScope } from "../../convex/lib/userPreferences";
 
 export type RepositoryId = Id<"repositories">;
 export type ThreadId = Id<"threads">;
+export type RepositorySource = {
+  repositoryId: RepositoryId;
+  sourceRepoFullName: string;
+  defaultBranch?: string | null;
+  lastSyncedCommitSha?: string;
+};
 /**
  * Stored mode of any thread document (matches the schema-level
  * `threadMode` validator). Alias of {@link ChatMode} — DB literal, URL

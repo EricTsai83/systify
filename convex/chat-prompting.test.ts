@@ -402,6 +402,8 @@ describe("buildUserPrompt artifact numbering", () => {
         {
           kind: "artifact",
           artifactId: makeArtifactId("alpha"),
+          artifactKind: "architecture_diagram",
+          artifactVersion: 1,
           title: "Architecture diagram",
           description: "Module boundaries.",
           contentMarkdown: "graph TD\nA-->B",
@@ -409,6 +411,8 @@ describe("buildUserPrompt artifact numbering", () => {
         {
           kind: "artifact",
           artifactId: makeArtifactId("beta"),
+          artifactKind: "design_review",
+          artifactVersion: 1,
           title: "Risk hotspots",
           description: "Top 3 risks identified.",
           contentMarkdown: "1. coupling\n2. flaky tests\n3. db migration",
@@ -436,6 +440,7 @@ describe("buildUserPrompt artifact numbering", () => {
             artifactId: makeArtifactId("data-model"),
             artifactTitle: "Data model overview",
             artifactKind: "data_model_overview",
+            artifactVersion: 3,
             headingPath: ["Architecture", "Data Model"],
             content: "Repositories own imports, artifacts, and chat threads.",
             lexicalScore: 1,
@@ -464,6 +469,8 @@ describe("buildUserPrompt artifact numbering", () => {
         Array.from({ length: overflow }, (_, index) => ({
           kind: "artifact",
           artifactId: makeArtifactId(`art-${index}`),
+          artifactKind: "custom_document",
+          artifactVersion: index + 1,
           title: `Artifact ${index}`,
           description: `Summary ${index}`,
           contentMarkdown: `Body ${index}`,
@@ -488,8 +495,24 @@ describe("buildCitationMap", () => {
     const alphaId = makeArtifactId("alpha");
     const betaId = makeArtifactId("beta");
     const evidence = readyArtifacts([
-      { kind: "artifact", artifactId: alphaId, title: "Alpha", description: "", contentMarkdown: "" },
-      { kind: "artifact", artifactId: betaId, title: "Beta", description: "", contentMarkdown: "" },
+      {
+        kind: "artifact",
+        artifactId: alphaId,
+        artifactKind: "readme_summary",
+        artifactVersion: 2,
+        title: "Alpha",
+        description: "",
+        contentMarkdown: "",
+      },
+      {
+        kind: "artifact",
+        artifactId: betaId,
+        artifactKind: "security_overview",
+        artifactVersion: 5,
+        title: "Beta",
+        description: "",
+        contentMarkdown: "",
+      },
     ]);
 
     const map = buildCitationMap(evidence);
@@ -499,8 +522,20 @@ describe("buildCitationMap", () => {
     // prompt rendered them, so the frontend can resolve `[A1]` →
     // `alphaId` without any further bookkeeping.
     expect(map).toEqual([
-      { index: 1, artifactId: alphaId },
-      { index: 2, artifactId: betaId },
+      {
+        index: 1,
+        artifactId: alphaId,
+        artifactTitle: "Alpha",
+        artifactKind: "readme_summary",
+        artifactVersion: 2,
+      },
+      {
+        index: 2,
+        artifactId: betaId,
+        artifactTitle: "Beta",
+        artifactKind: "security_overview",
+        artifactVersion: 5,
+      },
     ]);
   });
 
@@ -514,6 +549,7 @@ describe("buildCitationMap", () => {
         artifactId,
         artifactTitle: "Data model overview",
         artifactKind: "data_model_overview",
+        artifactVersion: 4,
         headingPath: ["Architecture", "Data Model"],
         content: "Repository aggregate notes.",
         lexicalScore: 1,
@@ -526,6 +562,9 @@ describe("buildCitationMap", () => {
       {
         index: 1,
         artifactId,
+        artifactTitle: "Data model overview",
+        artifactKind: "data_model_overview",
+        artifactVersion: 4,
         chunkId,
         headingPath: ["Architecture", "Data Model"],
       },
@@ -538,6 +577,8 @@ describe("buildCitationMap", () => {
       Array.from({ length: overflow }, (_, index) => ({
         kind: "artifact",
         artifactId: makeArtifactId(`art-${index}`),
+        artifactKind: "custom_document",
+        artifactVersion: index + 1,
         title: `Artifact ${index}`,
         description: "",
         contentMarkdown: "",
@@ -574,6 +615,7 @@ describe("buildHeuristicAnswer", () => {
             artifactId: makeArtifactId("security"),
             artifactTitle: "Security overview",
             artifactKind: "security_overview",
+            artifactVersion: 7,
             headingPath: ["Threat Model"],
             content: "Tokens are scoped to the user.",
             lexicalScore: 1,

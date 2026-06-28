@@ -61,7 +61,7 @@ type FolderNavigatorProps = {
   /**
    * Optional handler to flip into a "folder overview" surface — used by the
    * Reader's left rail when the user clicks a folder header. Panels that
-   * do not have a folder-overview surface (e.g. the chat right rail) can
+   * do not have a folder-overview surface can
    * omit this and the folder header will simply expand/collapse.
    */
   onSelectFolder?: (folderId: FolderId | null) => void;
@@ -132,7 +132,7 @@ export function FolderNavigator({
   const createFolder = useMutation(api.artifactFolders.create);
 
   // Selection is controllable: omit `selectedFolderId` to let the navigator
-  // own the state (chat right rail), or pass it through to centralise state
+  // own the state, or pass it through to centralise state
   // in the parent (Library reader keeps the URL in sync). Either way the
   // navigator's "+ Create folder" path and row-click handler write through
   // `setSelectedFolderId`, so the caller never has to thread an uncontrolled

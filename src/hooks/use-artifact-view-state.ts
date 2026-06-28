@@ -50,7 +50,7 @@ function applyMarkViewedOptimistic(
 
 export function useArtifactViewState(repositoryId: RepositoryId | null): ArtifactViewState {
   // `"skip"` keeps the no-repo Home surface from opening a useless
-  // subscription, while letting downstream surfaces (chat right rail)
+  // subscription, while letting downstream Library surfaces
   // share the same hook signature as the Library shell.
   const state = useQuery(api.artifactViews.listViewStateByRepository, repositoryId ? { repositoryId } : "skip");
   const baseMarkViewed = useMutation(api.artifactViews.markViewed);

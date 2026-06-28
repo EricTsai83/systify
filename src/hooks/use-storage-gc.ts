@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { LOCAL_EDITOR_REPOSITORY_STORAGE_PREFIX } from "@/lib/local-editor";
 import { listKeysByPrefix, readString, removeKey } from "@/lib/storage";
 
 const REPOSITORY_SCOPED_PREFIXES = [
@@ -8,10 +9,12 @@ const REPOSITORY_SCOPED_PREFIXES = [
   "systify.library.askTabs.",
   "systify.composer.draft.repository.",
   "systify.folderNav.open.",
+  LOCAL_EDITOR_REPOSITORY_STORAGE_PREFIX,
 ] as const;
 
 const COMPOSER_DRAFT_THREAD_PREFIX = "systify.composer.draft.thread.";
 const ACTIVE_REPOSITORY_STORAGE_KEY = "systify.activeRepositoryId";
+const LEGACY_ARTIFACT_PANEL_OPEN_KEY = "systify.artifactPanel.open";
 export const STORAGE_GC_ID_PROBE_LIMIT = 200;
 
 /**
@@ -47,6 +50,7 @@ export function sweepRepositoryStorage(
   collectedRepositoryIds: ReadonlySet<string>,
   liveRepositoryIds: ReadonlySet<string>,
 ): void {
+  removeKey(LEGACY_ARTIFACT_PANEL_OPEN_KEY);
   for (const prefix of REPOSITORY_SCOPED_PREFIXES) {
     for (const key of listKeysByPrefix(prefix)) {
       const suffix = key.slice(prefix.length);
@@ -89,6 +93,10 @@ export function useStorageGC(): void {
     hasRepositoryIds ? { repositoryIds } : "skip",
   );
   const liveThreadIds = useQuery(api.chat.threads.listOwnedThreadIdsById, hasThreadIds ? { threadIds } : "skip");
+
+  useEffect(() => {
+    removeKey(LEGACY_ARTIFACT_PANEL_OPEN_KEY);
+  }, []);
 
   useEffect(() => {
     if (!hasRepositoryIds) return;

@@ -174,6 +174,8 @@ function toPromptArtifactFallbackEvidence(artifact: Doc<"artifacts">): PromptArt
   return {
     kind: "artifact",
     artifactId: artifact._id,
+    artifactKind: artifact.kind,
+    artifactVersion: artifact.version,
     title: artifact.title,
     description: artifact.description,
     contentMarkdown: artifact.contentMarkdown,
@@ -187,6 +189,7 @@ function toPromptArtifactChunkEvidence(chunk: RetrievedChunk): PromptArtifactEvi
     artifactId: chunk.artifactId,
     artifactTitle: chunk.artifactTitle,
     artifactKind: chunk.artifactKind,
+    artifactVersion: chunk.artifactVersion,
     headingPath: chunk.headingPath,
     content: chunk.content,
     lexicalScore: chunk.lexicalScore,
