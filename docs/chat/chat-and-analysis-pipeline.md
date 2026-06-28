@@ -247,10 +247,11 @@ Design Docs generation can produce up to eight LLM-backed templates: `readme_sum
 `requestSystemDesignGeneration` (in `convex/systemDesign.ts`) performs the following checks in order:
 
 1. **Identity + repository ownership** — `requireViewerIdentity` + `requireActiveRepositoryForViewer` reject archived, deleted, or non-owned repos with the standard error messages.
-2. **Non-empty selection** — at least one kind must be checked.
-3. **Active-job merge** — scans `jobs` by the `by_repositoryId_and_kind_and_status_and_leaseExpiresAt` index for an active (`queued` or `running`, lease still alive) `system_design` job. If one is found, newly selected templates are appended to that existing job instead of creating a duplicate.
-4. **Rate limiting** — consumes the per-owner `systemDesignRequests` bucket (10/hour by default) and the global `daytonaRequestsGlobal` bucket.
-5. **Folder seeding** — `ensureSystemDesignFolders` is idempotent and creates the default System Design folder tree if it does not already exist.
+2. **Feature + model access** — `generateSystemDesign`, `sandboxGrounding`, premium-model, and high-reasoning gates are checked before any job is created.
+3. **Non-empty normalized selection** — at least one System Design kind must remain after filtering duplicates and non-System Design artifact kinds.
+4. **Active-job merge** — scans `jobs` through the shared active-job helper for an active (`queued` or `running`, lease still alive) `system_design` job. If one is found, newly selected templates are appended to that existing job instead of creating a duplicate, and no new request-rate bucket is consumed.
+5. **Rate limiting** — new jobs consume the per-owner `systemDesignRequests` bucket (10/hour by default) and the global `daytonaRequestsGlobal` bucket.
+6. **Folder seeding** — `ensureSystemDesignFolders` is idempotent and creates the default System Design folder tree if it does not already exist.
 
 Sandbox readiness is **not** checked up front in the mutation. The repository's sandbox status helpers `getRepositorySandboxStatus` / `requireRepositorySandbox` describe the latest sandbox row but do not trigger provisioning; the actual provisioning happens lazily inside the Node action: `runSystemDesignGeneration` calls `ensureSandboxReady` (see `convex/systemDesignNode.ts`), and if that throws a `SandboxPreparationError`, the job is marked failed with the helper's user-facing message instead of being rejected pre-insert.
 
@@ -262,9 +263,9 @@ The lease is set **at insert time** rather than only at the `queued → running`
 
 ### 3. Run the generators
 
-`runSystemDesignGeneration` (in `convex/systemDesignNode.ts`) transitions the job to `running` via `markGenerationStarted`, which refreshes the lease for a fresh window, then runs the selected kinds serially in their submission order, refreshing the job lease via `refreshGenerationLease` *before each kind*. The runner re-reads the job's selections between generated docs so templates added while the job is active can be picked up by the same job. Serial execution is intentional: it honours both the per-sandbox tool budget and OpenAI rate limits.
+`runSystemDesignGeneration` (in `convex/systemDesignNode.ts`) transitions the job to `running` via `markGenerationStarted`, which refreshes the lease for a fresh window, prepares the repository sandbox once, then runs the selected kinds serially in their submission order. The action re-reads the job's selections between generated docs so templates added while the job is active can be picked up by the same job. Serial execution is intentional: it honours both the per-sandbox tool budget and gateway concurrency limits.
 
-Per-kind failures are isolated in a `try/catch`; the failing kind is logged with an `errorId` and skipped without affecting later kinds. After every kind completes (success or failure) the action updates `jobs.stage` / `jobs.progress` via `updateGenerationProgress`.
+Each kind is delegated to `runSystemDesignKind` (`convex/systemDesignKindRun.ts`), which refreshes the lease, checks the cache, reserves the usage budget / sandbox daily cap, calls the LLM gateway, runs the required-section and Mermaid quality gates, and hands a terminal outcome to publication settlement. Per-kind failures are isolated in the kind runner's `try/catch`; the failing kind is logged with an `errorId` and skipped without affecting later kinds. After every kind completes (success, cache hit, quality rejection, or failure) the action updates `jobs.stage` / `jobs.progress` via `updateGenerationProgress`.
 
 ### 4. Publication settlement
 
@@ -276,23 +277,25 @@ Every System Design kind is sandbox-grounded, so `createArtifactInMutation` stam
 
 After all kinds complete (success or failure), `completeGeneration` marks the job `completed` with a final `outputSummary` (`Generated X of Y documents.` / `; N failed.`). Progress and final status flow back to the UI through the standard job subscription.
 
-If the action dies (process restart, panic) before `completeGeneration`, the 5-minute cron `reconcileStaleInteractiveJobs` will eventually call `recoverStaleSystemDesignJob`, which fails the job with the standard stale-lease message — the lease semantics above guarantee the row is discoverable by the sweep.
+If the action dies (process restart, panic) before `completeGeneration`, the 5-minute cron `reconcileStaleInteractiveJobs` will eventually call `recoverStaleSystemDesignJob`. Recovery re-queues the job while resume attempts remain; completed, cached, and quality-rejected kind runs are treated as terminal so the resumed action only pays for missing or transiently failed kinds. Once the resume cap is exhausted, the job is marked failed with the stale-lease message. The lease semantics above guarantee the row is discoverable by the sweep.
 
 ## Sandbox Availability
 
-Two distinct surfaces depend on a live Daytona sandbox: sandbox-grounded Discuss replies and the LLM-backed templates of Design Docs generation. Both gate themselves through `convex/lib/repositorySandbox.ts`. If the sandbox:
+Two distinct surfaces depend on a live Daytona sandbox: sandbox-grounded Discuss replies and the LLM-backed templates of Design Docs generation. The Discuss composer uses repository-mode eligibility and `convex/lib/repositorySandbox.ts` to render current lifecycle copy, disabled reasons, and recoverable "prepares on send" states. Design Docs generation does not pre-check sandbox readiness in `requestSystemDesignGeneration`; provisioning happens lazily inside the Node action via `ensureSandboxReady`, and a `SandboxPreparationError` there fails the queued job with the helper's user-facing message rather than rejecting at insert.
+
+If the latest sandbox:
 
 - has passed its TTL
 - is archived
 - has failed
 - is missing required remote path information
 
-then Sandbox grounding is unavailable for chat. `getRepositorySandboxStatus` / `requireRepositorySandbox` report the latest sandbox row but do **not** provision — they only describe state. Design Docs generation does not pre-check sandbox readiness in `requestSystemDesignGeneration`; provisioning happens lazily inside the Node action via `ensureSandboxReady`, and a `SandboxPreparationError` there fails the queued job with the helper's user-facing message rather than rejecting at insert.
+then Sandbox grounding may be unavailable or recoverable depending on the structured grounding verdict. `getRepositorySandboxStatus` / `requireRepositorySandbox` report the latest sandbox row but do **not** provision — they only describe state. Actual provisioning, wake, and clone work happens in the Node action that needs live source.
 
 The frontend uses this state to tell the user to:
 
-- sync the repository to provision a new sandbox, or
-- turn off Sandbox grounding and continue with ungrounded Discuss or Library for degraded but still useful work
+- keep Sandbox grounding selected when live source can be prepared lazily, or
+- turn off Sandbox grounding and continue with ungrounded Discuss or Library for degraded but still useful work when the verdict is not recoverable
 
 Library mode is **not** gated on having artifacts. Any repository with a valid attached repo can open Library; if no generated docs exist yet, the Design Docs overview presents optional templates.
 

@@ -54,13 +54,6 @@ export interface ThreadCapabilities {
   /** Mode the UI should preselect when the thread first loads. */
   defaultMode: ChatMode;
   /**
-   * True when the disabled Sandbox option should still accept a click
-   * and trigger a lazy sandbox provision. The UI uses this to render
-   * the option as clickable (with an "activate" affordance) while
-   * activation runs.
-   */
-  sandboxIsActivatable: boolean;
-  /**
    * Visible sandbox cost budget for the ticker. `null` when sandbox
    * mode isn't currently relevant (no repo attached). When
    * non-null, this reflects the *more restrictive* of the per-user and
@@ -124,7 +117,6 @@ const NO_THREAD_CAPABILITIES: ThreadCapabilities = {
   modes: NO_THREAD_MODE_VERDICTS,
   defaultMode: getDefaultThreadMode(false),
   sandboxCostBudget: null,
-  sandboxIsActivatable: false,
   defaultGroundLibrary: false,
   defaultGroundSandbox: false,
   singleTurnEnabled: false,
@@ -195,7 +187,6 @@ export function useThreadCapabilities(threadId: ThreadId | null): ThreadCapabili
     modes: ctx.chatModes.modes,
     defaultMode: ctx.chatModes.defaultMode,
     sandboxCostBudget: deriveSandboxCostBudget(ctx.sandboxCostBudgets),
-    sandboxIsActivatable: ctx.sandboxIsActivatable,
     defaultGroundLibrary: ctx.thread.defaultGroundLibrary ?? false,
     defaultGroundSandbox: ctx.thread.defaultGroundSandbox ?? false,
     singleTurnEnabled: ctx.thread.singleTurnEnabled ?? false,

@@ -59,10 +59,9 @@ type FolderNavigatorProps = {
   selectedArtifactId?: ArtifactId | null;
   onSelectArtifact: (artifactId: ArtifactId) => void;
   /**
-   * Optional handler to flip into a "folder overview" surface — used by the
-   * Reader's left rail when the user clicks a folder header. Panels that
-   * do not have a folder-overview surface can
-   * omit this and the folder header will simply expand/collapse.
+   * Optional handler to flip into a folder-detail surface. Panels that do
+   * not have one can omit this and the folder header will simply
+   * expand/collapse.
    */
   onSelectFolder?: (folderId: FolderId | null) => void;
   selectedFolderId?: FolderId | null;

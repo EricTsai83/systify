@@ -341,7 +341,8 @@ export const markGenerationStarted = internalMutation({
 /**
  * Extend the running job's lease between LLM kinds. Each LLM-backed kind
  * can take tens of seconds on a slow sandbox; without a periodic refresh
- * a long publication (e.g. all five LLM kinds with high step budgets)
+ * a long publication (for example, every selected Design Docs template
+ * with high step budgets)
  * could overrun the initial lease window and trigger a spurious stale-
  * recovery while the action is still making progress.
  */

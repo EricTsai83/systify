@@ -134,6 +134,7 @@ export function createReplyStreamController(ctx: ActionCtx, controllerArgs: Repl
   let pendingDelta = "";
   let pendingReasoningDelta = "";
   let stream: LlmStreamResult | undefined;
+  let firstContentMarked = false;
 
   let wasCancelled = false;
   let cancellationReason: string | undefined;
@@ -365,6 +366,14 @@ export function createReplyStreamController(ctx: ActionCtx, controllerArgs: Repl
       }
       switch (part.type) {
         case "text-delta": {
+          if (!firstContentMarked && part.text.length > 0) {
+            firstContentMarked = true;
+            await ctx.runMutation(internal.chat.streaming.markAssistantFirstContentAt, {
+              assistantMessageId: controllerArgs.assistantMessageId,
+              jobId: controllerArgs.jobId,
+              occurredAt: Date.now(),
+            });
+          }
           pendingDelta += part.text;
           await flushTextIfNeeded();
           break;

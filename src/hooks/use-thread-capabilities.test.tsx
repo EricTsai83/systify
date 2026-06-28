@@ -89,7 +89,6 @@ describe("useThreadCapabilities — bridging behavior", () => {
         },
         defaultMode: "discuss",
       },
-      sandboxIsActivatable: false,
     });
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
@@ -101,10 +100,9 @@ describe("useThreadCapabilities — bridging behavior", () => {
     if (!result.current.modes.library.enabled) {
       expect(result.current.modes.library.message).toBeTruthy();
     }
-    expect(result.current.sandboxIsActivatable).toBe(false);
   });
 
-  test("thread with a repository but no sandbox: bridges discuss+library and flags activation", () => {
+  test("thread with a repository but no sandbox: bridges discuss+library and sandbox status", () => {
     useQueryMock.mockReturnValue({
       thread: { _id: threadId, repositoryId, defaultGroundLibrary: false, defaultGroundSandbox: false },
       attachedRepository: {
@@ -118,15 +116,12 @@ describe("useThreadCapabilities — bridging behavior", () => {
         message: "Live source will be prepared when a task needs it.",
       },
       chatModes: {
-        // "No sandbox" hint travels via grounding / sandboxIsActivatable
-        // rather than as a disabled-reason on a mode.
         modes: {
           discuss: { enabled: true },
           library: { enabled: true },
         },
         defaultMode: "library",
       },
-      sandboxIsActivatable: true,
     });
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
@@ -140,9 +135,6 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.modes.discuss.enabled).toBe(true);
     expect(result.current.modes.library.enabled).toBe(true);
     expect(result.current.defaultMode).toBe("library");
-    // The missing-sandbox case is selectable — the next live-source task
-    // prepares the environment lazily.
-    expect(result.current.sandboxIsActivatable).toBe(true);
   });
 
   test("thread with a ready sandbox: bridges discuss+library; sandbox surfaces via sandboxStatus", () => {
@@ -165,7 +157,6 @@ describe("useThreadCapabilities — bridging behavior", () => {
         },
         defaultMode: "library",
       },
-      sandboxIsActivatable: false,
     });
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
@@ -174,8 +165,6 @@ describe("useThreadCapabilities — bridging behavior", () => {
     expect(result.current.modes.library.enabled).toBe(true);
     expect(result.current.defaultMode).toBe("library");
     expect(result.current.sandboxStatus).toBe("ready");
-    // Already-ready sandboxes don't need to be activated again.
-    expect(result.current.sandboxIsActivatable).toBe(false);
   });
 
   test("thread with a provisioning sandbox: bridges the provisioning state via sandboxStatus", () => {
@@ -198,18 +187,14 @@ describe("useThreadCapabilities — bridging behavior", () => {
         },
         defaultMode: "library",
       },
-      sandboxIsActivatable: true,
     });
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
 
     expect(result.current.sandboxStatus).toBe("provisioning");
-    // Provisioning is recoverable/selectable: the user can keep the
-    // desired Sandbox grounding state while preparation continues.
-    expect(result.current.sandboxIsActivatable).toBe(true);
   });
 
-  test("thread with a stopped sandbox: forwards schema status verbatim and flags activation", () => {
+  test("thread with a stopped sandbox: forwards schema status verbatim", () => {
     useQueryMock.mockReturnValue({
       thread: { _id: threadId, repositoryId, defaultGroundLibrary: false, defaultGroundSandbox: false },
       attachedRepository: {
@@ -232,15 +217,11 @@ describe("useThreadCapabilities — bridging behavior", () => {
         },
         defaultMode: "library",
       },
-      sandboxIsActivatable: true,
     });
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
 
     expect(result.current.sandboxStatus).toBe("stopped");
-    // Expired sandboxes are selectable — the next live-source task
-    // prepares a fresh environment.
-    expect(result.current.sandboxIsActivatable).toBe(true);
   });
 
   test("thread carries per-thread default-grounding snapshot for the composer", () => {
@@ -263,7 +244,6 @@ describe("useThreadCapabilities — bridging behavior", () => {
         },
         defaultMode: "library",
       },
-      sandboxIsActivatable: false,
     });
 
     const { result } = renderHook(() => useThreadCapabilities(threadId));
@@ -300,7 +280,6 @@ describe("useThreadCapabilities — sandbox cost budget", () => {
         },
         defaultMode: "discuss",
       },
-      sandboxIsActivatable: false,
       sandboxCostBudgets: null,
     });
 
@@ -326,7 +305,6 @@ describe("useThreadCapabilities — sandbox cost budget", () => {
         },
         defaultMode: "library",
       },
-      sandboxIsActivatable: false,
       sandboxCostBudgets: {
         userBudget: { remainingCents: 320, capacityCents: 500, resetAtMs: 1_700_000_000_000 },
         repositoryBudget: null,
@@ -362,7 +340,6 @@ describe("useThreadCapabilities — sandbox cost budget", () => {
         },
         defaultMode: "library",
       },
-      sandboxIsActivatable: false,
       sandboxCostBudgets: {
         userBudget: { remainingCents: 480, capacityCents: 500, resetAtMs: 1_700_000_010_000 },
         // Repository cap has only $0.10 left — far less than the user's
@@ -402,7 +379,6 @@ describe("useThreadCapabilities — sandbox cost budget", () => {
         },
         defaultMode: "library",
       },
-      sandboxIsActivatable: false,
       sandboxCostBudgets: {
         userBudget: { remainingCents: 5, capacityCents: 500, resetAtMs: 1_700_000_010_000 },
         repositoryBudget: { remainingCents: 4500, capacityCents: 5000, resetAtMs: 1_700_000_020_000 },

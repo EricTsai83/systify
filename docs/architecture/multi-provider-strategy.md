@@ -146,12 +146,12 @@ No explicit fix needed — the per-document serialization is the mechanism.
 
 **Dev-tools bypass of the picker.** The picker is UX; the backend mutation
 is the contract. A fabricated `(provider, modelName)` either fails
-`isValidPick` with `unsupported_model` (`convex/chat/send.ts:380-385`) or
+`isValidPick` with `unsupported_model` in `convex/chat/send.ts` or
 fails the lock check with `thread_provider_locked`. Either way no message is
 queued and no LLM call is made.
 
 **Half-set picker pair.** Sending only `provider` or only `modelName` rejects
-with `incomplete_model_pick` (`convex/chat/send.ts:462-470`). The resolver
+with `incomplete_model_pick` in `convex/chat/send.ts`. The resolver
 never has to distinguish "intentional half-pick" from "missing arg" — the
 mutation refuses the request up front.
 

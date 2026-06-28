@@ -25,9 +25,9 @@ These two metric streams plus the existing `[chat] …` debug logs are the only 
 Design Docs generation runs selected templates, up to 8, through the LLM gateway with live sandbox grounding — every selected template is LLM-backed and provisions Daytona. Each internal System Design kind calls `ensureSandboxReady` (`convex/lib/sandboxLiveness.ts`) which provisions a Daytona sandbox if one isn't running. Sandbox lifecycle / cost / tool-error / latency symptoms for the two surfaces emit on TWO separate metric families:
 
 - **Chat (sandbox-grounded Discuss)**: `sandbox_session_finished` and `sandbox_tool_invoked`. Tags on `sandbox_session_finished` are `{mode, status, model, had_tools}` only — there is no `feature` tag, and only chat replies emit on this stream.
-- **Design Docs / internal System Design**: `systemdesign_kind_*` metrics (`systemdesign_kind_started`, `systemdesign_kind_duration_ms`, `systemdesign_kind_steps_used`, `systemdesign_kind_cost_usd`, `systemdesign_kind_tokens`, `systemdesign_kind_failed`, `systemdesign_kind_cache_hit`) emitted from `convex/systemDesignNode.ts:192-400`.
+- **Design Docs / internal System Design**: `systemdesign_kind_*` metrics (`systemdesign_kind_started`, `systemdesign_kind_duration_ms`, `systemdesign_kind_steps_used`, `systemdesign_kind_cost_usd`, `systemdesign_kind_tokens`, `systemdesign_kind_failed`, `systemdesign_kind_cache_hit`) emitted from the per-kind runner in `convex/systemDesignKindRun.ts`.
 
-An incident affecting Daytona (Incident 1 in this runbook) blocks Design Docs generation entirely: the kind fails with `failureReason: "live_source_unavailable"` or `"infra"`; the job's auto-resume re-tries on the next stale-recovery sweep. The same `SANDBOX_DAILY_CAP_PER_USER_USD=0` mitigation that gates new sandbox-grounded chat also gates new Design Docs generation requests — the internal System Design path has its own hard pre-check via `assertSandboxDailyCostBudget` (`convex/systemDesign.ts:756`) on the same daily cost cap.
+An incident affecting Daytona (Incident 1 in this runbook) blocks Design Docs generation entirely: the kind fails with `failureReason: "live_source_unavailable"` or `"infra"`; the job's auto-resume re-tries on the next stale-recovery sweep. The same `SANDBOX_DAILY_CAP_PER_USER_USD=0` mitigation that gates new sandbox-grounded chat also gates new Design Docs work — the internal System Design path reserves per-kind sandbox generation budget before each LLM call and settles actual spend after gateway usage returns.
 
 Cost-spike symptoms (Incident 2) may now include Design Docs generation runs. Because the two surfaces emit on separate metric families, query `systemdesign_kind_cost_usd` for Design Docs spend and `sandbox_session_finished` (`details.cost_usd`) for chat spend — there is no shared filter across them. Per-kind cost is also persisted on `systemDesignKindRuns.totalCostUsd`; `bun run report:user-costs` surfaces per-user totals and `bun run report:system-design` surfaces per-kind aggregates.
 
@@ -183,7 +183,7 @@ If `read_file` p95 walked up but `run_shell` did not, the regression is in the f
 
 ### Mitigate
 
-- **Bisect the deploy window** — `git log` the commits between the last good metric and the regression. Common culprits: changes to `convex/chat/sandboxTools.ts` (output cap, redaction), `convex/daytona.ts` (FS adapter), or the model selection (`OPENAI_MODEL_SANDBOX` env var pointing at a slower model).
+- **Bisect the deploy window** — `git log` the commits between the last good metric and the regression. Common culprits: changes to `convex/chat/sandboxTools.ts` (output cap, redaction), `convex/daytona.ts` (FS adapter), or model-catalog / default-selection changes that route Sandbox grounding to a slower model.
 - **Fall back to the previous deploy** if the bisect doesn't yield an obvious cause within 30 min. Latency is reversible; don't burn an hour debugging when a rollback restores the SLO.
 
 ### Resolve

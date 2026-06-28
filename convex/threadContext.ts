@@ -39,17 +39,6 @@ export interface ThreadContext {
    * has no use for the value.
    */
   sandboxCostBudgets: ThreadContextSandboxCostBudgets | null;
-  /**
-   * True when the Sandbox grounding axis is currently unavailable only
-   * because live source must be prepared lazily. The composer may keep
-   * or set Sandbox grounding in this state; the next live-source task
-   * calls `ensureSandboxReady`.
-   *
-   * Activatable iff: a repository is attached, the cost-cap gate is
-   * open, and the sandbox lifecycle is in a recoverable liveness state
-   * (`none` / `provisioning` / `expired` / `failed`).
-   */
-  sandboxIsActivatable: boolean;
 }
 
 async function loadThread(ctx: QueryCtx, threadId: Id<"threads">): Promise<Doc<"threads"> | null> {
@@ -91,7 +80,6 @@ async function enrichThreadContext(
     sandboxModeStatus: availability.sandboxModeStatus,
     chatModes: availability.chatModes,
     sandboxCostBudgets: availability.sandboxCostBudgets,
-    sandboxIsActivatable: availability.sandboxIsActivatable,
   };
 }
 

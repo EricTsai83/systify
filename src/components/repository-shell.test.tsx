@@ -88,7 +88,6 @@ function makeWorkspace(): RepositoryWorkspaceState {
         library: { enabled: false, code: "no_repository_attached", message: "No repository." },
       },
       defaultMode: "discuss",
-      sandboxIsActivatable: false,
       sandboxCostBudget: null,
       defaultGroundLibrary: false,
       defaultGroundSandbox: false,

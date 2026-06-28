@@ -340,10 +340,11 @@ function isSandboxGrounded(input: ReplyPromptInput): boolean {
  * the whole turn context shape.
  */
 type HeuristicMessageBuilders = {
-  readonly sandbox: (question: string) => string[];
-  readonly noRepo: (question: string) => string[];
+  readonly sandbox: (question: string, apiKeyEnvVar: string) => string[];
+  readonly noRepo: (question: string, apiKeyEnvVar: string) => string[];
   readonly withRepo: (
     question: string,
+    apiKeyEnvVar: string,
     repository: NonNullable<ReplyPromptInput["grounding"]["repository"]>,
     artifactEvidenceLabels: ReadonlyArray<string>,
   ) => Array<string | undefined>;
@@ -351,22 +352,22 @@ type HeuristicMessageBuilders = {
 
 const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
   en: {
-    sandbox: (question) => [
-      "`OPENAI_API_KEY` is not configured, so I cannot run the live sandbox tools (`read_file` / `list_dir` / `run_shell`) needed to answer with sandbox grounding.",
+    sandbox: (question, apiKeyEnvVar) => [
+      `\`${apiKeyEnvVar}\` is not configured, so I cannot run the live sandbox tools (\`read_file\` / \`list_dir\` / \`run_shell\`) needed to answer with sandbox grounding.`,
       "",
       `Your question: ${question}`,
       "",
-      "Turn off the Sandbox toggle to ask without live-source grounding, or enable Library grounding to lean on existing artifacts. Configure `OPENAI_API_KEY` to re-enable sandbox grounding.",
+      `Turn off the Sandbox toggle to ask without live-source grounding, or enable Library grounding to lean on existing artifacts. Configure \`${apiKeyEnvVar}\` to re-enable sandbox grounding.`,
     ],
-    noRepo: (question) => [
-      "`OPENAI_API_KEY` is not configured, and this thread is not bound to a repository, so I cannot provide a grounded response.",
+    noRepo: (question, apiKeyEnvVar) => [
+      `\`${apiKeyEnvVar}\` is not configured, and this thread is not bound to a repository, so I cannot provide a grounded response.`,
       "",
       `Your question: ${question}`,
       "",
       "Suggestion: Attach a repository from the sidebar and ask again to get grounded / deep mode responses.",
     ],
-    withRepo: (question, repository, artifactEvidenceLabels) => [
-      "`OPENAI_API_KEY` is not configured, so I'm using indexed repository artifacts to answer.",
+    withRepo: (question, apiKeyEnvVar, repository, artifactEvidenceLabels) => [
+      `\`${apiKeyEnvVar}\` is not configured, so I'm using indexed repository artifacts to answer.`,
       "",
       `Repository: ${repository.sourceRepoFullName ?? "(unknown)"}`,
       repository.repositorySummary ? `- Summary: ${repository.repositorySummary}` : undefined,
@@ -380,22 +381,22 @@ const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
     ],
   },
   zh: {
-    sandbox: (question) => [
-      "目前沒有設定 `OPENAI_API_KEY`，無法呼叫 `read_file` / `list_dir` / `run_shell` 工具來實際讀取沙箱裡的程式碼。",
+    sandbox: (question, apiKeyEnvVar) => [
+      `目前沒有設定 \`${apiKeyEnvVar}\`，無法呼叫 \`read_file\` / \`list_dir\` / \`run_shell\` 工具來實際讀取沙箱裡的程式碼。`,
       "",
       `你的問題：${question}`,
       "",
-      "請關掉 Sandbox 開關以一般方式回覆，或改開 Library 開關用既有 artifact 作答。要恢復 sandbox grounding，請設定 `OPENAI_API_KEY`。",
+      `請關掉 Sandbox 開關以一般方式回覆，或改開 Library 開關用既有 artifact 作答。要恢復 sandbox grounding，請設定 \`${apiKeyEnvVar}\`。`,
     ],
-    noRepo: (question) => [
-      "目前沒有設定 `OPENAI_API_KEY`，且這個對話尚未綁定 repository，所以無法做 grounded 回覆。",
+    noRepo: (question, apiKeyEnvVar) => [
+      `目前沒有設定 \`${apiKeyEnvVar}\`，且這個對話尚未綁定 repository，所以無法做 grounded 回覆。`,
       "",
       `你的問題：${question}`,
       "",
       "建議：在側邊欄附加一個 repository 之後再提問，就能取得 grounded / deep 模式的回覆。",
     ],
-    withRepo: (question, repository, artifactEvidenceLabels) => [
-      "目前沒有設定 `OPENAI_API_KEY`，所以我先用已索引的 repository artifact 回答。",
+    withRepo: (question, apiKeyEnvVar, repository, artifactEvidenceLabels) => [
+      `目前沒有設定 \`${apiKeyEnvVar}\`，所以我先用已索引的 repository artifact 回答。`,
       "",
       `Repository: ${repository.sourceRepoFullName ?? "(unknown)"}`,
       repository.repositorySummary ? `- Summary: ${repository.repositorySummary}` : undefined,
@@ -410,7 +411,7 @@ const HEURISTIC_MESSAGES: Record<UILanguage, HeuristicMessageBuilders> = {
   },
 };
 
-export function buildHeuristicAnswer(input: ReplyPromptInput, question: string) {
+export function buildHeuristicAnswer(input: ReplyPromptInput, question: string, apiKeyEnvVar = "OPENAI_API_KEY") {
   const language = getUILanguage(input);
 
   // Sandbox-grounded Discuss reply with no API key: the model can't run
@@ -418,11 +419,11 @@ export function buildHeuristicAnswer(input: ReplyPromptInput, question: string) 
   // heuristic fallback produce text that pretends to have inspected the
   // sandbox.
   if (isSandboxGrounded(input)) {
-    return HEURISTIC_MESSAGES[language].sandbox(question).join("\n");
+    return HEURISTIC_MESSAGES[language].sandbox(question, apiKeyEnvVar).join("\n");
   }
 
   if (!input.grounding.repository) {
-    return HEURISTIC_MESSAGES[language].noRepo(question).join("\n");
+    return HEURISTIC_MESSAGES[language].noRepo(question, apiKeyEnvVar).join("\n");
   }
 
   // `withRepo` may emit `undefined` placeholders for absent optional summary
@@ -431,7 +432,12 @@ export function buildHeuristicAnswer(input: ReplyPromptInput, question: string) 
   // `string[]` and the ESLint / `noUncheckedIndexedAccess` future-toggle would
   // not trip.
   return HEURISTIC_MESSAGES[language]
-    .withRepo(question, input.grounding.repository, buildArtifactEvidenceLabels(input.grounding.artifactEvidence))
+    .withRepo(
+      question,
+      apiKeyEnvVar,
+      input.grounding.repository,
+      buildArtifactEvidenceLabels(input.grounding.artifactEvidence),
+    )
     .filter((line): line is string => line !== undefined)
     .join("\n");
 }

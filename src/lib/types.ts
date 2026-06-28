@@ -110,6 +110,7 @@ export type ActiveMessageStream = {
   reasoningStartedAt: number | null;
   reasoningEndedAt: number | null;
   startedAt: number;
+  firstContentAt?: number | null;
   lastAppendedAt: number;
 };
 

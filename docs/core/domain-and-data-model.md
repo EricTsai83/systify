@@ -139,18 +139,27 @@ Because of this, the UI does not need to know the internal implementation of eve
 
 ### `artifacts`
 
-`artifacts` stores outputs with long-term value relative to repositories (and optionally threads) rather than ephemeral stream state. Current artifact kinds include:
+`artifacts` stores outputs with long-term value relative to repositories (and optionally threads) rather than ephemeral stream state.
+
+Active **Design Docs** artifact kinds are:
 
 - `readme_summary`
 - `architecture_overview`
 - `architecture_diagram`
-- `entrypoints`
-- `dependency_overview`
 - `data_model_overview`
 - `api_surface_overview`
 - `deployment_overview`
 - `security_overview`
 - `operations_overview`
+
+User-authored or draft-generated Library documents use:
+
+- `custom_document`
+
+The schema still accepts historical / legacy artifact kinds so existing rows do not break Convex schema validation before a data migration:
+
+- `entrypoints`
+- `dependency_overview`
 - `trade_off_matrix`
 - `migration_plan`
 - `capacity_estimate`
@@ -159,7 +168,7 @@ Because of this, the UI does not need to know the internal implementation of eve
 This table plays two roles:
 
 1. Reusable knowledge produced by **Design Docs generation** (implemented internally as System Design generation): the user opts into optional templates, and the sandbox-backed job writes user-selected artifact kinds (`readme_summary`, `architecture_overview`, `architecture_diagram`, `data_model_overview`, `api_surface_overview`, `deployment_overview`, `security_overview`, `operations_overview`). Import itself no longer seeds artifact bodies — it only seeds the default folder tree so the Library has a place to put them.
-2. Additional prose authored later by the user as Library notes, or produced by future per-folder generation jobs.
+2. Additional prose authored later by the user as Library notes, or produced by artifact-draft generation jobs (`custom_document`).
 
 Artifacts may optionally carry **`alignedImportCommitSha`**: best-effort record of which import revision the prose was authored against—used alongside sandbox verification timestamps to distinguish "checked against sandbox" freshness from **import snapshot drift**.
 

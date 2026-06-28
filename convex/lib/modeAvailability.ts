@@ -7,7 +7,6 @@ import {
   DISABLED_REASON_SANDBOX_USER_CAP_EXCEEDED,
   resolveChatModes,
   resolveRepositoryModes,
-  resolveSandboxGroundingAxis,
   type ChatModeResolution,
   type ChatModeSandboxStatus,
   type SandboxCostCapGate,
@@ -26,7 +25,6 @@ export interface ModeAvailabilitySnapshot {
   sandbox: Doc<"sandboxes"> | null;
   sandboxModeStatus: SandboxModeStatus | null;
   sandboxCostBudgets: ThreadContextSandboxCostBudgets | null;
-  sandboxIsActivatable: boolean;
 }
 
 interface SandboxCostCapEvaluation {
@@ -145,27 +143,18 @@ export async function evaluateThreadModeAvailability(
     sandbox = sandboxSnapshot.sandbox;
   }
 
-  let costGate: SandboxCostCapGate = { enabled: true };
   let sandboxCostBudgets: ThreadContextSandboxCostBudgets | null = null;
   if (attachedRepository !== null) {
     const evaluation = await computeSandboxCostCapEvaluation(ctx, viewerTokenIdentifier, attachedRepository._id);
-    costGate = evaluation.gate;
     sandboxCostBudgets = { userBudget: evaluation.userBudget, repositoryBudget: evaluation.repositoryBudget };
   }
 
-  const chatModeSandboxStatus = toChatModeSandboxStatus(sandboxModeStatus);
   const chatModes = resolveChatModes(attachedRepository !== null);
-  const sandboxGroundingVerdict = resolveSandboxGroundingAxis(
-    attachedRepository !== null,
-    chatModeSandboxStatus,
-    costGate,
-  );
 
   return {
     chatModes,
     sandbox,
     sandboxModeStatus,
     sandboxCostBudgets,
-    sandboxIsActivatable: !sandboxGroundingVerdict.enabled && sandboxGroundingVerdict.isActivatable,
   };
 }

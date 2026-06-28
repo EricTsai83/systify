@@ -37,7 +37,6 @@ import { PromptInputModelPicker } from "@/components/ai-elements/prompt-input-mo
 import { PromptInputReasoningPicker } from "@/components/ai-elements/prompt-input-reasoning-picker";
 import { SandboxActivityPill } from "@/components/sandbox-activity-pill";
 import { Button } from "@/components/ui/button";
-import { ButtonStateText } from "@/components/ui/button-state-text";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { ActiveMessageStream, ArtifactId, ChatMode, RepositoryId, RepositorySource, ThreadId } from "@/lib/types";
 import type { ChatComposerViewModel } from "@/components/chat-shell-shared/chat-composer-types";
@@ -554,17 +553,17 @@ function StopGenerationButton({ composer }: { composer: ChatComposerViewModel })
     <Button
       type="button"
       variant="destructive"
-      size="sm"
+      size="icon"
       disabled={composer.cancel.isCancelling}
       aria-label="Stop generating reply"
+      title="Stop generating reply"
       data-testid="chat-panel-stop-button"
-      className="min-w-30"
+      className="h-8 w-8 shrink-0"
       onClick={() => {
         void composer.cancel.onCancel?.();
       }}
     >
       <StopCircleIcon weight="bold" />
-      <ButtonStateText current={composer.cancel.isCancelling ? "Stopping…" : "Stop"} states={["Stop", "Stopping…"]} />
     </Button>
   );
 }

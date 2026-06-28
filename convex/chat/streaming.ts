@@ -240,6 +240,15 @@ function deriveMessageReasoning(
   return { reasoning: stream.liveReasoning, reasoningDurationMs: durationMs };
 }
 
+function deriveTimeToFirstTokenMs(
+  stream: Pick<Doc<"messageStreams">, "startedAt" | "firstContentAt"> | null,
+): number | undefined {
+  if (!stream || typeof stream.firstContentAt !== "number") {
+    return undefined;
+  }
+  return Math.max(0, stream.firstContentAt - stream.startedAt);
+}
+
 /**
  * Cap a tool-call summary at `TOOL_CALL_EVENT_SUMMARY_MAX_CHARS` characters,
  * appending the truncation marker when truncation actually happens.
@@ -492,6 +501,7 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
         // `lintSandboxClaims`; non-sandbox replies leave the field unset.
         const unverifiedClaims = lintSandboxClaims(message, finalContent);
         const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
+        const timeToFirstTokenMs = deriveTimeToFirstTokenMs(streamSnapshot?.stream ?? null);
         await ctx.db.patch(message._id, {
           content: finalContent,
           status: "completed",
@@ -506,6 +516,7 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
           unverifiedClaims,
           reasoning: reasoning.reasoning,
           reasoningDurationMs: reasoning.reasoningDurationMs,
+          timeToFirstTokenMs,
         });
         // The thread may have been deleted while we were streaming.
         // Patching a missing doc throws and would roll back the whole
@@ -551,6 +562,7 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
           // user can read what they got with appropriate skepticism.
           const unverifiedClaims = lintSandboxClaims(message, streamedContent);
           const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
+          const timeToFirstTokenMs = deriveTimeToFirstTokenMs(streamSnapshot?.stream ?? null);
           await ctx.db.patch(message._id, {
             status: "failed",
             errorMessage: outcome.errorMessage,
@@ -559,6 +571,7 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
             unverifiedClaims,
             reasoning: reasoning.reasoning,
             reasoningDurationMs: reasoning.reasoningDurationMs,
+            timeToFirstTokenMs,
             // Partial cost is real spend; persist it so the failed
             // bubble can show "Failed at $0.04 (800 tokens)" and the
             // daily cap can settle accurately. Falling back to existing
@@ -610,6 +623,7 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
           // completed bubble would show.
           const unverifiedClaims = lintSandboxClaims(message, streamedContent);
           const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
+          const timeToFirstTokenMs = deriveTimeToFirstTokenMs(streamSnapshot?.stream ?? null);
           await ctx.db.patch(message._id, {
             status: "cancelled",
             errorMessage: outcome.reason,
@@ -620,6 +634,7 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
             unverifiedClaims,
             reasoning: reasoning.reasoning,
             reasoningDurationMs: reasoning.reasoningDurationMs,
+            timeToFirstTokenMs,
             estimatedInputTokens: outcome.usage?.inputTokens ?? message.estimatedInputTokens,
             estimatedOutputTokens: outcome.usage?.outputTokens ?? message.estimatedOutputTokens,
             estimatedCachedInputTokens: outcome.usage?.cachedInputTokens ?? message.estimatedCachedInputTokens,
@@ -643,6 +658,7 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
           // message without highlights.
           const unverifiedClaims = lintSandboxClaims(message, streamSnapshot?.content ?? "");
           const reasoning = deriveMessageReasoning(streamSnapshot?.stream ?? null, now);
+          const timeToFirstTokenMs = deriveTimeToFirstTokenMs(streamSnapshot?.stream ?? null);
           await ctx.db.patch(message._id, {
             status: "failed",
             errorMessage: outcome.errorMessage,
@@ -651,6 +667,7 @@ async function applyTerminalSettlement(ctx: MutationCtx, outcome: TerminalOutcom
             unverifiedClaims,
             reasoning: reasoning.reasoning,
             reasoningDurationMs: reasoning.reasoningDurationMs,
+            timeToFirstTokenMs,
           });
         }
         // Stale-recovery deliberately does NOT settle cost against the
@@ -755,6 +772,7 @@ export const getActiveMessageStream = query({
       reasoningStartedAt: stream.reasoningStartedAt ?? null,
       reasoningEndedAt: stream.reasoningEndedAt ?? null,
       startedAt: stream.startedAt,
+      firstContentAt: stream.firstContentAt ?? null,
       lastAppendedAt: stream.lastAppendedAt,
     };
   },
@@ -917,6 +935,24 @@ export const appendAssistantStreamChunk = internalMutation({
     }
 
     await compactMessageStreamTail(ctx, stream._id);
+  },
+});
+
+export const markAssistantFirstContentAt = internalMutation({
+  args: {
+    assistantMessageId: v.id("messages"),
+    jobId: v.id("jobs"),
+    occurredAt: v.number(),
+  },
+  handler: async (ctx, args): Promise<null> => {
+    const stream = await getMessageStreamByAssistantMessageId(ctx, args.assistantMessageId);
+    if (!stream || stream.jobId !== args.jobId || stream.firstContentAt !== undefined) {
+      return null;
+    }
+    await ctx.db.patch(stream._id, {
+      firstContentAt: Math.max(stream.startedAt, args.occurredAt),
+    });
+    return null;
   },
 });
 

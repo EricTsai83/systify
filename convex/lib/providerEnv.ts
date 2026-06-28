@@ -20,6 +20,10 @@ const ENV_VAR_BY_PROVIDER: Record<LlmProvider, string> = {
   anthropic: "ANTHROPIC_API_KEY",
 };
 
+export function providerApiKeyEnvVar(provider: LlmProvider): string {
+  return ENV_VAR_BY_PROVIDER[provider];
+}
+
 /**
  * Return `true` iff the env var that powers `provider` is set to a
  * non-empty, non-whitespace value.
@@ -29,7 +33,7 @@ const ENV_VAR_BY_PROVIDER: Record<LlmProvider, string> = {
  * action into invoking the SDK against an empty token.
  */
 export function hasProviderApiKey(provider: LlmProvider): boolean {
-  const name = ENV_VAR_BY_PROVIDER[provider];
+  const name = providerApiKeyEnvVar(provider);
   const raw = process.env[name];
   if (typeof raw !== "string") {
     return false;
@@ -43,5 +47,5 @@ export function hasProviderApiKey(provider: LlmProvider): boolean {
  * without re-encoding the mapping.
  */
 export const TEST_INTERNALS = {
-  envVarFor: (provider: LlmProvider) => ENV_VAR_BY_PROVIDER[provider],
+  envVarFor: providerApiKeyEnvVar,
 } as const;

@@ -2,7 +2,7 @@
 
 Every answer points to its source.
 
-Systify is an open source repository analysis app for understanding unfamiliar codebases through grounded, repository-specific context. A user signs in with WorkOS, connects a GitHub App installation, imports a repository's metadata, README, and key files directly through the GitHub API into Convex, and then explores it through two AI surfaces. Daytona sandboxes are provisioned lazily — only when the user enables the Discuss-mode Sandbox grounding toggle or generates Design Docs — so the rest of the app works without ever paying sandbox cost:
+Systify is an open-source repository analysis app for understanding unfamiliar codebases through grounded, repository-specific context. A user signs in with WorkOS, connects a GitHub App installation, imports a repository's metadata, README, and key files directly through the GitHub API into Convex, and then explores it through two AI surfaces. Daytona sandboxes are provisioned lazily — only when the user sends a Discuss-mode Sandbox-grounded message or generates Design Docs — so the rest of the app works without ever paying sandbox cost:
 
 - **Chat** with two top-level modes:
   - `discuss` (UI label "Discuss") — free-form chat with two independent per-message grounding toggles the composer surfaces:
@@ -37,7 +37,7 @@ This repository is standardized on Bun for package management and script executi
 3. Systify verifies repository access and creates an import workflow.
 4. The import pipeline scans the repository via the GitHub API and writes files, chunks, summaries, and artifacts into Convex.
 5. The user explores the repository through chat (top-level `discuss` and `library` modes; `discuss` exposes per-message **Library** and **Sandbox** grounding toggles in the composer) or by generating optional Design Docs from the Library.
-6. When the user enables the **Sandbox** grounding toggle in `discuss` or generates Design Docs that need live validation, a Daytona sandbox is provisioned on-demand and the repository is cloned.
+6. When the user sends a **Sandbox**-grounded `discuss` message or generates Design Docs that need live validation, a Daytona sandbox is provisioned on-demand and the repository is cloned.
 7. Later syncs refresh the active snapshot without mixing old and new import data.
 
 ## Stack
@@ -60,7 +60,7 @@ This repository is standardized on Bun for package management and script executi
 - WorkOS AuthKit for browser-side sign-in
 - GitHub App for repository authorization and installation lifecycle
 - Daytona for repository sandboxes and deep inspection
-- OpenAI for model-backed chat generation, with a heuristic fallback when no API key is configured
+- OpenAI and Anthropic for model-backed chat generation, with a heuristic fallback when no provider API key is configured
 
 ## Repository layout
 
@@ -82,7 +82,7 @@ Before running Systify locally, make sure you have:
 - A WorkOS application
 - A GitHub App with installation access to the repositories you want to import
 - A Daytona account and API key
-- An OpenAI API key if you want model-backed chat responses
+- An OpenAI API key for the default model-backed chat path; optionally an Anthropic API key for Claude models
 
 ## Local development
 
@@ -120,9 +120,9 @@ Common runtime variables:
   - `GITHUB_APP_SLUG`
   - `GITHUB_APP_PRIVATE_KEY`
   - `GITHUB_APP_WEBHOOK_SECRET`
-- OpenAI
+- LLM providers
   - `OPENAI_API_KEY`
-  - `OPENAI_MODEL`
+  - `ANTHROPIC_API_KEY`
 - Daytona
   - `DAYTONA_API_KEY`
   - `DAYTONA_API_URL`

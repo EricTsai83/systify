@@ -77,6 +77,56 @@ describe("MessageBubble", () => {
     expect(screen.getAllByText(errorMessage)).toHaveLength(1);
   });
 
+  test("lets wrapped nerd stats define the usage footer height", () => {
+    render(
+      <MessageBubble
+        message={makeAssistantMessage({
+          estimatedInputTokens: 1800,
+          estimatedOutputTokens: 900,
+          estimatedCostUsd: 0.01,
+          modelName: "gpt-5.4-mini",
+          timeToFirstTokenMs: 1234,
+        })}
+        activeMessageStream={null}
+        showStatsForNerds
+      />,
+    );
+
+    const footer = screen.getByTestId("message-usage-footer");
+    expect(footer).toHaveClass("min-h-8");
+    expect(footer.querySelector(".absolute")).toBeNull();
+    expect(footer.querySelector(".items-center")).not.toBeNull();
+    expect(screen.getByTestId("message-nerd-stats")).toHaveTextContent("TTFT 1.23 sec");
+    expect(screen.queryByText(/Generation time/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/tok\/sec unavailable/)).not.toBeInTheDocument();
+  });
+
+  test("renders live time to first token from active stream timing", () => {
+    render(
+      <MessageBubble
+        message={makeAssistantMessage({
+          estimatedOutputTokens: 25,
+          modelName: "gpt-5.4-mini",
+          status: "streaming",
+        })}
+        activeMessageStream={{
+          assistantMessageId: "message_1" as Doc<"messages">["_id"],
+          content: "streaming content with enough characters for several estimated tokens",
+          reasoning: null,
+          reasoningStartedAt: null,
+          reasoningEndedAt: null,
+          startedAt: 1_000,
+          firstContentAt: 1_250,
+          lastAppendedAt: 2_000,
+        }}
+        showStatsForNerds
+      />,
+    );
+
+    expect(screen.getByTestId("message-nerd-stats")).toHaveTextContent("TTFT 0.25 sec");
+    expect(screen.queryByText(/tok\/sec/)).not.toBeInTheDocument();
+  });
+
   test("keeps a system alert when failed content contains useful partial output", () => {
     render(
       <MessageBubble

@@ -16,6 +16,7 @@ import { StatusPill } from "@/components/status-pill";
 import { StatusPanel } from "@/components/status-panel";
 import { ChatModeControls } from "@/components/chat-mode-controls";
 import { Skeleton } from "@/components/ui/skeleton";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import type { AttachedRepositorySummary } from "@/hooks/use-thread-capabilities";
 import type { ArtifactId, RepositoryId, SandboxModeStatus, ThreadId, ThreadMode } from "@/lib/types";
 
@@ -157,7 +158,7 @@ export function TopBar({
 
   return (
     <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
-      <ChatModeControls onSearchThreads={onSearchThreads} onNewThread={onNewThread} />
+      <SidebarTrigger side="left" />
       <TopBarTitleArea
         repoDetail={repoDetail}
         isRepoDetailLoading={isRepoDetailLoading}
@@ -169,6 +170,7 @@ export function TopBar({
         availableRepositories={availableRepositories}
         onThreadMovedToRepository={onThreadMovedToRepository}
       />
+      <ChatModeControls showSidebarToggle={false} onSearchThreads={onSearchThreads} onNewThread={onNewThread} />
 
       <div className="ml-auto flex items-center gap-1.5">
         <TopBarStatusSlot statusControl={statusControl} isDesktopLayout={isDesktopLayout} />

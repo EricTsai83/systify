@@ -1452,7 +1452,7 @@ describe("ChatPanel unverified-claim highlights", () => {
  *   - Stop button renders only when (a) `onCancelInFlightReply` is wired AND
  *     (b) the latest assistant message is non-terminal.
  *   - Click on Stop fires the callback exactly once.
- *   - "Stopping…" label appears between click and bubble flip.
+ *   - The Stop state stays icon-only while preserving its accessible name.
  *   - `cancelled` status surfaces the "Cancelled" label in the message status
  *     chip rather than fall through to the raw enum.
  *   - Send is restored once the assistant message reaches a terminal state.
@@ -1601,7 +1601,8 @@ describe("ChatPanel cancel-in-flight reply", () => {
 
     const stop = screen.getByTestId("chat-panel-stop-button");
     expect(stop).toBeInTheDocument();
-    expect(stop).toHaveTextContent("Stop");
+    expect(stop).toHaveAccessibleName("Stop generating reply");
+    expect(stop).toHaveTextContent("");
     expect(screen.queryByTestId("chat-panel-send-button")).not.toBeInTheDocument();
   });
 
@@ -1721,7 +1722,7 @@ describe("ChatPanel cancel-in-flight reply", () => {
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
 
-  test("renders 'Stopping…' and disables the Stop button while the cancel mutation is in flight", () => {
+  test("keeps Stop icon-only and disables it while the cancel mutation is in flight", () => {
     const onCancel = vi.fn();
     render(
       <ChatPanel
@@ -1756,7 +1757,8 @@ describe("ChatPanel cancel-in-flight reply", () => {
     );
 
     const stop = screen.getByTestId("chat-panel-stop-button");
-    expect(stop).toHaveTextContent("Stopping…");
+    expect(stop).toHaveAccessibleName("Stop generating reply");
+    expect(stop).toHaveTextContent("");
     expect(stop).toBeDisabled();
 
     // Defensive: even if the user manages to click the disabled button via

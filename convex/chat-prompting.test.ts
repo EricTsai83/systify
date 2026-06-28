@@ -605,6 +605,13 @@ describe("buildCitationMap", () => {
 });
 
 describe("buildHeuristicAnswer", () => {
+  test("names the missing provider key passed by the generation path", () => {
+    const answer = buildHeuristicAnswer(makePromptInput(), "What protects tokens?", "ANTHROPIC_API_KEY");
+
+    expect(answer).toContain("`ANTHROPIC_API_KEY` is not configured");
+    expect(answer).not.toContain("`OPENAI_API_KEY`");
+  });
+
   test("names retrieved artifact chunks when the no-provider fallback answers a Library-grounded reply", () => {
     const answer = buildHeuristicAnswer(
       makePromptInput({

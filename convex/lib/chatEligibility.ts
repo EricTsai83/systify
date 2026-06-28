@@ -180,10 +180,8 @@ export function resolveChatModes(hasAttachedRepo: boolean): ChatModeResolution {
  * Precedence: cost cap → lifecycle. The cost cap is the more actionable
  * signal for a viewer who already has a healthy sandbox.
  *
- * Exported so the per-thread read path (`threadContext.enrichThreadContext`)
- * can derive `sandboxIsActivatable` from this verdict instead of
- * recomputing the (repo + cost-gate + status) tuple in parallel —
- * keeping the recoverable/selectable rule a single source of truth.
+ * Exported so read and write paths share the same recoverable/selectable rule
+ * instead of recomputing the (repo + cost-gate + status) tuple in parallel.
  */
 export function resolveSandboxGroundingAxis(
   hasAttachedRepo: boolean,

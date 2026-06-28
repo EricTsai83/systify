@@ -147,7 +147,7 @@ export const listMetadataByRepositoryWithFreshness = query({
 
 /**
  * Owner-scoped artifact listing inside a folder. Used by the folder
- * navigator's "expand folder" path and the FolderOverview's contents list.
+ * navigator's "expand folder" path and any folder-detail contents list.
  * Sorted ascending by `_creationTime` so artifact order matches creation
  * order (predictable for sibling navigation in the Reader).
  */
