@@ -99,6 +99,52 @@ describe("chat streaming lifecycle", () => {
     expect(afterLateAppend).toBeGreaterThan(afterFirstAppend);
   });
 
+  test("time to first token is exposed live and persisted at finalize", async () => {
+    const ownerTokenIdentifier = "user|stream-ttft";
+    const t = convexTest(schema, modules);
+    const { threadId, jobId, assistantMessageId, streamId } = await createStreamingFixture(
+      t,
+      ownerTokenIdentifier,
+      "stream-ttft",
+    );
+
+    const startedAt = Date.now();
+    const firstContentAt = startedAt + 1_234;
+    vi.setSystemTime(new Date(firstContentAt));
+    await t.mutation(internal.chat.streaming.markAssistantFirstContentAt, {
+      assistantMessageId,
+      jobId,
+      occurredAt: firstContentAt,
+    });
+    await t.mutation(internal.chat.streaming.appendAssistantStreamChunk, {
+      assistantMessageId,
+      jobId,
+      delta: "first streamed chunk",
+    });
+
+    const stream = await t.run(async (ctx) => ctx.db.get(streamId));
+    expect(stream?.firstContentAt).toBe(firstContentAt);
+
+    const viewer = t.withIdentity({ tokenIdentifier: ownerTokenIdentifier });
+    const activeStream = await viewer.query(api.chat.streaming.getActiveMessageStream, { threadId });
+    expect(activeStream).toMatchObject({
+      firstContentAt,
+      startedAt,
+    });
+
+    await t.mutation(internal.chat.streaming.finalizeAssistantReply, {
+      threadId,
+      assistantMessageId,
+      jobId,
+      finalDelta: "",
+      inputTokens: 20,
+      outputTokens: 5,
+    });
+
+    const message = await t.run(async (ctx) => ctx.db.get(assistantMessageId));
+    expect(message?.timeToFirstTokenMs).toBe(1_234);
+  });
+
   test("appendAssistantStreamChunk compacts the tail and finalizeAssistantReply writes once", async () => {
     const ownerTokenIdentifier = "user|stream-finalize";
     const t = convexTest(schema, modules);

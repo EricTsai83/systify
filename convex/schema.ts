@@ -1276,6 +1276,13 @@ export default defineSchema({
      * and paired with `reasoning` — if one is set, both should be.
      */
     reasoningDurationMs: v.optional(v.number()),
+    /**
+     * Time to first token in milliseconds. Measured by the reply action from
+     * the start of the assistant stream to the first text delta observed from
+     * the provider. Optional for legacy rows and replies that failed before
+     * emitting any text.
+     */
+    timeToFirstTokenMs: v.optional(v.number()),
   })
     .index("by_threadId", ["threadId"])
     .index("by_threadId_and_status", ["threadId", "status"])
@@ -1435,6 +1442,12 @@ export default defineSchema({
     compactedThroughSequence: v.number(),
     nextSequence: v.number(),
     startedAt: v.number(),
+    /**
+     * First provider text-delta timestamp observed by the action. Optional so
+     * streams created before this field existed, or streams that have only
+     * emitted reasoning/tool events so far, continue to validate.
+     */
+    firstContentAt: v.optional(v.number()),
     lastAppendedAt: v.number(),
     /**
      * Live reasoning tail. Mirrors how `compactedContent` works for text,

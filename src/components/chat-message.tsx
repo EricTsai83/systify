@@ -34,7 +34,6 @@ import {
   CpuIcon,
   FileCodeIcon,
   FileTextIcon,
-  GaugeIcon,
   GearSixIcon,
   GithubLogoIcon,
   HashIcon,
@@ -724,7 +723,7 @@ function MessageUsageFooter({
   return (
     <div className="min-h-8" data-testid="message-usage-footer">
       <div className="-mt-1! -ml-0.5 flex w-full flex-row justify-start gap-1 opacity-100 transition-opacity select-none md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100 md:group-focus:opacity-100 md:group-has-aria-[describedby]:opacity-100 md:group-has-data-[state='delayed-open']:opacity-100 md:group-has-data-[state='instant-open']:opacity-100 print:hidden">
-        <div className="flex min-h-8 w-full items-start justify-between gap-3 px-2 py-1">
+        <div className="flex min-h-8 w-full items-center justify-between gap-3 px-2 py-1">
           <div className="min-w-0 flex-1">
             {nerdStats ? (
               nerdStats
@@ -752,9 +751,8 @@ function MessageNerdStats({
 }: {
   stats: {
     model: string;
-    tokensPerSecond: string;
     messageTokens: string;
-    generationTime: string;
+    timeToFirstToken: string | null;
   };
   costTicker: string | null;
   tickerAriaLabel: string;
@@ -778,17 +776,15 @@ function MessageNerdStats({
         {stats.model}
       </span>
       <span className="inline-flex items-center gap-1">
-        <GaugeIcon size={14} />
-        {stats.tokensPerSecond}
-      </span>
-      <span className="inline-flex items-center gap-1">
         <HashIcon size={14} />
         {stats.messageTokens}
       </span>
-      <span className="inline-flex items-center gap-1">
-        <ClockIcon size={14} />
-        {stats.generationTime}
-      </span>
+      {stats.timeToFirstToken ? (
+        <span className="inline-flex items-center gap-1">
+          <ClockIcon size={14} />
+          {stats.timeToFirstToken}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -929,29 +925,20 @@ function buildNerdStats(
   activeMessageStream: ActiveMessageStream | null,
 ): {
   model: string;
-  tokensPerSecond: string;
   messageTokens: string;
-  generationTime: string;
+  timeToFirstToken: string | null;
 } {
   const outputTokens = message.estimatedOutputTokens ?? estimateMessageTokens(displayContent);
-  const streamTiming =
-    activeMessageStream && activeMessageStream.content.trim()
-      ? {
-          elapsedMs: Math.max(0, activeMessageStream.lastAppendedAt - activeMessageStream.startedAt),
-          tokenCount: estimateMessageTokens(activeMessageStream.content),
-        }
-      : null;
+  const timeToFirstTokenMs =
+    message.timeToFirstTokenMs ??
+    (activeMessageStream?.firstContentAt != null
+      ? Math.max(0, activeMessageStream.firstContentAt - activeMessageStream.startedAt)
+      : null);
 
   return {
     model: message.modelName ?? "model unavailable",
-    tokensPerSecond:
-      streamTiming && streamTiming.elapsedMs > 0
-        ? `${formatTokensPerSecond(streamTiming.tokenCount / (streamTiming.elapsedMs / 1000))} tok/sec`
-        : "tok/sec unavailable",
     messageTokens: `${formatTokenCount(outputTokens)} est. tokens`,
-    generationTime: streamTiming
-      ? `Generation time ${formatDurationSeconds(streamTiming.elapsedMs)}`
-      : "Generation time unavailable",
+    timeToFirstToken: timeToFirstTokenMs == null ? null : `TTFT ${formatDurationSeconds(timeToFirstTokenMs)}`,
   };
 }
 
@@ -961,16 +948,6 @@ function estimateMessageTokens(content: string): number {
     return 0;
   }
   return Math.max(1, Math.ceil(trimmed.length / 4));
-}
-
-function formatTokensPerSecond(value: number): string {
-  if (value >= 100) {
-    return value.toFixed(0);
-  }
-  if (value >= 10) {
-    return value.toFixed(1);
-  }
-  return value.toFixed(2);
 }
 
 function formatDurationSeconds(ms: number): string {
