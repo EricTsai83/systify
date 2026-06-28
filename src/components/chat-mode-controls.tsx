@@ -8,10 +8,12 @@ export function ChatModeControls({
   onSearchThreads,
   onNewThread,
   className,
+  showSidebarToggle = true,
 }: {
   onSearchThreads: () => void;
   onNewThread: () => void;
   className?: string;
+  showSidebarToggle?: boolean;
 }) {
   const { toggle } = useSidebar("left");
   const shouldShow = useShouldShowChatModeControls();
@@ -28,16 +30,18 @@ export function ChatModeControls({
       )}
       aria-label="Chat navigation controls"
     >
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="h-7 w-7 text-muted-foreground hover:bg-background/80 hover:text-foreground"
-        onClick={toggle}
-        aria-label="Toggle sidebar"
-      >
-        <SidebarIcon size={16} weight="regular" />
-      </Button>
+      {showSidebarToggle ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground hover:bg-background/80 hover:text-foreground"
+          onClick={toggle}
+          aria-label="Toggle sidebar"
+        >
+          <SidebarIcon size={16} weight="regular" />
+        </Button>
+      ) : null}
       <Button
         type="button"
         variant="ghost"
