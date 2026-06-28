@@ -21,9 +21,25 @@ export type RepositorySourceLinkArgs = {
 };
 
 const CODE_FILE_CITATION_REGEX = /\[([^[\]\s]+):(\d+)(?:-(\d+))?\]/g;
+const CODE_SPAN_REGEX = /```[\s\S]*?(?:```|$)|`[^`\n]+`/g;
 
 export function parseCodeFileCitations(content: string): CodeFileCitation[] {
   const citations: CodeFileCitation[] = [];
+  const codeRe = new RegExp(CODE_SPAN_REGEX.source, "g");
+
+  let cursor = 0;
+  let codeSpan: RegExpExecArray | null = codeRe.exec(content);
+  while (codeSpan !== null) {
+    parseCodeFileCitationsInProse(content.slice(cursor, codeSpan.index), citations);
+    cursor = codeSpan.index + codeSpan[0].length;
+    codeSpan = codeRe.exec(content);
+  }
+  parseCodeFileCitationsInProse(content.slice(cursor), citations);
+
+  return citations;
+}
+
+function parseCodeFileCitationsInProse(content: string, citations: CodeFileCitation[]): void {
   for (const match of content.matchAll(CODE_FILE_CITATION_REGEX)) {
     const rawToken = match[0];
     const path = match[1] ?? "";
@@ -32,7 +48,7 @@ export function parseCodeFileCitations(content: string): CodeFileCitation[] {
     if (!isValidCodeCitationPath(path, rawToken)) {
       continue;
     }
-    if (!Number.isSafeInteger(startLine) || !Number.isSafeInteger(parsedEndLine)) {
+    if (!isValidLineRange(startLine, parsedEndLine)) {
       continue;
     }
     citations.push({
@@ -42,7 +58,6 @@ export function parseCodeFileCitations(content: string): CodeFileCitation[] {
       rawToken,
     });
   }
-  return citations;
 }
 
 export function parseCodeFileSources(content: string): CodeFileSource[] {
@@ -81,13 +96,17 @@ export function buildGitHubSourceUrl(args: RepositorySourceLinkArgs): string | n
   if (!owner || !repo || extra.length > 0) {
     return null;
   }
+  const normalizedRef = args.ref.trim();
+  if (!normalizedRef) {
+    return null;
+  }
   const normalizedPath = stripLeadingSlashes(args.path);
-  if (!normalizedPath || hasParentPathSegment(normalizedPath)) {
+  if (!normalizedPath || hasParentPathSegment(normalizedPath) || !isValidLineRange(args.startLine, args.endLine)) {
     return null;
   }
   const anchor = args.startLine === args.endLine ? `#L${args.startLine}` : `#L${args.startLine}-L${args.endLine}`;
   return `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/blob/${encodePathPreservingSlashes(
-    args.ref,
+    normalizedRef,
   )}/${encodePathPreservingSlashes(normalizedPath)}${anchor}`;
 }
 
@@ -99,6 +118,9 @@ function isValidCodeCitationPath(path: string, rawToken: string): boolean {
     return false;
   }
   if (/^A\d+$/.test(path)) {
+    return false;
+  }
+  if (hasParentPathSegment(stripLeadingSlashes(path))) {
     return false;
   }
   return true;
@@ -114,6 +136,10 @@ function stripLeadingSlashes(path: string): string {
 
 function hasParentPathSegment(path: string): boolean {
   return path.split("/").some((segment) => segment === "..");
+}
+
+function isValidLineRange(startLine: number, endLine: number): boolean {
+  return Number.isSafeInteger(startLine) && Number.isSafeInteger(endLine) && startLine >= 1 && endLine >= startLine;
 }
 
 function encodePathPreservingSlashes(path: string): string {

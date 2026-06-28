@@ -17,6 +17,7 @@ import {
   buildEditorUrl,
   openEditorUrl,
   readLocalEditorConfig,
+  removeLocalEditorConfig,
   type LocalEditorRepositoryConfig,
 } from "@/lib/local-editor";
 import {
@@ -214,8 +215,9 @@ export const MessageBubble = memo(function MessageBubble({
 }) {
   const viewModel = buildMessageBubbleViewModel(message, activeMessageStream, showStatsForNerds);
   const codeSources = useMemo(
-    () => (viewModel.isAssistant ? parseCodeFileSources(viewModel.displayContent) : []),
-    [viewModel.displayContent, viewModel.isAssistant],
+    () =>
+      viewModel.isAssistant && message.groundSandbox === true ? parseCodeFileSources(viewModel.displayContent) : [],
+    [message.groundSandbox, viewModel.displayContent, viewModel.isAssistant],
   );
   // Custom-tag renderers for the markdown pass, bound to *this* message's
   // citation map and the artifact-select handler. Memoized so streamdown's
@@ -396,41 +398,44 @@ function MessageSources({
   const librarySources = useMemo(() => buildLibraryDocumentSources(citationMap), [citationMap]);
   const [actionSource, setActionSource] = useState<CodeFileSource | null>(null);
   const [setupSource, setSetupSource] = useState<CodeFileSource | null>(null);
+  const [, refreshLocalEditorConfig] = useState(0);
+  const localEditorConfig = repositorySource ? readLocalEditorConfig(repositorySource.repositoryId) : null;
 
-  const openCodeSourceWithConfig = useCallback((source: CodeFileSource, config: LocalEditorRepositoryConfig) => {
-    const firstRange = source.ranges[0];
-    if (!firstRange) {
-      return;
-    }
-    try {
-      openEditorUrl(
-        buildEditorUrl({
-          editor: config.editor,
-          rootPath: config.rootPath,
-          relativePath: source.path,
-          line: firstRange.startLine,
-        }),
-      );
-    } catch {
-      setActionSource(source);
-    }
+  const openCodeSourceWithConfig = useCallback(
+    (source: CodeFileSource, config: LocalEditorRepositoryConfig): boolean => {
+      const firstRange = source.ranges[0];
+      if (!firstRange) {
+        return false;
+      }
+      try {
+        openEditorUrl(
+          buildEditorUrl({
+            editor: config.editor,
+            rootPath: config.rootPath,
+            relativePath: source.path,
+            line: firstRange.startLine,
+          }),
+        );
+        return true;
+      } catch {
+        setActionSource(source);
+        return false;
+      }
+    },
+    [],
+  );
+
+  const handleCodeSourceClick = useCallback((source: CodeFileSource) => {
+    setActionSource(source);
   }, []);
 
-  const handleCodeSourceClick = useCallback(
-    (source: CodeFileSource) => {
-      if (!repositorySource) {
-        setActionSource(source);
-        return;
-      }
-      const config = readLocalEditorConfig(repositorySource.repositoryId);
-      if (!config) {
-        setActionSource(source);
-        return;
-      }
-      openCodeSourceWithConfig(source, config);
-    },
-    [openCodeSourceWithConfig, repositorySource],
-  );
+  const handleClearLocalPath = useCallback(() => {
+    if (!repositorySource) {
+      return;
+    }
+    removeLocalEditorConfig(repositorySource.repositoryId);
+    refreshLocalEditorConfig((revision) => revision + 1);
+  }, [repositorySource]);
 
   if (librarySources.length === 0 && codeSources.length === 0) {
     return null;
@@ -458,6 +463,13 @@ function MessageSources({
       <CodeSourceActionsDialog
         source={actionSource}
         repositorySource={repositorySource}
+        localEditorConfig={localEditorConfig}
+        onOpenLocal={(source, config) => {
+          if (openCodeSourceWithConfig(source, config)) {
+            setActionSource(null);
+          }
+        }}
+        onClearLocalPath={handleClearLocalPath}
         onOpenChange={(open) => {
           if (!open) setActionSource(null);
         }}
@@ -466,19 +478,23 @@ function MessageSources({
           setActionSource(null);
         }}
       />
-      <LocalEditorSetupDialog
-        open={setupSource !== null}
-        onOpenChange={(open) => {
-          if (!open) setSetupSource(null);
-        }}
-        repositoryId={repositorySource?.repositoryId ?? null}
-        onSaved={(config) => {
-          if (setupSource) {
-            openCodeSourceWithConfig(setupSource, config);
-          }
-          setSetupSource(null);
-        }}
-      />
+      {setupSource ? (
+        <LocalEditorSetupDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setSetupSource(null);
+          }}
+          repositoryId={repositorySource?.repositoryId ?? null}
+          initialConfig={localEditorConfig}
+          onSaved={(config) => {
+            refreshLocalEditorConfig((revision) => revision + 1);
+            if (setupSource) {
+              openCodeSourceWithConfig(setupSource, config);
+            }
+            setSetupSource(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
@@ -549,11 +565,17 @@ function CodeSourceButton({ source, onOpen }: { source: CodeFileSource; onOpen: 
 function CodeSourceActionsDialog({
   source,
   repositorySource,
+  localEditorConfig,
+  onOpenLocal,
+  onClearLocalPath,
   onOpenChange,
   onSetLocalPath,
 }: {
   source: CodeFileSource | null;
   repositorySource: RepositorySource | undefined;
+  localEditorConfig: LocalEditorRepositoryConfig | null;
+  onOpenLocal: (source: CodeFileSource, config: LocalEditorRepositoryConfig) => void;
+  onClearLocalPath: () => void;
   onOpenChange: (open: boolean) => void;
   onSetLocalPath: () => void;
 }) {
@@ -579,10 +601,29 @@ function CodeSourceActionsDialog({
             <DialogDescription className="break-all">{source.path}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-2">
+            {localEditorConfig ? (
+              <Button
+                type="button"
+                variant="secondary"
+                className="justify-start"
+                onClick={() => {
+                  onOpenLocal(source, localEditorConfig);
+                }}
+              >
+                <FileCodeIcon weight="bold" />
+                Open locally
+              </Button>
+            ) : null}
             {repositorySource ? (
               <Button type="button" variant="secondary" className="justify-start" onClick={onSetLocalPath}>
                 <GearSixIcon weight="bold" />
-                Set local path
+                {localEditorConfig ? "Change local path" : "Set local path"}
+              </Button>
+            ) : null}
+            {repositorySource && localEditorConfig ? (
+              <Button type="button" variant="ghost" className="justify-start" onClick={onClearLocalPath}>
+                <GearSixIcon weight="bold" />
+                Forget local path
               </Button>
             ) : null}
             {gitHubUrl ? (

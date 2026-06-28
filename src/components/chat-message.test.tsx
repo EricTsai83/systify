@@ -132,6 +132,7 @@ describe("MessageBubble", () => {
       <MessageBubble
         message={makeAssistantMessage({
           content: "The parser is implemented in [src/components/chat-message.tsx:190-205].",
+          groundSandbox: true,
         })}
         activeMessageStream={null}
         repositorySource={repositorySource()}
@@ -145,11 +146,29 @@ describe("MessageBubble", () => {
     expect(screen.getByText("190-205")).toBeInTheDocument();
   });
 
+  test("does not render code file sources for replies that were not sandbox-grounded", () => {
+    render(
+      <MessageBubble
+        message={makeAssistantMessage({
+          content: "The parser is implemented in [src/components/chat-message.tsx:190-205].",
+          groundSandbox: false,
+        })}
+        activeMessageStream={null}
+        repositorySource={repositorySource()}
+      />,
+    );
+
+    expect(screen.queryByText("Sources")).not.toBeInTheDocument();
+    expect(screen.queryByText("Code files")).not.toBeInTheDocument();
+    expect(screen.queryByText("chat-message.tsx")).not.toBeInTheDocument();
+  });
+
   test("renders both Library documents and Code files sections", () => {
     render(
       <MessageBubble
         message={makeAssistantMessage({
           content: "Compare [A1] with [src/lib/source-citations.ts:12].",
+          groundSandbox: true,
           citationMap: [
             {
               index: 1,
@@ -170,7 +189,7 @@ describe("MessageBubble", () => {
     expect(screen.getByText("source-citations.ts")).toBeInTheDocument();
   });
 
-  test("opens a configured local editor when clicking a code source", () => {
+  test("opens a configured local editor from the code source actions", async () => {
     const source = repositorySource();
     writeLocalEditorConfig(source.repositoryId, {
       editor: "cursor",
@@ -182,6 +201,7 @@ describe("MessageBubble", () => {
       <MessageBubble
         message={makeAssistantMessage({
           content: "See [src/components/chat-message.tsx:190].",
+          groundSandbox: true,
         })}
         activeMessageStream={null}
         repositorySource={source}
@@ -189,10 +209,44 @@ describe("MessageBubble", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: /chat-message.tsx/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Open locally/i }));
 
     expect(openEditorUrl).toHaveBeenCalledWith(
       "cursor://file//Users/eric/personal-project/systify/src/components/chat-message.tsx:190",
     );
+  });
+
+  test("prefills and can forget a configured local editor path", async () => {
+    const source = repositorySource();
+    writeLocalEditorConfig(source.repositoryId, {
+      editor: "vscode",
+      rootPath: "/Users/eric/personal-project/systify",
+      updatedAt: 1790000000000,
+    });
+
+    render(
+      <MessageBubble
+        message={makeAssistantMessage({
+          content: "See [src/components/chat-message.tsx:190].",
+          groundSandbox: true,
+        })}
+        activeMessageStream={null}
+        repositorySource={source}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /chat-message.tsx/i }));
+    expect(await screen.findByRole("button", { name: /Change local path/i })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /Change local path/i }));
+    expect(await screen.findByLabelText("Local repository path")).toHaveValue("/Users/eric/personal-project/systify");
+
+    fireEvent.click(screen.getByRole("button", { name: /Cancel/i }));
+    fireEvent.click(screen.getByRole("button", { name: /chat-message.tsx/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Forget local path/i }));
+
+    expect(screen.queryByRole("button", { name: /Open locally/i })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Set local path/i })).toBeInTheDocument();
   });
 
   test("shows code source actions and setup flow when no local editor is configured", async () => {
@@ -202,6 +256,7 @@ describe("MessageBubble", () => {
       <MessageBubble
         message={makeAssistantMessage({
           content: "See [src/components/chat-message.tsx:190].",
+          groundSandbox: true,
         })}
         activeMessageStream={null}
         repositorySource={source}

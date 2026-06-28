@@ -49,6 +49,31 @@ describe("parseCodeFileSources", () => {
       },
     ]);
   });
+
+  test("rejects zero and reversed line ranges", () => {
+    expect(parseCodeFileSources("Ignore [src/app.ts:0] and [src/app.ts:20-10].")).toEqual([]);
+  });
+
+  test("skips inline code and fenced code blocks", () => {
+    expect(
+      parseCodeFileSources(
+        [
+          "Keep [src/live.ts:9].",
+          "`const example = '[src/inline.ts:4]'`",
+          "```ts",
+          "const example = '[src/fenced.ts:8]';",
+          "```",
+        ].join("\n"),
+      ),
+    ).toEqual([
+      {
+        path: "src/live.ts",
+        basename: "live.ts",
+        ranges: [{ startLine: 9, endLine: 9 }],
+        rawTokens: ["[src/live.ts:9]"],
+      },
+    ]);
+  });
 });
 
 describe("buildGitHubSourceUrl", () => {
@@ -74,5 +99,35 @@ describe("buildGitHubSourceUrl", () => {
         endLine: 18,
       }),
     ).toBe("https://github.com/acme/widget/blob/main/src/app.ts#L12-L18");
+  });
+
+  test("rejects invalid source locations", () => {
+    expect(
+      buildGitHubSourceUrl({
+        sourceRepoFullName: "acme/widget",
+        ref: "main",
+        path: "src/app.ts",
+        startLine: 0,
+        endLine: 1,
+      }),
+    ).toBeNull();
+    expect(
+      buildGitHubSourceUrl({
+        sourceRepoFullName: "acme/widget",
+        ref: "main",
+        path: "src/app.ts",
+        startLine: 20,
+        endLine: 10,
+      }),
+    ).toBeNull();
+    expect(
+      buildGitHubSourceUrl({
+        sourceRepoFullName: "acme/widget",
+        ref: "",
+        path: "src/app.ts",
+        startLine: 1,
+        endLine: 1,
+      }),
+    ).toBeNull();
   });
 });

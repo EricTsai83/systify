@@ -17,15 +17,17 @@ export function LocalEditorSetupDialog({
   open,
   onOpenChange,
   repositoryId,
+  initialConfig = null,
   onSaved,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   repositoryId: RepositoryId | null;
+  initialConfig?: LocalEditorRepositoryConfig | null;
   onSaved: (config: LocalEditorRepositoryConfig) => void;
 }) {
-  const [rootPath, setRootPath] = useState("");
-  const [editor, setEditor] = useState<LocalEditorKind>("cursor");
+  const [rootPath, setRootPath] = useState(() => initialConfig?.rootPath ?? "");
+  const [editor, setEditor] = useState<LocalEditorKind>(() => initialConfig?.editor ?? "cursor");
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = useCallback(
