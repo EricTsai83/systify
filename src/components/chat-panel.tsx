@@ -1,4 +1,14 @@
-import { Children, Fragment, useCallback, useMemo, useState, type AnimationEvent, type ReactNode } from "react";
+import {
+  Children,
+  Fragment,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  type AnimationEvent,
+  type RefObject,
+  type ReactNode,
+} from "react";
 import { FileTextIcon, PaperPlaneTiltIcon, StopCircleIcon } from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { findInFlightAssistantMessage, useConversationThread } from "@/hooks/use-conversation-thread";
@@ -130,6 +140,7 @@ export function ChatPanel({
 }: ChatPanelProps) {
   const hasMessages = (messages?.length ?? 0) > 0;
   const [showStatsForNerds] = useStatsForNerdsPreference();
+  const composerInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Owns stick-to-bottom on append, anchor preservation on prepend,
   // sentinel observer for load-older, threadId-keyed reset, and
@@ -198,6 +209,14 @@ export function ChatPanel({
   const sandboxPill =
     shouldShowSandboxPill && attachedRepositoryId ? <SandboxActivityPill repositoryId={attachedRepositoryId} /> : null;
 
+  const handleUseExample = useCallback(
+    (prompt: string) => {
+      composer.input.setValue(prompt);
+      composerInputRef.current?.focus({ preventScroll: true });
+    },
+    [composer.input],
+  );
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col">
       {shouldShowEmptyState ? (
@@ -206,7 +225,7 @@ export function ChatPanel({
           hasAttachedRepository={hasAttachedRepository}
           sandboxPill={sandboxPill}
           readOnly={composer.input.readOnly}
-          onUseExample={composer.input.setValue}
+          onUseExample={handleUseExample}
         />
       ) : (
         <MessageChatPanelBody
@@ -225,6 +244,7 @@ export function ChatPanel({
 
       <ChatComposer
         composer={composer}
+        inputRef={composerInputRef}
         artifactToggle={artifactToggle}
         canCancel={canCancel}
         isSendBlocked={isSendBlocked}
@@ -355,13 +375,21 @@ function MessageList({ messages, activeMessageStream, onSelectArtifact, showStat
 
 type ChatComposerProps = {
   composer: ChatComposerViewModel;
+  inputRef: RefObject<HTMLTextAreaElement | null>;
   artifactToggle: ArtifactToggleControl | null;
   canCancel: boolean;
   isSendBlocked: boolean;
   sendButtonTitle: string | undefined;
 };
 
-function ChatComposer({ composer, artifactToggle, canCancel, isSendBlocked, sendButtonTitle }: ChatComposerProps) {
+function ChatComposer({
+  composer,
+  inputRef,
+  artifactToggle,
+  canCancel,
+  isSendBlocked,
+  sendButtonTitle,
+}: ChatComposerProps) {
   const readOnlyHint = composer.input.readOnly ? composer.input.readOnlyHint : null;
 
   return (
@@ -376,6 +404,7 @@ function ChatComposer({ composer, artifactToggle, canCancel, isSendBlocked, send
         }}
       >
         <PromptInputTextarea
+          ref={inputRef}
           name="message"
           value={composer.input.value}
           onChange={(e) => composer.input.setValue(e.target.value)}
