@@ -1,6 +1,14 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from "@/components/ui/message-scroller";
+import { usePrefersReducedMotion } from "@/hooks/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
 import { createContext, useContext, type ComponentProps, type ReactNode } from "react";
 import type { UseChatScrollResult } from "./use-chat-scroll";
@@ -38,25 +46,28 @@ export type ConversationProps = ComponentProps<"div"> & {
   scroll: UseChatScrollResult;
 };
 
-export const Conversation = ({ className, scroll, children, ...props }: ConversationProps) => {
-  const { setScrollContainer } = scroll;
+export const Conversation = ({
+  className,
+  scroll,
+  children,
+  role = "log",
+  "aria-live": ariaLive = "polite",
+  "aria-relevant": ariaRelevant = "additions",
+  ...props
+}: ConversationProps) => {
   return (
     <ConversationScrollContext.Provider value={scroll}>
-      <div className={cn("relative flex min-h-0 flex-1 flex-col", className)} {...props}>
-        <div
-          ref={setScrollContainer}
-          className="flex-1 overflow-y-auto"
-          // `role="log"` so screen readers treat the scrollable region as
-          // a log of conversation turns. `aria-live` is NOT set here —
-          // the in-flight bubble's content slot is the only place we
-          // want announcements; pushing live-region semantics onto the
-          // whole list would re-announce every prior turn on every
-          // subscription tick.
-          role="log"
+      <MessageScrollerProvider autoScroll defaultScrollPosition="last-anchor">
+        <MessageScroller
+          role={role}
+          aria-live={ariaLive}
+          aria-relevant={ariaRelevant}
+          className={cn("min-h-0 flex-1", className)}
+          {...props}
         >
           {children}
-        </div>
-      </div>
+        </MessageScroller>
+      </MessageScrollerProvider>
     </ConversationScrollContext.Provider>
   );
 };
@@ -76,29 +87,39 @@ export const ConversationContent = ({
   children,
   ...props
 }: ConversationContentProps) => {
-  const { setContent, setSentinel } = useConversationScroll();
+  const { setContent, setScrollContainer, setSentinel } = useConversationScroll();
   return (
-    <div ref={setContent} className={cn("flex flex-col gap-8 p-4", className)} {...props}>
-      {showLoadOlderSentinel ? (
-        // Sentinel is intentionally tiny + visually empty. The
-        // IntersectionObserver inside `useChatScroll` fires
-        // `onLoadOlder` once the sentinel enters the (container-
-        // relative) viewport with a 320px top margin — older history
-        // is in flight before the user runs out of content to scroll
-        // up through. The wrapper preserves the `flex-col gap-8`
-        // rhythm so the first message doesn't snap closer to the top
-        // when the sentinel mounts.
-        <div
-          ref={setSentinel}
-          data-testid="conversation-load-older-sentinel"
-          aria-hidden="true"
-          className="h-px w-full"
-        />
-      ) : null}
-      {children}
-    </div>
+    <MessageScrollerViewport ref={setScrollContainer}>
+      <MessageScrollerContent ref={setContent} className={cn("gap-8 p-4", className)} {...props}>
+        {showLoadOlderSentinel ? (
+          // Sentinel is intentionally tiny + visually empty. The
+          // IntersectionObserver inside `useChatScroll` fires
+          // `onLoadOlder` once the sentinel enters the (container-
+          // relative) viewport with a 320px top margin — older history
+          // is in flight before the user runs out of content to scroll
+          // up through. The wrapper preserves the `flex-col gap-8`
+          // rhythm so the first message doesn't snap closer to the top
+          // when the sentinel mounts.
+          <MessageScrollerItem messageId="conversation-load-older-sentinel">
+            <div
+              ref={setSentinel}
+              data-testid="conversation-load-older-sentinel"
+              aria-hidden="true"
+              className="h-px w-full"
+            />
+          </MessageScrollerItem>
+        ) : null}
+        {children}
+      </MessageScrollerContent>
+    </MessageScrollerViewport>
   );
 };
+
+export type ConversationItemProps = ComponentProps<typeof MessageScrollerItem>;
+
+export const ConversationItem = ({ className, ...props }: ConversationItemProps) => (
+  <MessageScrollerItem className={cn("min-w-0", className)} {...props} />
+);
 
 export type ConversationEmptyStateProps = ComponentProps<"div"> & {
   title?: string;
@@ -130,21 +151,18 @@ export const ConversationEmptyState = ({
   </div>
 );
 
-export type ConversationScrollButtonProps = ComponentProps<typeof Button>;
+export type ConversationScrollButtonProps = ComponentProps<typeof MessageScrollerButton>;
 
 export const ConversationScrollButton = ({ className, ...props }: ConversationScrollButtonProps) => {
-  const { isAtBottom, scrollToBottom } = useConversationScroll();
-  if (isAtBottom) return null;
+  const prefersReducedMotion = usePrefersReducedMotion();
   return (
-    <Button
-      className={cn("absolute bottom-2 left-[50%] translate-x-[-50%]", className)}
-      onClick={scrollToBottom}
+    <MessageScrollerButton
+      className={cn("absolute bottom-2", className)}
+      behavior={prefersReducedMotion ? "auto" : "smooth"}
       size="xs"
       type="button"
       variant="secondary"
       {...props}
-    >
-      Scroll to bottom
-    </Button>
+    />
   );
 };

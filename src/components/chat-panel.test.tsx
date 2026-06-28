@@ -2556,10 +2556,12 @@ describe("ChatPanel mode examples", () => {
 
     const firstCard = screen.getByTestId("mode-example-discuss-0");
     const cardText = firstCard.textContent ?? "";
+    const composerInput = screen.getByPlaceholderText("Ask about architecture, module boundaries, data flow, risks…");
     fireEvent.click(firstCard);
 
     expect(setChatInput).toHaveBeenCalledTimes(1);
     expect(setChatInput).toHaveBeenCalledWith(cardText);
+    expect(composerInput).toHaveFocus();
     // Critical: clicking a card never sends. The prompt is a scaffold
     // the user is expected to refine before hitting Send.
     expect(onSendMessage).not.toHaveBeenCalled();

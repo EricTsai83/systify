@@ -47,6 +47,7 @@ vi.mock("convex/react", () => ({
 vi.mock("@/components/ai-elements/conversation", () => ({
   Conversation: ({ children }: { children: React.ReactNode }) => <div data-testid="conversation">{children}</div>,
   ConversationContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  ConversationItem: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   ConversationScrollButton: () => null,
 }));
 
