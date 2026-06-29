@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAction, useQuery } from "convex/react";
-import { CaretRightIcon, CheckIcon, CopySimpleIcon, MinusIcon, PlusIcon } from "@phosphor-icons/react";
+import { CheckIcon, CopySimpleIcon, MinusIcon, PlusIcon, SlidersHorizontalIcon, XIcon } from "@phosphor-icons/react";
+import { motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import { Markdown, type MermaidRepairRequest } from "@/components/markdown";
@@ -38,6 +39,7 @@ import { cn } from "@/lib/utils";
 const FONT_SIZE_STEPS = ["80", "90", "100", "110", "125", "140", "160", "180"] as const;
 type FontSize = (typeof FONT_SIZE_STEPS)[number];
 const DEFAULT_FONT_SIZE: FontSize = "100";
+const READER_TOOLBAR_STATES = ["collapsed", "expanded"] as const;
 const UPDATED_AT_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -54,10 +56,9 @@ function fontSizeZoom(size: FontSize): number {
 /**
  * Library editor (center pane).
  *
- * Renders one artifact in the IDE-style shell: breadcrumb at top,
- * artifact metadata header, then the rendered body. The shell relies
- * on the inner ScrollArea for long-form reading — no minimap, no
- * outline rail.
+ * Renders one artifact in the IDE-style shell with a floating reader toolbar
+ * over the rendered body. The shell relies on the inner ScrollArea for
+ * long-form reading — no minimap, no outline rail.
  */
 export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactId; className?: string }) {
   const artifact = useQuery(api.artifacts.getById, { artifactId });
@@ -69,8 +70,13 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
       ? { artifactId, version: selectedVersion }
       : "skip",
   );
-  const folder = useQuery(api.artifactFolders.getById, artifact?.folderId ? { folderId: artifact.folderId } : "skip");
   const repairMermaidBlock = useAction(api.artifactMermaidRepairNode.repairArtifactMermaidBlock);
+  const [toolbarState, setToolbarState] = useLocalStorageEnum(
+    "systify.library.readerToolbar",
+    READER_TOOLBAR_STATES,
+    "collapsed",
+  );
+  const shouldReduceMotion = useReducedMotion();
 
   useEffect(() => {
     setSelectedVersion(null);
@@ -113,13 +119,7 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
   );
 
   if (artifact === undefined) {
-    return (
-      <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
-        <ScrollArea className="min-h-0 flex-1">
-          <EditorSkeleton className="mx-auto min-h-[60vh] w-full max-w-[68ch]" />
-        </ScrollArea>
-      </div>
-    );
+    return <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)} />;
   }
   if (artifact === null) {
     return (
@@ -145,15 +145,62 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
   const versionIsLoading = displayedArtifact === undefined;
   const versionIsMissing = displayedArtifact === null;
   const copyIsDisabled = versionIsLoading || versionIsMissing;
+  const toolbarExpanded = toolbarState === "expanded";
+  const toolbarLayoutTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : ({ duration: 0.22, ease: [0.23, 1, 0.32, 1] } as const);
+  const toolbarContentTransition = shouldReduceMotion
+    ? { duration: 0 }
+    : ({ duration: 0.22, ease: [0.23, 1, 0.32, 1] } as const);
 
   return (
-    <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
-      <div className="flex shrink-0 flex-nowrap items-center gap-2 border-b border-border bg-background/80 px-4 py-1 backdrop-blur">
-        <LibraryBreadcrumb folderName={folder?.name ?? null} title={displayedArtifact?.title ?? artifact.title} />
-        <span className="hidden shrink-0 text-xs text-muted-foreground lg:inline">
-          Updated {UPDATED_AT_FORMATTER.format(displayedUpdatedAt)}
-        </span>
-        <div className="ml-auto flex items-center gap-1.5">
+    <div className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden", className)}>
+      <motion.div
+        layout
+        transition={toolbarLayoutTransition}
+        className={cn(
+          "absolute top-3 right-4 z-10 flex max-w-[calc(100%-2rem)] flex-row-reverse items-center overflow-hidden border border-border bg-background/95 shadow-sm backdrop-blur",
+          toolbarExpanded ? "p-0.5" : "p-0",
+        )}
+        data-testid="reader-toolbar"
+      >
+        <motion.div
+          layout
+          animate={{
+            height: toolbarExpanded ? 24 : 28,
+            width: toolbarExpanded ? 24 : 28,
+          }}
+          transition={toolbarLayoutTransition}
+          className="shrink-0"
+        >
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-full w-full p-0"
+            aria-label={toolbarExpanded ? "Collapse reader tools" : "Expand reader tools"}
+            aria-expanded={toolbarExpanded}
+            aria-controls="library-reader-tools"
+            onClick={() => setToolbarState(toolbarExpanded ? "collapsed" : "expanded")}
+          >
+            {toolbarExpanded ? <XIcon size={12} weight="bold" /> : <SlidersHorizontalIcon size={13} weight="bold" />}
+          </Button>
+        </motion.div>
+
+        <motion.div
+          id="library-reader-tools"
+          aria-hidden={!toolbarExpanded}
+          inert={!toolbarExpanded ? true : undefined}
+          animate={{
+            width: toolbarExpanded ? "auto" : 0,
+            opacity: toolbarExpanded ? 1 : 0,
+          }}
+          transition={toolbarContentTransition}
+          className={cn(
+            "flex max-w-[calc(100vw-6rem)] flex-nowrap items-center gap-1 overflow-hidden whitespace-nowrap",
+            !toolbarExpanded && "pointer-events-none",
+          )}
+        >
           <ArtifactVersionSelect
             versions={versions}
             currentVersion={artifact.version}
@@ -161,20 +208,23 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
             onChange={(version) => setSelectedVersion(version === artifact.version ? null : version)}
           />
           {!isHtmlArtifact ? <FontSizeControl value={fontSize} onChange={setFontSize} /> : null}
+          <ReaderToolbarSeparator />
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 gap-1.5 px-2"
+            className="h-6 w-14 shrink-0 gap-1 px-1.5 text-[11px]"
             onClick={() => void runCopy()}
             disabled={copyIsDisabled}
             aria-label="Copy markdown"
+            tabIndex={toolbarExpanded ? undefined : -1}
           >
             {copied ? <CheckIcon size={13} weight="bold" /> : <CopySimpleIcon size={13} weight="bold" />}
             {copied ? "Copied" : "Copy"}
           </Button>
-        </div>
-      </div>
+          <ReaderToolbarSeparator className="mr-1" />
+        </motion.div>
+      </motion.div>
 
       <ScrollArea className="min-h-0 flex-1">
         <article
@@ -208,12 +258,19 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
                   </Markdown>
                 </div>
               )}
+              <p className="border-t border-border pt-3 text-right text-[11px] text-muted-foreground">
+                Updated {UPDATED_AT_FORMATTER.format(displayedUpdatedAt)}
+              </p>
             </>
           )}
         </article>
       </ScrollArea>
     </div>
   );
+}
+
+function ReaderToolbarSeparator({ className }: { className?: string }) {
+  return <span aria-hidden="true" className={cn("h-4 w-px shrink-0 bg-border", className)} />;
 }
 
 function ArtifactVersionSelect({
@@ -239,7 +296,7 @@ function ArtifactVersionSelect({
 
   return (
     <Select value={String(selectedVersion)} onValueChange={(value) => onChange(Number(value))}>
-      <SelectTrigger className="h-7 w-28 px-2 text-[11px]" aria-label="Artifact version">
+      <SelectTrigger className="h-6 w-24 shrink-0 px-1.5 text-[11px]" aria-label="Artifact version">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -284,22 +341,6 @@ function ArtifactHtmlViewer({ artifactId, version }: { artifactId: ArtifactId; v
   );
 }
 
-export function LibraryBreadcrumb({ folderName, title }: { folderName: string | null; title: string }) {
-  return (
-    <nav aria-label="Artifact breadcrumb" className="flex min-w-0 items-center gap-1 text-[12px] text-muted-foreground">
-      <span>Repository</span>
-      <CaretRightIcon size={10} weight="bold" />
-      {folderName ? (
-        <>
-          <span className="truncate text-foreground">{folderName}</span>
-          <CaretRightIcon size={10} weight="bold" />
-        </>
-      ) : null}
-      <span className="truncate font-medium text-foreground">{title}</span>
-    </nav>
-  );
-}
-
 /**
  * Stepper for the Reader's text-size preference: a −/+ pair that walks
  * the `FONT_SIZE_STEPS` ladder one rung per click. Two buttons however
@@ -317,12 +358,12 @@ function FontSizeControl({ value, onChange }: { value: FontSize; onChange: (next
   };
 
   return (
-    <div className="flex items-center" role="group" aria-label="Reading text size">
+    <div className="flex shrink-0 items-center" role="group" aria-label="Reading text size">
       <Button
         type="button"
         variant="ghost"
         size="sm"
-        className="h-7 w-7 px-0"
+        className="h-6 w-6 px-0"
         disabled={atMin}
         onClick={() => stepTo(-1)}
         aria-label="Decrease text size"
@@ -333,27 +374,13 @@ function FontSizeControl({ value, onChange }: { value: FontSize; onChange: (next
         type="button"
         variant="ghost"
         size="sm"
-        className="h-7 w-7 px-0"
+        className="h-6 w-6 px-0"
         disabled={atMax}
         onClick={() => stepTo(1)}
         aria-label="Increase text size"
       >
         <PlusIcon size={13} weight="bold" />
       </Button>
-    </div>
-  );
-}
-
-function EditorSkeleton({ className }: { className?: string }) {
-  return (
-    <div className={cn("flex flex-1 flex-col gap-3 px-6 py-8", className)}>
-      <Skeleton className="h-7 w-2/3" />
-      <Skeleton className="h-4 w-1/3" />
-      <div className="mt-4 flex flex-col gap-2">
-        {Array.from({ length: 6 }).map((_, idx) => (
-          <Skeleton key={idx} className="h-3 w-full" />
-        ))}
-      </div>
     </div>
   );
 }

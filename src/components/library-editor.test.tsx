@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type React from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { getFunctionName } from "convex/server";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
@@ -40,8 +40,18 @@ vi.mock("@/components/ui/badge", () => ({
 }));
 
 vi.mock("@/components/ui/scroll-area", () => ({
-  ScrollArea: ({ children, className }: { children: React.ReactNode; className?: string }) => (
-    <div className={className}>{children}</div>
+  ScrollArea: ({
+    children,
+    className,
+    viewportRef,
+  }: {
+    children: React.ReactNode;
+    className?: string;
+    viewportRef?: React.Ref<HTMLDivElement>;
+  }) => (
+    <div ref={viewportRef} data-testid="reader-viewport" className={className}>
+      {children}
+    </div>
   ),
 }));
 
@@ -79,6 +89,7 @@ function makeHtmlArtifact(): Doc<"artifacts"> & { freshness: ArtifactFreshness }
 }
 
 beforeEach(() => {
+  window.localStorage.clear();
   mocks.useAction.mockReset().mockReturnValue(vi.fn());
   mocks.useQuery.mockReset().mockImplementation((reference: unknown, args: unknown) => {
     if (args === "skip") return undefined;
@@ -100,6 +111,15 @@ afterEach(() => {
 });
 
 describe("LibraryEditor HTML artifacts", () => {
+  test("does not render a skeleton while the artifact is loading", () => {
+    mocks.useQuery.mockReturnValue(undefined);
+
+    render(<LibraryEditor artifactId={artifactId} />);
+
+    expect(screen.queryByTestId("skeleton")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("reader-viewport")).not.toBeInTheDocument();
+  });
+
   test("renders persisted HTML artifacts in a sandboxed iframe", () => {
     render(<LibraryEditor artifactId={artifactId} />);
 
@@ -108,5 +128,24 @@ describe("LibraryEditor HTML artifacts", () => {
     expect(iframe).toHaveAttribute("referrerpolicy", "no-referrer");
     expect(iframe).toHaveAttribute("src", "https://storage.example/report.html");
     expect(screen.queryByTestId("markdown")).not.toBeInTheDocument();
+  });
+
+  test("renders update time in the document footer", () => {
+    render(<LibraryEditor artifactId={artifactId} />);
+
+    expect(screen.queryByLabelText("Artifact breadcrumb")).not.toBeInTheDocument();
+    expect(screen.getByText(/Updated/)).toBeInTheDocument();
+  });
+
+  test("collapses reader tools until the toolbar is expanded", () => {
+    render(<LibraryEditor artifactId={artifactId} />);
+
+    expect(screen.getByRole("button", { name: "Expand reader tools" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("button", { name: "Copy markdown" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand reader tools" }));
+
+    expect(screen.getByRole("button", { name: "Collapse reader tools" })).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("button", { name: "Copy markdown" })).toBeInTheDocument();
   });
 });
