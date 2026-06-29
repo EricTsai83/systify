@@ -5,12 +5,11 @@ import type { ArtifactId, FolderId } from "@/lib/types";
 
 /**
  * Hold Convex subscriptions open for `artifactIds` (and their `folderIds`)
- * so switching between Library tabs is instantaneous and stays
- * live-reactive.
+ * so the active Library reader and its breadcrumb stay live-reactive.
  *
  * Convex's `useQuery` re-subscribes from scratch when its args change,
  * returning `undefined` until the server responds — that gap is the
- * `EditorSkeleton` flash users see when switching tabs. By subscribing
+ * `EditorSkeleton` flash users see when the reader changes. By subscribing
  * in parallel at a parent level via `useQueries`, the data for these
  * artifacts is already on the client. When `LibraryEditor`'s `useQuery`
  * mounts with the same `(query, args)` it shares the same ref-counted
@@ -19,8 +18,8 @@ import type { ArtifactId, FolderId } from "@/lib/types";
  * This is *not* a cache — every entry is a real, server-pushed
  * subscription, so server-side edits stream in normally with no stale
  * read risk. The cost is `artifactIds.length + folderIds.length` extra
- * subscriptions; the Library tab strip already caps `openArtifactIds`
- * at `MAX_OPEN_TABS`, so the working set is bounded for free.
+ * subscriptions; Library currently warms only the active artifact and
+ * its folder, so the working set stays small.
  *
  * Both `artifacts.getById` and `artifactFolders.getById` are warmed
  * because the editor renders both together (breadcrumb + body) —

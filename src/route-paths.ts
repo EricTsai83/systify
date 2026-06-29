@@ -151,33 +151,22 @@ export function newDiscussPath(repositoryId: RepositoryId): string {
 }
 
 /**
- * Library mode landing. With an artifact id, opens the IDE-style reader
- * directly on that artifact; without one, the shell shows the docs
- * navigator. The `open` option is the multi-tab list to restore
- * (round-tripped through `?open=id1,id2`); empty / undefined means
- * "open just the active tab". An `?ask=:threadId` query param may also
- * be present — that one is owned by the page, not these builders.
+ * Library mode landing. With an artifact id, opens the reader directly
+ * on that artifact; without one, the shell shows the docs navigator. An
+ * `?ask=:threadId` query param may also be present — that one is owned
+ * by the page, not these builders.
  */
 export function libraryPath(repositoryId: RepositoryId): string {
   return `/r/${repositoryId}/library`;
 }
 
-export function libraryArtifactPath(
-  repositoryId: RepositoryId,
-  artifactId: ArtifactId,
-  options?: { open?: ArtifactId[] },
-): string {
-  const base = `/r/${repositoryId}/library/a/${artifactId}`;
-  if (!options?.open || options.open.length === 0) {
-    return base;
-  }
-  const params = new URLSearchParams({ open: options.open.join(",") });
-  return `${base}?${params.toString()}`;
+export function libraryArtifactPath(repositoryId: RepositoryId, artifactId: ArtifactId): string {
+  return `/r/${repositoryId}/library/a/${artifactId}`;
 }
 
 /**
  * Append or clear the `?ask=:threadId` query param on a Library URL,
- * preserving any other query params already present (notably `?open=`).
+ * preserving any other query params already present.
  */
 export function withLibraryAskParam(base: string, askThreadId: ThreadId | null): string {
   const [path, existingQuery] = base.split("?");

@@ -5,7 +5,6 @@ import {
   ClockCounterClockwiseIcon,
   DatabaseIcon,
   EyeIcon,
-  LightningIcon,
   WarningCircleIcon,
   XIcon,
 } from "@phosphor-icons/react";
@@ -15,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { ButtonStateText } from "@/components/ui/button-state-text";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Spinner } from "@/components/ui/spinner";
-import { useRelativeTime, useTimeUntil } from "@/hooks/use-relative-time";
+import { useRelativeTime } from "@/hooks/use-relative-time";
 import type { ArtifactId, SandboxModeStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
@@ -24,7 +23,6 @@ import {
   isUserRelevantJob,
   presentOperation,
   presentRepositoryIntelligenceSurface,
-  presentSandboxSurface,
   type OperationTone,
   type SurfaceStatus,
 } from "@/lib/operations";
@@ -62,8 +60,6 @@ type StatusPanelProps = {
  */
 export function StatusPanel({
   repository,
-  sandboxModeStatus,
-  sandbox,
   jobs,
   artifacts,
   hasRemoteUpdates,
@@ -82,11 +78,6 @@ export function StatusPanel({
         hasRemoteUpdates,
       }),
     [repository.importStatus, isSyncing, hasRemoteUpdates],
-  );
-
-  const sandboxStatus = useMemo(
-    () => presentSandboxSurface({ sandboxModeStatus, sandbox }),
-    [sandboxModeStatus, sandbox],
   );
 
   const repositoryBusy = isSyncing || repository.importStatus === "queued" || repository.importStatus === "running";
@@ -147,13 +138,6 @@ export function StatusPanel({
                 ) : null
               }
             />
-
-            <StatusCard
-              eyebrow="Live source"
-              surface={sandboxStatus}
-              icon={<LightningIcon weight="bold" />}
-              meta={sandboxStatus.ttlExpiresAt ? <RelativeExpiry timestamp={sandboxStatus.ttlExpiresAt} /> : null}
-            />
           </section>
 
           <ActivitySection
@@ -199,12 +183,6 @@ function StatusCard({
       {action ? <div className="mt-2.5">{action}</div> : null}
     </div>
   );
-}
-
-function RelativeExpiry({ timestamp }: { timestamp: number }) {
-  const label = useTimeUntil(timestamp);
-  if (!label) return null;
-  return <span>Auto-archives {label}</span>;
 }
 
 const TIMELINE_VISIBLE_LIMIT = 8;

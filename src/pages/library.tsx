@@ -1,16 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import {
-  BookOpenIcon,
-  CaretDownIcon,
-  CircleIcon,
-  FoldersIcon,
-  LightningIcon,
-  PaperPlaneTiltIcon,
-  SparkleIcon,
-  WarningCircleIcon,
-} from "@phosphor-icons/react";
+import { BookOpenIcon, CaretDownIcon, FoldersIcon, PaperPlaneTiltIcon, SparkleIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import {
   AppSidebarLeft,
@@ -41,7 +32,6 @@ import {
   SidebarInset,
   SidebarTrigger,
 } from "@/components/ui/sidebar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   PromptInputComposerFrame,
@@ -57,11 +47,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
 import { useCheckForUpdates } from "@/hooks/use-check-for-updates";
-import { useLibraryTabs } from "@/hooks/use-library-tabs";
 import { useRepositoryLifecycle } from "@/hooks/use-repository-lifecycle";
 import { isViewerFeatureEnabled, useViewerAccess } from "@/hooks/use-viewer-access";
 import {
   DEFAULT_AUTHENTICATED_PATH,
+  libraryArtifactPath,
   libraryPath,
   modeAwareThreadPath,
   repositoryPath,
@@ -85,7 +75,7 @@ const MOBILE_DRAWER_HEIGHT_CLASS = "h-[95dvh] data-[vaul-drawer-direction=bottom
  * Mounted at:
  *   - `/r/:repositoryId/library`               → docs navigator.
  *   - `/r/:repositoryId/library/a/:artifactId` → shell with the artifact
- *                                                open in the active tab.
+ *                                                open in the reader.
  *
  * The active Library Ask thread is carried as a `?ask=:threadId` query
  * param on either of those URLs.
@@ -164,7 +154,7 @@ function LibraryRepository({
   );
   const hasLocalRepositoryIntent = readString(ACTIVE_REPOSITORY_STORAGE_KEY) === repositoryId;
 
-  const tabs = useLibraryTabs(canLoadRepositoryData ? repositoryId : null, canLoadRepositoryData ? artifactId : null);
+  const activeArtifactId = canLoadRepositoryData ? artifactId : null;
 
   const allArtifacts = useQuery(
     api.artifacts.listMetadataByRepositoryWithFreshness,
@@ -181,10 +171,10 @@ function LibraryRepository({
 
   useEffect(() => {
     if (!canLoadRepositoryData) return;
-    if (tabs.activeArtifactId) {
-      markViewed(tabs.activeArtifactId);
+    if (activeArtifactId) {
+      markViewed(activeArtifactId);
     }
-  }, [canLoadRepositoryData, tabs.activeArtifactId, markViewed]);
+  }, [activeArtifactId, canLoadRepositoryData, markViewed]);
 
   const [isGenerateDialogOpen, setIsGenerateDialogOpen] = useState(false);
   const openGenerateDialog = useCallback(() => setIsGenerateDialogOpen(true), []);
@@ -284,6 +274,17 @@ function LibraryRepository({
     [setSearchParams],
   );
 
+  const handleSelectLibraryArtifact = useCallback(
+    (nextArtifactId: ArtifactId) => {
+      void navigate(withLibraryAskParam(libraryArtifactPath(repositoryId, nextArtifactId), askThreadId));
+    },
+    [askThreadId, navigate, repositoryId],
+  );
+
+  const handleShowLibraryNavigator = useCallback(() => {
+    void navigate(withLibraryAskParam(libraryPath(repositoryId), askThreadId));
+  }, [askThreadId, navigate, repositoryId]);
+
   const handleRailError = useCallback((message: string | null) => {
     if (!message) return;
     toast.error(message);
@@ -363,8 +364,8 @@ function LibraryRepository({
         importDisabledReason={importDisabledReason}
         libraryRepositoryId={repositoryId}
         libraryArtifacts={allArtifacts}
-        libraryActiveArtifactId={tabs.activeArtifactId}
-        onSelectLibraryArtifact={tabs.openTab}
+        libraryActiveArtifactId={activeArtifactId}
+        onSelectLibraryArtifact={handleSelectLibraryArtifact}
         isUnseen={isUnseen}
       />
       <SidebarInset>
@@ -397,14 +398,13 @@ function LibraryRepository({
           onNewThread={() => {}}
           onSync={() => void handleSync()}
           syncDisabledReason={syncDisabledReason}
-          onViewArtifact={tabs.openTab}
+          onViewArtifact={handleSelectLibraryArtifact}
           showSystemStatus={repoDetail !== null}
           showRepositoryTitle={false}
-          centerActions={<LibraryLiveSourceBadge status={sandboxActivityStatus} />}
           rightActions={
             <>
               <LibraryDesignDocsMenu
-                onShowNavigator={tabs.showNavigator}
+                onShowNavigator={handleShowLibraryNavigator}
                 onGenerate={openGenerateDialog}
                 generateDisabledReason={generateSystemDesignDisabledReason}
               />
@@ -424,15 +424,20 @@ function LibraryRepository({
           </div>
         ) : null}
         <div className="flex min-h-0 min-w-0 flex-1">
-          <LibraryShell repositoryId={repositoryId} tabs={tabs} allArtifacts={allArtifacts} />
+          <LibraryShell
+            repositoryId={repositoryId}
+            activeArtifactId={activeArtifactId}
+            onSelectArtifact={handleSelectLibraryArtifact}
+            allArtifacts={allArtifacts}
+          />
         </div>
       </SidebarInset>
       <AppSidebarRight
         repositoryId={repositoryId}
         askThreadId={askThreadId}
-        activeArtifactId={tabs.activeArtifactId}
+        activeArtifactId={activeArtifactId}
         hasArtifacts={hasArtifacts}
-        onSelectArtifact={tabs.openTab}
+        onSelectArtifact={handleSelectLibraryArtifact}
         onSelectAskThread={handleSelectLibraryThread}
         onGenerate={openGenerateDialog}
         askDisabledReason={libraryAskDisabledReason}
@@ -460,7 +465,7 @@ function LibraryRepository({
                 isSyncing={isHeaderSyncing}
                 onSync={() => void handleSync()}
                 syncDisabledReason={syncDisabledReason}
-                onViewArtifact={tabs.openTab}
+                onViewArtifact={handleSelectLibraryArtifact}
                 onClose={() => setIsStatusOpen(false)}
               />
             </div>
@@ -634,66 +639,4 @@ export function PendingLibraryAskShell() {
       </div>
     </div>
   );
-}
-
-type LibrarySandboxActivityStatus = ReturnType<typeof useQuery<typeof api.repositories.getSandboxActivityStatus>>;
-
-export function LibraryLiveSourceBadge({ status }: { status: LibrarySandboxActivityStatus | undefined }) {
-  const presentation = getLibraryLiveSourcePresentation(status);
-  const Icon = presentation.icon;
-
-  return (
-    <Badge
-      variant="outline"
-      title={presentation.title}
-      aria-label={presentation.title}
-      className={cn("ml-2 h-6 shrink-0 gap-1.5 px-2 text-[11px] font-medium", presentation.className)}
-    >
-      <Icon size={10} weight="fill" className={presentation.iconClassName} aria-hidden="true" />
-      <span>{presentation.label}</span>
-    </Badge>
-  );
-}
-
-function getLibraryLiveSourcePresentation(status: LibrarySandboxActivityStatus | undefined) {
-  if (status == null) {
-    return {
-      label: "Code access",
-      title: "Repository code access status is loading",
-      icon: CircleIcon,
-      className: "border-border bg-card text-muted-foreground",
-      iconClassName: "animate-pulse text-muted-foreground",
-    };
-  }
-
-  if (status.kind === "ready" || status.kind === "expiring_soon") {
-    return {
-      label: "Code access active",
-      title:
-        status.kind === "expiring_soon"
-          ? "Repository code access is active and will auto-archive soon"
-          : "Repository code access is active",
-      icon: LightningIcon,
-      className: "border-success/35 bg-success/10 text-success",
-      iconClassName: "text-success",
-    };
-  }
-
-  if (status.kind === "preparing") {
-    return {
-      label: "Code access starting",
-      title: "Repository code access is starting",
-      icon: CircleIcon,
-      className: "border-primary/35 bg-primary/10 text-primary",
-      iconClassName: "animate-pulse text-primary",
-    };
-  }
-
-  return {
-    label: "Code access idle",
-    title: "Repository code access starts when a task needs current repository files.",
-    icon: WarningCircleIcon,
-    className: "border-border bg-card text-muted-foreground",
-    iconClassName: "text-muted-foreground",
-  };
 }

@@ -38,6 +38,13 @@ import { cn } from "@/lib/utils";
 const FONT_SIZE_STEPS = ["80", "90", "100", "110", "125", "140", "160", "180"] as const;
 type FontSize = (typeof FONT_SIZE_STEPS)[number];
 const DEFAULT_FONT_SIZE: FontSize = "100";
+const UPDATED_AT_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
 
 /** The CSS `zoom` multiplier for a stored text-size rung. */
 function fontSizeZoom(size: FontSize): number {
@@ -131,6 +138,7 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
   const isHistoricalVersion = displayedVersion !== artifact.version;
   const displayedArtifact = isHistoricalVersion ? historicalVersion : artifact;
   const selectedVersionMetadata = versions?.find((version) => version.version === displayedVersion);
+  const displayedUpdatedAt = selectedVersionMetadata?.createdAt ?? artifact.updatedAt ?? artifact._creationTime;
   const selectedRenderFormat =
     displayedArtifact?.renderFormat ?? selectedVersionMetadata?.renderFormat ?? artifact.renderFormat;
   const isHtmlArtifact = selectedRenderFormat === "html";
@@ -140,8 +148,11 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
 
   return (
     <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur">
+      <div className="flex shrink-0 flex-nowrap items-center gap-2 border-b border-border bg-background/80 px-4 py-1 backdrop-blur">
         <LibraryBreadcrumb folderName={folder?.name ?? null} title={displayedArtifact?.title ?? artifact.title} />
+        <span className="hidden shrink-0 text-xs text-muted-foreground lg:inline">
+          Updated {UPDATED_AT_FORMATTER.format(displayedUpdatedAt)}
+        </span>
         <div className="ml-auto flex items-center gap-1.5">
           <ArtifactVersionSelect
             versions={versions}
@@ -154,7 +165,7 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
             type="button"
             variant="ghost"
             size="sm"
-            className="gap-1.5"
+            className="h-7 gap-1.5 px-2"
             onClick={() => void runCopy()}
             disabled={copyIsDisabled}
             aria-label="Copy markdown"
@@ -228,7 +239,7 @@ function ArtifactVersionSelect({
 
   return (
     <Select value={String(selectedVersion)} onValueChange={(value) => onChange(Number(value))}>
-      <SelectTrigger className="h-8 w-28 px-2 text-[11px]" aria-label="Artifact version">
+      <SelectTrigger className="h-7 w-28 px-2 text-[11px]" aria-label="Artifact version">
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -311,7 +322,7 @@ function FontSizeControl({ value, onChange }: { value: FontSize; onChange: (next
         type="button"
         variant="ghost"
         size="sm"
-        className="w-8 px-0"
+        className="h-7 w-7 px-0"
         disabled={atMin}
         onClick={() => stepTo(-1)}
         aria-label="Decrease text size"
@@ -322,7 +333,7 @@ function FontSizeControl({ value, onChange }: { value: FontSize; onChange: (next
         type="button"
         variant="ghost"
         size="sm"
-        className="w-8 px-0"
+        className="h-7 w-7 px-0"
         disabled={atMax}
         onClick={() => stepTo(1)}
         aria-label="Increase text size"

@@ -12,16 +12,13 @@ import { cn } from "@/lib/utils";
 /**
  * Library Ask thread tab strip.
  *
- * An IDE-style *open set*: one tab per thread the user has opened, mirroring
- * the artifact tab strip's chrome (`LibraryTabs`) — horizontal scroll with a
- * left edge gradient, a trailing pinned slot. Click activates; the X (and
+ * An IDE-style *open set*: one tab per thread the user has opened, with
+ * horizontal scroll, a left edge gradient, and a trailing pinned slot. Click activates; the X (and
  * middle-click) **close the tab only** — they do not delete the thread.
  * Deleting a thread lives in the history popover, opened by the trailing
  * clock button, so it is always a deliberate, searched-for action.
  *
- * This is a sibling of `LibraryTabs`, not a generalization of it: the two
- * share visual chrome but neither data shape nor behavior. The strip renders
- * the `tabs` it is handed — the panel reconciles cached titles against
+ * The strip renders the `tabs` it is handed — the panel reconciles cached titles against
  * `listThreads` before passing them in.
  */
 export interface LibraryAskThreadTabsProps {
