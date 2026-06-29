@@ -1,6 +1,12 @@
-import { BookOpenIcon, FlaskIcon } from "@phosphor-icons/react";
+import { BookOpenIcon, FlaskIcon, ProhibitIcon } from "@phosphor-icons/react";
 import type { RepositoryModeDisabledReasonCode } from "../../convex/lib/chatEligibility";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  PromptInputSelect,
+  PromptInputSelectContent,
+  PromptInputSelectItem,
+  PromptInputSelectTrigger,
+  PromptInputSelectValue,
+} from "@/components/ai-elements/prompt-input";
 import { cn } from "@/lib/utils";
 
 /**
@@ -38,6 +44,8 @@ export interface GroundingToggleBarProps {
   hidden?: boolean;
   className?: string;
 }
+
+type GroundingSelectorValue = GroundingAxisId | "none";
 
 const LOADING_GROUNDING_VERDICT: GroundingAxisLike = {
   enabled: false,
@@ -81,9 +89,9 @@ export function createDiscussGroundingAxes(input: {
  * Per-message grounding selector for Discuss Mode.
  *
  * A single-select control for Library (artifact RAG), Sandbox (live source
- * tools), or no per-message grounding. Disabled options expose their reason
- * through a tooltip. Recoverable Sandbox liveness states stay selectable and
- * prepare on send.
+ * tools), or no per-message grounding. Disabled options keep their reason on
+ * the menu item's title. Recoverable Sandbox liveness states stay selectable
+ * and prepare on send.
  *
  * The session reducer also enforces mutual exclusion so this component and
  * send-time payloads cannot drift apart.
@@ -93,127 +101,172 @@ export function GroundingToggleBar({ axes, hidden = false, className }: Groundin
     return null;
   }
 
-  return (
-    <TooltipProvider delayDuration={150}>
-      <div
-        role="radiogroup"
-        aria-label="Discuss grounding source"
-        className={cn("inline-flex min-w-0 flex-wrap items-center border border-border bg-background", className)}
-      >
-        <GroundingNoneOption axes={axes} />
-        {axes.map((axis) => (
-          <GroundingAxisOption key={axis.id} axis={axis} axes={axes} />
-        ))}
-      </div>
-    </TooltipProvider>
-  );
-}
+  const activeAxis = axes.find((axis) => axis.active);
+  const value: GroundingSelectorValue = activeAxis?.id ?? "none";
+  const currentOption = activeAxis ? getAxisOptionPresentation(activeAxis) : NONE_OPTION_PRESENTATION;
 
-function GroundingNoneOption({ axes }: { axes: readonly GroundingAxisControl[] }) {
-  const active = axes.every((axis) => !axis.active);
-  return (
-    <GroundingOption
-      label="None"
-      active={active}
-      available
-      onSelect={() => {
-        axes.forEach((axis) => {
-          if (axis.active) {
-            axis.onActiveChange(false);
-          }
-        });
-      }}
-      testId="grounding-toggle-none"
-    />
-  );
-}
-
-function GroundingAxisOption({ axis, axes }: { axis: GroundingAxisControl; axes: readonly GroundingAxisControl[] }) {
-  const enabled = axis.verdict.enabled;
-  const activatable = !axis.verdict.enabled && axis.verdict.isActivatable === true;
-  const available = enabled || (axis.id === "sandbox" && activatable);
-  const reason = !axis.verdict.enabled ? axis.verdict.message : undefined;
-  const suffix =
-    axis.id === "sandbox" ? (activatable ? "prepares on send" : enabled ? "live source" : undefined) : undefined;
-  const Icon = axis.id === "library" ? BookOpenIcon : FlaskIcon;
-  const iconFilled = axis.active && available;
-
-  return (
-    <GroundingOption
-      label={axis.label}
-      icon={<Icon size={14} weight={iconFilled ? "fill" : "regular"} />}
-      active={axis.active}
-      available={available}
-      reason={reason}
-      suffix={suffix}
-      onSelect={() => {
-        if (!available || axis.active) {
-          return;
+  const handleValueChange = (next: string) => {
+    if (!isGroundingSelectorValue(next)) {
+      return;
+    }
+    if (next === value) {
+      return;
+    }
+    if (next === "none") {
+      axes.forEach((axis) => {
+        if (axis.active) {
+          axis.onActiveChange(false);
         }
-        axes.forEach((otherAxis) => {
-          if (otherAxis.id !== axis.id && otherAxis.active) {
-            otherAxis.onActiveChange(false);
-          }
-        });
-        axis.onActiveChange(true);
-      }}
-      testId={`grounding-toggle-${axis.id}`}
-    />
+      });
+      return;
+    }
+    const selectedAxis = axes.find((axis) => axis.id === next);
+    if (!selectedAxis || !isAxisAvailable(selectedAxis)) {
+      return;
+    }
+    axes.forEach((axis) => {
+      if (axis.id !== selectedAxis.id && axis.active) {
+        axis.onActiveChange(false);
+      }
+    });
+    selectedAxis.onActiveChange(true);
+  };
+
+  return (
+    <div className={cn("flex min-w-0 items-center", className)}>
+      <PromptInputSelect value={value} onValueChange={handleValueChange}>
+        <PromptInputSelectTrigger
+          aria-label="Discuss grounding source"
+          data-testid="grounding-toggle-trigger"
+          title={currentOption.title}
+          className={cn(
+            "h-8 w-auto min-w-0 max-w-40 justify-start gap-1.5 rounded-none border-none bg-transparent px-2 text-xs font-medium text-muted-foreground shadow-none",
+            "hover:bg-accent hover:text-foreground",
+            "focus-visible:bg-transparent focus-visible:text-foreground",
+            "aria-expanded:bg-accent aria-expanded:text-foreground",
+          )}
+        >
+          <span className="flex size-4 shrink-0 items-center justify-center self-center text-current">
+            <currentOption.Icon size={14} weight={currentOption.iconWeight} />
+          </span>
+          <PromptInputSelectValue className="flex items-center truncate leading-none" placeholder="Grounding">
+            {currentOption.label}
+          </PromptInputSelectValue>
+        </PromptInputSelectTrigger>
+        <PromptInputSelectContent className="min-w-44 border-border bg-popover p-1 text-popover-foreground shadow-lg">
+          <GroundingSelectItem
+            value="none"
+            label={NONE_OPTION_PRESENTATION.label}
+            title={NONE_OPTION_PRESENTATION.title}
+            Icon={NONE_OPTION_PRESENTATION.Icon}
+            testId="grounding-toggle-none"
+          />
+          {axes.map((axis) => {
+            const option = getAxisOptionPresentation(axis);
+            return (
+              <GroundingSelectItem
+                key={axis.id}
+                value={axis.id}
+                label={option.label}
+                title={option.title}
+                Icon={option.Icon}
+                disabled={!option.available}
+                suffix={option.suffix}
+                testId={`grounding-toggle-${axis.id}`}
+              />
+            );
+          })}
+        </PromptInputSelectContent>
+      </PromptInputSelect>
+    </div>
   );
 }
 
-type GroundingOptionProps = {
+type GroundingOptionPresentation = {
   label: string;
-  icon?: React.ReactNode;
-  active: boolean;
+  title: string;
+  Icon: typeof BookOpenIcon;
+  iconWeight: "regular" | "fill" | "bold";
   available: boolean;
-  reason?: string;
   suffix?: string;
-  onSelect: () => void;
-  testId: string;
 };
 
-function GroundingOption({ label, icon, active, available, reason, suffix, onSelect, testId }: GroundingOptionProps) {
-  const title = available ? (suffix ? `${label} grounding (${suffix})` : `${label} grounding`) : reason;
-  const button = (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={active}
-      aria-disabled={!available}
-      onClick={onSelect}
+const NONE_OPTION_PRESENTATION: GroundingOptionPresentation = {
+  label: "None",
+  title: "No per-message grounding",
+  Icon: ProhibitIcon,
+  iconWeight: "bold",
+  available: true,
+};
+
+function GroundingSelectItem({
+  value,
+  label,
+  title,
+  Icon,
+  disabled = false,
+  suffix,
+  testId,
+}: {
+  value: GroundingSelectorValue;
+  label: string;
+  title: string;
+  Icon: typeof BookOpenIcon;
+  disabled?: boolean;
+  suffix?: string;
+  testId: string;
+}) {
+  return (
+    <PromptInputSelectItem
+      value={value}
+      disabled={disabled}
       title={title}
       data-testid={testId}
       className={cn(
-        "inline-flex h-7 items-center gap-1.5 border-0 border-r border-border px-2 text-xs font-medium transition-colors last:border-r-0",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
-        active && available
-          ? "bg-primary/10 text-primary hover:bg-primary/15"
-          : available
-            ? "bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground"
-            : "cursor-not-allowed bg-muted/30 text-muted-foreground/70",
+        "h-8 px-2 py-0 text-sm text-popover-foreground",
+        "focus:bg-accent focus:text-accent-foreground data-highlighted:bg-accent",
+        "[&>span:first-child]:hidden",
       )}
     >
-      {icon ?? null}
-      <span>{label}</span>
-      {suffix && available ? (
-        <span aria-hidden="true" className="text-[10px] text-muted-foreground/80">
-          · {suffix}
+      <div className="flex h-full w-full min-w-0 items-center gap-2 leading-none">
+        <span className="flex size-5 shrink-0 items-center justify-center self-center text-muted-foreground">
+          <Icon size={15} weight="bold" />
         </span>
-      ) : null}
-    </button>
+        <span className="min-w-0 truncate leading-none">{label}</span>
+        {suffix ? <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/80">{suffix}</span> : null}
+      </div>
+    </PromptInputSelectItem>
   );
+}
 
-  if (!available && reason) {
-    return (
-      <Tooltip>
-        <TooltipTrigger asChild>{button}</TooltipTrigger>
-        <TooltipContent side="top" className="max-w-72">
-          {reason}
-        </TooltipContent>
-      </Tooltip>
-    );
-  }
+function getAxisOptionPresentation(axis: GroundingAxisControl): GroundingOptionPresentation {
+  const enabled = axis.verdict.enabled;
+  const activatable = !axis.verdict.enabled && axis.verdict.isActivatable === true;
+  const available = isAxisAvailable(axis);
+  const reason = !axis.verdict.enabled ? axis.verdict.message : undefined;
+  const suffix = axis.id === "sandbox" ? (activatable ? "Prepares" : enabled ? "Live" : undefined) : undefined;
+  const Icon = axis.id === "library" ? BookOpenIcon : FlaskIcon;
+  const label = axis.label;
+  return {
+    label,
+    title: available
+      ? suffix
+        ? `${label} grounding (${suffix.toLowerCase()} on send)`
+        : `${label} grounding`
+      : (reason ?? `${label} grounding unavailable`),
+    Icon,
+    iconWeight: axis.active && available ? "fill" : "regular",
+    available,
+    suffix,
+  };
+}
 
-  return button;
+function isAxisAvailable(axis: GroundingAxisControl): boolean {
+  const enabled = axis.verdict.enabled;
+  const activatable = !axis.verdict.enabled && axis.verdict.isActivatable === true;
+  return enabled || (axis.id === "sandbox" && activatable);
+}
+
+function isGroundingSelectorValue(value: string): value is GroundingSelectorValue {
+  return value === "none" || value === "library" || value === "sandbox";
 }

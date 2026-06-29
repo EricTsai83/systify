@@ -4,7 +4,7 @@ import type React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useMutation, usePaginatedQuery, useQuery } from "convex/react";
 import { getFunctionName } from "convex/server";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { api } from "../../convex/_generated/api";
 import { ChatContainer as RealChatContainer, ChatPanel as RealChatPanel } from "./chat-panel";
@@ -68,6 +68,15 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
   DropdownMenuSeparator: () => <div />,
   DropdownMenuTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
+
+beforeAll(() => {
+  if (!HTMLElement.prototype.hasPointerCapture) {
+    HTMLElement.prototype.hasPointerCapture = () => false;
+  }
+  if (!HTMLElement.prototype.releasePointerCapture) {
+    HTMLElement.prototype.releasePointerCapture = () => {};
+  }
+});
 
 vi.mock("@/components/app-notice", () => ({
   // Mock surfaces title / message and forwards `onAction` and `onDismiss` so
@@ -812,6 +821,7 @@ describe("ChatPanel streaming rendering", () => {
       />,
     );
 
+    fireEvent.pointerDown(screen.getByTestId("grounding-toggle-trigger"), { button: 0, pointerType: "mouse" });
     fireEvent.click(screen.getByTestId("grounding-toggle-sandbox"));
 
     expect(setGroundSandbox).toHaveBeenCalledWith(true);

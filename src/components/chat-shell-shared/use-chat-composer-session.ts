@@ -227,11 +227,7 @@ export function useChatComposerSession(args: UseChatComposerSessionArgs): ChatCo
     onAfterCreateThread: args.onAfterCreateThread,
   });
 
-  const modelPickerReady = !shouldRenderModelPicker || Array.isArray(modelCatalogEntries);
-  const reasoningPickerReady = !shouldRenderReasoningPicker || Array.isArray(reasoningCatalogEntries);
-  const groundingReady =
-    args.surface !== "repository" || args.mode !== "discuss" || args.groundingAvailability !== undefined;
-  const toolsReady = (args.extraControlsReady ?? true) && modelPickerReady && reasoningPickerReady && groundingReady;
+  const toolsReady = args.extraControlsReady ?? true;
 
   const accessDisabledReason =
     args.extraSendDisabledReason ?? access.chatSendDisabledReason ?? access.modelAccessDisabledReason;

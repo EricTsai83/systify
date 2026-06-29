@@ -1,14 +1,27 @@
 // @vitest-environment jsdom
 
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, test, vi } from "vitest";
 import { GroundingToggleBar, createDiscussGroundingAxes } from "./grounding-toggle-bar";
+
+beforeAll(() => {
+  if (!HTMLElement.prototype.hasPointerCapture) {
+    HTMLElement.prototype.hasPointerCapture = () => false;
+  }
+  if (!HTMLElement.prototype.releasePointerCapture) {
+    HTMLElement.prototype.releasePointerCapture = () => {};
+  }
+});
 
 afterEach(() => {
   cleanup();
 });
 
 describe("GroundingToggleBar", () => {
+  function openGroundingSelector() {
+    fireEvent.pointerDown(screen.getByTestId("grounding-toggle-trigger"), { button: 0, pointerType: "mouse" });
+  }
+
   test("recoverable Sandbox state selects desired grounding and shows prepare-on-send copy", () => {
     const setGroundSandbox = vi.fn();
 
@@ -32,8 +45,9 @@ describe("GroundingToggleBar", () => {
       />,
     );
 
+    openGroundingSelector();
     const sandboxToggle = screen.getByTestId("grounding-toggle-sandbox");
-    expect(sandboxToggle).toHaveTextContent("prepares on send");
+    expect(sandboxToggle).toHaveTextContent("Prepares");
 
     fireEvent.click(sandboxToggle);
 
@@ -59,6 +73,7 @@ describe("GroundingToggleBar", () => {
       />,
     );
 
+    openGroundingSelector();
     fireEvent.click(screen.getByTestId("grounding-toggle-library"));
 
     expect(setGroundSandbox).toHaveBeenCalledWith(false);
@@ -83,6 +98,7 @@ describe("GroundingToggleBar", () => {
       />,
     );
 
+    openGroundingSelector();
     fireEvent.click(screen.getByTestId("grounding-toggle-none"));
 
     expect(setGroundLibrary).toHaveBeenCalledWith(false);
@@ -122,15 +138,10 @@ describe("GroundingToggleBar", () => {
       />,
     );
 
+    openGroundingSelector();
     const libraryToggle = screen.getByTestId("grounding-toggle-library");
     expect(screen.queryByTestId("grounding-generate-cta")).not.toBeInTheDocument();
     expect(libraryToggle).toHaveAttribute("title", "Generate a guide first.");
-
-    fireEvent.pointerEnter(libraryToggle);
-    fireEvent.mouseMove(libraryToggle);
-    fireEvent.focus(libraryToggle);
-
-    expect(await screen.findByRole("tooltip")).toHaveTextContent("Generate a guide first.");
   });
 
   test("disabled non-activatable axis does not call change handler", () => {
@@ -155,6 +166,7 @@ describe("GroundingToggleBar", () => {
       />,
     );
 
+    openGroundingSelector();
     fireEvent.click(screen.getByTestId("grounding-toggle-sandbox"));
 
     expect(setGroundSandbox).not.toHaveBeenCalled();
