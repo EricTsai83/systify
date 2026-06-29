@@ -91,6 +91,7 @@ export function StatusPanel({
 
   const repositoryBusy = isSyncing || repository.importStatus === "queued" || repository.importStatus === "running";
   const repositoryFailed = repository.importStatus === "failed";
+  const shouldShowSyncAction = repositoryBusy || hasRemoteUpdates || repositoryFailed;
   const syncDisabled = repositoryBusy || syncDisabledReason !== undefined;
 
   return (
@@ -119,29 +120,31 @@ export function StatusPanel({
               surface={repositoryIntelligence}
               icon={<DatabaseIcon weight="bold" />}
               action={
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={hasRemoteUpdates || repositoryFailed ? "default" : "outline"}
-                  disabled={syncDisabled}
-                  title={syncDisabledReason}
-                  onClick={onSync}
-                  className="w-full"
-                >
-                  <ArrowsClockwiseIcon weight="bold" className={cn(repositoryBusy && "motion-safe:animate-spin")} />
-                  <ButtonStateText
-                    current={
-                      repositoryBusy
-                        ? "Syncing…"
-                        : hasRemoteUpdates
-                          ? "Sync updates"
-                          : repositoryFailed
-                            ? "Retry sync"
-                            : "Sync now"
-                    }
-                    states={["Sync now", "Sync updates", "Retry sync", "Syncing…"]}
-                  />
-                </Button>
+                shouldShowSyncAction ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={hasRemoteUpdates || repositoryFailed ? "default" : "outline"}
+                    disabled={syncDisabled}
+                    title={syncDisabledReason}
+                    onClick={onSync}
+                    className="w-full"
+                  >
+                    <ArrowsClockwiseIcon weight="bold" className={cn(repositoryBusy && "motion-safe:animate-spin")} />
+                    <ButtonStateText
+                      current={
+                        repositoryBusy
+                          ? "Syncing…"
+                          : hasRemoteUpdates
+                            ? "Needs update"
+                            : repositoryFailed
+                              ? "Retry sync"
+                              : "Sync repository"
+                      }
+                      states={["Needs update", "Retry sync", "Syncing…", "Sync repository"]}
+                    />
+                  </Button>
+                ) : null
               }
             />
 

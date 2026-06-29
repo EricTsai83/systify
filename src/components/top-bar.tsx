@@ -23,7 +23,6 @@ import { ChatModeControls } from "@/components/chat-mode-controls";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import type { AttachedRepositorySummary } from "@/hooks/use-thread-capabilities";
-import { getRepositoryStatusPresentation } from "@/lib/repository-status-presentation";
 import type { ArtifactId, RepositoryId, SandboxModeStatus, ThreadId, ThreadMode } from "@/lib/types";
 
 export type TopBarRepoDetail = {
@@ -329,25 +328,17 @@ function RepositoryActionsMenu({
   onRestoreRepo: () => void;
   onPermanentDeleteRepo: () => void;
 }) {
-  const statusState =
-    statusControl.isVisible && repoDetail
-      ? getRepositoryStatusPresentation({
-          repository: statusControl.repository,
-          sandboxModeStatus: statusControl.sandboxModeStatus,
-          jobs: statusControl.jobs,
-          hasRemoteUpdates: statusControl.hasRemoteUpdates,
-          isSyncing: statusControl.isSyncing,
-        })
-      : null;
+  const repositoryFailed = repoDetail?.repository.importStatus === "failed";
+  const shouldShowSyncAction = statusControl.isVisible && (statusControl.hasRemoteUpdates || repositoryFailed);
   const canSync = statusControl.isVisible && !statusControl.isSyncing && statusControl.syncDisabledReason === undefined;
   const syncLabel =
     statusControl.isVisible && statusControl.isSyncing
       ? "Syncing…"
       : statusControl.isVisible && statusControl.hasRemoteUpdates
-        ? "Sync updates"
-        : repoDetail?.repository.importStatus === "failed"
+        ? "Needs update"
+        : repositoryFailed
           ? "Retry sync"
-          : "Sync repository";
+          : null;
 
   return (
     <DropdownMenu>
@@ -365,30 +356,29 @@ function RepositoryActionsMenu({
       <DropdownMenuContent align="end" className="w-56">
         {statusControl.isVisible ? (
           <>
+            {shouldShowSyncAction && syncLabel ? (
+              <DropdownMenuItem
+                disabled={!canSync}
+                title={statusControl.syncDisabledReason}
+                onSelect={() => {
+                  if (!canSync) return;
+                  statusControl.onSync();
+                }}
+              >
+                <ArrowsClockwiseIcon
+                  weight="bold"
+                  className={statusControl.isSyncing ? "motion-safe:animate-spin" : ""}
+                />
+                <span className={statusControl.hasRemoteUpdates ? "text-warning" : undefined}>{syncLabel}</span>
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem
               onSelect={(e) => {
                 e.preventDefault();
                 statusControl.onOpenChange(true);
               }}
             >
-              <span className={statusState?.tone === "warning" ? "text-warning" : undefined}>
-                {statusState?.label ?? "Repository status"}
-              </span>
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={!canSync}
-              title={statusControl.syncDisabledReason}
-              onSelect={(e) => {
-                e.preventDefault();
-                if (!canSync) return;
-                statusControl.onSync();
-              }}
-            >
-              <ArrowsClockwiseIcon
-                weight="bold"
-                className={statusControl.isSyncing ? "motion-safe:animate-spin" : ""}
-              />
-              {syncLabel}
+              Repository status
             </DropdownMenuItem>
           </>
         ) : null}
