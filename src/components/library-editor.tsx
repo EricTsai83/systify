@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useAction, useQuery } from "convex/react";
 import { CheckIcon, CopySimpleIcon, MinusIcon, PlusIcon, SlidersHorizontalIcon, XIcon } from "@phosphor-icons/react";
 import { motion, useReducedMotion } from "motion/react";
@@ -39,7 +39,6 @@ import { cn } from "@/lib/utils";
 const FONT_SIZE_STEPS = ["80", "90", "100", "110", "125", "140", "160", "180"] as const;
 type FontSize = (typeof FONT_SIZE_STEPS)[number];
 const DEFAULT_FONT_SIZE: FontSize = "100";
-const READER_TOOLBAR_STATES = ["collapsed", "expanded"] as const;
 const UPDATED_AT_FORMATTER = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -71,15 +70,31 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
       : "skip",
   );
   const repairMermaidBlock = useAction(api.artifactMermaidRepairNode.repairArtifactMermaidBlock);
-  const [toolbarState, setToolbarState] = useLocalStorageEnum(
-    "systify.library.readerToolbar",
-    READER_TOOLBAR_STATES,
-    "collapsed",
-  );
+  const toolbarToolsContentRef = useRef<HTMLDivElement>(null);
+  const [toolbarToolsWidth, setToolbarToolsWidth] = useState(0);
+  const [toolbarExpanded, setToolbarExpanded] = useState(false);
   const shouldReduceMotion = useReducedMotion();
+
+  useLayoutEffect(() => {
+    const element = toolbarToolsContentRef.current;
+    if (!element) return;
+
+    const updateWidth = () => {
+      setToolbarToolsWidth(Math.ceil(element.scrollWidth));
+    };
+
+    updateWidth();
+
+    if (typeof ResizeObserver === "undefined") return;
+
+    const resizeObserver = new ResizeObserver(updateWidth);
+    resizeObserver.observe(element);
+    return () => resizeObserver.disconnect();
+  });
 
   useEffect(() => {
     setSelectedVersion(null);
+    setToolbarExpanded(false);
   }, [artifactId]);
 
   const [copied, setCopied] = useState(false);
@@ -145,7 +160,6 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
   const versionIsLoading = displayedArtifact === undefined;
   const versionIsMissing = displayedArtifact === null;
   const copyIsDisabled = versionIsLoading || versionIsMissing;
-  const toolbarExpanded = toolbarState === "expanded";
   const toolbarLayoutTransition = shouldReduceMotion
     ? { duration: 0 }
     : ({ duration: 0.22, ease: [0.23, 1, 0.32, 1] } as const);
@@ -156,16 +170,16 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
   return (
     <div className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden", className)}>
       <motion.div
-        layout
+        initial={false}
+        animate={{
+          padding: toolbarExpanded ? 2 : 0,
+        }}
         transition={toolbarLayoutTransition}
-        className={cn(
-          "absolute top-3 right-4 z-10 flex max-w-[calc(100%-2rem)] flex-row-reverse items-center overflow-hidden border border-border bg-background/95 shadow-sm backdrop-blur",
-          toolbarExpanded ? "p-0.5" : "p-0",
-        )}
+        className="absolute top-3 right-4 z-10 flex max-w-[calc(100%-2rem)] flex-row-reverse items-center overflow-hidden border border-border bg-background/95 shadow-sm backdrop-blur"
         data-testid="reader-toolbar"
       >
         <motion.div
-          layout
+          initial={false}
           animate={{
             height: toolbarExpanded ? 24 : 28,
             width: toolbarExpanded ? 24 : 28,
@@ -181,48 +195,51 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
             aria-label={toolbarExpanded ? "Collapse reader tools" : "Expand reader tools"}
             aria-expanded={toolbarExpanded}
             aria-controls="library-reader-tools"
-            onClick={() => setToolbarState(toolbarExpanded ? "collapsed" : "expanded")}
+            onClick={() => setToolbarExpanded((expanded) => !expanded)}
           >
             {toolbarExpanded ? <XIcon size={12} weight="bold" /> : <SlidersHorizontalIcon size={13} weight="bold" />}
           </Button>
         </motion.div>
 
         <motion.div
+          initial={false}
           id="library-reader-tools"
           aria-hidden={!toolbarExpanded}
           inert={!toolbarExpanded ? true : undefined}
           animate={{
-            width: toolbarExpanded ? "auto" : 0,
+            width: toolbarExpanded ? toolbarToolsWidth : 0,
             opacity: toolbarExpanded ? 1 : 0,
           }}
           transition={toolbarContentTransition}
           className={cn(
-            "flex max-w-[calc(100vw-6rem)] flex-nowrap items-center gap-1 overflow-hidden whitespace-nowrap",
+            "flex max-w-[calc(100vw-6rem)] justify-end overflow-hidden whitespace-nowrap",
             !toolbarExpanded && "pointer-events-none",
           )}
         >
-          <ArtifactVersionSelect
-            versions={versions}
-            currentVersion={artifact.version}
-            selectedVersion={displayedVersion}
-            onChange={(version) => setSelectedVersion(version === artifact.version ? null : version)}
-          />
-          {!isHtmlArtifact ? <FontSizeControl value={fontSize} onChange={setFontSize} /> : null}
-          <ReaderToolbarSeparator />
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="h-6 w-14 shrink-0 gap-1 px-1.5 text-[11px]"
-            onClick={() => void runCopy()}
-            disabled={copyIsDisabled}
-            aria-label="Copy markdown"
-            tabIndex={toolbarExpanded ? undefined : -1}
-          >
-            {copied ? <CheckIcon size={13} weight="bold" /> : <CopySimpleIcon size={13} weight="bold" />}
-            {copied ? "Copied" : "Copy"}
-          </Button>
-          <ReaderToolbarSeparator className="mr-1" />
+          <div ref={toolbarToolsContentRef} className="flex w-max shrink-0 flex-nowrap items-center gap-1">
+            <ArtifactVersionSelect
+              versions={versions}
+              currentVersion={artifact.version}
+              selectedVersion={displayedVersion}
+              onChange={(version) => setSelectedVersion(version === artifact.version ? null : version)}
+            />
+            {!isHtmlArtifact ? <FontSizeControl value={fontSize} onChange={setFontSize} /> : null}
+            <ReaderToolbarSeparator />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 w-14 shrink-0 gap-1 px-1.5 text-[11px]"
+              onClick={() => void runCopy()}
+              disabled={copyIsDisabled}
+              aria-label="Copy markdown"
+              tabIndex={toolbarExpanded ? undefined : -1}
+            >
+              {copied ? <CheckIcon size={13} weight="bold" /> : <CopySimpleIcon size={13} weight="bold" />}
+              {copied ? "Copied" : "Copy"}
+            </Button>
+            <ReaderToolbarSeparator className="mr-1" />
+          </div>
         </motion.div>
       </motion.div>
 
