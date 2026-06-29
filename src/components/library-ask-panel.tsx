@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   BookOpenIcon,
-  CaretDownIcon,
   FileHtmlIcon,
   FilePlusIcon,
   GitDiffIcon,
@@ -39,6 +38,7 @@ import {
 import { LibraryAskThreadTabs } from "@/components/library-ask-thread-tabs";
 import { type PromptInputModelPickerValue } from "@/components/ai-elements/prompt-input-model-picker";
 import { Button } from "@/components/ui/button";
+import { CompactDropdownTrigger } from "@/components/ui/compact-dropdown-trigger";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1058,23 +1058,13 @@ function LibraryAskComposerTools({ tools }: { tools: LibraryAskComposerToolsStat
     >
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            className={[
-              "inline-flex h-8 w-auto min-w-0 max-w-32 shrink-0 items-center justify-start gap-1.5 rounded-none border-none bg-transparent px-2 py-0 text-xs font-medium text-muted-foreground shadow-none transition-colors",
-              "hover:bg-accent hover:text-foreground",
-              "focus-visible:bg-transparent focus-visible:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-              "aria-expanded:bg-accent aria-expanded:text-foreground",
-              "disabled:pointer-events-none disabled:opacity-50",
-              "[&_svg]:shrink-0",
-            ].join(" ")}
+          <CompactDropdownTrigger
+            icon={<SparkleIcon size={13} weight="bold" />}
+            label="Draft"
+            className="max-w-32"
             disabled={tools.draftMenuDisabledReason !== undefined}
             title={tools.draftMenuDisabledReason}
-          >
-            <SparkleIcon size={13} weight="bold" />
-            <span className="truncate leading-none">Draft</span>
-            <CaretDownIcon size={11} weight="bold" />
-          </button>
+          />
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-56">
           <DropdownMenuItem onSelect={tools.openCreateDraft}>

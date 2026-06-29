@@ -1,7 +1,7 @@
 import { memo, isValidElement, useCallback, useMemo, useState, type ReactNode } from "react";
 import type { AllowedTags, Components } from "streamdown";
 import type { Doc } from "../../convex/_generated/dataModel";
-import { Message, MessageContent, MessageActions, MessageAction } from "@/components/ai-elements/message";
+import { Message, MessageContent, MessageActions } from "@/components/ai-elements/message";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { Shimmer } from "@/components/ai-elements/shimmer";
 import { LocalEditorSetupDialog } from "@/components/local-editor-setup-dialog";
@@ -9,6 +9,7 @@ import { ToolCallTrace } from "@/components/tool-call-trace";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { CopyActionButton } from "@/components/ui/copy-action-button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Markdown } from "@/components/markdown";
 import { useClipboard } from "@/hooks/use-clipboard";
@@ -845,32 +846,18 @@ function computeReasoningDurationSeconds(
   return undefined;
 }
 
-/**
- * Copy button for assistant messages. Shows a checkmark briefly after
- * clicking to confirm the copy succeeded.
- *
- * Delegates to {@link useClipboard} so the timer cleanup (auto-reset
- * after 1.5s), unmount guard, and `navigator.clipboard` availability
- * check all match the rest of the app's copy affordances rather than
- * being re-derived here. The hook swallows clipboard failures and
- * leaves `copied` false on rejection — the affordance stays idle when
- * the browser blocks the write (insecure context, permissions policy)
- * instead of falsely confirming a successful copy.
- */
 function CopyMessageAction({ content }: { content: string }) {
-  const { copied, copy } = useClipboard({ resetAfterMs: 1500 });
-  const handleCopy = useCallback(() => {
-    void copy(content);
-  }, [copy, content]);
   return (
-    <MessageAction
-      tooltip={copied ? "Copied" : "Copy reply"}
+    <CopyActionButton
+      text={content}
+      idleLabel="Copy reply"
+      copiedLabel="Copied"
+      idleAriaLabel="Copy reply"
       size="sm"
-      onClick={handleCopy}
+      copyIcon={<CopyIcon size={16} />}
+      copiedIcon={<CheckIcon size={16} weight="bold" />}
       data-testid="message-copy-button"
-    >
-      {copied ? <CheckIcon size={16} weight="bold" /> : <CopyIcon size={16} />}
-    </MessageAction>
+    />
   );
 }
 

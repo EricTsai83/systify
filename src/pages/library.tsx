@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery } from "convex/react";
-import { BookOpenIcon, CaretDownIcon, FoldersIcon, PaperPlaneTiltIcon, SparkleIcon } from "@phosphor-icons/react";
+import { BookOpenIcon, FoldersIcon, PaperPlaneTiltIcon, SparkleIcon } from "@phosphor-icons/react";
 import { api } from "../../convex/_generated/api";
 import {
   AppSidebarLeft,
@@ -24,6 +24,7 @@ import { ScreenState } from "@/components/screen-state";
 import { StatusPanel } from "@/components/status-panel";
 import { TopBar } from "@/components/top-bar";
 import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
+import { CompactDropdownTrigger } from "@/components/ui/compact-dropdown-trigger";
 import {
   Sidebar,
   SidebarContent,
@@ -518,23 +519,13 @@ function LibraryDesignDocsMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button
-          type="button"
+        <CompactDropdownTrigger
           aria-label={REPOSITORY_GUIDE_COPY.name}
-          className={cn(
-            "inline-flex h-8 items-center justify-center gap-1.5 border border-transparent bg-transparent px-2.5 text-xs font-semibold text-muted-foreground transition-colors",
-            "hover:bg-muted hover:text-foreground",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-            "aria-expanded:bg-accent aria-expanded:text-foreground",
-            "disabled:pointer-events-none disabled:opacity-50",
-            "[&_svg]:pointer-events-none [&_svg]:shrink-0",
-            className,
-          )}
-        >
-          <BookOpenIcon size={14} weight="bold" />
-          <span className="hidden sm:inline">{REPOSITORY_GUIDE_COPY.name}</span>
-          <CaretDownIcon size={12} weight="bold" className="text-muted-foreground" />
-        </button>
+          icon={<BookOpenIcon size={14} weight="bold" />}
+          label={REPOSITORY_GUIDE_COPY.name}
+          hideLabelBelowSm
+          className={cn("justify-center px-2.5 font-semibold hover:bg-muted", className)}
+        />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
         <DropdownMenuItem onSelect={onShowNavigator}>

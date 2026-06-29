@@ -16,6 +16,7 @@ import {
 import { createPortal } from "react-dom";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { TooltipIconButton } from "@/components/ui/tooltip-icon-button";
 import { cn } from "@/lib/utils";
 
 export interface MermaidRepairRequest {
@@ -305,9 +306,9 @@ function SvgViewer({
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <ViewerToolbar actionsRef={fullscreenActionsRef} />
-                <ToolbarButton label="Close diagram" onClick={() => setIsFullscreen(false)}>
+                <TooltipIconButton label="Close diagram" onClick={() => setIsFullscreen(false)} className="size-8 p-0">
                   <X className="size-4" />
-                </ToolbarButton>
+                </TooltipIconButton>
               </div>
             </div>
             <ZoomableViewport actionsRef={fullscreenActionsRef} className="min-h-0 flex-1" interactive wheelZoomEnabled>
@@ -327,9 +328,13 @@ function SvgViewer({
     <>
       <div className="border-b border-border bg-background/70 px-3 py-2">
         <div className="flex items-center justify-end">
-          <ToolbarButton label="View diagram fullscreen" onClick={() => setIsFullscreen(true)}>
+          <TooltipIconButton
+            label="View diagram fullscreen"
+            onClick={() => setIsFullscreen(true)}
+            className="size-8 p-0"
+          >
             <Maximize2 className="size-4" />
-          </ToolbarButton>
+          </TooltipIconButton>
         </div>
       </div>
       <ZoomableViewport actionsRef={inlineActionsRef} className="min-h-48" interactive={false} wheelZoomEnabled={false}>
@@ -343,31 +348,16 @@ function SvgViewer({
 function ViewerToolbar({ actionsRef }: { actionsRef: RefObject<ZoomActions | null> }) {
   return (
     <>
-      <ToolbarButton label="Zoom in" onClick={() => actionsRef.current?.zoomIn()}>
+      <TooltipIconButton label="Zoom in" onClick={() => actionsRef.current?.zoomIn()} className="size-8 p-0">
         <ZoomIn className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton label="Zoom out" onClick={() => actionsRef.current?.zoomOut()}>
+      </TooltipIconButton>
+      <TooltipIconButton label="Zoom out" onClick={() => actionsRef.current?.zoomOut()} className="size-8 p-0">
         <ZoomOut className="size-4" />
-      </ToolbarButton>
-      <ToolbarButton label="Reset diagram view" onClick={() => actionsRef.current?.reset()}>
+      </TooltipIconButton>
+      <TooltipIconButton label="Reset diagram view" onClick={() => actionsRef.current?.reset()} className="size-8 p-0">
         <RotateCcw className="size-4" />
-      </ToolbarButton>
+      </TooltipIconButton>
     </>
-  );
-}
-
-function ToolbarButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
-  return (
-    <TooltipProvider delayDuration={150}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button aria-label={label} className="size-8 p-0" onClick={onClick} size="icon" type="button" variant="ghost">
-            {children}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>{label}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
   );
 }
 

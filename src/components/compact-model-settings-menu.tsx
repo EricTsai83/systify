@@ -4,7 +4,7 @@ import {
   resolveReasoningPickerState,
   type ReasoningPickerState,
 } from "@/components/ai-elements/reasoning-effort-options";
-import { Button } from "@/components/ui/button";
+import { CompactDropdownTrigger } from "@/components/ui/compact-dropdown-trigger";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -59,18 +59,15 @@ export function CompactModelSettingsMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
+        <CompactDropdownTrigger
+          icon={<SlidersHorizontalIcon size={14} weight="bold" />}
+          label={triggerLabel}
+          caret={null}
           disabled={modelPicker.disabled}
           aria-label="Model settings"
           data-testid="compact-model-settings-trigger"
-          className="h-8 max-w-full shrink-0 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground active:scale-100 focus-visible:bg-muted focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-muted data-[state=open]:text-foreground"
-        >
-          <SlidersHorizontalIcon size={14} weight="bold" />
-          <span className="truncate">{triggerLabel}</span>
-        </Button>
+          className="max-w-full hover:text-foreground focus-visible:bg-muted focus-visible:ring-0 focus-visible:ring-offset-0 data-[state=open]:bg-muted data-[state=open]:text-foreground"
+        />
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="w-56 p-1" data-testid="compact-model-settings-menu">
         <DropdownMenuLabel>Model</DropdownMenuLabel>

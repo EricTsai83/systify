@@ -32,6 +32,8 @@ const buttonVariants = cva(
   },
 );
 
+type ButtonPressEffect = "scale" | "none";
+
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
@@ -40,12 +42,25 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> &
     // callers (and Radix asChild Slots that inject a ref via cloneElement)
     // forward refs without resorting to forwardRef on a plain function.
     ref?: React.Ref<HTMLButtonElement>;
+    pressEffect?: ButtonPressEffect;
   };
 
-function Button({ className, variant, size, type = "button", asChild = false, ...props }: ButtonProps) {
+function Button({
+  className,
+  variant,
+  size,
+  type = "button",
+  asChild = false,
+  pressEffect = "scale",
+  ...props
+}: ButtonProps) {
   const Comp = asChild ? Slot.Root : "button";
   return (
-    <Comp type={asChild ? undefined : type} className={cn(buttonVariants({ variant, size, className }))} {...props} />
+    <Comp
+      type={asChild ? undefined : type}
+      className={cn(buttonVariants({ variant, size }), pressEffect === "none" && "active:scale-100", className)}
+      {...props}
+    />
   );
 }
 

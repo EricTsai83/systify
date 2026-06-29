@@ -94,7 +94,7 @@ describe("MessageBubble", () => {
 
     const footer = screen.getByTestId("message-usage-footer");
     expect(footer).toHaveClass("min-h-8");
-    expect(footer.querySelector(".absolute")).toBeNull();
+    expect(screen.getByTestId("message-nerd-stats").querySelector(".absolute")).toBeNull();
     expect(footer.querySelector(".items-center")).not.toBeNull();
     expect(screen.getByTestId("message-nerd-stats")).toHaveTextContent("TTFT 1.23 sec");
     expect(screen.queryByText(/Generation time/)).not.toBeInTheDocument();
@@ -237,6 +237,12 @@ describe("MessageBubble", () => {
     expect(screen.getByText("Code files")).toBeInTheDocument();
     expect(screen.getByText("Architecture > Data Model")).toBeInTheDocument();
     expect(screen.getByText("source-citations.ts")).toBeInTheDocument();
+  });
+
+  test("renders the completed assistant copy action with its initial accessible label", () => {
+    render(<MessageBubble message={makeAssistantMessage()} activeMessageStream={null} />);
+
+    expect(screen.getByTestId("message-copy-button")).toHaveAccessibleName("Copy reply");
   });
 
   test("opens a configured local editor directly from the code source", async () => {

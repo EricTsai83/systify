@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAction, useQuery } from "convex/react";
 import { CheckIcon, CopySimpleIcon, MinusIcon, PlusIcon, SlidersHorizontalIcon, XIcon } from "@phosphor-icons/react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import { Markdown, type MermaidRepairRequest } from "@/components/markdown";
 import { Button } from "@/components/ui/button";
+import { CopyActionButton } from "@/components/ui/copy-action-button";
 import { FloatingExpandableToolbar } from "@/components/ui/floating-expandable-toolbar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useAsyncCallback } from "@/hooks/use-async-callback";
 import { useLocalStorageEnum } from "@/hooks/use-persisted-state";
 import { toUserErrorMessage } from "@/lib/errors";
 import type { ArtifactId } from "@/lib/types";
@@ -78,34 +78,6 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
     setToolbarExpanded(false);
   }, [artifactId]);
 
-  const [copied, setCopied] = useState(false);
-  const copiedResetTimer = useRef<number | null>(null);
-
-  const clearCopiedResetTimer = useCallback(() => {
-    if (copiedResetTimer.current === null) return;
-    window.clearTimeout(copiedResetTimer.current);
-    copiedResetTimer.current = null;
-  }, []);
-
-  useEffect(() => clearCopiedResetTimer, [clearCopiedResetTimer]);
-
-  const [, runCopy] = useAsyncCallback(async () => {
-    if (!artifact) return;
-    const copySource = selectedVersion !== null && selectedVersion !== artifact.version ? historicalVersion : artifact;
-    if (!copySource) return;
-    try {
-      await navigator.clipboard.writeText(copySource.contentMarkdown);
-      clearCopiedResetTimer();
-      setCopied(true);
-      copiedResetTimer.current = window.setTimeout(() => {
-        copiedResetTimer.current = null;
-        setCopied(false);
-      }, 1600);
-    } catch {
-      // Browsers without clipboard API support — leave the affordance idle.
-    }
-  });
-
   const [fontSize, setFontSize] = useLocalStorageEnum("systify.library.fontSize", FONT_SIZE_STEPS, DEFAULT_FONT_SIZE);
   const handleRepairMermaid = useCallback(
     async ({ chart, error }: MermaidRepairRequest) => {
@@ -155,6 +127,7 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
   const versionIsLoading = displayedArtifact === undefined;
   const versionIsMissing = displayedArtifact === null;
   const copyIsDisabled = versionIsLoading || versionIsMissing;
+  const copyMarkdown = () => displayedArtifact?.contentMarkdown;
 
   return (
     <div className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden", className)}>
@@ -169,8 +142,7 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
         fontSize={fontSize}
         onFontSizeChange={setFontSize}
         copyIsDisabled={copyIsDisabled}
-        copied={copied}
-        onCopy={() => void runCopy()}
+        copyText={copyMarkdown}
       />
 
       <ScrollArea className="min-h-0 flex-1">
@@ -231,8 +203,7 @@ function ReaderToolbar({
   fontSize,
   onFontSizeChange,
   copyIsDisabled,
-  copied,
-  onCopy,
+  copyText,
 }: {
   expanded: boolean;
   onExpandedChange: (next: boolean | ((previous: boolean) => boolean)) => void;
@@ -250,8 +221,7 @@ function ReaderToolbar({
   fontSize: FontSize;
   onFontSizeChange: (next: FontSize) => void;
   copyIsDisabled: boolean;
-  copied: boolean;
-  onCopy: () => void;
+  copyText: () => string | null | undefined;
 }) {
   return (
     <FloatingExpandableToolbar
@@ -262,6 +232,7 @@ function ReaderToolbar({
       collapseLabel="Collapse reader tools"
       expandIcon={<SlidersHorizontalIcon size={13} weight="bold" />}
       collapseIcon={<XIcon size={12} weight="bold" />}
+      className="absolute top-3 right-4 z-10 max-w-[calc(100%-2rem)]"
       data-testid="reader-toolbar"
     >
       <ArtifactVersionSelect
@@ -272,19 +243,21 @@ function ReaderToolbar({
       />
       {showFontSizeControl ? <FontSizeControl value={fontSize} onChange={onFontSizeChange} /> : null}
       <ReaderToolbarSeparator />
-      <Button
-        type="button"
-        variant="ghost"
+      <CopyActionButton
+        text={copyText}
+        idleLabel="Copy"
+        copiedLabel="Copied"
+        idleAriaLabel="Copy markdown"
+        showLabel
+        tooltip={false}
+        copyIcon={<CopySimpleIcon size={13} weight="bold" />}
+        copiedIcon={<CheckIcon size={13} weight="bold" />}
+        resetAfterMs={1600}
         size="sm"
-        className="h-6 w-14 shrink-0 gap-1 px-1.5 text-[11px] active:scale-100"
-        onClick={onCopy}
+        className="h-6 w-14 shrink-0 gap-1 px-1.5 text-[11px]"
         disabled={copyIsDisabled}
-        aria-label="Copy markdown"
         tabIndex={expanded ? undefined : -1}
-      >
-        {copied ? <CheckIcon size={13} weight="bold" /> : <CopySimpleIcon size={13} weight="bold" />}
-        {copied ? "Copied" : "Copy"}
-      </Button>
+      />
       <ReaderToolbarSeparator className="mr-1" />
     </FloatingExpandableToolbar>
   );
@@ -380,7 +353,8 @@ function FontSizeControl({ value, onChange }: { value: FontSize; onChange: (next
         type="button"
         variant="ghost"
         size="sm"
-        className="h-6 w-6 px-0 active:scale-100"
+        pressEffect="none"
+        className="h-6 w-6 px-0"
         disabled={atMin}
         onClick={() => stepTo(-1)}
         aria-label="Decrease text size"
@@ -391,7 +365,8 @@ function FontSizeControl({ value, onChange }: { value: FontSize; onChange: (next
         type="button"
         variant="ghost"
         size="sm"
-        className="h-6 w-6 px-0 active:scale-100"
+        pressEffect="none"
+        className="h-6 w-6 px-0"
         disabled={atMax}
         onClick={() => stepTo(1)}
         aria-label="Increase text size"

@@ -49,7 +49,7 @@ export function FloatingExpandableToolbar({
   return (
     <div
       className={cn(
-        "absolute top-3 right-4 z-10 flex max-w-[calc(100%-2rem)] flex-row-reverse items-center overflow-hidden border p-0.5 transition-[background-color,border-color,box-shadow,backdrop-filter] duration-150 ease-out motion-reduce:transition-none",
+        "flex max-w-full flex-row-reverse items-center overflow-hidden border p-0.5 transition-[background-color,border-color,box-shadow,backdrop-filter] duration-150 ease-out motion-reduce:transition-none",
         expanded
           ? "border-border bg-background/95 shadow-sm backdrop-blur"
           : "border-transparent bg-transparent shadow-none backdrop-blur-none",
@@ -96,7 +96,7 @@ function FloatingToolbarButton({
   children: ReactNode;
 }) {
   return (
-    <Button type="button" variant="ghost" size="sm" className="size-7 p-0 active:scale-100" {...props}>
+    <Button type="button" variant="ghost" size="sm" pressEffect="none" className="size-7 p-0" {...props}>
       {children}
     </Button>
   );

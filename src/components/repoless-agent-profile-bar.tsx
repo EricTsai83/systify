@@ -13,6 +13,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { TooltipIconButton } from "@/components/ui/tooltip-icon-button";
 import { getRepolessChatTypeTooltip, getRepolessSingleTurnTooltip } from "@/components/repoless-agent-profile-copy";
 import { Toggle } from "@/components/ui/toggle";
 import { cn } from "@/lib/utils";
@@ -122,37 +123,22 @@ export function RepolessChatTypeToggle({
       </TooltipProvider>
 
       {isAgent ? (
-        <TooltipProvider delayDuration={150}>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span className="inline-flex shrink-0">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  disabled={isDisabled}
-                  onClick={() => setProfileOpen(true)}
-                  aria-label={profileLabel}
-                  aria-invalid={!hasProfile}
-                  data-testid="repoless-agent-profile-button"
-                  className={cn(
-                    "relative h-8 w-8 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none",
-                    "before:absolute before:left-0 before:top-1/2 before:h-3 before:w-px before:-translate-y-1/2 before:bg-border/55",
-                    "hover:bg-accent hover:text-foreground focus-visible:bg-transparent focus-visible:text-foreground",
-                    !hasProfile && "text-amber-700 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300",
-                    "[&_svg]:size-3.5",
-                  )}
-                >
-                  <SlidersHorizontalIcon
-                    className={COMPOSER_CONTROL_ICON_CLASS}
-                    weight={hasProfile ? "bold" : "regular"}
-                  />
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent side="top">{profileLabel}</TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        <TooltipIconButton
+          label={profileLabel}
+          disabled={isDisabled}
+          onClick={() => setProfileOpen(true)}
+          aria-invalid={!hasProfile}
+          data-testid="repoless-agent-profile-button"
+          className={cn(
+            "relative h-8 w-8 rounded-none border-0 bg-transparent p-0 text-muted-foreground shadow-none",
+            "before:absolute before:left-0 before:top-1/2 before:h-3 before:w-px before:-translate-y-1/2 before:bg-border/55",
+            "hover:bg-accent hover:text-foreground focus-visible:bg-transparent focus-visible:text-foreground",
+            !hasProfile && "text-amber-700 hover:text-amber-800 dark:text-amber-400 dark:hover:text-amber-300",
+            "[&_svg]:size-3.5",
+          )}
+        >
+          <SlidersHorizontalIcon className={COMPOSER_CONTROL_ICON_CLASS} weight={hasProfile ? "bold" : "regular"} />
+        </TooltipIconButton>
       ) : null}
 
       <Dialog open={profileOpen} onOpenChange={setProfileOpen}>

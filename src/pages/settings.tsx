@@ -55,6 +55,7 @@ import {
   ComboboxList,
   ComboboxTrigger,
 } from "@/components/ui/combobox";
+import { CopyActionButton } from "@/components/ui/copy-action-button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
@@ -63,6 +64,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { TooltipIconButton } from "@/components/ui/tooltip-icon-button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useComboboxAnchor } from "@/components/ui/use-combobox-anchor";
 import {
@@ -76,7 +78,6 @@ import {
   useUserPreferences,
 } from "@/hooks/use-user-preferences";
 import { useAsyncCallback } from "@/hooks/use-async-callback";
-import { useClipboard } from "@/hooks/use-clipboard";
 import { useLocalStorageEnum } from "@/hooks/use-persisted-state";
 import { useViewerAccess, type ViewerAccess } from "@/hooks/use-viewer-access";
 import {
@@ -493,7 +494,6 @@ function AccountSettingsSection() {
   const viewerAccess = useViewerAccess();
   const githubConnection = useGitHubConnection();
   const disconnectGitHub = useMutation(api.github.disconnectGitHub);
-  const { copied: copiedAccountId, copy: copyAccountId } = useClipboard({ resetAfterMs: 1500 });
   const [isDisconnectDialogOpen, setIsDisconnectDialogOpen] = useState(false);
   const [disconnectError, setDisconnectError] = useState<string | null>(null);
   const isAccountLoading = isAuthLoading || githubConnection.isLoading || viewerAccess === undefined;
@@ -511,11 +511,6 @@ function AccountSettingsSection() {
     if (!manageGitHubUrl) return;
     window.open(manageGitHubUrl, "systify-github-permissions", "width=1020,height=720,popup=yes");
   }, [manageGitHubUrl]);
-
-  const handleCopyAccountId = useCallback(() => {
-    if (!viewerAccess) return;
-    void copyAccountId(getSupportAccountId(viewerAccess.ownerTokenIdentifier));
-  }, [copyAccountId, viewerAccess]);
 
   const [isDisconnectingGitHub, handleDisconnectGitHub] = useAsyncCallback(async () => {
     setDisconnectError(null);
@@ -579,41 +574,17 @@ function AccountSettingsSection() {
                       <code className="min-w-0 max-w-48 truncate border border-border/70 bg-background/60 px-2 py-1.5 font-mono text-[11px] text-foreground/80">
                         {formatSupportAccountId(viewerAccess.ownerTokenIdentifier)}
                       </code>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="size-7 shrink-0"
-                            aria-label={copiedAccountId ? "Support ID copied" : "Copy support ID"}
-                            onClick={handleCopyAccountId}
-                          >
-                            <span className="relative size-3.5" aria-hidden="true">
-                              <CopyIcon
-                                size={14}
-                                className={cn(
-                                  "absolute inset-0 text-muted-foreground transition-[opacity,filter,transform,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
-                                  copiedAccountId
-                                    ? "scale-90 text-muted-foreground/40 opacity-0 blur-[1.5px]"
-                                    : "scale-100 opacity-100 blur-0",
-                                )}
-                              />
-                              <CheckIcon
-                                size={14}
-                                weight="bold"
-                                className={cn(
-                                  "absolute inset-0 transition-[opacity,filter,transform,color] duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] motion-reduce:transition-none",
-                                  copiedAccountId
-                                    ? "scale-100 text-foreground opacity-100 blur-0"
-                                    : "scale-75 text-muted-foreground/40 opacity-0 blur-[1.5px]",
-                                )}
-                              />
-                            </span>
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent side="top">{copiedAccountId ? "Copied" : "Copy support ID"}</TooltipContent>
-                      </Tooltip>
+                      <CopyActionButton
+                        text={() => getSupportAccountId(viewerAccess.ownerTokenIdentifier)}
+                        idleLabel="Copy support ID"
+                        copiedLabel="Copied"
+                        idleAriaLabel="Copy support ID"
+                        copiedAriaLabel="Support ID copied"
+                        tooltipSide="top"
+                        copyIcon={<CopyIcon size={14} />}
+                        copiedIcon={<CheckIcon size={14} weight="bold" />}
+                        className="size-7 shrink-0"
+                      />
                     </div>
                   ) : null}
                 </div>
@@ -2058,33 +2029,29 @@ function ModelPreferenceActionButton({
   onClick: () => void;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-pressed={active}
-          aria-label={ariaLabel}
-          aria-disabled={disabled}
-          className={cn(
-            active ? "bg-muted text-primary hover:bg-muted hover:text-primary" : "text-muted-foreground",
-            disabled &&
-              (active
-                ? "cursor-default opacity-60 active:scale-100 hover:bg-muted hover:text-primary"
-                : "cursor-default opacity-50 active:scale-100 hover:bg-transparent hover:text-muted-foreground"),
-          )}
-          onClick={() => {
-            if (!disabled) {
-              onClick();
-            }
-          }}
-        >
-          {icon}
-        </Button>
-      </TooltipTrigger>
-      <TooltipContent side="top">{tooltip}</TooltipContent>
-    </Tooltip>
+    <TooltipIconButton
+      label={ariaLabel}
+      tooltip={tooltip}
+      tooltipSide="top"
+      variant="ghost"
+      size="icon-xs"
+      aria-pressed={active}
+      aria-disabled={disabled}
+      className={cn(
+        active ? "bg-muted text-primary hover:bg-muted hover:text-primary" : "text-muted-foreground",
+        disabled &&
+          (active
+            ? "cursor-default opacity-60 hover:bg-muted hover:text-primary"
+            : "cursor-default opacity-50 hover:bg-transparent hover:text-muted-foreground"),
+      )}
+      onClick={() => {
+        if (!disabled) {
+          onClick();
+        }
+      }}
+    >
+      {icon}
+    </TooltipIconButton>
   );
 }
 
@@ -2446,8 +2413,9 @@ function TimeZoneSelector({
             <Button
               type="button"
               variant="outline"
+              pressEffect="none"
               className={cn(
-                "h-auto min-h-12 w-full min-w-0 justify-between bg-background px-3 py-2 active:scale-100",
+                "h-auto min-h-12 w-full min-w-0 justify-between bg-background px-3 py-2",
                 invalid ? "border-destructive focus-visible:ring-destructive/20" : null,
               )}
               aria-label="Timezone"
