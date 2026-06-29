@@ -171,27 +171,20 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
     <div className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden", className)}>
       <motion.div
         initial={false}
-        animate={{
-          padding: toolbarExpanded ? 2 : 0,
-        }}
         transition={toolbarLayoutTransition}
-        className="absolute top-3 right-4 z-10 flex max-w-[calc(100%-2rem)] flex-row-reverse items-center overflow-hidden border border-border bg-background/95 shadow-sm backdrop-blur"
+        className="absolute top-3 right-4 z-10 flex max-w-[calc(100%-2rem)] flex-row-reverse items-center overflow-hidden border border-border bg-background/95 p-0.5 shadow-sm backdrop-blur"
         data-testid="reader-toolbar"
       >
         <motion.div
           initial={false}
-          animate={{
-            height: toolbarExpanded ? 24 : 28,
-            width: toolbarExpanded ? 24 : 28,
-          }}
           transition={toolbarLayoutTransition}
-          className="shrink-0"
+          className="flex size-7 shrink-0 items-center justify-center"
         >
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            className="h-full w-full p-0"
+            className="size-7 p-0 active:scale-100"
             aria-label={toolbarExpanded ? "Collapse reader tools" : "Expand reader tools"}
             aria-expanded={toolbarExpanded}
             aria-controls="library-reader-tools"
@@ -229,7 +222,7 @@ export function LibraryEditor({ artifactId, className }: { artifactId: ArtifactI
               type="button"
               variant="ghost"
               size="sm"
-              className="h-6 w-14 shrink-0 gap-1 px-1.5 text-[11px]"
+              className="h-6 w-14 shrink-0 gap-1 px-1.5 text-[11px] active:scale-100"
               onClick={() => void runCopy()}
               disabled={copyIsDisabled}
               aria-label="Copy markdown"
@@ -380,7 +373,7 @@ function FontSizeControl({ value, onChange }: { value: FontSize; onChange: (next
         type="button"
         variant="ghost"
         size="sm"
-        className="h-6 w-6 px-0"
+        className="h-6 w-6 px-0 active:scale-100"
         disabled={atMin}
         onClick={() => stepTo(-1)}
         aria-label="Decrease text size"
@@ -391,7 +384,7 @@ function FontSizeControl({ value, onChange }: { value: FontSize; onChange: (next
         type="button"
         variant="ghost"
         size="sm"
-        className="h-6 w-6 px-0"
+        className="h-6 w-6 px-0 active:scale-100"
         disabled={atMax}
         onClick={() => stepTo(1)}
         aria-label="Increase text size"
