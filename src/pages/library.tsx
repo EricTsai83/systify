@@ -22,12 +22,17 @@ import {
   LIBRARY_ASK_MAX_WIDTH,
   LIBRARY_ASK_WIDTH_STORAGE_KEY,
 } from "@/components/app-sidebar";
+import { AppNotice } from "@/components/app-notice";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { GenerateSystemDesignDialog } from "@/components/generate-system-design-dialog";
 import { LibraryShell } from "@/components/library-shell";
 import { LibraryTree } from "@/components/library-tree";
 import { Logo } from "@/components/logo";
 import { RepositoryModeSwitcher } from "@/components/repository-mode-switcher";
 import { ScreenState } from "@/components/screen-state";
+import { StatusPanel } from "@/components/status-panel";
+import { TopBar } from "@/components/top-bar";
+import { Drawer, DrawerContent, DrawerDescription, DrawerTitle } from "@/components/ui/drawer";
 import {
   Sidebar,
   SidebarContent,
@@ -51,7 +56,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useArtifactViewState } from "@/hooks/use-artifact-view-state";
+import { useCheckForUpdates } from "@/hooks/use-check-for-updates";
 import { useLibraryTabs } from "@/hooks/use-library-tabs";
+import { useRepositoryLifecycle } from "@/hooks/use-repository-lifecycle";
 import { isViewerFeatureEnabled, useViewerAccess } from "@/hooks/use-viewer-access";
 import {
   DEFAULT_AUTHENTICATED_PATH,
@@ -69,6 +76,8 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 
 const ACTIVE_REPOSITORY_STORAGE_KEY = "systify.activeRepositoryId";
+const DESKTOP_LAYOUT_QUERY = "(min-width: 1280px)";
+const MOBILE_DRAWER_HEIGHT_CLASS = "h-[95dvh] data-[vaul-drawer-direction=bottom]:max-h-[95dvh]";
 
 /**
  * Library service mode entry point.
@@ -112,6 +121,16 @@ function LibraryRepository({
   const navigate = useNavigate();
   const [, setSearchParams] = useSearchParams();
   const viewerAccess = useViewerAccess();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [showArchiveDialog, setShowArchiveDialog] = useState(false);
+  const [showPermanentDeleteDialog, setShowPermanentDeleteDialog] = useState(false);
+  const [isStatusOpen, setIsStatusOpen] = useState(false);
+  const [isDesktopLayout, setIsDesktopLayout] = useState<boolean>(() => {
+    if (typeof window === "undefined") {
+      return true;
+    }
+    return window.matchMedia(DESKTOP_LAYOUT_QUERY).matches;
+  });
 
   const repositories = useQuery(api.repositoryPreferences.listRepositoriesForSwitcher);
   const authorizedRepositoryIds = useQuery(api.repositoryPreferences.listOwnedRepositoryIdsById, {
@@ -151,6 +170,7 @@ function LibraryRepository({
     api.artifacts.listMetadataByRepositoryWithFreshness,
     canLoadRepositoryData ? { repositoryId } : "skip",
   );
+  const repoDetail = useQuery(api.repositories.getRepositoryDetail, canLoadRepositoryData ? { repositoryId } : "skip");
   const sandboxActivityStatus = useQuery(
     api.repositories.getSandboxActivityStatus,
     canLoadRepositoryData ? { repositoryId } : "skip",
@@ -172,6 +192,10 @@ function LibraryRepository({
   const importDisabledReason =
     accessLoadingReason ??
     (isViewerFeatureEnabled(viewerAccess, "repoImport") ? undefined : DEMO_MODE_COPY.importDisabled);
+  const syncDisabledReason =
+    accessLoadingReason ??
+    (isViewerFeatureEnabled(viewerAccess, "syncRepository") ? undefined : DEMO_MODE_COPY.syncDisabled);
+  const checkForUpdatesEnabled = isViewerFeatureEnabled(viewerAccess, "checkForUpdates");
   const libraryAskDisabledReason =
     accessLoadingReason ??
     (isViewerFeatureEnabled(viewerAccess, "libraryAsk") ? undefined : DEMO_MODE_COPY.libraryAskDisabled);
@@ -189,6 +213,51 @@ function LibraryRepository({
     accessLoadingReason ??
     (isViewerFeatureEnabled(viewerAccess, "highReasoning") ? undefined : DEMO_MODE_COPY.highReasoningDisabled);
   const artifactDraftDisabledReason = libraryAskDisabledReason ?? generateSystemDesignDisabledReason;
+  const isRepositorySyncing =
+    repoDetail !== null &&
+    repoDetail !== undefined &&
+    !repoDetail.isArchived &&
+    (repoDetail.repository.importStatus === "queued" || repoDetail.repository.importStatus === "running");
+
+  const {
+    isSyncing,
+    handleSync,
+    isArchivingRepo,
+    handleArchiveRepo,
+    handleRestoreRepo,
+    isPermanentDeletingRepo,
+    handlePermanentDeleteRepo,
+  } = useRepositoryLifecycle({
+    selectedRepositoryId: canLoadRepositoryData ? repositoryId : null,
+    setActionError,
+    setShowArchiveDialog,
+    setShowPermanentDeleteDialog,
+    syncDisabledReason,
+    onAfterArchiveRepo: () => {
+      void navigate(DEFAULT_AUTHENTICATED_PATH);
+    },
+    onAfterRestoreRepo: () => {},
+    onAfterPermanentDeleteRepo: () => {
+      void navigate(DEFAULT_AUTHENTICATED_PATH);
+    },
+  });
+  const isHeaderSyncing = isSyncing || isRepositorySyncing;
+
+  useCheckForUpdates(canLoadRepositoryData ? repositoryId : null, checkForUpdatesEnabled);
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia(DESKTOP_LAYOUT_QUERY);
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsDesktopLayout(event.matches);
+      setIsStatusOpen(false);
+    };
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, []);
+
+  const handleSetStatusOpen = useCallback((open: boolean) => {
+    setIsStatusOpen(open);
+  }, []);
 
   const handleSwitchRepository = useCallback(
     (id: RepositoryId) => {
@@ -299,20 +368,61 @@ function LibraryRepository({
         isUnseen={isUnseen}
       />
       <SidebarInset>
-        <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
-          <SidebarTrigger side="left" />
-          <h1 className="min-w-0 truncate text-sm font-semibold tracking-tight text-foreground md:text-base">
-            {currentRepository?.sourceRepoFullName ?? "Library"}
-          </h1>
-          <LibraryLiveSourceBadge status={sandboxActivityStatus} />
-          <LibraryDesignDocsMenu
-            className="ml-auto"
-            onShowNavigator={tabs.showNavigator}
-            onGenerate={openGenerateDialog}
-            generateDisabledReason={generateSystemDesignDisabledReason}
-          />
-          <SidebarTrigger side="right" />
-        </header>
+        <TopBar
+          repoDetail={repoDetail ?? undefined}
+          isRepoDetailLoading={repoDetail === undefined}
+          isSyncing={isHeaderSyncing}
+          isStatusPanelOpen={isStatusOpen}
+          onSetStatusPanelOpen={handleSetStatusOpen}
+          onArchiveRepo={() => setShowArchiveDialog(true)}
+          onRestoreRepo={() => void handleRestoreRepo()}
+          onPermanentDeleteRepo={() => setShowPermanentDeleteDialog(true)}
+          threadId={askThreadId}
+          attachedRepository={
+            askThreadId && currentRepository
+              ? {
+                  id: repositoryId,
+                  fullName: currentRepository.sourceRepoFullName,
+                  shortName: currentRepository.sourceRepoName,
+                }
+              : null
+          }
+          availableRepositories={repositories}
+          onThreadMovedToRepository={(movedRepositoryId, threadMode) => {
+            if (!movedRepositoryId || !askThreadId || !threadMode) return;
+            void navigate(modeAwareThreadPath(movedRepositoryId, askThreadId, threadMode));
+          }}
+          isDesktopLayout={isDesktopLayout}
+          onSearchThreads={() => {}}
+          onNewThread={() => {}}
+          onSync={() => void handleSync()}
+          syncDisabledReason={syncDisabledReason}
+          onViewArtifact={tabs.openTab}
+          showSystemStatus={repoDetail !== null}
+          showRepositoryTitle={false}
+          centerActions={<LibraryLiveSourceBadge status={sandboxActivityStatus} />}
+          rightActions={
+            <>
+              <LibraryDesignDocsMenu
+                onShowNavigator={tabs.showNavigator}
+                onGenerate={openGenerateDialog}
+                generateDisabledReason={generateSystemDesignDisabledReason}
+              />
+              <SidebarTrigger side="right" />
+            </>
+          }
+        />
+        {actionError ? (
+          <div className="border-b border-border px-6 py-3">
+            <AppNotice
+              title="Action failed"
+              message={actionError}
+              tone="error"
+              onDismiss={() => setActionError(null)}
+              dismissLabel="Dismiss action error"
+            />
+          </div>
+        ) : null}
         <div className="flex min-h-0 min-w-0 flex-1">
           <LibraryShell repositoryId={repositoryId} tabs={tabs} allArtifacts={allArtifacts} />
         </div>
@@ -331,6 +441,51 @@ function LibraryRepository({
         liveSourceStatus={sandboxActivityStatus}
         premiumModelsDisabledReason={premiumModelsDisabledReason}
         highReasoningDisabledReason={highReasoningDisabledReason}
+      />
+      {!isDesktopLayout && repoDetail ? (
+        <Drawer open={isStatusOpen} onOpenChange={setIsStatusOpen} aria-label="status-drawer">
+          <DrawerContent className={cn(MOBILE_DRAWER_HEIGHT_CLASS, "rounded-t-2xl")}>
+            <DrawerTitle className="sr-only">Repository status</DrawerTitle>
+            <DrawerDescription className="sr-only">
+              Current sync, sandbox, and analysis state, with recent activity and operation launchers.
+            </DrawerDescription>
+            <div className="flex min-h-0 flex-1 flex-col">
+              <StatusPanel
+                repository={repoDetail.repository}
+                sandboxModeStatus={repoDetail.sandboxModeStatus}
+                sandbox={repoDetail.sandbox}
+                jobs={repoDetail.jobs}
+                artifacts={repoDetail.artifacts}
+                hasRemoteUpdates={repoDetail.hasRemoteUpdates}
+                isSyncing={isHeaderSyncing}
+                onSync={() => void handleSync()}
+                syncDisabledReason={syncDisabledReason}
+                onViewArtifact={tabs.openTab}
+                onClose={() => setIsStatusOpen(false)}
+              />
+            </div>
+          </DrawerContent>
+        </Drawer>
+      ) : null}
+      <ConfirmDialog
+        open={showArchiveDialog}
+        onOpenChange={setShowArchiveDialog}
+        title="Archive repository"
+        description="The repository disappears from your sidebar. Threads, messages, and artifacts are preserved — sandboxes are stopped to free resources. Restore any time from your archive."
+        actionLabel="Archive repository"
+        loadingLabel="Archiving…"
+        isPending={isArchivingRepo}
+        onConfirm={() => void handleArchiveRepo()}
+      />
+      <ConfirmDialog
+        open={showPermanentDeleteDialog}
+        onOpenChange={setShowPermanentDeleteDialog}
+        title="Permanently delete repository?"
+        description="This will permanently delete this repository and all its threads, messages, analysis artifacts, jobs, and indexed files. This action cannot be undone."
+        actionLabel="Delete permanently"
+        loadingLabel="Deleting…"
+        isPending={isPermanentDeletingRepo}
+        onConfirm={() => void handlePermanentDeleteRepo()}
       />
       <GenerateSystemDesignDialog
         open={isGenerateDialogOpen}

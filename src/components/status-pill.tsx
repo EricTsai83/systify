@@ -5,24 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Spinner } from "@/components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useRelativeTime } from "@/hooks/use-relative-time";
-import { cn } from "@/lib/utils";
 import {
-  isUserRelevantActiveJob,
-  presentRepositoryIntelligenceSurface,
-  presentSandboxSurface,
-  type OperationTone,
-} from "@/lib/operations";
+  getRepositoryStatusPresentation,
+  type RepositoryStatusPresentation,
+  type RepositoryStatusTone,
+} from "@/lib/repository-status-presentation";
+import { cn } from "@/lib/utils";
+import type { OperationTone } from "@/lib/operations";
 import type { SandboxModeStatus } from "@/lib/types";
-
-type PillTone = "idle" | "active" | "warning" | "error";
-
-type PillState = {
-  tone: PillTone;
-  label: string;
-  icon: "spinner" | "alert" | "sparkle" | "sync" | null;
-  /** Optional secondary copy used in the tooltip; main label stays compact. */
-  detail?: string;
-};
 
 /**
  * StatusPill props split into "pill data" (fields that drive the visual state)
@@ -73,7 +63,7 @@ export function StatusPill({
 }: StatusPillProps) {
   const state = useMemo(
     () =>
-      derivePillState({
+      getRepositoryStatusPresentation({
         repository,
         sandboxModeStatus,
         jobs,
@@ -119,7 +109,7 @@ export function StatusPill({
   );
 }
 
-function PillIcon({ icon }: { icon: PillState["icon"] }) {
+function PillIcon({ icon }: { icon: RepositoryStatusPresentation["icon"] }) {
   if (!icon) return null;
   switch (icon) {
     case "spinner":
@@ -133,74 +123,7 @@ function PillIcon({ icon }: { icon: PillState["icon"] }) {
   }
 }
 
-function derivePillState(input: {
-  repository: Doc<"repositories">;
-  sandboxModeStatus: SandboxModeStatus;
-  jobs: Doc<"jobs">[];
-  hasRemoteUpdates: boolean;
-  isSyncing: boolean;
-}): PillState {
-  const intelligence = presentRepositoryIntelligenceSurface({
-    importStatus: input.repository.importStatus,
-    isSyncing: input.isSyncing,
-    hasRemoteUpdates: input.hasRemoteUpdates,
-  });
-  const sandbox = presentSandboxSurface({
-    sandboxModeStatus: input.sandboxModeStatus,
-    sandbox: null,
-  });
-
-  const intelligenceFailed = intelligence.tone === "error";
-  const sandboxFailed = sandbox.tone === "error";
-  if (intelligenceFailed || sandboxFailed) {
-    return {
-      tone: "error",
-      label: intelligenceFailed ? "Sync failed" : "Live source error",
-      icon: "alert",
-      detail: intelligenceFailed
-        ? "Repository import failed. Open the panel to retry."
-        : (input.sandboxModeStatus.message ?? "Live source access is unavailable. Open the panel for details."),
-    };
-  }
-
-  // Active beats warning — when something is running, the user wants progress
-  // visibility more than they want a "consider syncing" nudge.
-  if (input.jobs.some(isUserRelevantActiveJob) || input.isSyncing) {
-    return {
-      tone: "active",
-      label: "Working…",
-      icon: "spinner",
-      detail: "Background work is running for this repository.",
-    };
-  }
-
-  if (input.hasRemoteUpdates) {
-    return {
-      tone: "warning",
-      label: "Updates ready",
-      icon: "sync",
-      detail: "New commits are available on the remote. Open the panel to sync.",
-    };
-  }
-
-  if (sandbox.tone === "warning") {
-    return {
-      tone: "warning",
-      label: "Live source idle",
-      icon: "alert",
-      detail: input.sandboxModeStatus.message ?? "Live source needs a refresh before live analysis.",
-    };
-  }
-
-  return {
-    tone: "idle",
-    label: "Ready",
-    icon: null,
-    detail: "Repository is up to date. Open the panel for details.",
-  };
-}
-
-function pillToneClassName(tone: PillTone) {
+function pillToneClassName(tone: RepositoryStatusTone) {
   switch (tone) {
     case "warning":
       return "border-warning bg-card text-warning hover:bg-muted";

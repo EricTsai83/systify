@@ -1,5 +1,11 @@
 import type { ReactNode } from "react";
-import { ArchiveIcon, ArrowCounterClockwiseIcon, DotsThreeVerticalIcon, TrashIcon } from "@phosphor-icons/react";
+import {
+  ArchiveIcon,
+  ArrowCounterClockwiseIcon,
+  ArrowsClockwiseIcon,
+  DotsThreeVerticalIcon,
+  TrashIcon,
+} from "@phosphor-icons/react";
 import type { Doc } from "../../convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import {
@@ -8,16 +14,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { RepoInfoPopover } from "@/components/repo-info-popover";
 import { RepoStatusIndicator } from "@/components/repo-status-indicator";
 import { SwapThreadRepositoryControl } from "@/components/swap-thread-repository-control";
-import { StatusPill } from "@/components/status-pill";
 import { StatusPanel } from "@/components/status-panel";
 import { ChatModeControls } from "@/components/chat-mode-controls";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import type { AttachedRepositorySummary } from "@/hooks/use-thread-capabilities";
+import { getRepositoryStatusPresentation } from "@/lib/repository-status-presentation";
 import type { ArtifactId, RepositoryId, SandboxModeStatus, ThreadId, ThreadMode } from "@/lib/types";
 
 export type TopBarRepoDetail = {
@@ -102,6 +108,9 @@ export function TopBar({
   syncDisabledReason,
   onViewArtifact,
   showSystemStatus,
+  showRepositoryTitle = false,
+  centerActions,
+  rightActions,
 }: {
   repoDetail?: TopBarRepoDetail;
   /**
@@ -136,6 +145,9 @@ export function TopBar({
    * repository actually backing the current surface or attached thread.
    */
   showSystemStatus: boolean;
+  showRepositoryTitle?: boolean;
+  centerActions?: ReactNode;
+  rightActions?: ReactNode;
 }) {
   const statusControl: TopBarStatusControl =
     repoDetail && showSystemStatus
@@ -157,31 +169,39 @@ export function TopBar({
       : { isVisible: false };
 
   return (
-    <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
-      <SidebarTrigger side="left" />
-      <TopBarTitleArea
-        repoDetail={repoDetail}
-        isRepoDetailLoading={isRepoDetailLoading}
-        showSystemStatus={showSystemStatus}
-      />
-      <TopBarSwapRepositorySlot
-        threadId={threadId}
-        attachedRepository={attachedRepository}
-        availableRepositories={availableRepositories}
-        onThreadMovedToRepository={onThreadMovedToRepository}
-      />
-      <ChatModeControls showSidebarToggle={false} onSearchThreads={onSearchThreads} onNewThread={onNewThread} />
-
-      <div className="ml-auto flex items-center gap-1.5">
-        <TopBarStatusSlot statusControl={statusControl} isDesktopLayout={isDesktopLayout} />
-        <RepositoryActionsMenu
-          repoDetail={repoDetail}
-          onArchiveRepo={onArchiveRepo}
-          onRestoreRepo={onRestoreRepo}
-          onPermanentDeleteRepo={onPermanentDeleteRepo}
+    <>
+      <div className="flex h-12 shrink-0 items-center gap-2 border-b border-border bg-background px-3 md:px-4">
+        <SidebarTrigger side="left" />
+        {showRepositoryTitle ? (
+          <TopBarTitleArea
+            repoDetail={repoDetail}
+            isRepoDetailLoading={isRepoDetailLoading}
+            showSystemStatus={showSystemStatus}
+          />
+        ) : null}
+        <TopBarSwapRepositorySlot
+          threadId={threadId}
+          attachedRepository={attachedRepository}
+          availableRepositories={availableRepositories}
+          onThreadMovedToRepository={onThreadMovedToRepository}
         />
+        {centerActions ?? (
+          <ChatModeControls showSidebarToggle={false} onSearchThreads={onSearchThreads} onNewThread={onNewThread} />
+        )}
+
+        <div className="ml-auto flex items-center gap-1.5">
+          {rightActions}
+          <RepositoryActionsMenu
+            repoDetail={repoDetail}
+            statusControl={statusControl}
+            onArchiveRepo={onArchiveRepo}
+            onRestoreRepo={onRestoreRepo}
+            onPermanentDeleteRepo={onPermanentDeleteRepo}
+          />
+        </div>
       </div>
-    </div>
+      <DesktopStatusDialog statusControl={statusControl} isDesktopLayout={isDesktopLayout} />
+    </>
   );
 }
 
@@ -261,52 +281,23 @@ function TopBarSwapRepositorySlot({
   );
 }
 
-function TopBarStatusSlot({
+function DesktopStatusDialog({
   statusControl,
   isDesktopLayout,
 }: {
   statusControl: TopBarStatusControl;
   isDesktopLayout: boolean;
 }) {
-  if (!statusControl.isVisible) {
+  if (!statusControl.isVisible || !isDesktopLayout) {
     return null;
   }
-  if (isDesktopLayout) {
-    return <DesktopStatusPopover statusControl={statusControl} />;
-  }
   return (
-    <StatusPill
-      repository={statusControl.repository}
-      sandboxModeStatus={statusControl.sandboxModeStatus}
-      jobs={statusControl.jobs}
-      hasRemoteUpdates={statusControl.hasRemoteUpdates}
-      isSyncing={statusControl.isSyncing}
-      isOpen={statusControl.isOpen}
-      onClick={() => statusControl.onOpenChange(!statusControl.isOpen)}
-    />
-  );
-}
-
-function DesktopStatusPopover({ statusControl }: { statusControl: Extract<TopBarStatusControl, { isVisible: true }> }) {
-  return (
-    <Popover open={statusControl.isOpen} onOpenChange={statusControl.onOpenChange}>
-      <PopoverTrigger asChild>
-        <StatusPill
-          repository={statusControl.repository}
-          sandboxModeStatus={statusControl.sandboxModeStatus}
-          jobs={statusControl.jobs}
-          hasRemoteUpdates={statusControl.hasRemoteUpdates}
-          isSyncing={statusControl.isSyncing}
-          isOpen={statusControl.isOpen}
-        />
-      </PopoverTrigger>
-      <PopoverContent
-        side="bottom"
-        align="end"
-        sideOffset={8}
-        collisionPadding={12}
-        className="w-88 max-h-[min(36rem,calc(100vh-5rem))] overflow-hidden p-0"
-      >
+    <Dialog open={statusControl.isOpen} onOpenChange={statusControl.onOpenChange}>
+      <DialogContent showCloseButton={false} className="h-[min(42rem,calc(100dvh-2rem))] max-w-xl overflow-hidden p-0">
+        <DialogTitle className="sr-only">Repository status</DialogTitle>
+        <DialogDescription className="sr-only">
+          Current sync, sandbox, and analysis state, with recent activity and operation launchers.
+        </DialogDescription>
         <StatusPanel
           repository={statusControl.repository}
           sandboxModeStatus={statusControl.sandboxModeStatus}
@@ -320,22 +311,44 @@ function DesktopStatusPopover({ statusControl }: { statusControl: Extract<TopBar
           onViewArtifact={statusControl.onViewArtifact}
           onClose={() => statusControl.onOpenChange(false)}
         />
-      </PopoverContent>
-    </Popover>
+      </DialogContent>
+    </Dialog>
   );
 }
 
 function RepositoryActionsMenu({
   repoDetail,
+  statusControl,
   onArchiveRepo,
   onRestoreRepo,
   onPermanentDeleteRepo,
 }: {
   repoDetail: TopBarRepoDetail | undefined;
+  statusControl: TopBarStatusControl;
   onArchiveRepo: () => void;
   onRestoreRepo: () => void;
   onPermanentDeleteRepo: () => void;
 }) {
+  const statusState =
+    statusControl.isVisible && repoDetail
+      ? getRepositoryStatusPresentation({
+          repository: statusControl.repository,
+          sandboxModeStatus: statusControl.sandboxModeStatus,
+          jobs: statusControl.jobs,
+          hasRemoteUpdates: statusControl.hasRemoteUpdates,
+          isSyncing: statusControl.isSyncing,
+        })
+      : null;
+  const canSync = statusControl.isVisible && !statusControl.isSyncing && statusControl.syncDisabledReason === undefined;
+  const syncLabel =
+    statusControl.isVisible && statusControl.isSyncing
+      ? "Syncing…"
+      : statusControl.isVisible && statusControl.hasRemoteUpdates
+        ? "Sync updates"
+        : repoDetail?.repository.importStatus === "failed"
+          ? "Retry sync"
+          : "Sync repository";
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -350,6 +363,35 @@ function RepositoryActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-56">
+        {statusControl.isVisible ? (
+          <>
+            <DropdownMenuItem
+              onSelect={(e) => {
+                e.preventDefault();
+                statusControl.onOpenChange(true);
+              }}
+            >
+              <span className={statusState?.tone === "warning" ? "text-warning" : undefined}>
+                {statusState?.label ?? "Repository status"}
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={!canSync}
+              title={statusControl.syncDisabledReason}
+              onSelect={(e) => {
+                e.preventDefault();
+                if (!canSync) return;
+                statusControl.onSync();
+              }}
+            >
+              <ArrowsClockwiseIcon
+                weight="bold"
+                className={statusControl.isSyncing ? "motion-safe:animate-spin" : ""}
+              />
+              {syncLabel}
+            </DropdownMenuItem>
+          </>
+        ) : null}
         {repoDetail?.isArchived ? (
           <>
             <DropdownMenuItem
