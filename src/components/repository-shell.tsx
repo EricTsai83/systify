@@ -54,7 +54,7 @@ export function RepositoryShell({
     <>
       <AppSidebarLeft
         repositories={workspace.repositories}
-        activeRepositoryId={workspace.activeRepositoryId}
+        activeRepositoryId={workspace.selectedRepositoryId}
         onSwitchRepository={workspace.handlers.switchRepository}
         selectedThreadId={workspace.selectedThreadId}
         onSelectThread={workspace.handlers.selectThread}

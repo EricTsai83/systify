@@ -9,6 +9,7 @@ import type { RepositoryId } from "@/lib/types";
 
 const mocks = vi.hoisted(() => ({
   useRepositoryWorkspaceState: vi.fn<() => RepositoryWorkspaceState>(),
+  appSidebarLeft: vi.fn<(props: Record<string, unknown>) => void>(),
   chatContainer: vi.fn<(props: Record<string, unknown>) => void>(),
 }));
 
@@ -17,7 +18,10 @@ vi.mock("@/components/chat-shell-shared/use-repository-workspace-state", () => (
 }));
 
 vi.mock("@/components/app-sidebar", () => ({
-  AppSidebarLeft: () => <aside data-testid="app-sidebar" />,
+  AppSidebarLeft: (props: Record<string, unknown>) => {
+    mocks.appSidebarLeft(props);
+    return <aside data-testid="app-sidebar" />;
+  },
 }));
 
 vi.mock("@/components/chat-panel", () => ({
@@ -54,6 +58,7 @@ vi.mock("@/components/ui/sidebar", () => ({
 afterEach(() => {
   cleanup();
   mocks.useRepositoryWorkspaceState.mockReset();
+  mocks.appSidebarLeft.mockClear();
   mocks.chatContainer.mockClear();
 });
 
@@ -66,15 +71,38 @@ describe("RepositoryShell", () => {
     expect(screen.getByTestId("chat-container")).toHaveAttribute("data-has-artifact-toggle", "false");
     expect(screen.queryByLabelText("artifact-drawer")).not.toBeInTheDocument();
   });
+
+  test("drives the sidebar from the selected repository instead of the persisted active repository", () => {
+    const persistedRepositoryId = "repo_a" as RepositoryId;
+    const selectedRepositoryId = "repo_b" as RepositoryId;
+    mocks.useRepositoryWorkspaceState.mockReturnValue(
+      makeWorkspace({
+        activeRepositoryId: persistedRepositoryId,
+        selectedRepositoryId,
+      }),
+    );
+
+    render(<RepositoryShell urlRepositoryId={selectedRepositoryId} urlThreadId={null} />);
+
+    expect(mocks.appSidebarLeft).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activeRepositoryId: selectedRepositoryId,
+      }),
+    );
+  });
 });
 
-function makeWorkspace(): RepositoryWorkspaceState {
-  const repositoryId = "repo_1" as RepositoryId;
+function makeWorkspace(
+  overrides: Partial<
+    Pick<RepositoryWorkspaceState, "activeRepositoryId" | "selectedRepositoryId" | "artifactRepositoryId">
+  > = {},
+): RepositoryWorkspaceState {
+  const repositoryId = overrides.selectedRepositoryId ?? ("repo_1" as RepositoryId);
   return {
     repositories: [],
-    activeRepositoryId: repositoryId,
-    selectedRepositoryId: repositoryId,
-    artifactRepositoryId: repositoryId,
+    activeRepositoryId: overrides.activeRepositoryId ?? repositoryId,
+    selectedRepositoryId: overrides.selectedRepositoryId ?? repositoryId,
+    artifactRepositoryId: overrides.artifactRepositoryId ?? repositoryId,
     selectedThreadId: null,
     chatMode: "discuss",
     capabilities: {
